@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.retention.policy import (
+    RETENTION_CHANGE_PERMISSION,
     RetentionPermissionDenied,
     RetentionPolicy,
     RetentionRule,
@@ -40,9 +42,16 @@ def test_per_symbol_beats_global() -> None:
 
 
 def test_retention_change_requires_permission() -> None:
-    require_retention_change(["retention.change"])
+    require_retention_change([Permission.RECORDING_WRITE])
     with pytest.raises(RetentionPermissionDenied):
-        require_retention_change(["orders.read"])
+        require_retention_change([Permission.RECORDING_READ, Permission.ORDERS_READ])
+
+
+def test_retention_change_is_the_seeded_recording_write_code_not_the_audit_action() -> None:
+    # #2699: `retention.change` is an audit action no role holds; the gate is the seeded code.
+    assert RETENTION_CHANGE_PERMISSION == Permission.RECORDING_WRITE
+    with pytest.raises(RetentionPermissionDenied):
+        require_retention_change(["retention.change"])
 
 
 def test_storage_usage_keys_match_openapi() -> None:

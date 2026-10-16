@@ -3017,7 +3017,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `outbox` processed (PG)               | 7 d                | —                                      | 7 d           | drop                         | Dead-lettered rows kept 90 d                 |
 | `backups` (PG)                        | ∞                  | —                                      | ∞             | —                            | Metadata only                                |
 
-Changing any retention value is a dangerous action: it requires the `retention.change` permission, writes an audit entry with before/after, and the UI shows the computed volume delta before confirmation.
+Changing any retention value is a dangerous action: it requires the `recording:write` permission with step-up (04 §7.2.2 row 9), writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
 
 ---
 

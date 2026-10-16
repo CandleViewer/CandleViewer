@@ -2,7 +2,8 @@
 
 Most-specific-first: a per-symbol rule beats the global default. Defaults are
 seeded from `backend/db/seeds/retention_defaults.yaml`. Policy *changes* are a
-dangerous action gated by `retention.change` at the service boundary.
+dangerous action gated by `recording:write` at the service boundary; step-up (SR-025) must be
+enforced at the route, which the step-up registry does not cover yet (#2738).
 """
 
 from __future__ import annotations
@@ -14,11 +15,16 @@ from pathlib import Path
 
 from candleviewer.storage.models import StreamKind
 
-RETENTION_CHANGE_PERMISSION = "retention.change"
+#: The seeded RBAC code the contract gates retention changes with (`setRetentionPolicies`,
+#: 04 §7.2.2 row 9, #1778 decision Z: Owner and Manager; step-up belongs to the route, #2738).
+#: `retention.change` is the audit action for such a change, not a permission (#2699). `storage`
+#: may not import `auth`; tests/unit/auth/test_permission_literals.py checks this literal against
+#: `rbac_seed.json`.
+RETENTION_CHANGE_PERMISSION = "recording:write"
 
 
 class RetentionPermissionDenied(PermissionError):
-    """Caller lacks `retention.change`."""
+    """Caller lacks `recording:write`."""
 
 
 def require_retention_change(permissions: Iterable[str]) -> None:
