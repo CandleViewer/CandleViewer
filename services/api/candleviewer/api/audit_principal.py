@@ -7,13 +7,15 @@ which the router maps to 401. Permissions are read server-side per request
 (C-12.4); nothing is trusted from the client. The principal's `ip` (the audit
 `actor_ip` of every route that resolves one) is the address MeshOnly admitted,
 as the auth audit records it: behind the configured trusted proxy, the client's
-hop, never the proxy (#2275).
+hop, never the proxy (#2275). `last_step_up_at` is read from the same session row, so the
+resolver makes no query of its own for it (#2754).
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Protocol
 
 from fastapi import Request
@@ -22,6 +24,7 @@ from candleviewer.api.csrf import source_ip
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.step_up import last_step_up_at
 
 
 def _is_owner(user_id: uuid.UUID, roles: Any) -> bool:
@@ -34,6 +37,13 @@ def _is_owner(user_id: uuid.UUID, roles: Any) -> bool:
     except ValueError:
         return False
     return snapshot.is_owner
+
+
+def _last_step_up_at(record: Any) -> datetime | None:
+    """The latest step-up instant the loaded session row records. A record that carries no
+    step-up state has none."""
+    elevations = getattr(record, "step_up_elevations", None)
+    return last_step_up_at(elevations) if elevations else None
 
 
 class _Sessions(Protocol):
@@ -78,6 +88,7 @@ class SessionAuditPrincipalResolver:
             username=str(user["username"]),
             permissions=frozenset(str(p) for p in info.get("permissions", ())),
             is_owner=_is_owner(record.user_id, user.get("roles") or ()),
+            last_step_up_at=_last_step_up_at(record),
             session_id=record.id,
             ip=source_ip(request.scope),
             request_id=request_id,
