@@ -13394,11 +13394,15 @@ components:
         extend_right: { type: boolean }
         levels:
           type: array
-          description: "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`."
+          description: "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. Non-zero items must have |x| ≥ 1e-6 (`number_out_of_range`)."
           minItems: 1
           maxItems: 24
           uniqueItems: true
-          items: { type: number, minimum: -1000, maximum: 1000 }
+          items:
+            type: number
+            minimum: -1000
+            maximum: 1000
+            description: "A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`."
         bands:
           type: array
           description: "Standard-deviation bands (`anchored_vwap` only)."
@@ -13417,7 +13421,11 @@ components:
       properties:
         colour: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
         fill_colour: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
-        fill_opacity: { type: number, minimum: 0, maximum: 1 }
+        fill_opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`."
         width: { type: integer, minimum: 1, maximum: 8 }
         dash: { type: string, enum: [solid, dashed, dotted] }
         font_size: { type: integer, minimum: 8, maximum: 48 }
