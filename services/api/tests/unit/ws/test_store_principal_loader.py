@@ -204,7 +204,8 @@ async def test_reevaluation_through_the_loader_revokes_and_never_raises(change: 
     async def send(frame: dict[str, Any]) -> None:
         sent.append(frame)
 
-    conn = ConnectionAuthz(await registry.resolve(USER), registry.services)
+    snap = await registry.resolve(USER)
+    conn = ConnectionAuthz(snap.principal, registry.services, version=snap.version)
     registry.register(conn, send)
     sub = {"ch": "orders", "opts": {"exchange_account_ids": [str(GRANTED)]}}
     await handle_sub(conn, {"t": "sub", "id": "s", "p": {"topics": [sub]}}, send)

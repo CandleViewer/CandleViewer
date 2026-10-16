@@ -205,7 +205,10 @@ def _violations(bundle: Path, schema_id: str, doc: Any) -> list[tuple[str, str, 
 
 def _emitted_permission_change(new: PrincipalSnapshot) -> dict[str, Any]:
     """The frame `ConnectionAuthz.apply_snapshot` really emits when `new` replaces a snapshot."""
-    frame = ConnectionAuthz(_snap("viewer", VIEWER)).apply_snapshot(new, 1)[0]
+    conn = ConnectionAuthz(_snap("viewer", VIEWER))
+    frames = conn.apply_snapshot(VersionedSnapshot(new, conn.version + 1), 1)
+    assert frames is not None
+    frame = frames[0]
     assert frame["t"] == "permission_change", frame
     return frame
 

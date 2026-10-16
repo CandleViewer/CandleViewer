@@ -193,8 +193,9 @@ def test_withdrawn_grant_revokes_the_live_subscription(deployed: SimpleNamespace
 def test_fake_backend_keeps_the_deny_all_principal() -> None:
     owner = rbac.user_id_of("owner")
     app = appmod.create_app(Settings())
-    principal = asyncio.run(app.state.ws_registry.resolve(owner))
-    assert principal == PrincipalSnapshot(owner, frozenset(), frozenset())
+    snap = asyncio.run(app.state.ws_registry.resolve(owner))
+    assert snap.principal == PrincipalSnapshot(owner, frozenset(), frozenset())
+    assert snap.version >= 1
 
 
 def test_the_derived_families_cover_the_issue_scope() -> None:

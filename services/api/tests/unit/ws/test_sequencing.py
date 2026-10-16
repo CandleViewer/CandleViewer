@@ -26,6 +26,7 @@ from candleviewer.ws.binary import (
     decode_b64,
     encode,
 )
+from candleviewer.ws.permissions import VersionedSnapshot
 from candleviewer.ws.sequencing import (
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
     MAX_OUTBOUND_FRAME_BYTES,
@@ -763,7 +764,9 @@ def test_permission_loss_revokes_account_less_subscriptions_and_their_deltas() -
     hub = SequencingHub()
     alerts, recorder = _scoped(hub, "alerts"), _scoped(hub, "recorder")
     for conn in (alerts, recorder):
-        frames = conn.authz.apply_snapshot(replace(conn.authz.principal, permissions=PERMS), 9)
+        new = replace(conn.authz.principal, permissions=PERMS)
+        frames = conn.authz.apply_snapshot(VersionedSnapshot(new, conn.authz.version + 1), 9)
+        assert frames is not None
         assert [(f["t"], f["p"]["reason"]) for f in frames[1:]] == [
             ("revoked", "permission_revoked")
         ]
