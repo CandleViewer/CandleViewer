@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import _drawings_api_env as fakes
 import pytest
 from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, VIEWER, Env, wire
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
+from candleviewer.audit.writer import AuditUnavailable
 
 ACTORS = {"owner": USER_A, "other": USER_B, "viewer": VIEWER}
 #: operation -> HTTP status for (owner, other, viewer); user A owns the target drawing.
@@ -60,6 +64,36 @@ def test_idor_matrix(op: str, actor: str) -> None:
     else:
         probes = ("write:put", "delete:delete", "write:batch_update", "delete:batch_delete")
         assert reasons == (["not_owner:workspaces:write:self"] if op in probes else [])
+
+
+@pytest.mark.parametrize(
+    ("op", "actor", "grants", "permission"),
+    [
+        ("write:create", "viewer", None, "workspaces:write"),  # read-only: refused on each write
+        ("write:put", "viewer", None, "workspaces:write"),
+        ("delete:delete", "viewer", None, "workspaces:write"),
+        ("write:batch_update", "viewer", None, "workspaces:write"),
+        ("read:list", "owner", set(), "workspaces:read"),  # no grant at all: refused on the read
+    ],
+)
+def test_a_denial_whose_audit_record_cannot_be_written_is_503_and_changes_nothing(
+    op: str, actor: str, grants: set[str] | None, permission: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9 fail closed: a 403 is only sent once its `rbac.denied` record is durable."""
+    env = Env()
+    mine = env.create()
+    env.user, env.grants = ACTORS[actor], grants
+    monkeypatch.setattr(env.audit, "emit", AsyncMock(side_effect=AuditUnavailable("down")))
+    labels, before = {"permission": permission}, (dict(env.repo.rows), list(env.repo.calls))
+    counted = REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0
+    method, path, body = _request(op, mine)
+    with capture_logs() as logs:
+        r = env.c.request(method, path, json=body)
+    assert (r.status_code, r.headers["content-type"]) == (503, "application/problem+json")
+    assert r.json()["code"] == "store_unavailable"  # the contract's code, never the denial's 403
+    assert (dict(env.repo.rows), list(env.repo.calls)) == before  # no store call, no state change
+    assert REGISTRY.get_sample_value("authz_denied_total", labels) == counted + 1  # once (SR-125)
+    assert [e["event"] for e in logs] == ["drawings_audit_unavailable"]  # not the store's event
 
 
 def test_production_create_app_resolves_callers_from_the_session(

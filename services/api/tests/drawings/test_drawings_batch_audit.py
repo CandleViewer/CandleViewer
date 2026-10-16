@@ -10,13 +10,19 @@ from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
-from _drawings_api_env import BATCH, SID, TRENDLINE, USER_A, USER_B, Env, wire
+from _drawings_api_env import BATCH, SID, TRENDLINE, USER_B, Env, wire
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
+
+from candleviewer.audit.actions import UnknownAuditAction
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
+from candleviewer.storage.repositories.drawings import BatchOpFailed
 
 STALE = "2026-10-14T12:00:00.000000Z"
 NOT_OWNER = "not_owner:workspaces:write:self"
 KINDS = ["update", "delete"]
+#: What a failed audit write leaves on the wire: the registered 503, or a bug's plain 500.
+BODY = {503: '"code":"store_unavailable"', 500: "Internal Server Error"}
 
 
 def _target(kind: str, d: dict[str, Any], **over: Any) -> dict[str, Any]:
@@ -124,23 +130,74 @@ def test_the_internal_rule_reaches_neither_the_metric_nor_the_log() -> None:
     ]
 
 
+def _refusing_emit(failure: Exception) -> Any:
+    """An audit writer whose every `emit` raises `failure`."""
+
+    async def down(action: str, **_kw: Any) -> None:
+        raise failure
+
+    return down
+
+
 @pytest.mark.parametrize("route", ["put", "batch"])
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [
+        (AuditUnavailable("audit store down"), 503),  # the WAL refused the record
+        (AuditWriterStopped(), 503),  # the writer is not running
+        (RuntimeError("audit store down"), 500),  # a bug in the sink: only its refusals are 503
+        (UnknownAuditAction("rbac.typo"), 500),  # a typo'd action is a bug too, never a 503
+    ],
+    ids=["unavailable", "stopped", "unexpected", "unknown-action"],
+)
 def test_a_failed_audit_write_fails_the_probe_closed(
-    route: str, monkeypatch: pytest.MonkeyPatch
+    route: str, failure: Exception, status: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env = Env()
     mine = env.create()
     env.user = USER_B
-
-    async def down(action: str, **_kw: Any) -> None:
-        raise RuntimeError("audit store down")
-
-    monkeypatch.setattr(env.audit, "emit", down)
-    client = TestClient(env.c.app, raise_server_exceptions=False)  # the 500, not a raised error
+    before = (dict(env.repo.rows), dict(env.repo.deleted))
+    monkeypatch.setattr(env.audit, "emit", _refusing_emit(failure))
+    client = TestClient(env.c.app, raise_server_exceptions=False)  # an unexpected error is a 500
     if route == "put":
         r = client.put(f"/drawings/{mine['id']}", json=wire(TRENDLINE))
     else:
         body = wire({"operations": [_target("delete", mine)]}, BATCH)
         r = client.post("/drawings/batch", json=body)
-    assert r.status_code == 500  # never the plain 404 / 409 that would hide the missing record
-    assert env.repo.rows[mine["id"]].owner_user_id == str(USER_A) and not env.repo.deleted
+    assert r.status_code == status  # never the plain 404 / 409 that would hide the missing record
+    assert BODY[status] in r.text  # the registered problem, or the server's own 500
+    assert (dict(env.repo.rows), dict(env.repo.deleted)) == before  # no state changed
+
+
+def test_a_failed_audit_write_still_counts_and_logs_the_batch_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-125, as `enforce()`: the conflict is counted and logged before the audit write."""
+    metrics = MagicMock()
+    env = Env(metrics=metrics)
+    mine = env.create()
+    env.user = USER_B
+    monkeypatch.setattr(env.audit, "emit", _refusing_emit(AuditUnavailable("audit store down")))
+    with capture_logs() as logs:
+        assert _post(env, _target("delete", mine)).status_code == 503
+    assert metrics.conflicts.labels.call_args_list == [call("target_unavailable")]
+    conflicts = [(e["event"], e["rule"]) for e in logs if e["event"] == "drawings_batch_conflict"]
+    assert conflicts == [("drawings_batch_conflict", "target_unavailable")]
+
+
+def test_an_unexpected_audit_failure_never_chains_the_internal_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A traceback prints `__context__`: `target_not_owned` must not be in it (it is not wire)."""
+    env = Env()
+    mine = env.create()
+    env.user = USER_B
+    monkeypatch.setattr(env.audit, "emit", _refusing_emit(RuntimeError("audit store down")))
+    with pytest.raises(RuntimeError) as err:  # the TestClient re-raises what the app leaves
+        _post(env, _target("delete", mine))
+    chain: list[BaseException] = []
+    exc: BaseException | None = err.value
+    while exc is not None:
+        chain.append(exc)
+        exc = exc.__context__
+    assert not any(isinstance(e, BatchOpFailed) for e in chain)

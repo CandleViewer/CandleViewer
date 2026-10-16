@@ -22,7 +22,7 @@ race-free).
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, assert_never
 
@@ -104,6 +104,45 @@ _SOFT_DELETE = sa.text(
     "WHERE id = CAST(:id AS uuid) AND owner_user_id = CAST(:owner AS uuid) "
     "AND deleted_at IS NULL"
 )
+# Set-based batch statements (one round trip per op kind). The rows travel as ONE jsonb array
+# bound as text; `jsonb_to_recordset` types every column, so nothing is interpolated. The
+# recordset columns are `n_`-prefixed so RETURNING's bare column names stay unambiguous.
+_INSERT_MANY = sa.text(
+    "INSERT INTO drawings (id, owner_user_id, symbol, layout_id, tool, geometry, style, label, "
+    "locked, visible, z_index, anchor_start, anchor_end) "
+    "SELECT n_id, CAST(:owner AS uuid), n_symbol, n_layout, n_tool, n_geometry, n_style, n_label, "
+    "n_locked, n_visible, n_z_index, n_anchor_start, n_anchor_end "
+    "FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id uuid, n_symbol text, "
+    "n_layout uuid, n_tool text, n_geometry jsonb, n_style jsonb, n_label text, n_locked boolean, "
+    "n_visible boolean, n_z_index integer, n_anchor_start timestamptz, "
+    "n_anchor_end timestamptz) "
+    "ON CONFLICT (id) DO NOTHING RETURNING "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
+)
+_UPDATE_MANY = sa.text(
+    "UPDATE drawings SET "
+    "layout_id = r.n_layout, geometry = r.n_geometry, "
+    "style = r.n_style, label = r.n_label, locked = r.n_locked, visible = r.n_visible, "
+    "z_index = r.n_z_index, anchor_start = r.n_anchor_start, anchor_end = r.n_anchor_end, "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
+    "FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id uuid, n_if_match timestamptz, "
+    "n_layout uuid, n_geometry jsonb, n_style jsonb, n_label text, "
+    "n_locked boolean, n_visible boolean, n_z_index integer, n_anchor_start timestamptz, "
+    "n_anchor_end timestamptz) "
+    "WHERE drawings.id = ANY(CAST(:ids AS uuid[])) AND drawings.id = r.n_id "
+    "AND drawings.owner_user_id = CAST(:owner AS uuid) "
+    "AND drawings.deleted_at IS NULL AND drawings.updated_at = r.n_if_match "
+    "RETURNING "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
+)
+_SOFT_DELETE_MANY = sa.text(
+    "UPDATE drawings SET deleted_at = now(), "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
+    "WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = CAST(:owner AS uuid) "
+    "AND deleted_at IS NULL RETURNING id::text AS id"
+)
 _SNAPSHOT = sa.text(
     "SELECT id::text AS id, symbol, tool, deleted_at, updated_at "
     "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = CAST(:owner AS uuid) "
@@ -153,6 +192,100 @@ def _params(fields: DrawingFields) -> dict[str, Any]:
         "anchor_start": fields.anchor_start,
         "anchor_end": fields.anchor_end,
     }
+
+
+#: Storage-side cap on one batch; a test pins it equal to the API's `MAX_BATCH_OPS`
+#: (storage must not import `api`).
+MAX_BATCH_OPS_STORAGE = 200
+
+
+def _iso(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _row_json(
+    op_id: str, fields: DrawingFields, if_match: datetime | None = None
+) -> dict[str, Any]:
+    # `jsonb_to_recordset` would coerce "yes" -> true or "7" -> 7; refuse instead (SR-040).
+    if not (
+        isinstance(fields.locked, bool)
+        and isinstance(fields.visible, bool)
+        and isinstance(fields.z_index, int)
+        and not isinstance(fields.z_index, bool)
+        and (fields.label is None or isinstance(fields.label, str))
+        and isinstance(fields.symbol, str)
+        and isinstance(fields.tool, str)
+    ):
+        raise TypeError("DrawingFields has a mistyped value")
+    row: dict[str, Any] = {
+        "n_id": op_id,
+        "n_symbol": fields.symbol,
+        "n_layout": fields.layout_id,
+        "n_tool": fields.tool,
+        "n_geometry": fields.geometry,
+        "n_style": fields.style,
+        "n_label": fields.label,
+        "n_locked": fields.locked,
+        "n_visible": fields.visible,
+        "n_z_index": fields.z_index,
+        "n_anchor_start": _iso(fields.anchor_start),
+        "n_anchor_end": _iso(fields.anchor_end),
+    }
+    if if_match is not None:
+        row["n_if_match"] = _iso(if_match)
+    return row
+
+
+def _rows_param(rows: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        rows, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=False
+    )
+
+
+def _first_failure(
+    ops: Sequence[BatchOp], snap: Mapping[str, Mapping[str, Any]]
+) -> tuple[int, str] | None:
+    """First `(index, rule)` a batch hits against the locked snapshot, in operation order.
+
+    `snap` holds only the caller's own rows, live or soft-deleted (`_SNAPSHOT` is owner-scoped),
+    so an update/delete target absent from it is another owner's or missing: `target_not_owned`,
+    which nothing tells apart. The caller's own soft-deleted row is `target_unavailable`.
+
+    Pure: the per-op rules the repository always applied, plus the write-time outcomes the old
+    one-statement-per-op loop produced when an id repeats (the bulk statements would otherwise
+    let those succeed): a second create collides with the first insert; an update after an
+    update or delete, or a delete after a delete, finds a bumped token or a deleted row and is
+    `target_unavailable`. An update followed by a delete of the same id still succeeds.
+    """
+    created: set[str] = set()
+    bumped: set[str] = set()  # updated earlier in this batch (token moved on)
+    deleted: set[str] = set()  # soft-deleted earlier in this batch
+    for i, op in enumerate(ops):
+        existing = snap.get(op.id)
+        if isinstance(op, CreateOp):
+            if existing is not None or op.id in created:
+                return i, "id_unavailable"
+            created.add(op.id)
+            continue
+        if existing is None:  # another owner's row or none at all: told apart by nothing
+            return i, "target_not_owned"
+        if existing["deleted_at"]:
+            return i, "target_unavailable"
+        if existing["updated_at"] != op.if_match:
+            return i, "version_conflict"
+        if isinstance(op, UpdateOp):
+            if op.fields.symbol != existing["symbol"] or op.fields.tool != existing["tool"]:
+                return i, "immutable_field"
+            if op.id in bumped or op.id in deleted:
+                return i, "target_unavailable"
+            bumped.add(op.id)
+        elif isinstance(op, DeleteOp):
+            if op.id in deleted:
+                return i, "target_unavailable"
+            deleted.add(op.id)
+        else:
+            assert_never(op)
+    return None
 
 
 def _is_pk_collision(exc: IntegrityError) -> bool:
@@ -250,56 +383,75 @@ class SqlAlchemyDrawingRepository:
         return bool(getattr(res, "rowcount", 0))
 
     async def apply_batch(self, owner: str, ops: Sequence[BatchOp]) -> BatchResult:
-        created: list[DrawingRow] = []
-        updated: list[DrawingRow] = []
-        deleted: list[str] = []
+        """Apply `ops` atomically with four statements (snapshot + one per op kind)."""
+        if len(ops) > MAX_BATCH_OPS_STORAGE:
+            raise ValueError(f"a batch carries at most {MAX_BATCH_OPS_STORAGE} operations")
+        creates: list[tuple[int, CreateOp]] = [
+            (i, op) for i, op in enumerate(ops) if isinstance(op, CreateOp)
+        ]
+        updates: list[tuple[int, UpdateOp]] = [
+            (i, op) for i, op in enumerate(ops) if isinstance(op, UpdateOp)
+        ]
+        deletes: list[tuple[int, DeleteOp]] = [
+            (i, op) for i, op in enumerate(ops) if isinstance(op, DeleteOp)
+        ]
         async with self._relational.unit_of_work() as uow:
             ids = [op.id for op in ops]
             locked = await uow.session.execute(_SNAPSHOT, {"ids": ids, "owner": owner})
-            snap = {r["id"]: r for r in locked.mappings()}  # the caller's rows only
-            for i, op in enumerate(ops):
-                existing = snap.get(op.id)
-                if isinstance(op, CreateOp):
-                    if existing is not None:
-                        raise BatchOpFailed(i, "id_unavailable")
-                    params = {"id": op.id, "owner": owner, **_params(op.fields)}
-                    try:
-                        async with uow.session.begin_nested():
-                            row = (await uow.session.execute(_INSERT, params)).mappings().one()
-                    except IntegrityError as exc:
-                        if _is_pk_collision(exc):
-                            raise BatchOpFailed(i, "id_unavailable") from exc
-                        raise
-                    created.append(_to_row(row))
-                    continue
-                if existing is None:  # another owner's row or none at all: told apart by nothing
-                    raise BatchOpFailed(i, "target_not_owned")
-                if existing["deleted_at"]:
-                    raise BatchOpFailed(i, "target_unavailable")
-                if existing["updated_at"] != op.if_match:
-                    raise BatchOpFailed(i, "version_conflict")
-                if isinstance(op, UpdateOp):
-                    if op.fields.symbol != existing["symbol"] or op.fields.tool != existing["tool"]:
-                        raise BatchOpFailed(i, "immutable_field")
-                    params = {
-                        "id": op.id,
+            snap: dict[str, Mapping[str, Any]] = {r["id"]: dict(r) for r in locked.mappings()}
+            failure = _first_failure(ops, snap)  # `snap` is the caller's own rows only
+            # Creates before the first snapshot failure are inserted too, so a concurrent PK
+            # collision at an earlier index still wins, exactly as in operation order.
+            limit = failure[0] if failure is not None else len(ops)
+            first_create = [(i, op) for i, op in creates if i < limit]
+            created_by_id: dict[str, DrawingRow] = {}
+            if first_create:
+                got = await uow.session.execute(
+                    _INSERT_MANY,
+                    {
                         "owner": owner,
-                        "if_match": op.if_match,
-                        **_params(op.fields),
-                    }
-                    got = (await uow.session.execute(_UPDATE, params)).mappings().all()
-                    if len(got) != 1:  # fail closed: the locked row must be updated exactly once
+                        "rows": _rows_param(
+                            [_row_json(op.id, op.fields) for _, op in first_create]
+                        ),
+                    },
+                )
+                created_by_id = {r["id"]: _to_row(r) for r in got.mappings()}
+                for i, op in first_create:
+                    if op.id not in created_by_id:
+                        raise BatchOpFailed(i, "id_unavailable")
+            if failure is not None:
+                raise BatchOpFailed(*failure)
+            updated_by_id: dict[str, DrawingRow] = {}
+            if updates:
+                got = await uow.session.execute(
+                    _UPDATE_MANY,
+                    {
+                        "owner": owner,
+                        "ids": [op.id for _, op in updates],
+                        "rows": _rows_param(
+                            [_row_json(op.id, op.fields, op.if_match) for _, op in updates]
+                        ),
+                    },
+                )
+                updated_by_id = {r["id"]: _to_row(r) for r in got.mappings()}
+                for i, uop in updates:  # fail closed: every locked row is updated exactly once
+                    if uop.id not in updated_by_id:
                         raise BatchOpFailed(i, "target_unavailable")
-                    updated.append(_to_row(got[0]))
-                elif isinstance(op, DeleteOp):
-                    res = await uow.session.execute(_SOFT_DELETE, {"id": op.id, "owner": owner})
-                    if getattr(res, "rowcount", 0) != 1:  # fail closed
+            deleted_ids: set[str] = set()
+            if deletes:
+                gone = await uow.session.execute(
+                    _SOFT_DELETE_MANY, {"owner": owner, "ids": [op.id for _, op in deletes]}
+                )
+                deleted_ids = {str(row[0]) for row in gone.all()}
+                for i, dop in deletes:  # fail closed
+                    if dop.id not in deleted_ids:
                         raise BatchOpFailed(i, "target_unavailable")
-                    deleted.append(op.id)
-                else:
-                    assert_never(op)
             await uow.commit()
-        return BatchResult(tuple(created), tuple(updated), tuple(deleted))
+        return BatchResult(
+            tuple(created_by_id[op.id] for _, op in creates),
+            tuple(updated_by_id[op.id] for _, op in updates),
+            tuple(op.id for _, op in deletes),
+        )
 
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:
         if older_than_days < 1 or not 1 <= limit <= MAX_PURGE_BATCH:
@@ -316,4 +468,9 @@ class SqlAlchemyDrawingRepository:
         return {str(tool): int(n) for tool, n in rows}
 
 
-__all__ = ["DRAWING_COLUMNS", "MAX_PURGE_BATCH", "SqlAlchemyDrawingRepository"]
+__all__ = [
+    "DRAWING_COLUMNS",
+    "MAX_BATCH_OPS_STORAGE",
+    "MAX_PURGE_BATCH",
+    "SqlAlchemyDrawingRepository",
+]

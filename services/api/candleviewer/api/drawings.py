@@ -10,6 +10,10 @@ soft-deleted target but is audited too: telling them apart would need a second l
 difference. Drawing writes are not audited (not a C-2.9 action). Bodies are read raw so byte, depth
 and batch-size caps run before pydantic; no content is logged. POST and batch replay an
 `Idempotency-Key` from a bounded per-user cache.
+
+A denial whose `rbac.denied` record cannot be made durable is answered 503 `store_unavailable`
+with no state change, never 403/404/409; an allowed request on the caller's own rows never
+reaches the audit writer, while a foreign-id probe does (DR18).
 """
 
 import base64
@@ -45,6 +49,7 @@ from candleviewer.api.drawings_models import (
 )
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.ingestion.ticker_stream import uuid7
@@ -222,7 +227,9 @@ class _Problem(Exception):
 
 
 class _ProblemRoute(APIRoute):
-    """`_Problem` -> its response; a store I/O failure -> 503 `store_unavailable`."""
+    """`_Problem` -> its response; a store I/O failure, or an audit write the sink refuses
+    (`AuditUnavailable`, `AuditWriterStopped`: the request fails closed) -> 503 `store_unavailable`.
+    """
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
@@ -234,9 +241,9 @@ class _ProblemRoute(APIRoute):
                 return p.response()
             except (OSError, StorageTierUnavailable) as exc:
                 _log().error("drawings_store_unavailable", error=type(exc).__name__)
-                return _Problem(
-                    "store_unavailable", "The drawings store is unavailable."
-                ).response()
+            except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
+                _log().error("drawings_audit_unavailable", error=type(exc).__name__)
+            return _Problem("store_unavailable", "The drawings store is unavailable.").response()
 
         return handler
 
@@ -608,22 +615,26 @@ def make_drawings_router(
         ops = [_op(op, new_id) for op in body.operations]
         if metrics is not None:
             metrics.batch_ops.child().observe(len(ops))
+        failed: tuple[int, str] | None = None  # (index, rule): the exception would pin this frame
         try:
             res = await store().apply_batch(owner, ops)
         except BatchOpFailed as exc:
-            field = f"operations.{exc.index}"
-            if exc.rule == "immutable_field":  # as on PUT; checked under the row lock (C2)
+            failed = (exc.index, exc.rule)  # answered below, outside the `except`: nothing chains
+        if failed is not None:
+            index, internal = failed
+            field = f"operations.{index}"
+            if internal == "immutable_field":  # as on PUT; checked under the row lock (C2)
                 msg = "symbol and tool cannot change"
-                raise _invalid([_rule(f"{field}.drawing", exc.rule, msg)]) from None
-            rule = exc.rule
-            if rule == "target_not_owned":  # foreign or missing, told apart by nothing: audited
-                await audit_not_owner(principal, ops[exc.index].id)  # before the problem is raised
-                rule = "target_unavailable"  # the wire rule (and metric label) of every such target
-            conflict(rule)
+                raise _invalid([_rule(f"{field}.drawing", internal, msg)])
+            not_owned = internal == "target_not_owned"  # foreign or missing: not told apart
+            rule = "target_unavailable" if not_owned else internal  # the wire rule and label
+            conflict(rule)  # counted and logged before the audit write, as `enforce()` (SR-125)
             _log().info("drawings_batch_conflict", user_id=owner, op_count=len(ops), rule=rule)
+            if not_owned:  # `rbac.denied` first; a refused audit write fails the request closed
+                await audit_not_owner(principal, ops[index].id)
             msg = _BATCH_RULES.get(rule, "This operation cannot be applied.")
             errs = [_rule(field, rule, msg)]
-            raise _Problem("conflict", "The batch was rolled back.", errors=errs) from None
+            raise _Problem("conflict", "The batch was rolled back.", errors=errs)
         _log().info("drawings_batch_applied", user_id=owner, op_count=len(ops))
         created, updated = [_dump(r) for r in res.created], [_dump(r) for r in res.updated]
         out = {"created": created, "updated": updated, "deleted": list(res.deleted)}

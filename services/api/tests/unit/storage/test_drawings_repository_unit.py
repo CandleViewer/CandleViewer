@@ -109,14 +109,17 @@ _STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause
 def test_the_statement_set_is_pinned() -> None:
     assert set(_STATEMENTS) == {
         "_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE", "_SNAPSHOT",
-        "_PURGE", "_COUNT_LIVE",
+        "_PURGE", "_COUNT_LIVE", "_INSERT_MANY", "_UPDATE_MANY", "_SOFT_DELETE_MANY",
     }  # fmt: skip
 
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
 def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> None:
     text = str(_STATEMENTS[name])
-    if name == "_INSERT":  # no WHERE clause: the owner is written as a bound value
+    if name in {
+        "_INSERT",
+        "_INSERT_MANY",
+    }:  # no WHERE clause: the owner is written as a bound value
         assert "CAST(:owner AS uuid)" in text
     elif name not in mod.UNSCOPED:
         assert "owner_user_id = CAST(:owner AS uuid)" in text
@@ -125,6 +128,13 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
 def test_only_three_statements_are_unscoped() -> None:
     assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE"})
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
+
+
+def test_purge_deletes_only_soft_deleted_rows_past_the_bounded_cutoff() -> None:
+    """The one DELETE no owner filter scopes: these two guards are all that protects live rows."""
+    text = str(_STATEMENTS["_PURGE"])
+    assert "deleted_at IS NOT NULL AND deleted_at < now() - make_interval(" in text  # one AND
+    assert "make_interval(days => CAST(:days AS integer))" in text
 
 
 def test_snapshot_locks_rows_in_a_deterministic_order() -> None:
@@ -144,7 +154,7 @@ def test_read_allow_list_excludes_internal_columns() -> None:
         assert hidden not in mod.DRAWING_COLUMNS
 
 
-@pytest.mark.parametrize("name", ["_UPDATE", "_SOFT_DELETE"])
+@pytest.mark.parametrize("name", ["_UPDATE", "_SOFT_DELETE", "_UPDATE_MANY", "_SOFT_DELETE_MANY"])
 def test_updates_bump_the_token_monotonically(name: str) -> None:
     assert "greatest(clock_timestamp(), updated_at + interval '1 microsecond')" in str(
         _STATEMENTS[name]
@@ -156,7 +166,9 @@ def test_list_uses_the_index_friendly_shape() -> None:
     assert "symbol = :symbol" in text and "ORDER BY id LIMIT :limit" in text
 
 
-@pytest.mark.parametrize("name", ["_INSERT", "_GET", "_LIST", "_UPDATE"])
+@pytest.mark.parametrize(
+    "name", ["_INSERT", "_INSERT_MANY", "_GET", "_LIST", "_UPDATE", "_UPDATE_MANY"]
+)
 def test_literal_column_lists_match_the_allow_list(name: str) -> None:
     assert mod.DRAWING_COLUMNS in str(_STATEMENTS[name])
 
@@ -236,3 +248,163 @@ def test_target_not_owned_is_an_internal_batch_rule() -> None:
 def test_batch_op_failed_rejects_an_unknown_rule() -> None:
     with pytest.raises(ValueError, match="unknown batch rule"):
         BatchOpFailed(0, "made_up")
+
+
+def test_update_many_never_writes_the_immutable_columns() -> None:
+    set_clause = str(_STATEMENTS["_UPDATE_MANY"]).split(" FROM ")[0]
+    assert "symbol" not in set_clause and "tool" not in set_clause
+
+
+# --- fail-closed branches of the set-based apply_batch (stub unit of work) ---------------
+
+
+class _Result:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> _Result:
+        return self
+
+    def __iter__(self) -> Any:
+        return iter(self._rows)
+
+    def all(self) -> list[Any]:
+        return [tuple(r.values()) for r in self._rows]
+
+
+class _Session:
+    def __init__(self, script: list[list[dict[str, object]]]) -> None:
+        self._script = script
+        self.statements: list[str] = []
+        self.params: list[dict[str, Any]] = []
+
+    async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
+        self.statements.append(str(stmt)[:20])
+        self.params.append(params)
+        return _Result(self._script.pop(0))
+
+
+class _Uow:
+    def __init__(self, session: _Session) -> None:
+        self.session = session
+        self.commits = 0
+
+    async def __aenter__(self) -> _Uow:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class _Rel:
+    def __init__(self, script: list[list[dict[str, object]]]) -> None:
+        self.uow = _Uow(_Session(script))
+
+    def unit_of_work(self) -> _Uow:
+        return self.uow
+
+
+def _snap_row(i: str) -> dict[str, object]:  # the columns of `_SNAPSHOT`: the caller's rows only
+    return {"id": i, "symbol": "BTCUSDT", "tool": "trendline", "deleted_at": None,
+            "updated_at": _T}  # fmt: skip
+
+
+async def _run(script: list[list[dict[str, object]]], ops: list[Any]) -> tuple[_Rel, BatchOpFailed]:
+    rel = _Rel(script)
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch("o", ops)
+    return rel, err.value
+
+
+async def test_batch_insert_returning_fewer_rows_is_id_unavailable_at_the_missing_create() -> None:
+    ops = [CreateOp("a", _fields()), CreateOp("b", _fields()), CreateOp("c", _fields())]
+    # snapshot empty; INSERT returns only a and c (b hit ON CONFLICT)
+    script = [[], [_mapping(id="a"), _mapping(id="c")]]
+    rel, err = await _run(script, ops)
+    assert (err.index, err.rule) == (1, "id_unavailable")
+    assert rel.uow.commits == 0
+
+
+async def test_batch_update_returning_fewer_rows_is_target_unavailable_at_the_missing_op() -> None:
+    ops = [CreateOp("n", _fields()), UpdateOp("u1", _T, _fields()), UpdateOp("u2", _T, _fields())]
+    script = [[_snap_row("u1"), _snap_row("u2")], [_mapping(id="n")], [_mapping(id="u1")]]
+    rel, err = await _run(script, ops)
+    assert (err.index, err.rule) == (2, "target_unavailable")
+    assert rel.uow.commits == 0
+
+
+async def test_batch_delete_returning_fewer_ids_is_target_unavailable_at_the_missing_op() -> None:
+    ops = [DeleteOp("d1", _T), DeleteOp("d2", _T)]
+    script = [[_snap_row("d1"), _snap_row("d2")], [{"id": "d2"}]]
+    rel, err = await _run(script, ops)
+    assert (err.index, err.rule) == (0, "target_unavailable")
+    assert rel.uow.commits == 0
+
+
+async def test_the_snapshot_is_taken_for_the_caller_alone() -> None:
+    rel, err = await _run([[]], [UpdateOp("u", _T, _fields())])
+    assert rel.uow.session.params == [{"ids": ["u"], "owner": "o"}]  # the lock stays on own rows
+    assert (err.index, err.rule) == (0, "target_not_owned")  # absent from it: foreign or missing
+    assert rel.uow.session.statements == [str(_STATEMENTS["_SNAPSHOT"])[:20]]  # and nothing else
+    assert rel.uow.commits == 0
+
+
+@pytest.mark.parametrize("kind", ["update", "delete"])
+@pytest.mark.parametrize(
+    ("in_snapshot", "rule"), [(True, "target_unavailable"), (False, "target_not_owned")]
+)
+async def test_only_a_target_missing_from_the_snapshot_is_not_owned(
+    kind: str, in_snapshot: bool, rule: str
+) -> None:
+    """R3/R4: a write that finds no row for a target the caller's snapshot holds fails closed as
+    the caller's own `target_unavailable`. The API audits `target_not_owned` as a cross-owner
+    probe, so relabelling either branch would audit the caller's own row."""
+    op = UpdateOp("t", _T, _fields()) if kind == "update" else DeleteOp("t", _T)
+    script: list[list[dict[str, object]]] = [[_snap_row("t")] if in_snapshot else [], []]
+    rel, err = await _run(script, [op])
+    assert (err.index, err.rule) == (0, rule)
+    assert rel.uow.commits == 0
+
+
+def test_storage_batch_cap_equals_the_api_cap() -> None:
+    from candleviewer.api.drawings_models import MAX_BATCH_OPS
+
+    assert mod.MAX_BATCH_OPS_STORAGE == MAX_BATCH_OPS
+
+
+async def test_apply_batch_refuses_more_ops_than_the_cap_before_touching_the_database() -> None:
+    rel = _Rel([])
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    ops = [CreateOp(str(n), _fields()) for n in range(mod.MAX_BATCH_OPS_STORAGE + 1)]
+    with pytest.raises(ValueError, match="at most"):
+        await repo.apply_batch("o", ops)
+    assert rel.uow.session.statements == []
+
+
+@pytest.mark.parametrize(
+    "over", [{"locked": "yes"}, {"visible": 1}, {"z_index": "7"}, {"z_index": True}, {"label": 123}]
+)
+def test_row_json_refuses_mistyped_fields_instead_of_letting_postgres_coerce(
+    over: dict[str, Any],
+) -> None:
+    with pytest.raises(TypeError, match="mistyped"):
+        mod._row_json("i", dataclasses.replace(_fields(), **over))
+
+
+def test_rows_param_keeps_non_ascii_text_unescaped() -> None:
+    out = mod._rows_param([{"n_label": "é"}])
+    assert "é" in out and "\\u00e9" not in out
+
+
+async def test_apply_batch_accepts_exactly_the_cap_and_reaches_the_snapshot() -> None:
+    rel = _Rel([[], [_mapping(id=str(n)) for n in range(mod.MAX_BATCH_OPS_STORAGE)]])
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    ops = [CreateOp(str(n), _fields()) for n in range(mod.MAX_BATCH_OPS_STORAGE)]
+    result = await repo.apply_batch("o", ops)
+    assert len(result.created) == mod.MAX_BATCH_OPS_STORAGE
+    assert len(rel.uow.session.statements) == 2  # snapshot + one INSERT
+    assert rel.uow.commits == 1
