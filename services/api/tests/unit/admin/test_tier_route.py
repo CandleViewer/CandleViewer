@@ -207,7 +207,7 @@ _CANARY = "sk_live_" + "Zq9x" * 6  # a secret-shaped value a client might send, 
         (f'{{"tier": "regular", "{_CANARY}": 20}}'.encode(), "", "extra_forbidden"),
         (b'["regular"]', "", "model_type"),
         (b"not json", "", "json_invalid"),
-        (b'{"tier": "regular"}' + b" " * 1100, "", "body_too_large"),
+        (b'{"tier": "regular"}'.ljust(1025), "", "body_too_large"),  # one byte over the cap
         (f'{{"tier": "{_CANARY}"}}'.encode(), "tier", "literal_error"),
     ],
     ids="missing gold case null extra list junk big canary".split(),
@@ -222,6 +222,11 @@ def test_a_body_that_is_not_one_of_the_two_tiers_is_422_and_changes_nothing(
     assert [r["action"] for r in spy.records] == ["admin.area_entered"]  # nothing to audit
     assert store is not None and store.calls == []  # not even read
     assert store.rows[SUBACCOUNT_TIER_KEY].value == "regular"
+
+
+def test_a_body_of_exactly_the_cap_is_read() -> None:  # 1025 bytes is `body_too_large`, above
+    client, _, _ = _app(_recorded(None))
+    assert _put(client, content=b'{"tier": "regular"}'.ljust(1024)).status_code == 200
 
 
 # -- the store and the audit trail fail closed (503) ---------------------------------------------
