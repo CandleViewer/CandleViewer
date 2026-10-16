@@ -84,13 +84,34 @@ def test_catalogue_every_planned_entry_has_owning_epic() -> None:
             assert _KNOWN_EPICS.match(s.owner_epic), s.name
 
 
+#: A section comment of the catalogue source, `# --- <title> ---`. The trailing dashes are optional:
+#: the recorder headers have none, and a pattern that needed them let those two run into the section
+#: above (#2319 review).
+_SECTION_HEADER = re.compile(r"^[ \t]*# --- (.+?)(?: -+)?[ \t]*$", flags=re.MULTILINE)
+
+
+def _sections(source: str) -> list[tuple[str, str]]:
+    """(title, body) of each `# ---` section; the body runs to the next header or the end."""
+    parts = _SECTION_HEADER.split(source)  # head, title, body, title, body, ...
+    return list(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def test_catalogue_section_split_finds_every_header_comment() -> None:
+    source = Path(metrics_catalogue.__file__).read_text(encoding="utf-8")
+    headers = [line for line in source.splitlines() if line.lstrip().startswith("# --- ")]
+    sections = _sections(source)
+    assert headers  # the catalogue has section comments at all
+    assert len(sections) == len(headers)
+    for header, (title, _) in zip(headers, sections, strict=True):
+        assert title in header, f"{header.strip()!r} was split as {title!r}"
+
+
 def test_catalogue_planned_section_headers_only_cover_planned_entries() -> None:
     # A `# --- ... (planned) ---` comment reads as the status of its block; the SR-125 one went on
     # saying so after its auth series went live (#2319 review).
     source = Path(metrics_catalogue.__file__).read_text(encoding="utf-8")
-    parts = re.split(r"^\s*# --- (.+?) -*$", source, flags=re.MULTILINE)  # head, title, body, ...
     status = {spec.name: spec.status for spec in CATALOGUE}
-    for title, body in zip(parts[1::2], parts[2::2], strict=True):
+    for title, body in _sections(source):
         live = [name for name in re.findall(r'_s\(\s*"(\w+)"', body) if status[name] != "planned"]
         assert "(planned)" not in title or not live, f"{title!r} heads live entries: {live}"
 

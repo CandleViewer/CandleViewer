@@ -409,7 +409,22 @@ them yet (#2746), so read them when investigating:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auth_refresh_reuse_total`               | a rotated-out refresh token was presented again; the whole session family is revoked                                                                                                        | `auth.refresh_reuse_detected` (critical)                                                                                                                                                 |
 | `auth_session_revocations_total{reason}` | sessions revoked; `reason` is from a closed set (logout, logout_all, rotated, rotation_reuse, expired, idle, admin, user_revoked, locked, timeout, unlock_attempts_exceeded) plus `other`   | `auth.session_revoked` for the logout and revoke routes                                                                                                                                  |
+| `auth_session_revoke_denied_total`       | `DELETE /me/sessions/{id}` named an id that is not one of the caller's live sessions: a foreign or unknown id (the probe) or the caller's own ended session; the answer is the same 404     | `auth.session_revoke_denied` (denied, warning, reason `not_live_own_session`; object: the id named). Rows are budgeted at 10 a minute per user and 30 overall; every probe is counted.   |
 | `users_invites_rejected_total{reason}`   | invite requests refused: unknown, expired, redeemed, revoked, enrollment_invalid, role_tamper (a `role` or `roles` claim) or identity_tamper (`username`, `user_id` or `email` in the body) | `users.invite_rejected` (warning for redeemed, role_tamper and identity_tamper). Tamper requests count against the per-address invite budget: the 11th in a minute gets `429` and no row |
+
+A lone `auth_session_revoke_denied_total` hit is as likely a stale Sessions row (the caller's own
+session ended, for example by rotation) as a probe, and the series cannot tell them apart: look the
+audit row's `object_id` up in `sessions`; another user's row means a probe. A probe past the row
+budget, or while the audit writer is saturated, is still counted and gets no row: the log then says
+`auth.session_revoke_denied.unaudited` with `cause` `audit_throttled` or `audit_saturated`, so a rate
+of that line is the number of probes left out on purpose.
+
+A probe whose row was lost by accident is counted too, and the log says why. A write that fails, or
+an audit sink that is down (`error` is `inactive`), logs
+`auth.session_revoke_denied.audit_unavailable`. A write still running after the 2 seconds the route
+waits logs `auth.session_revoke_denied.audit_slow` (the row may still land); if it then fails, or
+fails after the client hung up, `auth.session_revoke_denied.audit_failed_late` follows. Those lines
+have no series of their own, so count the lines to bound the probes with no row.
 
 Deliberately not served on the metrics listener: `auth_sessions_active` (a process-local gauge that
 drifts: it never drops on expiry or rotation, and a restarted process drives it negative; the database
@@ -509,7 +524,7 @@ of an accepted code stay silent.
 | Disable-user cascade (SR-029)                                             | #965                 |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
-| No alert rule reads the session, invite or step-up failure series         | #2746                |
+| No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
 
 ## Execution record

@@ -32,6 +32,14 @@ never issued here is refused with the same 401 as any other, and counted
 the CSRF guard's in-flight-capped, shielded writer path. Expired or revoked
 tokens of real sessions are not attempts and stay silent.
 
+IDOR probe (AC-CSRF-05, #2319): `DELETE /me/sessions/{id}` for an id that is not one
+of the caller's live sessions keeps its 404 (a foreign id, an unknown id and the caller's
+own ended session answer identically) and is counted (`auth_session_revoke_denied_total`)
+and audited (`auth.session_revoke_denied`, reason `not_live_own_session`) within a
+per-user and a global budget, through the same in-flight-capped, shielded writer path. Nothing
+changes, so that record is not write-ahead: a slow, refused or cancelled write leaves the 404 as
+it is, and a budget or cap trip is logged (`auth.session_revoke_denied.unaudited`).
+
 Write-ahead audit (C-2.9, #2251): the record is written before anything is
 rotated, revoked, set or cleared. An inactive sink, or a writer that refuses the
 record (`AuditError`: WAL full or unwritable, writer stopped), answers 503 with
@@ -54,6 +62,7 @@ from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.csrf import (
     AUDIT_TIMEOUT_S,
+    LostWrite,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -72,7 +81,11 @@ from candleviewer.auth.errors import (
     SessionRevoked,
     UserDisabled,
 )
-from candleviewer.auth.metrics import auth_csrf_refused_total, auth_session_fixation_attempts_total
+from candleviewer.auth.metrics import (
+    auth_csrf_refused_total,
+    auth_session_fixation_attempts_total,
+    auth_session_revoke_denied_total,
+)
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
@@ -146,6 +159,8 @@ class AuditEmitter(Protocol):
         actor_user_id: str | uuid.UUID | None = None,
         actor_ip: str | None = None,
         session_id: str | uuid.UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
         outcome: AuditOutcome = AuditOutcome.SUCCESS,
         severity: Severity = Severity.INFO,
         reason: str | None = None,
@@ -202,6 +217,46 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
+#: Log lines of a write that failed after its route stopped waiting for it (the tracker's too).
+_PROBE_LATE_FAILURE = "auth.session_revoke_denied.audit_failed_late"
+_FIXATION_LATE_FAILURE = "auth.session_fixation_attempt.audit_failed_late"
+
+
+def _probe_audit_failed(error: str) -> None:
+    """The probe row was not written; the 404 and the count stand, so the log is the trace."""
+    _log().error("auth.session_revoke_denied.audit_unavailable", error=error)
+
+
+def _count_fixation_audit_lost() -> None:
+    """A fixation row that may be lost: its write failed late, or ran on past the drain."""
+    auth_session_fixation_attempts_total.labels(reason="audit_unavailable").inc()
+
+
+def _fixation_audit_failed(error: str) -> None:
+    """The fixation row was not written; the 401 stands, so the count and the log are the trace."""
+    _count_fixation_audit_lost()
+    _log().error("auth.session_fixation_attempt.audit_unavailable", error=error)
+
+
+def _cancelled_while_writing(
+    tracker: RefusalAuditTracker,
+    task: asyncio.Task[None],
+    late_failure_event: str,
+    on_lost: LostWrite | None = None,
+) -> None:
+    """The request was cancelled awaiting its audit write *task* (the caller re-raises). A write
+    still running goes to the tracker, which reports a failure when it ends. One that ended in the
+    cancel's own loop iteration is done: `mark_timed_out` skips it and the tracker's callback stays
+    silent for a write it was not told about, so a failure is reported here as the tracker would."""
+    failure = task.exception() if task.done() and not task.cancelled() else None
+    if failure is None:
+        tracker.mark_timed_out(task)
+        return
+    _log().error(late_failure_event, error=type(failure).__name__)
+    if on_lost is not None:
+        on_lost()
+
+
 def _source_ip(request: Request) -> str | None:
     """The address MeshOnly admitted (trusted-proxy aware), else the socket peer."""
     return source_ip(request.scope)
@@ -223,6 +278,14 @@ REFRESH_WINDOW_S = 60.0
 FIXATION_AUDITS_PER_WINDOW = 20
 FIXATION_AUDITS_GLOBAL_PER_WINDOW = 60
 FIXATION_AUDIT_WINDOW_S = 60.0
+#: Revokes of an id that is not one of the caller's live sessions (AC-CSRF-05, #2319) audited per
+#: authenticated user (the caller is known, so the key is the user) and for all users together, per
+#: window, with at most the shared `RefusalAuditTracker` cap in flight. Past any of them the 404 is
+#: unchanged and the attempt is still counted (`auth_session_revoke_denied_total`), with no audit
+#: row and one `unaudited` log line (C-2.9 vs C-2.18, as the fixation row).
+PROBE_AUDITS_PER_WINDOW = 10
+PROBE_AUDITS_GLOBAL_PER_WINDOW = 30
+PROBE_AUDIT_WINDOW_S = 60.0
 _ALL_SOURCES = "*"
 
 
@@ -304,6 +367,8 @@ def make_session_router(
     csrf: CsrfCodec,
     fixation_throttle: PerIpLoginThrottle | None = None,
     fixation_global_throttle: PerIpLoginThrottle | None = None,
+    probe_throttle: PerIpLoginThrottle | None = None,
+    probe_global_throttle: PerIpLoginThrottle | None = None,
     audit_tracker: RefusalAuditTracker | None = None,
     audit_timeout_s: float = AUDIT_TIMEOUT_S,
 ) -> APIRouter:
@@ -322,6 +387,14 @@ def make_session_router(
     by_fixation_all = fixation_global_throttle or PerIpLoginThrottle(
         max_attempts=FIXATION_AUDITS_GLOBAL_PER_WINDOW,
         window_s=FIXATION_AUDIT_WINDOW_S,
+        max_tracked_ips=1,
+    )
+    by_probe_user = probe_throttle or PerIpLoginThrottle(
+        max_attempts=PROBE_AUDITS_PER_WINDOW, window_s=PROBE_AUDIT_WINDOW_S
+    )
+    by_probe_all = probe_global_throttle or PerIpLoginThrottle(
+        max_attempts=PROBE_AUDITS_GLOBAL_PER_WINDOW,
+        window_s=PROBE_AUDIT_WINDOW_S,
         max_tracked_ips=1,
     )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
@@ -363,6 +436,57 @@ def make_session_router(
             )
             raise AuditUnavailableError from exc
 
+    async def _revoke_denied(request: Request, record: SessionRecord, target: uuid.UUID) -> None:
+        """AC-CSRF-05 / SR-019 (#2319): the caller named an id that is not one of their live
+        sessions: a foreign or an unknown id (an IDOR probe), or their own session that has already
+        ended (a stale Sessions row). The route reads the live list only, so it cannot tell the
+        three apart, and the 404 is the same for all of them (no oracle). Counted every time;
+        audited within the per-user and the global budget and the tracker's in-flight cap (past
+        which one `unaudited` line says why), through the shielded writer path as the CSRF guard
+        writes its refusal. The id is a validated UUID row key, not a credential. A slow, failed or
+        cancelled write never changes the 404."""
+        auth_session_revoke_denied_total.inc()
+        key = str(record.user_id)
+        if tracker.full or by_probe_user.is_blocked(key) or by_probe_all.is_blocked(_ALL_SOURCES):
+            cause = "audit_saturated" if tracker.full else "audit_throttled"
+            _log().warning("auth.session_revoke_denied.unaudited", cause=cause)
+            return
+        by_probe_user.record_failure(key)
+        by_probe_all.record_failure(_ALL_SOURCES)
+        if audit_service is None or not audit_service.is_active:
+            _probe_audit_failed("inactive")
+            return
+        task = tracker.track(
+            audit_service.writer.emit(
+                "auth.session_revoke_denied",
+                actor_label=key,
+                actor_user_id=record.user_id,
+                actor_ip=_source_ip(request),
+                session_id=record.id,
+                object_kind="session",
+                object_id=str(target),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="not_live_own_session",
+            ),
+            late_failure_event=_PROBE_LATE_FAILURE,
+        )
+        try:
+            await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
+        except TimeoutError:
+            # The clock, unless the writer raised `TimeoutError` itself: the task's outcome decides.
+            failure = task.exception() if task.done() and not task.cancelled() else None
+            if failure is not None:
+                _probe_audit_failed(type(failure).__name__)
+                return
+            tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
+            _log().warning("auth.session_revoke_denied.audit_slow")
+        except asyncio.CancelledError:
+            _cancelled_while_writing(tracker, task, _PROBE_LATE_FAILURE)  # the request is gone
+            raise
+        except Exception as exc:
+            _probe_audit_failed(type(exc).__name__)
+
     async def _fixation_attempt(request: Request, vector: str) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
         presented. The uniform 401 is unchanged (no oracle). The attempt is counted, and
@@ -384,8 +508,7 @@ def make_session_router(
         by_fixation_ip.record_failure(key)
         by_fixation_all.record_failure(_ALL_SOURCES)
         if audit_service is None or not audit_service.is_active:
-            fixation.labels(reason="audit_unavailable").inc()
-            _log().error("auth.session_fixation_attempt.audit_unavailable", error="inactive")
+            _fixation_audit_failed("inactive")
             return
         task = tracker.track(
             audit_service.writer.emit(
@@ -396,19 +519,28 @@ def make_session_router(
                 severity=Severity.WARNING,
                 reason="unknown_token",
                 after_state={"vector": vector, "path": _route_path(request)},
-            )
+            ),
+            on_lost=_count_fixation_audit_lost,
+            late_failure_event=_FIXATION_LATE_FAILURE,
         )
         try:
             await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
         except TimeoutError:
+            # The clock, unless the writer raised `TimeoutError` itself: the task's outcome decides.
+            failure = task.exception() if task.done() and not task.cancelled() else None
+            if failure is not None:
+                _fixation_audit_failed(type(failure).__name__)
+                return
             tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             fixation.labels(reason="audit_slow").inc()
             _log().warning("auth.session_fixation_attempt.audit_slow")
-        except Exception as exc:
-            fixation.labels(reason="audit_unavailable").inc()
-            _log().error(
-                "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
+        except asyncio.CancelledError:
+            _cancelled_while_writing(
+                tracker, task, _FIXATION_LATE_FAILURE, _count_fixation_audit_lost
             )
+            raise
+        except Exception as exc:
+            _fixation_audit_failed(type(exc).__name__)
 
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
@@ -731,6 +863,7 @@ def make_session_router(
             str(record.user_id), current_session_id=str(record.id)
         )
         if str(session_id) not in {str(v.id) for v in own}:
+            await _revoke_denied(request, record, session_id)
             return _problem(404, "Not found", "no such session")
         try:
             await _audit(

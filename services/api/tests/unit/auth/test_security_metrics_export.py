@@ -39,6 +39,7 @@ OBSERVABILITY_SERIES = {
     "auth_session_revocations_total": ("reason",),
     "auth_readonly_downgrades_total": (),
     "users_invites_rejected_total": ("reason",),
+    "auth_session_revoke_denied_total": (),
 }
 _SPECS = {spec.name: spec for spec in CATALOGUE}
 _API_ROOT = Path(__file__).resolve().parents[3]
@@ -159,7 +160,7 @@ def test_export_serves_the_login_failure_methods_and_the_label_less_series_with_
         collector.close()
     for method in LOGIN_FAILURE_METHODS:
         assert f'auth_login_failures_total{{env="demo",method="{method}"}} ' in text
-    for name in ("auth_refresh_reuse_total",):
+    for name in ("auth_refresh_reuse_total", "auth_session_revoke_denied_total"):
         assert f'{name}{{env="demo"}} ' in text, name
 
 

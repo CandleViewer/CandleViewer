@@ -680,6 +680,36 @@ def test_late_failures_and_drain_leftovers_are_reported_once_and_only_to_their_o
     assert moved == {}
 
 
+def test_a_late_failure_is_logged_under_the_event_its_owner_named_else_the_csrf_one() -> None:
+    # Shared by three audit paths, each naming its own late-failure line (#2319 review).
+    from structlog.testing import capture_logs
+
+    lost: list[str] = []
+
+    async def drive() -> None:
+        async def fails() -> None:
+            raise OSError("EIO")
+
+        tracker = RefusalAuditTracker()
+        named = tracker.track(
+            fails(),
+            on_lost=lambda: lost.append("named"),
+            late_failure_event="auth.other.audit_failed_late",
+        )
+        unnamed = tracker.track(fails())
+        tracker.mark_timed_out(named)
+        tracker.mark_timed_out(unnamed)
+        await asyncio.gather(named, unnamed, return_exceptions=True)
+
+    with capture_logs() as logs:
+        asyncio.run(drive())
+    assert sorted(e["event"] for e in logs) == [
+        "auth.csrf_refused.audit_failed_late",
+        "auth.other.audit_failed_late",
+    ]
+    assert lost == ["named"]  # the owner's own accounting is not replaced by the name
+
+
 # -- audit bookkeeping through the middleware (#2264) ---------------------------------------------
 
 

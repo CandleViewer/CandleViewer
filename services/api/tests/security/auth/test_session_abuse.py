@@ -1,4 +1,5 @@
-"""E09-X02 session abuse cases (AC-SES-*): fixation, rotation, refresh reuse, expiry."""
+"""E09-X02 session abuse cases (AC-SES-*): fixation, rotation, refresh reuse, expiry; and the
+audit half of AC-CSRF-05 (the session-revoke IDOR probe) through the real stack."""
 
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from ._kit import Clock
 from ._stack import ORIGIN, PW, Stack
 
 _FIXATION = "auth.session_fixation_attempt"
+_REVOKE_DENIED = "auth.session_revoke_denied"
 
 
 def _svc() -> tuple[SessionService, FakeSessionRepository, Clock]:
@@ -170,3 +172,28 @@ async def test_ac_ses_07_forged_access_token_rejected() -> None:
     for forged in ("", "A" * 43, "../../etc/passwd", "x" * 4096):
         with pytest.raises(SessionNotFound):
             await svc.authenticate_access_token(forged)
+
+
+def test_ac_csrf_05_foreign_session_revoke_is_the_same_404_counted_and_audited(
+    stack: Stack,
+) -> None:  # O1/O7 + SR-019 (#2319): the IDOR probe is no longer silent
+    attacker, _ = stack.principal("mallory", "viewer")
+    victim, _ = stack.principal("victim", "viewer")
+    victim_sid = _session_id(stack, victim["Authorization"].removeprefix("Bearer "))
+    attacker_id = stack.client.get("/auth/session", headers=attacker).json()["user"]["id"]
+    unknown = str(uuid.uuid4())
+    counted = stack.scraped("auth_session_revoke_denied_total")
+    foreign = stack.client.delete(f"/me/sessions/{victim_sid}", headers=attacker)
+    missing = stack.client.delete(f"/me/sessions/{unknown}", headers=attacker)
+    assert foreign.status_code == missing.status_code == 404  # no oracle: the answers match
+    assert foreign.json()["detail"] == missing.json()["detail"]
+    rows = stack.audit.of(_REVOKE_DENIED)
+    assert [(x["reason"], x["outcome"], x["severity"], x["object_id"]) for x in rows] == [
+        ("not_live_own_session", AuditOutcome.DENIED, Severity.WARNING, victim_sid),
+        ("not_live_own_session", AuditOutcome.DENIED, Severity.WARNING, unknown),
+    ]
+    assert {str(x["actor_user_id"]) for x in rows} == {attacker_id}  # the prober is named
+    assert stack.scraped("auth_session_revoke_denied_total") - counted == len(rows)
+    assert stack.client.get("/auth/session", headers=victim).status_code == 200  # still live
+    listing = stack.client.get("/auth/sessions", headers=attacker)
+    assert victim_sid not in repr(listing.json())  # and never shown to the attacker

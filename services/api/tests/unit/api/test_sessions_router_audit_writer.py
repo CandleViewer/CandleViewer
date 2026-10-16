@@ -279,8 +279,8 @@ async def test_revoke_foreign_session_with_the_writer_refusing_is_still_the_plai
     )
     unknown = w.client.delete(f"/api/v1/me/sessions/{uuid.uuid4()}", headers=_h(mine.access_token))
     assert foreign.status_code == unknown.status_code == 404
-    assert foreign.json() == unknown.json()  # the ownership check answers before any audit write
-    assert w.writer.refused == [] and w.writer.events == []
+    assert foreign.json() == unknown.json()  # no oracle: the probe row (#2319) is best-effort
+    assert w.writer.refused == ["auth.session_revoke_denied"] * 2 and w.writer.events == []
     assert await w.live(_OTHER) == {str(theirs.session_id)}
 
 
