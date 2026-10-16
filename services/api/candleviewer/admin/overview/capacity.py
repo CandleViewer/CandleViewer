@@ -133,7 +133,7 @@ def project(snap: StorageSnapshot) -> DiskProjection:
             projected += growth * retention
         rows.append(SymbolProjection(s.symbol, s.used_bytes, growth, s.pinned, retention))
     growth_total = sum(r.daily_growth_bytes for r in rows)
-    headroom = max(min(snap.cap_bytes - snap.used_bytes, snap.free_bytes), 0)  # project_full_at
+    headroom = snap.headroom_bytes  # as DiskBudget.project_full_at
     if headroom == 0:  # at the cap or on a full volume: exhausted now, growth or not
         days: float | None = 0.0
     elif growth_total > 0 and (unbounded or projected > snap.used_bytes + headroom):
@@ -219,8 +219,12 @@ class AdminCapacityService:
             )
             for u in uses
         )
-        if any(u.limit_per_minute <= 0 < u.peak_used_per_minute for u in uses):
-            # usage against no budget is not a healthy 0.0 %
+        if any(u.peak_used_per_minute < 0 for u in uses):
+            return Degraded(rows, "error", "rate_budget: invalid usage", "rate_budget:InvalidUsage")
+        if any(
+            u.limit_per_minute < 0 or u.limit_per_minute == 0 < u.peak_used_per_minute for u in uses
+        ):
+            # a negative budget, or usage against no budget, is not a healthy 0.0 %
             return Degraded(rows, "error", "rate_budget: invalid limit", "rate_budget:InvalidLimit")
         return rows
 

@@ -178,12 +178,12 @@ class Tier:
 
 
 class RateLimit:
-    def __init__(self, sub_peak: int = 0) -> None:
-        self.sub_peak = sub_peak
+    def __init__(self, sub_limit: int = 0, sub_peak: int = 0) -> None:
+        self.sub_limit, self.sub_peak = sub_limit, sub_peak
 
     async def rate_budget(self) -> tuple[RateBudgetUse, ...]:
-        uid = UUID(int=1)
-        return (RateBudgetUse(uid, "main", 600, 450), RateBudgetUse(uid, "sub", 0, self.sub_peak))
+        uid, sub = UUID(int=1), (self.sub_limit, self.sub_peak)
+        return (RateBudgetUse(uid, "main", 600, 450), RateBudgetUse(uid, "sub", *sub))
 
 
 def _service(
@@ -365,8 +365,21 @@ async def test_a_failed_usage_read_logs_only_part_and_class() -> None:
     assert reasons == ["subaccounts:OSError"] and "hunter2" not in repr(logs)
 
 
-async def test_usage_against_no_rate_limit_is_an_error_not_a_healthy_zero() -> None:
+@pytest.mark.parametrize(
+    ("limit", "peak", "detail"),
+    [(0, 7, "invalid limit"), (600, -1, "invalid usage"), (-5, 0, "invalid limit")],
+    ids=["usage-against-no-limit", "negative-usage", "negative-limit-without-usage"],
+)
+async def test_an_invalid_rate_budget_row_is_an_error_not_a_healthy_figure(
+    limit: int, peak: int, detail: str
+) -> None:
     fan = SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
-    service = AdminCapacityService(fan, rate_limit=RateLimit(sub_peak=7))
+    service = AdminCapacityService(fan, rate_limit=RateLimit(sub_limit=limit, sub_peak=peak))
     budget = (await service.capacity()).rate_budget
-    assert (budget.status, budget.detail) == ("error", "rate_budget: invalid limit")
+    assert (budget.status, budget.detail) == ("error", f"rate_budget: {detail}")
+
+
+def test_a_negative_retention_is_clamped_to_zero_never_flipped() -> None:
+    p = project(_snap(_sym("A", 3 * GB, retention=-30), _sym("B", 5 * GB, retention=100)))
+    assert [r.retention_days for r in p.per_symbol] == [0, 100]
+    assert (p.projected_bytes, p.days_until_full) == (500 * GB, 50.0)

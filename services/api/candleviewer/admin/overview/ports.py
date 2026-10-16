@@ -82,9 +82,13 @@ class StorageSnapshot:
     daily_growth_bytes: int | None
     days_until_full: float | None
     symbols: tuple[SymbolStorage, ...]
-    #: The recorder's disk cap (`BudgetConfig.cap_bytes`, mandatory); headroom is
-    #: `min(cap - used, free)`.
+    #: The recorder's disk cap (`BudgetConfig.cap_bytes`, mandatory).
     cap_bytes: int
+
+    @property
+    def headroom_bytes(self) -> int:
+        """`min(cap - used, free)`, never below 0. Zero is exhaustion now: 0 days, everywhere."""
+        return max(min(self.cap_bytes - self.used_bytes, self.free_bytes), 0)
 
 
 class RecorderPort(Protocol):

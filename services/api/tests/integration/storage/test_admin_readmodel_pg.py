@@ -193,9 +193,11 @@ async def test_subaccounts_in_use_is_the_busiest_main_in_the_bound_environment(
     assert await SqlAlchemyAdminCounts(relational, env=env).subaccounts_in_use() == used
 
 
-async def _pooled_statement_timeout(relational: SqlAlchemyRelationalRepository) -> str:
+async def _pooled(relational: SqlAlchemyRelationalRepository) -> tuple[int, str]:
     async with relational._engine.connect() as conn:  # a pooled connection, outside any read
-        return str((await conn.execute(sa.text("SHOW statement_timeout"))).scalar())
+        sql = "SELECT pg_backend_pid(), current_setting('statement_timeout')"
+        pid, timeout = (await conn.execute(sa.text(sql))).one()
+        return int(pid), str(timeout)
 
 
 async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
@@ -204,9 +206,11 @@ async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
     """Pins the per-read server cap: the transaction-local timeout (not lock_timeout, not a
     session setting) cuts a slow statement near READ_TIMEOUT, far below the 5 s sleep and the
     30 s repository default, and the pooled connection keeps its own default afterwards."""
-    before = await _pooled_statement_timeout(relational)
+    before, pid_sql = await _pooled(relational), sa.text("SELECT pg_backend_pid() AS pid")
+    read = await SqlAlchemyAdminCounts(relational, env="demo")._row(pid_sql)  # same backend
     started = time.monotonic()
     with pytest.raises(DBAPIError, match="statement timeout"):
         await SqlAlchemyAdminCounts(relational, env="demo")._row(sa.text("SELECT pg_sleep(5)"))
     assert time.monotonic() - started < 2.5
-    assert repo.READ_TIMEOUT == "1s" and await _pooled_statement_timeout(relational) == before
+    assert repo.READ_TIMEOUT == "1s" and await _pooled(relational) == before
+    assert read["pid"] == before[0]  # one pooled backend throughout: the check is not vacuous

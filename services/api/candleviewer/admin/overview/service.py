@@ -4,7 +4,7 @@ Six slices, read concurrently through the shared `SliceFanOut` (one budget, cach
 mapping each): users, accounts and incidents from the relational counts; recorder and storage
 from the recorder port; trading from the OMS port, read live on every call because kill-switch
 and flag state are never cached. A port that is not wired makes its slice `unavailable`. The
-trading flags are awaited in turn; open positions get a shorter budget so the flags survive.
+trading parts are read in turn, each on a sub-budget: 0.05 s per flag, 0.14 s positions.
 """
 
 from __future__ import annotations
@@ -131,7 +131,8 @@ class AdminOverviewService:
         snap = await self._recorder.storage_snapshot()
         if snap is None:
             raise SourceUnavailable("storage: no disk sample yet")
-        return StorageHeadroom(snap.used_bytes, snap.free_bytes, snap.days_until_full)
+        days = 0.0 if snap.headroom_bytes == 0 else snap.days_until_full  # as /admin/capacity
+        return StorageHeadroom(snap.used_bytes, snap.free_bytes, days)
 
     async def _trading(self) -> TradingState | Degraded[TradingState]:
         if self._oms is None:

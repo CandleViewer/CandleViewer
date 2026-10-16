@@ -7,8 +7,8 @@ parameterised, aggregate-only SQL: only counts leave this module, never a row, a
 material. Account and key counts are scoped to the process environment bound at construction
 (C-2.11: demo rows never show as live). Each read caps server work at `READ_TIMEOUT` (a
 transaction-local `statement_timeout`); the 300 ms slice budget is the client-side cancellation.
-The recorded sub-account tier needs the `settings` table, which no migration has created yet
-(planned `0012_governance`, 21-database-schema.md 9.4), so it is not read here.
+The recorded sub-account tier needs the `settings` table (migration `0025_settings`, #2680);
+it is read through the capacity `TierPort` adapter, not here.
 """
 
 from __future__ import annotations
