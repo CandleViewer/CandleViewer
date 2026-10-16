@@ -1,9 +1,10 @@
 """In-memory recorded-tier fakes (E26-T02) — the public test surface for replay consumers.
 
 They satisfy the `storage.repositories.recorded` Protocols structurally and mirror the real
-tiers' contract: half-open ranges, the book-depth filter, the row `limit`, and storage order
-(insertion order here) rather than a sorted one, so callers cannot rely on an order the real
-tiers do not give.
+tiers' contract: half-open ranges, the book-depth filter, the row `limit` (earliest first; a
+`limit` below 1 is refused like the real reader refuses it), an inclusive `not_before_us`, and
+storage order (insertion order here) rather than a sorted one: equal timestamps are never
+sorted by key, so callers cannot rely on an order the real tiers do not give.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from candleviewer.storage.repositories.recorded import (
     RecordedBookSnapshot,
     RecordedEvent,
     RecordedGap,
+    RecordedQueryRejected,
     covered_parts,
     order_key,
 )
@@ -42,6 +44,8 @@ class InMemoryRecordedTier:
     async def read(
         self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
     ) -> list[RecordedEvent]:
+        if isinstance(limit, bool) or limit < 1:
+            raise RecordedQueryRejected("limit must be an int >= 1")
         self.reads += 1
         out: list[RecordedEvent] = []
         for event in self._events:
@@ -52,7 +56,8 @@ class InMemoryRecordedTier:
             if stream in BOOK_STREAMS and _depth_of(event) != depth:
                 continue
             out.append(event)
-        out.sort(key=lambda e: e.ts_us)  # stable: equal timestamps stay in insertion order
+        # Stable sort on `ts_us` alone: equal timestamps keep storage (insertion) order.
+        out.sort(key=lambda e: e.ts_us)
         return out[:limit]
 
     async def snapshot_at(
