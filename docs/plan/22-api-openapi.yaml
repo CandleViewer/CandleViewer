@@ -7445,8 +7445,8 @@ paths:
         the job succeeds its `result` is an `AuditExportResult`.
 
         **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a
-        step-up of the `audit_export` action class within its grace window (SR-067). Until then
-        the call is refused with `403` and `code: step_up_required`.
+        step-up of the `audit` action class (SR-025, 5-minute grace; SR-067). Until the session
+        holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
 
         **Limits.** These are configured server-side, so that export cannot be used for
         exfiltration or denial of service. A window longer than the configured maximum is
@@ -7468,7 +7468,7 @@ paths:
         **Download.** The file at `download_url` is fetched with an authenticated `GET` whose URL
         carries no credential. Its checks run in this order: authentication (`401`),
         authorisation (`403`), requester (`404 not_found` for anyone but the user who requested
-        the export, and for an unknown or evicted job), step-up of the `audit_export` class
+        the export, and for an unknown or evicted job), step-up of the `audit` class
         within its grace window (`403 step_up_required`, checked by the operation itself, after
         the requester check), the per-user rate limit (`audit_download_rate_per_hour`, default 20;
         `429`), expiry (`410 gone` after `expires_at`, when the file is deleted), then a
@@ -7543,10 +7543,10 @@ paths:
         shapes. In short: Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50a),
         only the user who requested the export (any other user, another Owner included, gets the
         same `404 not_found` as for an unknown or evicted job), and only within the grace window of
-        an `audit_export` step-up.
+        an `audit` step-up.
 
         **Statuses.** `401`: not authenticated. `403`: the caller lacks `audit:export`
-        (`code: forbidden`) or has no live `audit_export` step-up (`code: step_up_required`).
+        (`code: forbidden`) or has no live `audit` step-up (`code: step_up_required`).
         `404 not_found`: not the requester, or an unknown or evicted job. `410 gone`: the file was
         deleted after `expires_at`. `429 rate_limited`: over `audit_download_rate_per_hour`
         (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead audit record
@@ -8585,8 +8585,9 @@ paths:
                     Optional cross-check. The server elevates the class its last
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
-                    `audit` gates the audit-log export (`exportAuditLog`); `backups` gates a
-                    backup restore (`restoreBackup`), one fresh code per restore.
+                    `audit` gates the audit-log export (`exportAuditLog`) and the download of
+                    its file (`downloadAuditExport`); `backups` gates a backup restore
+                    (`restoreBackup`), one fresh code per restore.
                   type: string
                   enum:
                     [
@@ -14515,7 +14516,7 @@ components:
           type: string
           description: >-
             Relative API URL of the artefact. It carries no credential: fetching it is an
-            authenticated `GET`, allowed only to the requesting user within the `audit_export`
+            authenticated `GET`, allowed only to the requesting user within the `audit`
             step-up grace window, and audited before any byte is sent (see `exportAuditLog`).
         sha256:
           type: string
