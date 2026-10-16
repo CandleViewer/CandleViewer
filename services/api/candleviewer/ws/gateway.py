@@ -119,7 +119,9 @@ from candleviewer.ws.limits import (
     AUTH_TIMEOUT_S,
     ENVELOPE_ID_MAX_LEN,
     MAX_INBOUND_FRAME_BYTES,
+    MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
+    MAX_PREAUTH_FRAME_BYTES,
     json_depth_exceeds,
 )
 from candleviewer.ws.metrics import (
@@ -538,6 +540,11 @@ class _Connection:
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
         """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close.
 
+        Two limits come before any scan or decode (SR-184). The size cap is the smaller
+        `MAX_PREAUTH_FRAME_BYTES` until the first `auth_ok` (which sets `user_id`), the frame before
+        `hello` included. A JSON frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters
+        is malformed, and is never depth-scanned or decoded.
+
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
         malformed. The payload is the `bytes` value unless that is `None`, else the text (or
@@ -549,7 +556,10 @@ class _Connection:
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         size = len(raw.encode()) if isinstance(raw, str) else len(raw)
-        if size > max_frame_bytes:
+        cap = max_frame_bytes
+        if self.user_id is None:
+            cap = min(cap, MAX_PREAUTH_FRAME_BYTES)
+        if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
         try:
@@ -557,6 +567,9 @@ class _Connection:
                 return [] if isinstance(raw, str) else decode_client_frame(raw)
             if isinstance(raw, bytes):
                 return []  # a binary frame on cv.v1.json: a violation, never decoded
+            openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
+            if openers > MAX_JSON_CONTAINERS:
+                return []  # SR-184: too many containers -> protocol violation, never scanned
             if json_depth_exceeds(raw, MAX_JSON_DEPTH):
                 return []  # SR-184: too deep -> protocol violation, never decoded
             return json.loads(raw)
