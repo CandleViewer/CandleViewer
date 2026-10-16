@@ -407,8 +407,12 @@ E13-X01) is integrity-first where indicators become safety-relevant: ATR feeding
 sizing (IR-12 and IR-45 fail-closed, Critical: a display-only worker value must never be the source) and provisional Zig Zag swings
 (IR-11), then preset BOLA/forged built-ins (IR-01, IR-02, IR-10), unvalidated `params`/`style` (IR-07, IR-09) and
 availability of the compute surface (IR-29..IR-34). Controls SR-E13-01..13 (proposed caps, to be confirmed by
-E13-Q03) are requested on E13-T01/T02/T03/S01/S05/S07/S08/X02; abuse cases AC-01..AC-24 go to E13-X02/Q06 (see
-RSK-060, RSK-061). Status Draft; depends on ADR-0034 (Proposed).
+E13-Q03) are requested on E13-T01/T02/T03/S01/S05/S07/S08/X02. The stop-sizing hand-offs (TB-8: IR-12/20/45 and the
+swing assertion of IR-11) are owned by E28-T03 (the sizer and both ATR tests), E32-T01/T02 (native-SL choke point and
+watchdog), E32-S04, E30-T01/S03 and E28-X01 (model); abuse cases AC-01..AC-24 go to E13-X02/Q06 (AC-21 to E13-Q05),
+and E28-X03 re-executes AC-10/23/24 against the shipped sizer (see RSK-060, RSK-061). Status Approved (2026-10-13;
+accepted sub-risks IR-18/IR-27 owner-approved per #1778 item Y; amended 2026-10-16 to close the QA routing gaps);
+ADR-0034 is Accepted (ratified by the owner 2026-10-09, #1778 item S).
 
 **E35 rule engine** (`docs/security/threat-models/e35-rule-engine.md`, ticket E35-X01) models the IR,
 compiler, rule store, evaluator, executor, `pre_trade_check` hook, `emit_signal` bus, firing log/WS and
