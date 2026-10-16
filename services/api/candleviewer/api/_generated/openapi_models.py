@@ -4418,6 +4418,7 @@ class Job(BaseModel):
             "retention_sweep",
             "reconciliation",
             "archive_import",
+            "retention_purge",
         ]
         | None
     ) = None

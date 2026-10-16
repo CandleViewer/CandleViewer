@@ -279,7 +279,10 @@ STEP_UP_FAILURE_CAP = 3
 READONLY_DOWNGRADE_US = 5 * 60 * 1_000_000
 #: Ticket "No-grace list": a fresh code is *always* required for these.
 NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
-ACTION_CLASSES = frozenset({"keys", "users", "live_enablement", "killswitch", "risk_caps"})
+#: `recorder`: irreversible recorded-data purge (permission 51, E16-T06); a grace class.
+ACTION_CLASSES = frozenset(
+    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder"}
+)
 
 
 def grace_window_valid(context: dict[str, Any], event: dict[str, Any]) -> bool:

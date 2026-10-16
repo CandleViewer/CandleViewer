@@ -109,3 +109,10 @@ def test_invites_router_write_routes_are_gated() -> None:
         if _ungated(m, r.path)
     ]
     assert missing == []
+
+
+def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
+    """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check."""
+    assert dangerous_action_class("POST", "/admin/recorder/purge") is None
+    assert ("POST", "/admin/recorder/purge", "recorder") in HANDLER_GATED_ROUTES
+    assert not _ungated("POST", "/admin/recorder/purge")

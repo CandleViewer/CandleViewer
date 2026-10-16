@@ -390,7 +390,7 @@ export interface paths {
     put?: never;
     /**
      * Irreversibly delete recorded data (owner, step-up)
-     * @description Destructive and irreversible. Requires an elevated session, a mandatory reason, and an explicit `confirm_symbol` echo that must equal the symbol being purged. Pinned symbols are refused unless `include_pinned` is set. Always audited with the exact window deleted.
+     * @description Destructive and irreversible. Requires an elevated session, a mandatory reason, and an explicit `confirm_symbol` echo that must equal the symbol being purged. Pinned symbols are refused unless `include_pinned` is set. Always audited with the exact window deleted. Elevation is the `recorder` step-up class (403 `step_up_required` with `action_class: recorder` until `POST /auth/step-up`; the ticket's `purge_requires_elevation`), checked after RBAC and before the body is parsed. 422 codes: `purge_confirmation_mismatch` (echo differs), `retention_pinned_refused` (pinned without `include_pinned`), `validation_failed`, `idempotency_key_reused`. 409 `job_running` while a purge is queued or running. The audit record (`retention.purge`, exact window, partition count, rows, bytes) is written BEFORE the job exists; if it cannot be written the answer is 503 and no job starts. `before` (default: now) bounds the window `[earliest, before)`; QuestDB DAY partitions shared with other symbols are left to the nightly roll-off.
      */
     post: operations["purgeRecordedData"];
     delete?: never;
@@ -5434,7 +5434,8 @@ export interface components {
         | "rule_simulation"
         | "retention_sweep"
         | "reconciliation"
-        | "archive_import";
+        | "archive_import"
+        | "retention_purge";
       progress_pct?: number;
       result?: {
         [key: string]: unknown;
@@ -8838,8 +8839,12 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getSecuritySummary: {
@@ -9687,7 +9692,8 @@ export interface operations {
            * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required.
            * @enum {string}
            */
-          action_class?: "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps";
+          action_class?:
+            "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps" | "recorder";
           /**
            * Format: uuid
            * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement` or `killswitch`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.

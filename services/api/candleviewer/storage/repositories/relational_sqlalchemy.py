@@ -118,6 +118,11 @@ class SqlAlchemyRelationalRepository:
         self._sessionmaker = async_sessionmaker(self._engine, expire_on_commit=False)
         self._application_name_suffix = application_name_suffix
 
+    @property
+    def engine(self) -> AsyncEngine:
+        """The shared engine (E16-T06: the reaper's `PgAdvisoryRunLock` holds a connection)."""
+        return self._engine
+
     async def dispose(self) -> None:
         """Release the pool. Call once at module `stop()`."""
         await self._engine.dispose()

@@ -169,13 +169,16 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/trading/kill-switch", "killswitch"),  # E39: release only
     ("POST", "/session/environment", "live_enablement"),  # E44: to live only
     ("PUT", "/rules/{ruleId}/mode", "live_enablement"),  # E35-S01: arming a live-scoped rule
+    # E16-T06: irreversible purge. The handler checks RBAC, then owner-only (capability 9a),
+    # THEN step-up, so a non-owner gets the audited `purge_owner_only`, not a step-up prompt.
+    ("POST", "/admin/recorder/purge", "recorder"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
 #: registries above (deny-by-default for future tickets).
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
-    r"|session/environment|risk/lockouts)(/|$)"
+    r"|session/environment|risk/lockouts|recorder/purge)(/|$)"
 )
 
 

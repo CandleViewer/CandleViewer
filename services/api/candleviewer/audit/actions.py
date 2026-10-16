@@ -132,6 +132,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "replay.session.error",
         "retention.change",
         "retention.purge",
+        # E16-T06: per-pass reaper record + one write-ahead record per deletion (system actor).
+        "retention.run",
+        "data.deleted",
         "retention.downsample",
         "rolloff.drop_aborted",
         # #2522: the DROP was issued but QuestDB could not be confirmed to have applied it; the

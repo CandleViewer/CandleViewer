@@ -78,16 +78,23 @@ from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
+from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import make_session_router
-from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
+from candleviewer.api.step_up import (
+    make_read_only_guard,
+    make_step_up_router,
+    require_elevation_for,
+    required_problem,
+)
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
     InviteRecord,
@@ -185,6 +192,7 @@ from candleviewer.replay.sessions_service import (
     ReplaySessionService,
     WindowCoverage,
 )
+from candleviewer.retention_wiring import build_retention_manager
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
@@ -1325,6 +1333,27 @@ def create_app(
                 coverage_service,
                 backlog_rows=current_write_backlog_rows,
             ),
+        )
+    )
+    # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
+    retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
+    app.state.retention_manager = retention_manager
+
+    async def _purge_elevation(request: Request, action_class: str) -> JSONResponse | None:
+        principal = await audit_resolver.resolve(request) if audit_resolver else None
+        if principal is None or principal.session_id is None:
+            return required_problem(StepUpRequired(action_class))
+        if not ctx.auth.step_up_is_active:
+            return required_problem(StepUpRequired(action_class))
+        return await require_elevation_for(ctx.auth, str(principal.session_id), action_class)
+
+    app.include_router(
+        make_recorder_purge_router(
+            admin_jobs,
+            retention_manager,
+            _LazyAuditEmitter(ctx.audit),
+            audit_resolver,
+            _purge_elevation,
         )
     )
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).
