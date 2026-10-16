@@ -159,9 +159,10 @@ class UnknownIlpTable(IlpRowError, KeyError):
 
 
 class StorageRecordInvalid(StorageError, ValueError):
-    """A stored market-data row cannot become a `RecordedEvent` (E26-T02): a required column
-    is missing or non-finite, or the stream is not replayable. Raised, never skipped, so a
-    replay cannot silently lose a recorded event. The message names the column, not values."""
+    """A stored market-data row cannot become a `RecordedEvent` (E26-T02): a column is missing,
+    mistyped, non-finite or outside its closed set, or the stream is not replayable. Raised,
+    never skipped, so a replay cannot silently lose a recorded event. The message names the
+    column, and no exception chain carries the value."""
 
     code = "STORAGE_RECORD_INVALID"
 

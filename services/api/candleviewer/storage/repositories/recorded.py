@@ -26,9 +26,11 @@ merge (`24-internal-schemas.md` Sec.13.7).
 `event_from_row` is the single canonical mapping from a stored row to a `RecordedEvent`. A
 QuestDB PGWire record and a Parquet row carry the same Sec.4 columns and both tiers go through
 it, so one recorded row yields an equal event whichever tier served it: a DOUBLE converts once
-via `Decimal(repr(x))` (the shortest round-trip text), decimal text converts exactly, and the
-timestamp may arrive as a naive or aware datetime or an int. Per stream, `seq` is `trades.seq`,
-book `cross_seq` (else `update_id`) or 0, and `tiebreak` puts the recorded-order column first.
+via `Decimal(float.__repr__(x))` (the shortest round-trip text, whatever float subclass the
+driver returns), decimal text converts exactly, and a timestamp may arrive as a naive or aware
+datetime or an int. Per stream, `seq` is `trades.seq` (the ingest counter), book `cross_seq`
+(else `update_id`) or 0, each meaningful within its own stream only, and `tiebreak` puts the
+recorded-order column first.
 
 No storage driver is imported here (stdlib and `orjson` only), so the replay module may depend
 on it (ADR-0003).
@@ -113,6 +115,11 @@ class RecordedBookSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class RecordedTicker:
+    """Every `tickers` column the recorder writes (`recorder/writer.py` `ticker_records`), so a
+    replay re-emits the recorded ticker losslessly (24 Sec.13.7); `None` is a column the row
+    did not carry. `next_funding_ts` is µs UTC. The last five default to `None` only so the
+    payload can be built positionally from the first nine."""
+
     last_price: Decimal | None
     mark_price: Decimal | None
     index_price: Decimal | None
@@ -122,6 +129,11 @@ class RecordedTicker:
     ask1_size: Decimal | None
     open_interest: Decimal | None
     funding_rate: Decimal | None
+    open_interest_value: Decimal | None = None
+    turnover_24h: Decimal | None = None
+    volume_24h: Decimal | None = None
+    price_24h_pcnt: Decimal | None = None
+    next_funding_ts: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,20 +315,31 @@ def _invalid(column: str) -> StorageRecordInvalid:
     return StorageRecordInvalid(f"recorded row has no usable {column!r}")
 
 
+# A failed conversion raises *after* its handler, so neither `__cause__` nor `__context__`
+# holds the stored value that failed (the error names the column, never the value).
+
+#: Closed `side` sets as stored (21 Sec.4): a taker or closing-order side, and a book side.
+_ORDER_SIDES: Final = frozenset({"buy", "sell"})
+_BOOK_SIDES: Final = frozenset({"bid", "ask"})
+
+
 def _decimal(value: object, column: str) -> Decimal | None:
-    """`None`, NaN and infinities read as missing; a non-numeric value is invalid."""
+    """`None`, NaN and infinities read as missing; a non-numeric value is invalid. A float
+    converts through `float.__repr__`, never a subclass's `repr` (`np.float64(0.1)`)."""
     if value is None:
         return None
     if isinstance(value, bool):
         raise _invalid(column)
     if isinstance(value, float):
-        return Decimal(repr(value)) if math.isfinite(value) else None
+        return Decimal(float.__repr__(value)) if math.isfinite(value) else None
     if not isinstance(value, Decimal | int | str):
         raise _invalid(column)
     try:
-        number = Decimal(value)
-    except InvalidOperation as exc:
-        raise _invalid(column) from exc
+        number: Decimal | None = Decimal(value)
+    except InvalidOperation:
+        number = None
+    if number is None:
+        raise _invalid(column)
     return number if number.is_finite() else None
 
 
@@ -338,13 +361,47 @@ def _opt_int(row: _Row, column: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int | str):
         raise _invalid(column)
     try:
-        return int(value)
-    except ValueError as exc:
-        raise _invalid(column) from exc
+        number: int | None = int(value)
+    except ValueError:
+        number = None
+    if number is None:
+        raise _invalid(column)
+    return number
 
 
 def _req_int(row: _Row, column: str) -> int:
     value = _opt_int(row, column)
+    if value is None:
+        raise _invalid(column)
+    return value
+
+
+def _opt_id(row: _Row, column: str) -> int | None:
+    """An optional id whose missing value orders as -1: a stored negative id would tie with a
+    missing one, so it is invalid."""
+    value = _opt_int(row, column)
+    if value is not None and value < 0:
+        raise _invalid(column)
+    return value
+
+
+def _opt_ts(row: _Row, column: str) -> int | None:
+    """A TIMESTAMP as integer µs UTC: a naive (PGWire, UTC) or aware (Parquet) datetime, or an
+    int (an ILP-shaped row)."""
+    value = row.get(column)
+    if value is None:
+        return None
+    try:
+        ts_us: int | None = ts_us_from_row(value)
+    except (TypeError, ValueError):
+        ts_us = None
+    if ts_us is None:
+        raise _invalid(column)
+    return ts_us
+
+
+def _req_ts(row: _Row, column: str) -> int:
+    value = _opt_ts(row, column)
     if value is None:
         raise _invalid(column)
     return value
@@ -364,6 +421,14 @@ def _req_str(row: _Row, column: str) -> str:
     return value
 
 
+def _req_member(row: _Row, column: str, allowed: frozenset[str]) -> str:
+    """A closed-set text column: any value outside `allowed` is invalid."""
+    value = _req_str(row, column)
+    if value not in allowed:
+        raise _invalid(column)
+    return value
+
+
 def _opt_bool(row: _Row, column: str) -> bool | None:
     value = row.get(column)
     if value is None or isinstance(value, bool):
@@ -378,8 +443,8 @@ def _levels(row: _Row, column: str) -> tuple[Level, ...]:
         raise _invalid(column)
     try:
         parsed: object = orjson.loads(raw)
-    except orjson.JSONDecodeError as exc:
-        raise _invalid(column) from exc
+    except orjson.JSONDecodeError:
+        parsed = None
     if not isinstance(parsed, list):
         raise _invalid(column)
     levels: list[Level] = []
@@ -397,13 +462,14 @@ def _book_seq(update_id: int, cross_seq: int | None) -> int:
     return update_id if cross_seq is None else cross_seq
 
 
-# A None key column reads as -1 (int ids are >= 0) or "" (text): one type per tiebreak position.
+# A None key column reads as -1 (`_opt_id` refuses a stored negative id, which would tie with
+# it) or "" (text): one type per tiebreak position.
 
 
 def _trade(row: _Row) -> _Mapped:
     trade_id = _req_str(row, "trade_id")
     payload = RecordedTrade(
-        side=_req_str(row, "side"),
+        side=_req_member(row, "side", _ORDER_SIDES),
         price=_req_decimal(row, "price"),
         size=_req_decimal(row, "size"),
         trade_id=trade_id,
@@ -413,7 +479,7 @@ def _trade(row: _Row) -> _Mapped:
 
 
 def _book_delta(row: _Row) -> _Mapped:
-    depth, side = _req_int(row, "depth"), _req_str(row, "side")
+    depth, side = _req_int(row, "depth"), _req_member(row, "side", _BOOK_SIDES)
     price, update_id = _req_decimal(row, "price"), _req_int(row, "update_id")
     cross_seq = _opt_int(row, "cross_seq")
     payload = RecordedBookDelta(depth, side, price, _req_decimal(row, "size"), update_id, cross_seq)
@@ -422,7 +488,7 @@ def _book_delta(row: _Row) -> _Mapped:
 
 def _book_snapshot(row: _Row) -> _Mapped:
     depth, update_id = _req_int(row, "depth"), _req_int(row, "update_id")
-    cross_seq, epoch_id = _opt_int(row, "cross_seq"), _opt_int(row, "epoch_id")
+    cross_seq, epoch_id = _opt_int(row, "cross_seq"), _opt_id(row, "epoch_id")
     payload = RecordedBookSnapshot(
         depth, update_id, cross_seq, _levels(row, "bids"), _levels(row, "asks")
     )
@@ -441,6 +507,11 @@ def _ticker(row: _Row) -> _Mapped:
         ask1_size=_opt_decimal(row, "ask1_size"),
         open_interest=_opt_decimal(row, "open_interest"),
         funding_rate=_opt_decimal(row, "funding_rate"),
+        open_interest_value=_opt_decimal(row, "open_interest_value"),
+        turnover_24h=_opt_decimal(row, "turnover_24h"),
+        volume_24h=_opt_decimal(row, "volume_24h"),
+        price_24h_pcnt=_opt_decimal(row, "price_24h_pcnt"),
+        next_funding_ts=_opt_ts(row, "next_funding_ts"),
     )
     return 0, (), payload
 
@@ -461,8 +532,9 @@ def _kline(row: _Row) -> _Mapped:
 
 
 def _liquidation(row: _Row) -> _Mapped:
-    side, price, size = _req_str(row, "side"), _req_decimal(row, "price"), _req_decimal(row, "size")
-    batch_index = _opt_int(row, "batch_index")
+    side = _req_member(row, "side", _ORDER_SIDES)
+    price, size = _req_decimal(row, "price"), _req_decimal(row, "size")
+    batch_index = _opt_id(row, "batch_index")
     payload = RecordedLiquidation(side, price, size, batch_index)
     return 0, (-1 if batch_index is None else batch_index, side, price, size), payload
 
@@ -503,11 +575,5 @@ def event_from_row(stream: StreamKind, row: Mapping[str, object]) -> RecordedEve
     if mapper is None:
         raise StorageRecordInvalid(f"stream {stream.value!r} is not replayable")
     seq, tiebreak, payload = mapper(row)
-    ts = row.get("ts")
-    if ts is None:
-        raise _invalid("ts")
-    try:
-        ts_us = ts_us_from_row(ts)
-    except (TypeError, ValueError) as exc:
-        raise _invalid("ts") from exc
+    ts_us = _req_ts(row, "ts")
     return RecordedEvent(ts_us, seq, _req_str(row, "symbol"), stream, tiebreak, payload)
