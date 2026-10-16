@@ -19,14 +19,13 @@ at import. The runtime reads `load_contract_subset()`: a pruned copy of the YAML
 `scripts/generate_protocol_models.py` commits inside this package and that is loaded
 package-relative, so `create_app()` needs no `docs/plan`.
 
-Only the stdlib is imported at module level, so the boot path and the generator (which loads
-this file by path) need nothing else. The dev-only functions import PyYAML and
-openapi-spec-validator when called (#2616). No network.
+Only the stdlib is imported at module level, so the boot path, the generator and the
+`gen-freshness` CI gate (both load this file by path) need nothing else. The dev-only functions
+import PyYAML and openapi-spec-validator when called (#2616). No network.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from importlib.resources import files
@@ -249,17 +248,18 @@ def render_contract_subset(source: bytes) -> str:
     """The artifact text for the YAML bytes `source`, byte-identical for equal input.
 
     Keys are sorted (the `x-cv-generated` header first), with a two-space indent, LF line ends
-    and a trailing newline. The header records the SHA-256 of `source` (CRLF folded to LF), so
-    the dependency-free `gen-freshness` CI job can catch a YAML edit that skipped regeneration.
+    and a trailing newline; CRLF in `source` is folded to LF. The header names the source but
+    records no digest of it (#2743): a digest of the whole YAML changes with every contract edit,
+    so any two contract PRs would conflict on it. Freshness is checked by rendering again and
+    comparing instead (`--check` of the generator, and the `gen-freshness` CI gate).
     """
-    import yaml  # dev-only: only the generator and the tests render
+    import yaml  # dev-only: only the generator, the gen-freshness gate and the tests render
 
     normalised = source.replace(b"\r\n", b"\n")
     header = {
         "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with "
         "`uv run python scripts/generate_protocol_models.py`.",
         "source": OPENAPI_SPEC_RELPATH,
-        "source_sha256": hashlib.sha256(normalised).hexdigest(),
     }
     subset = build_contract_subset(cast(dict[str, object], yaml.safe_load(normalised)))
     document = {"x-cv-generated": header, **_sorted(subset)}

@@ -11,7 +11,11 @@ rather than accept float/str drift on the backend.
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
-`render_contract_subset` in `candleviewer/api/contract_conformance.py` defines its content.
+`render_contract_subset` in `candleviewer/api/contract_conformance.py` defines its content. The
+artifact records no digest of the YAML (#2743), so two PRs that change different parts of the
+contract do not conflict on it: `--check` here and the always-on `gen-freshness` CI gate
+(`tools/ci/check_gen_freshness.py`) render it again and compare, which catches a YAML edit that
+skipped regeneration and a hand edit of the artifact alike.
 
 Usage: uv run python scripts/generate_protocol_models.py [--check]
 """
@@ -200,7 +204,9 @@ def generate() -> None:
 
 def check() -> None:
     """Regenerates into a temp copy and diffs against the committed files
-    (the `make gen && git diff --exit-code` pattern, run in-process)."""
+    (the `make gen && git diff --exit-code` pattern, run in-process). Byte equality, so a
+    hand edit of any of the three outputs fails it as surely as a contract edit that skipped
+    regeneration."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
