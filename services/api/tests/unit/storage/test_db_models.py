@@ -73,6 +73,9 @@ def test_metadata_declares_every_table_from_0001() -> None:
         # E42-T03 (0027_feature_flags)
         "feature_flags",
         "feature_flag_overrides",
+        # E42-T05 (0028_incidents_backups)
+        "incidents",
+        "backups",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

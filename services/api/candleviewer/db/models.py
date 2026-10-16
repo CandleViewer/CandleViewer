@@ -1746,3 +1746,81 @@ feature_flag_overrides = Table(
         postgresql_where=text("role_id IS NOT NULL"),
     ),
 )
+
+#: `incidents` and `backups` (E42-T05, revision 0028_incidents_backups): Sec.3.10.2a, Sec.3.10.3.
+BACKUP_KINDS = ("pg_basebackup", "pg_dump", "questdb_snapshot", "parquet_sync", "config_bundle")
+BACKUP_STATUSES = ("running", "ok", "failed", "verified", "restored")
+backup_kind = ENUM(*BACKUP_KINDS, name="backup_kind", metadata=metadata, create_type=False)
+backup_status = ENUM(*BACKUP_STATUSES, name="backup_status", metadata=metadata, create_type=False)
+incidents = Table(
+    "incidents",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("component", Text, nullable=False),
+    Column("signature", Text, nullable=False),
+    Column("severity", severity, nullable=False),
+    Column("status", Text, nullable=False, server_default=text("'open'")),
+    Column("title", Text, nullable=False),
+    Column("detail", Text),
+    Column("occurrences", Integer, nullable=False, server_default=text("1")),
+    Column("first_seen_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("last_seen_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("acknowledged_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("acknowledged_at", TIMESTAMP(timezone=True)),
+    Column("resolved_at", TIMESTAMP(timezone=True)),
+    Column("runbook_ref", Text),
+    CheckConstraint("signature ~ '^[0-9a-f]{16}$'", name="inc_signature"),
+    CheckConstraint("severity IN ('error','critical')", name="inc_severity"),
+    CheckConstraint("status IN ('open','acknowledged','resolved')", name="inc_status"),
+    CheckConstraint("occurrences >= 1", name="inc_count"),
+    CheckConstraint("last_seen_at >= first_seen_at", name="inc_seen"),
+    CheckConstraint("status <> 'acknowledged' OR acknowledged_at IS NOT NULL", name="inc_ack"),
+    CheckConstraint("(status = 'resolved') = (resolved_at IS NOT NULL)", name="inc_resolved"),
+    Index("ux_incidents_group", "component", "signature", unique=True),
+    Index("ix_incidents_seen", text("last_seen_at DESC")),
+    Index("ix_incidents_status_seen", "status", text("last_seen_at DESC")),
+)
+backups = Table(
+    "backups",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("kind", backup_kind, nullable=False),
+    Column("status", backup_status, nullable=False, server_default=text("'running'")),
+    Column("target_path", Text, nullable=False),
+    Column("size_bytes", BigInteger),
+    Column("checksum_sha256", _sha256_hex),
+    Column("encrypted", Boolean, nullable=False, server_default=text("true")),
+    Column(
+        "encryption_ref",
+        Text,
+        comment=(
+            "SECRET: opaque keyring alias of the backup encryption key, never key material "
+            "(21 Sec.12); never returned by any API, never logged"
+        ),
+    ),
+    Column("covers_from", TIMESTAMP(timezone=True)),
+    Column("covers_to", TIMESTAMP(timezone=True)),
+    Column("wal_start_lsn", Text),
+    Column("wal_end_lsn", Text),
+    Column("duration_ms", Integer),
+    Column("verified_at", TIMESTAMP(timezone=True)),
+    Column("verify_method", Text),
+    Column("restored_at", TIMESTAMP(timezone=True)),
+    Column("error_message", Text),
+    Column("triggered_by", Text, nullable=False, server_default=text("'schedule'")),
+    Column("triggered_by_user", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("started_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("finished_at", TIMESTAMP(timezone=True)),
+    Column("retention_until", TIMESTAMP(timezone=True)),
+    CheckConstraint(
+        "triggered_by IN ('schedule','manual','pre_migration','pre_release','pre_restore')",
+        name="bk_trigger",
+    ),
+    CheckConstraint(
+        "verify_method IS NULL OR verify_method IN "
+        "('restore_smoke','checksum','pg_verifybackup','duckdb_scan')",
+        name="bk_verify",
+    ),
+    Index("ix_backups_kind_time", "kind", text("started_at DESC")),
+    Index("ix_backups_failed", text("started_at DESC"), postgresql_where=text("status = 'failed'")),
+)

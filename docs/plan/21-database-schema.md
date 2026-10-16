@@ -37,7 +37,7 @@ Conventions used throughout:
    3.7 Journal & notes
    3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys
    3.9 Settings & feature flags
-   3.10 Audit log (hash chain), system events, backups
+   3.10 Audit log (hash chain), system events, incidents, backups
 4. QuestDB — table definitions, partitioning, dedup, retention
 5. Parquet layout, compaction, DuckDB views
 6. Data lifecycle hot → cold, pinning
@@ -2392,7 +2392,42 @@ The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes
 the Owner's MFA methods and sessions (`revoked_reason='break_glass'`).
 
+#### 3.10.2a `incidents` (E42-T05, migration `0028_incidents_backups`)
+
+The incident read model behind `GET /admin/incidents` (`22-api-openapi.yaml`, `Incident`): one row per `(component, signature)`, materialised when an `error` or `critical` `system_events` row is written, never aggregated per request. `signature` is 16 hex characters of sha256 over the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols. `title` is that normalised message and `detail` the latest event's message, both through the audit exporter's redaction allowlist. `severity` is the worst grouped event. A new occurrence reopens a `resolved` incident: the write path sets `status` back to `open` and clears `resolved_at`, `acknowledged_by` and `acknowledged_at` (the acknowledgement belonged to the earlier episode and stays in the audit log), and `inc_resolved` rejects a row whose `resolved_at` and `status = 'resolved'` disagree in either direction; an `acknowledged` incident stays acknowledged. Retention (§7): open and acknowledged rows are kept, a `resolved` row is dropped 24 months after `last_seen_at` (the `system_events` total horizon), found through `ix_incidents_status_seen`. The contract carries no resolution text, so none is stored; the duration is `resolved_at - first_seen_at`. Data class: P0 (§12). `component` carries no CHECK: it is copied from `system_events.component`, which `se_component` already closes, so a new component needs no second migration.
+
+```sql
+CREATE TABLE incidents (
+  id              uuid PRIMARY KEY,
+  component       text NOT NULL,
+  signature       text NOT NULL,
+  severity        severity NOT NULL,
+  status          text NOT NULL DEFAULT 'open',   -- open | acknowledged | resolved
+  title           text NOT NULL,
+  detail          text,
+  occurrences     integer NOT NULL DEFAULT 1,
+  first_seen_at   timestamptz NOT NULL,
+  last_seen_at    timestamptz NOT NULL,
+  acknowledged_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  acknowledged_at timestamptz,
+  resolved_at     timestamptz,
+  runbook_ref     text,
+  CONSTRAINT inc_signature CHECK (signature ~ '^[0-9a-f]{16}$'),
+  CONSTRAINT inc_severity  CHECK (severity IN ('error','critical')),
+  CONSTRAINT inc_status    CHECK (status IN ('open','acknowledged','resolved')),
+  CONSTRAINT inc_count     CHECK (occurrences >= 1),
+  CONSTRAINT inc_seen      CHECK (last_seen_at >= first_seen_at),
+  CONSTRAINT inc_ack       CHECK (status <> 'acknowledged' OR acknowledged_at IS NOT NULL),
+  CONSTRAINT inc_resolved  CHECK ((status = 'resolved') = (resolved_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX ux_incidents_group ON incidents (component, signature);
+CREATE INDEX ix_incidents_seen        ON incidents (last_seen_at DESC);
+CREATE INDEX ix_incidents_status_seen ON incidents (status, last_seen_at DESC);
+```
+
 #### 3.10.3 `backups`
+
+> Shipped as Alembic `0028_incidents_backups` (E42-T05 #966, on top of `0027_feature_flags`), with `incidents` (§3.10.2a) and the `backup_kind` and `backup_status` types (§1.2): DDL below verbatim. Two changes were made to the original §3.10.3 before this revision merged (E42-T05 review): `retention_until` was added, because the `Backup` contract returns it and the tiers of §8.1 (daily, weekly, monthly for `pg_basebackup`) make it underivable from `kind` and `started_at`, so the backup engine sets it when a run finishes (NULL means no horizon assigned yet, never "keep forever"; the row itself is kept forever, §7), and the `verify_method` and `triggered_by` comments now list every value their CHECKs allow. Contract mapping: `target_path` is `Backup.location`, `error_message` is `Backup.error`, and `encryption_ref` is not in the contract. `encryption_ref` is class S (§12): an opaque keyring alias only, key material (restic password, age identity) never enters the database (§8.1), and the column carries a `SECRET:` comment. The writer passes `error_message` through the C-12.6 redaction filter before insert, and `target_path` is a filesystem path, never a URL with userinfo. No seed, trigger or grant. Downgrade refuses while either table holds rows, and the refusal advises fixing forward or, failing that, exporting both tables first: `backups` is the artefact catalogue and is kept forever (§7), so deleting its rows orphans the metadata of real backup artefacts.
 
 ```sql
 CREATE TABLE backups (
@@ -2410,13 +2445,14 @@ CREATE TABLE backups (
   wal_end_lsn    text,
   duration_ms    integer,
   verified_at    timestamptz,
-  verify_method  text,             -- 'restore_smoke' | 'checksum' | 'pg_verifybackup'
+  verify_method  text,             -- 'restore_smoke' | 'checksum' | 'pg_verifybackup' | 'duckdb_scan'
   restored_at    timestamptz,
   error_message  text,
-  triggered_by   text NOT NULL DEFAULT 'schedule',  -- schedule | manual | pre_migration | pre_release
+  triggered_by   text NOT NULL DEFAULT 'schedule',  -- schedule | manual | pre_migration | pre_release | pre_restore
   triggered_by_user uuid REFERENCES users(id) ON DELETE SET NULL,
   started_at     timestamptz NOT NULL DEFAULT now(),
   finished_at    timestamptz,
+  retention_until timestamptz,     -- artefact prunable after this; set by the backup engine
   CONSTRAINT bk_trigger CHECK (triggered_by IN ('schedule','manual','pre_migration','pre_release','pre_restore')),
   CONSTRAINT bk_verify  CHECK (verify_method IS NULL OR verify_method IN ('restore_smoke','checksum','pg_verifybackup','duckdb_scan'))
 );
@@ -3044,6 +3080,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `mfa_challenges` (PG)                 | 24 h               | —                                      | 24 h          | drop                         |                                              |
 | `audit_log` (PG)                      | ∞ live 24 mo       | 7 y                                    | 7 y (min)     | archive_parquet              | Chain head checkpointed before any detach    |
 | `system_events` (PG)                  | 180 d              | 24 mo                                  | 24 mo         | archive_parquet              |                                              |
+| `incidents` (PG)                      | ∞ while open       | —                                      | 24 mo         | drop                         | Resolved rows only; from `last_seen_at`      |
 | `outbox` processed (PG)               | 7 d                | —                                      | 7 d           | drop                         | Dead-lettered rows kept 90 d                 |
 | `backups` (PG)                        | ∞                  | —                                      | ∞             | —                            | Metadata only                                |
 
@@ -3199,7 +3236,7 @@ NAMING_CONVENTION = {
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
-| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flag tables = `0027_feature_flags`                                     |
+| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
 ---
@@ -3442,6 +3479,7 @@ Hot-disk formula used above: `Σ_symbols ( trades_GB·30 + deltas_GB·7 + heatma
 | `journal_trades`                                                    |                              60 |                  600 B |           13 MB |                                                                    |
 | `audit_log`                                                         |                           1 200 |                   1 KB |          438 MB |                                                                    |
 | `system_events`                                                     |                             500 |                  600 B |          110 MB |                                                                    |
+| `incidents`                                                         |            ~10 (new signatures) |                 ~600 B |           ~2 MB | Bounded by distinct signatures, not event volume                   |
 | Config tables (users, layouts, drawings, presets, rules, templates) |                               — |                      — |        < 100 MB | Bounded by human editing rate                                      |
 | **Total**                                                           |                                 |                        | **≈ 2.2 GB/yr** | Trivial next to the market-data tiers; index overhead ~40 % on top |
 
@@ -3491,7 +3529,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `positions`, `orders`, `executions`, `wallet_balances` | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
-| `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  |                                                                                                                                                 |
+| `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
 | `settings`                                             | `value` where `is_secret`               | S          | AES-256-GCM                                     | `is_secret=true` rows are returned masked by the API                                                                                            |
 | Everything else                                        | —                                       | P0         | —                                               |                                                                                                                                                 |
 
@@ -3561,6 +3599,7 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 33  | Key rotation reminder         | `api_keys WHERE rotation_due_at < now() AND status='active'`                           | `ix_api_keys_rotation` (partial)                                        | < 2 ms                                |
 | 34  | KEK rotation job              | `api_keys WHERE kek_version < $1`                                                      | `ix_api_keys_kek`                                                       | < 5 ms                                |
 | 35  | Risk dashboard                | latest `wallet_balances` per account                                                   | `ix_wb_acct_time` + `DISTINCT ON`                                       | < 10 ms                               |
+| 36  | Incident list / upsert        | `WHERE status = $1 ORDER BY last_seen_at DESC`; `ON CONFLICT (component, signature)`   | `ix_incidents_status_seen`, `ix_incidents_seen`, `ux_incidents_group`   | < 5 ms                                |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 
