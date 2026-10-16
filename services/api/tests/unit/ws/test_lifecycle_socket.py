@@ -33,10 +33,16 @@ from candleviewer.ws.revocation import RevocationHub
 
 USER = uuid.uuid4()
 OTHER = uuid.uuid4()
-SESSION = str(uuid.uuid4())
+# Pinned to the UUID from CI run 38844674285: its "bad-" substring is what made the old
+# `"bad-" not in repr(records)` assertion flaky (#2760), so this keeps the regression visible.
+SESSION = "35aa4bad-7085-44f7-be13-d8c34121772e"
 BASE_MS = 1_789_132_262_000
 TOKEN_TTL_S = 600
 JSON = ["cv.v1.json"]
+# Rejected-token marker for the secrecy assertions. It must contain a character that can never
+# occur in hex or UUID text (`z`): a random `session_id`/`request_id` like `35aa4bad-7085-…`
+# contains "bad-", which made a `"bad-" not in repr(records)` assertion flaky (#2760).
+REJECTED_MARK = "zz-rejected"
 #: §2.5: the TestClient's own origin, allow-listed and sent on every upgrade.
 ORIGIN = "http://testserver"
 _TIMEOUT_S = 5.0
@@ -290,15 +296,15 @@ def test_three_failed_auth_attempts_bye_4401_and_warning_audit(world: _World) ->
     with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _hello(ws)
         for i in range(2):
-            err = _auth(ws, f"bad-{i}")
+            err = _auth(ws, f"{REJECTED_MARK}-{i}")
             assert (err["t"], err["p"]["code"]) == ("err", "auth_failed")
-        ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": "bad-2"}})
+        ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": f"{REJECTED_MARK}-2"}})
         bye, code = _bye_then_close(ws)
     assert (bye["p"]["reason"], code) == ("auth_failed", 4401)
     assert len(world.audit.records) == 1
     rec = world.audit.records[0]
     assert rec["severity"] == "warning" and rec["reason"] == "ws_auth_failed"
-    assert "bad-" not in repr(rec)  # the token never lands in the audit trail
+    assert REJECTED_MARK not in repr(rec)  # the token never lands in the audit trail
 
 
 def test_unauthenticated_frames_get_err_then_close_after_three(world: _World) -> None:
@@ -634,15 +640,15 @@ def test_failed_reauths_on_an_authenticated_socket_write_a_warning_close_audit(
         _hello(ws)
         assert _auth(ws)["t"] == "auth_ok"
         for i in range(2):
-            assert _auth(ws, f"bad-{i}")["p"]["code"] == "auth_failed"
-        ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": "bad-2"}})
+            assert _auth(ws, f"{REJECTED_MARK}-{i}")["p"]["code"] == "auth_failed"
+        ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": f"{REJECTED_MARK}-2"}})
         bye, code = _bye_then_close(ws)
         (rec,) = _close_audits(world)
     assert (bye["p"]["reason"], code) == ("auth_failed", 4401)
     assert (rec["reason"], rec["severity"]) == ("auth_failed", "warning")
     assert rec["actor_user_id"] == USER
     assert [r["action"] for r in world.audit.records] == ["auth.login_failed", CLOSED]
-    assert "bad-" not in repr(world.audit.records)
+    assert REJECTED_MARK not in repr(world.audit.records)
 
 
 def test_server_close_audits_the_bye_reason(world: _World) -> None:
