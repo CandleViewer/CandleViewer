@@ -9,7 +9,9 @@ total: no I/O, no clock, no process-wide setting; the collision check is in
 from __future__ import annotations
 
 import zlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Final, Literal, cast
 from uuid import UUID
 
@@ -50,19 +52,27 @@ BASE62: Final = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 SEQ_MAX: Final = 62**2 - 1
 """The largest `seq2`, 3843: two base62 digits."""
 
-PURPOSE_TAG: Final[dict[OrderPurpose, PurposeTag]] = {
-    "entry": "en",
-    "reverse": "en",  # a reverse opens the new side, so it carries the native SL (C-2.6)
-    "stop_loss": "sl",
-    "take_profit": "tp",
-    "scale_in": "sc",
-    "scale_out": "sc",
-    "flatten": "fl",
-    "algo_child": "ac",
-}
+# Global state on the id path is read-only: `Final` stops rebinding, not item assignment, and
+# a mutated table would change every id generated afterwards, or make generation raise.
+PURPOSE_TAG: Final[Mapping[OrderPurpose, PurposeTag]] = MappingProxyType(
+    {
+        "entry": "en",
+        "reverse": "en",  # a reverse opens the new side, so it carries the native SL (C-2.6)
+        "stop_loss": "sl",
+        "take_profit": "tp",
+        "scale_in": "sc",
+        "scale_out": "sc",
+        "flatten": "fl",
+        "algo_child": "ac",
+    }
+)
 
-_ENV_LETTER: Final[dict[Environment, EnvLetter]] = {"live": "l", "demo": "d", "testnet": "t"}
-_DIGIT: Final = {char: value for value, char in enumerate(BASE62)}
+_ENV_LETTER: Final[Mapping[Environment, EnvLetter]] = MappingProxyType(
+    {"live": "l", "demo": "d", "testnet": "t"}
+)
+_DIGIT: Final[Mapping[str, int]] = MappingProxyType(
+    {char: value for value, char in enumerate(BASE62)}
+)
 
 
 def _base62(value: int, width: int) -> str:
