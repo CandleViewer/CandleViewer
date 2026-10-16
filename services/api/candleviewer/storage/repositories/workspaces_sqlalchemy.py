@@ -16,23 +16,36 @@ stored pane set intact when a write fails late.
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     SqlAlchemyUnitOfWork,
 )
 from candleviewer.storage.repositories.workspaces import (
+    LayoutFields,
     LayoutRow,
     PaneFields,
+    WorkspaceConflictError,
     WorkspaceDetailRow,
+    WorkspaceFields,
+    WorkspaceNotFoundError,
     WorkspaceRow,
+    WorkspaceVersionConflictError,
+    WriteResult,
 )
 from candleviewer.storage.repositories.workspaces_codec import (
+    lay_params,
     lay_row,
+    map_integrity,
+    pane_payload,
     pane_row,
+    same_fields,
+    ws_params,
     ws_row,
 )
 
@@ -323,6 +336,173 @@ class SqlAlchemyWorkspaceRepository:
             res = await uow.session.execute(_CHART_SYMBOLS)
             symbols: list[str] = list(res.scalars().all())
             return symbols
+
+    # ---- workspace writes ----------------------------------------------------------------
+    async def create_workspace(
+        self, owner: str, workspace_id: str, fields: WorkspaceFields
+    ) -> WorkspaceRow:
+        params = {"wid": workspace_id, "owner": owner, **ws_params(fields)}
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await uow.session.execute(_LOCK_USER, {"owner": owner})
+                count: int = (await uow.session.execute(_WS_COUNT, {"owner": owner})).scalar_one()
+                if count >= MAX_WORKSPACES:
+                    raise WorkspaceConflictError("limit_reached", None)
+                if fields.is_default:
+                    await uow.session.execute(_WS_CLEAR_DEFAULT, {"owner": owner, "keep": None})
+                await uow.session.execute(_WS_INSERT, params)
+                row = await self._ws(uow, owner, workspace_id)
+                await uow.commit()
+        except IntegrityError as exc:
+            raise map_integrity(exc) or exc from exc
+        return row
+
+    async def _ws(self, uow: SqlAlchemyUnitOfWork, owner: str, wid: str) -> WorkspaceRow:
+        got = (await uow.session.execute(_WS_GET, {"wid": wid, "owner": owner})).mappings().one()
+        return ws_row(got)
+
+    async def _lock_workspace(self, uow: SqlAlchemyUnitOfWork, owner: str, wid: str) -> Any:
+        row = (await uow.session.execute(_WS_LOCK, {"wid": wid, "owner": owner})).mappings().first()
+        if row is None:
+            raise WorkspaceNotFoundError("workspace")
+        return row
+
+    async def update_workspace(
+        self,
+        owner: str,
+        workspace_id: str,
+        fields: WorkspaceFields,
+        *,
+        if_match: datetime | None,
+    ) -> WriteResult[WorkspaceRow]:
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await uow.session.execute(_LOCK_USER, {"owner": owner})
+                cur = await self._lock_workspace(uow, owner, workspace_id)
+                stored = WorkspaceFields(
+                    cur["name"], cur["is_default"], cur["icon_token"], cur["sort_order"]
+                )
+                if same_fields(stored, fields):  # no-op wins over a stale token (D13)
+                    return WriteResult(await self._ws(uow, owner, workspace_id), False)
+                if if_match is not None and cur["updated_at"] != if_match:
+                    raise WorkspaceVersionConflictError(workspace_id)
+                if fields.is_default:
+                    keep = {"owner": owner, "keep": workspace_id}
+                    await uow.session.execute(_WS_CLEAR_DEFAULT, keep)
+                params = {"wid": workspace_id, "owner": owner, **ws_params(fields)}
+                await uow.session.execute(_WS_UPDATE, params)
+                row = await self._ws(uow, owner, workspace_id)
+                await uow.commit()
+        except IntegrityError as exc:
+            raise map_integrity(exc) or exc from exc
+        return WriteResult(row, True)
+
+    async def soft_delete_workspace(self, owner: str, workspace_id: str) -> None:
+        async with self._relational.unit_of_work() as uow:
+            await uow.session.execute(_LOCK_USER, {"owner": owner})
+            await self._lock_workspace(uow, owner, workspace_id)
+            if (await uow.session.execute(_WS_COUNT, {"owner": owner})).scalar_one() <= 1:
+                raise WorkspaceConflictError("last_workspace", "workspaceId")
+            ids = {"wid": workspace_id, "owner": owner}
+            ts: datetime = (await uow.session.execute(_WS_SOFT_DELETE, ids)).scalar_one()
+            gone = await uow.session.execute(_LAYS_SOFT_DELETE, {**ids, "ts": ts})
+            layout_ids: list[str] = list(gone.scalars().all())
+            if layout_ids:
+                await uow.session.execute(
+                    _DRAWINGS_SOFT_DELETE, {"ids": layout_ids, "owner": owner, "ts": ts}
+                )
+            await uow.commit()
+
+    # ---- layout writes -------------------------------------------------------------------
+    async def create_layout(
+        self, owner: str, workspace_id: str, layout_id: str, fields: LayoutFields
+    ) -> LayoutRow:
+        ids = {"wid": workspace_id, "owner": owner}
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._lock_workspace(uow, owner, workspace_id)
+                if (await uow.session.execute(_LAY_COUNT, ids)).scalar_one() >= MAX_LAYOUTS:
+                    raise WorkspaceConflictError("limit_reached", None)
+                if fields.is_default:
+                    await uow.session.execute(_LAY_CLEAR_DEFAULT, {**ids, "keep": None})
+                await uow.session.execute(
+                    _LAY_INSERT, {**ids, "lid": layout_id, **lay_params(fields)}
+                )
+                await self._write_panes(uow, owner, layout_id, fields)
+                row = await self._get_layout(uow, owner, workspace_id, layout_id)
+                await uow.commit()
+        except IntegrityError as exc:
+            raise map_integrity(exc) or exc from exc
+        if row is None:  # unreachable: read back inside the inserting transaction
+            raise WorkspaceNotFoundError("layout")
+        return row
+
+    async def _write_panes(
+        self, uow: SqlAlchemyUnitOfWork, owner: str, lid: str, fields: LayoutFields
+    ) -> None:
+        if fields.panes:
+            payload = {"lid": lid, "owner": owner, "panes": pane_payload(fields.panes)}
+            await uow.session.execute(_PANES_INSERT, payload)
+
+    async def replace_layout(
+        self,
+        owner: str,
+        workspace_id: str,
+        layout_id: str,
+        fields: LayoutFields,
+        *,
+        if_match: datetime | None,
+    ) -> WriteResult[LayoutRow]:
+        ids = {"wid": workspace_id, "owner": owner}
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._lock_workspace(uow, owner, workspace_id)
+                locked = await uow.session.execute(_LAY_LOCK, {**ids, "lid": layout_id})
+                if locked.first() is None:
+                    raise WorkspaceNotFoundError("layout")
+                cur = await self._get_layout(uow, owner, workspace_id, layout_id)
+                if cur is None:  # unreachable: the row lock above succeeded
+                    raise WorkspaceNotFoundError("layout")
+                if same_fields(cur.to_fields(), fields):  # no-op wins over a stale token (D13)
+                    return WriteResult(cur, False)
+                if if_match is not None and cur.updated_at != if_match:
+                    raise WorkspaceVersionConflictError(layout_id)
+                if fields.is_default:
+                    await uow.session.execute(_LAY_CLEAR_DEFAULT, {**ids, "keep": layout_id})
+                await uow.session.execute(_PANES_DELETE, {"lid": layout_id, "owner": owner})
+                await self._write_panes(uow, owner, layout_id, fields)
+                upd = {**ids, "lid": layout_id, **lay_params(fields)}
+                await uow.session.execute(_LAY_UPDATE, upd)
+                row = await self._get_layout(uow, owner, workspace_id, layout_id)
+                await uow.commit()
+        except IntegrityError as exc:
+            raise map_integrity(exc) or exc from exc
+        if row is None:  # unreachable: read back inside the writing transaction
+            raise WorkspaceNotFoundError("layout")
+        return WriteResult(row, True)
+
+    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None:
+        ids = {"wid": workspace_id, "owner": owner, "lid": layout_id}
+        async with self._relational.unit_of_work() as uow:
+            await self._lock_workspace(uow, owner, workspace_id)
+            if (await uow.session.execute(_LAY_LOCK, ids)).first() is None:
+                raise WorkspaceNotFoundError("layout")
+            ts: datetime = (await uow.session.execute(_LAY_SOFT_DELETE, ids)).scalar_one()
+            await uow.session.execute(
+                _DRAWINGS_SOFT_DELETE, {"ids": [layout_id], "owner": owner, "ts": ts}
+            )
+            await uow.commit()
+
+    # ---- retention -----------------------------------------------------------------------
+    async def purge_deleted(self, older_than_days: int, limit: int) -> int:
+        if older_than_days < 1 or not 1 <= limit <= MAX_PURGE_BATCH:
+            raise ValueError("purge needs older_than_days >= 1 and 1 <= limit <= MAX_PURGE_BATCH")
+        params = {"days": older_than_days, "limit": limit}
+        async with self._relational.unit_of_work() as uow:
+            layouts = await uow.session.execute(_PURGE_LAYOUTS, params)
+            workspaces = await uow.session.execute(_PURGE_WORKSPACES, params)
+            await uow.commit()
+        return int(getattr(layouts, "rowcount", 0)) + int(getattr(workspaces, "rowcount", 0))
 
 
 __all__ = ["MAX_PURGE_BATCH", "UNSCOPED", "SqlAlchemyWorkspaceRepository"]

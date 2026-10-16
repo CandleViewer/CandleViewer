@@ -5,6 +5,8 @@ Real-DB behaviour lives in `tests/integration/storage/test_workspaces_repository
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import sqlalchemy as sa
 
@@ -78,3 +80,15 @@ def test_recorder_probe_uses_the_symbol_equality_shape() -> None:
 def test_no_statement_interpolates_values() -> None:
     for text in map(str, _STATEMENTS.values()):
         assert "{" not in text and "%s" not in text
+
+
+@pytest.mark.parametrize(
+    ("days", "limit"),
+    [(0, 10), (-1, 10), (90, 0), (90, -5), (90, mod.MAX_PURGE_BATCH + 1)],
+)
+async def test_purge_rejects_unsafe_arguments_before_touching_the_database(
+    days: int, limit: int
+) -> None:
+    unused: Any = object()  # never touched: the ValueError fires first
+    with pytest.raises(ValueError, match="purge needs"):
+        await mod.SqlAlchemyWorkspaceRepository(unused).purge_deleted(days, limit)
