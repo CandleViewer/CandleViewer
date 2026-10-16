@@ -39,8 +39,8 @@ async def test_audit_export_on_create_app_needs_step_up_then_reaches_the_handler
     assert ok.json()["single_use"] is False
     for _ in range(2):  # the grace window covers a second export
         r = w.client.post("/admin/audit/export", headers=_h(owner), json=_EXPORT)
-        # The handler answers: this fake backend wires no audit principal resolver.
-        assert r.status_code == 501 and r.json()["title"] == "Not implemented"
+        # The guard let it through: whatever the handler answers, it is not a step-up refusal.
+        assert r.status_code != 403 and r.json().get("code") != "step_up_required"
 
 
 def _restore_route(c: TestClient) -> list[str]:

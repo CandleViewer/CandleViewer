@@ -178,8 +178,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # step. The handler must not gate again (a second check always fails); its ticket may instead
     # move this row to HANDLER_GATED_ROUTES and spend the grant after validation. Before it is
     # mounted, `consume_single_use` must become atomic (a read-modify-write today, so concurrent
-    # restores can share one code), and the restore's write-ahead audit record must name the
-    # step-up (B16 records no spend).
+    # restores can share one code: #2798), and the restore's write-ahead audit record must name
+    # the step-up (B16 records no spend: #2799).
     ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
 )
 
