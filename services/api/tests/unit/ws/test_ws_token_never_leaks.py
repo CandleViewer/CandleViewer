@@ -124,4 +124,7 @@ def test_ws_access_token_never_reaches_a_log_frame_audit_record_or_metric(
     actions = [r["action"] for r in w.audit.records]
     assert actions.count("auth.login_failed") == 1
     assert set(actions) == {"auth.login_failed", "ws.connection.closed"}
+    # One row per authenticated close: the 2nd and 3rd sockets. The 1st never authenticated, so its
+    # close writes none (its 3rd failed `auth` is the `auth.login_failed` row above).
+    assert actions.count("ws.connection.closed") == 2
     assert registry.get_sample_value("cv_ws_auth_failures_total", rejected) == rejected_before + 3
