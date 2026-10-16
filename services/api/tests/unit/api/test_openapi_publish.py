@@ -10,7 +10,7 @@ as generated, and let FastAPI own the cache.
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -19,7 +19,9 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from candleviewer import app as app_module
 from candleviewer.api import openapi_publish
+from candleviewer.api._generated.openapi_models import Problem
 from candleviewer.api.contract_conformance import (
     assert_spec_is_valid,
     component_closure,
@@ -298,3 +300,86 @@ def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     assert published == served
     for method, path in served:
         assert doc["paths"][path][method] == SUBSET["paths"][path][method]
+
+
+# The HTTP edge (#2767). The refusal tests above call `app.openapi()` directly, on bare apps
+# without the error redaction `create_app()` installs, so nothing pinned what a client sees
+# when the publish raises. This one drives the real app: its wrapper, its redaction handler
+# and its middleware.
+
+
+def _refusing_contract() -> dict[str, Any]:
+    """`Thing` differs from the model the probe route generates for it: the publish is refused."""
+    return _contract_with({"type": "object", "properties": {"driftedField": {"type": "integer"}}})
+
+
+def _failing_contract() -> dict[str, Any]:
+    """`GET /drawings` answers with a response the contract lacks: the publish fails."""
+    contract = copy.deepcopy(SUBSET)
+    contract["paths"]["/drawings"]["get"]["responses"] = {
+        "200": {"$ref": "#/components/responses/Missing"}
+    }
+    return contract
+
+
+@pytest.mark.parametrize(
+    ("faulty_contract", "leaks"),
+    [
+        pytest.param(
+            _refusing_contract, ("components.schemas.Thing", "driftedField"), id="refused"
+        ),
+        pytest.param(_failing_contract, ("dangling reference", "Missing"), id="failed"),
+    ],
+)
+def test_openapi_json_is_a_redacted_500_for_a_refused_or_failed_publish_then_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    faulty_contract: Callable[[], dict[str, Any]],
+    leaks: tuple[str, ...],
+) -> None:
+    """`create_app()` over a contract its real publish refuses or fails on. `GET /openapi.json`
+    answers the generic problem body (no exception text, no contract fragment) and caches
+    nothing: once the contract is repaired, the very next request serves the full document."""
+    contract = faulty_contract()
+    # `create_app()` reads the packaged subset through `_cached_spec` and hands the wrapper that
+    # very mapping, so repairing `contract` in place below is the fault clearing.
+    monkeypatch.setattr(app_module, "_cached_spec", lambda: contract)
+    app = create_app(Settings(git_sha="test", version="0.0.0-test"))
+
+    # The generated `Thing` that `_refusing_contract` clashes with; the real app has no schema
+    # named like a contract component, so there is nothing to refuse without it.
+    @app.get("/things/{name}", response_model=Thing)
+    async def get_thing(name: str) -> Thing:
+        return Thing(name=name)
+
+    client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
+
+    refused = client.get("/openapi.json")
+
+    assert refused.status_code == 500, refused.text
+    assert refused.headers["content-type"].startswith("application/problem+json")
+    problem = refused.json()
+    Problem.model_validate(problem)
+    assert (problem["status"], problem["code"]) == (500, "internal_error")
+    assert set(problem) <= {"type", "title", "status", "code", "instance"}, "free text echoed"
+    list_drawings = SUBSET["paths"]["/drawings"]["get"]["operationId"]
+    for fragment in (*leaks, "/drawings", list_drawings):
+        assert fragment not in refused.text, fragment
+    assert app.openapi_schema is None  # the refused document is not cached
+
+    contract.clear()
+    contract.update(copy.deepcopy(SUBSET))  # the fault clears
+    served = client.get("/openapi.json")
+
+    assert served.status_code == 200, served.text
+    doc = served.json()
+    assert_spec_is_valid(doc)
+    published = [
+        (path, method)
+        for path, item in doc["paths"].items()
+        if under_raw_body_prefix(path)
+        for method in item
+        if method != "parameters"
+    ]
+    assert published, "the real app serves raw-body operations"
+    for path, method in published:
+        assert doc["paths"][path][method] == SUBSET["paths"][path][method], f"{method} {path}"
