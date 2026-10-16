@@ -125,6 +125,7 @@ tests:
     - exp_labels:
         severity: page
         component: audit
+        resolves: window
       exp_annotations:
         summary: Audit chain verification failed
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed

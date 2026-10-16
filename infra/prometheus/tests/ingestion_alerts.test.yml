@@ -16,6 +16,7 @@ tests:
           - exp_labels:
               severity: page
               component: ingestion
+              resolves: window
               env: demo
               symbol: BTCUSDT
             exp_annotations:
