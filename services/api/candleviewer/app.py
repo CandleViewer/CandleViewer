@@ -30,6 +30,8 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.accounts.service import AccountsService
+from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
+from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
     AuditHandle,
@@ -40,6 +42,7 @@ from candleviewer.admin.wiring import (
     build_secrets_service,
     export_secrets_metrics,
 )
+from candleviewer.admin_wiring import build_admin_read_models
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.lifecycle import AlertCharts
@@ -59,6 +62,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_contract_subset
@@ -870,6 +874,7 @@ def create_app(
         dependencies=[Depends(make_deny_undeclared_dependency(declared_operations(spec)))],
     )
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
+    app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
     ctx = build_app_context(resolved, auth_clock=auth_clock, secrets_bundle=secrets_bundle)
     app.state.app_context = ctx
@@ -1225,6 +1230,19 @@ def create_app(
     app.state.support_bundle = support_bundle
     app.include_router(
         make_support_bundle_router(support_bundle, _LazyAuditEmitter(ctx.audit), audit_resolver)
+    )
+    # E42-T01: admin overview + capacity read models behind the audited admin-area dependency.
+    admin_overview, admin_capacity = build_admin_read_models(resolved)
+    app.include_router(
+        make_admin_overview_router(
+            admin_overview,
+            admin_capacity,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )
+    app.state.admin_overview_metrics = export_overview_metrics(
+        ctx.metrics, env=resolved.environment.value
     )
     # E16-T05: weekly cold-tier compaction on demand (async job, polled via /admin/jobs).
     _cold_registry = DatasetRegistry(resolved.parquet_root)
