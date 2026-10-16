@@ -67,8 +67,9 @@ LIMITS_BLOCK: Final[dict[str, int]] = {
     "min_throttle_ms": 50,
     "max_symbols_per_connection": 40,
 }
-#: §4.2 `welcome.features` every build serves. `coalescing` is not one of them (D11, #412): it
-#: mirrors `CV_WS_BACKPRESSURE_ENABLED`, so `welcome_features` adds it per router.
+#: §4.2 `welcome.features` every build serves. `coalescing` is not one of them: it mirrors
+#: `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so `welcome_features` adds it per
+#: router.
 FEATURES: Final[dict[str, bool]] = {"replay": True, "binary_payloads": True}
 
 
@@ -425,9 +426,11 @@ class ConnectRateLimiter:
 
 
 def welcome_features(*, coalescing: bool) -> dict[str, bool]:
-    """The §4.2 `features` block: `FEATURES` plus `coalescing`. It is true only while the
-    backpressure pipeline serves the connection (D11, #412), so a welcome never promises merged
-    frames the build does not send. Hands out a fresh dict."""
+    """The §4.2 `features` block: `FEATURES` plus `coalescing`, which mirrors
+    `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2): advertised when the flag is on.
+    The flag must stay off until the pipeline is complete (#412 S4; removal ticket #2900), so a
+    welcome from a build that has it on earlier advertises ahead of what that build does. That
+    rollout precondition is the operator's; nothing here checks it. Hands out a fresh dict."""
     return {**FEATURES, "coalescing": coalescing}
 
 

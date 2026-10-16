@@ -2,8 +2,8 @@
 
 The composition root hands `make_ws_router` a `BackpressureConfig`, built from the budget settings,
 only while the flag is on; off (the default) it passes none and the gateway keeps today's path.
-`welcome.features.coalescing` mirrors the flag through the real handshake (D11). A sibling of
-`test_app_wiring.py`, which other open PRs edit at its tail (C-4.15).
+`welcome.features.coalescing` mirrors the flag through the real handshake (`23-ws-protocol.md`
+§4.2). A sibling of `test_app_wiring.py`, which other open PRs edit at its tail (C-4.15).
 """
 
 from __future__ import annotations
@@ -82,8 +82,8 @@ def test_create_app_passes_the_budget_settings_while_the_flag_is_on(
 
 @pytest.mark.parametrize("flag", [False, True], ids=["off", "on"])
 def test_welcome_coalescing_feature_mirrors_the_flag(flag: bool) -> None:
-    """D11: off it honestly reads `false` (nothing coalesces); `replay` and `binary_payloads`
-    are not the flag's to change."""
+    """Off it honestly reads `false` (nothing coalesces); `replay` and `binary_payloads` are not
+    the flag's to change."""
     app = create_app(_settings(ws_backpressure_enabled=flag))
 
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": ORIGIN}) as client:

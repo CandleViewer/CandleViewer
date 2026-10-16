@@ -830,10 +830,10 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_DEK_CACHE_TTL_S`             | float  | `300`                     | process | unwrapped-DEK cache TTL, 0-300                                                                                      |
 | `CV_RECV_WINDOW_MS`              | int    | `5000`                    | process | raising it is a stopgap, alerts when > 5000                                                                         |
 | `CV_MAX_WS_TOPICS_PER_CONN`      | int    | `64`                      | runtime | gateway limit                                                                                                       |
-| `CV_WS_BACKPRESSURE_ENABLED`     | bool   | `false`                   | process | E17-T03 flag (C-4.13, removal #2900): off keeps the 1 024-frame push bound; welcome `coalescing` mirrors it         |
-| `CV_WS_QUEUE_BYTES`              | int    | `8388608`                 | process | per-connection outbound byte budget (23 §8.4), 4194304-8388608; lowered, never raised                               |
-| `CV_WS_QUEUE_FRAMES`             | int    | `2000`                    | process | per-connection outbound frame budget (23 §8.4), 256-2000; lowered, never raised                                     |
-| `CV_WS_CLASSIFY_INTERVAL_MS`     | int    | `2000`                    | process | adaptive-throttle classification and RTT probe cadence (23 §8.3), 500-10000                                         |
+| `CV_WS_BACKPRESSURE_ENABLED`     | bool   | `false`                   | process | E17-T03 flag (C-4.13, #2900): inert until S2a-S4; keep off until S4 and #410 scenarios 2-3; `coalescing` mirrors it |
+| `CV_WS_QUEUE_BYTES`              | int    | `8388608`                 | process | outbound byte budget (23 §8.4): 4194304 floor (typo guard) to 8388608, lower only; unread until #412 S2a            |
+| `CV_WS_QUEUE_FRAMES`             | int    | `2000`                    | process | outbound frame budget (23 §8.4): 256 floor (typo guard) to 2000, lower only; unread until #412 S2a                  |
+| `CV_WS_CLASSIFY_INTERVAL_MS`     | int    | `2000`                    | process | classification and RTT probe cadence (23 §8.3), 500-10000; unread until #412 S4                                     |
 | `CV_HEATMAP_CADENCE_MS`          | int    | `100`                     | runtime |                                                                                                                     |
 | `CV_BOOK_DEPTH`                  | int    | `200`                     | runtime | 1/50/200/500                                                                                                        |
 | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`                      | runtime | per-symbol override allowed                                                                                         |

@@ -612,7 +612,8 @@ def make_ws_router(
 
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline: `None`, today's path,
     keeps the `OUTBOUND_QUEUE_MAX` push bound. Nothing reads the budget yet (S2a wires it); the
-    one effect of a config is that the `welcome` advertises `features.coalescing` (D11)."""
+    one effect of a config is that the `welcome` advertises `features.coalescing`
+    (`23-ws-protocol.md` §4.2), which is why the flag stays off until the pipeline is complete."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})

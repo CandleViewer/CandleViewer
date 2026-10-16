@@ -2,9 +2,9 @@
 
 `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default, removal ticket #2900) and the three
 `CV_WS_*` budget settings of `23-ws-protocol.md` §4.3. The queue budget may be lowered, never
-raised (D10: the contract value is the ceiling; a raise needs a security review), and the classify
-interval is bounded to 500..10 000 ms. Every check is a field check, so a refusal never carries
-another setting (#2728, C-12.6).
+raised (the contract value is the ceiling; a raise needs a security review, E17 threat model §6),
+and the classify interval is bounded to 500..10 000 ms. Every check is a field check, so a refusal
+never carries another setting (#2728, C-12.6). The floors are typo guards beyond the contract.
 """
 
 from __future__ import annotations
@@ -18,9 +18,11 @@ from candleviewer.ws.limits import MAX_SUBSCRIPTIONS
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
 from candleviewer.ws.pacing import CLASSIFY_INTERVAL_S
 
-#: The lowest accepted budget: one maximum outbound frame, so a legitimate frame always fits.
+#: The lowest accepted byte budget: one maximum outbound frame. A typo guard: it promises that one
+#: maximum frame fits and nothing more.
 FLOOR_BYTES = 4_194_304
-#: The lowest accepted frame budget: one snapshot per allowed subscription, plus control replies.
+#: The lowest accepted frame budget: above the 200 allowed subscriptions, with room for control
+#: replies. A typo guard, not a sizing guarantee (a chunked snapshot needs more).
 FLOOR_FRAMES = 256
 #: An inert marker standing in for a secret value; never a credential.
 _MARKER = "cv-412-marker-not-a-secret"
@@ -77,7 +79,7 @@ def test_budget_settings_default_to_the_contract_values() -> None:
 def test_queue_budget_settings_cannot_exceed_the_contract(
     monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
-    """D10: one past the contract value is refused, and the refusal names the ceiling."""
+    """One past the contract value is refused, and the refusal names the ceiling."""
     refused = _refusal(monkeypatch, _env(field), str(_CEILING[field] + 1))
 
     (error,) = refused.errors()
@@ -103,8 +105,8 @@ def test_queue_budget_settings_accept_the_contract_value_and_any_lower_one_to_th
 def test_queue_budget_settings_are_refused_below_the_floor(
     monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
-    """A budget under the floor closes every connection at its first large frame, so a typo
-    (`CV_WS_QUEUE_BYTES=800`) is refused at startup instead."""
+    """A budget under the floor would close connections at their first large frame or round of
+    snapshots, so a typo (`CV_WS_QUEUE_BYTES=800`) is refused at startup instead."""
     for value in (_FLOOR[field] - 1, 0):
         refused = _refusal(monkeypatch, _env(field), str(value))
 
@@ -129,8 +131,8 @@ def _declared_bounds(field: str) -> tuple[object, object]:
 
 def test_the_declared_bounds_come_from_the_contract() -> None:
     """The ceilings are `ws.outbound`'s budget, the byte floor is one maximum outbound frame
-    (`welcome.limits`) and the frame floor holds one snapshot per allowed subscription. M1 may
-    not import `ws`, so `settings.py` spells the numbers out and this keeps them from drifting."""
+    (`welcome.limits`) and the frame floor is above the allowed subscriptions. M1 may not
+    import `ws`, so `settings.py` spells the numbers out and this keeps them from drifting."""
     assert _declared_bounds("ws_queue_bytes") == (
         LIMITS_BLOCK["max_outbound_frame_bytes"],
         QUEUE_BYTES,
@@ -141,23 +143,35 @@ def test_the_declared_bounds_come_from_the_contract() -> None:
     assert _declared_bounds("ws_classify_interval_ms") == (500, 10_000)
 
 
-@pytest.mark.parametrize(
-    ("value", "accepted"),
-    [(499, False), (500, True), (2_000, True), (10_000, True), (10_001, False), (0, False)],
-)
-def test_classify_interval_bounds(
-    monkeypatch: pytest.MonkeyPatch, value: int, accepted: bool
+@pytest.mark.parametrize("value", [500, 2_000, 10_000])
+def test_classify_interval_accepts_500_to_10000(
+    monkeypatch: pytest.MonkeyPatch, value: int
 ) -> None:
-    """D10: 500..10 000 ms; the 2 s default (§8.3) is inside."""
-    if accepted:
-        monkeypatch.setenv("CV_WS_CLASSIFY_INTERVAL_MS", str(value))
+    """500..10 000 ms; the 2 s default (§8.3) is inside."""
+    monkeypatch.setenv("CV_WS_CLASSIFY_INTERVAL_MS", str(value))
 
-        assert Settings().ws_classify_interval_ms == value
-    else:
-        refused = _refusal(monkeypatch, "CV_WS_CLASSIFY_INTERVAL_MS", str(value))
+    assert Settings().ws_classify_interval_ms == value
 
-        (error,) = refused.errors()
-        assert error["loc"] == ("ws_classify_interval_ms",)
+
+@pytest.mark.parametrize(
+    ("value", "error_type", "ctx"),
+    [
+        (499, "greater_than_equal", {"ge": 500}),
+        (0, "greater_than_equal", {"ge": 500}),
+        (10_001, "less_than_equal", {"le": 10_000}),
+    ],
+)
+def test_classify_interval_is_refused_outside_500_to_10000(
+    monkeypatch: pytest.MonkeyPatch, value: int, error_type: str, ctx: dict[str, int]
+) -> None:
+    refused = _refusal(monkeypatch, "CV_WS_CLASSIFY_INTERVAL_MS", str(value))
+
+    (error,) = refused.errors()
+    assert (error["loc"], error["type"], error["ctx"]) == (
+        ("ws_classify_interval_ms",),
+        error_type,
+        ctx,
+    )
 
 
 @pytest.mark.parametrize(

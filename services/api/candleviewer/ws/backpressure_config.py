@@ -7,8 +7,9 @@ gateway keeps today's 1 024-frame push bound: the flag swaps the bounding mechan
 removes the bound (C-2.18).
 
 The defaults are the contract values. `Settings` owns the ceilings (the same numbers as `le=`: the
-budget may be lowered, never raised, D10), so this class only holds values and a harness may build
-one with a small budget. Plain data: no I/O, no clock.
+budget may be lowered, never raised, E17 threat model §6) and the floors, so this class only holds
+values and enforces nothing: a harness may build one with a small budget, and the wiring slices
+must not take a hand-built config for a checked one. Plain data: no I/O, no clock.
 """
 
 from __future__ import annotations

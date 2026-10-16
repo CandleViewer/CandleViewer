@@ -340,15 +340,19 @@ class Settings(BaseSettings):
     # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket
     # #2900). It swaps the mechanism that bounds a connection's outbound frames and never removes
     # the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no safety invariant
-    # (C-4.14). Inert until the wiring slices land: for now its only effect is that
-    # `welcome.features.coalescing` mirrors it, so keep it off until S4 and #410 scenarios 2 and 3.
+    # (C-4.14). Inert until the wiring slices land (#412 S2a to S4): for now its only effect is
+    # that `welcome.features.coalescing` mirrors it (`23-ws-protocol.md` §4.2). Rollout
+    # precondition: keep it off until S4 has merged and #410's chaos scenarios 2 and 3 pass.
     ws_backpressure_enabled: bool = False
-    # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). D10: the
-    # contract values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may
-    # be lowered and never raised (a raise needs a security review: E17 threat model §6). M1 may
-    # not import `ws`, so the numbers are spelled out here and a test pins them. The floors catch
-    # a typo that would close every connection: one maximum outbound frame (4 MiB, as in
-    # `welcome.limits`), and one snapshot per allowed subscription (200) plus control replies.
+    # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). The contract
+    # values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may be lowered
+    # and never raised (a raise needs a security review: E17 threat model §6). M1 may not import
+    # `ws`, so the numbers are spelled out here and a test pins them. Nothing reads them yet: the
+    # budget from S2a, the interval from S4, and only with the flag on. The floors are typo
+    # guards, not sizing: a byte budget under one maximum outbound frame (4 MiB, as in
+    # `welcome.limits`) or a frame budget under the 200 allowed subscriptions (256 leaves room
+    # for control replies) would close a connection at its first large frame or round of
+    # snapshots. At a floor one maximum frame fits and nothing more is promised.
     ws_queue_bytes: int = Field(default=8_388_608, ge=4_194_304, le=8_388_608)
     ws_queue_frames: int = Field(default=2_000, ge=256, le=2_000)
     ws_classify_interval_ms: int = Field(default=2_000, ge=500, le=10_000)

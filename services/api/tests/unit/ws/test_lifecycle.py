@@ -188,7 +188,8 @@ def test_welcome_clock_skew_can_be_negative() -> None:
 
 
 def test_the_fixed_features_do_not_advertise_coalescing() -> None:
-    """D11 (#412): `coalescing` mirrors `CV_WS_BACKPRESSURE_ENABLED`, so it is never fixed."""
+    """`coalescing` mirrors `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so it is never
+    fixed."""
     assert FEATURES == {"replay": True, "binary_payloads": True}
 
 
@@ -199,6 +200,18 @@ def test_welcome_features_carry_coalescing_and_leave_the_rest_alone(coalescing: 
         "binary_payloads": True,
         "coalescing": coalescing,
     }
+
+
+def test_welcome_features_hands_out_a_fresh_dict_and_leaves_features_alone() -> None:
+    """A router keeps its block for every welcome: a later change to one copy, or to the shared
+    `FEATURES`, must not reach another."""
+    first = welcome_features(coalescing=True)
+    second = welcome_features(coalescing=True)
+
+    assert first is not second
+    first["replay"] = False
+    assert second == {"replay": True, "binary_payloads": True, "coalescing": True}
+    assert FEATURES == {"replay": True, "binary_payloads": True}
 
 
 def test_welcome_payload_carries_exactly_the_features_it_is_given() -> None:
