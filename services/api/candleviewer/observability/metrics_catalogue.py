@@ -1811,6 +1811,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=32,
         exported=True,
     ),
+    _s(
+        "cv_feature_flag_changes_total",
+        "counter",
+        "changes",
+        ("flag", "result"),
+        "Feature-flag write attempts past validation, by result.",
+        "flag churn; conflict or refusal spikes",
+        _L,
+        "E42",
+        max_series=256,
+        exported=True,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",

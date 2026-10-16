@@ -36,6 +36,7 @@ rules:
       # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
       # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
       # flag (E42-T03): only feature-flag registry keys, a closed code-reviewed set (about 16);
+      #   cv_feature_flag_changes_total pairs it with `result` (the write outcomes): max_series=256;
       #   unknown keys are refused before any series is touched; max_series=32.
       - metavariable-regex:
           metavariable: $LABEL

@@ -1,13 +1,21 @@
-"""In-memory `FlagStore` and a fake clock for the E42-T03 flag-service tests."""
+"""In-memory `FlagStore`, audit emitter and clock for the E42-T03 flag-service tests."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from candleviewer.admin.flags import FlagSpec, StoredFlag
-from candleviewer.admin.flags.store import StoreUnavailableError
+from candleviewer.admin.flags.store import (
+    FlagWrite,
+    Prepare,
+    StaleWriteError,
+    StoreUnavailableError,
+)
+from candleviewer.audit.actions import validate_action
 
 T0 = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
 
@@ -17,11 +25,14 @@ class FakeFlagStore:
         self.rows: dict[str, StoredFlag] = {}
         self.down = False
         self.loads = 0
+        self.writes: list[FlagWrite] = []
         #: When set, `load` blocks until it is set (a hung or slow store).
         self.hold: asyncio.Event | None = None
         self.crash: Exception | None = None
         #: Runs after the snapshot is taken (e.g. a write committing mid-load).
         self.on_load: Callable[[], None] | None = None
+        self.on_lock: Callable[[], None] | None = None
+        self.fail_write = False
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
         if self.down:
@@ -41,6 +52,38 @@ class FakeFlagStore:
         if self.down:
             raise StoreUnavailableError("down")
         return snapshot
+
+    async def write(self, key: str, prepare: Prepare) -> StoredFlag:
+        if self.on_lock is not None:
+            self.on_lock()  # a commit that lands before this write takes the row lock
+        if self.down:
+            raise StoreUnavailableError("down")
+        current = self.rows[key]
+        change = await prepare(current)  # under the (simulated) row lock
+        if self.fail_write:
+            raise StoreUnavailableError("down mid-write")
+        if current.updated_at != change.expected_updated_at:
+            raise StaleWriteError(current)
+        assert current.updated_at is not None
+        row = replace(
+            current,
+            value=change.value,
+            user_overrides=dict(change.user_overrides),
+            updated_at=current.updated_at + timedelta(seconds=1),
+            updated_by=change.actor,
+        )
+        self.rows[change.key] = row
+        self.writes.append(change)
+        return row
+
+
+class FakeAudit:
+    def __init__(self) -> None:
+        self.records: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        validate_action(action)  # an unregistered action is refused, as `audit.emit` refuses it
+        self.records.append((action, kwargs))
 
 
 class Clock:

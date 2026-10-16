@@ -73,6 +73,7 @@
 ["cv_drawings_conflicts_total", "counter", ["rule"], "planned", "E14"]
 ["cv_drawings_purged_total", "counter", [], "planned", "E14"]
 ["cv_drawings_rows", "gauge", ["tool"], "planned", "E14"]
+["cv_feature_flag_changes_total", "counter", ["flag", "result"], "live", "E42"]
 ["cv_feature_flag_evaluations_total", "counter", ["flag"], "live", "E42"]
 ["cv_feature_flag_unreadable_overrides_total", "counter", ["flag"], "live", "E42"]
 ["cv_kek_degraded_state", "gauge", [], "live", "E27"]
