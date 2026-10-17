@@ -522,13 +522,17 @@ class TopicEmitter:
         cv_ws_snapshot_bytes.labels(topic=fam).observe(total)
         if reason in COUNTED_SNAP_REASONS:
             cv_ws_resync_total.labels(reason=reason).inc()
-            getattr(_log(), "warning" if reason in INCIDENT_REASONS else "info")(
-                "ws resync",
-                connection_id=self.connection_id,
-                ch=sub.ch,
-                reason=reason,
-                previous_seq=previous,
-            )
+            fields = {
+                "connection_id": self.connection_id,
+                "ch": sub.ch,
+                "reason": reason,
+                "previous_seq": previous,
+            }
+            # 23 §7.4's incidents, `upstream_desync` and `backpressure`, log at warning.
+            if reason in INCIDENT_REASONS:
+                _log().warning("ws resync", **fields)
+            else:
+                _log().info("ws resync", **fields)
         return True
 
     def _frames(
@@ -643,8 +647,11 @@ class TopicEmitter:
         }
         if (seen := _logged_seq(last_seq)) is not None:
             fields["client_last_seq"] = seen
-        level = "warning" if reason == "sequence_gap" else "info"
-        getattr(_log(), level)("ws client resync", **fields)
+        # Of a client's reasons only `sequence_gap` is an incident (23 §7.1); §7.4 names no other.
+        if reason == "sequence_gap":
+            _log().warning("ws client resync", **fields)
+        else:
+            _log().info("ws client resync", **fields)
         now = self.clock()
         window = sub.resyncs
         while window and now - window[0] >= RESYNC_WINDOW_S:

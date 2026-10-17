@@ -1,10 +1,11 @@
 """E17-T06 (#571): the sequencing layer's log lines (`23-ws-protocol.md` §7.7).
 
-`ws resync` (every `snap` but `initial`) takes its severity from `INCIDENT_REASONS`.
-`ws client resync` records what a client said (its reason, and its `last_seq` only when a log line
-can carry it) beside the server's own `server_seq`, and `ws resync rate limited` marks the resync
-that revokes. Each field set is asserted whole, so a token, a payload or other client text cannot
-join a line unnoticed.
+`ws resync` (every `snap` but `initial`) is a `warning` for the two incidents 23 §7.4 names and
+`info` for the rest; the incident set is written out below, not read from the module, so widening
+or narrowing it fails here. `ws client resync` records what a client said (its reason, and its
+`last_seq` only when a log line can carry it) beside the server's own `server_seq`, and
+`ws resync rate limited` marks the resync that revokes. Each field set is asserted whole, so a
+token, a payload or other client text cannot join a line unnoticed.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import (
     CLIENT_RESYNC_REASONS,
     COUNTED_SNAP_REASONS,
-    INCIDENT_REASONS,
     RESYNC_MAX_PER_WINDOW,
     RESYNC_WINDOW_S,
     SnapReason,
@@ -30,6 +30,7 @@ from tests.unit.ws.test_sequencing import _book_source, _resync
 
 _CH = "book.BTCUSDT.50"
 _CONN = "ws_test"  # `Conn`'s connection id
+_INCIDENTS = frozenset({"upstream_desync", "backpressure"})  # 23 §7.4, not `INCIDENT_REASONS`
 
 
 def _attached() -> tuple[Conn, Subscription]:
@@ -51,7 +52,7 @@ def test_ws_resync_is_a_warning_for_an_incident_reason_and_info_for_the_rest(rea
     assert logs == [
         {
             "event": "ws resync",
-            "log_level": "warning" if reason in INCIDENT_REASONS else "info",
+            "log_level": "warning" if reason in _INCIDENTS else "info",
             "connection_id": _CONN,
             "ch": _CH,
             "reason": reason,
@@ -90,6 +91,19 @@ def test_client_resync_logs_the_stated_reason_and_both_sequence_numbers(client_r
     )
 
 
+def test_client_resync_after_deltas_logs_the_servers_current_sequence_number() -> None:
+    conn, sub = _attached()
+    for i in range(3):  # the `initial` snapshot took 1; three deltas take 2, 3 and 4
+        assert conn.emitter.delta(sub, {"symbol": "BTCUSDT", "bids": [[f"{i}.5", "1"]], "asks": []})
+    conn.take()
+    with capture_logs() as logs:
+        _resync(conn, _CH, last_seq=2)  # the client says it saw up to 2, the server had sent 4
+    (line,) = _lines(logs, "ws client resync")
+    assert (line["client_last_seq"], line["server_seq"]) == (2, 4)  # not the one snapshot built
+    (answer,) = _lines(logs, "ws resync")
+    assert answer["previous_seq"] == line["server_seq"]  # the two lines name the same number
+
+
 @pytest.mark.parametrize(
     ("last_seq", "logged"),
     [
@@ -116,15 +130,18 @@ def test_client_last_seq_is_logged_only_as_an_int_from_zero_below_two_to_the_53r
     assert [f["t"] for f in conn.take()] == ["snap"]  # and the resync is answered all the same
 
 
-def test_the_sixth_resync_in_a_minute_logs_the_rate_limit_warning_and_no_snapshot() -> None:
+@pytest.mark.parametrize("client_reason", ["sequence_gap", "manual"])
+def test_the_sixth_resync_in_a_minute_logs_the_rate_limit_warning_and_no_snapshot(
+    client_reason: str,
+) -> None:
     conn, sub = _attached()
     with capture_logs() as logs:
         for i in range(RESYNC_MAX_PER_WINDOW):
             conn.clock.now = float(i)
-            _resync(conn, _CH)
+            _resync(conn, _CH, reason=client_reason)
         assert _lines(logs, "ws resync rate limited") == []  # five are within the limit
         conn.clock.now = 59.0
-        _resync(conn, _CH)
+        _resync(conn, _CH, reason=client_reason)
     assert len(_lines(logs, "ws client resync")) == RESYNC_MAX_PER_WINDOW + 1  # the refused too
     assert len(_lines(logs, "ws resync")) == RESYNC_MAX_PER_WINDOW  # no `snap` answered it
     assert _lines(logs, "ws resync rate limited") == [
@@ -133,7 +150,7 @@ def test_the_sixth_resync_in_a_minute_logs_the_rate_limit_warning_and_no_snapsho
             "log_level": "warning",
             "connection_id": _CONN,
             "ch": _CH,
-            "client_reason": "sequence_gap",
+            "client_reason": client_reason,  # the stated one, whichever it is
             "limit": RESYNC_MAX_PER_WINDOW,
             "window_s": RESYNC_WINDOW_S,
         }
