@@ -519,17 +519,18 @@ Scope: the repository itself, `main` branch integrity, branch-protection configu
 
 **E17 client WS gateway** (`docs/security/threat-models/E17-ws-gateway.md`, ticket E17-X01) extends Area 5
 (W3-W5) to the gateway as built by E17-S01/S02/T02. Three concerns get dedicated analysis: the bounded 10 s
-unauthenticated window (pre-auth slots are capped only by the auth timeout until #2155), continuous topic
+unauthenticated window (since #2155 at most 64 sockets await auth per process and each `auth` call is bounded at
+6 s, so WG1 is Low while exposure stays tailnet-only, N3 in §5.10), continuous topic
 authorisation (synchronous drop/narrow before any send; snapshot ordering requirement SR-189), and resource
 exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 51 rows
 (WS-S01..E06, incl. WS-D15..D17 and WS-I09), two inherent Highs (slow consumer WG2; audit-store flooding WG9 =
 WS-D15); no residual High (WG9 re-scored Medium after SR-192 was built, #3123; RR-08 in §16.1, closure proposed);
-residual Medium on WG1, WG3, WG8 and WG9. Controls SR-183..
+residual Medium on WG3, WG8 and WG9. Controls SR-183..
 SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
 
 | T   | STRIDE                 | Threat                                                                                                                       | L   | I   | Risk     | Mitigations                                                                                                                                                 | Residual |
 | --- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| WG1 | Spoofing               | Unauthenticated sockets occupy slots during the 10 s auth window                                                             | M   | M   | Medium   | SR-074; 10 s timeout, 3 attempts, rate limit and frame cap before auth; global pre-auth cap (#2155)                                                         | Medium   |
+| WG1 | Spoofing               | Unauthenticated sockets occupy slots during the 10 s auth window                                                             | M   | M   | Medium   | SR-074; 10 s timeout, 3 attempts, rate limit and frame cap before auth; 64 sockets awaiting auth per process, 6 s per auth call (#2155)                     | Low      |
 | WG2 | Denial of service      | Slow consumer grows server memory                                                                                            | H   | M   | **High** | SR-073; 8 MiB / 2 000-frame budget and overflow ladder (E17-T03); close 4429                                                                                | Low      |
 | WG3 | Denial of service      | Per-user amplification: 8 sockets x 40 symbols of deep book and heatmap                                                      | M   | M   | Medium   | SR-073; subscription/symbol/connection caps, throttles, encode-once (E17-S02/T03); measured by E17-Q03; SR-192/SR-193 for per-frame work and snapshot churn | Medium   |
 | WG4 | Elevation of privilege | Subscription outlives a withdrawn grant or role                                                                              | M   | H   | Medium   | SR-074; re-evaluation on every change, synchronous drop before send; SR-189 snapshot versioning                                                             | Low      |
@@ -577,8 +578,8 @@ residuals (RR-14) and of the open High F-27 (RR-13) is pending, queued on #2701.
 
 | Residual level  | Count                                                                                                                                                                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Low             | 106 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG2, WG4–WG7 from E17-X01; KV1–KV5, KV7, KV8, KV10–KV12, KV14 from E27-X01)                                                                                                                |
-| Medium          | 12 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG1, WG3, WG8, WG9 from E17-X01; KV9, KV13 from E27-X01; U34 from #2295)                                             |
+| Low             | 107 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG1, WG2, WG4–WG7 from E17-X01; KV1–KV5, KV7, KV8, KV10–KV12, KV14 from E27-X01)                                                                                                           |
+| Medium          | 11 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG3, WG8, WG9 from E17-X01; KV9, KV13 from E27-X01; U34 from #2295)                                                  |
 | High / Critical | 0 (WG9 audit-store flooding from E17-X01 was the one, High before SR-192 (#2292) was built; re-scored Medium in #3123 and counted in the Medium row; RR-08 in §16.1, closure proposed)                                                            |
 | Not accepted    | 5 open High/Critical residuals, excluded from the counts above (release blockers for R2): RR1-RR4 from E26-X01, recorded as RR-09..RR-12 in §16.1 (RSK-069..RSK-071; RR4 via G6 and G7), and KV6 (F-27) from E27-X01, recorded as RR-13 (RSK-068) |
 
