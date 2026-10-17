@@ -48,11 +48,9 @@ _ACCOUNTS = sa.text("""
             WHERE k.status = 'invalid') AS keys_invalid
     FROM exchange_accounts a WHERE a.deleted_at IS NULL AND a.env::text = :env
     """)
-_INCIDENTS = sa.text("""
-    SELECT count(*) AS open FROM (
-      SELECT DISTINCT component, kind FROM system_events
-      WHERE resolved_at IS NULL AND severity IN ('error', 'critical')) AS incidents
-    """)
+_INCIDENTS = sa.text(
+    "SELECT count(*) AS open FROM incidents WHERE status IN ('open', 'acknowledged')"
+)
 _SUBACCOUNTS = sa.text("""
     SELECT coalesce(max(n), 0) AS used FROM (
       SELECT count(*) AS n FROM exchange_accounts
@@ -102,10 +100,11 @@ class SqlAlchemyAdminCounts:
         )
 
     async def open_incidents(self) -> int:
-        """Interim: distinct (component, kind) of unresolved `error`/`critical` system events.
+        """Unresolved incidents (`open` or `acknowledged`) of the materialised `incidents` table
+        (E42-T05), one per `(component, signature)`, on `ix_incidents_status_seen`.
 
-        Process-local, not environment-scoped: `system_events` has no env column. To be aligned
-        with E42-T05's incident grouping by (component, signature) when that read model lands.
+        Process-local, not environment-scoped: neither `incidents` nor `system_events` has an env
+        column.
         """
         return int((await self._row(_INCIDENTS))["open"])
 

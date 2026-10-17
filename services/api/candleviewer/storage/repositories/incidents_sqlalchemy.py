@@ -27,13 +27,17 @@ widen to the event's time; `detail` follows the latest event; `severity` keeps t
 `severity` from `error` to `critical`, both clearing the acknowledgement; `resolved_at` is cleared,
 since the group now holds an unresolved event, so `inc_resolved` holds. `title` is the normalised
 message, the same for the whole group, so a conflict never rewrites it.
+
+`purge_resolved` is the retention side (21 Sec.7): one batch of `resolved` incidents last seen more
+than the given months ago, oldest first, on `ix_incidents_status_seen`; open and acknowledged rows
+are kept.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -53,6 +57,8 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 
 _C = _TABLE.c
+#: Upper bound for one purge call, so a single transaction stays short.
+MAX_PURGE_BATCH: Final = 10_000
 _SQLSTATE = re.compile(r"[0-9A-Z]{5}")
 #: SQLSTATE classes of a statement the database refuses: data, constraint, syntax/access, internal.
 _BUG_CLASSES = frozenset({"22", "23", "42", "XX"})
@@ -73,6 +79,16 @@ def _is_outage(exc: BaseException) -> bool:
     if isinstance(exc, sa_exc.DBAPIError):  # the driver's own error: the statement, or the server
         return (_sqlstate(exc) or "")[:2] not in _BUG_CLASSES
     return isinstance(exc, OSError | sa_exc.TimeoutError)  # unreachable; or the pool is exhausted
+
+
+def purge_statement(older_than_months: int, limit: int) -> sa.Delete:
+    """At most `limit` expired `resolved` rows, oldest first. The `DELETE` repeats the predicate:
+    under READ COMMITTED a row a new occurrence reopened after the batch was picked is re-checked
+    against its new version and kept."""
+    cutoff = sa.func.now() - sa.func.make_interval(0, older_than_months)
+    expired = sa.and_(_C.status == "resolved", _C.last_seen_at < cutoff)
+    batch = sa.select(_C.id).where(expired).order_by(_C.last_seen_at).limit(limit)
+    return sa.delete(_TABLE).where(_C.id.in_(batch), expired)
 
 
 def page_statement(status: str | None, after: Position | None, limit: int) -> sa.Select[Any]:
@@ -105,6 +121,15 @@ class SqlAlchemyIncidents:
                 "incidents_read_failed", error=type(exc).__name__, sqlstate=_sqlstate(exc)
             )
             raise StorageTierUnavailable("incidents: read failed") from None
+
+    async def purge_resolved(self, older_than_months: int, limit: int) -> int:
+        """Delete one batch of expired `resolved` incidents; the number of rows deleted."""
+        if older_than_months < 1 or not 1 <= limit <= MAX_PURGE_BATCH:
+            raise ValueError("purge needs older_than_months >= 1 and 1 <= limit <= MAX_PURGE_BATCH")
+        async with self._rel.unit_of_work() as uow:
+            result = await uow.session.execute(purge_statement(older_than_months, limit))
+            await uow.commit()
+        return int(getattr(result, "rowcount", 0))
 
 
 def upsert_statement(occ: IncidentOccurrence, *, seen_at: datetime, incident_id: UUID) -> Insert:

@@ -42,7 +42,7 @@ class CountsPort(Protocol):
     async def account_counts(self, expiring_before: datetime) -> AccountCounts: ...
 
     async def open_incidents(self) -> int:
-        """Distinct (component, kind) of unresolved `error`/`critical` system events."""
+        """Unresolved (`open` or `acknowledged`) incidents of the materialised read model."""
 
 
 class SubaccountPort(Protocol):
