@@ -625,6 +625,8 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     # Reads of the caller's own state: they report a step-up deadline and demand none.
     "authGetSession": "reads the session's own `step_up_expires_at`; demands no step-up",
     "getMe": "reads the session's own `elevated_until`, the step-up grace expiry; demands none",
+    # Leaving view-as acts on the caller's own session only (#3085, AD-F03).
+    "endViewAs": "the contract says it needs no permission and no step-up, so a viewer can leave",
     # A read of another user's sessions: only revoking one is gated (`users`, 04 row 40a).
     "listUserSessions": "a read: the contract says listing needs no step-up (04 row 40a)",
     # The lock lift is no elevation: it takes the password only and restores no grant.
