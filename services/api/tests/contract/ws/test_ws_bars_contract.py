@@ -6,9 +6,9 @@ client validates every frame on receipt, under `cv.v1.json` and `cv.v1.msgpack`.
 emissions come from the recorded BTCUSDT tape (C-13.5), built by the real builders.
 
 Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; a client resync
-after a lost delta; the structured fallback of a binary subscription (C15, C17, C19); the scales of
-each kind-4 frame (C16); a dotted `param`; no `marketdata:read`, at subscribe and mid-stream. The
-generation swap (C14) is `tests/unit/ws/test_bars_socket.py`'s."""
+after a lost delta; a generation swap (C14); the structured fallback of a binary subscription, of a
+snapshot and of deltas (C15, C17, C19); the scales of each kind-4 frame (C16); a dotted `param`;
+no `marketdata:read`, at subscribe and mid-stream."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarReader, row_key
-from candleviewer.bars.rows import bar_param_for
+from candleviewer.bars.rows import bar_param_for, bar_row
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.time_builder import TimeBarBuilder
@@ -53,7 +53,7 @@ class _Storage:
     query (the WS store's hydration), as the real SQL answers them for one symbol."""
 
     def __init__(self, rows: dict[str, list[dict[str, object]]]) -> None:
-        self.rows = rows
+        self.rows = {bar_param: list(stored) for bar_param, stored in rows.items()}
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         symbol, bar_param, start = params[:3]
@@ -159,8 +159,24 @@ def _ms(iso: str) -> int:
 
 @functools.cache
 def _closed(bar_type: str, param: str) -> list[Bar]:
-    """The builders' closed bars of the tape: the ones `_STORE` holds as rows."""
-    return _build(_SERIES[bar_type, param])
+    """The tape's closed bars, the ones `_STORE` holds as rows (`_build` also returns the forming
+    bar a non-time builder ends with)."""
+    return [b for b in _build(_SERIES[bar_type, param]) if b.closed]
+
+
+@functools.cache
+def _long_minute() -> list[dict[str, object]]:
+    """540 stored one-minute rows, so that `history=500` cuts: the tape's 180 bars three times, each
+    copy 180 minutes and 180 indexes after the one before it, the last at the tape's own times."""
+    spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
+    rows: list[dict[str, object]] = []
+    for copy in range(3):
+        back_us = (2 - copy) * 180 * 60_000_000
+        for b in bars:
+            moved = {"index": b.index + 180 * copy, "open_time": b.open_time - back_us}
+            moved["close_time"] = b.close_time - back_us
+            rows.append(bar_row(b.model_copy(update=moved), spec, generation=0))
+    return rows
 
 
 def _up(kind: Literal["open", "update", "close"], bar: Bar, *, amended: bool = False) -> BarUpdate:
@@ -197,9 +213,10 @@ def test_contract_bars_snapshot_equals_rest_for_the_same_window(
     bar_type: str, param: str, history: int, mode: str, flow: bool
 ) -> None:
     """§6.1: the snapshot is the last `history` bars, oldest to newest as REST orders them. REST
-    is asked for every field; `include_delta` decides which of them the snapshot carries."""
-    rig, spec = _Rig(_STORE), from_wire(bar_type, param)
-    first = int(str(_STORE[bar_param_for(spec)][0]["ts"]))  # the series' first stored bar
+    is asked for every field; `include_delta` decides which of them the snapshot carries. 3 cuts
+    every series; 500 cuts the 540 one-minute rows and takes the tape's 5 and 8 whole."""
+    rows, spec = {**_STORE, "1m": _long_minute()}, from_wire(bar_type, param)
+    rig, first = _Rig(rows), int(str(rows[bar_param_for(spec)][0]["ts"]))  # the first stored bar
     rest = {"include_delta": "true"}
     stored = rig.rest(bar_type, param, **rest, **{"from": _iso(first)})
     window = stored[-history:]
@@ -242,7 +259,7 @@ def test_contract_bars_forming_bar_is_unconfirmed_in_every_frame_and_confirmed_e
             for item in h.structured_of(c.next_of("d"))["bars"]:
                 seen.setdefault(item["index"], []).append(item["confirm"])
     assert sorted(seen) == [r["index"] for r in _STORE["1m"]]  # every bar of the tape arrived
-    assert all(flags == [False] * (len(flags) - 1) + [True] for flags in seen.values())
+    assert all(f[0] is False and f == [False] * (len(f) - 1) + [True] for f in seen.values())
 
 
 @pytest.mark.parametrize("mode", h.MODES)
@@ -274,6 +291,29 @@ def test_contract_bars_a_client_that_lost_a_delta_resyncs_to_a_snapshot_holding_
         assert mine.apply(c.next_of("d")) and mine.last == 6  # the deltas go on from its `s`
 
 
+@pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_a_generation_change_is_a_swap_snapshot_never_a_delta(mode: str) -> None:
+    """§7.4, §8.2, §16.4 (C14): a change of generation, up or down, re-snapshots the subscriber
+    instead of sending a `d`; the client replaces its whole series, never merging generations."""
+    spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
+    rig, mine = _Rig({"1m": _STORE["1m"][:3]}), _Series(binary=mode == "binary")
+    with h.connect(rig.w) as c:
+        c.sub({"ch": CH, "opts": {"encoding": mode}})
+        assert mine.apply(c.next_of("snap")) and sorted(mine.bars) == [(0, 0), (0, 1), (0, 2)]
+        rig.emit(spec, _up("open", bars[3]))
+        assert mine.apply(c.next_of("d"))  # s 2
+        # up, then back down: each snapshot takes the next `s`
+        for generation, seq in [(1, 3), (0, 4)]:
+            rig.emit(spec, _up("open", bars[0]), generation=generation)  # index 0 again
+            swap = c.recv()  # the first frame the emission causes: a `snap`, not a `d`
+            meta = swap["meta"]
+            assert (swap["t"], swap["s"], meta["previous_seq"]) == ("snap", seq, seq - 1)
+            assert meta["reason"] == "generation_swap" and mine.apply(swap)
+            assert sorted(mine.bars) == [(generation, 0)]  # replaced: nothing of the old series
+        c.send({"t": "ping", "id": "p"})
+        assert c.recv()["t"] == "pong"  # and no `d` followed either snapshot
+
+
 def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c15_c17() -> None:
     """§3.4, §6.1 (C15, C17, C19): an amended close, a value outside its field and unknown scales
     each go structured, `s` runs on across both encodings, and the client applies every frame."""
@@ -291,7 +331,8 @@ def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c1
     with h.connect(rig.w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "binary", "include_delta": True}})
         assert mine.apply(c.next_of("snap"))
-        for rig.scales, update in steps:  # the catalogue's answer for each emission
+        for scales, update in steps:
+            rig.scales = scales  # the catalogue's answer for this emission
             rig.emit(spec, update)
             frames.append(c.next_of("d"))
             assert mine.apply(frames[-1])
@@ -300,6 +341,25 @@ def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c1
     ]  # fmt: skip
     assert (mine.bars[0, 10]["c"], mine.bars[0, 11]["o"]) == ("63000.5", "10000000000000000000")
     assert len({frozenset(mine.bars[0, i]) for i in range(10, 14)}) == 1  # one shape, any encoding
+
+
+def test_contract_bars_unknown_scales_send_the_snapshot_structured_then_d_is_kind_4() -> None:
+    """§3.4, §6.1 (C15): a snapshot kind 4 cannot carry goes whole structured and `sub_ok` still
+    says binary; once the scales are known the next `d` is kind 4, `s` runs on, and the client
+    applies both."""
+    spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
+    rig, mine = _Rig({"1m": _STORE["1m"][:3]}), _Series(binary=True)
+    rig.scales = None
+    with h.connect(rig.w) as c:
+        (result,) = c.sub({"ch": CH, "opts": {"encoding": "binary"}})["p"]["results"]
+        assert result["effective"]["encoding"] == "binary"
+        snap = c.next_of("snap")
+        assert (snap["e"], snap["s"]) == ("j", 1) and mine.apply(snap)
+        rig.scales = (1, 3)
+        rig.emit(spec, _up("close", bars[3]))
+        d = c.next_of("d")
+        assert (d["e"], d["s"]) == (c.binary_e, 2) and mine.apply(d)
+    assert sorted(mine.bars) == [(0, 0), (0, 1), (0, 2), (0, 3)]
 
 
 def test_contract_bars_each_kind_4_frame_carries_the_scales_its_own_bars_need() -> None:
