@@ -95,7 +95,9 @@ class _Hub(GatewayHub):
 class _Wire:
     """Starlette's `WebSocket`, the slice the handler uses: inbound frames are fed, every send is
     recorded raw (`raw`) and decoded (`sent`), and `hold()` parks sends like a peer that stopped
-    reading."""
+    reading. A server `ping` is kept out of `sent`, in `pings`, and answered at once with a `pong`
+    echoing its `id`, as §9.1 requires of a client (C6): with the flag on the RTT probe (#412)
+    pings from the first classification on. `answer = False` stops answering, a client gone slow."""
 
     def __init__(self, encoding: str = _JSON) -> None:
         self.scope: dict[str, Any] = {
@@ -107,6 +109,8 @@ class _Wire:
         self.inbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.sent: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.raw: list[tuple[str, str | bytes]] = []
+        self.pings: list[dict[str, Any]] = []
+        self.answer = True
         self.closed_with: int | None = None
         self.parked = asyncio.Event()  # set once a send is held
         self._gate: asyncio.Event | None = None
@@ -135,6 +139,11 @@ class _Wire:
             await self._gate.wait()
         self.raw.append((kind, payload))
         frame = msgpack.unpackb(payload) if isinstance(payload, bytes) else json.loads(payload)
+        if frame["t"] == "ping":
+            self.pings.append(frame)
+            if self.answer:
+                self.feed({"t": "pong", "id": frame["id"]})
+            return
         self.sent.put_nowait(frame)
 
     async def close(self, code: int = 1000) -> None:
@@ -1215,7 +1224,12 @@ async def test_the_budgeted_writer_sends_what_push_timed_and_sized(
         await asyncio.wait({handler})
     wire = [payload for _, payload in sock.raw]
     assert {how for how, _ in sock.raw} == {"bytes" if sock.msgpack else "text"}
-    assert encoded == sent == wire  # once each, at push; the writer encoded nothing
+    # Once each, at push, and sent as encoded. The clock passed 1 s, so the writer's turn queued
+    # the RTT probe's `ping` (§9.1) after the deltas, and it overtakes them on the priority lane.
+    *rest, ping = encoded
+    head = len(rest) - deltas
+    assert sent == wire == [*rest[:head], ping, *rest[head:]]
+    assert sock.pings == [msgpack.unpackb(ping) if isinstance(ping, bytes) else json.loads(ping)]
     stamped = [i for i, f in enumerate(frames) if f["s"] % n == 0]
     assert [frames[i]["s"] for i in stamped] == ([n, 2 * n] if deltas > n else [])
     assert ticks.reads == 2 * len(stamped)  # a timer pair per stamped frame; none for any other

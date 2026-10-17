@@ -67,7 +67,11 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   a subscription's stream drops what it overtakes of it (§8.4 Lanes). The `bye` takes a terminal
   slot, and every close flushes under one deadline, past which the socket goes with no `bye`
   (§4.4, §8.4); the close audit records the ladder's trigger and an expired flush (§4.3). The
-  hub's deltas go through the pipeline's pacer (§8.1); the writer's turn closes due windows.
+  hub's deltas go through the pipeline's pacer (§8.1); the writer's turn closes due windows. It
+  also classifies the connection every `CV_WS_CLASSIFY_INTERVAL_MS`, announcing a class change on
+  `system` (§8.3), and sends the RTT probe `ping`, whose `pong` `dispatch` hands the pipeline at
+  the frame's receipt (§9.1). The idle heartbeat `ping` is unchanged; while the probe runs, the
+  outbound traffic does not idle long enough for it to fire.
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
@@ -846,9 +850,9 @@ def make_ws_router(
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
     `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
     deadline. `None`, today's path, keeps the `OUTBOUND_QUEUE_MAX` push bound. A config also
-    makes the `welcome` advertise `features.coalescing` (§4.2), though nothing coalesces before
-    the later slices, which is why the flag stays off until the pipeline is complete. Without a
-    config the `welcome` says `coalescing: false`."""
+    makes the `welcome` advertise `features.coalescing` (§4.2); the flag stays off until #410's
+    chaos scenarios pass (§8.4 Rollout). Without a config the `welcome` says
+    `coalescing: false`."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
@@ -1151,7 +1155,7 @@ def make_ws_router(
                 sink = conn.emitter if conn.pipeline is None else conn.pipeline
                 svc.sequencing.register(conn.authz, sink)
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
-                conn.pipeline.attach(conn.authz, conn.emitter)
+                conn.pipeline.attach(conn.authz, conn.emitter, conn.push_system)
                 conn.authz.on_settle = lambda subs: settle(conn, subs)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
@@ -1255,8 +1259,9 @@ def make_ws_router(
             conn.violation(fid)
         elif kind == "ping":
             pong(conn, frame)
-        elif kind == "pong":
-            pass  # reply to a server ping; inbound traffic already recorded
+        elif kind == "pong":  # a reply to a server ping; inbound traffic already recorded
+            if conn.pipeline is not None and isinstance(fid, str):  # flag on: maybe the probe's
+                conn.pipeline.pong(fid, conn.watchdog.last_inbound)  # at its receipt (§9.1)
         elif kind == "auth":
             await do_auth(conn, frame)
         elif not conn.lifecycle.authenticated:
