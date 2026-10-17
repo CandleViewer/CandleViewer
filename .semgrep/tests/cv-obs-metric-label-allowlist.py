@@ -29,3 +29,7 @@ def bad_raw_path(reg: object) -> None:
 
 def ok_flag(reg: object) -> None:
     reg.counter("cv_w_total", "help", ("flag", "result"))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_entity_kind(reg: object) -> None:
+    reg.counter("cv_m_total", "help", ("entity_kind",))  # ok: cv-obs-metric-label-allowlist

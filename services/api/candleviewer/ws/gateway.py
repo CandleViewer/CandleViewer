@@ -932,9 +932,18 @@ def make_ws_router(
             p["rtt_hint_ms"] = max(0, now_ms - client_ms)
         conn.push(_reply("pong", frame.get("id"), ts=now_ms, p=p))
 
-    def flush(conn: _Connection) -> None:
+    def pending(authz: ConnectionAuthz) -> set[str]:
+        return {sid for sid, sub in authz.by_id.items() if sub.snapshot_pending}
+
+    def flush(conn: _Connection, fresh: set[str]) -> None:
+        """Snapshot the pending subscriptions after a `sub` or `ctl`; a `machines` one only when
+        this frame made it pending (`fresh`). After that only a publish on its topic wakes it,
+        never an inbound frame (§6.4)."""
         if conn.authz is not None and conn.emitter is not None:
-            conn.emitter.flush_pending(list(conn.authz.by_id.values()))
+            subs = conn.authz.by_id.values()
+            conn.emitter.flush_pending(
+                [s for s in subs if s.topic.entity_kind is None or s.sub_id in fresh]
+            )
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
@@ -988,16 +997,18 @@ def make_ws_router(
             else:
                 conn.push(build_ws_error("not_authenticated", id=_str_or_none(fid)))
         elif kind == "sub" and conn.authz is not None:
+            held = pending(conn.authz)
             await _handle_sub(conn.authz, frame, conn.send, now_ms=conn.wall_ms())
             if conn.authz.by_id and conn.lifecycle.can(ConnEvent.SUB_OK):
                 conn.lifecycle.fire(ConnEvent.SUB_OK)
-            flush(conn)  # §7.1: the `snap` follows `sub_ok`, before any `d`
+            flush(conn, pending(conn.authz) - held)  # §7.1: the `snap` follows `sub_ok`
         elif kind == "unsub" and conn.authz is not None:
             # §5.3 idempotent; §6.2 `system` is permanent (refused, stays attached).
             conn.push(handle_unsub(conn.authz, frame, conn.wall_ms()))
         elif kind == "ctl" and conn.authz is not None:
+            held = pending(conn.authz)
             conn.push(handle_ctl(conn.authz, frame, conn.wall_ms()))
-            flush(conn)  # `ctl_ok { resnapshot }` then the `reconfigure` snap
+            flush(conn, pending(conn.authz) - held)  # `ctl_ok { resnapshot }`, then its snap
         elif kind == "resync" and conn.authz is not None and conn.emitter is not None:
             conn.emitter.client_resync(conn.authz, frame)
         else:

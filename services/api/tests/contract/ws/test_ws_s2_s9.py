@@ -80,6 +80,37 @@ def test_s2_delta_is_suppressed_while_the_snapshot_cannot_be_built() -> None:
         assert (snap["t"], snap["s"]) == ("snap", 1)
 
 
+def test_s2_a_pending_machines_subscription_waits_for_a_publish_not_an_inbound_frame() -> None:
+    """§6.4: no inbound frame retries it; the first publish on its topic wakes it."""
+    w, ch = World(), "machines.kill_switch.state"
+    w.source.unavailable.add("")  # no state yet for this symbol-less entity
+    with connect(w) as c:
+        assert c.sub(ch)["p"]["results"][0]["snapshot_pending"] is True
+        w.source.unavailable.clear()
+        c.sub("book.BTCUSDT.50")
+        assert c.recv()["ch"] == "book.BTCUSDT.50"  # that topic's `snap`, and no machine one
+        c.send({"t": "ctl", "id": "c", "ch": "book.BTCUSDT.50", "p": {"throttle_ms": 250}})
+        assert c.recv()["t"] == "ctl_ok"  # a `ctl` retries no pending machines subscription either
+        c.send({"t": "ping", "id": "p"})
+        assert c.recv()["t"] == "pong"
+        assert w.call(lambda: w.hub.publish(ch, delta_body("machines"), wake=True)) == 1
+        snap = c.recv()
+        assert (snap["t"], snap["ch"], snap["meta"]["reason"]) == ("snap", ch, "initial")
+
+
+def test_s2_a_resumed_machines_subscription_is_snapped_at_once() -> None:
+    """A `ctl` that makes a `machines` subscription pending is answered with its `snap`."""
+    w, ch = World(), "machines.kill_switch.state"
+    with connect(w) as c:
+        c.sub(ch)
+        assert c.recv()["t"] == "snap"
+        for paused in (True, False):
+            c.send({"t": "ctl", "id": "c", "ch": ch, "p": {"paused": paused}})
+            assert c.recv()["t"] == "ctl_ok"
+        snap = c.recv()
+        assert (snap["t"], snap["meta"]["reason"]) == ("snap", "reconfigure")
+
+
 def test_s2_snapshot_false_attaches_to_deltas_only_when_continuity_is_provable() -> None:
     w = World()
     w.source.covered_from_ts = 1_789_132_000_000

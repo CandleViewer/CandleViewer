@@ -732,12 +732,14 @@ class SequencingHub:
         ts_ms: int | None = None,
         meta: Mapping[str, Any] | None = None,
         select: Callable[[Subscription], bool] | None = None,
+        wake: bool = False,
     ) -> int:
         """One delta for `ch` (live, or one replay session) to every subscription in its scope:
         `account` for account-scoped private families, `user` (the owner) for SELF ones. With
         `select`, only the subscriptions it accepts, asked after the scope check: a publisher
         sends one variant per group. `select` must be pure and total: a raise stops the fan-out
-        part-way."""
+        part-way. With `wake` (the source already holds `body`, §6.4), a subscription still
+        pending its `snap` gets that `snap` instead of the `d`: the publish wakes it."""
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
@@ -745,7 +747,9 @@ class SequencingHub:
                 continue
             if select is not None and not select(sub):
                 continue
-            if emitter.delta(
+            if wake and sub.snapshot_pending:
+                sent += emitter.flush_pending((sub,))
+            elif emitter.delta(
                 sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms, meta=meta
             ):
                 sent += 1

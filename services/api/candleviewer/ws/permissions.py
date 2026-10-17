@@ -46,7 +46,6 @@ from candleviewer.ws.limits import (
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
 )
-from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -131,6 +130,13 @@ class AuditSink(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
+class EntityScopes(Protocol):
+    """What `sub` reads of the §6.4 machine-state registry, which only the publisher writes."""
+
+    def scope(self, ch: str) -> EntityScope | None:
+        """The entry's scope; `None` when `ch` has no entry."""
+
+
 @dataclass
 class SubscriptionServices:
     """Process-wide collaborators shared by every connection (injected; never a global)."""
@@ -150,7 +156,7 @@ class SubscriptionServices:
     bars_off: bool = False
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
-    machines: MachineStateRegistry | None = None
+    machines: EntityScopes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +315,10 @@ class ConnectionAuthz:
         self.by_id: dict[str, Subscription] = {}
         self._by_topic: dict[str, set[str]] = {}
         self._ids = itertools.count(1)
+        #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
+        #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
+        #: after that `admit`, for the audit row only; it never reaches the client.
+        self.refusal_reason: str | None = None
 
     # -- views ------------------------------------------------------------------------------
 
@@ -352,11 +362,14 @@ class ConnectionAuthz:
     ) -> tuple[dict[str, Any], Subscription | None]:
         """Validate, authorise and record one topic entry. Returns the `sub_ok` result and the
         new subscription (`None` when rejected or for the implicit `system` topic). Pure
-        bookkeeping: upstream refs and bar leases are taken by `subscribe_upstream`."""
+        bookkeeping: upstream refs and bar leases are taken by `subscribe_upstream`. A refused
+        `machines` entity leaves its internal §6.4 reason in `refusal_reason`."""
         ch = entry.get("ch") if isinstance(entry, dict) else entry
+        self.refusal_reason = None
         try:
             return self._admit(entry, ch, snapshot, replay_session_id)
         except TopicError as exc:
+            self.refusal_reason = exc.reason
             return _fail(ch, exc.code, exc.message, exc.field), None
 
     def _admit(
@@ -455,7 +468,7 @@ class ConnectionAuthz:
         scope = registry.scope(ch) if registry is not None else None
         refusal = machine_refusal(self.principal, kind, scope)
         if refusal is not None:
-            raise TopicError(refusal[0], _REFUSED[refusal[0]])
+            raise TopicError(refusal[0], _REFUSED[refusal[0]], reason=refusal[1])
         return scope or EntityScope()
 
     def _may_view(self, permission: Permission, account: uuid.UUID) -> bool:
@@ -910,10 +923,12 @@ async def handle_sub(
     replay = body.get("replay_session_id")
     for index, entry in enumerate(body["topics"]):
         ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by the shape
+        why: str | None = None  # a refused `machines` entity's internal reason, for the audit
         if index >= MAX_TOPICS_PER_SUB:
             result = _fail(ch, "too_many_topics", "More than 50 topics in one sub.")
         else:
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
+            why = authz.refusal_reason  # read before any await
             if sub is not None:
                 result = await authz.subscribe_upstream(sub) or result
                 if result["ok"]:
@@ -921,7 +936,7 @@ async def handle_sub(
         results.append(result)
         _observe(ch, result)
         if not result["ok"]:
-            await _audit_denial(authz, ch, result["error"]["code"])
+            await _audit_denial(authz, ch, result["error"]["code"], why)
     cv_ws_client_topics_depth.observe(len(authz.by_id))
     out: dict[str, Any] = {"t": "sub_ok", "p": {"results": results}}
     if fid is not None:
@@ -992,12 +1007,16 @@ def _observe(ch: str, result: Mapping[str, Any]) -> None:
 _AUDITED_DENIALS: Final = frozenset({"forbidden", "account_scope_denied"})
 
 
-async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str) -> None:
+async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str, why: str | None) -> None:
     """`ws.subscribe.denied`: every authorisation denial, plus any rejected private-topic
     attempt on a well-formed topic name (confidential; a malformed `sub` is refused whole before
-    any topic is read, #2396). Best effort: the reply is never held hostage to the audit sink."""
+    any topic is read, #2396). A `machines` row names the full `ch` (a topic name, at most 120
+    characters) and, when its entity was refused, the internal §6.4 reason `why` in `reason`
+    only, which the non-Owner projection drops (SR-067); every other field is the same for every
+    reason. Best effort: the reply is never held hostage to the audit sink."""
     audit = authz.services.audit
-    fam = FAMILIES.get(topic_family(ch))
+    family = topic_family(ch)
+    fam = FAMILIES.get(family)
     if audit is None or not (code in _AUDITED_DENIALS or (fam is not None and fam.private)):
         return
     try:
@@ -1006,16 +1025,24 @@ async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str) -> None:
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
             object_kind="ws_topic",
-            object_id=topic_family(ch)[:40],
+            object_id=ch if family == "machines" else family[:40],
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING,
-            reason=code,
+            reason=why or code,
         )
     except Exception:
         _log().warning("ws subscribe-denied audit not written", exc_info=True)
 
 
+#: §6.4: a `machines` revocation's internal reason. `_reevaluate_entity` revokes with
+#: `permission_revoked` exactly when the row refuses on `role`; otherwise the subscription held
+#: its entity at `sub`, so the refusal is `foreign`. (`evicted` comes with entry removal.)
+_MACHINE_REVOKED: Final = {"permission_revoked": "role", "account_scope_changed": "foreign"}
+
+
 async def _audit_revocations(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> None:
+    """`ws.subscription.revoked` per `revoked` frame. A `machines` row names the full `ch` and
+    its internal §6.4 reason, in `reason` only (SR-067), as a refusal's row does."""
     audit = authz.services.audit
     if audit is None:
         return
@@ -1023,13 +1050,15 @@ async def _audit_revocations(authz: ConnectionAuthz, frames: list[dict[str, Any]
         if f["t"] != "revoked":
             continue
         try:
+            ch, reason = str(f["ch"]), f["p"]["reason"]
+            machines = topic_family(ch) == "machines"
             await audit.emit(
                 "ws.subscription.revoked",
                 actor_label="ws",
                 actor_user_id=authz.principal.user_id,
                 object_kind="ws_topic",
-                object_id=str(f["ch"])[:40],
-                reason=f["p"]["reason"],
+                object_id=ch if machines else ch[:40],
+                reason=_MACHINE_REVOKED.get(reason, reason) if machines else reason,
                 after_state={"removed_accounts": f["p"].get("removed_accounts", [])},
             )
         except Exception:
