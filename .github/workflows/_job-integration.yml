@@ -141,6 +141,7 @@ jobs:
           MINIO_ROOT_PASSWORD: unused-ci
           CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
         run: |
+          set -e  # stop at the first failing pass; not left to the runner's default `bash -e`
           for n in 1 2 3 4 5; do
             echo "== S2 -> S3b -> S8, pass ${n} of 5 =="
             uv run pytest tests/chaos/storage/test_stack_scenarios.py -m "chaos and integration" \
