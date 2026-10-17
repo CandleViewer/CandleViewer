@@ -15,11 +15,16 @@ _GRANTS = sa.text(
     "SELECT exchange_account_id, can_view, frozen FROM user_account_access "
     "WHERE user_id = CAST(:id AS uuid)"
 )
+# O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission, so a
+# disabled user's armed rules lose `rules:arm_live` on the next read, before the asynchronous
+# disarm has run. The same predicate guards `identity_sqlalchemy._PERMS_SQL`.
 _PERMS = sa.text(
-    "SELECT DISTINCT p.code FROM user_roles ur "
+    "SELECT DISTINCT p.code FROM users u "
+    "JOIN user_roles ur ON ur.user_id = u.id "
     "JOIN role_permissions rp ON rp.role_id = ur.role_id "
     "JOIN permissions p ON p.id = rp.permission_id "
-    "WHERE ur.user_id = CAST(:id AS uuid) AND (ur.expires_at IS NULL OR ur.expires_at > now())"
+    "WHERE u.id = CAST(:id AS uuid) AND u.status = 'active' AND u.deleted_at IS NULL "
+    "AND (ur.expires_at IS NULL OR ur.expires_at > now())"
 )
 
 
