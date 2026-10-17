@@ -3794,6 +3794,12 @@ So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-t
 key that no flag definition names reach the Owner only. This uses the existing schema; no schema
 change.
 
+Likewise `exchange` (in `health` and `exchange_state`) reaches a Manager or Viewer with only
+`public_ws`, `private_ws` and `rest`; `applied` (in `connection_quality`) with only
+`throttle_multiplier`, `forced_coalesce` and `degraded_topics`. Every other property of either
+object is the Owner's alone until this section lists it: `rate_budget_free_pct` (E42-T05, its
+first producer, decides who may see it) and any property an object gains later.
+
 An engaged kill switch covers a connection, as of that frame, when its `scope` is `global`, or when
 the `exchange_account_ids` that connection receives is not empty. Under `scope: "accounts"` a frame
 always carries `exchange_account_ids`, and a Manager's or Viewer's list names only the covered
