@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import datetime
 from typing import Any
 
 import sqlalchemy as sa
 import structlog
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -60,25 +62,42 @@ _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
 #: the trigger hashed (see `_VERIFY_BATCH_SQL`).
 
-#: Fixed statements (no string-built SQL — Semgrep/Bandit B608): every
-#: optional filter is a typed, bound parameter that is a no-op when NULL.
-_QUERY_PAGE_SQL = sa.text(
-    "SELECT id, event_ts, actor_user_id, action, object_kind, object_id, outcome, "
-    "severity, actor_ip, request_id, entry_hash, prev_hash FROM audit_log WHERE "
-    "(CAST(:actor_user_id AS uuid) IS NULL OR actor_user_id = CAST(:actor_user_id AS uuid)) "
-    "AND (CAST(:actions AS text[]) IS NULL OR action = ANY(CAST(:actions AS text[]))) "
-    "AND (CAST(:subject_type AS text) IS NULL OR object_kind = CAST(:subject_type AS text)) "
-    "AND (CAST(:severity AS severity) IS NULL OR severity = CAST(:severity AS severity)) "
-    "AND (CAST(:outcome AS audit_outcome) IS NULL "
-    "OR outcome = CAST(:outcome AS audit_outcome)) "
-    "AND (CAST(:from_ts AS timestamptz) IS NULL OR event_ts >= CAST(:from_ts AS timestamptz)) "
-    "AND (CAST(:to_ts AS timestamptz) IS NULL OR event_ts <= CAST(:to_ts AS timestamptz)) "
-    "AND (CAST(:ip AS inet) IS NULL OR actor_ip = CAST(:ip AS inet)) "
-    "AND (CAST(:cursor AS bigint) IS NULL OR id < CAST(:cursor AS bigint)) "
-    "ORDER BY id DESC LIMIT :limit"
+#: The `audit_log` columns the page query reads or filters on, typed so that every bound
+#: value carries its Postgres type. The enum columns are read as text: an enum type built
+#: without its values would refuse them on read, and the values are owned by the schema.
+_AUDIT = sa.table(
+    "audit_log",
+    sa.column("id", sa.BigInteger),
+    sa.column("event_ts", TIMESTAMP(timezone=True)),
+    sa.column("actor_user_id", UUID(as_uuid=True)),
+    sa.column("actor_ip", INET),
+    sa.column("action", sa.Text),
+    sa.column("object_kind", sa.Text),
+    sa.column("object_id", sa.Text),
+    sa.column("outcome", sa.Text),
+    sa.column("severity", sa.Text),
+    sa.column("request_id", UUID(as_uuid=True)),
+    sa.column("entry_hash", sa.Text),
+    sa.column("prev_hash", sa.Text),
 )
+_OUTCOME = ENUM(name="audit_outcome", create_type=False)
+_SEVERITY = ENUM(name="severity", create_type=False)
 
-_SET_TIMEOUT_SQL = sa.text("SELECT set_config('statement_timeout', :v, true)")
+#: The `q` document. The full-text index planned in ADR-0025 must use this exact expression
+#: (the planner matches the expression, and `'simple'` must stay a literal, not a parameter).
+FTS_DOCUMENT_SQL = (
+    "to_tsvector('simple', coalesce(before_state::text, '') || ' ' || "
+    "coalesce(after_state::text, '') || ' ' || coalesce(object_label, ''))"
+)
+_FTS_DOCUMENT: sa.ColumnClause[str] = sa.literal_column(FTS_DOCUMENT_SQL)
+_FTS_CONFIG: sa.ColumnClause[str] = sa.literal_column("'simple'")
+
+_SET_TIMEOUT_SQL = sa.text(
+    "SELECT set_config('statement_timeout', :v, true), "
+    # One SQL text per filter shape; a custom plan per call keeps each shape's plan fitted
+    # to its values (a generic plan cannot see a time window or an actor's row count).
+    "set_config('plan_cache_mode', 'force_custom_plan', true)"
+)
 
 #: SQLSTATE 57014 `query_canceled`: raised when `statement_timeout` fires.
 _QUERY_CANCELED = "57014"
@@ -118,6 +137,55 @@ def _json_or_null(value: dict[str, Any] | None) -> str | None:
     """SQL NULL for an absent state — never the JSON literal `null`, which
     the chain trigger would hash as the 4-char text `null`."""
     return None if value is None else json.dumps(value, sort_keys=True)
+
+
+def _page_statement(
+    *,
+    restrict_to_actor: str | None,
+    actor_user_id: str | None,
+    actions: list[str] | None,
+    subject_type: str | None,
+    subject_id: str | None,
+    severity: str | None,
+    outcome: str | None,
+    ip: str | None,
+    q: str | None,
+    from_ts: datetime | None,
+    to_ts: datetime | None,
+    cursor: int | None,
+    limit: int,
+) -> sa.Select[Any]:
+    """One statement per combination of present filters, each a bound parameter (no
+    string-built SQL, Semgrep/Bandit B608), and no `IS NULL OR` placeholder, so every shape
+    gets its own plan. A set `restrict_to_actor` replaces `actor_user_id`, so a narrowed
+    caller can never widen its rows."""
+    t = _AUDIT
+    actor = restrict_to_actor if restrict_to_actor is not None else actor_user_id
+    where: list[sa.ColumnElement[bool]] = []
+    if actor is not None:
+        where.append(t.c.actor_user_id == uuid.UUID(actor))
+    if actions:
+        where.append(t.c.action == sa.any_(sa.bindparam("actions", actions, ARRAY(sa.Text))))
+    if subject_type is not None:
+        where.append(t.c.object_kind == subject_type)
+    if subject_id is not None:
+        where.append(t.c.object_id == subject_id)
+    if severity is not None:
+        where.append(t.c.severity == sa.bindparam("severity", severity, _SEVERITY))
+    if outcome is not None:
+        where.append(t.c.outcome == sa.bindparam("outcome", outcome, _OUTCOME))
+    if ip is not None:
+        where.append(t.c.actor_ip == ip)
+    if from_ts is not None:
+        where.append(t.c.event_ts >= from_ts)
+    if to_ts is not None:
+        where.append(t.c.event_ts < to_ts)
+    if q is not None:
+        query = sa.func.websearch_to_tsquery(_FTS_CONFIG, sa.bindparam("q", q, sa.Text))
+        where.append(_FTS_DOCUMENT.op("@@")(query))
+    if cursor is not None:
+        where.append(t.c.id < cursor)
+    return sa.select(t).where(*where).order_by(t.c.id.desc()).limit(limit)
 
 
 class SqlAlchemyAuditRepository:
@@ -161,30 +229,36 @@ class SqlAlchemyAuditRepository:
     async def query_page(
         self,
         *,
+        restrict_to_actor: str | None,
         actor_user_id: str | None,
         actions: list[str] | None,
         subject_type: str | None,
+        subject_id: str | None,
         severity: str | None,
         outcome: str | None,
+        ip: str | None,
+        q: str | None,
         from_ts: datetime | None,
         to_ts: datetime | None,
         cursor: int | None,
         limit: int,
-        ip: str | None = None,
         timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {
-            "actor_user_id": actor_user_id,
-            "actions": actions or None,
-            "subject_type": subject_type,
-            "severity": severity,
-            "outcome": outcome,
-            "from_ts": from_ts,
-            "to_ts": to_ts,
-            "cursor": cursor,
-            "limit": limit,
-            "ip": ip,
-        }
+        statement = _page_statement(
+            restrict_to_actor=restrict_to_actor,
+            actor_user_id=actor_user_id,
+            actions=actions,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            severity=severity,
+            outcome=outcome,
+            ip=ip,
+            q=q,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            cursor=cursor,
+            limit=limit,
+        )
         # The budget covers the whole call, connection checkout included: a pool wait
         # would otherwise run to the pool's own 30 s timeout.
         budget = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
@@ -195,7 +269,7 @@ class SqlAlchemyAuditRepository:
                     if timeout_ms is not None:
                         # SET takes no bind parameters; set_config(..., true) is `SET LOCAL`.
                         await uow.session.execute(_SET_TIMEOUT_SQL, {"v": f"{int(timeout_ms)}ms"})
-                    result = await uow.session.execute(_QUERY_PAGE_SQL, params)
+                    result = await uow.session.execute(statement)
                     return [dict(row._mapping) for row in result]
         except TimeoutError:
             cause = "budget"

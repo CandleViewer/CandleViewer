@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,8 @@ from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.errors import AuditChainBroken
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.query import AuditQueryService
+
+_ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
 
 async def _seed(repo: FakeAuditRepository, n: int, clock: FakeClock) -> None:
@@ -39,12 +42,39 @@ async def test_query_cursor_pagination_walks_newest_first(
 ) -> None:
     await _seed(repo, 7, clock)
     svc = AuditQueryService(repo)
-    page1 = await svc.query(limit=3)
+    page1 = await svc.query(restrict_to_actor=None, limit=3)
     assert [e.id for e in page1.items] == [7, 6, 5] and page1.has_more
     assert page1.next_cursor == "5" and page1.count == 3
-    page3 = await svc.query(limit=3, cursor=2)
+    page3 = await svc.query(restrict_to_actor=None, limit=3, cursor=2)
     assert [e.id for e in page3.items] == [1] and not page3.has_more
     assert page3.next_cursor is None
+
+
+async def test_query_passes_the_resolved_scope_to_the_repository(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 4, clock)
+    for row in repo.rows:
+        row["actor_user_id"] = _ME if row["id"] % 2 else _OTHER
+    page = await AuditQueryService(repo).query(restrict_to_actor=_ME, actor_user_id=_OTHER)
+    assert [e.id for e in page.items] == [3, 1]
+    assert repo.page_calls[-1]["restrict_to_actor"] == _ME
+
+
+async def test_query_filters_by_subject_id_ip_and_full_text(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 6, clock)
+    repo.rows[1].update(object_label="Breakout BTC", actor_ip="10.0.0.9")
+    svc = AuditQueryService(repo)
+    page = await svc.query(restrict_to_actor=None, subject_id="1")
+    assert [e.id for e in page.items] == [2]
+    assert [e.id for e in (await svc.query(restrict_to_actor=None, ip="10.0.0.9")).items] == [2]
+    found = await svc.query(restrict_to_actor=None, q="breakout btc")
+    assert [e.id for e in found.items] == [2]
+    assert (await svc.query(restrict_to_actor=None, q="breakout eth")).items == []
+    assert (await svc.query(restrict_to_actor=None, q="  ")).count == 6  # blank: no search
+    assert repo.page_calls[-1]["q"] is None
 
 
 async def test_query_filters_by_action_severity_outcome(
@@ -52,7 +82,7 @@ async def test_query_filters_by_action_severity_outcome(
 ) -> None:
     await _seed(repo, 10, clock)
     page = await AuditQueryService(repo).query(
-        actions=["auth.login"], severity="error", outcome="denied"
+        restrict_to_actor=None, actions=["auth.login"], severity="error", outcome="denied"
     )
     assert [e.id for e in page.items] == [1]
     assert page.items[0].outcome is AuditOutcome.DENIED
@@ -86,7 +116,7 @@ async def test_query_filters_by_subject_type(repo: FakeAuditRepository, clock: F
             "event_ts": clock().isoformat(),
         }
     )
-    page = await AuditQueryService(repo).query(subject_type="order")
+    page = await AuditQueryService(repo).query(restrict_to_actor=None, subject_type="order")
     assert [e.subject_type for e in page.items] == ["order"]
 
 
@@ -96,18 +126,19 @@ async def test_query_rejects_naive_from_ts(repo: FakeAuditRepository) -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        await AuditQueryService(repo).query(from_ts=datetime(2026, 1, 1))
+        await AuditQueryService(repo).query(restrict_to_actor=None, from_ts=datetime(2026, 1, 1))
 
 
-async def test_query_rejects_from_ts_after_to_ts(repo: FakeAuditRepository) -> None:
+async def test_query_rejects_from_ts_not_before_to_ts(repo: FakeAuditRepository) -> None:
     from datetime import UTC, datetime
 
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         await AuditQueryService(repo).query(
+            restrict_to_actor=None,
             from_ts=datetime(2026, 1, 2, tzinfo=UTC),
-            to_ts=datetime(2026, 1, 1, tzinfo=UTC),
+            to_ts=datetime(2026, 1, 2, tzinfo=UTC),  # `to` is exclusive: an empty window
         )
 
 
