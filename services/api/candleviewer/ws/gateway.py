@@ -69,7 +69,8 @@ Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
 `MAX_CONNECTIONS_PER_USER` per user (oldest idle connection closed),
 `MAX_AUTHS_PER_USER_PER_MIN` new sockets per user per minute (state only for users
-active in the last window). Transport only: no business logic, no data fan-out.
+active in the last window), `MAX_UNAUTHENTICATED_SOCKETS` sockets awaiting auth and
+`AUTH_CALL_TIMEOUT_S` per `auth` call (#2155). Transport only: no business logic, no data fan-out.
 """
 
 from __future__ import annotations
@@ -129,12 +130,14 @@ from candleviewer.ws.lifecycle import (
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
+    AUTH_CALL_TIMEOUT_S,
     AUTH_TIMEOUT_S,
     ENVELOPE_ID_MAX_LEN,
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
     MAX_PREAUTH_FRAME_BYTES,
+    MAX_UNAUTHENTICATED_SOCKETS,
     json_depth_exceeds,
 )
 from candleviewer.ws.metrics import (
@@ -168,6 +171,10 @@ from candleviewer.ws.system_filter import kill_switch_view, system_view
 WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
 OUTBOUND_QUEUE_MAX: Final = 1024
+#: The items `close_with` queues past the `push` bound: `bye`, the close sentinel and its code.
+CLOSE_ITEMS: Final = 3
+#: #2155 (§4.3): the `bye` reason of a socket shed at `GatewayHub.max_unauthenticated`.
+SHED_REASON: Final = "server_shedding_load"
 WATCHDOG_TICK_S: Final = 0.05
 #: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes; a fault too).
 WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer", "internal_error"})
@@ -205,6 +212,24 @@ def _token_expiry_ms(result: AuthResult) -> int:
     return (expires_at - _EPOCH) // _ONE_MS
 
 
+class AuthCallTimeout(Exception):
+    """An `auth` call (the arg names it) outlived its bound: a server fault, not a failed `auth`."""
+
+
+@contextlib.asynccontextmanager
+async def _auth_call(call: str, bound_s: float) -> AsyncIterator[None]:
+    """One external call of an `auth`, bounded (C-2.18). Its expiry raises `AuthCallTimeout`; a
+    `TimeoutError` the call raises itself stays a failed `auth`; a cancellation passes through."""
+    scope = asyncio.timeout(bound_s)
+    try:
+        async with scope:
+            yield
+    except TimeoutError:
+        if not scope.expired():
+            raise
+        raise AuthCallTimeout(call) from None
+
+
 class AuditEmitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
@@ -229,15 +254,17 @@ _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop r
 class GatewayHub:
     """Every live connection: per-user cap (§4, 8 per user), the per-user connect rate (§4.3,
     20 new sockets per user per minute) and the §9.4 planned-shutdown broadcast. Bounded by the
-    per-user cap after auth and by the auth timeout before it."""
+    per-user cap after auth and by `max_unauthenticated` before it (#2155)."""
 
     def __init__(
         self,
         *,
         max_per_user: int = MAX_CONNECTIONS_PER_USER,
         max_auths_per_min: int = MAX_AUTHS_PER_USER_PER_MIN,
+        max_unauthenticated: int = MAX_UNAUTHENTICATED_SOCKETS,
     ) -> None:
         self.max_per_user = max_per_user
+        self.max_unauthenticated = max_unauthenticated
         #: The server is shutting down: set by `shutdown()` and by `candleviewer.server` when its
         #: own shutdown begins (a forced exit or a failure may never reach `shutdown()`). Only
         #: `WsRuntime.start()` clears it, for an in-process restart. `closed_reason` reads it to
@@ -245,11 +272,28 @@ class GatewayHub:
         self.shutting_down = False
         self.connect_rate = ConnectRateLimiter(max_auths_per_min)
         self._live: set[_Connection] = set()
+        #: The sockets between `accept` and their first `auth_ok` (`admit_unauthenticated`).
+        self._unauthenticated: set[_Connection] = set()
         self._empty = asyncio.Event()
         self._empty.set()
 
     def __len__(self) -> int:
         return len(self._live)
+
+    @property
+    def unauthenticated(self) -> int:
+        """How many sockets count against `max_unauthenticated` now."""
+        return len(self._unauthenticated)
+
+    def admit_unauthenticated(self, conn: _Connection) -> None:
+        """#2155 (§4.3): count `conn` until its first `auth_ok` (`mark_authenticated`) or its end
+        (`discard`). The handler calls it right before the `try` whose `finally` discards it, with
+        no await since it found fewer than `max_unauthenticated` counted (else it sheds `conn`)."""
+        self._unauthenticated.add(conn)
+
+    def mark_authenticated(self, conn: _Connection) -> None:
+        """`conn` sent its first `auth_ok`, so it stops counting; a re-auth never counts."""
+        self._unauthenticated.discard(conn)
 
     def add(self, conn: _Connection) -> None:
         self._live.add(conn)
@@ -257,6 +301,7 @@ class GatewayHub:
 
     def discard(self, conn: _Connection) -> None:
         self._live.discard(conn)
+        self._unauthenticated.discard(conn)
         if not self._live:
             self._empty.set()
 
@@ -395,8 +440,8 @@ class _Connection:
             auth_deadline=now + auth_timeout_s, last_inbound=now, last_outbound=now
         )
         self.rate = InboundRateLimiter()
-        #: Bounded by `push` (OUTBOUND_QUEUE_MAX) plus the two close items.
-        self.outbound: asyncio.Queue[Any] = asyncio.Queue()
+        #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
+        self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
         self.session_id: str | None = None
         #: The session an `auth` in flight registered with the `RevocationHub` (#2739): it becomes
@@ -737,6 +782,7 @@ def make_ws_router(
     # tracker. Without it a refused upgrade is still refused and counted, not audited.
     origin_audit: OriginRefusalAudit | None = None,
     auth_timeout_s: float = AUTH_TIMEOUT_S,
+    auth_call_timeout_s: float = AUTH_CALL_TIMEOUT_S,
     max_frame_bytes: int = MAX_INBOUND_FRAME_BYTES,
     clock: Clock = time.monotonic,
     wall_ms: WallClockMs = _wall_ms,
@@ -750,7 +796,8 @@ def make_ws_router(
     """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
     deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
-    can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`).
+    can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`). So does
+    each `auth` call's bound, `auth_call_timeout_s` (#2155), for a call that never returns.
 
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
     `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
@@ -867,6 +914,46 @@ def make_ws_router(
         )
         conn.close_with("client_rate_limited", bye=bye)
 
+    def auth_call_late(conn: _Connection, call: str, *, reauth: bool) -> None:
+        """#2155 (§4.3): an `auth` call outlived `auth_call_timeout_s`. A server fault, not a failed
+        `auth` (no strike, no audit row): `bye internal_error` + `1011`, a re-auth's too. Its SR-189
+        registration goes here, its `RevocationHub` one in `do_auth`, as a failure's do."""
+        if not reauth and conn.authz is not None:
+            registry.unregister(conn.authz)
+            conn.authz = None
+        _log().warning(
+            "ws auth call timed out",
+            connection_id=conn.connection_id,
+            call=call,
+            reauth=reauth,
+            timeout_s=auth_call_timeout_s,
+        )
+        conn.close_with("internal_error")
+
+    async def shed(conn: _Connection) -> None:
+        """#2155 (§4.3): `max_unauthenticated` sockets await auth, so this one is closed at once:
+        `bye server_shedding_load` (retry after the auth window) and `1013`, within the close flush
+        deadline; no frame read, task or slot. Always counted; its warning is capped as §2.5's."""
+        retry_after_ms = int(auth_timeout_s * 1000)
+        cv_ws_closes_total.labels(reason=SHED_REASON).inc()
+        if (verdict := refusal_log.admit(SHED_REASON, clock())) is RefusalLog.LINE:
+            _log().warning(
+                "ws socket shed",
+                reason=SHED_REASON,
+                limit=gateway_hub.max_unauthenticated,
+                retry_after_ms=retry_after_ms,
+                source_ip=_source_ip(conn.ws.scope),
+            )
+        elif verdict is RefusalLog.SUMMARY:
+            _log().warning(
+                "ws socket sheds suppressed", reason=SHED_REASON, limit=REFUSAL_LOG_LIMIT
+            )
+        bye = lifecycle_bye(SHED_REASON, now_ms=conn.wall_ms(), retry_after_ms=retry_after_ms)
+        with contextlib.suppress(Exception):  # gone or not reading: the refusal stands regardless
+            async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
+                await conn.send_frame(bye)
+                await conn.ws.close(code=int(bye["p"]["code"]))
+
     async def do_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         """One `auth` frame. However it ends short of `auth_ok` (a failure, a refusal, a close,
         a cancellation), the hub registration `run_auth` made for the presented session is
@@ -889,7 +976,8 @@ def make_ws_router(
             if not isinstance(token, str) or not token:
                 failure = "missing_token"
                 raise ValueError("missing access_token")
-            result = await authenticate(token)
+            async with _auth_call("authenticate", auth_call_timeout_s):
+                result = await authenticate(token)
             session_id, user_id = result[0], result[1]
             expires_ms = _token_expiry_ms(result)
             if reauth and user_id != conn.user_id:
@@ -900,7 +988,8 @@ def make_ws_router(
                 # this socket. `do_auth` drops it again unless this auth is accepted.
                 revocation_hub.register(session_id, conn.closer)
                 conn.pending_session_id = session_id
-            snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
+            async with _auth_call("resolve", auth_call_timeout_s):
+                snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
@@ -913,7 +1002,8 @@ def make_ws_router(
                     version=snap.version,
                 )
                 registry.register(conn.authz, conn.send, conn.evict, conn.closer)
-                await registry.recheck(conn.authz)
+                async with _auth_call("recheck", auth_call_timeout_s):
+                    await registry.recheck(conn.authz)
                 revoked: list[dict[str, Any]] = []
             else:
                 # Subscriptions + sequences are kept; only ones the refreshed
@@ -922,6 +1012,9 @@ def make_ws_router(
                 revoked = [f for f in frames if f["t"] == "revoked"]
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
+        except AuthCallTimeout as late:
+            auth_call_late(conn, str(late), reauth=reauth)
+            return
         except Exception:
             if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
                 registry.unregister(conn.authz)
@@ -1022,6 +1115,7 @@ def make_ws_router(
         )
         if not reauth:
             cv_ws_handshake_seconds.observe(max(0.0, conn.clock() - conn.opened_at))
+            gateway_hub.mark_authenticated(conn)
             gateway_hub.enforce_cap(conn)
 
     def pong(conn: _Connection, frame: dict[str, Any]) -> None:
@@ -1284,6 +1378,9 @@ def make_ws_router(
             auth_timeout_s=auth_timeout_s,
             backpressure=backpressure,
         )
+        if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
+            await shed(conn)
+            return
         conn.lifecycle.fire(ConnEvent.OPEN_NEGOTIATED)
         gateway_hub.add(conn)
         cv_ws_connections_in_use.inc()
@@ -1301,6 +1398,7 @@ def make_ws_router(
 
         write_task.add_done_callback(_writer_done)
         fault: BaseException | None = None
+        gateway_hub.admit_unauthenticated(conn)  # #2155: no await since the cap check above
         try:
             await reader(conn)
             reading = False

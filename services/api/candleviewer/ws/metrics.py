@@ -222,8 +222,8 @@ cv_ws_closes_total = Counter(
 # after every restart goes unseen (#2264 bound the CSRF counter for the same reason). Read by
 # `WsOriginRefusalsHigh` (`origin_forbidden`) and `WsSlowConsumerClosed` (`slow_consumer`, #571).
 # Bound here, beside the counter, so `export_ws_metrics` serves every series without the gateway.
-# `normal`, `server_shedding_load` and `other` have no counting path today.
-# Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
+# `normal` and `other` have no counting path today (`server_shedding_load` counts sheds, #2155).
+# Nothing closes with `normal`. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
 # `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` and the flag-on
