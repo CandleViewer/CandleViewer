@@ -47,13 +47,14 @@ export function useThemeStore(): ThemeStore {
 
 function useSlice<T>(select: (snapshot: ThemeSnapshot) => T): T {
   const store = useThemeStore();
-  return useSyncExternalStore(store.subscribe, () => select(store.getSnapshot()));
+  const read = (): T => select(store.getSnapshot());
+  return useSyncExternalStore(store.subscribe, read, read); // 3rd arg: also safe under renderToString
 }
 
 /** Every value, re-rendering on any change (settings screens). Prefer the narrow hooks below. */
 export function useThemeSnapshot(): ThemeSnapshot {
   const store = useThemeStore();
-  return useSyncExternalStore(store.subscribe, store.getSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
 /** The resolved theme (`data-theme`) and its setter; re-renders only when the theme changes. */

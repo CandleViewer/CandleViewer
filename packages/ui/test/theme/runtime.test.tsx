@@ -4,7 +4,7 @@ import { act, useEffect } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { composeStories } from "@storybook/react";
 import { within } from "@storybook/test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as stories from "../../src/theme/ThemeRuntime.stories.js";
 import {
   HIGH_CONTRAST_SHORTCUT,
@@ -104,6 +104,15 @@ describe("theme provider and hooks", () => {
     expect(api).toMatchObject({ scale: 125, reduced: true });
     expect(rootData["textScale"]).toBe("125");
     expect(() => renderToStaticMarkup(<Probe />)).toThrow("requires <ThemeProvider>");
+    // jsdom defines `document`, so React warns that the layout effect does nothing on the server
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const served = renderToStaticMarkup(
+      <ThemeProvider options={options}>
+        <Probe />
+      </ThemeProvider>,
+    );
+    quiet.mockRestore();
+    expect(served).toBe("");
   });
 
   it("exposes the Ctrl+Shift+H contract and announces each toggle through one polite live region", () => {
