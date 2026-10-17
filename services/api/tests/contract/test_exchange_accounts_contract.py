@@ -92,7 +92,8 @@ _REFUSED = (
 #: The two codes of step 2: the withdrawal-or-transfer check runs first (M2 and M13 already raise
 #: `key_withdraw_permission`), and the allow-list refuses every other right.
 _RIGHT_RULES = ("key_withdraw_permission", "key_permission_not_allowed")
-#: Every `createApiKey` rule code, with its step: E27-T03's list (#836) plus the two #2417 adds.
+#: Every `createApiKey` rule code, with its step: E27-T03's list (#836) plus the two #2417 adds and
+#: `key_expired` (SR-030a: step 6 refuses an expiry that is not in the future).
 _RULE_STEPS = {
     "key_wrong_environment": 1,
     "key_withdraw_permission": 2,
@@ -103,6 +104,7 @@ _RULE_STEPS = {
     "key_uid_mismatch": 4,
     "key_ip_whitelist_missing": 5,
     "key_ip_whitelist_mismatch": 5,
+    "key_expired": 6,
     "key_probe_failed": 7,
 }
 #: The internal exchange-error taxonomy (24-internal-schemas.md §8.6) a key probe can end in.
@@ -342,7 +344,7 @@ _DESCRIBED = (
         "|**Permission allow-list** (C-2.8, SR-030a, #2270)"
         "|must report `readOnly: 0` and hold"
         "|mandatory in every environment (C-2.8, owner decision #5)"
-        "|Expiry, if set, must be at least 14 days away"
+        "|Expiry, if set, must be in the future (SR-030a)"
         "|must pass: the exchange answers with return code 0 within the `recv_window`",
     ),
     (
@@ -468,7 +470,9 @@ def test_key_gate_names_each_rule_code_in_its_step() -> None:
 
 
 def test_no_exchange_accounts_example_holds_a_right_outside_the_allow_list() -> None:
-    permissions = _all("permissions")
+    # An accepted key's examples only: a rejected import shows what the key reports, the right
+    # that failed it included, on purpose (`KeyRejected`).
+    permissions = [v["permissions"] for v in _all("verification") if v["passed"] is True]
     assert len(permissions) >= 3  # the createApiKey 201, rotateApiKey 200 and testApiKey 200
     for granted in permissions:
         for group, rights in granted.items():
@@ -498,14 +502,16 @@ def test_ip_whitelist_is_mandatory_and_no_setting_can_turn_it_off() -> None:
         assert phrase in gate, phrase
 
 
-def test_every_whitelist_example_is_one_host_address() -> None:
-    verifications = _all("verification")
+def test_every_whitelist_example_lists_host_addresses_and_flags_the_match_it_states() -> None:
+    # Where the whitelist check ran: an accepted key holds the egress IP alone, and the one
+    # rejected for its whitelist holds it and another address (`ipWhitelistMismatch`).
+    verifications = [v for v in _all("verification") if "ip_whitelist_matches_egress" in v]
     assert len(verifications) >= 3
     for verification in verifications:
-        assert verification["ip_whitelist_matches_egress"] is True
-        hosts = {ipaddress.ip_network(entry, strict=True) for entry in verification["ip_whitelist"]}
-        assert len(hosts) == 1
-        assert next(iter(hosts)).num_addresses == 1
+        for entry in verification["ip_whitelist"]:
+            assert ipaddress.ip_network(entry, strict=True).num_addresses == 1
+        alone = verification["ip_whitelist"] == [verification["egress_ip"]]
+        assert verification["ip_whitelist_matches_egress"] is alone
 
 
 # --- Key-id mask (SR-E27-03) --------------------------------------------------------------------

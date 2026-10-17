@@ -682,6 +682,25 @@ class IpWhitelistItem(RootModel[str]):
     root: Annotated[str, Field(max_length=49, pattern="^([*]|[0-9A-Fa-f:.]{2,45}(/[0-9]{1,3})?)$")]
 
 
+class KeyVerificationNotRead(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    passed: Literal[False]
+    egress_ip: Annotated[
+        IPv4Address | IPv6Address | None,
+        Field(
+            description="The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP whitelist may hold; `null` while none is configured. It comes from configuration, never from a request header. It is the address the Owner adds to the key's whitelist at the exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or `keys:read`, and never written to an audit record or used as a metric label.\n"
+        ),
+    ] = None
+
+
+class KeyExchangeProblem(Problem):
+    exchange: Annotated[
+        Exchange | None, Field(description="Present when the failure originated at Bybit.")
+    ] = None
+
+
 class RotateApiKeyRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -5955,7 +5974,10 @@ class KeyVerification(BaseModel):
         ),
     ] = None
     withdraw_enabled: Annotated[
-        bool, Field(description="Must be false; a true value causes rejection.")
+        bool,
+        Field(
+            description="Must be false; a true value causes rejection. Sent only once the key's rights were read, never as a default (`KeyVerificationNotRead`)."
+        ),
     ]
     ip_whitelist: Annotated[
         list[IpWhitelistItem] | None,
@@ -5983,6 +6005,14 @@ class KeyVerification(BaseModel):
 
 class KeyVerificationPassed(KeyVerification):
     passed: Literal[True]
+
+
+class KeyRejectedProblem(Problem):
+    code: Annotated[
+        Literal["validation_failed"],
+        Field(description="Stable machine-readable error code from `x-error-codes`."),
+    ]
+    verification: KeyVerification | KeyVerificationNotRead | None = None
 
 
 class ApiKeyRotation(BaseModel):

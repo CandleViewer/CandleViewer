@@ -2454,16 +2454,56 @@ paths:
            entry must be the configured deployment egress IP itself (SR-030a). An empty list is
            `key_ip_whitelist_missing`; a wildcard, a range or any other address is
            `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
-        6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
-           is attached.
+        6. Expiry, if set, must be in the future (SR-030a): an expired key, or one the exchange
+           itself refuses as expired, is rejected with `validation_failed` / `key_expired`. A key
+           that expires within 14 days is accepted, with the `key_expiring_soon` warning.
         7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
            with return code 0 within the `recv_window`, which also validates clock sync
-           (`key_probe_failed`).
+           (`key_probe_failed` when the exchange refuses the probe; a probe it cannot answer in
+           time gives no verdict, see **No verdict**).
 
         The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
         keyring / age-encrypted file) before it touches disk; the plaintext exists only in
         request-scoped memory. The full verification result is stored as
         `permission_snapshot` and re-checked at start-up and hourly (C-12.2).
+
+        **Verdict.** The exchange refusing the key itself ends a check with a verdict whichever
+        call it refuses: an unknown key, a missing right, an address the key's whitelist does not
+        hold and an expired key are the rules of steps 1, 3, 5 and 6 (`key_wrong_environment`,
+        `key_missing_scopes`, `key_ip_whitelist_mismatch`, `key_expired`), and a refused signed
+        probe is `key_probe_failed`. Every rejection is a `422` that carries the `verification`
+        the pipeline reached (`KeyRejectedProblem`): `passed` is false, `egress_ip` is the
+        address to add to the key's IP whitelist at the exchange, and the fields of a check that
+        did not run are left out. A key the exchange refuses before its rights are read has no
+        check to show (`KeyVerificationNotRead`): `passed` and `egress_ip` only, and never
+        `withdraw_enabled`, since a withdrawal check that did not run is not a pass and is not
+        sent as `false` (C-2.8). A `422` is stored for replay like any other answer, so the
+        resend after the key is put right takes a new `Idempotency-Key`.
+
+        **No verdict.** A signed call can end without saying anything about the key: the exchange
+        gave no answer, or answered with an error that is not a refusal of the key (a refused
+        signature, a clock outside the `recv_window`, a rate limit, an outage, a reply that
+        cannot be read). The pipeline then has no verdict: nothing is stored, no stored key or
+        account changes, and the import may be sent again. `transport_error` and `timeout`,
+        where the exchange gave no answer, give `503 exchange_unavailable` with `Retry-After`;
+        an error answer gives `502 exchange_error`. Neither answer echoes exchange text
+        (`KeyExchangeProblem`): `Problem.exchange` holds `ret_code` only (omitted when the
+        exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any other exchange
+        text, header, URL or request fragment (SR-E27-08). A `502` or `503` of an import is
+        never stored for replay: the identical request re-sent with the same `Idempotency-Key`
+        is a first submission, which verifies again (no `Idempotency-Replayed`).
+
+        **Other statuses.** `404` is an account that does not exist. `409` is an `Idempotency-Key`
+        first used with a different request (`idempotency_key_reuse`) or still being processed
+        (`idempotency_in_flight`), or a request that conflicts with stored state (`conflict`).
+        The replay fingerprint holds `api_key` only as a server-keyed HMAC, so another key under
+        the same `Idempotency-Key` is `idempotency_key_reuse` and never the first key's answer,
+        and it never holds `api_secret`, which is not hashed, stored or logged for it
+        (SR-E27-20). A `503` also answers when the import cannot be made or recorded, and
+        nothing is stored then: `exchange_unavailable` when signing is unavailable,
+        `audit_unavailable` when the write-ahead audit record of the import cannot be written
+        (C-2.9) and `store_unavailable` when the relational store is unavailable. A KEK that is
+        unavailable is refused with `403 kek_unavailable` instead (ADR-0009 Amendment 1).
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: required
       parameters:
@@ -2519,25 +2559,11 @@ paths:
                       warnings: []
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "422":
-          description: Key rejected by the verification pipeline.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-              examples:
-                withdrawEnabled:
-                  value:
-                    type: "https://candleviewer.local/errors/validation_failed"
-                    title: "Request body or parameters failed schema validation"
-                    status: 422
-                    detail: "API key has withdrawal permission enabled; CandleViewer refuses to store keys that can withdraw."
-                    instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d02"
-                    code: validation_failed
-                    errors:
-                      - field: api_key
-                        rule: key_withdraw_permission
-                        message: "permissions.Wallet contains 'Withdraw'"
-        "502": { $ref: "#/components/responses/ExchangeError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/KeyRejected" }
+        "502": { $ref: "#/components/responses/KeyExchangeError" }
+        "503": { $ref: "#/components/responses/KeyServiceUnavailable" }
 
   /exchange-accounts/{accountId}/keys/{keyId}:
     parameters:
@@ -12539,6 +12565,157 @@ components:
                 instance: "urn:cv:req:0193f2bb-5959"
                 code: exposure_unknown
                 remedy: fix_key
+    KeyRejected:
+      description: >
+        The verification pipeline refused the key, so nothing was stored (`validation_failed`;
+        `errors[].rule` names each failed check). The body also carries `verification`, the
+        result as far as the pipeline got, so a client lists the checks and shows `egress_ip`
+        to copy (`createApiKey`, SCR-126). A key the exchange refused before its rights were
+        read carries `KeyVerificationNotRead`. A request that fails its schema is the same `422`
+        with the validation types in `errors` and no `verification`. A call that ends without a
+        verdict is a `502` or `503`, never this `422`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/KeyRejectedProblem" }
+          examples:
+            withdrawEnabled:
+              summary: A right that can move funds, checked before every other check (step 2)
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "API key has withdrawal permission enabled; CandleViewer refuses to store keys that can withdraw."
+                instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d02"
+                code: validation_failed
+                errors:
+                  - field: api_key
+                    rule: key_withdraw_permission
+                    message: "permissions.Wallet contains 'Withdraw'"
+                verification:
+                  passed: false
+                  uid: "10234567"
+                  uta: true
+                  read_only: false
+                  permissions: { ContractTrade: [Order, Position], Wallet: [Withdraw] }
+                  withdraw_enabled: true
+                  ip_whitelist: ["203.0.113.10"]
+                  egress_ip: "203.0.113.10"
+                  warnings: []
+            ipWhitelistMismatch:
+              summary: The whitelist holds the egress IP and another address (step 5); the exchange answers only from a whitelisted address
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "The key's IP whitelist must hold only the egress IP 203.0.113.10; remove the other address in the exchange's key settings."
+                instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d03"
+                code: validation_failed
+                errors:
+                  - field: api_key
+                    rule: key_ip_whitelist_mismatch
+                    message: "the IP whitelist must hold only the egress IP 203.0.113.10"
+                verification:
+                  passed: false
+                  uid: "10234567"
+                  uta: true
+                  read_only: false
+                  permissions: { ContractTrade: [Order, Position] }
+                  withdraw_enabled: false
+                  ip_whitelist: ["203.0.113.10", "198.51.100.7"]
+                  ip_whitelist_matches_egress: false
+                  egress_ip: "203.0.113.10"
+                  warnings: []
+            wrongEnvironment:
+              summary: The exchange does not know the key on this environment's host (step 1); no check ran, so only `passed`
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "The key does not belong to this environment."
+                instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d05"
+                code: validation_failed
+                errors:
+                  - field: api_key
+                    rule: key_wrong_environment
+                    message: "key does not belong to this environment"
+                verification: { passed: false }
+            exchangeRefusedIp:
+              summary: The exchange refused the egress IP before it reported the key's rights (step 1); `egress_ip` is the address to add at the exchange
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "The exchange refused the egress IP 203.0.113.10; add it in the exchange's key settings."
+                instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d06"
+                code: validation_failed
+                errors:
+                  - field: api_key
+                    rule: key_ip_whitelist_mismatch
+                    message: "the exchange refused the egress IP 203.0.113.10; add it to the key's IP whitelist"
+                verification: { passed: false, egress_ip: "203.0.113.10" }
+            requestInvalid:
+              summary: The request fails its schema, so no check ran and there is no `verification`
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "1 field failed validation."
+                instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d04"
+                code: validation_failed
+                errors:
+                  - field: body.api_secret
+                    rule: string_too_short
+                    message: "String should have at least 8 characters"
+    KeyExchangeError:
+      description: >
+        An import whose signed call got an error answer that is not a refusal of the key: no
+        verdict, nothing stored (`exchange_error`). `exchange` holds `ret_code` only
+        (`KeyExchangeProblem`).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/KeyExchangeProblem" }
+          examples:
+            signatureRefused:
+              value:
+                type: "https://candleviewer.local/errors/exchange_error"
+                title: "Bybit returned a non-zero exchange refusal code"
+                status: 502
+                detail: "The exchange refused the signed call, so the key could not be verified; nothing was stored."
+                instance: "urn:cv:req:0193f2bb-c001"
+                code: exchange_error
+                exchange: { ret_code: 10004 }
+    KeyServiceUnavailable:
+      description: >
+        An import that could not be made or recorded, so nothing was stored (`createApiKey`).
+        `exchange` holds `ret_code` only (`KeyExchangeProblem`); the exchange sent none when it
+        gave no answer. `audit_unavailable` is the import's alone: a test never fails on its
+        audit record.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/KeyExchangeProblem" }
+          examples:
+            exchangeUnavailable:
+              summary: The exchange gave no answer to the import, or signing is unavailable
+              value:
+                type: "https://candleviewer.local/errors/exchange_unavailable"
+                title: "Exchange connectivity lost (WS down and REST failing)"
+                status: 503
+                detail: "The exchange gave no answer, so the key could not be verified; nothing was stored."
+                instance: "urn:cv:req:0193f2bb-d001"
+                code: exchange_unavailable
+                retry_after_seconds: 5
+            auditUnavailable:
+              summary: The write-ahead audit record of the import could not be written (`createApiKey`)
+              value:
+                type: "https://candleviewer.local/errors/audit_unavailable"
+                title: "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"
+                status: 503
+                detail: "The audit record of the import could not be written; nothing was stored."
+                instance: "urn:cv:req:0193f2bb-d002"
+                code: audit_unavailable
+                retry_after_seconds: 5
     PreconditionFailed:
       description: ETag precondition failed.
       content:
@@ -13863,7 +14040,10 @@ components:
             type: array
             items: { type: string, pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$" }
         withdraw_enabled:
-          { type: boolean, description: "Must be false; a true value causes rejection." }
+          {
+            type: boolean,
+            description: "Must be false; a true value causes rejection. Sent only once the key's rights were read, never as a default (`KeyVerificationNotRead`).",
+          }
         ip_whitelist:
           type: array
           description: >
@@ -13893,6 +14073,21 @@ components:
         - { type: "null" }
         - { type: string, format: ipv4 }
         - { type: string, format: ipv6 }
+    KeyVerificationNotRead:
+      type: object
+      additionalProperties: false
+      required: [passed]
+      description: >
+        The verification of a key whose rights were never read: the exchange refused the key-info
+        call (step 1 of `createApiKey`: an unknown key, the egress IP, a right or an expiry), so
+        no check of steps 2 to 7 ran. It carries `passed: false` and `egress_ip` only, never
+        `withdraw_enabled`: a withdrawal check that did not run is not a pass, so no `false` is
+        sent for it (C-2.8), and a client shows each check as not checked, never as ok. The rule
+        that failed is in `errors` (`createApiKey`) or `rest.error` (`testApiKey`). It is never the
+        verification of a stored key (`KeyVerificationPassed`).
+      properties:
+        passed: { const: false }
+        egress_ip: { $ref: "#/components/schemas/EgressIp" }
     KeyVerificationWarning:
       type: string
       enum: [key_expiring_soon, clock_skew]
@@ -13947,6 +14142,55 @@ components:
         - { $ref: "#/components/schemas/KeyVerification" }
         - type: object
           properties: { passed: { const: true } }
+    KeyRejectedProblem:
+      description: >
+        The `422` problem of a key operation (`createApiKey`; `rotateApiKey` can reuse it): the
+        problem body plus, when the verification pipeline refused the key, the `verification` it
+        reached. Exactly then `errors` names a rule of the pipeline (`key_*`), `verification` is
+        required and `verification.passed` is false, and otherwise it is not allowed. A request
+        that fails its schema is the same problem with the validation types in `errors` and no
+        `verification`. The fields of a check that did not run are left out of `verification`,
+        and no exchange text is echoed (SR-E27-08).
+      allOf:
+        - { $ref: "#/components/schemas/Problem" }
+        - type: object
+          properties:
+            code: { const: validation_failed }
+            verification:
+              oneOf:
+                - { $ref: "#/components/schemas/KeyVerification" }
+                - { $ref: "#/components/schemas/KeyVerificationNotRead" }
+          if:
+            required: [errors]
+            properties:
+              errors:
+                contains:
+                  type: object
+                  required: [rule]
+                  properties: { rule: { type: string, pattern: "^key_" } }
+          then:
+            required: [verification]
+            properties: { verification: { properties: { passed: { const: false } } } }
+          else:
+            not: { required: [verification] }
+    KeyExchangeProblem:
+      description: >
+        The `502` and `503` problems of a key operation: the problem body whose `exchange` member
+        holds the exchange's return code only, never `ret_msg`, `endpoint`, `request_id` or any
+        other exchange text (SR-E27-08): the text of a refused signature can echo the signed
+        request, key id included. This schema alone refuses the other members: the generated
+        Python class re-declares `exchange` with the type of `Problem`, which also admits
+        `ret_msg`, `endpoint` and `request_id`, so a body built from that class type-checks while
+        it leaks exchange text. A route builds `exchange` from the return code alone, and its
+        provider test validates the real `502` and `503` against this schema.
+      allOf:
+        - { $ref: "#/components/schemas/Problem" }
+        - type: object
+          properties:
+            exchange:
+              type: object
+              additionalProperties: false
+              properties: { ret_code: { type: integer } }
     RotateApiKeyRequest:
       type: object
       additionalProperties: false
