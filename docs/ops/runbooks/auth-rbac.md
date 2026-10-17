@@ -711,9 +711,9 @@ waits logs `auth.session_revoke_denied.audit_slow` (the row may still land); if 
 fails after the client hung up, `auth.session_revoke_denied.audit_failed_late` follows. Those lines
 have no series of their own, so count the lines to bound the probes with no row.
 
-**Enrolment-only refusals (#2295).** `auth_enrolment_refused_total{channel,reason}` (`channel` is
-`http` or `ws`) counts each refusal of an enrolment-only session; no alert rule reads it yet
-(#2746). By `reason`:
+**Enrolment-only refusals (#2295).** `auth_enrolment_refused_total{transport,reason}` (`transport`
+is `http` or `ws`, the `channel` of the log lines and audit rows) counts each refusal of an
+enrolment-only session; no alert rule reads it yet (#2746). By `reason`:
 
 - `enrolment_only`: an operation outside the five enrolment operations was answered
   `403 mfa_enrollment_required`, or the WebSocket `auth` got `bye mfa_enrollment_required`
