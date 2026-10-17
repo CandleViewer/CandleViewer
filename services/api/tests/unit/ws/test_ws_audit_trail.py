@@ -234,21 +234,27 @@ def _rows(world: ls._World, action: str) -> list[dict[str, Any]]:
     return [r for r in world.audit.records if r["action"] == action]
 
 
-def test_a_resync_rate_limited_revocation_writes_its_revoked_row(world: ls._World) -> None:
-    ch = "book.BTCUSDT.50"
+@pytest.mark.parametrize("rs", [None, "bb000000-0000-4000-8000-000000000001"], ids=["live", "rs"])
+def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
+    world: ls._World, rs: str | None
+) -> None:
+    """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay."""
+    ch, named = "book.BTCUSDT.50", {"rs": rs} if rs else {}
     with world.client.websocket_connect("/ws", subprotocols=ls.JSON) as ws:
         ls._hello(ws)
         ls._auth(ws)
-        ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch]}})
+        ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch], "replay_session_id": rs}})
         assert ls._recv_type(ws, "sub_ok")["p"]["results"][0]["ok"] is True
         for i in range(REBUILD_MAX_PER_TOPIC + 1):  # every one at the fake clock's t=0
-            ws.send_json({"t": "resync", "id": f"r{i}", "ch": ch, "p": {"reason": "manual"}})
+            resync = {"t": "resync", "id": f"r{i}", "ch": ch, "p": {"reason": "manual"}}
+            ws.send_json(resync | named)
         assert ls._recv_type(ws, "err")["p"]["code"] == "resync_rate_limited"
         assert ls._recv(ws)["p"]["reason"] == "resync_rate_limited"
         ls._settle(world, lambda: bool(_rows(world, REVOKED)))
     (row,) = _rows(world, REVOKED)  # the close row follows once the socket is gone
     assert (row["object_id"], row["reason"]) == (ch, "resync_rate_limited")
-    assert (row["actor_user_id"], row["after_state"]) == (ls.USER, {"removed_accounts": []})
+    named_by = {"removed_accounts": [], "sub_id": "s_01", **named}
+    assert (row["actor_user_id"], row["after_state"]) == (ls.USER, named_by)
 
 
 def test_the_third_failed_auth_row_names_the_source_address_and_the_request(

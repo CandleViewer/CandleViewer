@@ -111,7 +111,7 @@ def test_resync_and_a_resuming_ctl_draw_on_one_topic_budget(resumes: int, held: 
 
 def test_a_topic_and_its_replay_session_draw_on_separate_shares() -> None:
     conn, other = Conn(_book_source()), "book.BTCUSDT.050"
-    _, live = conn.sub(BOOK)
+    conn.sub(BOOK)
     conn.sub(other)
     conn.sub(BOOK, replay_session_id=RS)
     for _ in range(2):
@@ -120,10 +120,29 @@ def test_a_topic_and_its_replay_session_draw_on_separate_shares() -> None:
         _resync(conn, ch)  # the last is the topic's sixth draw, three of them resyncs: refused
     answers = [f["t"] for f in conn.take() if f["t"] in ("snap", "err")]
     assert answers[-4:] == ["snap", "snap", "snap", "err"]
-    conn.authz.revoke(live, "resync_rate_limited", 1)  # a `resync` of BOOK now finds the replay one
-    for _ in range(TOPIC):
-        _resync(conn, BOOK)
+    replay = {"t": "resync", "ch": BOOK, "rs": RS, "p": {"reason": "manual"}}  # §7.5 (#3218)
+    for _ in range(TOPIC):  # named by its `rs` while the live topic's five are spent
+        conn.emitter.client_resync(conn.authz, replay)
     assert [(f["t"], f.get("rs")) for f in conn.take()] == [("snap", RS)] * TOPIC
+
+
+def test_a_replay_stream_s_ctl_draws_on_its_share_and_a_refused_resync_names_it() -> None:
+    """W10, §7.5 (#3218): a `ctl` naming `rs` draws on that replay stream's share. Its refused
+    `resync`, with one of the five draws a `ctl`'s, is no loop: the stream continues, and the
+    `err` carries its `rs`. The live stream's share is untouched."""
+    conn = Conn(_book_source())
+    conn.sub(BOOK)
+    conn.sub(BOOK, replay_session_id=RS)
+    for paused in (True, False):  # the resume draws (§5.4, #2517), the pause does not
+        frame = {"t": "ctl", "id": "c-8", "ch": BOOK, "rs": RS, "p": {"paused": paused}}
+        conn.push(handle_ctl(conn.authz, frame, 1))
+    replay = {"t": "resync", "id": "c-9", "ch": BOOK, "rs": RS, "p": {"reason": "manual"}}
+    for _ in range(TOPIC):
+        conn.emitter.client_resync(conn.authz, replay)
+    _resync(conn, BOOK)
+    answers = [(f["t"], f.get("rs")) for f in conn.take() if f["t"] in ("snap", "err")]
+    tail = [("snap", RS)] * (TOPIC - 1) + [("err", RS), ("snap", None)]
+    assert (answers[-len(tail) :], conn.authz.find(BOOK, RS) is not None) == (tail, True)
 
 
 def test_the_server_s_own_snapshots_never_draw() -> None:

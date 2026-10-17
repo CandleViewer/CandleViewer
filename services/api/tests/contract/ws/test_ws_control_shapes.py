@@ -86,7 +86,8 @@ def test_contract_unsub_of_exactly_the_cap_welcome_advertises_is_answered_entry_
         c.send({"t": "unsub", "id": "u", "p": {"topics": names}})
         results = c.next_validated("unsub_ok")["p"]["results"]
         assert [r["ch"] for r in results] == names
-        assert results[0] == {"ch": "trades.BTCUSDT", "ok": True}  # the live subscription
+        ended = [{"sub_id": "s_01"}]  # the live subscription (§5.3, #3218)
+        assert results[0] == {"ch": "trades.BTCUSDT", "ok": True, "ended": ended}
         assert all(r.get("noop") is True for r in results[1:])
 
 

@@ -206,7 +206,11 @@ def _revoked_rows(world: _World) -> list[dict[str, Any]]:
             "object_kind": "ws_topic",
             "object_id": f["ch"],
             "reason": f["p"]["reason"],
-            "after_state": {"removed_accounts": f["p"].get("removed_accounts", [])},
+            "after_state": {  # #3218: it names the subscription, as the frame does
+                "removed_accounts": f["p"].get("removed_accounts", []),
+                "sub_id": f["p"]["sub_id"],
+                **({"rs": f["rs"]} if "rs" in f else {}),
+            },
         }
         for frames in world.revoked()
         for f in frames
@@ -293,9 +297,9 @@ async def test_every_revoked_frame_gets_exactly_one_audit_row_in_socket_then_fra
     await world.registry.grants_changed(USER)
     assert world.sink.rows == _revoked_rows(world) and len(world.sink.rows) == 9
     assert [(r["object_id"], r["reason"], r["after_state"]) for r in world.sink.rows[:3]] == [
-        ("orders", "account_scope_changed", {"removed_accounts": [str(B)]}),
-        ("positions", "account_scope_changed", {"removed_accounts": [str(B)]}),
-        ("trades.BTCUSDT", "permission_revoked", {"removed_accounts": []}),
+        ("orders", "account_scope_changed", {"removed_accounts": [str(B)], "sub_id": "s_02"}),
+        ("positions", "account_scope_changed", {"removed_accounts": [str(B)], "sub_id": "s_01"}),
+        ("trades.BTCUSDT", "permission_revoked", {"removed_accounts": [], "sub_id": "s_03"}),
     ]
 
 

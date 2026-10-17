@@ -357,11 +357,24 @@ def test_private_topic_with_replay_session_is_invalid_options(topic: str) -> Non
     assert r["error"]["code"] == "invalid_options"
 
 
-@pytest.mark.parametrize("bad", ["nope", 5])
+@pytest.mark.parametrize("bad", ["nope", 5, f"urn:uuid:{RS}", "{" + RS + "}", RS.replace("-", "")])
 def test_malformed_replay_session_id_is_invalid_options(bad: Any) -> None:
+    """§5.2, §7.5 (#3218): only the §13 uuid form, though `uuid.UUID` reads the last three."""
     conn = ConnectionAuthz(_mgr(A), _services())
     (r,) = _sub(conn, "trades.BTCUSDT", replay_session_id=bad)
-    assert r["error"]["field"] == "replay_session_id"
+    assert (r["error"]["code"], r["error"]["field"]) == ("invalid_options", "replay_session_id")
+
+
+@pytest.mark.parametrize("bars_off", [True, False], ids=["bars-off", "past-the-bars-cap"])
+def test_a_replay_result_refused_upstream_carries_its_rs(bars_off: bool) -> None:
+    """§5.2 (#3218): a replay result that `subscribe_upstream` refuses carries `rs` too, in lower
+    case: `unknown_topic` while bars are off, else `subscription_limit` past the bars cap."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), bars_off=bars_off))
+    if not bars_off:  # the cap's worth of live `bars.*` first
+        _sub(conn, *[f"bars.BTCUSDT.tick.{100 + i}" for i in range(MAX_BARS_SUBSCRIPTIONS)])
+    (r,) = _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS.upper())
+    code = "unknown_topic" if bars_off else "subscription_limit"
+    assert (r["ok"], r["error"]["code"], r["rs"]) == (False, code, RS)
 
 
 # -- unsub ---------------------------------------------------------------------------------------
@@ -381,7 +394,10 @@ def _unsub_results(conn: ConnectionAuthz, *topics: str) -> list[dict[str, Any]]:
 def test_unsub_twice_is_idempotent() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, "book.BTCUSDT.50")
-    assert _unsub_results(conn, "book.BTCUSDT.50") == [{"ch": "book.BTCUSDT.50", "ok": True}]
+    ended = [{"sub_id": "s_01"}]  # §5.3 (#3218)
+    assert _unsub_results(conn, "book.BTCUSDT.50") == [
+        {"ch": "book.BTCUSDT.50", "ok": True, "ended": ended}
+    ]
     assert _unsub_results(conn, "book.BTCUSDT.50") == [
         {"ch": "book.BTCUSDT.50", "ok": True, "noop": True}
     ]
@@ -446,7 +462,7 @@ def test_unsub_at_the_cap_is_answered_entry_by_entry() -> None:
     assert len(names) == _CAP
     results = _unsub_results(conn, *names)
     assert [r["ch"] for r in results] == names
-    assert results[0] == {"ch": _T[0], "ok": True}  # the live subscription is released
+    assert results[0] == {"ch": _T[0], "ok": True, "ended": [{"sub_id": "s_01"}]}  # released
     assert all(r == {"ch": r["ch"], "ok": True, "noop": True} for r in results[1:])  # none held
     assert conn.topics == set()
 
@@ -488,7 +504,8 @@ def test_ctl_retunes_throttle_without_resnapshot_and_keeps_sequence() -> None:
     assert sub is not None
     sub.seq, sub.snapshot_pending = 3000, False
     ok = _ctl(conn, "book.BTCUSDT.50", {"throttle_ms": 200})
-    assert (ok["t"], ok["id"], ok["p"]) == ("ctl_ok", "c-9", {"effective": {"throttle_ms": 200}})
+    p = {"effective": {"throttle_ms": 200}, "sub_id": "s_01"}  # §5.4 (#3218): the one retuned
+    assert (ok["t"], ok["id"], ok["p"]) == ("ctl_ok", "c-9", p)
     assert sub.seq == 3000  # the next delta continues at 3001 (E17-S03)
     assert _ctl(conn, "book.BTCUSDT.50", {"throttle_ms": 5})["p"]["effective"]["throttle_ms"] == 50
 
@@ -614,10 +631,24 @@ def test_ctl_without_a_ch_stays_not_subscribed_and_carries_none(frame_ch: dict[s
     assert (err["p"]["code"], "ch" in err) == ("not_subscribed", False)
 
 
-def test_ctl_on_replay_only_subscription_resolves_it() -> None:
+def test_ctl_reaches_a_replay_only_subscription_by_its_rs_alone() -> None:
+    """W10 (§5.4, #3218): a `ctl` without `rs` reaches the live subscription only."""
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, "trades.BTCUSDT", replay_session_id=RS)
-    assert _ctl(conn, "trades.BTCUSDT", {"throttle_ms": 100})["t"] == "ctl_ok"
+    assert _ctl(conn, "trades.BTCUSDT", {"throttle_ms": 100})["p"]["code"] == "not_subscribed"
+    frame = {"t": "ctl", "ch": "trades.BTCUSDT", "rs": RS, "p": {"throttle_ms": 100}}
+    assert handle_ctl(conn, frame, 7)["rs"] == RS
+
+
+@pytest.mark.parametrize(
+    ("named", "field"), [({}, "rs"), ({"ch": "trades.BTCUSDT"}, "rs"), ({"ch": 7}, "ch")]
+)
+def test_ctl_refusals_come_in_order_ch_rs_stream_options(named: dict[str, Any], field: str) -> None:
+    """§5.4 (W10): the `ch`, then a malformed `rs` (`ch` absent too), before the stream and the
+    options are read (`z` is no option); nothing is echoed."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    err = handle_ctl(conn, {"t": "ctl", "rs": "x", "p": {"z": 1}, **named}, 7)
+    assert (err["p"]["code"], err["p"]["field"], "rs" in err) == ("invalid_options", field, False)
 
 
 def _scope_of(conn: ConnectionAuthz, ch: str) -> tuple[Any, ...]:
@@ -751,7 +782,7 @@ def test_registry_grants_changed_pushes_revoked_and_audits() -> None:
     assert [f["t"] for f in sent] == ["sub_ok", "permission_change", "revoked"]
     actions = [r["action"] for r in audit.records]  # the sub's grant record first (SR-186)
     assert actions == ["ws.subscribe.granted", "ws.subscription.revoked"]
-    assert audit.records[1]["after_state"] == {"removed_accounts": [str(B)]}
+    assert audit.records[1]["after_state"] == {"removed_accounts": [str(B)], "sub_id": "s_01"}
 
 
 def test_registry_kill_switch_reevaluates_every_user() -> None:

@@ -25,6 +25,7 @@ def build_ws_error(
     *,
     id: str | None = None,
     ch: str | None = None,
+    rs: str | None = None,
     message: str | None = None,
     field: str | None = None,
     request_id: str | None = None,
@@ -36,6 +37,7 @@ def build_ws_error(
     ``message`` defaults to the code's catalogue title (``common#/$defs/error`` requires one).
     ``internal_error`` always carries only its generic title, plus ``request_id``: no caller
     text, so no exception text, stack trace or SQL can reach a client through this path.
+    ``rs`` (a canonical session id) goes on the envelope beside ``ch`` only (§7.5, #3218).
     """
     try:
         known = ErrorCode(code)
@@ -61,4 +63,6 @@ def build_ws_error(
         frame["id"] = id
     if ch is not None:
         frame["ch"] = ch
+        if rs is not None:
+            frame["rs"] = rs
     return frame

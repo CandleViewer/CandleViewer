@@ -43,6 +43,13 @@ def test_build_ws_error_defaults_the_message_to_the_catalogue_title() -> None:
     assert frame["p"]["message"] == ERROR_META[ErrorCode.FRAME_MALFORMED].title != ""
 
 
+def test_build_ws_error_carries_rs_only_beside_a_ch() -> None:
+    """§7.5 (#3218): an `err` names a replay stream by `rs` beside its `ch`, never alone."""
+    rs = "bb000000-0000-4000-8000-000000000001"
+    assert build_ws_error("not_subscribed", ch="book.BTCUSDT.50", rs=rs)["rs"] == rs
+    assert "rs" not in build_ws_error("not_subscribed", rs=rs)
+
+
 def test_build_ws_error_keeps_a_call_site_message() -> None:
     frame = build_ws_error("invalid_options", message="depth must be one of 1, 50, 200, 500")
     assert frame["p"]["message"] == "depth must be one of 1, 50, 200, 500"
