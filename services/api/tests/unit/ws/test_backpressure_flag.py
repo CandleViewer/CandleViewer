@@ -83,7 +83,7 @@ async def _frames_before_the_close(**router_kwargs: Any) -> tuple[int, dict[str,
         handler, _ = await rig.open(sock)
         (conn,) = rig.hub.of_user(USER)
         for _ in range(OUTBOUND_QUEUE_MAX + 1):
-            conn.push_system({"kind": "tick"})
+            conn.push_system({"kind": "notice", "message": "tick"})  # role-neutral
         frames = 0
         while (frame := await sock.sent.get())["t"] != "bye":
             frames += 1
@@ -115,12 +115,12 @@ async def test_router_with_a_backpressure_config_bounds_at_its_budget_not_at_102
         handler, _ = await rig.open(sock)
         (conn,) = rig.hub.of_user(USER)
         for _ in range(OUTBOUND_QUEUE_MAX + 1):
-            conn.push_system({"kind": "tick"})
+            conn.push_system({"kind": "notice", "message": "tick"})
         for _ in range(OUTBOUND_QUEUE_MAX + 1):
             assert (await sock.sent.get())["t"] == "d"
         assert not conn.closing
         for _ in range(OUTBOUND_QUEUE_MAX + 3):
-            conn.push_system({"kind": "tick"})
+            conn.push_system({"kind": "notice", "message": "tick"})
         bye = await sock.sent.get()  # both lanes cleared: the `bye` is next
         await handler
 

@@ -79,6 +79,18 @@ async def _no_sleep(_s: float) -> None:
     return None
 
 
+class _Hub(GatewayHub):
+    """These tests feed the writer arbitrary `system` bodies, which SR-188's filter would drop."""
+
+    def broadcast_system(self, body: dict[str, Any]) -> int:
+        conns = self._authenticated()
+        for conn in conns:
+            conn.system_seq += 1
+            frame = {"t": "d", "ch": "system", "s": conn.system_seq, "ts": conn.wall_ms(), "e": "j"}
+            conn.push(frame | {"p": body})
+        return len(conns)
+
+
 class _Wire:
     """Starlette's `WebSocket`, the slice the handler uses: inbound frames are fed, every send is
     recorded raw (`raw`) and decoded (`sent`), and `hold()` parks sends like a peer that stopped
@@ -148,7 +160,7 @@ class _Rig:
     ) -> None:
         self.clock = _Clock()
         self.audit = _Audit()
-        self.hub = GatewayHub()
+        self.hub = _Hub()
         self.revocation = RevocationHub()
         self.sequencing = SequencingHub()
         self.source = Source()
@@ -801,7 +813,7 @@ async def test_auth_ok_precedes_the_system_notices_after_it_under_the_flag() -> 
     """§8.4 Lanes: `auth_ok` precedes the `system` frames after it. Until the control-frame lane
     rule lands, control frames ride the normal lane, so a notice queued in the same turn
     (E27-T02's degraded or read-only state) overtakes `auth_ok`; S2a-ii flips this case."""
-    rig, sock = _Rig(BackpressureConfig(), system_notices=lambda: [{"kind": "degraded"}]), _Wire()
+    rig, sock = _Rig(BackpressureConfig(), system_notices=lambda: [{"kind": "notice"}]), _Wire()
     async with asyncio.timeout(_DEADLINE_S):
         handler = asyncio.create_task(rig.endpoint(sock))
         sock.feed({"t": "hello", "id": "h", "p": {"clock_ms": BASE_MS}})

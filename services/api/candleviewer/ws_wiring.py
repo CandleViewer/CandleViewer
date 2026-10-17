@@ -369,7 +369,7 @@ class WsRuntime:
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
-        to flush and stop the sweeper. Returns the number of connections notified.
+        to flush and stop the sweeper. Returns the number of connections offered the notice.
 
         The notice and grace run once (#2546): the server runs this before uvicorn's own
         shutdown closes the sockets, and the lifespan teardown's later call only stops the

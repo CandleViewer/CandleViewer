@@ -616,3 +616,95 @@ def test_in_flight_subscription_gets_revoked_when_the_grant_is_withdrawn(world: 
         assert (revoked["t"], revoked["ch"]) == ("revoked", "orders")
         assert revoked["p"]["reason"] == "account_scope_changed"
         assert _sub(ws, "orders", GRANTED)["error"]["code"] == "account_scope_denied"
+
+
+# -- `system` content per role (SR-188, 23-ws-protocol.md §15.9; #2175) -------------------------
+
+_KINDS_ENUM = json.loads(
+    (Path(__file__).resolve().parents[5] / "docs" / "plan" / "ws-schema.json").read_text("utf-8")
+)["schemas"]["cv://ws/v1/system.schema.json"]["properties"]["kind"]["enum"]
+#: Every role receives it whole; reading up to it proves nothing else was queued before it.
+_MARK = {"kind": "notice", "severity": "info", "message": "marker", "reason": "test.marker"}
+_HALT = {"engaged": True, "scope": "accounts", "exchange_account_ids": [str(GRANTED), str(FOREIGN)]}
+_WHO = {"engaged_by": str(user_id_of("owner")), "reason": "halt"}  # the Owner's, as `actions`
+_OMS = {"name": "oms", "state": "degraded"}  # a health component; `detail` is the Owner's
+#: One frame per `system_kinds` row, carrying the kind's Owner-only fields where it has any.
+_SYSTEM_SAMPLES: dict[str, dict[str, Any]] = {
+    "clock_drift": {"kind": "clock_drift", "severity": "warning", "clock_offset_ms": 900},
+    "connection_quality": {"kind": "connection_quality", "class": "lagging", "queue_pct": 30},
+    "degraded_data": {"kind": "degraded_data", "degraded_topics": ["heatmap.BTCUSDT"]},
+    "exchange_state": {"kind": "exchange_state", "public_ws": "resyncing"},
+    "feature_flags": {"kind": "feature_flags", "feature_flags": {"storage.cold_tier": True}},
+    "health": {"kind": "health", "health": "degraded", "components": [_OMS | {"detail": "x"}]},
+    "kill_switch": {
+        "kind": "kill_switch",
+        "kill_switch": _HALT | _WHO,
+        "actions": {"rules_disarmed": 1},
+    },
+    "notice": {"kind": "notice", "severity": "critical", "reason": "net.binding_check_failed"},
+    "shutdown_notice": {"kind": "shutdown_notice", "reason": "deploy", "closing_in_ms": 5000},
+    "unknown": {"kind": "tick"},
+}
+
+
+def _system_rows() -> dict[str, dict[str, str]]:
+    from tests.contract.rbac.test_route_matrix import _MATRIX
+
+    rows: dict[str, dict[str, str]] = _MATRIX["system_kinds"]
+    return rows
+
+
+def _neutral(kind: str, actor: str) -> dict[str, Any]:
+    """The role-neutral view, written out: no Owner-only field, accounts cut to the actor's."""
+    if kind == "health":
+        return {"kind": "health", "health": "degraded", "components": [_OMS]}
+    mine = [str(GRANTED)] if actor == "manager_with_grant" else []
+    return {"kind": "kill_switch", "kill_switch": _HALT | {"exchange_account_ids": mine}}
+
+
+def _until_mark(ws: Any, hub: Any) -> list[Any]:
+    """The `system` bodies queued for `ws` before now, read up to the marker."""
+    ws.portal.call(hub.broadcast_system, _MARK)  # on the app's own loop, as a producer runs
+    seen: list[Any] = []
+    while (frame := _recv(ws)).get("p") != _MARK:
+        seen.append(frame.get("p"))
+    return seen
+
+
+def test_system_kind_matrix_is_total_over_the_contract_kinds() -> None:
+    rows = _system_rows()
+    assert set(rows) == {*_KINDS_ENUM, "unknown"} == set(_SYSTEM_SAMPLES)
+    for kind, row in rows.items():
+        assert set(row) == set(ACTORS), kind
+        assert set(row.values()) <= {"whole", "neutral", "none"}, kind
+        assert row["unauthenticated"] == "none", kind
+
+
+@pytest.mark.parametrize(
+    ("kind", "actor"),
+    [pytest.param(k, a, id=f"{k}|{a}") for k in sorted(_SYSTEM_SAMPLES) for a in ACTORS],
+)
+def test_every_system_kind_x_actor_matches_the_matrix(world: World, kind: str, actor: str) -> None:
+    expected = _system_rows()[kind][actor]
+    sample = _SYSTEM_SAMPLES[kind]
+    want = {"whole": [sample], "neutral": [_neutral(kind, actor)], "none": []}[expected]
+    hub = world.app.state.ws_hub
+    started = time.perf_counter()
+    try:
+        with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            if actor == "unauthenticated":
+                _hello(ws)
+                ws.portal.call(hub.broadcast_system, sample)
+                ws.send_json({"t": "sub", "id": "s", "p": {"topics": ["system"]}})
+                first = _recv(ws)  # the refusal, unless a `system` frame was queued before it
+                got = [] if first["t"] == "err" else [first.get("p")]
+            else:
+                assert _auth(ws, actor)["t"] == "auth_ok"
+                _until_mark(ws, hub)  # whatever `auth_ok` queued
+                ws.portal.call(hub.broadcast_system, sample)
+                got = _until_mark(ws, hub)
+        assert got == want, f"system {kind} as {actor}: expected {expected}, got {got}"
+    except BaseException:
+        record_cell("ws", f"WS system.{kind}", actor, "fail", started)
+        raise
+    record_cell("ws", f"WS system.{kind}", actor, "pass", started)

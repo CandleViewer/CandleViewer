@@ -21,7 +21,8 @@ from tests.unit.ws._seq_support import USER, validate
 pytestmark = pytest.mark.chaos
 
 BOUND_S = 1.0  # WS-E04 / AC-26
-STATE = {"engaged": True, "scope": "global", "reason": "chaos"}
+STATE = {"engaged": True, "scope": "global", "reason": "chaos"}  # as the producer engages it
+VIEW = {"engaged": True, "scope": "global"}  # what a manager's `system` frame carries (§15.9)
 
 
 async def flip(stack: Stack) -> float:
@@ -55,7 +56,7 @@ async def test_s7_kill_switch_reaches_healthy_sockets_within_1s_past_a_stall(sta
         (i,) = c.system("kill_switch")
         validate(c.frames[i])
         kill = c.frames[i]["p"]
-        assert kill["kill_switch"] == STATE and kill["severity"] == "critical"
+        assert kill["kill_switch"] == VIEW and kill["severity"] == "critical"
         assert c.rx_at[i] - t0 < BOUND_S and not c.order_entry  # C12 on this frame alone
     await each(healthy, lambda c: any(f["t"] == "permission_change" for f in c.frames), "re-eval")
     for c in healthy:  # §12.5: the system frame first, then the re-evaluation
@@ -64,7 +65,7 @@ async def test_s7_kill_switch_reaches_healthy_sockets_within_1s_past_a_stall(sta
 
     lane.inject(Fault.HEAL)  # not lost: the stalled client gets the delta, then the switch
     await stalled.until(lambda: seen(stalled), "kill_switch frame after the stall")
-    assert stalled.frames[stalled.system("kill_switch")[0]]["p"]["kill_switch"] == STATE
+    assert stalled.frames[stalled.system("kill_switch")[0]]["p"]["kill_switch"] == VIEW
     assert stalled.seq.get(BOOK) == 2 and not stalled.order_entry
     assert all(c.gaps == [] and c.closes == [] for c in everyone) and len(stack.gateway) == 4
 
