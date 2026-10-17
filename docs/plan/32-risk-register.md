@@ -724,12 +724,12 @@ the 30-minute canary meanwhile.
 
 ### RSK-064 · A WS subscription outlives the grant that authorised it (continuous authorisation)
 
-`Risk: R6` · Category **Security** · L 2 · I 4 · **Score 8 — Medium** · Owner **Security engineer** · Epics E17, E09 · Status **Open**
+`Risk: R6` · Category **Security** · L 2 · I 4 · **Score 8 — Medium** · Owner **Security engineer** · Epics E17, E09 · Status **Mitigating**
 
-- **Description** — Introduced by E17-X01 (WS-E02, WS-I02). Subscriptions are dropped or narrowed synchronously on every grant, role or kill-switch change, but principal resolution is asynchronous; without snapshot versioning a connection completing `auth` or re-auth during a change could apply an older snapshot (reconnect race).
-- **Mitigation** — Synchronous drop/narrow before any send (merged, E17-S02); SR-189 snapshot versioning (E17-S02 follow-up); producers route private events by the subscription's account set (E29/E34); reconnect-race chaos test (E17-Q02) and AC-13/AC-14 (E17-X02).
+- **Description** — Introduced by E17-X01 (WS-E02, WS-I02). Subscriptions are dropped or narrowed synchronously on every grant, role or kill-switch change, but principal resolution is asynchronous; without snapshot versioning a connection completing `auth` or re-auth during a change could apply an older snapshot (reconnect race). Since #2525 the principal comes from the store, so that race is reachable in production; SR-189 (#2318) closes it.
+- **Mitigation** — Synchronous drop/narrow before any send (merged, E17-S02); SR-189 snapshot versioning (merged, E17-S02, #2318); producers route private events by the subscription's scope: account set, or owner for `alerts` (E29/E34); reconnect-race chaos test (E17-Q02) and AC-13/AC-14 (E17-X02).
 - **Trigger** — Any private-topic frame for an account after its `revoked`; AC-14 failure.
-- **Contingency** — Close every socket of the affected user on a grant change (forces fresh `auth`) until SR-189 ships; Owner review of the audit trail.
+- **Contingency** — If the trigger fires (a stale snapshot wins; AC-14 failure), close every socket of the affected user on a grant change (forces fresh `auth`) until the version check is fixed; Owner review of the audit trail.
 
 ### RSK-065 · Live API keys decryptable outside live KEK custody (shared KEK lineage, environment-held credentials)
 

@@ -39,9 +39,9 @@ open gaps, already tracked:
 
 | Gap                                                                                                                                                                                                                 | Tracked in            | Rows affected       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------- |
-| No global cap on pre-auth sockets (bounded only by the 10 s auth timeout); `authenticate` / principal resolution are not wrapped in `asyncio.timeout`; outbound queue has no literal `maxsize` (bound is in `push`) | #2155                 | WS-S03, WS-D01, D02 |
+| No global cap on pre-auth sockets (bounded only by the 10 s auth timeout); `authenticate()` is not wrapped in `asyncio.timeout` (principal load: 5 s); outbound queue has no literal `maxsize` (bound is in `push`) | #2155                 | WS-S03, WS-D01, D02 |
 | Web client offers subprotocols but never sends `hello`/`auth`                                                                                                                                                       | #2155 (E17-T04 scope) | WS-S05, WS-E05      |
-| Gateway is mounted in `app.py`, but session authentication and principal snapshots fail closed until the identity store is wired; end-to-end wiring is still open on E17-S01                                        | #377                  | WS-S01, WS-E01      |
+| Closed by #2525: on the real backend the deployed principal is store-backed (`StorePrincipalLoader`, `ws_wiring.py`); the fake backend keeps deny-all                                                               | #377                  | WS-S01, WS-E01      |
 | Closed by #2483: `cv.v1.msgpack` is served, and its client frames reach only the SR-185 decoder (WS-T08)                                                                                                            | E17-T07 / ADR-0005    | WS-T08              |
 | ASGI-server WebSocket limits (message size, compression, queue, handshake timeouts) not explicitly configured                                                                                                       | #2176                 | WS-D11..D14         |
 | Coalescing, the 8 MiB / 2 000-frame budget and the overflow ladder (E17-T03); snapshot/resync and the resync rate limit (E17-S03)                                                                                   | #412, #411            | WS-D03..D06         |
@@ -168,6 +168,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-I06 | F4, F8         | `auth_ok` / `permission_change` reveals the full permission and account list                                                     | L   | L   | Low    | Only the caller's own scope; confidential classification; never logged in full Requirement: SR-074.                                                                                                                                                                                                                         | E17-S01          | review            | M     | Low      |
 | WS-I07 | F14, P9        | Decoded private data leaks through worker `postMessage` to another context                                                       | L   | M   | Low    | Worker is same-origin and dedicated to the app; no cross-origin messaging; CSP (SR-127)                                                                                                                                                                                                                                     | E17-T04          | review            | M     | Low      |
 | WS-I08 | F9-F13, P5/P7  | Account-scoped data reaches the wrong subscriber through the shared upstream reference or reuse of an encode-once fan-out buffer | L   | H   | Medium | Shared upstream refs and encode-once buffers are used only for **public** families; private families never take a shared upstream ref (`subscribe_upstream` skips them) and are encoded per subscription after account filtering; a test asserts no private frame buffer is shared across subscriptions (SR-190)            | E17-S02, E17-T03 | unit, integration | M     | Low      |
+| WS-I09 | F10-F11, P4    | Cross-user alert disclosure through the fan-out: another user's `alerts` delta reaches a connection that may not read it         | M   | M   | Medium | `alerts` deltas reach only the owning user's connections, and nobody when the event names no owner. Since #2521 a private delta also needs the family's permission on the connection's current principal; `recorder` (scope NONE) relies on 23 §9.5 revocation plus that check. Tests: `tests/unit/ws/test_sequencing.py`   | E17-S03          | unit              | M     | Low      |
 
 ### 3.5 Denial of service
 
@@ -175,7 +176,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------- | ----- | ------------------------- |
 | WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6); a flush past 2 s is abandoned, never the attempt (S11 exception, 23 §4.4)                                           | E17-T03, #2155   | unit, chaos               | M     | Low                       |
 | WS-D02 | F3, P1           | Slow auth/principal lookup stalls the handshake while sockets accumulate                                                                                                                                                                                                                                                                                          | L   | M   | Low    | Auth timeout closes the socket; wrapping the awaits in `asyncio.timeout` is open (#2155, C-2.18) Requirement: SR-073.                                                                                                                                                                                                               | #2155            | unit                      | M     | Low                       |
-| WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | 5 resyncs / topic / minute, then `resync_rate_limited` and revocation (planned) Requirement: SR-040.                                                                                                                                                                                                                                | E17-S03          | unit, chaos               | M     | Low                       |
+| WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | 5 resyncs / topic / minute, then `resync_rate_limited` and revocation. `ctl`-triggered snapshots (identity change, resume) are outside the 23 §7.5 window and bounded today only by the inbound frame limit (WS-D05); tracked in WS-D16 (#2293) Requirement: SR-040.                                                                | E17-S03          | unit, chaos               | M     | Low                       |
 | WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (caps the **accepted** topics only; entries beyond it are still parsed, echoed and audited, so it does not bound per-frame work, reply size or audit writes: see WS-D15), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073. | E17-S02          | unit, load                | M     | Medium (WS-D15 open)      |
 | WS-D05 | F2, P1           | Inbound frame flood                                                                                                                                                                                                                                                                                                                                               | M   | M   | Medium | 30 frames/s and 300/min, before and after auth, a `pong` included until `auth_ok`; second breach closes `4429`; 3 protocol violations close `4400` Requirement: SR-040.                                                                                                                                                             | E17-S01          | unit                      | M     | Low                       |
 | WS-D06 | F2, P1           | Oversized inbound frame                                                                                                                                                                                                                                                                                                                                           | M   | M   | Medium | 256 KiB (8 KiB until `auth_ok`) checked on raw bytes before decode, close 1009 Requirement: SR-040.                                                                                                                                                                                                                                 | E17-S01          | unit                      | M     | Low                       |
@@ -209,7 +210,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | P1 Handshake (F1-F4)           | S01-S06                                                      | T02, T05, T08      | R03           | I01, I04, I06 | D02, D05-D07  | E05      |
 | P2 SubscriptionManager (F5-F6) | S04                                                          | T03, T04, T06      | R01           | I02, I03      | D04, D15, D16 | E01, E03 |
 | P3 Revocation (F7-F8)          | S01                                                          | —                  | R02           | I06           | D09           | E02, E04 |
-| P4 Snapshot / sequencing (F11) | —                                                            | T05, T07           | —             | I05           | D03, D16      | —        |
+| P4 Snapshot / sequencing (F11) | —                                                            | T05, T07           | —             | I05, I09      | D03, D16      | —        |
 | P5 Multiplexer (F9-F10)        | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | I02           | D04, D08      | —        |
 | P6 Coalescing (F12)            | —                                                            | —                  | —             | —             | D01, D08      | —        |
 | P7 Encoder (F13)               | —                                                            | T01                | —             | I01           | D08           | —        |
@@ -219,7 +220,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | E2 Session service (F3-F4)     | S01, S02                                                     | —                  | —             | —             | —             | E02      |
 | E3 Internal bus (F9)           | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | —             | D08           | —        |
 
-Every STRIDE category has analysed rows. Counts: 50 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16); two Highs (WS-D01 and WS-D15, inherent); residual High: WS-D15 (until #2292 merges); residual Medium:
+Every STRIDE category has analysed rows. Counts: 51 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16; WS-I09 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); residual High: WS-D15 (until #2292 merges); residual Medium:
 WS-S03, WS-D07, WS-D08, WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until #2176 merges (open items, §10).
 
 ## 4. WS authentication and the 10-second unauthenticated window
@@ -239,15 +240,20 @@ The argument is that the window is **bounded and cheap**:
   and a MessagePack frame at most 72 values until `auth_ok` (16 384 after).
 - **Small, fixed allocation.** Before `auth_ok` a socket holds the connection object, one writer task, a
   bounded outbound queue and a rate-limiter deque capped at 301 timestamps. No subscription state, upstream
-  reference or bar lease is created until `auth_ok`, and a registry entry only after a successful `authenticate`
-  (SR-189; the teardown removes it). This is not literally "nothing beyond the socket", but it is
-  constant-size per connection and independent of attacker input.
+  reference or bar lease is created until `auth_ok`. Since SR-189 the first `auth` that passes `authenticate`
+  registers the connection in the `ConnectionRegistry` and then re-checks the snapshot version (at most one
+  extra principal read) before `auth_ok`. That still runs inside the auth deadline, the registry sends nothing to
+  the socket before `auth_ok` (its `send` is silent until the connection is authenticated), and a failed
+  re-check is undone, as the teardown undoes the entry for a socket that
+  closes first. This is not literally "nothing beyond the socket", but it is constant-size per connection and
+  independent of attacker input.
 - **Not unique to an identity.** The 8-connections-per-user cap applies only after auth, because before auth
   there is no user. That is why a global pre-auth cap is needed.
 
-**Gaps (tracked, #2155):** there is no global cap on concurrent pre-auth sockets, and the `authenticate` and
-principal-resolution awaits are not wrapped in `asyncio.timeout`. Until both land, the number of pre-auth
-sockets is limited only by arrival rate x 10 s.
+**Gaps (tracked, #2155):** there is no global cap on concurrent pre-auth sockets, and the `authenticate` await
+is not wrapped in `asyncio.timeout`. The principal load is bounded: `PRINCIPAL_LOAD_TIMEOUT_S` (5 s) limits it
+and it fails closed to the deny-all snapshot (#2525). Until the cap and the `authenticate` bound land, the
+number of pre-auth sockets is limited only by arrival rate x 10 s.
 
 **Residual risk.** An unauthenticated party who can reach the port can occupy connection slots and a small
 amount of memory per slot for 10 s at a time. Exposure is Tailscale-only with loopback/WSL-internal binds
@@ -280,13 +286,21 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
 
 - _Snapshot ordering._ Principal resolution is asynchronous, so the design must guarantee that the
   snapshot applied to a connection is never older than the latest grant change, including for a connection
-  that is mid-handshake when the change happens. Requirement **SR-E17-07**: snapshots carry a monotonic
-  version, an older snapshot never replaces a newer one, and a connection re-checks the version after it
-  registers. Owner: E17-S02 follow-up (§9). Test: E17-Q02 reconnect race and AC-14.
+  that is mid-handshake when the change happens. Since #2525 the principal is read from the store, so the race
+  is reachable in production: a role or grant change that commits between the principal load and the socket's
+  registration would miss the fan-out. Requirement **SR-E17-07** (SR-189, implemented in #2318): snapshots
+  carry a monotonic version taken before the read, an older snapshot never replaces a newer one (it is
+  refused, counted and audited: §8), and a connection re-checks the version after it registers, before
+  `auth_ok` (§4). Owner: E17-S02 (§9). Tests: `tests/unit/ws/test_snapshot_versioning.py`, and E17-Q02's
+  reconnect race (chaos scenario 6b) for AC-14.
 - _Reconnect race_ (E17-Q02). A client that reconnects during a revocation gets a fresh `auth` against the
   current grants. With SR-E17-07 it cannot inherit a stale snapshot.
-- _Producer-side filtering._ Private-topic producers (E29/E34) must route events by account through the
-  subscription's account set, not by user. Recorded as a referenced control (WS-I02).
+- _Producer-side filtering._ Private-topic producers (E29/E34) must route events of an account-scoped family
+  by account through the subscription's account set, not by user. A SELF family (`alerts`) has no account:
+  its events are routed by user, to the owner's connections only, and a NONE family (`recorder`) reaches
+  every subscription that holds its permission (WS-I09). No producer or snapshot adapter for `alerts` or
+  `recorder` exists yet; when they land, the `alerts` ones must scope by the connection's user. Recorded as a
+  referenced control (WS-I02).
 - _Queued and windowed data (E17-T03, flag on)._ With two outbound lanes (`23-ws-protocol.md` §8.4),
   `permission_change` and `revoked` ride the priority lane and overtake what the normal lane still holds, and a
   throttle window can hold data coalesced under the old scope. Requirement: in the narrowing step itself, before
@@ -422,6 +436,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | planned E17-S03                          |
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged                                   |
 | Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
+| Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
 | Audit write failures on the WS path | —                                    | counter required (SR-E17-04)                     | R04      | requested E17-T06                        |
 | Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | merged (#2239; audit #2269)              |
 | User connect/close churn (#2322)    | `ws.connection.closed` (#2486)       | `cv_ws_handshake_seconds_count`                  | D07      | merged (#2486); capped by #2558          |
@@ -469,6 +484,14 @@ close, it clears both lanes before the `bye`, so nothing queued under the old sc
 `warning`) and counted (`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type,
 family and error class, never its payload (C-12.6).
 
+**Stale permission snapshots (SR-189, WS-E02).** The registry stamps every principal read with a monotonic
+version taken before the read, and a connection never takes an older one (§5). A refusal is counted in
+`cv_ws_permission_snapshots_refused_total{event}`, where `event` is the step that was refused: `reauth`,
+`grant_change` or `handshake`. It also writes one `ws.permission_snapshot.refused` row at `warning` (outcome
+`denied`, reason `stale`), whose `after_state` holds the `event` and the `applied_version` and
+`refused_version`. Any increase means a grant change raced a re-auth or a handshake and the check kept the
+newer snapshot. Like every WS audit write, the row is best effort (WS-R04 as built, §10).
+
 ## 9. Control-to-ticket map
 
 Every E17-* ticket appears here; a missing row is a model defect (GOV-008,
@@ -482,7 +505,7 @@ PR; local aliases `SR-E17-01..07` in the rows above map 1:1 to SR-183..SR-189; S
 | E17-T01                     | Generated WS schemas are the strict validation source (SR-040); `ws_message_schemas` gate keeps doc and code equal                                                                                                                      |
 | E17-T02                     | CVWB bounds-checked decode (SR-128) and fuzz corpus (SR-155) — merged; T01                                                                                                                                                              |
 | E17-S01                     | Handshake, timeouts, attempts, rate limit, frame cap, re-auth identity, no query-string token (S01-S06, T02, D05-D07, E05, I01); Origin allow-list SR-183; nested-JSON handling SR-184; #2155 follow-ups (pre-auth cap, await timeouts) |
-| E17-S02                     | Registry, option schema, per-account `decide`, generic denial, revocation, audit (T03-T06, I02, I03, E01-E03, R01, R02, D04, D09); snapshot versioning SR-189 (follow-up filed)                                                         |
+| E17-S02                     | Registry, option schema, per-account `decide`, generic denial, revocation, audit (T03-T06, I02, I03, E01-E03, R01, R02, D04, D09); snapshot versioning SR-189 (merged, #2318)                                                           |
 | E17-S03                     | Sequencing, `upstream_desync` snap, resync rate limit, 4 MiB chunking (T05, T07, D03, D10); `system` payload filtering SR-188                                                                                                           |
 | E17-T03                     | 8 MiB / 2 000-frame budget (lower only), both lanes inside it, overflow ladder, coalescing, throttles (D01, D08); narrowing drops queued and windowed data first (E02); an unsendable non-droppable frame closes `internal_error` (D01) |
 | E17-T04                     | Web client `hello`/`auth` (#2155), worker decode, gap detection, no token in URL (T07, D10, I07)                                                                                                                                        |
@@ -505,8 +528,9 @@ owner tickets by comment: SR-185 to E17-T07 #572; SR-190 test to E17-S02/E17-T03
 WS-E04 1 s bound to E17-Q02 #410 and E17-Q04 #569. Follow-ups #2172-#2176 and #2155 are on the project board.
 
 **Gaps that become work.** Every control gap is already a ticket or owned by a named open E17 ticket: #2155
-(pre-auth cap, await timeouts, web hello/auth), #2176 (explicit server WS limits, SR-191) and the new follow-up for SR-189 (snapshot versioning) on
-E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
+(pre-auth cap, await timeouts, web hello/auth) and #2176 (explicit server WS limits, SR-191). SR-189
+(snapshot versioning, E17-S02) is implemented (#2318) and is no longer a gap. SR-183..SR-188 are requested as
+scope on the open tickets named above.
 
 ## 10. Residual risks, review and sign-off
 
@@ -553,8 +577,9 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
     Low once #2176 merges. Part of **RSK-063**.
   - WS-D08: per-user amplification on hot symbols is bounded but unmeasured until E17-Q03. **RSK-063**.
 - **Contingent Low:** WS-D01, WS-D03, WS-T07, WS-D10 and WS-I05 are rated on planned controls (E17-T03, E17-S03,
-  E17-T04); re-triaged at each PR's security review if the control is missing. WS-E02 is Low contingent on
-  SR-189. **RSK-064** records the continuous-authorisation risk until then.
+  E17-T04); re-triaged at each PR's security review if the control is missing. WS-E02 was Low contingent on
+  SR-189, which is implemented (#2318), so it is Low as built. **RSK-064** (continuous authorisation) is
+  Mitigating in `32-risk-register.md`.
 - One High residual (WS-D15, above) and no other. The pre-auth argument (§4) holds only for tailnet-only exposure.
 - Status is **Approved** (2026-10-13). WS-D15 is residual High until #2292 merges (recorded as RR-08 in `04-security-program.md` §16.1, owner sign-off
   pending); WS-D16 is residual Medium until #2293 merges.
@@ -578,3 +603,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag, floors and S11 flush deadline (§6), close fields and fail-closed close (§8), row (§9)   |
 | 2026-10-16 | author (agent; PR for #412 S2a-0)                 | Pre-auth inbound frame limits, #412 S2a-0: §4, §6, WS-T02, WS-T08, WS-D05 and WS-D06 state them                                              |
 | 2026-10-16 | author (agent; PR for #2824)                      | WS-R04 as built (#2824): fan-out rows after the frames, 2 s each, 3 failed in a row end them; swap eviction; D15 (§6, §10)                   |
+| 2026-10-17 | author (agent; PR for #2322)                      | SR-189 as built (#2318): §4, §5, §8-§10, RSK-064; WS-I09 (#2521); WS-D03 `ctl` snapshots (#2556); §1.1 rows (#2525)                          |
