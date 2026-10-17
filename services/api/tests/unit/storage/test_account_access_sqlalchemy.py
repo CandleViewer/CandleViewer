@@ -42,7 +42,8 @@ from candleviewer.storage.repositories.account_access import (
     RemovalContext,
 )
 
-_USER, _ACTOR, _RID = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+_USER, _ACTOR, _RID, _SESSION = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+_IP = "192.0.2.7"  # the caller's address (RFC 5737)
 _A, _B, _C, _D = sorted(uuid.uuid4() for _ in range(4))
 _T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)
 _Row = tuple[uuid.UUID, bool, bool]  # (exchange_account_id, can_view, can_trade), not frozen
@@ -63,6 +64,11 @@ _WAIT_S = 5.0
 _CLOSE_FAILED = "account access closing audit record not written"
 
 
+def _label(account: uuid.UUID) -> str:
+    """What `_Rel` reads back as a known account's label."""
+    return f"acct-{account.hex[:8]}"
+
+
 class _Rel:
     """Fake UoW keyed by statement: records each statement, its params and the commit. Ids come
     back as asyncpg's own `uuid.UUID` subclass, as the driver returns them."""
@@ -70,7 +76,7 @@ class _Rel:
     def __init__(
         self,
         status: str | None = "active",
-        rows: tuple[_Row | _FrozenRow, ...] = (),
+        rows: tuple[tuple[Any, ...], ...] = (),  # a `_CURRENT` row, or a prefix of one
         unknown: frozenset[uuid.UUID] = frozenset(),
         *,
         fail_on: object = None,
@@ -99,10 +105,11 @@ class _Rel:
                 (DriverUUID(str(r[0])), *r[1:4], r[4] and DriverUUID(str(r[4])))
                 for r in self.listing
             ]
-        if stmt is m._KNOWN_ACCOUNTS:
-            return [(DriverUUID(i),) for i in params["ids"] if uuid.UUID(i) not in self.unknown]
-        if stmt is m._CURRENT:  # a 3-tuple row reads back `frozen = false, frozen_at = NULL`
-            pad = (False, None)
+        if stmt is m._KNOWN_ACCOUNTS:  # each known account's label and environment
+            ids = (i for i in params["ids"] if uuid.UUID(i) not in self.unknown)
+            return [(DriverUUID(i), _label(uuid.UUID(i)), "demo") for i in ids]
+        if stmt is m._CURRENT:  # a short row reads back unfrozen, with no granter
+            pad = (False, None, None)
             return [(DriverUUID(str(r[0])), *r[1:], *pad[len(r) - 3 :]) for r in self.rows]
         return []
 
@@ -198,7 +205,13 @@ async def _replace(
     removal: RemovalContext | None = _KNOWN,
 ) -> AccessChange:
     return await _store(rel, audit).replace_grants(
-        _USER, grants, actor_user_id=_ACTOR, request_id=_RID, removal=removal
+        _USER,
+        grants,
+        actor_user_id=_ACTOR,
+        request_id=_RID,
+        removal=removal,
+        actor_ip=_IP,
+        session_id=_SESSION,
     )
 
 
@@ -244,6 +257,8 @@ async def test_replace_audit_record_names_the_grants_before_and_after() -> None:
     assert kwargs == {
         "actor_label": str(_ACTOR),
         "actor_user_id": _ACTOR,
+        "actor_ip": _IP,
+        "session_id": _SESSION,
         "object_kind": "user",
         "object_id": str(_USER),
         "before_state": _grants((_A, "read"), (_B, "trade")),
@@ -373,6 +388,7 @@ async def test_replace_whose_commit_fails_closes_the_write_ahead_record() -> Non
     (_, ahead, _, _), (action, closing, _, _) = audit.calls
     assert action == "users.access_change_failed" and action in AUDIT_ACTIONS
     assert closing == {**ahead, "outcome": "failure", "reason": "commit_failed"}
+    assert (closing["actor_ip"], closing["session_id"]) == (_IP, _SESSION)  # who asked (C-2.9)
 
 
 async def test_replace_cancelled_during_the_commit_closes_the_write_ahead_record() -> None:
