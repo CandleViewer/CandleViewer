@@ -56,6 +56,9 @@ from candleviewer.admin.flags.store import (
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 
+#: A string `value`, or override value, is audited cut to this many characters and a `…`; a list,
+#: an object, a float or an integer outside 0-100, never a flag value, as its type and length.
+AUDITED_STRING_MAX: Final = 256
 #: The bound on the writer's own awaits (the store adapter bounds `store.write`): under the row
 #: lock, the user lookup, the step-up and the audit records together, and an unknown key's record
 #: (past it, `503 store_unavailable`); after the commit, the hook and each record (past it, logged).
@@ -129,7 +132,7 @@ class FlagWriter:
             raise FlagsWriteDenied("flags:write")
         evidence, audited_url = check_evidence_url(evidence_url)  # once per request
         request = {
-            "value": value,
+            "value": _audited(value),
             "overrides": _overrides(user_overrides),
             "reason": reason,
             "evidence_url": audited_url,
@@ -226,8 +229,17 @@ def _validated(
     return expected_updated_at
 
 
+def _audited(value: object) -> object:
+    if isinstance(value, str) and len(value) > AUDITED_STRING_MAX:
+        return value[:AUDITED_STRING_MAX] + "\u2026"
+    if isinstance(value, list | dict | float) or (type(value) is int and not 0 <= value <= 100):
+        size = len(value) if isinstance(value, list | dict) else len(str(value))
+        return {"type": type(value).__name__, "len": size}
+    return value
+
+
 def _overrides(overrides: Mapping[uuid.UUID, object] | None) -> dict[str, object] | None:
-    return None if overrides is None else {str(k): v for k, v in overrides.items()}
+    return None if overrides is None else {str(k): _audited(v) for k, v in overrides.items()}
 
 
 @dataclass(frozen=True, slots=True)

@@ -86,10 +86,6 @@
       "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
       "ticket": "E42-T05"
     },
-    "GET /admin/feature-flags": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /admin/security/summary": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -543,10 +539,6 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "POST /watchlists": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "PUT /admin/feature-flags/{flagKey}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },

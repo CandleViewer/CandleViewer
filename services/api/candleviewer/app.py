@@ -96,6 +96,7 @@ from candleviewer.api.deny_by_default import (
 from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
+from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
@@ -1671,6 +1672,11 @@ def create_app(
     app.state.admin_overview_metrics = export_overview_metrics(
         ctx.metrics, env=resolved.environment.value
     )
+    # E42-T03: list and set the feature flags, on the audited admin router.
+    for flags_router in make_feature_flags_routers(
+        feature_flags, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+    ):
+        app.include_router(flags_router)
     # E16-T05: weekly cold-tier compaction on demand (async job, polled via /admin/jobs).
     _cold_registry = DatasetRegistry(resolved.parquet_root)
 
