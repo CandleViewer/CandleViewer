@@ -1,9 +1,10 @@
 # E17 — STRIDE threat model: Client WS protocol and gateway
 
 - Ticket: E17-X01 (issue #381). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-13;
-  review log in §10). Accepted residuals WS-I04 and WS-R04 are owner-accepted per #1778 (2026-10-12; review date 2027-01-15). WS-D15/WS-D16 are Open, tracked in #2292/#2293: WS-D15 is residual
-  High until #2292 merges (release blocker, recorded as RR-08 in `04-security-program.md` §16.1, owner sign-off pending); WS-D16 is residual
-  Medium until #2293 merges.
+  review log in §10). Accepted residuals WS-I04 and WS-R04 are owner-accepted per #1778 (2026-10-12; review date
+  2027-01-15). WS-D15's control (SR-192, #2292) is built and its row is re-scored residual Medium (#3123; recorded as
+  RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is Open, tracked in #2293,
+  and is residual Medium until #2293 merges.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1). Format mirrors `E13-indicators.md`. Reuses the E09 auth/RBAC model (`e09-auth-rbac.md`, U-rows);
   those threats are **referenced, not duplicated**. Upstream Bybit connection security is E08's model.
@@ -177,7 +178,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6); a flush past 2 s is abandoned, never the attempt (S11 exception, 23 §4.4)                                           | E17-T03, #2155   | unit, chaos               | M     | Low                       |
 | WS-D02 | F3, P1           | Slow auth/principal lookup stalls the handshake while sockets accumulate                                                                                                                                                                                                                                                                                          | L   | M   | Low    | Auth timeout closes the socket; each call an `auth` makes is bounded at 6 s, past which the socket closes `bye internal_error` + `1011` (#2155, C-2.18) Requirement: SR-073.                                                                                                                                                        | #2155            | unit                      | M     | Low                       |
 | WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | 5 resyncs / topic / minute, then `resync_rate_limited` and revocation. `ctl`-triggered snapshots (identity change, resume) are outside the 23 §7.5 window and bounded today only by the inbound frame limit (WS-D05); tracked in WS-D16 (#2293) Requirement: SR-040.                                                                | E17-S03          | unit, chaos               | M     | Low                       |
-| WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (a longer frame is refused whole before any entry is read, so per-frame work, reply size and audit writes stay bounded: WS-D15, #2292), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073.                                   | E17-S02          | unit, load                | M     | Medium (WS-D15 open)      |
+| WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (a longer frame is refused whole before any entry is read, so per-frame work, reply size and audit writes stay bounded: WS-D15, #2292), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073.                                   | E17-S02          | unit, load                | M     | Low                       |
 | WS-D05 | F2, P1           | Inbound frame flood                                                                                                                                                                                                                                                                                                                                               | M   | M   | Medium | 30 frames/s and 300/min, before and after auth, a `pong` included until `auth_ok`; second breach closes `4429`; 3 protocol violations close `4400` Requirement: SR-040.                                                                                                                                                             | E17-S01          | unit                      | M     | Low                       |
 | WS-D06 | F2, P1           | Oversized inbound frame                                                                                                                                                                                                                                                                                                                                           | M   | M   | Medium | 256 KiB (8 KiB until `auth_ok`) checked on raw bytes before decode, close 1009 Requirement: SR-040.                                                                                                                                                                                                                                 | E17-S01          | unit                      | M     | Low                       |
 | WS-D07 | F1, P1           | Connection exhaustion per user and globally                                                                                                                                                                                                                                                                                                                       | M   | M   | Medium | 8 per user after auth (oldest idle closed), and 20 new sockets per user per minute (#2558); at most 64 sockets awaiting their first `auth_ok` per process, the next shed with `bye server_shedding_load` + `1013` (#2155) Requirement: SR-073.                                                                                      | E17-S01, #2155   | load                      | M     | Low                       |
@@ -188,7 +189,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-D12 | F1-F2, P1        | permessage-deflate amplification: a small compressed frame inflates to a large message before any app check                                                                                                                                                                                                                                                       | M   | M   | Medium | Server compression settings not explicitly configured; disable inbound compression or bound the decompressed size at the server (SR-191); the protocol does not require compression (§3.5)                                                                                                                                          | #2176            | integration               | M     | Low after #2176           |
 | WS-D13 | F1-F2, P1        | Fragmentation reassembly: many continuation frames held open to accumulate buffered state                                                                                                                                                                                                                                                                         | L   | M   | Low    | Same server message-size limit bounds the reassembled message; per-connection server queue limit (SR-191); auth timeout closes idle pre-auth sockets                                                                                                                                                                                | #2176, E17-S01   | integration               | M     | Low                       |
 | WS-D14 | F1, P1           | Slowloris on the upgrade: HTTP upgrade requests sent slowly to hold server slots before the app sees the socket                                                                                                                                                                                                                                                   | L   | M   | Low    | Server keep-alive/handshake timeouts not explicitly configured; set explicit server timeouts and connection limits (SR-191); tailnet-only reachability (SR-045/047)                                                                                                                                                                 | #2176            | integration               | M     | Low after #2176           |
-| WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built (#2292): a `sub` of more than `MAX_TOPICS_PER_SUB` (50) entries is refused whole before any entry is read (one small `too_many_topics` `err`, no audit row); the audited refusals of a processed frame are one `ws.subscribe.denied` record (count, codes, first 10 refusals); its reply holds at most 50 results (SR-192) | #2292            | unit, load, chaos (AC-29) | M     | High (re-score in #3123)  |
+| WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built (#2292): a `sub` of more than `MAX_TOPICS_PER_SUB` (50) entries is refused whole before any entry is read (one small `too_many_topics` `err`, no audit row); the audited refusals of a processed frame are one `ws.subscribe.denied` record (count, codes, first 10 refusals); its reply holds at most 50 results (SR-192) | #2292, #3185     | unit, load, chaos (AC-29) | M     | Medium (until measured)   |
 | WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached                                                                                                                            | M   | M   | Medium | WS-D03 limits only client `resync` frames (5/topic/min). Required: one rebuild budget across resync, `ctl`-forced and sub-churn paths, returning `resync_rate_limited` (SR-193). Only the generic 30 frames/s bounds this today                                                                                                     | #2293            | unit, load (AC-30)        | M     | Medium until #2293 merges |
 | WS-D17 | F13, P1          | The planned shutdown outruns the container stop budget, or uvicorn's drain never ends: SIGKILL cuts off the storage flushes and secrets zeroing of the module teardown. Outside the sum today: `BarsRuntime.stop` (up to 30 s with bars on) and the metrics listener's unbounded drain, each able to use the budget alone (#2878); #2827 adds a 2 s term to it    | M   | M   | Medium | `Settings` refuses a `CV_WS_SHUTDOWN_GRACE_MS` that cannot fit `CV_API_STOP_BUDGET_S` (grace + 2 s flush + drain + 16 s for one hung module + 0.2 s of ticks; the lifespan's earlier stops are outside it); uvicorn drain bounded, and not below the 4 s one close can need; compose `stop_grace_period` equals the budget          | #2565, #2878     | unit                      | M     | Low                       |
 
@@ -220,8 +221,10 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | E2 Session service (F3-F4)     | S01, S02                                                     | —                  | —             | —             | —             | E02      |
 | E3 Internal bus (F9)           | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | —             | D08           | —        |
 
-Every STRIDE category has analysed rows. Counts: 51 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16; WS-I09 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); residual High: WS-D15 (until #2292 merges); residual Medium:
-WS-D08, WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until #2176 merges (open items, §10).
+Every STRIDE category has analysed rows. Counts: 51 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
+WS-I09 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored in #3123);
+residual Medium: WS-D08, WS-D15 (until measured), WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until
+#2176 merges (open items, §10).
 
 ## 4. WS authentication and the 10-second unauthenticated window
 
@@ -470,8 +473,11 @@ a user's first refusal in a window. Every close also writes the generic `ws clos
 limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
 A `sub` refused whole (over 50 topics, or malformed; `23-ws-protocol.md` §5.2) is an accepted exception with no audit
-row, as the connect-rate refusals are: the over-cap refusal is answered with `too_many_topics` and has no per-refusal
-identity to audit.
+row and no scraped metric: only the in-process `cv_ws_errors_total{code}` moves (pinned for malformed names by AC-WS-04
+in `docs/security/abuse-cases/e09-auth.md`), where the connect-rate refusals keep a scraped counter and a capped log
+line. A sender that keeps going past the frame limit is closed at its second breach and shows in the limiter's scraped
+`cv_ws_closes_total{reason="client_rate_limited"}` (D05); one within the limit leaves no scraped trace. The over-cap refusal is answered with `too_many_topics` and
+has no per-entry identity to audit (the frame is refused before any entry is read).
 
 **Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
 (`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries an `after_state` of at most two
@@ -569,19 +575,26 @@ scope on the open tickets named above.
   part-way, one at a time and each bounded at 2 s. Its loss windows: a row still queued for the writer's lock at 2 s
   is lost (`ws audit not confirmed`, with the row's user) and one already appending lands late; once 3 rows in a row
   have raised or timed out, the rest are abandoned even when the writer would have taken them a moment later (a stall
-  of 6 s or more, WS-D15's flooding included), and so are the rows a cancellation during the writes leaves (both
-  `ws audit rows abandoned`, with a count and the users). A socket whose re-evaluation raises is evicted like a
+  of 6 s or more; before #2292 bounded WS-D15's records per frame its flooding was one cause, and a sustained flood is
+  still the residual rated in the WS-D15 bullet below), and so are the rows a cancellation during the writes leaves
+  (both `ws audit rows abandoned`, with a count and the users). A socket whose re-evaluation raises is evicted like a
   stalled one: it gets no `revoked` frame and the revocations it had made get no row; its `ws.connection.closed` row
   reads `slow_consumer`, and only the error log `ws permission swap failed; socket evicted` names the cause. The
   revocations themselves never wait for a row. The alerting metric SR-E17-04 asks for is owed by E17-T06 (#571).
-- **Residual High (open, not accepted; release blocker until #2292 merges):** WS-D15 (audit-store flooding). Inherent
-  High (L M x I H scores High in the `04-security-program.md` §5 template) and, with SR-192 unbuilt, the residual is
-  High. Recorded as RR-08 in `04-security-program.md` §16.1 under the §5.11 release-blocker rule: mitigation ticket
-  #2292, review date 2026-11-15, owner sign-off pending (queued on #2701; orchestrator interim record under the
-  2026-10-12 delegation). It is re-scored when #2292 merges and AC-29 passes.
-  Since #2824 such a flood can make a revocation fan-out abandon the rest of its audit rows (WS-R04 as built), where it
-  used to delay revocations; a WS audit-failure counter and alert are owed by E17-T06 (#571, a follow-up listed there).
+- **Residual High: none.** WS-D15 (audit-store flooding) was the one, a release blocker under the
+  `04-security-program.md` §5.11 rule while SR-192 was unbuilt. It is re-scored Medium below (#3123).
 - **Residual Medium (not eliminated):**
+  - WS-D15: audit-store flooding, re-scored from High (#3123). Inherent High (likelihood Medium x impact High scores
+    High in the `04-security-program.md` §5 template). With SR-192 built (#2292), a `sub` over 50 topics is refused
+    whole before any entry is read and a processed frame writes at most one `ws.subscribe.denied` record, so likelihood
+    drops to Low (sustained sending is needed) and impact stays High: likelihood Low x impact High scores Medium. What
+    remains is at most one record per `sub` frame; the frame and connection limits (WS-D05, WS-D07) bound the rate. A
+    per-connection budget for these rows is tracked as a follow-up to this re-score (#3185). The Medium is re-scored
+    once that budget is built (#3185 tracks it if RR-08 closes); a failed order-path leg in E17-X02's AC-29 run
+    re-scores it to High. AC-29's
+    bounded-reply and audit-append legs are tested in #2292 (unit and contract); E17-X02 (#415) executes AC-29 whole.
+    Recorded as RR-08 in `04-security-program.md` §16.1: closure proposed, owner sign-off pending (queued on #2701),
+    review date 2026-11-15.
   - WS-D11, WS-D12, WS-D14: transport-layer limits enforced by the ASGI server are not explicitly configured;
     Low once #2176 merges. Part of **RSK-063**.
   - WS-D08: per-user amplification on hot symbols is bounded but unmeasured until E17-Q03. **RSK-063**.
@@ -591,9 +604,11 @@ scope on the open tickets named above.
   Mitigating in `32-risk-register.md`.
 - **Lowered by #2155:** WS-S03 and WS-D07 are Low: at most 64 sockets await auth per process, and each `auth` call
   is bounded at 6 s (§4). They were **RSK-063**'s first trigger; #3145 re-rates WG1 and RSK-063 to match.
-- One High residual (WS-D15, above) and no other. The pre-auth argument (§4) holds only for tailnet-only exposure.
-- Status is **Approved** (2026-10-13). WS-D15 is residual High until #2292 merges (recorded as RR-08 in `04-security-program.md` §16.1, owner sign-off
-  pending); WS-D16 is residual Medium until #2293 merges.
+- No High residual: WS-D15 was the one (re-scored above, #3123). The unauthenticated-window argument (§4) holds only
+  for tailnet-only exposure.
+- Status is **Approved** (2026-10-13). WS-D15 is residual Medium since SR-192 was built (#2292; re-scored in #3123;
+  RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is residual Medium
+  until #2293 merges.
 
 ### Review log
 
@@ -618,3 +633,4 @@ scope on the open tickets named above.
 | 2026-10-17 | author (agent; PR for #2175)                      | WS-I05 built (#2175): `system` and `auth_ok.kill_switch` filtered per socket (SR-188); out of the Contingent Low list (§3.4, §10)            |
 | 2026-10-17 | author (agent; PR for #2292)                      | SR-192 as built: WS-D04/D15 controls, AC-29 note, §8 exception for a `sub` refused whole; D15 re-score in #3123                              |
 | 2026-10-17 | author (agent; PR for #2155)                      | WS-S03, WS-D07 to Low: a cap of 64 sockets awaiting auth (`1013`); 6 s per auth call (D02); queue `maxsize` (§1.1-§10)                       |
+| 2026-10-17 | author (agent; PR for #3123)                      | WS-D15 and WG9 re-scored Medium after SR-192; WS-D04 back to Low; RR-08 closure proposed; §8 exception names both halves                     |
