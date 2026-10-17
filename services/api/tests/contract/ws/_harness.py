@@ -5,19 +5,24 @@ clock, the snapshot `Source`, the bounded `_recv`. The server side is wired exac
 production (`make_ws_router` + `ConnectionRegistry` + `SequencingHub` + `SubscriptionServices`);
 only time, the token verifier, the principal loader and the snapshot source are faked.
 
-The client side is a protocol-level JSON client that does NOT use `apps/web`'s client, so an
-app-client bug cannot mask a server bug. EVERY frame it receives is validated against the
-`23-ws-protocol.md` §13-§15 schemas (`docs/plan/ws-schema.json`) before a test sees it; a frame
-the schemas do not describe fails the test that received it (no allow-list).
+The client side is a protocol-level client that does NOT use `apps/web`'s client, so an
+app-client bug cannot mask a server bug. It speaks whichever subprotocol the server echoed, JSON
+or MessagePack (§2.2), and `conftest.py` runs every socket-driven test under both. EVERY frame it
+receives is validated against the `23-ws-protocol.md` §13-§15 schemas (`docs/plan/ws-schema.json`)
+before a test sees it; a frame the schemas do not describe fails the test that received it (no
+allow-list).
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
@@ -33,7 +38,7 @@ from referencing import Registry, Resource
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64
+from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64, encode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
@@ -79,9 +84,48 @@ OFFERS: dict[str, list[str]] = {
     "json": ["cv.v1.json"],
     "msgpack-preferred": ["cv.v1.msgpack", "cv.v1.json"],
 }
-JSON = OFFERS["json"]
 #: Payload modes: structured JSON bodies, or CVWB binary carried as base64 in the JSON envelope.
 MODES = ("structured", "binary")
+#: The wire (an `OFFERS` key) a `connect()` that names no offer speaks. The `wire` fixture
+#: (conftest.py) sets it per test, so every socket-driven row runs under `cv.v1.json` AND
+#: `cv.v1.msgpack` (AC6, §2.2). Each wire must negotiate its own subprotocol.
+_WIRE: ContextVar[str | None] = ContextVar("cv_ws_wire", default=None)
+WIRE_SUBPROTOCOL = {"json": "cv.v1.json", "msgpack-preferred": "cv.v1.msgpack"}
+#: The attribute `json_only` sets. A plain function attribute, not a pytest marker: a marker would
+#: need registering in pyproject.toml (`--strict-markers`).
+JSON_ONLY_ATTR = "json_only"
+
+
+def use_wire(name: str) -> Token[str | None]:
+    return _WIRE.set(name)
+
+
+def reset_wire(token: Token[str | None]) -> None:
+    _WIRE.reset(token)
+
+
+def current_wire() -> str:
+    """The running test's wire. A socket-driven test that no `wire` was set for fails here,
+    loudly, instead of silently running under JSON only."""
+    name = _WIRE.get()
+    if name is None:
+        raise RuntimeError(
+            "no wire set: a socket-driven test must mention `World` or `connect` (conftest.py "
+            "parametrises it over both subprotocols) or take an explicit `offer` parameter"
+        )
+    return name
+
+
+def current_offer() -> list[str]:
+    """The subprotocol offer of the running test's wire."""
+    return OFFERS[current_wire()]
+
+
+def json_only[F: Callable[..., Any]](test: F) -> F:
+    """Run this socket-driven test under `cv.v1.json` only: what it sends is inherently a JSON
+    text frame (its size or shape has no MessagePack twin). Read by `pytest_generate_tests`."""
+    setattr(test, JSON_ONLY_ATTR, True)
+    return test
 
 
 # -- schema validation -------------------------------------------------------------------------
@@ -138,15 +182,32 @@ def topic_fields(ch: str) -> dict[str, Any]:
     return out
 
 
+def raw_payload(frame: dict[str, Any]) -> bytes:
+    """The CVWB bytes of a binary `snap`/`d`: raw on `cv.v1.msgpack` (`e: "b"`), base64 on JSON
+    (`e: "b64"`), §3.2. Tests read the payload through this, never as one encoding."""
+    assert frame["e"] in {"b", "b64"}, frame["e"]
+    return bytes(frame["p"]) if frame["e"] == "b" else base64.b64decode(frame["p"], validate=True)
+
+
+def wire_payload(e: str, raw: bytes) -> bytes | str:
+    """The `p` a server frame with encoding `e` carries for the CVWB bytes `raw`: the inverse of
+    `raw_payload`."""
+    return raw if e == "b" else encode_b64(decode(raw))
+
+
+def cvwb_part(frame: dict[str, Any]) -> Frame:
+    """The decoded CVWB part of a binary `snap`/`d`, whichever encoding carried it."""
+    assert frame["e"] in {"b", "b64"}, frame["e"]
+    return decode(frame["p"]) if frame["e"] == "b" else decode_b64(frame["p"])
+
+
 def structured_of(frame: dict[str, Any]) -> dict[str, Any]:
     """The §14 structured payload of a `snap`/`d`: the JSON body itself, or a CVWB body decoded
     and rendered in item form (binary/structured equivalence, §16.4)."""
     if frame["e"] == "j":
         body: dict[str, Any] = frame["p"]
         return body
-    assert frame["e"] in {"b", "b64"}, frame["e"]  # raw on MessagePack, base64 on JSON (§3.2)
-    part = decode(frame["p"]) if frame["e"] == "b" else decode_b64(frame["p"])
-    return {**topic_fields(frame["ch"]), **structured(part)}
+    return {**topic_fields(frame["ch"]), **structured(cvwb_part(frame))}
 
 
 def validate_frame(frame: dict[str, Any]) -> None:
@@ -354,6 +415,35 @@ class Client:
     def send_text(self, text: str) -> None:
         self.ws.send_text(text)
 
+    @property
+    def binary_e(self) -> str:
+        """The `e` of a CVWB payload here: raw on MessagePack, base64 on JSON (§3.2)."""
+        return "b" if self.msgpack else "b64"
+
+    def send_raw(self, value: Any) -> None:
+        """`value` as one unvalidated frame in the negotiated codec: what no conforming client
+        sends (a non-object, a deep nest, an oversize body), as JSON text or as MessagePack."""
+        if self.msgpack:
+            self.ws.send_bytes(msgpack.packb(value))
+        else:
+            self.ws.send_text(json.dumps(value))
+
+    def send_undecodable(self, text: str) -> None:
+        """`text` as one frame in the negotiated KIND (§2.2: text on `cv.v1.json`, binary on
+        `cv.v1.msgpack`), though no codec reads it as an envelope."""
+        if self.msgpack:
+            self.ws.send_bytes(text.encode())
+        else:
+            self.ws.send_text(text)
+
+    def send_other_kind(self, text: str) -> None:
+        """`text` as one frame of the kind the negotiated subprotocol does NOT take (§2.2): a binary
+        frame on `cv.v1.json`, a text frame on `cv.v1.msgpack`."""
+        if self.msgpack:
+            self.ws.send_text(text)
+        else:
+            self.ws.send_bytes(text.encode())
+
     def recv(self, *, skip_ping: bool = True, validate: bool = True) -> dict[str, Any]:
         while True:
             frame: dict[str, Any] = recv_json(self.ws)
@@ -466,12 +556,14 @@ def connect(
     conform: bool = True,
     **hello: Any,
 ) -> Iterator[Client]:
-    offered = offer or JSON
+    offered = offer or current_offer()
     with world.client, world.client.websocket_connect("/ws", subprotocols=offered) as ws:
         # §2.2: the server picks by its own order, msgpack first. Without this check a server that
         # stopped preferring msgpack would run every `msgpack-preferred` row as JSON, unnoticed.
         expected = "cv.v1.msgpack" if "cv.v1.msgpack" in offered else "cv.v1.json"
         assert ws.accepted_subprotocol == expected, (ws.accepted_subprotocol, offered)
+        if offer is None:  # the test's own wire: the socket must speak what the wire's name says
+            assert ws.accepted_subprotocol == WIRE_SUBPROTOCOL[current_wire()], current_wire()
         c = Client(ws, conform=conform)
         if handshake:
             c.open(auth=authed, **hello)
@@ -511,6 +603,83 @@ def wire_error_codes() -> frozenset[str]:
     return frozenset(re.findall(r"^\| `([a-z_]+)`\s+\|", text[start:end], flags=re.M))
 
 
+@dataclass(frozen=True)
+class HeatmapRow:
+    """One §6.1.1 reference-value row: the pane, its documented `ideal_ms` and the selected rung."""
+
+    display: str
+    css_px: int
+    dpr: float
+    device_px: int
+    ideal_ms: int
+    selected_ms: int
+    rung_ms: int | None  # the rung before the clamp, where the row prints one (`**5000**† → …`)
+
+
+@dataclass(frozen=True)
+class HeatmapRef:
+    """§6.1.1 as the document states it: the formula's constants, the ladder, the upward clamp, the
+    server's fallback and the six reference rows."""
+
+    window_s: int
+    divisor: int
+    ladder: tuple[int, ...]
+    clamp_ms: int
+    clamp_ideal_max_ms: int
+    top_rung_above_ms: int
+    fallback_ms: int
+    rows: tuple[HeatmapRow, ...]
+
+
+#: A reference-value row: pane CSS px, DPR, device px, `ideal_ms`, then the selected rung, where a
+#: clamped row reads `**5000**† → clamped to **1000**` (the last bold number is the result).
+_HEATMAP_ROW = re.compile(
+    r"^\|\s*(?P<display>[^|]+?)\s*\|\s*(?P<css>\d+)\s*\|\s*(?P<dpr>\d+(?:\.\d+)?)\s*\|"
+    r"\s*(?P<device>\d+)\s*\|\s*(?P<ideal>\d+)\s*\|\s*(?P<selected>[^|]*\*\*\d+\*\*[^|]*?)\s*\|\s*$",
+    flags=re.M,
+)
+
+
+def _heatmap_row(m: re.Match[str]) -> HeatmapRow:
+    bold = [int(n) for n in re.findall(r"\*\*(\d+)\*\*", m["selected"])]
+    return HeatmapRow(
+        " ".join(m["display"].split()),
+        int(m["css"]),
+        float(m["dpr"]),
+        int(m["device"]),
+        int(m["ideal"]),
+        bold[-1],
+        bold[0] if len(bold) > 1 else None,
+    )
+
+
+def heatmap_reference(text: str | None = None) -> HeatmapRef:
+    """§6.1.1 parsed from the protocol document itself, as `wire_error_codes()` reads §10.2: an
+    oracle independent of the server and of the reference algorithm. `text` is the document to read
+    (default: the checked-in one), so a test can parse an edited copy. A statement the section no
+    longer makes is an `AssertionError`, as is an edit that changes one."""
+    doc = PROTOCOL_DOC.read_text(encoding="utf-8") if text is None else text
+    start = doc.index("#### 6.1.1 ")
+    section = doc[start : doc.index("\n### 6.2 ", start)]
+
+    def stated(pattern: str) -> tuple[str, ...]:
+        found = re.search(pattern, section)
+        assert found, f"§6.1.1 does not state {pattern!r}"
+        return found.groups()
+
+    (ladder,) = stated(r"from \{([\d, ]+)\}")
+    (divisor,) = stated(r"devicePixelRatio / (\d+)\)")
+    (window,) = stated(r"shipped default `window_seconds: (\d+)`")
+    (fallback,) = stated(r"server applies \*\*`(\d+)`\*\*")
+    clamp, edge = stated(r"clamps upward selection at \*\*(\d+) ms\*\* whenever `ideal_ms ≤ (\d+)`")
+    (above,) = stated(r"small pane \(`ideal_ms > (\d+)`\) takes the 5\s?000 ms rung")
+    rows = tuple(_heatmap_row(m) for m in _HEATMAP_ROW.finditer(section))
+    rungs = tuple(int(rung) for rung in ladder.split(","))
+    return HeatmapRef(
+        int(window), int(divisor), rungs, int(clamp), int(edge), int(above), int(fallback), rows
+    )
+
+
 def binary_body(frame: Frame, **extra: Any) -> SnapshotBody:
     """A snapshot body whose CVWB part and structured twin come from the same `Frame`."""
     return SnapshotBody(
@@ -533,6 +702,46 @@ def assert_contiguous(frames: list[dict[str, Any]]) -> None:
         expected = last.get(key, 0) + 1
         assert f["s"] == expected, f"{key}: got s={f['s']}, expected {expected} (skipped or reused)"
         last[key] = f["s"]
+
+
+def scenario_frames(wire: str, replay_session: str) -> list[dict[str, Any]]:
+    """One fixed scenario on `wire`, for comparing the wires: snapshots and deltas of four families
+    (one of them replayed), then a pong. The frames after the handshake, whose ids are random, with
+    MessagePack's raw CVWB payloads written as the base64 JSON carries them."""
+    token = use_wire(wire)
+    try:
+        w = World()
+        with connect(w) as c:
+            c.sub(
+                entry("trades", ("symbol",), "binary"),
+                entry("book", ("symbol", "depth"), "binary"),
+                {"ch": "orders", "opts": {"exchange_account_ids": [str(ACC_A)]}},
+            )
+            c.drain(3)
+            c.send(
+                {
+                    "t": "sub",
+                    "id": "r",
+                    "p": {
+                        "topics": [entry("ticker", ("symbol",))],
+                        "replay_session_id": replay_session,
+                    },
+                }
+            )
+            c.drain(2)
+            publish(w, "trades", "trades.BTCUSDT", "binary")
+            publish(w, "book", "book.BTCUSDT.50", "binary")
+            publish(w, "orders", "orders", account=ACC_A)
+            publish(w, "ticker", "ticker.BTCUSDT", replay=replay_session, ts_ms=1_700_000_000_000)
+            c.drain(4)
+            c.send({"t": "ping", "id": "p"})
+            c.next_of("pong")
+    finally:
+        reset_wire(token)
+    return [
+        {**f, "e": "b64", "p": base64.b64encode(f["p"]).decode()} if f.get("e") == "b" else f
+        for f in c.seen[2:]
+    ]
 
 
 def all_private(c: Client, *fams: str) -> None:
