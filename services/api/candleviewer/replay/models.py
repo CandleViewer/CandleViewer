@@ -38,6 +38,9 @@ US_PER_HOUR: Final = 3_600_000_000
 #: Default of `ReplayRequest.max_span_us`: the default of E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS`
 #: (24 h), which owns the cap. Only a default: callers pass the configured value.
 DEFAULT_MAX_SPAN_US: Final = 24 * US_PER_HOUR
+#: Ceiling of `ReplayRequest.max_span_us`: the most `CV_REPLAY_MAX_WINDOW_HOURS` can be set to
+#: (`le=24 * 31` in `settings.py`), so a cap no deployment can configure is refused.
+MAX_SPAN_CEILING_US: Final = 24 * 31 * US_PER_HOUR
 _ONE_US = timedelta(microseconds=1)
 
 
@@ -52,9 +55,11 @@ class ReplayRequest(BaseModel):
 
     The window cap has one source of truth, E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS` (bounded in
     `settings.py`): the caller passes it in µs as `max_span_us`, defaulting to the setting's
-    default of 24 h, so a window the session service accepted is never refused here and a
-    crafted request still cannot scan the whole lake (ticket security notes). Every refusal,
-    the cap included, raises `ReplayRequestInvalid` naming the fields at fault, never a value.
+    default of 24 h and at most its ceiling (`MAX_SPAN_CEILING_US`, 24 x 31 h), so a window the
+    session service accepted is never refused here and a crafted request still cannot scan the
+    whole lake (ticket security notes). `ReplaySource` takes its cap from this field and has none
+    of its own. Every refusal, the cap included, raises `ReplayRequestInvalid` naming the fields
+    at fault, never a value.
 
     `source_tier` is internal and operator-only (see `SourceTier`, RP-T07)."""
 
@@ -66,7 +71,7 @@ class ReplayRequest(BaseModel):
     end: AwareDatetime
     depth: Literal[1, 50, 200, 500] = 200
     source_tier: SourceTier = "auto"
-    max_span_us: int = Field(default=DEFAULT_MAX_SPAN_US, gt=0, strict=True)
+    max_span_us: int = Field(default=DEFAULT_MAX_SPAN_US, gt=0, le=MAX_SPAN_CEILING_US, strict=True)
 
     @model_validator(mode="wrap")
     @classmethod

@@ -111,7 +111,9 @@ def request(
     streams: tuple[StreamKind, ...] = (StreamKind.TRADES,),
     depth: int = 200,
     tier: SourceTier = "auto",
+    max_span_us: int | None = None,
 ) -> ReplayRequest:
+    caps = {} if max_span_us is None else {"max_span_us": max_span_us}
     return ReplayRequest.model_validate(
         {
             "symbols": symbols,
@@ -121,6 +123,7 @@ def request(
             "depth": depth,
             "source_tier": tier,
         }
+        | caps
     )
 
 

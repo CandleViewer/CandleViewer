@@ -28,9 +28,9 @@ class ReplayRequestInvalid(ReplayError):
 
 
 class ReplayConfigInvalid(ReplayError, ValueError):
-    """A replay read was configured outside its bounds (read windows, storage timeout, memory
-    budget): a composition bug, refused before any storage read rather than looping or
-    waiting without a bound."""
+    """A replay read was configured or used outside its bounds (read windows, storage timeout,
+    memory and read-ahead budgets, a single-pass merge read twice): a composition bug, refused
+    before any storage read rather than looping, waiting without a bound or skipping events."""
 
     code = "REPLAY_CONFIG_INVALID"
 
@@ -80,6 +80,19 @@ class ReplaySourceUnavailable(ReplayError):
         self.symbol = symbol
         self.stream = stream
         self.reason = reason
+
+
+class ReplayInternalError(ReplayError):
+    """The read failed for a reason that is no typed replay failure: a bug, a reader that broke
+    the port's contract by raising something that is neither a storage error nor a timeout, or a
+    producer cancelled by anyone but the source's own close. `ReplaySource` raises this in its
+    place with a fixed text and nothing of the original (which can carry a path or a value,
+    RP-I02); the original is logged by type."""
+
+    code = "REPLAY_INTERNAL_ERROR"
+
+    def __init__(self) -> None:
+        super().__init__("the replay read failed unexpectedly")
 
 
 class ReplayTierStraddle(ReplayError):
