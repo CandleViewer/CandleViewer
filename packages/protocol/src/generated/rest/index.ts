@@ -8622,6 +8622,83 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /**
+     * @description `code: auth_unavailable` (#2152, ADR-0009 Amendment 4). The second factor cannot be
+     *     checked or sealed: the KEK is unavailable (any reason in `docs/plan/spikes/e27-kek.md`
+     *     section 6), this environment's auth keyring is missing, mismatched or stranded, or the
+     *     user's TOTP method is sealed under a key this process does not hold. MFA then fails
+     *     closed on exactly eight operations: `POST /auth/login`, `POST /auth/mfa/verify`,
+     *     `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
+     *     `POST /auth/step-up`, `POST /invites/{inviteToken}` and
+     *     `POST /invites/{inviteToken}/confirm`. `POST /auth/login` answers it only for a user with
+     *     a confirmed MFA method and only after the password verified, in place of the
+     *     `mfa_required` challenge; a wrong password is still `401 unauthenticated`. Its `503` also
+     *     keeps every meaning of `ServiceUnavailable`.
+     *
+     *     The answer counts, consumes and changes nothing: no session or `mfa_token` is minted,
+     *     nothing is revoked, and no MFA attempt, failed-login count, lockout, recovery-code use,
+     *     invite redemption or enrolment is recorded. It stores no idempotency record either, so an
+     *     `Idempotency-Key` sent with it stays unused: the client may send the same request, with
+     *     the same key, again after `Retry-After`, and that request is a first submission that
+     *     executes once, never a replay of the `503` (no `Idempotency-Replayed`). A method this
+     *     process cannot open never counts as "no method": it never leads to an enrolment-only
+     *     session or a new enrolment. Users without an MFA method still sign in, and existing
+     *     sessions keep working. `title` and `detail` are generic: they name no cause, key, key
+     *     reference or KEK version (the cause is the `secrets` health reason). Audited as
+     *     `auth.mfa_unavailable`.
+     *
+     *     **Order of checks.** These refusals come first and keep their answers and counting:
+     *     authentication, CSRF, session state, rate limits, request validation, the `mfa_token` or
+     *     invite token, and the per-operation checks named below. The `503` comes next, before
+     *     anything else is examined: no password is verified except at login, no TOTP code,
+     *     recovery code or recovery-code pool is examined, and no seed is generated, opened or
+     *     sealed. One confirmed TOTP method that this process cannot open is enough: a code is
+     *     never checked against some of the user's methods and then answered `503`.
+     *
+     *     - `POST /auth/login` (ruling D4): the user lookup, the lock, the password and the
+     *       disabled state come first, each with its current answer and counting. The `503` then
+     *       replaces the `mfa_required` challenge before anything is written: no `mfa_token`, no
+     *       password rehash, and the failed-login count is neither incremented nor reset. Before
+     *       the password, a `503` would tell an unauthenticated caller which accounts have MFA;
+     *       after it, the `503` says no more than the challenge it replaces.
+     *     - `POST /auth/mfa/verify`: after the `mfa_token` check (unknown, expired or locked is
+     *       still `401`), before the code. The challenge keeps its attempt count and its expiry.
+     *     - `POST /auth/mfa/recovery`: after the `mfa_token` check, before the recovery-code pool
+     *       and the code, so a `503` says nothing about how many codes are left.
+     *     - `POST /auth/mfa/enroll`: after every refusal that needs no auth key, before a seed is
+     *       generated; no method is created.
+     *     - `POST /auth/mfa/enroll/confirm`: after every refusal that needs no auth key, the
+     *       pending method lookup included (an unknown `method_id` keeps its answer), before the
+     *       code. Confirming may issue recovery codes, so it needs the method's TOTP key and the
+     *       recovery key; without either it answers `503` and the method stays pending.
+     *     - `POST /auth/step-up`: after request validation (the `422` and every `400`, the
+     *       `challenge_id` ones included) and `403 session_read_only`, before either factor.
+     *       Whatever password was sent is not verified, so no step-up failure, failed-login count,
+     *       lockout or read-only downgrade is recorded, nothing is elevated and the live challenge
+     *       stays live. This differs from login on purpose. Step-up never reveals which factor
+     *       failed (any wrong factor is the same `401 mfa_invalid`), and a password verified before
+     *       a `503` would turn an outage into a password check for whoever holds the session. The
+     *       lockout counters bound password guesses; a `503` verifies no password, so there is
+     *       nothing to count (ruling D4: nothing counted or consumed), as with the `challenge_id`
+     *       `400`s.
+     *     - `POST /invites/{inviteToken}`: after the rate limit (`429`), the body and role checks
+     *       (`400`, `403`), the token (`404`) and the password policy (`422`), before the password
+     *       is hashed or the token consumed. The invite stays open and no failed attempt is
+     *       recorded for the address.
+     *     - `POST /invites/{inviteToken}/confirm`: after the same rate limit, body and role checks,
+     *       the token and its enrolment state (`404`) and the pending method lookup, before the
+     *       code. It needs the same two keys as `POST /auth/mfa/enroll/confirm`. No failed attempt
+     *       is recorded, and the enrolment window keeps running.
+     */
+    AuthUnavailable: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description Malformed request. */
     BadRequest: {
       headers: {
@@ -10452,7 +10529,16 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
-      503: components["responses"]["ServiceUnavailable"];
+      /** @description A dependency is unavailable or data is degraded. This keeps every meaning of `ServiceUnavailable` (such as `store_unavailable`), whose examples apply unchanged. For a user with a confirmed MFA method it can also be `code: auth_unavailable` (see `AuthUnavailable`), answered only after the password verified, in place of the `mfa_required` challenge. */
+      503: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   authLogout: {
@@ -10531,6 +10617,7 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaEnrollConfirm: {
@@ -10567,6 +10654,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaDeleteMethod: {
@@ -10632,6 +10720,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaVerify: {
@@ -10660,6 +10749,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authChangePassword: {
@@ -10860,6 +10950,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   listChartTemplates: {
@@ -12368,6 +12459,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   confirmInvite: {
@@ -12424,6 +12516,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   getJournalAnalytics: {

@@ -14,18 +14,18 @@ Windows host console. Each option is scored on: KEK at rest, KEK in transit, pro
 **Evidence status.** This finding was produced desk-side. The measured items the ticket asks for
 (per-mechanism start-up latency, non-visibility transcripts, restore-drill log) are **not fabricated
 here**; they are owed by follow-up drill **FU-1** (§9) run on the real host against the T02 build.
-Figures below marked *(budget)* are targets, not measurements.
+Figures below marked _(budget)_ are targets, not measurements.
 
 ## 2. KEK custody
 
-| # | Custody | WSL deployment | VPS deployment | Verdict |
-|---|---|---|---|---|
-| C1 | Windows Credential Manager (host), read by a host-side launcher | ✔ outside WSL + volumes | n/a | ★ **WSL** |
-| C2 | File `0400`, owned by service uid, outside every Docker volume and the repo | weak: WSL FS is in the threat model | acceptable only as source for C3 | dev only (`CV_KEK_SOURCE=file`) |
-| C3 | systemd credential: `LoadCredentialEncrypted=` (TPM2 and/or host key sealed via `systemd-creds`) | n/a (no systemd guarantee in WSL) | ✔ unattended, never plaintext on disk | ★ **VPS** |
-| C4 | `age`-encrypted file `0600` + identity file | identity sits beside it ⇒ no gain | fallback when no TPM2/`systemd-creds` | VPS fallback |
-| C5 | Plain env var in compose `environment:` | visible via `docker inspect` | same | **rejected** |
-| C6 | OS keyring inside WSL / password at boot / Vault / KMS | rejected by ADR-0009 | — | not re-litigated |
+| #   | Custody                                                                                          | WSL deployment                      | VPS deployment                        | Verdict                         |
+| --- | ------------------------------------------------------------------------------------------------ | ----------------------------------- | ------------------------------------- | ------------------------------- |
+| C1  | Windows Credential Manager (host), read by a host-side launcher                                  | ✔ outside WSL + volumes             | n/a                                   | ★ **WSL**                       |
+| C2  | File `0400`, owned by service uid, outside every Docker volume and the repo                      | weak: WSL FS is in the threat model | acceptable only as source for C3      | dev only (`CV_KEK_SOURCE=file`) |
+| C3  | systemd credential: `LoadCredentialEncrypted=` (TPM2 and/or host key sealed via `systemd-creds`) | n/a (no systemd guarantee in WSL)   | ✔ unattended, never plaintext on disk | ★ **VPS**                       |
+| C4  | `age`-encrypted file `0600` + identity file                                                      | identity sits beside it ⇒ no gain   | fallback when no TPM2/`systemd-creds` | VPS fallback                    |
+| C5  | Plain env var in compose `environment:`                                                          | visible via `docker inspect`        | same                                  | **rejected**                    |
+| C6  | OS keyring inside WSL / password at boot / Vault / KMS                                           | rejected by ADR-0009                | —                                     | not re-litigated                |
 
 TPM: on a VPS a virtual TPM2 is used when the provider exposes one (`systemd-creds --with-key=tpm2`);
 otherwise `--with-key=host` (key in `/var/lib/systemd/credential.secret`, root `0400`). Both keep the
@@ -38,16 +38,17 @@ backup key (SR-091).
 
 Candidates from the ticket:
 
-| Mech | How | Where the KEK is visible | Unattended restart | Verdict |
-|---|---|---|---|---|
-| (a) `docker compose run --env` from launcher | launcher reads C1, passes env | `/proc/1/environ` of the container **and** `docker inspect` (`Config.Env`) | yes | **rejected** — fails non-visibility |
-| (b) Compose `secrets:` backed by a pipe/FIFO | launcher writes to a host FIFO bind-mounted as `/run/secrets/cv_kek` | tmpfs-like mount inside the container only; not in `inspect` env; FIFO is on the WSL FS path but holds no data at rest | yes, if the launcher is the restart supervisor | ★ **chosen** |
-| (c) Authenticated localhost unwrap call to a host agent | `cv-api` calls host agent at boot | KEK never enters container if agent unwraps DEKs; otherwise in transit over loopback | needs agent up + its own credential (bootstrap problem recurs) | rejected for v1 — new long-running host service, new auth secret, new network path |
+| Mech                                                    | How                                                                  | Where the KEK is visible                                                                                               | Unattended restart                                             | Verdict                                                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| (a) `docker compose run --env` from launcher            | launcher reads C1, passes env                                        | `/proc/1/environ` of the container **and** `docker inspect` (`Config.Env`)                                             | yes                                                            | **rejected** — fails non-visibility                                                |
+| (b) Compose `secrets:` backed by a pipe/FIFO            | launcher writes to a host FIFO bind-mounted as `/run/secrets/cv_kek` | tmpfs-like mount inside the container only; not in `inspect` env; FIFO is on the WSL FS path but holds no data at rest | yes, if the launcher is the restart supervisor                 | ★ **chosen**                                                                       |
+| (c) Authenticated localhost unwrap call to a host agent | `cv-api` calls host agent at boot                                    | KEK never enters container if agent unwraps DEKs; otherwise in transit over loopback                                   | needs agent up + its own credential (bootstrap problem recurs) | rejected for v1 — new long-running host service, new auth secret, new network path |
 
 ★ **Handle contract.** Whatever the host side does, `cv-api` sees exactly one thing: a path
 `CV_KEK_HANDLE` (default `/run/secrets/cv_kek`) that yields exactly 32 raw bytes.
 
 **WSL mechanism (normative for T02):**
+
 1. Supported engine: ★ **Docker Engine installed inside the WSL distro** (bind mounts and FIFOs are
    native). Docker Desktop (separate VM, 9p/virtiofs file sharing) is **not supported** for the FIFO;
    fallback on Docker Desktop is running `cv-api` as a host-distro process (no container) with the
@@ -71,7 +72,7 @@ Candidates from the ticket:
 **Host-interop hardening (★ required, not residual):** by default any WSL process can run
 `powershell.exe` and read the Windows Credential Manager. T02/infra MUST set `/etc/wsl.conf`
 `[interop] enabled=false` and `appendWindowsPath=false`; the launcher runs from Windows and only
-pushes *into* WSL. Residual: a Windows-side compromise of the owner account still reaches C1 — this
+pushes _into_ WSL. Residual: a Windows-side compromise of the owner account still reaches C1 — this
 is the host-compromise ceiling already recorded in the E09 threat model §3.6.1 (owner: Owner).
 
 **VPS:** systemd unit with `LoadCredentialEncrypted=cv_kek:...`; the service gets
@@ -90,18 +91,19 @@ its `bytearray` buffer (best effort) and never logs length or prefix; the value 
 Rejecting (a): env vars leak into `docker inspect` and every child process. Rejecting (c): it re-creates
 the custody problem for the agent's credential and adds a network surface the threat model does not need.
 
-KEK acquisition budget: ≤500 ms added to boot *(budget; measure in FU-1)*.
+KEK acquisition budget: ≤500 ms added to boot _(budget; measure in FU-1)_.
 
 ## 4. Configuration vocabulary (fixed)
 
-| Key | Values | Meaning |
-|---|---|---|
-| `CV_ENV` | `dev` · `ci` · `demo` · `live` | existing environment selector |
-| `CV_KEK_SOURCE` | `handle` ★ (prod default) · `file` (dev/ci only) · `none` | how the loader obtains the KEK. Replaces today's placeholder `kek_source="host-keychain"` in `settings.py`; T02 changes the default to `handle` and keeps `host-keychain` as a deprecated alias for one release. |
-| `CV_KEK_HANDLE` | path | `handle`: read-once path (default `/run/secrets/cv_kek`); `file`: path to a dev key file |
-| `CV_KEK_VERSION` | int ≥ 1 | the version of the KEK being supplied; must equal the active version in the `kek_versions` metadata (T02) or the current max `api_keys.kek_version` |
+| Key              | Values                                                    | Meaning                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CV_ENV`         | `dev` · `ci` · `demo` · `live`                            | existing environment selector                                                                                                                                                                                    |
+| `CV_KEK_SOURCE`  | `handle` ★ (prod default) · `file` (dev/ci only) · `none` | how the loader obtains the KEK. Replaces today's placeholder `kek_source="host-keychain"` in `settings.py`; T02 changes the default to `handle` and keeps `host-keychain` as a deprecated alias for one release. |
+| `CV_KEK_HANDLE`  | path                                                      | `handle`: read-once path (default `/run/secrets/cv_kek`); `file`: path to a dev key file                                                                                                                         |
+| `CV_KEK_VERSION` | int ≥ 1                                                   | the version of the KEK being supplied; must equal the active version in the `kek_versions` metadata (T02) or the current max `api_keys.kek_version`                                                              |
 
 Hard rules (startup, before any module starts):
+
 - `CV_KEK_SOURCE=file` with `CV_ENV=live` ⇒ **fatal**, exit non-zero, error code `kek_source_not_permitted`.
 - `CV_KEK_SOURCE=file` with `CV_ENV=demo` ⇒ allowed only with an explicit warning log; ★ demo should use `handle`.
 - Any key file / credential path is opened with `O_NOFOLLOW` and must be **exactly** mode `0400`
@@ -125,6 +127,7 @@ retired_at)` (migration in T02 #835 scope). The loader compares with `hmac.compa
 (constant-time); a mismatch is `kek_mismatch`, not a decrypt storm.
 
 ★ **Two version layers, two AADs (SR-003).**
+
 - Data layer: credential ciphertext under the DEK. **As implemented (E27-T02 #835):** AAD =
   `cv-cred-v2 ‖ environment ‖ account_id ‖ credential_id ‖ field` (length-prefixed). `key_version`
   is bound through `credential_id`, because every exchange key rotation inserts a new `api_keys` row
@@ -135,6 +138,7 @@ retired_at)` (migration in T02 #835 scope). The loader compares with `hmac.compa
   `kek_version` stops a downgrade to a retired wrap.
 
 Rotation procedure (owner-run, app in maintenance or Degraded, no order flow required):
+
 1. Provision KEK v(n+1) into custody (C1 / C3) alongside v(n); launcher supplies **both** handles
    (`CV_KEK_HANDLE` + `CV_KEK_PREV_HANDLE`, the latter only during rotation). FIFO order: current
    first, then previous, both in the handoff dir (`dirname(CV_KEK_HANDLE)`); cv-api drains them in
@@ -150,29 +154,36 @@ Rotation procedure (owner-run, app in maintenance or Degraded, no order flow req
 4. Verify: zero rows at version n; each re-wrapped DEK decrypts its ciphertext (in memory, discarded).
 5. Audit `security.kek_rotated` (from, to, row count; no key material). Retire v(n) from custody,
    set `kek_versions.retired_at`, drop `CV_KEK_PREV_HANDLE`.
-Budget: ≤50 rows in ≤5 s *(budget; measure in FU-1)*. Same job re-wraps E09 TOTP/recovery material
-once E09 moves onto the KEK (FU-3 #2152).
+   Budget: ≤50 rows in ≤5 s _(budget; measure in FU-1)_. This job does not re-wrap E09's TOTP and
+   recovery-code keys (FU-3 #2152, ADR-0009 Amendment 4): they are two `auth_keys` rows per environment
+   (`21-database-schema.md` §3.1.5a), which M2 re-wraps itself at the rotation boot, each new wrap
+   verified before a compare-and-set. Seeds and code hashes never change, and `kek_rotated` waits until
+   no auth row is left at v(n).
 
 ## 6. Degraded mode (fail CLOSED)
 
-| Condition | Result |
-|---|---|
-| handle missing / unreadable / timeout / short or long read / bad mode or owner | **Degraded**; `kek_unavailable` or `kek_handle_permissions` |
-| KCV mismatch | Degraded; reason `kek_mismatch` |
-| handoff anomaly (extra reader) | launcher stops the stack; `security.kek_handoff_anomaly` |
-| `file` + `live` | **fatal exit** (`kek_source_not_permitted`) — never Degraded |
+| Condition                                                                      | Result                                                       |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| handle missing / unreadable / timeout / short or long read / bad mode or owner | **Degraded**; `kek_unavailable` or `kek_handle_permissions`  |
+| KCV mismatch                                                                   | Degraded; reason `kek_mismatch`                              |
+| handoff anomaly (extra reader)                                                 | launcher stops the stack; `security.kek_handoff_anomaly`     |
+| `file` + `live`                                                                | **fatal exit** (`kek_source_not_permitted`) — never Degraded |
 
 In Degraded (KEK): market data stays live; **every operation needing the KEK fails closed**:
+
 - signing / order entry: broker raises typed `KekUnavailable` (`secrets.errors`); order routes 403
   with problem type `kek_unavailable` (E09 route gating);
 - key add, key verify/test and key rotation: 403 `kek_unavailable` (rotation preconditions fail);
 - the hourly C-2.8 withdrawal-permission check **fails** (recorded as a failed check, alert raised) —
   it is never skipped or reported green;
+- MFA: the eight operations that check or seal a second factor answer `503 auth_unavailable` and
+  count or consume nothing; users without MFA still sign in and existing sessions keep working
+  (ADR-0009 Amendment 4, `22-api-openapi.yaml` `AuthUnavailable`);
 - `/health` and the `system` WS topic report `secrets` red with reason; critical alert; UI blocking
   banner (E27-D03 / E27-S02); this remediation text is logged verbatim:
-`KEK unavailable (reason=<r>): trading disabled. Ensure the host launcher/systemd credential supplies
+  `KEK unavailable (reason=<r>): trading disabled. Ensure the host launcher/systemd credential supplies
 CV_KEK_HANDLE, then restart cv-api via the launcher. See docs/ops/runbooks/kek-custody.md.`
-No runtime re-load in v1: recovery is a launcher restart.
+  No runtime re-load in v1: recovery is a launcher restart.
 
 Observability (specified, implemented by T02): `cv_kek_load_seconds` (histogram),
 `cv_kek_load_failures_total{reason}` (`kek_unavailable|kek_mismatch|kek_handle_permissions`),
@@ -208,6 +219,7 @@ supervisor enters Degraded (§6). Tests use an in-memory fake source — never a
 ## 8. Break-glass CLI (#2119) — offline KEK load
 
 Per the #2119 decision the CLI lives under `candleviewer.admin` (allowed to import `secrets`, C-3.2):
+
 - Entry `python -m candleviewer.admin.breakglass`; on WSL run via the launcher
   (`cv-launch.ps1 breakglass`, same stdin/FIFO handoff), on the VPS via
   `systemd-run -p LoadCredentialEncrypted=...`. No new custody path.
@@ -229,12 +241,15 @@ Degraded, every order and key route 403, zero decrypted rows. Supply the correct
 KEK → `kek_mismatch`, still nothing decrypts.
 
 Not proven desk-side (the ticket's "inconclusive" branch applies only to these):
+
 - **FU-1 #2151** host drill: timing table for (a)/(b)/(c); non-visibility transcript (`docker inspect`,
   sibling `/proc/1/environ`, grep of every mounted volume); handoff-anomaly test; interop-disabled
   check; unattended-reboot test; restore-drill log; KEK absent from crash reports, Docker and app logs.
   Interim control: T02 adds a CI test that compose has no `CV_KEK*` under `environment:`.
 - **FU-2** runbook `docs/ops/runbooks/kek-custody.md` — in E27-T02 #835 scope.
-- **FU-3 #2152** move E09 TOTP/recovery keys under KEK-wrapped DEKs.
+- **FU-3 #2152** move E09 TOTP/recovery keys under the KEK. Decided as ADR-0009 Amendment 4: a
+  per-environment auth keyring generated inside M2 and stored KEK-wrapped in `auth_keys`
+  (`21-database-schema.md` §3.1.5a). Without the KEK, MFA fails closed with `503 auth_unavailable`.
 - **FU-4** `kek_versions` migration — in E27-T02 #835 scope.
 
 ## 10. ★ Recommendation summary

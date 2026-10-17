@@ -627,6 +627,87 @@ CREATE INDEX ix_recovery_unused ON recovery_codes (user_id) WHERE used_at IS NUL
 
 Policy: 10 single-use recovery codes per enrollment; regeneration hard-deletes unused codes and writes `auth.recovery_codes_regenerated`. Expired `mfa_challenges` are deleted nightly (retention 24 h).
 
+#### 3.1.5a `auth_keys` (#2152, migration `00NN_auth_keys`)
+
+The auth keyring of each environment (ADR-0009 Amendment 4): the TOTP sealing key (`totp_seal`)
+and the recovery-code HMAC key (`recovery_hmac`), each 256-bit. M2 generates them, or imports them
+once from the old env settings on `demo` and `testnet` (`origin = 'imported_env'`). A row holds only
+the key wrapped under the KEK of `(env, kek_version)`, so nothing in it opens without the KEK. Data
+class: S for `dek_ref`, Internal for the other columns. Status: designed in #2152 S1; the migration
+lands in S2 and M2 writes the rows from S5b.
+
+```sql
+-- 00NN_auth_keys: the next free slot after 0029 in the single-head queue (re-parent on rebase, C-5.3)
+CREATE TABLE auth_keys (
+  id          uuid PRIMARY KEY,
+  env         exchange_env NOT NULL,       -- no default: the process environment (as kek_versions.env)
+  purpose     text NOT NULL,               -- totp_seal | recovery_hmac
+  key_version integer NOT NULL DEFAULT 1,  -- the auth key's own version, not the KEK's
+  origin      text NOT NULL,               -- generated | imported_env
+  dek_ref     text NOT NULL,               -- SECRET: the auth key wrapped under the KEK
+  kek_version integer NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),  -- moves only at a re-wrap (trg_auth_keys_touch)
+  CONSTRAINT ak_purpose     CHECK (purpose IN ('totp_seal','recovery_hmac')),
+  CONSTRAINT ak_origin      CHECK (origin IN ('generated','imported_env')),
+  CONSTRAINT ak_key_version CHECK (key_version >= 1),
+  CONSTRAINT ak_kek_version CHECK (kek_version >= 1),
+  CONSTRAINT ak_env_purpose_key_version UNIQUE (env, purpose, key_version)
+);
+CREATE INDEX ix_auth_keys_env_kek ON auth_keys (env, kek_version);
+COMMENT ON COLUMN auth_keys.dek_ref IS 'SECRET: auth key wrapped under the KEK of (env, kek_version)';
+CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+-- trg_auth_keys_write_once and REVOKE DELETE FROM cv_app: see "Privileges and triggers" below
+```
+
+- **Byte formats.** The two AADs and the digest preimage below are length-prefixed as in §3.2.3a:
+  each part is preceded by its length as a u16 big-endian, with the part encodings that
+  `secrets/_envelope.py` uses for the §3.2.3a AADs. The labels (`cv-akey-v1`, `cv-totp-v1`,
+  `cv-rc-v2`), `environment` (`live`, `demo` or `testnet`: the process environment) and `purpose`
+  (`totp_seal` or `recovery_hmac`) are their ASCII bytes. `id` and `user_id` are the 16 raw bytes
+  of the UUID (RFC 9562 byte order, Python `UUID.bytes`), never its text. `kek_version` is its
+  decimal digits in ASCII, with no sign and no leading zero.
+- **Wrap.** `dek_ref` is `ak1:` plus the lower-case hex of `nonce(12) ‖ ciphertext(32) ‖ tag(16)`
+  (120 hex digits): the 32-byte auth key under AES-256-GCM with the KEK of `(env, kek_version)` and
+  AAD `cv-akey-v1 ‖ environment ‖ purpose ‖ id ‖ kek_version`, where `id` is the row's own id. A
+  wrap moved to another row, purpose, environment or `kek_version` fails authentication, and so does
+  an `api_keys` `v2:` wrap.
+- **TOTP seeds** (`mfa_methods.secret_enc`, §3.1.5). A new seal is `nonce(12) ‖ ciphertext ‖ tag(16)`
+  of the raw seed (20 bytes today) under the environment's `totp_seal` key, with AAD
+  `cv-totp-v1 ‖ environment ‖ user_id`, where `user_id` is the method row's `user_id`. It stores
+  `secret_key_ref = 'akey:<id>'`, the `auth_keys` row id as canonical lower-case hyphenated text
+  (36 characters). A seed sealed under the old env key (`secret_key_ref = 'local-dev-v1'`, no AAD)
+  opens only on an imported keyring. A method whose `secret_key_ref` this process does not hold
+  fails closed (`503 auth_unavailable`); it never counts as "no method".
+- **Recovery codes** (`recovery_codes.code_hash`, §3.1.5). A new digest is
+  `HMAC-SHA256(recovery_hmac key, cv-rc-v2 ‖ user_id ‖ normalised code)` over that length-prefixed
+  preimage, stored as 64 lower-case hex digits (`sha256_hex`), where `user_id` is the code row's
+  `user_id`. The normalised code is the presented code with leading and trailing whitespace
+  stripped, then upper-cased, then with every `-` and space removed (Python `str.strip` and
+  `str.upper`, as `normalize_recovery_code` does today), as UTF-8 bytes, so a generated code becomes
+  its 28 alphabet characters. Only on an imported keyring is the old digest,
+  `HMAC-SHA256(key, normalised code)` over the bare normalised code, also tried: the lookup takes
+  every candidate digest (`code_hash = ANY(...)`).
+- **Privileges and triggers.** M2 inserts the rows. After that only `dek_ref` and `kek_version`
+  change, together, at a re-wrap, and `updated_at` records when (`trg_auth_keys_touch`, the §1.4
+  `set_updated_at` trigger). Trigger `trg_auth_keys_write_once` (BEFORE UPDATE, per row,
+  `ENABLE ALWAYS`; function `auth_keys_write_once_check()`) refuses an UPDATE that changes `id`,
+  `env`, `purpose`, `key_version`, `origin` or `created_at` with SQLSTATE 23514, naming the column
+  and never a value, as `trg_api_keys_write_once` does (§3.2.2). It sorts after
+  `trg_auth_keys_touch` and must stay the last BEFORE UPDATE row trigger. The same revision revokes
+  DELETE on `auth_keys` from `cv_app` where the role exists, as `0024` does for `api_keys`: no
+  runtime path deletes an auth key, because that strands every seed and digest made under it. The
+  owner role and superusers can still bypass both; such a change leaves MFA unavailable, never open,
+  because nothing is generated over existing material.
+- **KEK rotation.** The rotation boot re-wraps both rows of the environment to the new
+  `kek_version`, each new wrap verified before a compare-and-set on `kek_version`; the KCV check's
+  trial unwrap (§3.2.3a) covers these rows too. `mfa_methods.secret_enc` and
+  `recovery_codes.code_hash` never change.
+- **Migration.** Additive (C-5.1); `mfa_methods` and `recovery_codes` keep their columns. The
+  downgrade refuses while any `auth_keys` row exists (C-5.2): from the first boot on, new seeds and
+  digests depend on these keys.
+
 ### 3.2 Exchange accounts, API keys, profiles
 
 #### 3.2.1 `exchange_accounts`
@@ -899,9 +980,9 @@ CREATE INDEX ix_akr_open ON api_key_rotations (started_at) WHERE completed_at IS
 
 Non-secret key-check values identifying each KEK version (`e27-kek.md` §5). `kcv` = first 8 bytes of
 HMAC-SHA256(KEK, `"cv-kek-kcv-v1"`), compared in constant time at start-up. No trust-on-first-use: a
-KCV is recorded only when no unrevoked `api_keys` row of the process's environment exists at that
-version, or after a trial unwrap of one such row succeeds; the previous KEK's KCV must already exist.
-Data class: Internal (`env` and `kcv`).
+KCV is recorded only when no unrevoked `api_keys` row and no `auth_keys` row (§3.1.5a) of the
+process's environment exists at that version, or after a trial unwrap of one such row succeeds; the
+previous KEK's KCV must already exist. Data class: Internal (`env` and `kcv`).
 
 Each environment has its own KEK lineage (#2338, ADR-0009 Amendment 3). Rows are keyed
 `(env, version)` and each lineage is numbered from 1. The version policy (retired, out of sequence)
@@ -3274,6 +3355,7 @@ NAMING_CONVENTION = {
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
 | `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
+| `00NN_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, the next free slot after `0029`; the downgrade refuses while any row exists                                                                  |
 
 ---
 
@@ -3547,10 +3629,11 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `users`                                                | `last_login_ip`                         | P2         | plaintext                                       | Purged at 90 d by the reaper                                                                                                                    |
 | `sessions`                                             | `refresh_token_hash`                    | S          | SHA-256 of token                                | Raw token exists only in the response body and the client                                                                                       |
 | `sessions`                                             | `ip`, `user_agent`, `tailscale_node`    | P2         | plaintext                                       | Purged with the session row (30 d after expiry)                                                                                                 |
-| `mfa_methods`                                          | `secret_enc`                            | S          | AES-256-GCM (envelope)                          | Decrypted only in the MFA verifier; never exported                                                                                              |
+| `mfa_methods`                                          | `secret_enc`                            | S          | AES-256-GCM under the KEK-wrapped TOTP key      | Opened only in the MFA verifier, as a zeroed `bytearray`; never logged, snapshotted, returned or exported (§3.1.5a)                             |
 | `mfa_methods`                                          | `public_key`, `credential_id`           | P1         | plaintext                                       | Not secret, but identifying                                                                                                                     |
 | `mfa_challenges`                                       | `nonce`                                 | S          | SHA-256 hex digest of `mfa_token` (UTF-8 bytes) | 24 h TTL; raw token never stored                                                                                                                |
-| `recovery_codes`                                       | `code_hash`                             | S          | SHA-256                                         | Plaintext shown once at generation                                                                                                              |
+| `recovery_codes`                                       | `code_hash`                             | S          | HMAC-SHA256 under the KEK-wrapped recovery key  | Plaintext shown once at generation; new digests bind the user (§3.1.5a)                                                                         |
+| `auth_keys`                                            | `dek_ref`                               | S          | AES-256-GCM wrap under the environment's KEK    | Unwrapped only inside M2; the key never leaves `secrets` and is never logged, returned or exported; useless without the KEK                     |
 | `api_keys`                                             | `key_id_enc`, `secret_enc`              | S          | AES-256-GCM, DEK wrapped by external KEK        | Only the credential broker may decrypt; every decryption writes `api_key.reveal_attempt`-class telemetry; **no API endpoint ever returns them** |
 | `api_keys`                                             | `enc_nonce`, `dek_ref`                  | S          | —                                               | Useless alone but treated as secret                                                                                                             |
 | `api_keys`                                             | `key_id_last4`                          | P0         | plaintext                                       | Safe display tail                                                                                                                               |
@@ -3574,7 +3657,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 Enforcement:
 
 - A CI check parses the migration DDL and asserts every column listed above carries a matching `COMMENT ON COLUMN` tag (`PII:` / `SECRET:`).
-- A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
+- A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `auth_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
 - The structured logger has a deny-list of field names; a unit test asserts that logging a model instance containing a secret field emits `[redacted]`.
 - Parquet exports of OMS tables exclude every S-class column by explicit projection, and the exporter test asserts the written schema contains none of them.
 
