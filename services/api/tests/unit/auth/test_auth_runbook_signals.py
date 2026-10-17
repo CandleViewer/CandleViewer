@@ -5,6 +5,7 @@ under it triage a probe hit by what its `object_id` finds in `sessions` (#3054).
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -20,8 +21,8 @@ from candleviewer.api.sessions import (
 _RUNBOOK = Path(__file__).resolve().parents[5] / "docs" / "ops" / "runbooks" / "auth-rbac.md"
 _SCHEMA = _RUNBOOK.parents[2] / "plan" / "21-database-schema.md"
 _PACKAGE = Path(sessions.__file__).resolve().parents[1]  # `candleviewer/`
-#: A statement that drops `sessions` rows, written as every repository here writes SQL
-#: (`DELETE FROM drawings ...`): any case and spacing, the table quoted or schema-qualified.
+#: Raw SQL that drops `sessions` rows (`DELETE FROM sessions ...`): any case and spacing, the table
+#: quoted or schema-qualified. A Core repository has no such text (`sa.delete(_TABLE)`).
 _SESSIONS_ROW_DELETE = re.compile(r'\bDELETE\s+FROM\s+(?:"?\w+"?\.)?"?sessions\b', re.IGNORECASE)
 #: Words a finished clause does not end on: a cell that does is cut off, or lost its last words.
 _DANGLING = frozenset(
@@ -109,8 +110,36 @@ def test_the_probe_triage_sends_the_session_id_search_through_the_indexes_the_sc
     assert "start from the indexed `action` or `actor_user_id`" in no_row
 
 
+def _drops_sessions_rows(source: str) -> bool:
+    """A raw `DELETE FROM sessions`, or a SQLAlchemy Core `delete(t)`, `sa.delete(t)` or
+    `t.delete()` of the `sessions` Table: `models.sessions`, or `sessions` imported under any alias
+    (as `replay_sessions_sqlalchemy.py` imports its own Table), so `sa.delete(_TABLE)` over another
+    table does not match. It stops an honest regression, not a deliberate bypass."""
+    if _SESSIONS_ROW_DELETE.search(source):
+        return True
+    if "delete(" not in source:
+        return False
+    tree = ast.parse(source)
+    table = {"models.sessions"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "candleviewer.db.models":
+            table |= {a.asname or a.name for a in node.names if a.name == "sessions"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            match node.func:
+                case ast.Name(id="delete"):
+                    targets = node.args[:1]  # delete(t)
+                case ast.Attribute(attr="delete", value=owner):
+                    targets = [owner, *node.args[:1]]  # t.delete(), sa.delete(t)
+                case _:
+                    continue
+            if any(ast.unparse(t) in table for t in targets):
+                return True
+    return False
+
+
 @pytest.mark.parametrize(
-    ("sql", "drops_sessions_rows"),
+    ("source", "drops_sessions_rows"),
     [
         ("DELETE FROM sessions WHERE expires_at < :cutoff", True),
         ("delete\n    from public.sessions where true", True),
@@ -118,12 +147,20 @@ def test_the_probe_triage_sends_the_session_id_search_through_the_indexes_the_sc
         ("DELETE FROM sessions_rotation WHERE true", False),
         ("DELETE FROM replay_sessions WHERE id = :id", False),
         ("UPDATE sessions SET revoked_at = :now", False),
+        ("from candleviewer.db.models import sessions\nq = sa.delete(sessions)", True),
+        ("from candleviewer.db.models import sessions\nq = sessions.delete()", True),
+        ("from candleviewer.db import models\nq = sa.delete(models.sessions)", True),
+        ("from candleviewer.db.models import sessions as t\nq = delete(t)", True),
+        # the neighbour's idiom over another table, an update, and a local that is not the Table
+        ("from candleviewer.db.models import replay_sessions as t\nq = sa.delete(t)", False),
+        ("from candleviewer.db.models import sessions\nq = sa.update(sessions)", False),
+        ("def purge(sessions):\n    sessions.delete()", False),
     ],
 )
-def test_the_sessions_row_delete_pattern_matches_the_table_and_no_other(
-    sql: str, drops_sessions_rows: bool
+def test_the_sessions_row_delete_check_matches_the_table_and_no_other(
+    source: str, drops_sessions_rows: bool
 ) -> None:
-    assert bool(_SESSIONS_ROW_DELETE.search(sql)) is drops_sessions_rows
+    assert _drops_sessions_rows(source) is drops_sessions_rows
 
 
 def test_no_code_drops_a_sessions_row_while_the_runbook_says_the_job_has_not_shipped() -> None:
@@ -134,7 +171,7 @@ def test_no_code_drops_a_sessions_row_while_the_runbook_says_the_job_has_not_shi
     droppers = [
         str(path.relative_to(_PACKAGE))
         for path in sorted(_PACKAGE.rglob("*.py"))
-        if _SESSIONS_ROW_DELETE.search(path.read_text(encoding="utf-8"))
+        if _drops_sessions_rows(path.read_text(encoding="utf-8"))
     ]
     assert droppers == [], (
         f"{droppers} drop `sessions` rows, but the no-row paragraph of "
