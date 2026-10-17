@@ -17,14 +17,16 @@ largest row the request can produce, so it never exceeds the share; the queue ha
 fewer than there are batches in all. `buffered_events` is what is queued. The producer yields to
 the event loop after every batch (C-2.17: merging a batch of 1 024 events took 1-3 ms here). The
 consumer owns its own yields: `__anext__` suspends only to wait for a batch, so a loop that awaits
-nothing else drains a full read-ahead in one turn; the replay clock yields every 256 deliveries.
+nothing else drains a full read-ahead in one turn (E26-T03's clock is to yield every 256
+deliveries).
 
 **Memory ceiling.** `memory_ceiling_bytes` is the session's estimated budget: the read-ahead
 takes `readahead_bytes` of it and the merge's cursors share the rest, each read capped at its
 share in rows and at the merge's `DEFAULT_MAX_ROWS_PER_READ`. A session too wide or a stream too
 dense for it fails with `ReplayMemoryCeilingExceeded`; gap markers sit outside it (see
 `replay.merge`). Every byte figure is an estimate, not a measured resident size: an event counts
-512 B (E26-K01 measured ~0.4 KB) plus 128 B per snapshot level (`merge.approx_bytes`).
+512 B plus 128 B per snapshot level (`merge.approx_bytes`); E26-K01 measured about 0.4 KB a row in
+one run and 0.78 KB in its dense 200-depth window, so E26-Q03 is to calibrate it.
 
 **Failures** reach the consumer in order. A `ReplayError` is raised after every event merged
 before it (the merge yields its batch in progress first). Any other failure is a bug or a
@@ -46,7 +48,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import math
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import dataclass
 from typing import Any, Final, Self
 
@@ -76,6 +78,13 @@ _MIN_BATCHES: Final = 3
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+def _report(event: str, **fields: Any) -> None:
+    """Log an error. A logger that fails must neither change what the consumer is told nor leave
+    it waiting, so nothing it raises gets out of here."""
+    with suppress(Exception):
+        _log().error(event, **fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +170,7 @@ def _failure(exc: Exception) -> _Failed:
     `ReplayInternalError` (RP-I02), the original logged by type and traceback."""
     if isinstance(exc, ReplayError):
         return _Failed(exc)
-    _log().error("replay_source_failed", error_type=type(exc).__name__, exc_info=exc)
+    _report("replay_source_failed", error_type=type(exc).__name__, exc_info=exc)
     return _Failed(ReplayInternalError())
 
 
@@ -235,7 +244,7 @@ class ReplaySource:
                     async with asyncio.timeout(self._stop_timeout_s):
                         await asyncio.wait({task})
                 except TimeoutError:
-                    _log().error("replay_source_producer_did_not_stop", wait_s=self._stop_timeout_s)
+                    _report("replay_source_producer_did_not_stop", wait_s=self._stop_timeout_s)
         finally:
             self._release()
 
@@ -253,12 +262,13 @@ class ReplaySource:
         return self._task
 
     def _producer_ended(self, task: asyncio.Task[None]) -> None:
-        """Wake a consumer parked on the empty queue when the producer was cancelled: by `aclose`
-        (which clears the queue and leaves its own end marker afterwards) or by anyone else. A
-        full queue means the consumer is not parked: `_advance` finds the cancelled producer once
-        it has drained the queue. A closed source lets go of the task: nothing starts it again,
-        and a cancelled task keeps its exception, and that the producer's frame and its batch."""
-        if task.cancelled() and not self._queue.full():
+        """Wake a consumer parked on the empty queue when the producer ended without leaving its
+        own end marker: cancelled (by `aclose`, which clears the queue and leaves its own end
+        marker afterwards, or by anyone else) or dead of an exception. A full queue means the
+        consumer is not parked: `_advance` finds the ended producer once it has drained the
+        queue. A closed source lets go of the task: nothing starts it again, and a cancelled task
+        keeps its exception, and that the producer's frame and its batch."""
+        if (task.cancelled() or task.exception() is not None) and not self._queue.full():
             self._queue.put_nowait(_Mark.STOPPED)
         if self._done:
             self._task = None
@@ -270,7 +280,7 @@ class ReplaySource:
         self._batch, self._pos = [], 0  # the finished batch is released before waiting
         task = self._start()
         got: _Queued
-        if task.cancelled() and self._queue.empty():
+        if task.done() and self._queue.empty():  # it ended and left no marker
             got = _Mark.STOPPED
         else:
             got = await self._queue.get()
@@ -285,7 +295,7 @@ class ReplaySource:
         if isinstance(got, _Failed):
             raise got.error
         if got is _Mark.STOPPED:
-            _log().error("replay_source_producer_stopped")
+            _report("replay_source_producer_stopped")
             raise ReplayInternalError
         raise StopAsyncIteration
 
@@ -298,6 +308,8 @@ class ReplaySource:
         replay_readahead_depth.dec(self._queued)
         self._queued = 0
         self._batch, self._pos = [], 0
+        if self._task is not None and self._task.done():
+            self._task = None  # an ended task keeps its exception, and that the frame and its batch
 
     async def _produce(self) -> None:
         outcome: _Failed | _Mark = _Mark.END

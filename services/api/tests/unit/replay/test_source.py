@@ -172,6 +172,7 @@ async def test_an_unexpected_failure_reaches_the_consumer_only_as_a_fixed_intern
     assert [(e["event"], e["error_type"]) for e in failed] == [
         ("replay_source_failed", "ZeroDivisionError")
     ]
+    assert isinstance(failed[0]["exc_info"], ZeroDivisionError)  # the traceback is logged, too
 
 
 async def test_a_source_starts_one_producer_however_often_it_is_asked_for_items(

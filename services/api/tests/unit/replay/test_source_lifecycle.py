@@ -16,6 +16,7 @@ from candleviewer.replay import (
     ReplaySource,
     ReplaySourceUnavailable,
 )
+from candleviewer.replay import source as source_module
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
 from candleviewer.storage.testing import InMemoryRecordedTier
@@ -67,9 +68,34 @@ class _Gated(InMemoryRecordedTier):
         return await super().read(symbol, stream, rng, depth=depth, limit=limit)
 
 
-class _IgnoresCancellation(InMemoryRecordedTier):
+class _BreaksWhenReleased(InMemoryRecordedTier):
+    """Answers the first read, then fails every later one once `gate` is set."""
+
+    def __init__(self, events: list[RecordedEvent]) -> None:
+        super().__init__(events)
+        self.gate = asyncio.Event()
+
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        if self.reads:
+            await self.gate.wait()
+            raise ZeroDivisionError("a reader bug, not a storage error")
+        return await super().read(symbol, stream, rng, depth=depth, limit=limit)
+
+
+def _dies_reporting(exc: Exception) -> object:
+    raise OSError("the report of the failure failed too")
+
+
+class _BrokenLogger:
+    def error(self, event: str, **fields: object) -> None:
+        raise OSError("the log sink is gone")
+
+
+class _IgnoresCancellation(MintingTier):
     """A reader that breaks the port's contract: it swallows cancellation until released, then
-    serves what it holds."""
+    serves what it holds (weakly counted rows)."""
 
     def __init__(self, events: list[RecordedEvent] | None = None) -> None:
         super().__init__(events or [])
@@ -176,6 +202,83 @@ async def test_the_producer_cancelled_by_someone_else_still_delivers_what_was_qu
             await drain_into(source, got)
 
     assert got == stored[:128]  # the two queued batches, then the error: nothing skipped silently
+
+
+async def test_a_producer_that_dies_of_an_exception_ends_a_parked_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reporting the failure itself fails, so the producer dies with an exception instead of
+    leaving a marker: the consumer, parked on the empty queue, is woken all the same. The read
+    that fails is the second, so the first window's 5 rows (one batch in progress) are lost."""
+    monkeypatch.setattr(source_module, "_failure", _dies_reporting)
+    reader = _BreaksWhenReleased(many(5))
+    harness = Harness().replace_ports(hot=reader)
+    got: list[ReplayItem] = []
+
+    async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+        consumer = asyncio.create_task(drain_into(source, got))
+        for _ in range(20):  # it parks on the empty queue
+            await asyncio.sleep(0)
+        reader.gate.set()
+
+        with pytest.raises(ReplayInternalError):
+            await consumer
+
+    assert got == []  # the 5 rows were still the batch in progress: an untyped failure drops it
+
+
+async def test_a_producer_that_dies_with_a_full_queue_is_found_once_the_queue_is_drained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One slot, full with the first batch when the second fails to build and the report of the
+    failure dies: nothing can be queued for the consumer, which finds the dead producer itself."""
+    monkeypatch.setattr(source_module, "_failure", _dies_reporting)
+    one_slot = replace(SMALL, readahead_events=9, batch_events=3)
+    reader = _BreaksWhenReleased(many(5))
+    reader.gate.set()
+    harness = Harness().replace_ports(hot=reader)
+    got: list[ReplayItem] = []
+
+    async with ReplaySource(harness.req, harness.tiers, config=one_slot) as source:
+        for _ in range(20):  # the producer dies before the consumer has asked for anything
+            await asyncio.sleep(0)
+        with pytest.raises(ReplayInternalError):
+            await drain_into(source, got)
+
+    assert got == many(5)[:3]
+
+
+async def test_a_logger_that_fails_changes_nothing_the_consumer_sees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_module, "_log", _BrokenLogger)
+    reader = _BreaksWhenReleased(many(500))
+    reader.gate.set()
+    harness = Harness().replace_ports(hot=reader)
+    got: list[ReplayItem] = []
+
+    with pytest.raises(ReplayInternalError) as raised:
+        async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+            await drain_into(source, got)
+
+    assert got == many(500)[: 7 * 64]
+    assert str(raised.value) == "the replay read failed unexpectedly"
+
+
+async def test_a_producer_cancelled_by_someone_else_leaves_nothing_in_the_closed_source() -> None:
+    tier = MintingTier(many(2_000))
+    harness = Harness().replace_ports(hot=tier)
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL)
+    await source.__aenter__()
+    await until_parked(source, at_least=128)
+    (producer,) = _producers()
+    producer.cancel()
+    await _finished(producer)
+    del producer  # the source must not keep it: a cancelled task keeps its traceback and batch
+
+    await source.aclose()
+
+    assert tier.alive() == 0
 
 
 async def test_a_producer_cancelled_while_the_queue_is_full_raises_nothing_in_the_loop() -> None:
@@ -292,12 +395,14 @@ async def test_a_producer_that_outlives_the_give_up_queues_nothing_for_the_close
     # one read (its first window of 500 rows holds the first batch of 64), nothing queued
     assert (reader.reads, source.buffered_events, _gauge()) == (1, 0, baseline)
     assert await drain(source) == []
+    del producer
+    assert reader.alive() == 0  # not even in the closed queue
 
 
 async def test_a_producer_that_outlives_the_give_up_does_not_park_on_the_closed_queue() -> None:
     """With one queue slot, already holding the end marker the close left, a producer that put
-    its own marker would wait for room that never comes."""
-    reader = _IgnoresCancellation()
+    a marker or a batch of its own would wait for room that never comes."""
+    reader = _IgnoresCancellation(many(100))
     harness = Harness().replace_ports(hot=reader)
     one_slot = ReadAheadConfig(
         window_us=SECOND, readahead_events=9, batch_events=3, io_timeout_s=0.01

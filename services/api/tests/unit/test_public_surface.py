@@ -184,7 +184,6 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReadAheadConfig",
         "ReplayConfigInvalid",
         "ReplayGap",
-        "ReplayInternalError",
         "ReplayItem",
         "ReplayMemoryCeilingExceeded",
         "ReplayRequest",
