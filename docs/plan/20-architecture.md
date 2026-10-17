@@ -834,7 +834,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_WS_BACKPRESSURE_ENABLED`     | bool   | `false`                   | process | E17-T03 flag (C-4.13, #2900): inert until the wiring lands; keep off until then (23 §8.4); `coalescing` mirrors it  |
 | `CV_WS_QUEUE_BYTES`              | int    | `8388608`                 | process | outbound byte budget (23 §8.4): 4194304 floor (typo guard) to 8388608, lower only; unread until the wiring lands    |
 | `CV_WS_QUEUE_FRAMES`             | int    | `2000`                    | process | outbound frame budget (23 §8.4): 256 floor (typo guard) to 2000, lower only; unread until the wiring lands          |
-| `CV_WS_CLASSIFY_INTERVAL_MS`     | int    | `2000`                    | process | classification and RTT probe cadence (23 §8.3), 500-10000; unread until the wiring lands                            |
+| `CV_WS_CLASSIFY_INTERVAL_MS`     | int    | `1000`                    | process | classification and RTT probe cadence (23 §8.3), 500-10000; unread until the wiring lands                            |
 | `CV_HEATMAP_CADENCE_MS`          | int    | `100`                     | runtime |                                                                                                                     |
 | `CV_BOOK_DEPTH`                  | int    | `200`                     | runtime | 1/50/200/500                                                                                                        |
 | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`                      | runtime | per-symbol override allowed                                                                                         |

@@ -39,7 +39,7 @@ from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflo
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import TopicEmitter
 
-CLASSIFY_INTERVAL_S: Final = 2.0
+CLASSIFY_INTERVAL_S: Final = 1.0
 LAGGING_QUEUE_PCT: Final = 25.0
 SATURATED_QUEUE_PCT: Final = 60.0
 OVERFLOWING_QUEUE_PCT: Final = 90.0

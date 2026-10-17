@@ -88,7 +88,7 @@ def test_budget_settings_default_to_the_contract_values() -> None:
 
     assert settings.ws_queue_bytes == QUEUE_BYTES == 8_388_608
     assert settings.ws_queue_frames == QUEUE_FRAMES == 2_000
-    assert settings.ws_classify_interval_ms == round(CLASSIFY_INTERVAL_S * 1000) == 2_000
+    assert settings.ws_classify_interval_ms == round(CLASSIFY_INTERVAL_S * 1000) == 1_000
 
 
 @pytest.mark.parametrize("field", _CEILING)
@@ -165,11 +165,11 @@ def test_one_maximum_outbound_frame_fits_at_the_floors() -> None:
     assert not queue.over_budget()
 
 
-@pytest.mark.parametrize("value", [500, 2_000, 10_000])
+@pytest.mark.parametrize("value", [500, 1_000, 10_000])
 def test_classify_interval_accepts_500_to_10000(
     monkeypatch: pytest.MonkeyPatch, value: int
 ) -> None:
-    """500..10 000 ms; the 2 s default (§8.3) is inside."""
+    """500..10 000 ms; the 1 s default (§8.3) is inside."""
     monkeypatch.setenv("CV_WS_CLASSIFY_INTERVAL_MS", str(value))
 
     assert Settings().ws_classify_interval_ms == value

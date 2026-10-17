@@ -427,7 +427,7 @@ class Settings(BaseSettings):
     # fits (a test pins it) and nothing more is promised.
     ws_queue_bytes: int = Field(default=8_388_608, ge=4_194_304, le=8_388_608)
     ws_queue_frames: int = Field(default=2_000, ge=256, le=2_000)
-    ws_classify_interval_ms: int = Field(default=2_000, ge=500, le=10_000)
+    ws_classify_interval_ms: int = Field(default=1_000, ge=500, le=10_000)
     ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
     # #2558: new sockets one user may authenticate per sliding 60 s (§4.3). The excess is refused
     # `bye client_rate_limited` + 4429 before `auth_ok`. Default = `ws.lifecycle` constant of the
