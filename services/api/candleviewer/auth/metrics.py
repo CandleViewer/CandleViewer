@@ -131,10 +131,10 @@ auth_totp_clock_skew_total = Counter(
     # closed set: authenticator_behind | authenticator_ahead
     ["kind"],
 )
-#: `auth_enrolment_refused_total{channel, reason}` (#2295) closed sets. Each refusal of an
+#: `auth_enrolment_refused_total{transport, reason}` (#2295) closed sets. Each refusal of an
 #: enrolment-only session counts once under its reason, and an `enrolment_only` one counts again
 #: under an audit reason when its `auth.mfa_enrollment_required` record was not written normally.
-ENROLMENT_REFUSAL_CHANNELS: tuple[str, ...] = ("http", "ws")
+ENROLMENT_REFUSAL_TRANSPORTS: tuple[str, ...] = ("http", "ws")
 ENROLMENT_REFUSAL_REASONS: tuple[str, ...] = (
     "enrolment_only",  # 403 / `bye mfa_enrollment_required` (audited)
     "expired",  # it would outlive its 15 minutes (Q7): 401 / a failed WS `auth`
@@ -145,13 +145,13 @@ ENROLMENT_REFUSAL_REASONS: tuple[str, ...] = (
 )
 auth_enrolment_refused_total = Counter(
     "auth_enrolment_refused_total",
-    "Requests and WS auths refused for an enrolment-only session (#2295), by channel and reason.",
-    ["channel", "reason"],
+    "Requests and WS auths refused for an enrolment-only session (#2295), by transport and reason.",
+    ["transport", "reason"],
 )
 # Bound now, so the first refusal after a restart is a visible 0 -> 1 `increase()`.
-for _channel in ENROLMENT_REFUSAL_CHANNELS:
+for _transport in ENROLMENT_REFUSAL_TRANSPORTS:
     for _reason in ENROLMENT_REFUSAL_REASONS:
-        auth_enrolment_refused_total.labels(channel=_channel, reason=_reason)
+        auth_enrolment_refused_total.labels(transport=_transport, reason=_reason)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, another user's, or rotated away, presented"

@@ -19,7 +19,7 @@ The guard is inert only while `AuthService.enrolment_gate_is_active` is false: n
 is wired, so nothing authenticates. Wired without the user store, every classification fails and
 the guard answers 503 (deny by default).
 
-Every refusal is counted (`auth_enrolment_refused_total{channel, reason}`, SR-125) and logged
+Every refusal is counted (`auth_enrolment_refused_total{transport, reason}`, SR-125) and logged
 with the method and the contract route template, never the raw path. A 403 also writes an
 `auth.mfa_enrollment_required` audit record (C-2.9; 04 section 7.3: a denied request is
 audited) through `EnrolmentRefusals`, the CSRF guard's bounded writer path: a per-user
@@ -105,7 +105,7 @@ _UNCLASSIFIED = (
     "The session could not be checked; try again shortly.",
 )
 
-#: Where a refusal happened: `http` (this guard) or `ws` (the `auth` frame).
+#: `http` (this guard) or `ws` (the `auth` frame): logged as `channel`, counted as `transport`.
 Channel = Literal["http", "ws"]
 CallNext = Callable[[Request], Awaitable[Response]]
 
@@ -184,7 +184,7 @@ class EnrolmentRefusals:
     """Counts, logs and audits each refusal of an enrolment-only session (SR-125, C-2.9), for
     the HTTP guard and the WS authenticator alike.
 
-    `auth_enrolment_refused_total{channel, reason}` counts every refusal once under its reason
+    `auth_enrolment_refused_total{transport, reason}` counts every refusal once under its reason
     (`enrolment_only`: 403 or `bye mfa_enrollment_required`; `expired`: an overlong or dead
     session, 401 or a failed `auth`; `unclassified`: the session could not be checked, 503 or a
     failed `auth`) and, for an `enrolment_only` refusal whose audit record was not written normally,
@@ -215,7 +215,7 @@ class EnrolmentRefusals:
 
     @staticmethod
     def _count(channel: Channel, reason: str) -> None:
-        auth_enrolment_refused_total.labels(channel=channel, reason=reason).inc()
+        auth_enrolment_refused_total.labels(transport=channel, reason=reason).inc()
 
     def unclassified(self, exc: Exception, *, channel: Channel, method: str, path: str) -> None:
         """The session could not be looked up or classified: refused, and an error to page."""
