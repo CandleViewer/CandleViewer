@@ -1,4 +1,4 @@
-"""`redact_exchange_payload()` and `redact_exchange_text()` (E29-T01 #845 slice 2/3, 21 Sec.3.3.5).
+"""`redact_exchange_payload()` and `redact_exchange_text()` (E29-T01 #845, 21 Sec.3.3.5).
 
 The ticket's fixture is a signed order create carrying `X-BAPI-SIGN`, `X-BAPI-API-KEY` and the
 recv-window header (24-internal-schemas.md Sec.14.3 documents the four signing headers and the WS
@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import string
 import uuid
 from datetime import UTC, datetime
@@ -172,6 +173,36 @@ def test_a_credential_shaped_string_is_redacted(text: str) -> None:
 )
 def test_ids_numbers_and_words_are_kept(text: str) -> None:
     assert redact_exchange_payload({"rejectReason": text}) == {"rejectReason": text}
+
+
+#: A USDT-linear symbol of 19 characters: inside `symbol_code` (`^[A-Z0-9]{4,20}$`).
+_LONG_SYMBOL = "1000000BABYDOGEUSDT"
+
+
+def _symbol_shaped(text: str) -> bool:
+    """The redactor keeps a run of this shape as a symbol, so no property seeds one as a key."""
+    return re.fullmatch(r"[A-Z0-9]{0,16}USDT", text) is not None
+
+
+def test_a_long_linear_symbol_is_kept_in_the_payload_and_in_a_message() -> None:
+    text = f"symbol {_LONG_SYMBOL} is not available for trading"
+    raw = {"symbol": _LONG_SYMBOL, "retMsg": text, "result": {"list": [{"symbol": _LONG_SYMBOL}]}}
+    assert redact_exchange_payload(raw) == raw
+    assert redact_exchange_text(text, message=True) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Q3w9" * 3 + "abUSDT",  # 18, mixed case: key-shaped although it ends in USDT
+        "Q3W9" * 5,  # 20, upper case and digits, not ending in USDT
+        "1" + "Q3W9" * 4 + "USDT",  # 21: past the `symbol_code` domain
+    ],
+)
+def test_a_key_shaped_run_that_is_no_symbol_is_still_redacted(text: str) -> None:
+    raw = {"symbol": text, "retMsg": f"symbol {text} is not available"}
+    assert redact_exchange_payload(raw) == {"symbol": REDACTED, "retMsg": REDACTED}
+    assert redact_exchange_text(text) == REDACTED
 
 
 #: 18 letters alone, built at run time (SR-145): the general rule keeps such a run as a word.
@@ -384,7 +415,7 @@ def test_the_message_rule_applies_to_exchange_text_on_request() -> None:
 
 _ALNUM = string.ascii_letters + string.digits
 _SECRETS = st.text(_ALNUM, min_size=18, max_size=64).filter(
-    lambda s: not s.isalpha() and not s.isdigit()
+    lambda s: not s.isalpha() and not s.isdigit() and not _symbol_shaped(s)
 )
 _WORDS = st.text(string.ascii_lowercase + " .,:", max_size=24)
 
@@ -431,7 +462,7 @@ def test_no_seeded_secret_survives_in_exchange_text(
 
 #: Letters alone with a capital, so neither the lower-case words nor a number can hold one.
 _LETTER_RUNS = st.text(string.ascii_letters, min_size=18, max_size=64).filter(
-    lambda s: not s.islower()
+    lambda s: not s.islower() and not _symbol_shaped(s)
 )
 
 

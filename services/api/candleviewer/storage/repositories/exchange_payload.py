@@ -20,7 +20,9 @@ Replaced by `REDACTED`:
 * the query of a URL; a query string naming a credential; and a string holding a credential-shaped
   run, 18 or more ASCII letters and digits with at least one of each (an API key, a secret, a hex
   MAC), outside an `OUR_ID` or `EXT_ID` (24 Sec.8.3). Ids, numbers and words pass, CamelCase enum
-  values such as reject reasons included;
+  values such as reject reasons included, and so does a run shaped like a USDT-linear symbol
+  (upper-case letters and digits ending in `USDT`, at most 20 characters: the `symbol_code`
+  domain, so `1000000BABYDOGEUSDT`), in a message too;
 * in a message, also a run of 18 or more letters alone (the message rule): in `ret_msg`
   (`redact_exchange_text(..., message=True)`) and in every string under a payload key whose name
   holds `msg` or `message`. Prose has no such word, but a key of letters alone is one, and the
@@ -39,8 +41,9 @@ length bound (`MAX_CODE_CHARS` for a code).
 
 A foreign client order id is a string like any other: one that is credential-shaped (the 32 hex
 characters of a `uuid4().hex`, say) is stored as `REDACTED` (21 Sec.3.3.4 "Adopted rows").
-What remains: a credential under 18 characters, or one split by separators, under a name this
-module does not know; the adapter's allow-listed record (E29-T04) is the control for those.
+What remains: a credential under 18 characters, split by separators or shaped like a symbol,
+under a name this module does not know; the adapter's allow-listed record (E29-T04) is the
+control for those.
 """
 
 from __future__ import annotations
@@ -80,6 +83,9 @@ _PARAM: Final = re.compile(r"(?:^|[?&;])\s*([A-Za-z0-9_.-]{1,64})=")
 #: Both `ord_link_fmt` arms, unanchored: masked before the shape scan, so an id is never a key.
 _IDS: Final = re.compile(f"{OUR_ID.pattern[1:-1]}|{EXT_ID.pattern[1:-1]}")
 _RUN: Final = re.compile(r"[A-Za-z0-9]{18,}")
+#: A USDT-linear symbol (`symbol_code`, `^[A-Z0-9]{4,20}$`, ending in `USDT`): a run of this shape
+#: is a symbol, not a key. A key is mixed-case or does not end in `USDT`, a hex MAC is lower-case.
+_SYMBOL: Final = re.compile(r"[A-Z0-9]{0,16}USDT")
 #: What `jsonb` refuses in text: NUL and a lone surrogate.
 _UNSTORABLE: Final = re.compile(r"[\x00\ud800-\udfff]")
 
@@ -106,9 +112,9 @@ def _storable(text: str) -> bool:
 
 
 def _credential_shaped(text: str, *, message: bool = False) -> bool:
-    """A run of 18+ letters and digits outside our ids: with a letter and a digit, or, in a
-    message, any run but one of digits alone."""
-    runs = _RUN.findall(_IDS.sub("-", text))
+    """A run of 18+ letters and digits outside our ids and other than a symbol: with a letter and
+    a digit, or, in a message, any run but one of digits alone."""
+    runs = [run for run in _RUN.findall(_IDS.sub("-", text)) if not _SYMBOL.fullmatch(run)]
     if message:
         return any(not run.isdigit() for run in runs)
     return any(not run.isalpha() and not run.isdigit() for run in runs)
