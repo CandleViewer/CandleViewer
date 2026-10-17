@@ -211,6 +211,3 @@ omit = [
 
 [tool.bandit]
 exclude_dirs = ["tests"]
-
-[tool.importlinter]
-root_package = "candleviewer"

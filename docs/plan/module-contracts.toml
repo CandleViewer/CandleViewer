@@ -10,8 +10,9 @@
 # the same PR, and vice versa. Adding a module or an edge needs an ADR
 # (C-3.4).
 #
-# `path` is the Python dotted import path rooted at `candleviewer` (the
-# `root_package` of `services/api/.importlinter`). `allowed` lists the
+# `path` is the Python dotted import path rooted at `candleviewer` (a root of
+# `services/api/.importlinter`; the other, the dev-only `cvdev`, is not an
+# M-module and has no entry here, ADR-0036). `allowed` lists the
 # dotted paths (not numbers) this module may import, transcribed from the
 # "May depend on" column of §3.
 
