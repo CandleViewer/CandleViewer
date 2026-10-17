@@ -52,7 +52,7 @@ describe("pre-paint snippet", () => {
     observer.disconnect();
   });
 
-  it("resolves exactly like the store for every persisted theme, motion, density and scale", () => {
+  it("resolves exactly like the store for every persisted theme, motion, density, scale and hostile shape", () => {
     const raws: (string | null)[] = [null, "{bad", "5", '"x"', "[1]", '{"textScale":"125"}'];
     const oses: Os[] = [true, false].flatMap((dark) =>
       [true, false].map((reduce) => ({ dark, reduce })),
@@ -70,6 +70,32 @@ describe("pre-paint snippet", () => {
     for (const density of [...DENSITIES, "huge"]) {
       for (const textScale of [100, 112, 125, 150, 99, "150"]) {
         raws.push(JSON.stringify({ density, textScale }));
+      }
+    }
+    // Hostile shapes: single-element arrays coerce under loose equality, objects may carry a
+    // throwing `toString`, and scalars of the wrong type must fall back without throwing.
+    for (const field of [
+      "baseTheme",
+      "density",
+      "motionOverride",
+      "textScale",
+      "matchSystem",
+      "highContrast",
+    ]) {
+      for (const value of [
+        ["light"],
+        ["comfortable"],
+        ["on"],
+        ["off"],
+        [150],
+        { toString: "x" },
+        {},
+        1,
+        true,
+        "",
+        null,
+      ]) {
+        raws.push(JSON.stringify({ [field]: value }));
       }
     }
     for (const raw of raws) {
