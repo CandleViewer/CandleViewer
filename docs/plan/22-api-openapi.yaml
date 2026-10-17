@@ -8521,6 +8521,8 @@ paths:
                     alerts_active: 1
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /health/live:
     get:
@@ -10883,8 +10885,16 @@ paths:
                         runbook_ref: null
                         signature: "5f0c2d9e4b7a1c3e"
                     meta: { next_cursor: null, has_more: false, count: 1 }
+        "400":
+          description: "Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor` (one issued for a different `status` filter)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/incidents/{incidentId}/acknowledge:
     parameters:
@@ -12231,6 +12241,21 @@ components:
                   instance: "urn:cv:req:0193f2bb-bbbb",
                   code: exchange_rate_limited,
                   retry_after_seconds: 2,
+                }
+    NotImplemented:
+      description: "Declared but not served: the provider behind this operation is not wired (`code: not_implemented`). No data was read or changed, and retrying does not help until it is wired."
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            notWired:
+              value:
+                {
+                  type: "https://candleviewer.local/errors/not_implemented",
+                  title: "Not implemented",
+                  status: 501,
+                  instance: "urn:cv:req:0193f2bb-5011",
+                  code: not_implemented,
                 }
     ExchangeError:
       description: The exchange rejected the request.

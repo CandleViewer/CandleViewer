@@ -9242,6 +9242,15 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /** @description Declared but not served: the provider behind this operation is not wired (`code: not_implemented`). No data was read or changed, and retrying does not help until it is wired. */
+    NotImplemented: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description State conflict (`conflict`, `idempotency_key_reuse`), or one of the two exposure refusals of SR-E27-07, so the revoke, disable or delete was not carried out. `open_exposure`: the account holds open positions, working orders or running emulated algos that the request does not resolve, or the request asks for `leave_positions` while a position has no native stop-loss; it always carries `consequences`, the summary the caller shows before it resends with an `open_exposure` choice. `exposure_unknown`: the exposure cannot be read because the exchange refuses every signable key of the account, or the account has none (`components.parameters.OpenExposure`); it always carries `remedy` and no `consequences`. `deleteExchangeAccount` answers it whatever the request carries. `updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries `flatten_first` or no choice, and for `leave_positions` too while a key can still be fixed. */
     OpenExposureConflict: {
       headers: {
@@ -10232,6 +10241,8 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listIncidents: {
@@ -10260,8 +10271,20 @@ export interface operations {
           };
         };
       };
+      /** @description Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor` (one issued for a different `status` filter). */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   acknowledgeIncident: {
