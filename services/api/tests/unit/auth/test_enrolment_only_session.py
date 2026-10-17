@@ -20,7 +20,7 @@ from hypothesis import strategies as st
 
 from candleviewer.auth.errors import AuthServiceUnavailable, SessionRevoked
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord
+from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord, UserStatus
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import (
     ENROLMENT_ONLY_LIFETIME,
@@ -33,11 +33,13 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 T0 = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 _TOTP = (MfaMethodKind.TOTP,)
-_FULL, _ONLY, _EXPIRED = (
+_FULL, _ONLY, _EXPIRED, _INACTIVE = (
     SessionClass.FULL,
     SessionClass.ENROLMENT_ONLY,
     SessionClass.ENROLMENT_ONLY_EXPIRED,
+    SessionClass.USER_INACTIVE,
 )
+_DISABLED = UserStatus.DISABLED
 
 
 class _Clock:
@@ -48,8 +50,15 @@ class _Clock:
         return self.now
 
 
-def _user(*, mfa_required: bool = True, methods: tuple[MfaMethodKind, ...] = ()) -> UserRecord:
-    return make_user(password_hash="unused", mfa_required=mfa_required, mfa_methods=methods)
+def _user(
+    *,
+    mfa_required: bool = True,
+    methods: tuple[MfaMethodKind, ...] = (),
+    status: UserStatus = UserStatus.ACTIVE,
+) -> UserRecord:
+    return make_user(
+        password_hash="unused", mfa_required=mfa_required, mfa_methods=methods, status=status
+    )
 
 
 def _session(user_id: uuid.UUID, *, expires_in: timedelta, proved: bool = True) -> SessionRecord:
@@ -76,8 +85,12 @@ def _session(user_id: uuid.UUID, *, expires_in: timedelta, proved: bool = True) 
         (_user(), timedelta(minutes=15, microseconds=1), _EXPIRED),
         (_user(), timedelta(hours=12), _EXPIRED),  # never minted as one
         (_user(mfa_required=False), timedelta(hours=12), _FULL),  # the decided rule; C-12.2
-        (None, timedelta(minutes=5), _ONLY),  # fail closed: no proven second factor
-        (None, timedelta(hours=12), _EXPIRED),
+        # #2911 answers a user who is gone or disabled: the route revokes the session
+        (None, timedelta(minutes=5), _INACTIVE),
+        (None, timedelta(hours=12), _INACTIVE),
+        (_user(methods=_TOTP, status=_DISABLED), timedelta(hours=12), _INACTIVE),
+        (_user(status=_DISABLED), timedelta(minutes=5), _INACTIVE),
+        (_user(methods=_TOTP, status=UserStatus.LOCKED), timedelta(hours=12), _FULL),
     ],
 )
 def test_classify_session_truth_table(
@@ -108,21 +121,29 @@ def test_classify_session_never_makes_a_password_only_session_full(
 @given(
     mfa_required=st.booleans(),
     methods=st.lists(st.sampled_from(list(MfaMethodKind)), max_size=3, unique=True),
-    known=st.booleans(),
+    status=st.sampled_from([*UserStatus, None]),
     proved=st.booleans(),
     seconds_left=st.integers(min_value=-3600, max_value=13 * 3600),
 )
 def test_classify_session_is_full_exactly_when_a_second_factor_is_proven_or_not_required(
-    mfa_required: bool, methods: list[MfaMethodKind], known: bool, proved: bool, seconds_left: int
+    mfa_required: bool,
+    methods: list[MfaMethodKind],
+    status: UserStatus | None,
+    proved: bool,
+    seconds_left: int,
 ) -> None:
-    user = _user(mfa_required=mfa_required, methods=tuple(methods)) if known else None
+    user = None
+    if status is not None:
+        user = _user(mfa_required=mfa_required, methods=tuple(methods), status=status)
     session = _session(uuid.uuid4(), expires_in=timedelta(seconds=seconds_left), proved=proved)
 
     verdict = classify_session(session, user, now=T0)
 
-    full = user is not None and (not user.mfa_required or (bool(user.mfa_methods) and proved))
+    inactive = user is None or user.status is _DISABLED
+    assert (verdict is _INACTIVE) is inactive
+    full = not inactive and (not mfa_required or (bool(methods) and proved))
     assert (verdict is _FULL) is full
-    if not full:
+    if not (full or inactive):
         left = timedelta(seconds=seconds_left)
         assert (verdict is _EXPIRED) is (left <= timedelta(0) or left > ENROLMENT_ONLY_LIFETIME)
 
@@ -180,6 +201,21 @@ async def test_classify_keeps_a_password_only_session_restricted_once_its_user_e
     users.add(user.model_copy(update={"mfa_methods": _TOTP}))  # a revoke-all that was missed
 
     assert await auth.classify(session) is _ONLY
+
+
+async def test_classify_leaves_a_disabled_or_deleted_users_session_to_the_backstop() -> None:
+    """#2911 answers, not the enrolment gate: `require_active` revokes such a session as
+    `user_disabled` and counts the SR-029 breach signal (#2295 review)."""
+    users = FakeUserRepository()
+    user = _user(methods=_TOTP)
+    users.add(user)
+    auth = await _auth(users)
+    session = _session(user.id, expires_in=timedelta(hours=12))
+    assert await auth.classify(session) is _FULL
+
+    users.add(user.model_copy(update={"status": _DISABLED}))
+    assert await auth.classify(session) is _INACTIVE
+    assert await auth.classify(_session(uuid.uuid4(), expires_in=timedelta(0))) is _INACTIVE
 
 
 async def test_classify_uses_the_injected_clock() -> None:

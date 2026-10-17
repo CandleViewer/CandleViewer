@@ -258,6 +258,10 @@ class SessionClass(StrEnum):
     #: as one (say, a full session whose user then lost every method). Refused like an
     #: expired session: the user signs in again (Q7).
     ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
+    #: The user is disabled or gone, whatever else holds: #2911 answers, not this class. The
+    #: HTTP guard leaves the request to its route, whose `require_active` revokes the session
+    #: as `user_disabled` and counts the SR-029 breach signal; the WS `auth` fails.
+    USER_INACTIVE = "user_inactive"
 
 
 def classify_session(
@@ -266,18 +270,19 @@ def classify_session(
     """The one classification every HTTP request and every WS `auth` runs (#2295).
 
     *user* is the session's user as the store reads it now, `None` when there is no such
-    live user. `UserRecord.mfa_methods` lists the confirmed, unrevoked methods, the same
-    rule `User.mfa_enabled` follows, so the server and the client always agree. Fail
-    closed: a user who cannot be read has no proven second factor.
+    user. A user who is gone or `disabled` comes first (`USER_INACTIVE`), as in
+    `SessionService.require_active` (#2911). `UserRecord.mfa_methods` lists the confirmed,
+    unrevoked methods, the same rule `User.mfa_enabled` follows, so the server and the client
+    always agree.
 
     A session that never proved a second factor (`mfa_satisfied_at` unset: minted with
     `mfa_satisfied=False`, on the password alone) stays restricted even once its user has a
     confirmed method. Revoke-all at confirm (ADR-0010 decision 2) ends such sessions; should
     one be missed, it still never turns full. `mint` sets `mfa_satisfied_at` by default (the
     MFA verify path) and `refresh` hands it on, so a full session keeps it."""
-    if user is not None and (
-        not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None)
-    ):
+    if user is None or user.status is UserStatus.DISABLED:
+        return SessionClass.USER_INACTIVE
+    if not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None):
         return SessionClass.FULL
     remaining = session.expires_at - now
     if remaining <= timedelta(0) or remaining > ENROLMENT_ONLY_LIFETIME:
