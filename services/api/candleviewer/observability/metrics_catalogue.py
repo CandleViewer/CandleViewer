@@ -130,8 +130,14 @@ FE_SCREEN_MAX_SERIES: Final = 8
 #: Frontend pushed histograms (client pre-buckets on the same edges).
 FE_FRAME_BUCKETS: Final = (4.0, 8.0, 12.0, 16.0, 20.0, 33.0, 50.0, 100.0)
 FE_DECODE_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 5.0, 10.0)
-#: HTTP request duration: edges on the 150 ms read / 300 ms write p95 budgets (#2421).
-HTTP_DURATION_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.3, 0.5, 1.0, 2.5, 5.0)
+#: HTTP request duration (#2421): edges on the 150 ms read / 300 ms write p95 budgets
+#: (06-performance #13), so a p95 over either is decided exactly, plus 50 ms below and 1 s above:
+#: a quantile clamps to the top finite edge, so a p95 over 0.3 s needs an edge above 0.3.
+HTTP_DURATION_BUCKETS: Final = (0.05, 0.15, 0.3, 1.0)
+#: Series cap: a series is `len(buckets) + 4` scrape samples (~7 us each) and the max-cardinality
+#: /metrics scrape must stay < 50 ms (ADR-0014). 300 covers the 238 contract operations plus 4xx/5xx
+#: and `unmatched` (99 are served today); re-measure the scrape budget test before raising it.
+HTTP_DURATION_MAX_SERIES: Final = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -2212,7 +2218,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E04",
         buckets=HTTP_DURATION_BUCKETS,
-        max_series=1000,
+        max_series=HTTP_DURATION_MAX_SERIES,
     ),
 )
 

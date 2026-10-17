@@ -19,9 +19,10 @@ NOT recorded and the error is re-raised: a disconnect is not a server error and 
 5xx-based alerts. Any other escaping exception counts as `5xx`.
 
 No user, account, symbol, query-string or header label exists (C-12.6, C-2.18). The series bound
-is route templates x observed method/status combinations, capped by `max_series=1000` on the
-catalogue entry (buckets live there too). At the cap `BoundedMetric` hands back a no-op child:
-new series are dropped (and a breach is counted), so memory cannot grow.
+is route templates x observed method/status combinations, capped by `HTTP_DURATION_MAX_SERIES`
+on the catalogue entry (buckets live there too). At the cap `BoundedMetric` hands back a no-op
+child: new series are dropped, each refused observation is counted in
+`metric_cardinality_breach_total` and existing series keep recording, so memory cannot grow.
 """
 
 from __future__ import annotations
