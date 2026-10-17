@@ -3813,6 +3813,87 @@ Adding an action requires a code change plus a test; the set is closed so that d
 
 **Retention:** audit rows are kept **forever** (they are small), exported nightly to the cold tier, and included in every backup. They are never subject to the data-retention job.
 
+### 15.6 Audit lane journal: frames and drain protocol (ADR-0037)
+
+The journal-first audit lane holds audit records that cv-api writes before they reach `audit_log`. The decision, rollout and threats are `27-adrs/ADR-0037-journal-first-audit-lane.md` and `docs/security/threat-models/e09-auth-rbac.md` §3.6.2; this section owns the on-disk format and the drain protocol. Code: `services/api/candleviewer/audit/lane_journal.py` (S1) and `audit/lane.py` (S2).
+
+**Entry into the chain.** A drained record enters the audit chain only through `AuditWriter.ingest()` and the `AuditEmission` model, so every existing model rule applies. The lane has no serializer of its own for records and never inserts into `audit_log`. The lane's own two actions are ordinary records: `audit.lane_started` is a frame like any other, and `audit.lane_anomaly` is built by `AuditWriter.build()` and handed to `AuditWriter.ingest()` like a drained record.
+
+**Directory.**
+
+```text
+<dir of CV_AUDIT_WAL_PATH>/lane/    0700, owned by the cv-api uid; absolute, no "..", no symlink
+  lane.lock                         flock, held exclusively by the one running cv-api
+  seg-<first_seq:020d>.lane         append-only segment files, 0600, at most SEGMENT_MAX_BYTES each
+  confirmed                         the confirmation marker, 0600; replaced, never edited in place
+  quarantine/                       unverifiable bytes, kept as evidence, never deleted by code
+```
+
+Every open uses `O_NOFOLLOW | O_CLOEXEC`, and a segment is created with `O_CREAT | O_EXCL`.
+
+**Frame.** A segment is a sequence of frames `<len>\n<body>\n<mac>\n`: `len` is the decimal byte length of `body` (at most 10 digits, no sign, no leading zero) and `mac` is 64 lower-case hex digits. `body` is canonical JSON (keys sorted, no whitespace, ASCII: the encoding `audit/wal.py` uses) of:
+
+```python
+class LaneFrame(BaseModel):             # frame format v1; extra="forbid"
+    v: Literal[1]                       # format version
+    lane: UUID                          # lane id, fixed when the lane is created
+    seq: int                            # >= 1, contiguous across segments
+    prev: str                           # 64 hex: the mac of frame seq-1; 64 zeros for seq 1
+    kid: str                            # 16 hex: the id of the key that made `mac`
+    cls: Literal["reserved", "shared"]  # the lane class, from LANE_ACTIONS at append time
+    rec: AuditEmission                  # the record, as AuditWriter.build() made it
+```
+
+- `mac = HMAC-SHA256(K[kid], b"cv-audit-lane/v1/frame\n" + body)`. Because `prev` is inside `body`, the MACs form a keyed hash chain: changing, removing or reordering a frame breaks it.
+- `kid` is the hex of the first 8 bytes of `HMAC-SHA256(K, b"cv-audit-lane/v1/kid")`, a one-way id that is safe to log. `K` is `CV_AUDIT_LANE_KEY_HEX`, which makes every new frame and marker; `CV_AUDIT_LANE_PREVIOUS_KEY_HEX` only verifies. Both settings join §16.1 in S2.
+- A reader checks a frame on the bytes it read, never on a re-serialization. A frame is at most `MAX_FRAME_BYTES`.
+
+**Confirmation marker.** `confirmed` holds `<body>\n<mac>\n`: `body` is canonical JSON of `{"v": 1, "lane": <lane id>, "seq": k, "mac": <the mac of frame k, or 64 zeros when k is 0>, "kid": <kid>}`, and `mac = HMAC-SHA256(K[kid], b"cv-audit-lane/v1/marker\n" + body)`. Frame `k` and every frame before it are confirmed, that is, in `audit_log`. A new lane writes a marker with `seq` 0 and appends `audit.lane_started` as frame 1.
+
+**Versioning.** A reader accepts only the `v` values it knows; an unknown `v` in a frame or the marker holds the drain, and is never rejected or skipped. A new format version ships with the reader for the old one, kept for at least one release (as C-2.15 does for recordings). `rec` follows `AuditEmission`, so a change to that model is a change to this format.
+
+**fsync points.** An append or a marker change is acknowledged only after these:
+
+1. Append: write the frame, `fsync` the segment, then return. For a new segment: create it, write its first frame, `fsync` the file and then the directory, then return.
+2. Marker: write `confirmed.tmp`, `fsync` it, rename it over `confirmed`, `fsync` the directory.
+3. Compaction: unlink each segment whose last `seq` is at or below the marker, then `fsync` the directory.
+4. Quarantine: copy the unverifiable bytes to `quarantine/<segment>.<offset>`, then `fsync` that file and the directory. Only for a torn tail or corrupt bytes, then truncate the segment at the last verified frame and `fsync` it; a rejected frame stays in place, because the frames after it are checked on their own.
+
+**Drain protocol.** One drain task per process, under `lane.lock`:
+
+1. **Scan** at boot, and whenever the drain meets a frame it has not seen: read the marker and verify its MAC; read the segments in `first_seq` order; check each frame's structure, `v`, `kid`, MAC, `lane`, `seq` (the next one expected) and `prev` (the `mac` of the previous verified frame, or the marker's `mac` for the first frame after it).
+2. **Classify** each failure. An incomplete last frame of the newest segment is a torn tail: it is quarantined and truncated (fsync point 4), logged and counted, with no anomaly record, since it was never acknowledged. An unknown `kid` or `v` holds the drain at that frame and pages; appends continue until the limits refuse them. Anything else becomes an anomaly: `frame_rejected` (a MAC failure, a foreign `lane`, a repeated or lower `seq`), `seq_gap` (frames missing before this `seq`), `segment_corrupt` (unparseable bytes before the end of a segment, which are quarantined) or `marker_lost` (no verifiable marker while segments exist; the drain then starts at the oldest frame).
+3. **Ingest** the frames after the marker in `seq` order, in batches of `DRAIN_BATCH`. Before the first frame after an anomaly, hand that anomaly to `AuditWriter.ingest()`, built by `AuditWriter.build()` with a `record_id` derived from the lane id, the reason and the first missing or rejected `seq` (UUIDv5), so a repeat after a crash is a no-op: action `audit.lane_anomaly`, actor `system:audit-lane`, outcome `failure`, severity `critical`, the reason above, `object_kind` `audit_lane`, `object_id` the lane id, and `after_state` `{"from_seq", "to_seq", "quarantined"}` (sequence numbers and a file name, never the rejected bytes). Then pass each frame's `rec` to `AuditWriter.ingest()`. A refusal (`AuditError`) ends the batch, and the drain retries with backoff (0.5 s, doubling to 30 s), woken early by a new append.
+4. **Confirm** after each batch: `await AuditWriter.flush(CONFIRM_TIMEOUT_S)`. When it returns, every record handed over is committed to Postgres: write the marker at the batch's last `seq`, then compact. A timeout leaves the marker where it was, and the running drain does not hand the batch over again.
+5. **Restart**: the drain re-ingests every frame after the marker, including those handed over before the restart, so a WAL lost between `ingest()` and the commit is covered. `ON CONFLICT (record_id) DO NOTHING` makes each repeat a no-op, so `audit_log` holds every record exactly once.
+
+**Crash consistency.**
+
+| Crash point                                                                 | State at boot                                                  | Result                                                                                                                                                                   |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| During an append, before its `fsync` returned                               | an incomplete last frame, or a complete one that fails its MAC | the torn tail is quarantined and truncated (never acknowledged); a complete but unverifiable frame is recorded as `frame_rejected`, which over-reports rather than hides |
+| After the append's `fsync`, before the caller saw it (cancelled, timed out) | a verified frame                                               | drained like any other; for an intent whose action then did not happen, the trail shows an intent without an outcome, as a cancelled `emit()` does                       |
+| After `ingest()` returned, before the marker moved                          | frames after the marker already in the WAL or in `audit_log`   | re-ingested; the duplicates are no-ops                                                                                                                                   |
+| During the marker replacement                                               | the old `confirmed`, perhaps a stray `confirmed.tmp`           | the old marker holds and the frames are re-ingested; the stray file is removed                                                                                           |
+| After the marker moved, before compaction                                   | fully confirmed segments still present                         | skipped by `seq`, deleted at the next compaction                                                                                                                         |
+| During a segment rotation                                                   | a new segment without a complete first frame                   | a torn tail; an empty segment file is removed                                                                                                                            |
+| During quarantine                                                           | the copy in `quarantine/`, the segment not yet truncated       | the scan finds the same bytes and quarantines them again under the same name                                                                                             |
+
+**Limits.** Constants in `audit/lane_journal.py`, overridable by the constructor in tests only; they are not settings.
+
+| Constant            | Default                                              | Past it                                                      |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------ |
+| `LANE_MAX_BYTES`    | 32 MiB of frames after the marker                    | the append is refused (`full`)                               |
+| `SHARED_MAX_BYTES`  | 16 MiB of those, for class `shared`                  | a `shared` append is refused (`full`); `reserved` still fits |
+| `SEGMENT_MAX_BYTES` | 1 MiB                                                | rotate to a new segment                                      |
+| `MAX_FRAME_BYTES`   | 64 KiB                                               | refused (`too_large`)                                        |
+| Lane lock waiters   | 192 `reserved`, 64 `shared`; `reserved` served first | refused at once (`busy`)                                     |
+| `APPEND_WAIT_S`     | 2 s                                                  | the façade falls back to `AuditWriter.ingest()`              |
+| `DRAIN_BATCH`       | 200 frames                                           | —                                                            |
+| `CONFIRM_TIMEOUT_S` | 5 s                                                  | the marker stays; retried                                    |
+
+A refusal never drops an accepted frame and never queues without bound (C-2.18). The façade then falls back to `AuditWriter.ingest()` with the same `record_id`, and only a double refusal reaches the caller.
+
 ---
 
 ## 16. Configuration and feature flags
