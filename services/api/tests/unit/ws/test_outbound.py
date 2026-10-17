@@ -412,6 +412,25 @@ def test_backpressure_drain_keeps_an_entry_its_own_snapshot_re_marked() -> None:
     assert (book.pending_reason, book.sub_id in ladder._parked) == ("backpressure", True)
 
 
+def test_backpressure_drain_sends_nothing_to_a_paused_topic_until_it_resumes() -> None:
+    """§5.4, §8.4 step 1 (#3102's review): paused after its mark, a topic gets no snapshot and no
+    `s` is consumed; the entry stays, unparked, and its resume gets exactly one snapshot."""
+    conn, pacer, queue, _ = _setup()
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    ladder, seq = Backpressure(queue, pacer), book.seq
+    pacer.drop(book)
+    conn.authz.ctl("book.BTCUSDT.50", {"paused": True})
+    assert ladder.drain(conn.authz.by_id) == [] and _drain(queue) == [] and book.seq == seq
+    assert book.sub_id in pacer.resnapshot_required and not ladder._parked
+    assert conn.authz.ctl("book.BTCUSDT.50", {"paused": False})[1]  # the resume re-snapshots
+    assert conn.emitter.flush_pending([book]) == 0  # held: the ladder sends that snapshot
+    assert ladder.drain(conn.authz.by_id) == [LadderEvent("resnapshot", ("book.BTCUSDT.50",))]
+    assert [(f["t"], f["meta"]["reason"], f["s"]) for f in _drain(queue)] == [
+        ("snap", "backpressure", seq + 1)
+    ]
+    assert ladder.drain(conn.authz.by_id) == [] and pacer.resnapshot_required == {}
+
+
 def test_outbound_budget_allows_exactly_its_bytes_and_frames() -> None:
     queue = OutboundQueue(max_bytes=20, max_frames=2)
     queue.push(Queued("x" * 10))

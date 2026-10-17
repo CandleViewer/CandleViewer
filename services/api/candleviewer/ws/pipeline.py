@@ -9,10 +9,11 @@ included. It is encoded once in the negotiated subprotocol (`outbound.encode`), 
 From the first `auth_ok` (`attach`) the §8.4 ladder (`outbound.Backpressure`) holds that budget:
 `check` after every push but a non-final `snap` chunk (no check splits a chunk set, §3.6). A drop
 wakes the writer, whose `service` drains before each pop, never from inside a push. A snapshot
-that does not queue, or raises (D9: logged, contained to its topic), is parked until a source
-rebuild names it or the coarse timer (`classify_interval_ms`), never retried once per send. Step
-3's `bye` carries `hint.most_expensive_topics`; the close audit's `after_state` its trigger and an
-expired flush (§4.3). Before `auth_ok` there is no topic: over budget is step 3 alone.
+that does not queue, or raises (D9: contained to its topic, logged at most once per family per
+`classify_interval_ms`), is parked until a source rebuild names it or the coarse timer's pass,
+which ends at its first failure, never retried once per send. Step 3's `bye` carries
+`hint.most_expensive_topics`; the close audit's `after_state` its trigger and an expired flush
+(§4.3). Before `auth_ok` there is no topic: over budget is step 3 alone.
 
 From `attach` the pipeline is `ConnectionAuthz.on_drop` (§8.4 Lanes, §9.5): a control frame that
 ends or resets a subscription's stream overtakes what the normal lane holds of it, so those frames
@@ -29,7 +30,9 @@ observes once the socket has the frame.
 
 A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
 marker are the only items admitted past the budget, one small frame, so the bound holds to within
-one frame and the budget never refuses a `bye` (§8.4, WS-D01). A close that ends the
+one frame, or one chunk set while it is being queued, since no check runs between its chunks; the
+check after its last chunk drops it whole or closes in the same synchronous turn. The budget never
+refuses a `bye` (§8.4, WS-D01). A close that ends the
 identity (token expiry, revocation, a disabled user) and every `slow_consumer` close clear both
 lanes, so the `bye` is next; any other close keeps the priority lane ahead of the `bye` and
 discards the normal lane. Nothing is queued after a close. The flush runs under one deadline,
@@ -272,7 +275,8 @@ class ConnectionPipeline:
 
     def service(self, now: float) -> None:
         """The writer's turn before each pop (after every send and wake): `drain` while a topic
-        awaits its snapshot, unparking all once per `classify_interval_ms` (the coarse timer)."""
+        awaits its snapshot, opening the ladder's `retry` pass over the parked ones once per
+        `classify_interval_ms` (the coarse timer)."""
         ladder = self.ladder
         self._now = now  # `_quiet`'s clock, as of the writer's last turn
         if ladder is None or self.terminal is not None or not ladder.pacer.resnapshot_required:
@@ -282,7 +286,7 @@ class ConnectionPipeline:
             self._retry_at = now + self._retry_s
         elif now >= self._retry_at:
             self._retry_at = now + self._retry_s
-            ladder.unpark()
+            ladder.retry()
         self._apply(ladder.drain(self._live))
 
     def _recovers(self, frame: Mapping[str, Any], exc: Exception) -> bool:
@@ -345,17 +349,21 @@ class ConnectionPipeline:
         self._close("slow_consumer", bye=slow_consumer_bye(self._wall_ms(), topics))
 
     def _snapshot(self, emitter: TopicEmitter, sub: Subscription) -> bool:
-        """`drain`'s emitter wrapper (D9): a snapshot that raises is logged by family and error
-        class only (C-12.6) and reads as not queued, so `drain` parks it (module docstring)."""
+        """`drain`'s emitter wrapper (D9): a snapshot that raises reads as not queued, so `drain`
+        parks it. Logged by family and error class only (C-12.6), at most once per family per
+        `classify_interval_ms`; the next line counts those held back (`suppressed`)."""
         try:
             return emitter.snapshot(sub, "backpressure")
         except Exception as exc:
-            _log().error(
-                "ws backpressure snapshot failed",
-                connection_id=self._connection_id,
-                family=sub.topic.family.family,
-                error=type(exc).__name__,
-            )
+            family = sub.topic.family.family
+            if (held := self._quiet(("snapshot", family))) is not None:
+                _log().error(
+                    "ws backpressure snapshot failed",
+                    connection_id=self._connection_id,
+                    family=family,
+                    error=type(exc).__name__,
+                    suppressed=held,
+                )
             return False
 
     def _rebuilt(self, subs: Iterable[Subscription]) -> None:

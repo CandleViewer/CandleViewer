@@ -35,9 +35,10 @@ pushes runs once it is whole, its events returned by `drain` (a drop is whole, a
 `drain` is the only sender of `backpressure` snapshots: the wiring must keep
 `TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them. It deletes, unsent, an entry
 that no longer awaits that snapshot or (given the connection's subscriptions) is no longer
-subscribed. A snapshot that does not queue (not ready, failed, or re-marked by its own pushes:
-§10.1) is parked: `drain` skips it until `unpark`, which the wiring calls on a source rebuild and
-on a coarse timer.
+subscribed, and keeps a paused one, unsent, for its resume (§5.4). A snapshot that does not queue
+(not ready, failed, or re-marked by its own pushes: §10.1) is parked, so `drain` tries one
+snapshot per call and skips a parked one until `unpark` (its source rebuilt) or the coarse
+timer's `retry` pass, which tries them in turn and ends at the first that does not queue.
 """
 
 from __future__ import annotations
@@ -278,8 +279,10 @@ class Backpressure:
         self._snapped: dict[str, Key] = {}
         #: Consecutive drops that found a subscription's `backpressure` snapshot unsent.
         self._redrops: dict[str, int] = {}
-        #: Marked subscriptions whose snapshot did not queue: `drain` skips them until `unpark`.
+        #: Marked subscriptions whose snapshot did not queue: `drain` skips them until `unpark`,
+        #: or tries them in turn while the coarse timer's pass (`retry`) is open.
         self._parked: set[str] = set()
+        self._retrying = False
         #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
         self._draining = False
         self._deferred: list[Subscription] | None = None
@@ -384,10 +387,11 @@ class Backpressure:
                 del required[sub_id]  # resnapshotted by another path, or ended: never sent
                 self._parked.discard(sub_id)
                 continue
-            if sub_id in self._parked:
-                continue
+            if _paused(sub) or (sub_id in self._parked and not self._retrying):
+                continue  # paused: no `s` until its resume (§5.4); parked: until a retry
             if self.queue.pct(self.pacer.pending_bytes) >= DRAIN_PCT:
                 break
+            self._parked.discard(sub_id)  # parked again below if it does not queue
             self._draining = True
             try:
                 queued = self._snapshot(sub)
@@ -398,22 +402,25 @@ class Backpressure:
                 del required[sub_id]
                 self._snapped[sub_id] = _key(sub)  # before the held check: a drop is a redrop
                 sent.append(sub.ch)
-            else:
-                self._parked.add(sub_id)  # not ready, failed or re-marked: until a rebuild or timer
+            else:  # not ready, failed or re-marked: parked behind the others, so none starves
+                required[sub_id] = required.pop(sub_id)
+                self._parked.add(sub_id)
+                self._retrying = False  # the timer's pass ends at its first failure
             if deferred is not None:
                 held += self.check(deferred)
-            if queued:
-                break
+            break  # one snapshot per call, queued or not
         return _record([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
 
-    def unpark(self, sub_ids: Iterable[str] | None = None) -> bool:
-        """Let `drain` retry the parked snapshots of `sub_ids` (all of them by default); True
-        when one was parked."""
+    def retry(self) -> None:
+        """The coarse timer: a pass over the parked snapshots, which `drain` tries in turn, one per
+        call, until the first that does not queue; the rest wait for the next pass."""
+        self._retrying = True
+
+    def unpark(self, sub_ids: Iterable[str]) -> bool:
+        """Let `drain` retry the parked snapshots of `sub_ids` (their source rebuilt); True when
+        one was parked."""
         before = len(self._parked)
-        if sub_ids is None:
-            self._parked.clear()
-        else:
-            self._parked.difference_update(sub_ids)
+        self._parked.difference_update(sub_ids)
         return len(self._parked) < before
 
 
