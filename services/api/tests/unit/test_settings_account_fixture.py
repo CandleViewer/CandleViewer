@@ -54,6 +54,13 @@ def _on(fixture_dir: str, **env: str) -> dict[str, str]:
     return {"CV_ACCOUNT_FIXTURE": _SCENARIO, "CV_ACCOUNT_FIXTURE_DIR": fixture_dir, **env}
 
 
+@pytest.fixture(params=["with-dir", "switch-alone"])
+def switch(request: pytest.FixtureRequest, fixture_dir: str) -> dict[str, str]:
+    """The switch with and without its optional dir: every refusal holds for both, and the switch
+    alone is the common setting (the dir is optional; S3's image check sets only the switch)."""
+    return _on(fixture_dir) if request.param == "with-dir" else {"CV_ACCOUNT_FIXTURE": _SCENARIO}
+
+
 def test_unset_by_default() -> None:
     settings = Settings()
 
@@ -76,19 +83,19 @@ def test_accepted_without_a_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (settings.account_fixture, settings.account_fixture_dir) == (_SCENARIO, None)
 
 
-def test_refused_on_live(monkeypatch: pytest.MonkeyPatch, fixture_dir: str) -> None:
+def test_refused_on_live(monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]) -> None:
     with pytest.raises(ValidationError, match="refused unless CV_ENVIRONMENT=demo"):
-        _settings(monkeypatch, **_on(fixture_dir, CV_ENVIRONMENT="live"))
+        _settings(monkeypatch, **switch, CV_ENVIRONMENT="live")
 
 
-def test_refused_on_testnet(monkeypatch: pytest.MonkeyPatch, fixture_dir: str) -> None:
+def test_refused_on_testnet(monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]) -> None:
     with pytest.raises(ValidationError, match="refused unless CV_ENVIRONMENT=demo"):
-        _settings(monkeypatch, **_on(fixture_dir, CV_ENVIRONMENT="testnet"))
+        _settings(monkeypatch, **switch, CV_ENVIRONMENT="testnet")
 
 
-def test_refused_with_live_feed(monkeypatch: pytest.MonkeyPatch, fixture_dir: str) -> None:
+def test_refused_with_live_feed(monkeypatch: pytest.MonkeyPatch, switch: dict[str, str]) -> None:
     with pytest.raises(ValidationError, match="refused unless CV_FEED=synthetic"):
-        _settings(monkeypatch, **_on(fixture_dir, CV_FEED="live"))
+        _settings(monkeypatch, **switch, CV_FEED="live")
 
 
 @pytest.mark.parametrize(
@@ -97,33 +104,33 @@ def test_refused_with_live_feed(monkeypatch: pytest.MonkeyPatch, fixture_dir: st
     ids=["key", "secret", "lower-case-key", "undeclared-name"],
 )
 def test_refused_with_env_exchange_key_and_never_echoes_it(
-    monkeypatch: pytest.MonkeyPatch, fixture_dir: str, variable: str
+    monkeypatch: pytest.MonkeyPatch, switch: dict[str, str], variable: str
 ) -> None:
     """Ruling 2's rider: any live credential variable refuses the switch, even a name `Settings`
     does not declare, which it would otherwise ignore. The refusal is a field validator's, so
     `str()`, `errors()` and `json()` carry only the dir's input, never the key (#2728, C-12.6)."""
     with pytest.raises(ValidationError, match=r"while any CV_BYBIT_API_\* variable is set") as err:
-        _settings(monkeypatch, **_on(fixture_dir, **{variable: _MARKER}))
+        _settings(monkeypatch, **switch, **{variable: _MARKER})
 
     error = err.value
     for rendered in (str(error), repr(error.errors()), error.json()):
         assert _MARKER[:12] not in rendered
     assert "input_value" not in str(error)
     assert [(e["loc"], e["input"]) for e in error.errors()] == [
-        (("account_fixture_dir",), fixture_dir)
+        (("account_fixture_dir",), switch.get("CV_ACCOUNT_FIXTURE_DIR"))
     ]
 
 
 @pytest.mark.parametrize("environment", ["demo", "testnet"])
 def test_refused_with_the_test_clock(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture_dir: str, environment: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, switch: dict[str, str], environment: str
 ) -> None:
     """Ruling 10: the fixture needs demo and #2086's test clock needs testnet, so the two never
     run together; the refusal says so instead of only naming one environment."""
     clock = {"CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": str(tmp_path / "offset")}
 
     with pytest.raises(ValidationError, match="refused while CV_TEST_CLOCK is on"):
-        _settings(monkeypatch, **_on(fixture_dir, CV_ENVIRONMENT=environment, **clock))
+        _settings(monkeypatch, **switch, CV_ENVIRONMENT=environment, **clock)
 
 
 @pytest.mark.parametrize("scenario", ["../x", "A", "", "a" * 65, "compliant\n", "with-dash"])
@@ -154,6 +161,38 @@ def test_dir_without_the_switch_is_refused(
     """Never silently ignored: a dir alone is a half-configured fixture stack."""
     with pytest.raises(ValidationError, match=reason):
         _settings(monkeypatch, CV_ENVIRONMENT=environment, CV_ACCOUNT_FIXTURE_DIR=fixture_dir)
+
+
+@pytest.mark.parametrize("environment", ["demo", "live", "testnet"])
+def test_an_empty_dir_alone_is_unset(monkeypatch: pytest.MonkeyPatch, environment: str) -> None:
+    """On purpose, as an empty `CV_TEST_CLOCK_FILE` is: a blank passthrough in a deploy env never
+    stops a boot, and nothing fixture-related runs without the switch."""
+    settings = _settings(monkeypatch, CV_ENVIRONMENT=environment, CV_ACCOUNT_FIXTURE_DIR="")
+
+    assert (settings.account_fixture, settings.account_fixture_dir) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("env", "reason"),
+    [
+        (
+            {"CV_ACCOUNT_FIXTURE": _SCENARIO, "CV_ACCOUNT_FIXTURE_DIR": ""},
+            "CV_ACCOUNT_FIXTURE_DIR must be an absolute path",
+        ),
+        (
+            {"CV_ACCOUNT_FIXTURE": "", "CV_ENVIRONMENT": "live"},
+            "CV_ACCOUNT_FIXTURE is refused unless CV_ENVIRONMENT=demo",
+        ),
+    ],
+    ids=["empty-dir-with-the-switch", "empty-switch-on-live"],
+)
+def test_empty_values_with_the_switch_are_refused(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], reason: str
+) -> None:
+    """Fail closed where the switch is involved: an empty switch is still a selector (an empty
+    `CV_TEST_CLOCK` stops a boot too), and with the switch on an empty dir is no path."""
+    with pytest.raises(ValidationError, match=re.escape(reason)):
+        _settings(monkeypatch, **env)
 
 
 @pytest.mark.parametrize(

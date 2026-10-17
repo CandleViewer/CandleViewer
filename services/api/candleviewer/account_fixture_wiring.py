@@ -5,7 +5,9 @@ is the `cvdev.account_fixture` package, a sibling of `candleviewer` that is neve
 never copied into an image (ruling 1). This module is the only one that names it, and it imports
 it lazily, only when the variable is set: unset, nothing is imported and nothing changes. A build
 without the package refuses boot instead of ignoring the variable (fail closed). `Settings` has
-already refused the variable outside dev/test (ruling 2), and the package re-checks that.
+already refused the variable outside dev/test (ruling 2); this module checks that again before it
+imports anything, so the shipped side never relies on the dev package to refuse, and the package
+re-checks it as well.
 
 S4 threads the handle into the exchange adapter's account REST clients and private socket. Until
 the guard and serving slices land, the package's transport and connector refuse every request.
@@ -22,7 +24,8 @@ import structlog
 
 from candleviewer.settings import Settings
 
-#: The dev-only entry point: a module exposing `build(settings) -> AccountFixture`.
+#: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`.
+_DEV_PACKAGE: Final = "cvdev"
 _DEV_WIRING: Final = "cvdev.account_fixture.wiring"
 NO_FIXTURE_TRANSPORT: Final = (
     "CV_ACCOUNT_FIXTURE is set but this build carries no fixture transport"
@@ -48,14 +51,22 @@ class AccountFixture(Protocol):
 def build_account_fixture(settings: Settings) -> AccountFixture | None:
     """The fixture handle for `create_app()`: None unless `CV_ACCOUNT_FIXTURE` is set.
 
-    Raises `AccountFixtureRefused` when the dev package is absent (a release image) or refuses
-    these settings. When on, it writes a boot warning, so fixture mode never runs silently."""
+    Raises `AccountFixtureRefused` when the settings are not dev/test (checked before any import)
+    or the dev package is absent (a release image). A module the dev package itself misses is a
+    broken checkout, not a release build: that `ModuleNotFoundError` propagates as is, so boot
+    still stops but names the real cause. When on, it writes a boot warning, so fixture mode never
+    runs silently."""
     scenario = settings.account_fixture
     if scenario is None:
         return None
+    refusal = settings.account_fixture_refusal()
+    if refusal is not None:
+        raise AccountFixtureRefused(refusal)
     try:
         module = importlib.import_module(_DEV_WIRING)
     except ModuleNotFoundError as exc:
+        if not _names_the_dev_package(exc.name):
+            raise
         raise AccountFixtureRefused(NO_FIXTURE_TRANSPORT) from exc
     build: Callable[[Settings], AccountFixture] = module.build
     fixture = build(settings)
@@ -67,3 +78,8 @@ def build_account_fixture(settings: Settings) -> AccountFixture | None:
         detail="the dev-only account fixture transport stands in for the exchange",
     )
     return fixture
+
+
+def _names_the_dev_package(module: str | None) -> bool:
+    """Whether a failed import was `cvdev` itself or one of its modules, not a dependency."""
+    return module is not None and (module == _DEV_PACKAGE or module.startswith(f"{_DEV_PACKAGE}."))

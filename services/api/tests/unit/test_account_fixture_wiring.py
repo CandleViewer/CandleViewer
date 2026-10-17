@@ -12,6 +12,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ import pytest
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
+from candleviewer import account_fixture_wiring as wiring_module
 from candleviewer import app as app_module
 from candleviewer.account_fixture_wiring import (
     NO_FIXTURE_TRANSPORT,
@@ -30,6 +32,7 @@ from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.observability.support_bundle import filter_config
 from candleviewer.settings import Environment, FeedMode, Settings
+from cvdev.account_fixture.wiring import build as dev_build
 
 _SCENARIO = "compliant"
 _VARIABLES = (
@@ -50,9 +53,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name)
 
 
+def _dev_modules() -> list[str]:
+    return [n for n in sys.modules if n == "cvdev" or n.startswith("cvdev.")]
+
+
 def _forget_the_dev_package(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drop every imported `cvdev` module for this test, so an import shows up again."""
-    for name in [n for n in sys.modules if n == "cvdev" or n.startswith("cvdev.")]:
+    for name in _dev_modules():
         monkeypatch.delitem(sys.modules, name)
 
 
@@ -78,7 +85,7 @@ def test_unset_imports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     app = app_module.create_app(Settings())
 
     assert app.state.account_fixture is None
-    assert not [n for n in sys.modules if n == "cvdev" or n.startswith("cvdev.")]
+    assert not _dev_modules()
 
 
 def test_set_without_dev_package_refuses_boot(
@@ -98,6 +105,34 @@ def test_set_without_dev_package_refuses_boot(
         app_module.create_app(_dev(tmp_path))
 
     assert isinstance(refused.value.__cause__, ModuleNotFoundError)
+
+
+@pytest.mark.parametrize(
+    ("missing", "absent"),
+    [
+        ("cvdev", True),
+        ("cvdev.account_fixture.wiring", True),
+        ("cvdevtools", False),
+        ("cv_2893_missing_dependency", False),
+        (None, False),
+    ],
+)
+def test_only_a_missing_dev_package_reads_as_no_fixture_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str | None, absent: bool
+) -> None:
+    """A dependency the dev package misses is a broken checkout, not a release build: it is
+    raised as is, so the boot still stops but the message names the real cause."""
+
+    def _import_module(name: str, package: str | None = None) -> ModuleType:
+        raise ModuleNotFoundError(f"no module named {missing!r}", name=missing)
+
+    monkeypatch.setattr(wiring_module, "importlib", SimpleNamespace(import_module=_import_module))
+
+    with pytest.raises((AccountFixtureRefused, ModuleNotFoundError)) as refused:
+        build_account_fixture(_dev(tmp_path))
+
+    assert isinstance(refused.value, AccountFixtureRefused) is absent
+    assert (str(refused.value) == NO_FIXTURE_TRANSPORT) is absent
 
 
 async def test_set_in_checkout_builds_a_transport_that_refuses_everything(
@@ -157,9 +192,7 @@ def test_set_logs_a_boot_warning(tmp_path: Path) -> None:
 
 
 _KEYS = {"bybit_api_key": SecretStr("k"), "bybit_api_secret": SecretStr("s")}
-
-
-@pytest.mark.parametrize(
+_SKIPPED_VALIDATION = pytest.mark.parametrize(
     ("fields", "reason"),
     [
         ({"environment": Environment.LIVE}, "unless CV_ENVIRONMENT=demo"),
@@ -173,13 +206,30 @@ _KEYS = {"bybit_api_key": SecretStr("k"), "bybit_api_secret": SecretStr("s")}
     ],
     ids=["live", "testnet", "live-feed", "api-key", "api-secret", "test-clock", "not-a-token"],
 )
+
+
+@_SKIPPED_VALIDATION
+def test_the_loader_refuses_skipped_validation_before_importing_the_dev_package(
+    monkeypatch: pytest.MonkeyPatch, fields: dict[str, Any], reason: str
+) -> None:
+    """The shipped side enforces the gate itself, so it never depends on `cvdev` to refuse."""
+    _forget_the_dev_package(monkeypatch)
+    settings = Settings.model_construct(**{"account_fixture": _SCENARIO, **fields})
+
+    with pytest.raises(AccountFixtureRefused, match=re.escape(reason)):
+        build_account_fixture(settings)
+
+    assert not _dev_modules()
+
+
+@_SKIPPED_VALIDATION
 def test_the_dev_package_rechecks_settings_that_skipped_validation(
     fields: dict[str, Any], reason: str
 ) -> None:
     settings = Settings.model_construct(**{"account_fixture": _SCENARIO, **fields})
 
     with pytest.raises(AccountFixtureRefused, match=re.escape(reason)):
-        build_account_fixture(settings)
+        dev_build(settings)
 
 
 def test_a_support_bundle_shows_fixture_mode() -> None:

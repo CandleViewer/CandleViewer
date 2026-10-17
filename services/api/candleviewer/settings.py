@@ -594,10 +594,11 @@ class Settings(BaseSettings):
         A field validator, not a model one (#2728): a refusal's `errors()` and `json()` carry only
         the dir's input, never another setting such as `CV_BYBIT_API_KEY` (C-12.6). It also runs
         on the default, so `CV_ACCOUNT_FIXTURE` alone is gated; `info.data` holds the fields
-        declared above."""
+        declared above. An empty dir alone counts as unset, as an empty `CV_TEST_CLOCK_FILE`
+        does, so a blank passthrough never stops a boot; an empty switch is still refused."""
         scenario = info.data.get("account_fixture")
-        if scenario is None and value is None:
-            return value
+        if scenario is None and not value:
+            return None
         refusal = _account_fixture_refusal(
             scenario,
             info.data.get("environment"),
