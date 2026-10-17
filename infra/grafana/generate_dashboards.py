@@ -186,6 +186,18 @@ def rate(m: str, by: str = "", extra: str = "") -> str:
     return f"sum by ({by}) ({inner})" if by else inner
 
 
+def _describe(b: Board, text: str) -> None:
+    """Give the panel just added a description (a hover note, so it never competes with data)."""
+    b.panels[-1]["description"] = text
+
+
+def _threshold_lines(b: Board) -> None:
+    """Draw the threshold steps of the panel just added as dashed lines. A timeseries panel shows
+    them only when asked (its default is off), and "against the 20 ms line" needs the line."""
+    custom = b.panels[-1]["fieldConfig"]["defaults"].setdefault("custom", {})
+    custom["thresholdsStyle"] = {"mode": "dashed"}
+
+
 def system() -> Board:
     b = Board("cv-system-health", "CV / System health", ["system"])
     b.row("Getting worse? (SLO burn)")
@@ -266,14 +278,67 @@ def market() -> Board:
         0.01,
         "{{engine}}",
     )
+    b.ts("Ingest queue depth", f"ingest_queue_depth{{{E}}}", "short", legend="{{stage}}")
+    b.row("WS gateway (client sockets)")
+    # E17-T06 (#571). Only series that exist are plotted. Not yet: connection class, queue depth and
+    # bytes, bandwidth per connection (no series), overflow actions (`cv_ws_overflow_total`, #2873:
+    # the series exists, but nothing increments it until the outbound ladder is wired into the
+    # gateway, E17-T03 #412). The 1 and 5 lines of the resync panel are 23-ws-protocol.md 16.3.
+    b.ts("Open client connections", f"sum(cv_ws_connections_in_use{{{E}}})", "short")
     b.ts(
         "WS fan-out latency p95 (budget 20 ms)",
         q("cv_ws_fanout_seconds", pct="0.95"),
         "s",
         0.02,
-        0.05,
     )
-    b.ts("Ingest queue depth", f"ingest_queue_depth{{{E}}}", "short", legend="{{stage}}")
+    _describe(
+        b,
+        "Gateway segment of budget #6, sampled 1 in 32, first 31 frames not observed: from a "
+        "subscription's turn in the hub loop to the writer handing the frame to the socket. The "
+        "20 ms line is the whole backend envelope of budget #6, and this stage is one share of "
+        "it (06 section 5.1). A congested client's drain wait, a slow consumer's backlog and "
+        "replay frames are inside it. WsFanoutP95OverBudget judges it only with 40 sampled "
+        "frames in 5 minutes, so an empty line is a quiet gateway, not a healthy one.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS resyncs in the range, by reason (lines: 1 and 5 an hour)",
+        f"round(sum by (reason) (increase(cv_ws_resync_total{{{E}}}[$__range])))",
+        "short",
+        1,
+        5,
+        "{{reason}}",
+    )
+    _describe(
+        b,
+        "Gateway-wide sum over the dashboard range before each point (1 h by default, which the "
+        "lines are for: target under 1, hard fail above 5 an hour), rounded to whole events as "
+        "WsUpstreamDesyncHigh rounds. Each affected subscription counts once, so one upstream "
+        "desync adds one per subscribed book topic across all connections; 23-ws-protocol.md "
+        "16.3 is per topic, so group the `ws resync` log lines by `ch`. upstream_desync and "
+        "backpressure are the incident reasons (7.4) and the only ones the lines judge; "
+        "reconfigure and client_resync cross them in normal use. Only client_resync and "
+        "reconfigure have a trigger today: upstream_desync, upstream_reconnect, "
+        "instrument_revision, replay_seek and backpressure read zero whatever happens until "
+        "their callers are wired (the outbound ladder, E17-T03 #412, for backpressure; the book "
+        "feed, the instrument cache and the replay engine for the other four), so a flat zero "
+        "here is not coverage. WsUpstreamDesyncHigh fires above 5 upstream_desync in an hour.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS closes in the range, by reason",
+        f"round(sum by (reason) (increase(cv_ws_closes_total{{{E}}}[$__range])))",
+        "short",
+        legend="{{reason}}",
+    )
+    _describe(
+        b,
+        "Server-initiated closes by bye reason; the close code is fixed per reason. Any "
+        "slow_consumer raises WsSlowConsumerClosed (a user lost their feed); a burst of "
+        "origin_forbidden raises WsOriginRefusalsHigh. Every reason exists from process start, "
+        "so the first close of any reason is counted; normal, server_shedding_load and other "
+        "have no counting path yet, so they read zero whatever happens.",
+    )
     b.flush()
     return b
 
