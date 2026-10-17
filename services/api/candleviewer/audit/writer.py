@@ -11,8 +11,9 @@ Write path (PR #1561 security findings 1-2):
 2. A single flusher task reads uncommitted records from the WAL in append
    order and inserts each into `audit_log` (the repository and the
    `audit_chain()` trigger both take `pg_advisory_xact_lock`), then advances
-   the WAL commit cursor. Postgres errors are retried with backoff; the WAL
-   is the buffer.
+   the WAL commit cursor. Each record is made storable first
+   (`models.storable`), whenever it was appended. Postgres errors are retried
+   with backoff; the WAL is the buffer.
 3. `start()` replays any WAL records left by a previous run first (same
    loop). Replay is idempotent: `record_id` is UNIQUE and the insert is
    `ON CONFLICT (record_id) DO NOTHING`, closing the "row committed, cursor
@@ -69,7 +70,7 @@ import structlog
 
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.errors import AuditError
-from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
+from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity, storable
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.wal import AuditWal, AuditWalFull
@@ -479,7 +480,8 @@ class AuditWriter:
                 if not batch:
                     break
                 for _end_offset, record in batch:
-                    await self._write_with_retry(record)
+                    # A frame appended before records were normalised is made storable here.
+                    await self._write_with_retry(storable(record))
                     self._written_total += 1
                 # One cursor fsync per batch: a crash mid-batch re-inserts the
                 # already-written prefix, which ON CONFLICT (record_id) ignores.

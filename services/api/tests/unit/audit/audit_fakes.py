@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -130,8 +131,9 @@ class FakeClock:
 class PgTextRefusedError(Exception):
     """What asyncpg raises for text Postgres 16 cannot store: U+0000 is SQLSTATE 22021 in a
     `text` column and 22P05 in `jsonb`; a lone surrogate is 22000 in `text` (refused before
-    it is sent) and 22P02 in `jsonb`. `model_dump_json` refuses a lone surrogate before a
-    record reaches the WAL, so only a stored frame can carry one this far."""
+    it is sent) and 22P02 in `jsonb`. `jsonb` also refuses NaN and the infinities (22P02).
+    `model_dump_json` refuses a lone surrogate and writes a non-finite number as `null`, so
+    only a stored frame can carry either this far."""
 
     def __init__(self, sqlstate: str) -> None:
         super().__init__(f"SQLSTATE {sqlstate}")
@@ -149,6 +151,17 @@ def _texts(value: Any) -> list[str]:
     return []
 
 
+def _non_finite(value: Any) -> bool:
+    """True if a JSON value holds NaN or an infinity, at any depth."""
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_non_finite(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_non_finite(item) for item in value)
+    return False
+
+
 def _refusal(text: str, *, jsonb: bool) -> str | None:
     if "\x00" in text:
         return "22P05" if jsonb else "22021"
@@ -161,7 +174,7 @@ def _refusal(text: str, *, jsonb: bool) -> str | None:
 
 class PgTextAuditRepository(FakeAuditRepository):
     """`FakeAuditRepository` that refuses, as Postgres does, a record holding text it cannot
-    store; `refused` lists the SQLSTATE of each refusal."""
+    store or, in `jsonb`, a non-finite number; `refused` lists the SQLSTATE of each refusal."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -181,4 +194,7 @@ class PgTextAuditRepository(FakeAuditRepository):
                 if sqlstate is not None:
                     self.refused.append(sqlstate)
                     raise PgTextRefusedError(sqlstate)
+            if jsonb and _non_finite(value):
+                self.refused.append("22P02")
+                raise PgTextRefusedError("22P02")
         await super().insert(record)

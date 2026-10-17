@@ -9,6 +9,7 @@ schemas and `services/api/candleviewer/db/models.py`'s `audit_log` columns.
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 import uuid
 from datetime import datetime
@@ -58,9 +59,11 @@ def _unstorable(text: str) -> bool:
 def _needs_scrub(value: object) -> bool:
     if isinstance(value, str):
         return _unstorable(value)
+    if isinstance(value, float):
+        return not math.isfinite(value)
     if isinstance(value, dict):
         for key, item in value.items():
-            if _needs_scrub(key) or _needs_scrub(item):
+            if (isinstance(key, str) and _unstorable(key)) or _needs_scrub(item):
                 return True
     elif isinstance(value, list | tuple):
         for item in value:
@@ -69,20 +72,37 @@ def _needs_scrub(value: object) -> bool:
     return False
 
 
-def _scrub(value: object) -> object:
+def _scrub(value: object) -> Any:
     """A copy of `value` with U+0000 replaced by U+FFFD and each lone surrogate by `?`
-    in every string, dict keys included, at any depth. Two keys that differ only in a
-    replaced character collide and the last one wins, as a duplicate key does in `jsonb`."""
+    in every string, dict keys included, at any depth, and each non-finite float (NaN or an
+    infinity, which `jsonb` refuses) by `None`. A key that is not a `str` is kept as it is.
+    Two keys that differ only in a replaced character collide and the last one wins, as a
+    duplicate key does in `jsonb`."""
     if isinstance(value, str):
         if not _unstorable(value):
             return value
         text = value.replace("\x00", _NUL_REPLACEMENT)
         return text.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if isinstance(value, dict):
-        return {_scrub(key): _scrub(item) for key, item in value.items()}
+        return {
+            (_scrub(key) if isinstance(key, str) else key): _scrub(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list | tuple):
         return [_scrub(item) for item in value]
     return value
+
+
+def storable(record: dict[str, Any]) -> dict[str, Any]:
+    """`record` with every string and non-finite float made storable (`_scrub`), or `record`
+    itself, uncopied, when nothing needs replacing. Applied by `AuditEmission` and again by the
+    WAL flusher."""
+    if not _needs_scrub(record):
+        return record
+    scrubbed: dict[str, Any] = _scrub(record)
+    return scrubbed
 
 
 class AuditEmission(BaseModel):
@@ -114,13 +134,11 @@ class AuditEmission(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _storable_text(cls, data: Any) -> Any:
-        """Before validation, replace what Postgres cannot store in any string (`_scrub`).
-        `emit()`, `ingest()` and the break-glass journal all build this model. Replaced, never
-        refused, so the audited action still gets its record. Input with nothing to replace
-        is passed through uncopied."""
-        if isinstance(data, dict) and _needs_scrub(data):
-            return _scrub(data)
-        return data
+        """Before validation, replace what Postgres cannot store in any string or float
+        (`storable`). `emit()`, `ingest()` and the break-glass journal all build this model, so
+        the record is always written. Input with nothing to replace is passed through
+        uncopied."""
+        return storable(data) if isinstance(data, dict) else data
 
 
 class AuditEntry(BaseModel):

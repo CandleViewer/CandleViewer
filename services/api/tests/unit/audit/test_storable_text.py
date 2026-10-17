@@ -5,6 +5,7 @@ the writer accepts is stored. `PgTextAuditRepository` refuses such text as Postg
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.audit.journal import fold_in, journal_dir
-from candleviewer.audit.models import AuditEmission
+from candleviewer.audit.models import AuditEmission, storable
 from candleviewer.audit.wal import AuditWal
 from candleviewer.audit.writer import AuditWriter
 
@@ -28,6 +29,9 @@ _ANY_TEXT = st.text(_UNSTORABLE | st.characters(exclude_categories=()))
 _DIRTY_TEXT = st.tuples(_ANY_TEXT, _UNSTORABLE, _ANY_TEXT).map("".join)
 #: Text Postgres stores as is: everything UTF-8 encodes but U+0000 (other controls included).
 _STORABLE_TEXT = st.text(st.characters(codec="utf-8", exclude_characters="\x00"))
+#: NaN and the infinities (which `jsonb` refuses) in a dict and a list, and the nulls they become.
+_NON_FINITE = {"n": math.nan, "xs": [math.inf, {"m": -math.inf}]}
+_NULLED = {"n": None, "xs": [None, {"m": None}]}
 
 
 def _writer(repo: PgTextAuditRepository, tmp_path: Path) -> AuditWriter:
@@ -36,6 +40,19 @@ def _writer(repo: PgTextAuditRepository, tmp_path: Path) -> AuditWriter:
 
 def _state(row: dict[str, Any], column: str = "after_state") -> Any:
     return json.loads(row[column])
+
+
+def _record(**fields: Any) -> dict[str, Any]:
+    """A record in the WAL's format: a stored frame, or what `ingest()` takes."""
+    return {
+        "record_id": str(uuid.uuid4()),
+        "action": "auth.login_failed",
+        "actor_label": "x",
+        "outcome": "failure",
+        "severity": "info",
+        "event_ts": "2026-10-15T12:00:00Z",
+        **fields,
+    }
 
 
 async def _stored(tmp_path: Path, *records: dict[str, Any]) -> PgTextAuditRepository:
@@ -114,6 +131,59 @@ async def test_fold_in_journaled_text_with_nul_is_stored_replaced(tmp_path: Path
     assert repo.refused == []
 
 
+async def test_writer_stores_a_pending_frame_from_an_earlier_version_replaced(
+    tmp_path: Path,
+) -> None:
+    """A WAL frame appended before records were normalised is stored replaced on `start()`."""
+    AuditWal(tmp_path / "audit.wal").append(
+        _record(actor_label="\x00ab***(len=3)", after_state={"binding\x00": "Ctrl+\x00"})
+    )
+    repo = PgTextAuditRepository()
+    w = _writer(repo, tmp_path)
+    await w.start()
+    await w.flush(5)
+    await w.stop(1)
+    [row] = repo.rows
+    assert (row["actor_label"], _state(row)) == (
+        f"{_FFFD}ab***(len=3)",
+        {f"binding{_FFFD}": f"Ctrl+{_FFFD}"},
+    )
+    assert (w.written_total, w.write_errors_total, repo.refused) == (1, 0, [])
+
+
+async def test_writer_stores_a_pending_frame_with_a_non_finite_number_as_null(
+    tmp_path: Path,
+) -> None:
+    """A frame holding NaN and infinity tokens, which `jsonb` refuses, is stored with `null`."""
+    AuditWal(tmp_path / "audit.wal").append(_record(after_state=_NON_FINITE))
+    repo = PgTextAuditRepository()
+    w = _writer(repo, tmp_path)
+    await w.start()
+    await w.flush(5)
+    await w.stop(1)
+    [row] = repo.rows
+    assert _state(row) == _NULLED
+    assert (w.written_total, w.write_errors_total, repo.refused) == (1, 0, [])
+
+
+@pytest.mark.parametrize("entry", ["emit", "ingest"])
+async def test_writer_stores_a_non_finite_number_in_state_as_null(
+    tmp_path: Path, entry: str
+) -> None:
+    repo = PgTextAuditRepository()
+    w = _writer(repo, tmp_path)
+    await w.start()
+    if entry == "emit":
+        await w.emit("auth.login_failed", actor_label="x", after_state=_NON_FINITE)
+    else:
+        await w.ingest(_record(after_state=_NON_FINITE))
+    await w.flush(5)
+    await w.stop(1)
+    [row] = repo.rows
+    assert _state(row) == _NULLED
+    assert repo.refused == []
+
+
 def _emission(texts: list[str]) -> AuditEmission:
     """An emission holding one of `texts` in each of six places: a field, and state keys and
     values in dicts, lists and tuples at several depths."""
@@ -152,9 +222,31 @@ def test_emission_storable_text_is_unchanged(text: str) -> None:
     assert _texts(_emission([text] * 6)) == [text] * 6
 
 
-def test_emission_validator_passes_storable_input_through_uncopied() -> None:
+def test_storable_passes_clean_input_through_uncopied() -> None:
     clean = {"actor_label": "a\x01b", "after_state": {"k": ["v", ("t",)]}, "event_ts": _TS}
-    dirty = {**clean, "reason": "r\x00"}
-    assert AuditEmission._storable_text(clean) is clean
-    assert AuditEmission._storable_text(dirty)["reason"] == f"r{_FFFD}"
-    assert dirty["reason"] == "r\x00"  # the input is never modified
+    assert storable(clean) is clean
+
+
+def test_storable_replaces_in_a_copy_and_leaves_its_input_unmodified() -> None:
+    dirty = {"actor_label": "a", "reason": "r\x00"}
+    assert storable(dirty)["reason"] == f"r{_FFFD}"
+    assert dirty["reason"] == "r\x00"
+
+
+def test_storable_keeps_a_non_str_key_unchanged() -> None:
+    key = ("k\x00", 1)
+    assert storable({"after_state": {key: "v\x00"}}) == {"after_state": {key: f"v{_FFFD}"}}
+
+
+@pytest.mark.parametrize(
+    ("state", "stored"),
+    [
+        ({"n": math.nan}, {"n": None}),
+        ({"xs": [math.inf]}, {"xs": [None]}),
+        ({"xs": ({"m": -math.inf},)}, {"xs": [{"m": None}]}),
+    ],
+)
+def test_storable_replaces_a_non_finite_float_that_is_the_only_unstorable_value(
+    state: Any, stored: Any
+) -> None:
+    assert storable({"after_state": state}) == {"after_state": stored}
