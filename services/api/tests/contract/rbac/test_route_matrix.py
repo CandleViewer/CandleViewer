@@ -327,7 +327,6 @@ _STUB_STATUS: dict[str, int] = {
     "POST /auth/refresh": 401,
     "GET /market/bars": 422,
     "GET /market/data-coverage": 422,  # required query params are validated before the 501/503
-    "GET /market/klines": 422,
     "GET /onboarding/checklist": 501,
     "POST /onboarding/checklist/dismiss": 501,
 }

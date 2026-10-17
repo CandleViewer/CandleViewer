@@ -29,10 +29,11 @@ first cut of this router served every request unauthenticated. This module
 now mirrors `api/audit.py`'s own fail-closed `_authorize_or_raise` pattern
 exactly: an injected, structurally-typed `PrincipalResolver` resolves the
 caller from the request, and the caller must hold `marketdata:read` or the
-request never reaches the cache. `principal_resolver=None` (no session
-module wired yet, same as `app.py`'s current `make_audit_router(ctx.audit)`
-call) degrades to `501`, not to "allow anyone" — there is a difference
-between "no session-verification module exists yet" and "this caller is
+request never reaches the cache. `app.py` injects the session-backed resolver
+(#2092, as for `/market/bars`). `principal_resolver=None` (the composition has
+no identity provider, i.e. the fake storage backend, so no session can be
+verified) degrades to `501`, not to "allow anyone" — there is a difference
+between "no session-verification module is composed" and "this caller is
 unauthenticated", and only the resolver can tell those apart (mirrors
 `api/audit.py`'s own docstring on this point).
 """
@@ -118,19 +119,26 @@ class MarketDataPrincipal:
         return "*" in self.permissions or permission in self.permissions  # nosem: no-adhoc-authz reason=Principal.has_permission-wildcard-impl-pending-E09-T01-authorize owner=@CandleViewer/security review=2026-12-31  # noqa: E501  # fmt: skip
 
 
+class _Principal(Protocol):
+    """All the router needs of a resolved caller: whether it holds a permission. Both
+    `MarketDataPrincipal` and the session resolver's `audit.access.AuditPrincipal` (which
+    the composition root injects, #2092) satisfy it structurally."""
+
+    def has(self, permission: str) -> bool: ...
+
+
 class PrincipalResolver(Protocol):
     """Resolves the authenticated caller for a `/market/klines` request.
 
     Structurally typed so this router never imports a concrete session
-    module; the composition root injects the real implementation once one
-    exists. Returning `None` means "no verified session" (401) — mirrors
-    `api/audit.py`'s own `PrincipalResolver`, including the distinction
-    between a resolver that found no session (401) and no resolver being
-    wired at all (501, see `_authorize_or_raise` below)."""
+    module; the composition root injects the session-backed implementation
+    (`api/audit_principal.py`, as for `/market/bars`). Returning `None`
+    means "no verified session" (401) — mirrors `api/audit.py`'s own
+    `PrincipalResolver`, including the distinction between a resolver that
+    found no session (401) and no resolver being wired at all (501, see
+    `_authorize_or_raise` below)."""
 
-    def resolve(
-        self, request: Request
-    ) -> MarketDataPrincipal | Awaitable[MarketDataPrincipal | None] | None: ...
+    def resolve(self, request: Request) -> _Principal | Awaitable[_Principal | None] | None: ...
 
 
 class CoverageIndexProvider(Protocol):
@@ -246,11 +254,13 @@ def make_market_router(
     has no coverage tracking of its own, so a request against it simply
     reports an empty hole list.
 
-    `principal_resolver=None` (no session-verification module wired yet,
-    same posture as `make_audit_router`'s own default) makes every request
-    fail closed with `501` rather than silently serving unauthenticated
-    reads (C-12.4, PR #1626 review) — RBAC on this route ("marketdata:read")
-    is enforced here, server-side, never left to the UI to hide a button.
+    `principal_resolver=None` (no identity provider composed, i.e. the fake
+    storage backend; same posture as `make_audit_router`'s own default and
+    `make_market_bars_router`) makes every request fail closed with `501`
+    rather than silently serving unauthenticated reads (C-12.4, PR #1626
+    review) — RBAC on this route ("marketdata:read", scope none: public
+    market data, not account-scoped) is enforced here, server-side, never
+    left to the UI to hide a button.
 
     E12-S05: when `read_service_provider` yields a `KlineReadService`, reads go through it
     (cold + hot tiers merged; exchange backfill started in the background for hot holes and

@@ -1650,14 +1650,16 @@ def create_app(
     # was missing entirely — cache-only reads today (`ctx.storage.
     # market_data`); backfilling from the exchange itself is wired once
     # E08-T02 lands a real exchange adapter (see `api/market.py`
-    # module docstring). `principal_resolver` stays `None` for the same
-    # reason as `make_audit_router` above (no session-verification module
-    # wired yet) — every request fails closed with `501`, not with a silent
-    # unauthenticated read (C-12.4, PR #1626 review finding: this route was
+    # module docstring). #2092: authorised through the session-backed `audit_resolver`
+    # (`marketdata:read`, as `/market/bars` below), so only a verified session with the
+    # permission is served (401 / 403 otherwise). Without an identity provider (fake
+    # backend) the resolver is `None` and every request fails closed with `501`, not with a
+    # silent unauthenticated read (C-12.4, PR #1626 review finding: this route was
     # previously reachable by any mesh caller with no RBAC check at all).
     app.include_router(
         make_market_router(
             lambda: ctx.storage.market_data,
+            principal_resolver=audit_resolver,
             read_service_provider=lambda: ctx.ingestion.klines,
             # SR-E12-08: only catalogue-listed, trading symbols may start a backfill.
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
