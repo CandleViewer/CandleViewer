@@ -55,3 +55,12 @@ class PositionsUnknownError(UserLifecycleError):  # 409: an unacknowledged unkno
 
 class LifecycleAuditUnavailableError(UserLifecycleError):  # 503: nothing changed (AC8)
     code = "audit_unavailable"
+
+
+class OpsNotWired(AdminError):
+    """The ops read model has no provider yet (E42-T05): 501 `not_implemented`, nothing read."""
+
+
+class OpsUnavailable(AdminError):
+    """The ops source failed, timed out or has nothing yet (E42-T05): 503, retryable. The
+    message is a fixed literal, never an exception's text."""

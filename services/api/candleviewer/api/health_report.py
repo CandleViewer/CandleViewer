@@ -1,37 +1,26 @@
-"""`/health/live`, `/health/ready`, `/admin/health` (E04-T04, ADR-0014 section 7).
+"""`/health/live` and `/health/ready` (E04-T04, ADR-0014 section 7).
 
 Contract: `docs/plan/22-api-openapi.yaml` (server base `/api/v1`, mounted by the
 app under that prefix). The two probes are unauthenticated and therefore
 disclose only a coarse state word and component *names* - no versions, hosts,
-details or stack traces. `/admin/health` is `admin:read` gated and is served
-from the registry's cached snapshot; it never runs probes on the request path.
+details or stack traces. `render_report` is the wire shape of `GET /admin/health`,
+which E42-T05 serves on the audited admin router (`api/admin_ops.py`).
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from candleviewer.observability.health_probes import HealthRegistry, HealthSnapshot
-
-ADMIN_READ = "admin:read"
+from candleviewer.observability.health_probes import HealthSnapshot
 
 #: A readiness check returns True when the dependency is ready. Exceptions
 #: and timeouts count as not ready; they are never surfaced to the caller.
 ReadyCheck = Callable[[], Awaitable[bool]]
-
-
-class _Principal(Protocol):
-    def has(self, permission: str) -> bool: ...
-
-
-class _PrincipalResolver(Protocol):
-    def resolve(self, request: Request) -> _Principal | None: ...
 
 
 def _problem(status: int, title: str, detail: str) -> JSONResponse:
@@ -54,9 +43,9 @@ def render_report(
     environment: str,
     uptime_seconds: int,
     clock_offset_ms: int | None,
-    alerts_active: int = 0,
 ) -> dict[str, Any]:
-    """Wire shape of `HealthReport`; also the WS `system` `health` block."""
+    """Wire shape of `HealthReport` without `alerts_active`: no alert source exists, so the field
+    is left out rather than sent as a `0`."""
     return {
         "overall": snap.overall.value,
         "version": version,
@@ -77,24 +66,15 @@ def render_report(
             }
             for c in snap.components
         ],
-        "alerts_active": alerts_active,
     }
 
 
 def make_health_report_router(
-    registry: HealthRegistry,
     *,
-    version: str,
-    git_sha: str,
-    environment: str,
     ready_checks: Mapping[str, ReadyCheck] | None = None,
-    principal_resolver: _PrincipalResolver | None = None,
     ready_timeout_s: float = 2.0,
-    clock_offset_ms: Callable[[], int | None] = lambda: None,
-    started_monotonic: float | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["admin"])
-    started = started_monotonic if started_monotonic is not None else time.monotonic()
     checks = dict(ready_checks or {})
 
     @router.get("/health/live")
@@ -120,28 +100,6 @@ def make_health_report_router(
         resp = _problem(503, "Service unavailable", f"not ready: {unready}")
         resp.headers["Retry-After"] = "5"
         return resp
-
-    @router.get("/admin/health")
-    def admin_health(request: Request) -> JSONResponse:
-        if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
-        principal = principal_resolver.resolve(request)
-        if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
-        if not principal.has(ADMIN_READ):
-            return _problem(403, "Forbidden", f"missing permission: {ADMIN_READ}")
-        snap = registry.snapshot()
-        if snap is None:
-            return _problem(503, "Service unavailable", "health snapshot not yet available")
-        body = render_report(
-            snap,
-            version=version,
-            git_sha=git_sha,
-            environment=environment,
-            uptime_seconds=int(time.monotonic() - started),
-            clock_offset_ms=clock_offset_ms(),
-        )
-        return JSONResponse(body)
 
     return router
 
