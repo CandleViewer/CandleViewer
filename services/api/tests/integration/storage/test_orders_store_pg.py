@@ -531,9 +531,10 @@ async def test_a_stale_position_write_leaves_the_newer_row(ledger: Ledger, pg_ds
         newer.id, newer.size, None, _T0, newer.updated_at,
     )  # fmt: skip
     assert [p.symbol for p in await positions.list_unprotected(account)] == ["BTCUSDT"]
-    times = ((3, _T0), (4, None), (5, older))  # equal; a NULL new time; over a NULL stored one
+    # equal; a NULL new time; over a NULL stored one
+    times = ((Decimal(3), _T0), (Decimal(4), None), (Decimal(5), older))
     applied = [
-        await positions.upsert(_state(account, "BTCUSDT", size=Decimal(n), exchange_updated_ts=ts))
+        await positions.upsert(_state(account, "BTCUSDT", size=n, exchange_updated_ts=ts))
         for n, ts in times
     ]
     assert [(p.size, p.exchange_updated_ts) for p in applied] == list(times)

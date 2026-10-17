@@ -280,7 +280,7 @@ def test_the_catalogue_bounds_the_table_label_by_the_tables_written() -> None:
     assert (spec.kind, spec.labels, spec.buckets) == ("histogram", ("table",), OMS_WRITE_BUCKETS)
     assert spec.max_series == len(WRITE_TABLES) == len(_WRITES)
     cap = OMS_STATEMENT_TIMEOUT_MS / 1000  # a p99 near the store's statement cap shows apart
-    assert {cap - 0.5, cap, cap + 0.5} <= set(spec.buckets)
+    assert {cap - 0.5, cap, cap + 0.5} <= set(OMS_WRITE_BUCKETS)
 
 
 @pytest.mark.parametrize(
