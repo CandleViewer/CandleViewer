@@ -73,6 +73,16 @@ groups:
         annotations:
           summary: "Expected metric auth_break_glass_unresolved_events is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2496 review: the series behind the AuthBreakGlassAttempted page (same reasoning).
+      - alert: ExpectedMetricMissingAuthBreakGlassAttempts
+        expr: absent(auth_break_glass_attempts)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric auth_break_glass_attempts is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingPgUp
         expr: absent(pg_up)
         for: 15m

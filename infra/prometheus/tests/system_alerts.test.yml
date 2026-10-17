@@ -428,6 +428,70 @@ tests:
         runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassused
 - interval: 1m
   input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: 2+0x10 3+0x10
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_break_glass_attempt
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'A break-glass run was recorded on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassattempted
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: 2+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: 2+0x10 _x20 3+0x10
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_break_glass_attempt
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'A break-glass run was recorded on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassattempted
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: 2+0x10 _x20 3+0x40
+  alert_rule_test:
+  - eval_time: 55m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_attempts{env="live"}
+    values: _x30 3+0x20
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: AuthBreakGlassAttempted
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: credential_verification_failures_total
     values: 0+0x10 1+0x10
   alert_rule_test:

@@ -14,6 +14,9 @@ class _Unresolved:
     async def unresolved_break_glass_count(self) -> int:
         return 1
 
+    async def break_glass_attempt_count(self) -> int:
+        return 1
+
 
 def _section_15_9() -> str:
     text = PROTOCOL_DOC.read_text(encoding="utf-8")
