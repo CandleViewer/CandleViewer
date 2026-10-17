@@ -12,16 +12,18 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast, get_args
 
 import pytest
 from sqlalchemy import CheckConstraint, Numeric, Table
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from candleviewer.db import models
+from candleviewer.exchange.base.frame_guard import MAX_FUTURE_SKEW_MS
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import positions_sqlalchemy as pos
 from candleviewer.storage.repositories.executions import ExecType, ExecutionRow, NewExecution
@@ -32,6 +34,8 @@ from candleviewer.storage.repositories.orders import (
     TpslMode,
 )
 from candleviewer.storage.repositories.positions import (
+    MAX_FUTURE_SKEW,
+    FutureDatedPositionError,
     NewPositionSnapshot,
     PositionRow,
     PositionSide,
@@ -42,6 +46,7 @@ from candleviewer.storage.repositories.positions import (
 from tests.unit.storage.test_orders_store import _ASYNCPG, _CAP, _leaky, _Rel, _Result, _sql
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+_HORIZON = T0 + MAX_FUTURE_SKEW  # the guard's horizon for a store whose clock reads T0
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
 
 
@@ -131,7 +136,7 @@ _STATEMENTS: dict[Any, dict[str, Any]] = {
         "get_statement": ex.get_statement(ACCOUNT, "E1"),
     },
     pos: {
-        "upsert_statement": pos.upsert_statement(_state()),
+        "upsert_statement": pos.upsert_statement(_state(), _HORIZON),
         "stored_statement": pos.stored_statement(_state()),
         "list_open_statement": pos.list_open_statement(ACCOUNT),
         "list_unprotected_statement": pos.list_unprotected_statement(ACCOUNT),
@@ -170,12 +175,45 @@ def test_a_position_upsert_takes_every_state_column_and_stamps_now() -> None:
     assert set(update.split(" WHERE ")[0].split(", ")) == {*state, *stamps}
 
 
-def test_a_position_upsert_skips_a_stale_write() -> None:
+def test_a_position_upsert_skips_a_stale_write_unless_the_stored_time_is_past_the_horizon() -> None:
     """A snapshot older than the stored row updates nothing, so a newer push without a stop-loss
-    stays in `list_unprotected` (C-2.6); equal times and a NULL time on either side apply."""
-    guard = _sql(_STATEMENTS[pos]["upsert_statement"]).split(" WHERE ")[1].split(" RETURNING ")[0]
+    stays in `list_unprotected` (C-2.6); equal times, a NULL time on either side and a stored time
+    past the horizon (a future-dated row, which would otherwise freeze) apply."""
+    stmt = _STATEMENTS[pos]["upsert_statement"]
+    guard = _sql(stmt).split(" WHERE ")[1].split(" RETURNING ")[0]
     stored, given = "positions.exchange_updated_ts", "excluded.exchange_updated_ts"
-    assert guard == f"{stored} IS NULL OR {given} IS NULL OR {stored} <= {given}"
+    head = f"{stored} IS NULL OR {given} IS NULL OR {stored} <= {given} OR {stored} > "
+    assert re.fullmatch(re.escape(head) + r"\$\d+::TIMESTAMP WITH TIME ZONE", guard), guard
+    assert stmt.compile(dialect=_ASYNCPG).params["exchange_updated_ts_1"] == _HORIZON
+
+
+def test_the_future_skew_is_the_ingest_windows() -> None:
+    """The cited tolerance (24 Sec.14.2 rule 10, `now + 5 s` on the injected clock) stays the
+    adapter's own."""
+    assert timedelta(milliseconds=MAX_FUTURE_SKEW_MS) == MAX_FUTURE_SKEW
+
+
+async def test_a_position_time_past_the_future_skew_is_refused_before_any_statement() -> None:
+    """More than `MAX_FUTURE_SKEW` ahead of the store's clock is a parse or unit error, not a
+    push: no transaction opens and nothing is written."""
+    rel = _Rel()
+    late = _state(exchange_updated_ts=_HORIZON + timedelta(microseconds=1))
+    with pytest.raises(FutureDatedPositionError, match=r"^exchange_updated_ts leads the clock"):
+        await pos.SqlAlchemyPositionStore(cast(Any, rel), clock=lambda: T0).upsert(late)
+    assert rel.units == []
+
+
+@pytest.mark.parametrize("ts", [None, T0, _HORIZON])
+async def test_a_position_time_up_to_the_skew_applies_under_the_clocks_horizon(
+    ts: datetime | None,
+) -> None:
+    """Up to the skew the write goes on, and its guard compares the stored time with the clock
+    plus the skew, never with the write's own time."""
+    rel = _Rel(_Result([_POSITION_ROW]))
+    store = pos.SqlAlchemyPositionStore(cast(Any, rel), clock=lambda: T0)
+    await store.upsert(_state(exchange_updated_ts=ts))
+    params = rel.statements[0].compile(dialect=_ASYNCPG).params
+    assert (params["exchange_updated_ts_1"], rel.commits) == (_HORIZON, 1)
 
 
 @pytest.mark.parametrize(
@@ -185,7 +223,7 @@ def test_a_position_upsert_skips_a_stale_write() -> None:
 def test_a_stop_of_zero_or_less_is_bound_as_null(given: Decimal | None, bound: object) -> None:
     """The exchange's 0 means none: stored as 0, `ix_pos_no_sl` would miss the position (C-2.6)."""
     stops = {"take_profit": given, "stop_loss": given, "trailing_stop": given}
-    params = pos.upsert_statement(_state(**stops)).compile(dialect=_ASYNCPG).params
+    params = pos.upsert_statement(_state(**stops), _HORIZON).compile(dialect=_ASYNCPG).params
     assert {name: params[name] for name in stops} == dict.fromkeys(stops, bound)
 
 
@@ -248,6 +286,15 @@ async def test_every_call_is_one_capped_unit_of_work_whose_refusal_is_named(call
     with pytest.raises(OrderConstraintError, match="ex_qty"):
         await run(store(cast(Any, failing)))
     assert failing.commits == 0
+
+
+@pytest.mark.parametrize("call", sorted(_CALLS))
+async def test_every_call_maps_a_server_that_does_not_serve_to_tier_unavailable(call: str) -> None:
+    """The `CappedStore` base maps for these stores as for the order store: a server shutting down
+    is Postgres unavailable (24 Sec.8.2 S7), not a failed statement."""
+    store, run, _ = _CALLS[call]
+    with pytest.raises(StorageTierUnavailable):
+        await run(store(cast(Any, _Rel(_leaky(OperationalError, "57P01")))))
 
 
 _EXEC_OUT, _POS_OUT = ExecutionRow(**_EXEC_ROW), PositionRow(**_POSITION_ROW)

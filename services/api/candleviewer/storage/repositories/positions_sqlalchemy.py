@@ -6,16 +6,19 @@ state, `recv_ts` and `updated_at` become now(), a new row's id is `gen_random_uu
 applies only when the stored or the new `exchange_updated_ts` is NULL or the stored one is not
 later, so a stale snapshot never overwrites a newer push and `list_unprotected` cannot lose a
 position without a stop-loss (C-2.6); a skipped update returns the stored row, re-selected under
-the conflict's row lock. A stop of 0 or less is bound as NULL, or `ix_pos_no_sl` would miss an
-unprotected position (C-2.6). The reads render `size > 0` with a literal 0 so the planner matches
-the partial indexes, and filter on the account (C-12.4); the two inserts write the account they
-are given (`UNSCOPED`).
+the conflict's row lock. Against the injected clock, a new time more than `MAX_FUTURE_SKEW` ahead
+is refused before any statement, and a stored one that far ahead no longer wins the guard, so a
+future-dated row heals on the next write instead of freezing. A stop of 0 or less is bound as
+NULL, or `ix_pos_no_sl` would miss an unprotected position (C-2.6). The reads render `size > 0`
+with a literal 0 so the planner matches the partial indexes, and filter on the account (C-12.4);
+the two inserts write the account they are given (`UNSCOPED`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import fields
+from datetime import UTC, datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -23,12 +26,20 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from candleviewer.db.models import position_snapshots, positions
-from candleviewer.storage.repositories.orders_sqlalchemy import CappedStore
+from candleviewer.storage.repositories.orders_sqlalchemy import (
+    OMS_STATEMENT_TIMEOUT_MS,
+    CappedStore,
+)
 from candleviewer.storage.repositories.positions import (
+    MAX_FUTURE_SKEW,
+    FutureDatedPositionError,
     NewPositionSnapshot,
     PositionRow,
     PositionSnapshotRow,
     PositionState,
+)
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
 )
 
 _P = positions.c
@@ -41,7 +52,8 @@ _KEY: Final = ("exchange_account_id", "symbol", "position_idx")
 _STOPS: Final = ("take_profit", "stop_loss", "trailing_stop")
 
 
-def upsert_statement(state: PositionState) -> sa.Insert:
+def upsert_statement(state: PositionState, horizon: datetime) -> sa.Insert:
+    """`horizon` is the store's clock plus `MAX_FUTURE_SKEW`: a stored time beyond it loses."""
     values: dict[str, Any] = {f.name: getattr(state, f.name) for f in fields(PositionState)}
     for name in _STOPS:
         if values[name] is not None and values[name] <= 0:
@@ -50,7 +62,7 @@ def upsert_statement(state: PositionState) -> sa.Insert:
     update: dict[str, Any] = {name: stmt.excluded[name] for name in values if name not in _KEY}
     update |= {"recv_ts": sa.func.now(), "updated_at": sa.func.now()}
     stored, given = _P.exchange_updated_ts, stmt.excluded.exchange_updated_ts
-    newer = sa.or_(stored.is_(None), given.is_(None), stored <= given)
+    newer = sa.or_(stored.is_(None), given.is_(None), stored <= given, stored > horizon)
     return stmt.on_conflict_do_update(
         index_elements=[_P[k] for k in _KEY], set_=update, where=newer
     ).returning(*POSITION_COLUMNS)
@@ -90,9 +102,23 @@ def _position(row: Mapping[Any, Any]) -> PositionRow:
 class SqlAlchemyPositionStore(CappedStore):
     """`PositionStore` and `PositionSnapshotStore` over one relational repository (asyncpg)."""
 
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
+        self._clock = clock
+
     async def upsert(self, state: PositionState) -> PositionRow:
+        horizon = self._clock() + MAX_FUTURE_SKEW
+        if state.exchange_updated_ts is not None and state.exchange_updated_ts > horizon:
+            raise FutureDatedPositionError
         async with self._unit_of_work() as uow:
-            row = (await uow.session.execute(upsert_statement(state))).mappings().first()
+            stmt = upsert_statement(state, horizon)
+            row = (await uow.session.execute(stmt)).mappings().first()
             if row is None:  # a stale write: the guard skipped the update
                 row = (await uow.session.execute(stored_statement(state))).mappings().one()
             await uow.commit()

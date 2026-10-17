@@ -9,15 +9,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
-from candleviewer.storage.repositories.orders import TpslMode, check_fields, typed_fields
+from candleviewer.storage.repositories.orders import (
+    OrderStoreError,
+    TpslMode,
+    check_fields,
+    typed_fields,
+)
 
 PositionSide = Literal["Buy", "Sell", "None"]
 SnapshotReason = Literal["ws_push", "rest_reconcile", "minute_tick", "risk_eval"]
+#: How far an exchange time may lie ahead of the store's clock: the ingest window's `now + 5 s`
+#: (24 Sec.14.2 rule 10, `MAX_FUTURE_SKEW_MS`; the 5000 ms `recv_window` too). A later time is a
+#: parse or unit error, not a push: `upsert` refuses it, and a stored one no longer blocks writes.
+MAX_FUTURE_SKEW: Final = timedelta(seconds=5)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -99,6 +108,14 @@ _STATE_STAMPS: Final = typed_fields(PositionState, datetime)
 _SNAPSHOT_MONEY: Final = dict.fromkeys(typed_fields(NewPositionSnapshot, Decimal), (38, 18))
 
 
+class FutureDatedPositionError(OrderStoreError):
+    """`exchange_updated_ts` lies more than `MAX_FUTURE_SKEW` ahead of the store's clock: refused,
+    nothing written."""
+
+    def __init__(self) -> None:
+        super().__init__(f"exchange_updated_ts leads the clock by over {MAX_FUTURE_SKEW}")
+
+
 class PositionStore(Protocol):
     """Upsert and account-scoped reads of `positions`."""
 
@@ -107,7 +124,9 @@ class PositionStore(Protocol):
         nothing changes and the stored row is returned, so a stale snapshot never overwrites a
         newer push (C-2.6). With either time NULL the write applies, so the OMS still owes exchange
         order for an account's updates (24 Sec.8.2 S5). A TP, SL or trailing stop of 0 or less
-        is stored as NULL, since the exchange's 0 means none."""
+        is stored as NULL, since the exchange's 0 means none. A time more than `MAX_FUTURE_SKEW`
+        ahead of the store's clock raises `FutureDatedPositionError` and writes nothing; a stored
+        time that far ahead loses the guard, so one bad write cannot freeze the row (C-2.6)."""
         ...
 
     async def list_open(self, account_id: UUID) -> tuple[PositionRow, ...]:
