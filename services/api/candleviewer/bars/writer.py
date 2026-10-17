@@ -50,7 +50,8 @@ bars_rows_written_total = Counter(
 )
 bars_write_queue_depth = Gauge("bars_write_queue_depth", "Rows waiting in the bars write buffer.")
 bars_write_saturation_total = Counter(
-    "bars_write_saturation_total", "Submits that had to wait for buffer space (backpressure)."
+    "bars_write_saturation_total",
+    "Rows that found the bars write buffer full and waited for space (none dropped).",
 )
 bars_write_failed_total = Counter(
     "bars_write_failed_total",

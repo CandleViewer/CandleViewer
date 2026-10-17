@@ -36,13 +36,15 @@ from candleviewer.observability.metrics_runtime import (
 _UNIT_SUFFIX = re.compile(
     r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts)$"
 )
-#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules).
+#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules) and
+#: by the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998).
 _SUFFIX_EXCEPTIONS = frozenset(
     {
         "disk_used_ratio",
         "recorder_disk_pressure_level",
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
+        "bars_symbol_cardinality",
     }
 )
 
@@ -266,6 +268,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
     from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
+    from candleviewer.bars import reader, writer  # noqa: F401 - the write and read path (#1998)
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.net.metrics import NET_EXPORTED_NAMES

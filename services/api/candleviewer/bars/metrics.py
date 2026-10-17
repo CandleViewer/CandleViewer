@@ -157,7 +157,8 @@ def record_param_rejected(reason: str) -> None:
         bars_endpoint_param_rejected_total.labels(reason=reason).inc()
 
 
-#: Names served by `export_bars_metrics` (the S01/S02 builder counters plus the above).
+#: Names served by `export_bars_metrics` (the S01/S02 builder counters plus the above, and the
+#: write and read path series of `bars.writer` / `bars.reader`, #1998).
 EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
     {
         "bars_built_total",
@@ -189,6 +190,16 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bar_renko_multi_brick_total",
         "bar_renko_reversals_total",
         "bar_build_latency_seconds",
+        "bars_rows_written_total",  # bars.writer (E12-T02, #1998)
+        "bars_write_queue_depth",
+        "bars_write_saturation_total",
+        "bars_write_failed_total",
+        "bars_write_latency_seconds",
+        "bars_symbol_cardinality",
+        "bars_source_overwrite_refused_total",  # also counted by bars.kline_rows
+        "bars_checksum_mismatch_total",  # bars.reader (E12-T02, #1998)
+        "bars_rebuild_scheduled_total",
+        "bars_stale_build_version_total",
     }
 )
 
