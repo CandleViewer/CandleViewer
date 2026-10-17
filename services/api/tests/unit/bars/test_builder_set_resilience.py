@@ -16,11 +16,13 @@ from candleviewer.bars.errors import BarsError, BarServiceStopping
 from candleviewer.bars.leases import GRACE_US
 from candleviewer.bars.metrics import (
     bar_builder_quarantined_total,
+    bar_builder_specs_in_use,
     bar_emit_sink_errors_total,
     bars_restore_gap_total,
 )
 from candleviewer.bars.models import BarBuilder, BarSpec
 from candleviewer.bars.service import BarsService
+from candleviewer.bars.state_store import StoredState
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy
 from candleviewer.observability.health import HealthStatus
@@ -29,6 +31,7 @@ from ._set_harness import M1, T3, TOPIC, V5, Clock, FakeTape, RecordingSink, mak
 from ._trades import SYM, trade, us
 
 T0 = us("10:00:00")
+ETH = "ETHUSDT"
 BOOM = BarSpec(kind="tick", tick_count=777)
 
 
@@ -77,8 +80,8 @@ async def test_dead_lane_task_unsubscribes_so_publisher_never_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(builder_set, "LANE_QUEUE", 2)
-    bus = Bus()
-    s = make_set(tmp_path, bus=bus)
+    bus, clock = Bus(), Clock(T0)
+    s = make_set(tmp_path, bus=bus, clock=clock)
     await s.register(T3, SYM, "a")
     lane = s._lanes[SYM]
 
@@ -97,6 +100,48 @@ async def test_dead_lane_task_unsubscribes_so_publisher_never_blocks(
     )
     assert BarsHealthReason.TASK_FAILED in s.health_reasons()
     assert s.quarantined(SYM, T3.spec_hash)  # its lane's series lost their builders with it
+    assert bar_builder_specs_in_use.labels(symbol=SYM)._value.get() == 1  # the dead lane's last
+    s.release(T3.spec_hash, SYM, "a")
+    clock.t += GRACE_US
+    await s.tick()  # its lease ends with no lane left to tear down: the tick completes
+    assert not s.quarantined(SYM, T3.spec_hash)
+    assert bar_builder_specs_in_use.labels(symbol=SYM)._value.get() == 0  # none in use now
+    await s.stop()
+
+
+async def test_a_dead_lanes_expired_lease_does_not_cut_the_rest_of_the_tick_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dead lane's lease is the first the tick meets: the same tick still tears down another
+    symbol's expired series (its final blob written) and writes the periodic save that is due."""
+    bus, clock = Bus(), Clock(T0)
+    s = make_set(tmp_path, bus=bus, clock=clock)
+    await s.register(T3, SYM, "a")  # the first lease: first in the table the tick walks
+    await s.register(V5, ETH, "b")  # a live lane whose lease ends with it
+    await s.register(M1, ETH, "c")  # stays leased, and is due its periodic save
+
+    async def die(_: Any, __: Any) -> None:
+        raise RuntimeError("lane defect outside builder isolation")
+
+    monkeypatch.setattr(s, "_apply", die)
+    await bus.publish(TOPIC, trade(T0, seq=0))  # reaches SYM's lane only
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert SYM not in s._lanes and s.quarantined(SYM, T3.spec_hash)
+    s.release(T3.spec_hash, SYM, "a")
+    s.release(V5.spec_hash, ETH, "b")
+    clock.t += builder_set.PERSIST_EVERY_US  # past the grace; each live series is due a save
+    saved: list[tuple[str, str, str]] = []
+    save = s._save
+
+    async def spy(stored: StoredState, stage: str) -> None:
+        saved.append((stage, stored.state.symbol, stored.state.spec_hash))
+        await save(stored, stage)
+
+    monkeypatch.setattr(s, "_save", spy)
+    await s.tick()
+    assert s.active(ETH) == (M1.spec_hash,)  # V5 went, though the dead lane's key came first
+    assert ("final", ETH, V5.spec_hash) in saved and ("periodic", ETH, M1.spec_hash) in saved
     await s.stop()
 
 
