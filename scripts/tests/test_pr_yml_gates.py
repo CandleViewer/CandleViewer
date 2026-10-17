@@ -27,7 +27,7 @@ GATES: dict[str, int | str] = {
     **dict.fromkeys(["statechart-lint", "event-coverage", "machine-hash-lock"], VAR),
     "xstate-pin-attestation": 10,
     "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at 59bec409
-    "gen": 5,  # #3104: _job-gen.yml:27 at 4a0d7694
+    "gen": 5,  # #3104: _job-gen.yml:27 at 59bec409
 }
 OTHER_LANES = ["changed-paths", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
@@ -121,14 +121,15 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
 def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
     steps = JOBS["gates"]["steps"]
     lines = [line.strip() for line in steps[-2]["run"].splitlines()]
-    # _job-gen.yml at 4a0d7694: the full install (commitlint's is `--filter .`), then PyYAML at its
+    # _job-gen.yml at 59bec409: the full install (commitlint's is `--filter .`), then PyYAML at its
     # pin in a fresh venv, so `pnpm generate`'s python3 sees nothing an earlier gate installed into
     # setup-python's 3.13 (pytest, pypi-attestations). The failure summary is the step's own.
     order = ["pnpm install --frozen-lockfile", 'python -m venv "$RUNNER_TEMP/gen-venv"']
     order += ['export PATH="$RUNNER_TEMP/gen-venv/bin:$PATH"']
     order += ["python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"]
-    order += ["python tools/ci/check_gen_freshness.py || {", '} >> "$GITHUB_STEP_SUMMARY"']
-    order += ["exit 1"]
+    # E03-T05's acceptance criterion: the failure summary names the command `make gen`.
+    order += ["python tools/ci/check_gen_freshness.py || {", 'echo "make gen"']
+    order += ['} >> "$GITHUB_STEP_SUMMARY"', "exit 1"]
     assert [line for line in lines if line in order] == order
     (python,) = [s for s in steps if "actions/setup-python@" in s.get("uses", "")]
     assert python["with"] == {"python-version": "3.13"}  # the old job's; no step activates a venv
