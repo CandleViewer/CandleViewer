@@ -533,12 +533,13 @@ async def test_put_binds_the_anchors_of_its_fields() -> None:
 async def test_a_batch_carries_each_ops_own_anchors_into_its_statement() -> None:
     ops: list[Any] = [
         CreateOp("c1", _anchored(_A_START, _A_END)),
+        CreateOp("c2", _anchored(_B_START, _A_END)),
         UpdateOp("u1", _T, _anchored(_B_START, _B_END)),
         UpdateOp("u2", _T, _anchored(_A_START, _B_END)),
     ]
     script = [
         [_snap_row("u1"), _snap_row("u2")],
-        [_mapping(id="c1")],
+        [_mapping(id="c1"), _mapping(id="c2")],
         [_mapping(id="u1"), _mapping(id="u2")],
     ]
     rel = _Rel(script)
@@ -548,6 +549,7 @@ async def test_a_batch_carries_each_ops_own_anchors_into_its_statement() -> None
     assert _statement_names(session) == ["_SNAPSHOT", "_INSERT_MANY", "_UPDATE_MANY"]
     assert _row_anchors(session.params[1]) == {
         "c1": (_A_START.isoformat(), _A_END.isoformat()),
+        "c2": (_B_START.isoformat(), _A_END.isoformat()),
     }
     assert _row_anchors(session.params[2]) == {
         "u1": (_B_START.isoformat(), _B_END.isoformat()),
