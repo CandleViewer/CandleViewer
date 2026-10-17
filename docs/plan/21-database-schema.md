@@ -1512,6 +1512,8 @@ CREATE TRIGGER trg_exec_no_truncate BEFORE TRUNCATE ON executions
 
 The unique `(exchange_account_id, exec_id)` is the **dedup key** — the private WS `execution` and `execution.fast` streams plus REST backfill all insert with `ON CONFLICT DO NOTHING`, which makes gap-backfill after a reconnect safe and repeatable.
 
+**Writes (E29-T01).** Rows are written only through the execution store (`storage/repositories/executions_sqlalchemy.py`, behind the OMS's `ExecutionRepository`), whose insert is that `ON CONFLICT (exchange_account_id, exec_id) DO NOTHING` and reports whether it stored the row. It binds `order_id` through a subquery scoped to the execution's account, so another account's order is refused (`OrderNotFoundError`) and nothing is stored. The insert is its own transaction, capped at 2 s like the order store's; E29-T03's `apply_execution`, which must write a fill and its order's totals in one transaction, is to extend the store for that.
+
 `order_events` and `executions` carry the `audit_log` guards of §3.10.1 beside their row triggers (C-5.7; [main-orchestrator ruling recorded on #845](https://github.com/basiltt/CandleViewer/issues/845#issuecomment-6220571436)): a `BEFORE TRUNCATE` statement trigger and no `UPDATE`, `DELETE` or `TRUNCATE` grant for `cv_app` or `cv_ro`, revoked by the migration wherever the role exists.
 
 #### 3.3.7 `positions` — latest snapshot + history
@@ -1578,6 +1580,8 @@ CREATE INDEX ix_psnap_sym_time  ON position_snapshots (symbol, snap_ts DESC);
 ```
 
 `ix_pos_no_sl` backs the same safety invariant as `ix_tgl_no_sl` but at exchange-truth level: an open position with no exchange-side stop is a `critical` system event.
+
+**Writes (E29-T01).** Rows are written only through the position store (`storage/repositories/positions_sqlalchemy.py`, behind the OMS's `PositionRepository` and `PositionSnapshotRepository`). Its upsert is `ON CONFLICT (exchange_account_id, symbol, position_idx) DO UPDATE`: the row takes the exchange's state and `recv_ts` and `updated_at` become `now()`. The last write wins, so the OMS must apply an account's position updates in exchange order (`24-internal-schemas.md` §8.2 S5; E29-T05, E29-T06). A `take_profit`, `stop_loss` or `trailing_stop` of 0 or less is stored as NULL: Bybit's `"0"` means none, and a stored 0 would hide an unprotected position from `ix_pos_no_sl` (C-2.6). `list_unprotected` (an account's open positions with no stop-loss) and `list_open` render `size > 0` with a literal 0, so the planner matches `ix_pos_no_sl` and `ix_pos_open`.
 
 #### 3.3.8 `wallet_balances`
 
