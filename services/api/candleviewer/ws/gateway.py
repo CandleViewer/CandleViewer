@@ -842,6 +842,15 @@ def make_ws_router(
             # began closing while this auth was in flight.
             cv_ws_auth_failures_total.labels(reason=failure).inc()
             conn.auth_failures += 1
+            # A closed `reason` and counts only: the exception text can carry client input.
+            _log().warning(
+                "ws auth failed",
+                connection_id=conn.connection_id,
+                reason=failure,
+                attempt=conn.auth_failures,
+                reauth=reauth,
+                source_ip=_source_ip(conn.ws.scope),
+            )
             third = conn.auth_failures >= MAX_AUTH_FAILURES
             if third:
                 await audit_auth_failure(conn)

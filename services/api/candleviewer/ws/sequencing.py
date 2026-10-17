@@ -147,6 +147,13 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
+def _logged_seq(value: object) -> int | None:
+    """A client's `last_seq` as a log field: a plain int in [0, 2**53), else None (not logged).
+    The schema allows any integer, and the JSON renderer (orjson) raises on one above 64 bits, which
+    would lose the whole line, so a value is clamped here rather than at render time."""
+    return value if type(value) is int and 0 <= value < 2**53 else None
+
+
 def _dumps(frame: Mapping[str, Any]) -> str:
     """Same serialization as the gateway writer, so size checks match the wire."""
     return json.dumps(frame, separators=(",", ":"))
@@ -517,13 +524,17 @@ class TopicEmitter:
         cv_ws_snapshot_bytes.labels(topic=fam).observe(total)
         if reason in COUNTED_SNAP_REASONS:
             cv_ws_resync_total.labels(reason=reason).inc()
-            _log().info(
-                "ws resync",
-                connection_id=self.connection_id,
-                ch=sub.ch,
-                reason=reason,
-                previous_seq=previous,
-            )
+            fields = {
+                "connection_id": self.connection_id,
+                "ch": sub.ch,
+                "reason": reason,
+                "previous_seq": previous,
+            }
+            # 23 §7.4's incidents, `upstream_desync` and `backpressure`, log at warning.
+            if reason in INCIDENT_REASONS:
+                _log().warning("ws resync", **fields)
+            else:
+                _log().info("ws resync", **fields)
         return True
 
     def _frames(
@@ -629,11 +640,33 @@ class TopicEmitter:
             return
         if reason == "sequence_gap":
             cv_ws_sequence_gaps_detected_total.inc()
+        # What the client says beside what the server numbered: a gap is one side's bug.
+        fields: dict[str, Any] = {
+            "connection_id": self.connection_id,
+            "ch": sub.ch,
+            "client_reason": reason,
+            "server_seq": sub.seq,
+        }
+        if (seen := _logged_seq(last_seq)) is not None:
+            fields["client_last_seq"] = seen
+        # Of a client's reasons only `sequence_gap` is an incident (23 §7.1); §7.4 names no other.
+        if reason == "sequence_gap":
+            _log().warning("ws client resync", **fields)
+        else:
+            _log().info("ws client resync", **fields)
         now = self.clock()
         window = sub.resyncs
         while window and now - window[0] >= RESYNC_WINDOW_S:
             window.popleft()
         if len(window) >= RESYNC_MAX_PER_WINDOW:
+            _log().warning(
+                "ws resync rate limited",
+                connection_id=self.connection_id,
+                ch=sub.ch,
+                client_reason=reason,
+                limit=RESYNC_MAX_PER_WINDOW,
+                window_s=RESYNC_WINDOW_S,
+            )
             self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))
             self.push(authz.revoke(sub, "resync_rate_limited", self.wall_ms()))
             return
