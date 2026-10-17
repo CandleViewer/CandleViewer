@@ -31,9 +31,9 @@ Single home for every bound the gateway enforces. Overflow policy:
   frames, or when the change raises or is cancelled, each under
   `FANOUT_AUDIT_TIMEOUT_S`; after `FANOUT_AUDIT_MAX_FAILURES` failed rows in a
   row the rest are abandoned and logged with a count (#2824).
-- A `resync`, or a `ctl` that would re-snapshot, past the connection's rebuild
-  budget -> `resync_rate_limited`; the `resync` also revokes its subscription, the
-  `ctl` changes nothing (SR-193, `ws/rebuild_budget.py`).
+- A `resync`, a `ctl` that would re-snapshot or a `sub` entry that would start a
+  subscription, past the connection's rebuild budget -> `resync_rate_limited`; it
+  changes nothing, and only a topic's own resync loop is revoked (SR-193).
 """
 
 from __future__ import annotations

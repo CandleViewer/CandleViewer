@@ -708,14 +708,13 @@ class TopicEmitter:
             _log().info("ws client resync", **fields)
         budget, key = authz.rebuilds, topic_key(sub.topic, sub.replay_session_id)
         if (scope := budget.take(key, "resync")) is not None:
-            spent = budget.refused(
-                "resync", scope, self.connection_id, sub.ch, client_reason=reason
-            )
+            budget.log("resync", scope, self.connection_id, sub.ch, client_reason=reason)
+            spent = budget.count_refusal("resync", scope)
             if budget.drawn(key, "resync") < budget.limits["topic"]:  # spent by `ctl`/`sub` too
                 message = f"{spent}; no snapshot was taken."
                 self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch, message=message))
                 return None  # the subscription continues (§7.5)
-            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))  # its own loop: AC-17
+            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))
             revoked = authz.revoke(sub, "resync_rate_limited", self.wall_ms())
             self.push(revoked)
             return revoked

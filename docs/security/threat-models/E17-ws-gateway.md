@@ -4,8 +4,8 @@
   review log in §10). Accepted residuals WS-I04 and WS-R04 are owner-accepted per #1778 (2026-10-12; review date
   2027-01-15). WS-D15's controls (SR-192, #2292; a per-connection budget for its denial records, #3185) are built and
   its row is re-scored residual Low (#3185; Medium in #3123 before the budget; recorded as RR-08 in
-  `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is Open, tracked in #2293, and is
-  residual Medium until #2293 merges.
+  `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16's control (SR-193, #2293) is
+  built and its row is residual Low.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1). Format mirrors `E13-indicators.md`. Reuses the E09 auth/RBAC model (`e09-auth-rbac.md`, U-rows);
   those threats are **referenced, not duplicated**. Upstream Bybit connection security is E08's model.
@@ -180,7 +180,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------- | ----- | ------------------------- |
 | WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Off (default): 1 024-frame push bound, `4429 slow_consumer`. Built behind `CV_WS_BACKPRESSURE_ENABLED` (off): 8 MiB / 2 000 frames (also the §6 performance budget) and the ladder (SR-073); Low stays contingent on its 23 §8.6 gates (#2900). A flush past 2 s is abandoned, never the attempt (S11 exception, 23 §4.4)           | E17-T03, #2155   | unit, chaos               | M     | Low                       |
 | WS-D02 | F3, P1           | Slow auth/principal lookup stalls the handshake while sockets accumulate                                                                                                                                                                                                                                                                                          | L   | M   | Low    | Auth timeout closes the socket; each call an `auth` makes is bounded at 6 s, past which the socket closes `bye internal_error` + `1011` (#2155, C-2.18) Requirement: SR-073.                                                                                                                                                        | #2155            | unit                      | M     | Low                       |
-| WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | A topic's 6th resync in a minute gets `resync_rate_limited` and revocation. Since #2293 resyncs draw on the connection's rebuild budget (5 per topic, 400 per connection, sliding 60 s, kept across `unsub`/`sub`; WS-D16), whose other refusals keep the subscription Requirement: SR-040.                                         | E17-S03, #2293   | unit, chaos               | M     | Low                       |
+| WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | A topic's 6th resync in a minute, its 5 draws all resyncs, gets `resync_rate_limited` and revocation. Since #2293 resyncs draw on the connection's rebuild budget (the 23 §16.2 limits, kept across `unsub`/`sub`; WS-D16), whose other refusals keep the subscription Requirement: SR-040.                                         | E17-S03, #2293   | unit, chaos               | M     | Low                       |
 | WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (a longer frame is refused whole before any entry is read, so per-frame work, reply size and audit writes stay bounded: WS-D15, #2292), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073.                                   | E17-S02          | unit, load                | M     | Low                       |
 | WS-D05 | F2, P1           | Inbound frame flood                                                                                                                                                                                                                                                                                                                                               | M   | M   | Medium | 30 frames/s and 300/min, before and after auth, a `pong` included until `auth_ok`; second breach closes `4429`; 3 protocol violations close `4400` Requirement: SR-040.                                                                                                                                                             | E17-S01          | unit                      | M     | Low                       |
 | WS-D06 | F2, P1           | Oversized inbound frame                                                                                                                                                                                                                                                                                                                                           | M   | M   | Medium | 256 KiB (8 KiB until `auth_ok`) checked on raw bytes before decode, close 1009 Requirement: SR-040.                                                                                                                                                                                                                                 | E17-S01          | unit                      | M     | Low                       |
@@ -193,7 +193,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-D13 | F1-F2, P1        | Fragmentation reassembly: many continuation frames held open to accumulate buffered state                                                                                                                                                                                                                                                                         | L   | M   | Low    | Same server message-size limit bounds the reassembled message; per-connection server queue limit (SR-191); auth timeout closes idle pre-auth sockets                                                                                                                                                                                | #2176, E17-S01   | integration               | M     | Low                       |
 | WS-D14 | F1, P1           | Slowloris on the upgrade: HTTP upgrade requests sent slowly to hold server slots before the app sees the socket                                                                                                                                                                                                                                                   | L   | M   | Low    | Server keep-alive/handshake timeouts not explicitly configured; set explicit server timeouts and connection limits (SR-191); tailnet-only reachability (SR-045/047)                                                                                                                                                                 | #2176            | integration               | M     | Low after #2176           |
 | WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built: a `sub` of over 50 entries is refused whole before any entry is read (one small `err`, no audit row); a processed frame's audited refusals are one `ws.subscribe.denied` record and its reply holds at most 50 results (SR-192, #2292); a connection writes at most 20 such records in a minute, the rest counted (#3185) | #2292, #3185     | unit, load, chaos (AC-29) | M     | Low                       |
-| WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached                                                                                                                            | M   | M   | Medium | One rebuild budget per connection (SR-193, 23 §7.5): `resync` and `ctl` re-snapshots draw on it; `sub` churn joins with #2293's `sub` path, bounded until then by 30 frames/s only. Outside it: `backpressure` rebuilds (the §8.4 ladder bounds them) and `replay_seek` (the replay control endpoint's)                             | #2293            | unit, load (AC-30)        | M     | Medium until #2293 merges |
+| WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached                                                                                                                            | M   | M   | Medium | One budget per connection (SR-193, 23 §7.5, limits in §16.2): `resync`, `ctl` re-snapshots and `sub` starts draw on it, so it also bounds the grant records of private-topic churn (#2174). Outside it: `backpressure` rebuilds (the §8.4 ladder bounds them) and `replay_seek` (the replay endpoint's)                             | #2293            | unit, contract (AC-30)    | M     | Low: per-connection limit |
 | WS-D17 | F13, P1          | The planned shutdown outruns the container stop budget, or uvicorn's drain never ends: SIGKILL cuts off the storage flushes and secrets zeroing of the module teardown. Outside the sum today: `BarsRuntime.stop` (up to 30 s with bars on) and the metrics listener's unbounded drain, each able to use the budget alone (#2878); #2827 adds a 2 s term to it    | M   | M   | Medium | `Settings` refuses a `CV_WS_SHUTDOWN_GRACE_MS` that cannot fit `CV_API_STOP_BUDGET_S` (grace + 2 s flush + drain + 16 s for one hung module + 0.2 s of ticks; the lifespan's earlier stops are outside it); uvicorn drain bounded, and not below the 4 s one close can need; compose `stop_grace_period` equals the budget          | #2565, #2878     | unit                      | M     | Low                       |
 
 ### 3.6 Elevation of privilege
@@ -226,7 +226,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 
 Every STRIDE category has analysed rows. Counts: 52 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
 WS-I09 and WS-I10 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored Medium in #3123, Low in #3185);
-residual Medium: WS-D08, WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until
+residual Medium: WS-D08, and WS-D11, WS-D12, WS-D14 until
 #2176 merges (open items, §10).
 
 ## 4. WS authentication and the 10-second unauthenticated window
@@ -351,7 +351,7 @@ security review in the same PR.
 | Auth call bound                        | 6 s per call                    | Handshake stall (D02)        | —                              | merged (#2155)                                 |
 | Outbound budget                        | 8 MiB or 2 000 frames           | Slow consumer (D01)          | Epic AC: memory per connection | built, flag off (#412); 1 024 frames while off |
 | Max outbound frame                     | 4 MiB, chunked snapshots        | D10                          | Snapshot latency               | planned E17-S03                                |
-| Resync rate                            | 5 / topic / min                 | Resync loop (D03)            | Snapshot rebuild cost          | planned E17-S03                                |
+| Rebuild budget                         | 23 §16.2 (topic, connection)    | Forced rebuilds (D03, D16)   | Snapshot rebuild cost          | merged                                         |
 | Min throttle                           | 50 ms (0 for orders/executions) | Amplification (D08)          | Budget #3 tick-to-screen       | built, flag off (#412)                         |
 | Fan-out send timeout                   | 2 s                             | Revocation fan-out (D09)     | —                              | merged                                         |
 | Fan-out audit row timeout / give-up    | 2 s / 3 failed rows in a row    | Revocation audit (R02, R04)  | Change duration                | merged                                         |
@@ -373,8 +373,8 @@ the queue. The release runs before the audit by construction, as its own teardow
 `test_gateway_teardown.py` shows that a release which raises skips neither the audit nor the other steps. The `bye`
 and the close marker are the only items admitted past the budget (`23-ws-protocol.md` §8.4), and a connection queues
 one `bye`, so the bound holds to within one small frame. Until #2529, footprint bars that share an open time make
-every update `unmergeable`: the topic is re-snapshotted per window with no rate bound (the 5 / topic / min limit
-covers client resyncs only, WS-D03). It counts apart as `cv_ws_overflow_total{reason="unmergeable"}`: alert on its
+every update `unmergeable`: the topic is re-snapshotted per window with no rate bound (the rebuild budget covers
+client frames only, SR-193). It counts apart as `cv_ws_overflow_total{reason="unmergeable"}`: alert on its
 rate. The bound, and the alert until it lands, are #3297, a gate for the flag (`23-ws-protocol.md` §8.6).
 
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
@@ -451,6 +451,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-30 | Loop `ctl` identity-option flips on one topic, and 50-entry unsub/sub churn, for 60 s                                                      | The shared budget caps rebuilds and the `ws.subscribe.granted` rows each cycle writes; `resync_rate_limited`; no unbounded snapshot builds (SR-193)     | WS-D16          |
 
 AC-29 as built (#2292): the frame is refused whole before any entry is read, so it writes no audit row; a frame within the cap writes at most one aggregated `ws.subscribe.denied` record (23-ws-protocol.md §5.2). Its "audited order path still succeeds" leg is E17-X02's (#415).
+AC-30 as built (#2293): a contract test on the fake clock, through the real gateway on both wires: a `ctl` flip each second and an `unsub` and `sub` of 50 topics every 2 s, for 60 s with a new generation each step, get `resync_rate_limited` on both paths, take at most 5 re-snapshots and 5 restarts per topic, keep the socket open, and get capacity back once the window slides. The load run stays with E17-Q03.
 
 ## 8. Observability: threats that must be detectable
 
@@ -461,6 +462,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Repeated `auth_failed` per identity | auth-failure `warning` (3rd failure) | `cv_ws_auth_failures_total{reason}`              | S03, R03 | merged; per source by `actor_ip` (#2174) |
 | Slow-consumer closes per identity   | `ws.connection.closed`, `warning`    | `cv_ws_closes_total{reason="slow_consumer"}`     | D01      | merged (#2486; alert #3035)              |
 | Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | merged (#2174)                           |
+| Rebuild-budget refusals             | none of its own; capped log line     | `cv_ws_rebuild_refused_total{kind,cause}`        | D03, D16 | merged                                   |
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged (within the 23 §4.3 budget)       |
 | Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
 | Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
@@ -471,6 +473,10 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Per-user connect-rate refusals      | none, by design; capped log line     | `cv_ws_connect_rate_limited_total`               | D07      | merged (#2558)                           |
 | Sockets shed awaiting auth (#2155)  | none (no identity); capped log line  | `cv_ws_closes_total` (`server_shedding_load`)    | S03, D07 | merged (#2155)                           |
 | Denial records past the WS budget   | none past budget; capped log line    | `cv_ws_subscribe_denied_unaudited_total`         | D15      | merged (#3185)                           |
+
+A rebuild-budget refusal writes no row of its own: one per refused entry would grow with the client's frames.
+A refused private-family `sub` entry is still in its frame's one `ws.subscribe.denied` record (23 §5.2), within
+#3185's per-connection budget (23 §4.3).
 
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
@@ -640,7 +646,7 @@ scope on the open tickets named above.
   `ws.subscribe.granted` record when it makes a new private subscription (WS-R01). The budget built here (§8) covers
   the denial records: a connection writes at most 20 in any 60 s, and the rest are counted, not written. It does not
   cover the grant records; the private-topic `unsub`/`sub` churn that grows those is WS-D16's, bounded by #2293's
-  rebuild budget (residual Medium until it merges). Likelihood stays Low: one socket adds at most 20 denial records a
+  rebuild budget (residual Low since it was built). Likelihood stays Low: one socket adds at most 20 denial records a
   minute whatever it sends, and adding more takes new sockets, which the connect rate and the 8-socket cap bound
   (D07) and each of which writes its own `ws.connection.closed` row. With the default limits a user's worst case is
   (8 open + 20 new sockets in a minute) x 20 = 560 denial records a minute, plus a `ws.connection.closed` row for each
@@ -655,7 +661,7 @@ scope on the open tickets named above.
   - WS-D11, WS-D12, WS-D14: transport-layer limits enforced by the ASGI server are not explicitly configured;
     Low once #2176 merges. Part of **RSK-063**.
   - WS-D08: per-user amplification on hot symbols is bounded but unmeasured until E17-Q03. **RSK-063**.
-- **Contingent Low:** WS-D01, WS-D03, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
+- **Contingent Low:** WS-D01, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
   E17-T04); re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
   behind `CV_WS_BACKPRESSURE_ENABLED`, which is off by default (#412), so its Low stays contingent until the flag is
   on, after the gates `23-ws-protocol.md` §8.6 lists (#3268, #3262, #3297, #3100, #413, #571, #410, #568; #2900
@@ -668,7 +674,7 @@ scope on the open tickets named above.
   unauthenticated-window argument (§4) holds only for tailnet-only exposure.
 - Status is **Approved** (2026-10-13). WS-D15 is residual Low since its denial-record budget was built (#3185; Medium
   after SR-192, #2292 and #3123; RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending);
-  WS-D16 is residual Medium until #2293 merges.
+  WS-D16 is residual Low since SR-193 was built (#2293).
 
 ### Review log
 
@@ -699,4 +705,4 @@ scope on the open tickets named above.
 | 2026-10-17 | author (agent; PR for #571 slice D2)              | WS-I10 added (#571 D2): `sp` from the OS CSPRNG per frame, a log field only; a client's `sp` never read, echoed or logged (§3.4, §3.7)       |
 | 2026-10-17 | author (agent; PR for #3185)                      | WS-D15 Low: 20 `ws.subscribe.denied` records a minute per connection, rest counted; §8 row and budget; §10, counts                           |
 | 2026-10-17 | author (agent; PR for #412 S5)                    | E17-T03 as built behind its flag (off): §1, §1.1, WS-D01, WS-D08, §5, §6 (probe `pong`, #3297), §9, §10; no rating or count changes          |
-| 2026-10-17 | author (agent; PR for #2293)                      | SR-193: WS-D03/D16 controls (`resync`, `ctl` draw on the budget; `backpressure`, `replay_seek` outside it); `sub` path next                  |
+| 2026-10-17 | author (agent; PR for #2293)                      | SR-193 built: WS-D03/D16 controls (all three paths), WS-D16 Low; §1/§10 status, §3.7, §6 and §8 rows, AC-30 note                             |

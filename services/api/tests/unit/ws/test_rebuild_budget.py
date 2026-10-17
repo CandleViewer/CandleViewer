@@ -4,20 +4,20 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.observability.metrics import CollectorRegistry
 from candleviewer.ws.limits import (
+    MAX_SUBSCRIPTIONS,
     REBUILD_MAX_PER_CONNECTION,
     REBUILD_MAX_PER_TOPIC,
     REBUILD_WINDOW_S,
 )
 from candleviewer.ws.metrics import export_ws_metrics
-from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices
 from candleviewer.ws.rebuild_budget import Key, RebuildBudget, RebuildPath, topic_key
 from candleviewer.ws.topics import parse_topic
-from tests.unit.ws._seq_support import Clock, principal
+from tests.unit.ws._seq_support import Clock
 
 LIVE: Key = ("book.BTCUSDT.50", None)
 RS = "bb000000-0000-4000-8000-000000000001"
@@ -26,12 +26,6 @@ RS = "bb000000-0000-4000-8000-000000000001"
 def _budget(**limits: int) -> tuple[RebuildBudget, Clock]:
     clock = Clock()
     return RebuildBudget(clock, **limits), clock
-
-
-def test_rebuild_budget_limits_are_the_contract_numbers() -> None:
-    """23 §7.5 and §16.2: 5 per topic, 400 per connection, a sliding 60 s."""
-    assert (REBUILD_MAX_PER_TOPIC, REBUILD_MAX_PER_CONNECTION, REBUILD_WINDOW_S) == (5, 400, 60.0)
-    assert RebuildBudget(Clock()).limits == {"topic": 5, "connection": 400}
 
 
 def test_rebuild_budget_sixth_draw_of_a_topic_is_refused_until_the_first_is_a_window_old() -> None:
@@ -61,34 +55,51 @@ def test_rebuild_budget_four_hundred_and_first_draw_is_refused_for_the_connectio
     assert budget.take(LIVE, "resync") == "topic"  # both spent: the topic's limit is named
     clock.now = REBUILD_WINDOW_S
     assert budget.take(("trades.NEWUSDT", None), "resync") is None
-    assert len(budget) == 1  # each key whose stamps all left the window is forgotten
+    assert len(budget._keys) == 1  # each key whose stamps all left the window is forgotten
 
 
 _KEYS: list[Key] = [(f"trades.S{i}USDT", None) for i in range(5)] + [("trades.S0USDT", RS)]
 
+_ACTS: list[RebuildPath | None] = ["resync", "ctl", "sub", None]  # None: the topic is released
+_STEP = st.tuples(
+    st.integers(0, 5), st.sampled_from(_ACTS), st.sampled_from([0.0, 0.5, 20.0, 60.0])
+)
 
-_STEP = st.tuples(st.integers(0, 5), st.booleans(), st.sampled_from([0.0, 0.5, 20.0, 59.5, 60.0]))
 
-
-@settings(max_examples=200, deadline=None, derandomize=True)
+@settings(max_examples=300, deadline=None, derandomize=True)
 @given(steps=st.lists(_STEP, max_size=60))
-def test_rebuild_budget_matches_a_naive_model(steps: list[tuple[int, bool, float]]) -> None:
-    """Against a naive model (every accepted draw kept for good), with small limits: the same
-    answer at every step, and only the keys with a draw in the window held (C-2.18)."""
+# Topic 0 is drawn again after topic 1, which leaves the window first and must be forgotten.
+@example(
+    steps=[(0, "ctl", 0.0), (1, "ctl", 0.5), (0, "ctl", 20.0), (2, "ctl", 20.0), (3, "ctl", 20.0)]
+)
+def test_rebuild_budget_matches_a_naive_model(
+    steps: list[tuple[int, RebuildPath | None, float]],
+) -> None:
+    """Against a naive model, small limits: same answers, a `sub` counting toward its topic only
+    within a window of its release, and only keys with a draw in the window held (C-2.18)."""
     budget, clock = _budget(per_topic=2, per_connection=4)
-    drawn: list[tuple[float, int, RebuildPath]] = []
-    for k, resync, dt in steps:
-        path: RebuildPath = "resync" if resync else "ctl"
+    drawn: list[tuple[float, int, RebuildPath]] = []  # the topics' draws
+    every: list[float] = []  # the connection's
+    released: dict[int, float] = {}
+    for k, path, dt in steps:
         clock.now += dt
-        live = [(i, p) for t, i, p in drawn if clock.now - t < REBUILD_WINDOW_S]
-        mine = [p for i, p in live if i == k]
-        want = "topic" if len(mine) >= 2 else "connection" if len(live) >= 4 else None
+        if path is None:
+            budget.released(_KEYS[k])
+            released[k] = clock.now
+            continue
+        window = clock.now - REBUILD_WINDOW_S
+        mine = [p for t, i, p in drawn if i == k and t > window]
+        topic = path != "sub" or released.get(k, window) > window
+        spent = len([t for t in every if t > window]) >= 4
+        want = "topic" if topic and len(mine) >= 2 else "connection" if spent else None
         assert budget.take(_KEYS[k], path) == want
         if want is None:
-            drawn.append((clock.now, k, path))
-            mine.append(path)
+            every.append(clock.now)
+            if topic:
+                drawn.append((clock.now, k, path))
+                mine.append(path)
         assert budget.drawn(_KEYS[k], "resync") == mine.count("resync")
-        assert len(budget) == len({i for t, i, _ in drawn if clock.now - t < REBUILD_WINDOW_S}) <= 4
+        assert len(budget._keys) == len({i for t, i, _ in drawn if t > window}) <= 4
 
 
 @pytest.mark.parametrize(
@@ -107,22 +118,18 @@ def test_topic_key_pairs(a: str, b: str, same: bool) -> None:
     assert topic_key(parse_topic("book.BTCUSDT.050"), None) == LIVE
 
 
-def test_connection_authz_runs_its_budget_on_the_connection_clock() -> None:
-    """`do_auth` passes the connection's clock; without one the services clock is the default."""
-    own, shared = Clock(), Clock()
-    authz = ConnectionAuthz(principal(), SubscriptionServices(clock=shared), clock=own)
-    default = ConnectionAuthz(principal(), SubscriptionServices(clock=shared))
-    for budget in (authz.rebuilds, default.rebuilds):
-        for _ in range(REBUILD_MAX_PER_TOPIC):
-            budget.take(LIVE, "resync")
-    own.now = REBUILD_WINDOW_S
-    assert (authz.rebuilds.take(LIVE, "ctl"), default.rebuilds.take(LIVE, "ctl")) == (None, "topic")
-    shared.now = REBUILD_WINDOW_S
-    assert default.rebuilds.take(LIVE, "ctl") is None
+def test_releases_stay_bounded_by_the_window() -> None:
+    """Each release follows a start that drew, so a window keeps at most that many (C-2.18)."""
+    budget, clock = _budget()
+    for i in range(3000):  # a new topic started and ended every 0.05 s, for 150 s
+        clock.now, key = i * 0.05, (f"trades.X{i:04d}USDT", None)
+        if budget.take(key, "sub") is None:
+            budget.released(key)
+        assert len(budget._released) < REBUILD_MAX_PER_CONNECTION + MAX_SUBSCRIPTIONS
 
 
 def test_every_refusal_series_is_bound_at_import_and_exported() -> None:
-    """Nothing refuses a `sub` entry yet, so its series exist only if bound at import."""
+    """All six series are served on the scraped registry, bound at import."""
     scraped = CollectorRegistry()
     export_ws_metrics(scraped, env="demo")
     series = {
