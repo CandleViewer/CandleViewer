@@ -21,6 +21,9 @@ class ErrorCode(StrEnum):
     MFA_REQUIRED = "mfa_required"
     MFA_INVALID = "mfa_invalid"
     REFRESH_TOKEN_INVALID = "refresh_token_invalid"
+    SESSION_IDLE_LOCKED = "session_idle_locked"
+    UNLOCK_INVALID = "unlock_invalid"
+    SESSION_REVOKED = "session_revoked"
     STEP_UP_REQUIRED = "step_up_required"
     SESSION_READ_ONLY = "session_read_only"
     POSITIONS_UNKNOWN = "positions_unknown"
@@ -97,6 +100,9 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.MFA_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "Multi-factor authentication challenge must be completed"),
     ErrorCode.MFA_INVALID: ErrorMeta(("rest",), None, False, None, None, "MFA code rejected"),
     ErrorCode.REFRESH_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "Refresh token unknown, rotated away, or revoked (possible reuse attack)"),
+    ErrorCode.SESSION_IDLE_LOCKED: ErrorMeta(("rest",), None, False, None, None, "Session is idle-locked; unlock it with the password (POST /auth/unlock)"),
+    ErrorCode.UNLOCK_INVALID: ErrorMeta(("rest",), None, False, None, None, "Unlock password rejected"),
+    ErrorCode.SESSION_REVOKED: ErrorMeta(("rest",), None, False, None, None, "Session revoked or past its absolute lifetime; sign in again"),
     ErrorCode.STEP_UP_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "A dangerous action needs a live step-up elevation for its action class"),
     ErrorCode.SESSION_READ_ONLY: ErrorMeta(("rest",), None, False, None, None, "Session is read-only for 5 minutes after three invalid step-up codes"),
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "Open-position state is unavailable; resend with acknowledge_unknown_positions=true"),

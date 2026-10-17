@@ -349,6 +349,18 @@
                   "title": "Missing, malformed or expired access token",
                   "type": "https://candleviewer.local/errors/unauthenticated"
                 }
+              },
+              "idleLocked": {
+                "summary": "Any authenticated operation on an idle-locked session (#2300)",
+                "value": {
+                  "code": "session_idle_locked",
+                  "detail": "Unlock with your password to continue.",
+                  "idle_locked_at": "2026-09-14T10:46:02Z",
+                  "instance": "urn:cv:req:0193f2bb-1112",
+                  "status": 401,
+                  "title": "Session is idle-locked; unlock it with the password (POST /auth/unlock)",
+                  "type": "https://candleviewer.local/errors/session_idle_locked"
+                }
               }
             },
             "schema": {
@@ -356,7 +368,7 @@
             }
           }
         },
-        "description": "Not authenticated."
+        "description": "Not authenticated. `code: session_idle_locked` (with `idle_locked_at`) means the session is valid but idle-locked: unlock it with `POST /auth/unlock` instead of signing in again."
       },
       "UnprocessableEntity": {
         "content": {
@@ -1726,6 +1738,11 @@
             },
             "type": "object"
           },
+          "idle_locked_at": {
+            "description": "`session_idle_locked` only: when the session idle-locked (its `idle_deadline`).",
+            "format": "date-time",
+            "type": "string"
+          },
           "instance": {
             "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry.",
             "type": "string"
@@ -1738,6 +1755,15 @@
           },
           "retry_after_seconds": {
             "type": "integer"
+          },
+          "revoked_reason": {
+            "description": "`session_revoked` only. `expired`: the 12 h absolute lifetime elapsed. `unlock_attempts_exceeded`: five consecutive wrong unlock passwords. `revoked`: any other revocation; the specific cause is not disclosed.\n",
+            "enum": [
+              "expired",
+              "unlock_attempts_exceeded",
+              "revoked"
+            ],
+            "type": "string"
           },
           "status": {
             "maximum": 599,
@@ -2380,6 +2406,14 @@
     },
     "/auth/logout": {
       "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "refreshCookie": []
+          }
+        ],
         "x-rbac": {
           "permissions": [],
           "scope": "self"
@@ -2457,6 +2491,22 @@
     },
     "/auth/session": {
       "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "refreshCookie": []
+          }
+        ],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/session/extend": {
+      "post": {
         "x-rbac": {
           "permissions": [],
           "scope": "self"
@@ -2473,6 +2523,22 @@
     },
     "/auth/step-up": {
       "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/unlock": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "refreshCookie": []
+          }
+        ],
         "x-rbac": {
           "permissions": [],
           "scope": "self"
