@@ -22,7 +22,8 @@ def test_the_statement_set_is_pinned() -> None:
     assert set(_STATEMENTS) == {
         "_LOCK_USER", "_WS_LOCK", "_WS_COUNT", "_WS_CLEAR_DEFAULT", "_WS_INSERT", "_WS_UPDATE",
         "_WS_GET", "_WS_LIST", "_WS_SOFT_DELETE", "_LAYS_SOFT_DELETE", "_LAY_SOFT_DELETE",
-        "_DRAWINGS_SOFT_DELETE", "_WS_LIVE", "_LAY_COUNT", "_LAY_LOCK", "_LAY_CLEAR_DEFAULT",
+        "_DRAWINGS_SOFT_DELETE", "_WS_LIVE", "_LAY_COUNT", "_LAY_LOCK", "_LAYS_LOCK",
+        "_LAY_REPLACE_LOCK", "_LAY_CLEAR_DEFAULT",
         "_LAY_INSERT", "_LAY_UPDATE", "_LAY_GET", "_LAY_LIST", "_PANES", "_PANES_DELETE",
         "_PANES_INSERT", "_IS_LIVE_LAYOUT", "_EXISTS_OTHER_WS", "_EXISTS_OTHER_LAY",
         "_CHART_OPEN", "_CHART_SYMBOLS", "_PURGE_LAYOUTS", "_PURGE_WORKSPACES", "_USERS_BY_BUCKET",
@@ -46,11 +47,15 @@ def test_unscoped_statements_are_exactly_the_documented_seven() -> None:
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 
 
-@pytest.mark.parametrize("name", ["_LAY_LOCK", "_PANES", "_LAY_LIST", "_WS_LIST"])
+@pytest.mark.parametrize(
+    "name", ["_LAY_LOCK", "_LAYS_LOCK", "_LAY_REPLACE_LOCK", "_PANES", "_LAY_LIST", "_WS_LIST"]
+)
 def test_multi_row_reads_and_locks_are_ordered(name: str) -> None:
     assert "ORDER BY" in str(_STATEMENTS[name])
     if name == "_LAY_LOCK":
         assert "ORDER BY id FOR UPDATE" in str(_STATEMENTS[name])
+    if name in ("_LAYS_LOCK", "_LAY_REPLACE_LOCK"):  # id order, like the drawings FOR SHARE
+        assert str(_STATEMENTS[name]).endswith("ORDER BY id FOR NO KEY UPDATE")
 
 
 @pytest.mark.parametrize(
@@ -92,3 +97,18 @@ async def test_purge_rejects_unsafe_arguments_before_touching_the_database(
     unused: Any = object()  # never touched: the ValueError fires first
     with pytest.raises(ValueError, match="purge needs"):
         await mod.SqlAlchemyWorkspaceRepository(unused).purge_deleted(days, limit)
+
+
+def test_purges_skip_parents_that_still_have_live_children() -> None:
+    """D21 defence in depth: a stuck parent stays visible; FK cascades never reach live rows."""
+    lay, ws = (
+        " ".join(str(_STATEMENTS[n]).split()) for n in ("_PURGE_LAYOUTS", "_PURGE_WORKSPACES")
+    )
+    assert (
+        "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = layouts.id "
+        "AND d.deleted_at IS NULL) ORDER BY deleted_at LIMIT :limit"
+    ) in lay
+    assert (
+        "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = workspaces.id) "
+        "ORDER BY deleted_at LIMIT :limit"
+    ) in ws

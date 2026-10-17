@@ -4,10 +4,14 @@ Static, parameterised `sa.text` only. Every statement is filtered by the caller 
 C-12.4 data-layer re-check) except `UNSCOPED`: the two `exists_for_other_owner` probes (their
 purpose), the recorder probes (all users, E16) and the retention purge. Transactions follow
 spec Sec.5: READ COMMITTED, one `unit_of_work()` per write; lock order is always
-advisory(user) -> workspace row -> layout rows -> panes/drawings. Multi-row UPDATEs carry no
-`ORDER BY`: they cannot deadlock because the per-user advisory lock (workspace writes) and the
-workspace row lock (layout writes) already serialise every writer of those rows; the single
-layout lock (`_LAY_LOCK`) is the only multi-statement row lock and is taken by `ORDER BY id`.
+advisory(user) -> workspace row -> layout rows -> panes/drawings. The advisory lock (workspace
+writes) and the workspace row lock (layout writes) serialise this repository's own writers, but
+the drawings writes share-lock layouts too (`FOR SHARE`, `ORDER BY id`, spec Sec.7). So every
+writer that updates more than one layout row locks those rows first, in id order
+(`_LAYS_LOCK`, `_LAY_REPLACE_LOCK`; `FOR NO KEY UPDATE`, the lock its UPDATEs take anyway), and
+the single-row writers lock one row by id (`_LAY_LOCK`): no two layout lockers wait on each other
+in opposite orders. A residual `40P01` (e.g. on the drawings rows a soft delete cascades to) is a
+store error the router answers with a retryable 503, as before.
 No-op detection compares type-preserving canonical JSON (`1`, `1.0` and `true` differ).
 Every UPDATE bumps `updated_at` strictly monotonically (D12), so a token never repeats.
 Uniqueness is decided by the unique indexes, never by a pre-check; the rollback keeps the
@@ -137,6 +141,21 @@ _LAY_LOCK = sa.text(
     "SELECT id FROM layouts WHERE id = CAST(:lid AS uuid) AND workspace_id = CAST(:wid AS uuid) "
     "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL ORDER BY id FOR UPDATE"
 )
+# Multi-row layout writers lock their rows here first, in id order (module docstring): all live
+# layouts of a workspace being soft-deleted, or a replaced layout plus the current default it
+# takes over (`:with_default`); `target` tells the replaced row apart (none: 404).
+_LAYS_LOCK = sa.text(
+    "SELECT id FROM layouts WHERE workspace_id = CAST(:wid AS uuid) "
+    "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL "
+    "ORDER BY id FOR NO KEY UPDATE"
+)
+_LAY_REPLACE_LOCK = sa.text(
+    "SELECT id = CAST(:lid AS uuid) AS target FROM layouts "
+    "WHERE workspace_id = CAST(:wid AS uuid) AND owner_user_id = CAST(:owner AS uuid) "
+    "AND deleted_at IS NULL "
+    "AND (id = CAST(:lid AS uuid) OR (CAST(:with_default AS boolean) AND is_default)) "
+    "ORDER BY id FOR NO KEY UPDATE"
+)
 _LAY_CLEAR_DEFAULT = sa.text(
     "UPDATE layouts SET is_default = false, "
     "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
@@ -219,14 +238,21 @@ _CHART_SYMBOLS = sa.text(
     "SELECT DISTINCT lp.symbol FROM layout_panes lp JOIN layouts l ON l.id = lp.layout_id "
     "WHERE lp.symbol IS NOT NULL AND l.deleted_at IS NULL ORDER BY lp.symbol"
 )
+# Retention purge, layouts first. Defence in depth (D21): a parent is purged only once nothing
+# live hangs below it, so a broken soft-delete cascade leaves a visible stuck row instead of an
+# FK cascade silently deleting live data; workspaces wait for their layouts, so every layout row
+# is removed (and counted) by `_PURGE_LAYOUTS` itself.
 _PURGE_LAYOUTS = sa.text(
     "DELETE FROM layouts WHERE id IN (SELECT id FROM layouts WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
+    "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = layouts.id "
+    "AND d.deleted_at IS NULL) "
     "ORDER BY deleted_at LIMIT :limit)"
 )
 _PURGE_WORKSPACES = sa.text(
     "DELETE FROM workspaces WHERE id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
+    "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = workspaces.id) "
     "ORDER BY deleted_at LIMIT :limit)"
 )
 _USERS_BY_BUCKET = sa.text(
@@ -410,6 +436,7 @@ class SqlAlchemyWorkspaceRepository:
             if (await uow.session.execute(_WS_COUNT, {"owner": owner})).scalar_one() <= 1:
                 raise WorkspaceConflictError("last_workspace", "workspaceId")
             ids = {"wid": workspace_id, "owner": owner}
+            await uow.session.execute(_LAYS_LOCK, ids)  # id order, before any row is written
             ts: datetime = (await uow.session.execute(_WS_SOFT_DELETE, ids)).scalar_one()
             gone = await uow.session.execute(_LAYS_SOFT_DELETE, {**ids, "ts": ts})
             layout_ids: list[str] = list(gone.scalars().all())
@@ -463,8 +490,9 @@ class SqlAlchemyWorkspaceRepository:
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._lock_workspace(uow, owner, workspace_id)
-                locked = await uow.session.execute(_LAY_LOCK, {**ids, "lid": layout_id})
-                if locked.first() is None:
+                lock = {**ids, "lid": layout_id, "with_default": fields.is_default}
+                locked = (await uow.session.execute(_LAY_REPLACE_LOCK, lock)).all()
+                if not any(target for (target,) in locked):
                     raise WorkspaceNotFoundError("layout")
                 cur = await self._get_layout(uow, owner, workspace_id, layout_id)
                 if cur is None:  # unreachable: the row lock above succeeded

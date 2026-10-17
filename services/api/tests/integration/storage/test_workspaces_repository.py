@@ -197,6 +197,20 @@ async def test_stale_token_raises_412_and_keeps_the_layout(
     assert await repo.get_layout(a, wid, lid) == made
 
 
+async def test_a_replace_taking_over_the_default_clears_the_old_default(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """The default move locks the target and the current default in id order first."""
+    a = _user(pg_dsn)
+    wid, old, new = await _new_ws(repo, a), str(uuid.uuid4()), str(uuid.uuid4())
+    await repo.create_layout(a, wid, old, _lay("Old", 1, default=True))
+    await repo.create_layout(a, wid, new, _lay("New", 1))
+    res = await repo.replace_layout(a, wid, new, _lay("New", 1, default=True), if_match=None)
+    assert res.changed and res.row.is_default
+    stored = await repo.get_layout(a, wid, old)
+    assert stored is not None and not stored.is_default
+
+
 async def test_two_puts_with_one_token_give_exactly_one_winner(
     repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
 ) -> None:
@@ -596,3 +610,59 @@ async def test_purge_counts_split_layouts_from_workspaces(
             (gone,),
         )
     assert await repo.purge_deleted_counts(1, 100) == (1, 1)
+
+
+async def test_a_broken_soft_delete_cascade_leaves_stuck_rows_never_silent_loss(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """Rows breaking D21 by hand (an old deleted workspace keeping a live layout, an old deleted
+    layout keeping a live drawing) are skipped by the purge: stuck and visible, nothing lost."""
+    a = _user(pg_dsn)
+    await _new_ws(repo, a)
+    ws = await _new_ws(repo, a)
+    live_lay, dead_lay, drawing = (str(uuid.uuid4()) for _ in range(3))
+    await repo.create_layout(a, ws, live_lay, _lay(None, 0))
+    await repo.create_layout(a, ws, dead_lay, _lay(None, 0))
+    with _sync(pg_dsn) as c:
+        c.execute(
+            "INSERT INTO drawings (id, owner_user_id, symbol, layout_id, tool, geometry) "
+            "VALUES (%s, %s, 'BTCUSDT', %s, 'trendline', %s::jsonb)",
+            (drawing, a, dead_lay, json.dumps({"points": []})),
+        )
+        c.execute(
+            "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (ws,)
+        )
+        c.execute(
+            "UPDATE layouts SET deleted_at = now() - interval '2 days' WHERE id = %s", (dead_lay,)
+        )
+    assert await repo.purge_deleted_counts(1, 100) == (0, 0)
+    with _sync(pg_dsn) as c:
+        left = c.execute(
+            "SELECT (SELECT count(*) FROM workspaces WHERE id = %s), "
+            "(SELECT count(*) FROM layouts WHERE id = ANY(%s::uuid[])), "
+            "(SELECT count(*) FROM drawings WHERE id = %s AND deleted_at IS NULL)",
+            (ws, [live_lay, dead_lay], drawing),
+        ).fetchone()
+    assert left == (1, 2, 1)
+
+
+async def test_the_layout_purge_counter_is_exact_when_a_batch_splits_a_workspace(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """Workspaces wait for their layouts, so `_PURGE_LAYOUTS` removes (and counts) every layout
+    row, even when the batch limit splits one workspace's layouts across two calls."""
+    a = _user(pg_dsn)
+    await _new_ws(repo, a)
+    gone = await _new_ws(repo, a)
+    for _ in range(2):
+        await repo.create_layout(a, gone, str(uuid.uuid4()), _lay(None, 0))
+    await repo.soft_delete_workspace(a, gone)
+    with _sync(pg_dsn) as c:
+        c.execute(
+            "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (gone,)
+        )
+        c.execute(
+            "UPDATE layouts SET deleted_at = now() - interval '2 days' WHERE workspace_id = %s",
+            (gone,),
+        )
+    assert [await repo.purge_deleted_counts(1, 1) for _ in range(3)] == [(1, 0), (1, 1), (0, 0)]

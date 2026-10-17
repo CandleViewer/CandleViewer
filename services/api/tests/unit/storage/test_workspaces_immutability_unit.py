@@ -54,6 +54,7 @@ def test_pane_writes_re_check_that_the_layout_belongs_to_the_caller(name: str) -
 def test_pane_writes_follow_the_workspace_lock_and_layout_lock_in_replace_and_create() -> None:
     import inspect
 
-    for method, first in (("replace_layout", "_LAY_LOCK"), ("create_layout", "_LAY_INSERT")):
+    pairs = (("replace_layout", "_LAY_REPLACE_LOCK"), ("create_layout", "_LAY_INSERT"))
+    for method, first in pairs:
         src = inspect.getsource(getattr(mod.SqlAlchemyWorkspaceRepository, method))
         assert src.index("_lock_workspace") < src.index(first) < src.index("_write_panes")
