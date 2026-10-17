@@ -418,6 +418,10 @@ export type CandleViewerWSEnvelope = {
    * Replay session id; present only on replay frames.
    */
   rs?: string;
+  /**
+   * Span id of a sampled frame (W3C span-id form, never all zeros); only on a snap or d that carries s, never on the system topic (§3.1).
+   */
+  sp?: string;
   e?: "j" | "b" | "b64";
   meta?: SnapMeta;
   p?: unknown;
