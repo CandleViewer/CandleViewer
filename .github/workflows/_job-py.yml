@@ -196,7 +196,7 @@ jobs:
     needs: [py-checks, py-tests]
     # Runs after a red lane too: when every lane left its data the coverage gate still gets the
     # suite's real number, as it did when one job ran everything. The last step fails `py` unless
-    # py-checks and every lane succeeded, so `architecture` (below) keeps reflecting all of it.
+    # py-checks and every lane succeeded, so `architecture` (pr.yml) keeps reflecting all of it.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Fixed: downloading, combining, reporting and building take about a minute.
@@ -290,23 +290,3 @@ jobs:
 
       - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
         run: uv run pytest -m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0
-
-  architecture:
-    # Reported as its own required check named `architecture` per the
-    # ticket's Definition of Done — mirrors the `py` job's result so
-    # `ci-required` (pr.yml) and any future required-check config can depend
-    # on `architecture` directly without re-running import-linter. The
-    # contract step runs in `py-checks`; `py` fails whenever py-checks does.
-    name: architecture
-    needs: py
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Reflect the py job's architecture-contract step outcome
-        run: |
-          if [ "${{ needs.py.result }}" != "success" ]; then
-            echo "py job (which fails when py-checks' import-linter architecture contract fails) did not succeed"
-            exit 1
-          fi
-          echo "architecture contract passed (see the 'py-checks' job's 'Architecture contract' step)"
