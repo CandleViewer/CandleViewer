@@ -119,6 +119,8 @@ def test_ws_access_token_never_reaches_a_log_frame_audit_record_or_metric(
     # Not vacuous: every token path ran and each sink saw it.
     assert len(wire.closes) == 3 and len(wire.texts) >= 9
     assert any(e.get("event") == "ws authenticated" and e.get("reauth") for e in events)
+    failed = [e["attempt"] for e in events if e.get("event") == "ws auth failed"]
+    assert failed == [1, 2, 3]  # the 1st socket's failed auths logged lines, and the scan saw them
     # The 3rd failed `auth`, plus one `ws.connection.closed` row per authenticated close (#2486);
     # every row reached the audit sink scanned above, so none of them carries the token either.
     actions = [r["action"] for r in w.audit.records]

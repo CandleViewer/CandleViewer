@@ -1396,7 +1396,7 @@ The `cv_ws_*` send-path series (E17-T06) observe one data frame in 32 of each su
 
 ### 12.2 Logging
 
-Structured JSON (`structlog`) to stdout, collected by the compose logging driver. Mandatory fields: `ts`, `level`, `logger`, `event`, `env`, `request_id`/`conn_id`, `user_id`, `account_id`, `symbol`, `order_link_id`, `trade_group_id`, `latency_ms`. Redaction filter strips API keys, signatures, cookies and TOTP codes at the formatter level (defence in depth: a unit test asserts a known secret never appears in output).
+Structured JSON (`structlog`) to stdout, collected by the compose logging driver. Mandatory fields: `ts`, `level`, `logger`, `event`, `env`, `request_id`/`conn_id`, `user_id`, `account_id`, `symbol`, `order_link_id`, `trade_group_id`, `latency_ms`. On the WebSocket gateway `conn_id` is spelled `connection_id` (`ws_` and 12 hex digits: the id in `welcome` and the `object_id` of the `ws.connection.closed` audit row). Redaction filter strips API keys, signatures, cookies and TOTP codes at the formatter level (defence in depth: a unit test asserts a known secret never appears in output).
 
 ### 12.3 Tracing
 
