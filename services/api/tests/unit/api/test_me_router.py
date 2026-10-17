@@ -620,3 +620,28 @@ def test_the_session_backend_and_the_identity_provider_are_wired_together(
     )
     assert (appmod.build_auth_service(settings)._session_repository is not None) is wired
     assert (appmod.build_identity_provider(settings) is not None) is wired
+
+
+# -- wiring: the app hands the router its auth clock -------------------------------------------
+
+
+async def test_the_app_gives_the_me_router_the_auth_clock_it_was_built_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`create_app` passes `make_me_router` the clock it builds the auth service with. Real UTC
+    and the auth clock differ only under `CV_TEST_CLOCK` (#2086), so no other test here can tell
+    them apart. This clock sits years before the wall clock: an elevation recorded on it reads
+    live on it, and a router left on real UTC would read the same window as lapsed."""
+    env = _Env()
+    env.now = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: env.identity)
+    app = appmod.create_app(auth_clock=lambda: env.now)
+    # The lifespan does not run, so the session service is wired by hand, as in the RBAC pack.
+    app.state.app_context.auth._sessions = env.svc
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    _, headers, minted = await env.sign_in()
+    window = env.now + timedelta(minutes=4)
+    await _seed_step_up(env, minted, {"users": window})
+    resp = client.get("/me", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["session"]["elevated_until"] == _wire(window)
