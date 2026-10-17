@@ -383,10 +383,22 @@ async def test_groups_count_only_the_subscriptions_a_frame_reaches(
 async def test_note_generation_seeds_a_missing_baseline_and_keeps_an_existing_one() -> None:
     _, pub, [(conn, _)] = _world({"encoding": "structured"})
     pub.note_generation("BTCUSDT", SPEC, 5)
-    pub.note_generation("BTCUSDT", SPEC, 7)  # kept at 5: a seed already there stays
+    pub.note_generation("BTCUSDT", SPEC, 5)  # another snapshot in the same generation
+    assert pub._seeds == {("BTCUSDT", SPEC.spec_hash): 5}  # kept at 5
     for generation in (7, 7):
         await pub.emit(_em(_up(), generation=generation))
     assert [f["t"] for f in conn.take()] == ["snap", "d"]  # 7 differs from the seeded 5: a swap
+
+
+@pytest.mark.parametrize(("seen", "at"), [(True, 9), (True, 7), (False, 9), (False, 7)])
+async def test_two_snapshot_generations_re_snapshot_every_subscriber(seen: bool, at: int) -> None:
+    _, pub, subs = _world({}, {})
+    if seen:  # a baseline from an emission at 7; else a seed from a snapshot at 7
+        await pub.emit(_em(_up(), generation=7))
+    for generation in (7, 9):  # one client's snapshot at 7, then another's at 9
+        pub.note_generation("BTCUSDT", SPEC, generation)
+    await pub.emit(_em(_up(), generation=at))  # either generation: a swap for both
+    assert [c.take()[-1]["meta"].get("reason") for c, _ in subs] == [SWAP, SWAP]
 
 
 async def test_note_generation_seeds_aside_and_never_ages_out_an_emitting_series() -> None:

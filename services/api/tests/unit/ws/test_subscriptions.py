@@ -1060,9 +1060,7 @@ def test_bars_volume_param_above_its_ceiling_is_refused() -> None:
 # -- #399 slice D2: the bars series hold (`SeriesStore.ensure`), and the #2709 r2 carries -------
 
 
-class _Store:
-    """`SeriesHolds` fake: `ensure` writes to the shared `log`; its `Hold` records the release."""
-
+class _Store:  # `SeriesHolds` fake: `ensure` writes to the shared `log`; a `Hold` records release
     def __init__(self, log: list[str], fail: Exception | None = None) -> None:
         self.log, self.fail = log, fail
         self.released: list[str] = []
@@ -1111,8 +1109,7 @@ def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it
      (BarSpecError("renko off"), "bars.BTCUSDT.renko.10", "invalid_topic_format")],
 )  # fmt: skip
 def test_a_refused_lease_releases_the_series_hold(fail: Exception, ch: str, code: str) -> None:
-    """`_Bars.check` passes, so these refuse at `register`, after the hold."""
-    conn, store, _ = _holding(_LoggedBars([], fail))
+    conn, store, _ = _holding(_LoggedBars([], fail))  # `check` passes: refused after the hold
     (r,) = _sub(conn, ch)
     assert (r["ok"], r["error"]["code"], conn.by_id) == (False, code, {})
     assert store.released == ["BTCUSDT"]

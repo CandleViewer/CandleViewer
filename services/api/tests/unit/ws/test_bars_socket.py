@@ -28,19 +28,18 @@ from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import IngestionUpstreamSink, default_snapshot_router, ingestion_streams
-from tests.unit.ws._seq_support import Clock, principal, validate
+from tests.unit.ws._seq_support import Clock, principal
 from tests.unit.ws.test_app_wiring import _Stream
 from tests.unit.ws.test_bars_source import CH, SPEC, SYM, _bar, _up
-from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
-from tests.unit.ws.test_sequencing_socket import _open
+from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN
+from tests.unit.ws.test_sequencing_socket import _open, _rx
 from tests.unit.ws.test_subscriptions import _Bars
 
 KEY: Final = (SYM, "bars", ("time", "5"))
 
 
 class _World:
-    def __init__(self, rows: tuple[tuple[int, Bar], ...] = ()) -> None:
-        """`rows`: the series' stored tail, which a first hold hydrates from."""
+    def __init__(self, rows: tuple[tuple[int, Bar], ...] = ()) -> None:  # the stored tail
 
         async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
             return BarTail(list(rows))
@@ -65,16 +64,11 @@ class _World:
             return "sess-1", principal().user_id, datetime(2100, 1, 1, tzinfo=UTC)
 
         app = FastAPI()
-        app.include_router(
-            make_ws_router(
-                authenticate=authenticate,
-                registry=ConnectionRegistry(resolve, lambda: 1, services),
-                revocation_hub=RevocationHub(),
-                allowed_origins=frozenset({ORIGIN}),
-                clock=Clock(),
-                tick_s=0.005,
-            )
-        )
+        app.include_router(make_ws_router(
+            authenticate=authenticate, registry=ConnectionRegistry(resolve, lambda: 1, services),
+            revocation_hub=RevocationHub(), allowed_origins=frozenset({ORIGIN}), clock=Clock(),
+            tick_s=0.005,
+        ))  # fmt: skip
         self.client = TestClient(app, headers={"origin": ORIGIN})
 
     def call(self, fn: Any, *args: Any) -> Any:
@@ -84,14 +78,6 @@ class _World:
 
     def emit(self, generation: int, *updates: BarUpdate) -> None:
         self.call(self.router.emit, SPEC, updates, generation)
-
-
-def _rx(ws: Any) -> dict[str, Any]:
-    while True:
-        frame = _recv(ws)
-        if frame["t"] != "ping":
-            validate(frame)
-            return frame
 
 
 def _subscribe(ws: Any, opts: dict[str, Any]) -> dict[str, Any]:  # the `snap` after `sub_ok`
@@ -165,7 +151,4 @@ def test_unsub_and_the_socket_end_release_the_hold_the_lease_and_the_trades_ref(
             assert _rx(ws)["p"]["results"][0]["ok"] is True  # the socket's end releases this one
         assert (len(w.bars.released), w.upstream.consumers(KEY), _freed(w)) == (2, 0, True)
         w.call(w.upstream.sweep, w.now + 30.0)  # past the upstream grace
-    assert w.trades.calls == [
-        ("acquire", "ws:bars:time:5", SYM),
-        ("release", "ws:bars:time:5", SYM),
-    ]
+    assert w.trades.calls == [(a, "ws:bars:time:5", SYM) for a in ("acquire", "release")]

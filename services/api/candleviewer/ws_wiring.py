@@ -8,8 +8,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter: `book` is the book module's (#2196, `book_snapshot_source`). Until bars
-  (#2195) and order-flow (#2197) land, their families map to `PendingSnapshotSource`, which
+  module's adapter: `book_snapshot_source` (#2196) and `BarsSnapshotSource` (#2195). Until
+  order-flow (#2197) lands, its families map to `PendingSnapshotSource`, which
   raises `NotImplementedError`; the router turns that into `None`, so the subscription reports
   `snapshot_pending` and no `d` is ever emitted.
 * **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and

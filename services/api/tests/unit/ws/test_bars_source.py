@@ -71,10 +71,9 @@ def _build(src: BarsSnapshotSource, sub: Subscription) -> SnapshotBody:
     return body
 
 
-@pytest.mark.parametrize(
-    ("opts", "want"),
-    [({}, [0, 1, 2, 3]), ({"history": 3}, [1, 2, 3]), ({"history": 1}, [3]), ({"history": 0}, [])],
-)
+@pytest.mark.parametrize(("opts", "want"), [
+    ({}, [0, 1, 2, 3]), ({"history": 3}, [1, 2, 3]), ({"history": 1}, [3]), ({"history": 0}, [])
+])  # fmt: skip
 async def test_build_sends_the_newest_history_bars_oldest_first_and_the_forming_bar_last(
     opts: dict[str, Any], want: list[int]
 ) -> None:
@@ -89,8 +88,7 @@ async def test_build_sends_the_newest_history_bars_oldest_first_and_the_forming_
 async def test_build_version_is_the_lowest_build_among_the_bars_sent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§6.1: bar 0 was built by build 2 under a running build 3; a snapshot without it is 3."""
-    monkeypatch.setitem(BUILD_VERSIONS, "time", 3)
+    monkeypatch.setitem(BUILD_VERSIONS, "time", 3)  # §6.1: bar 0 was built by 2 under a running 3
 
     async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
         return BarTail([(GEN, _bar(i)) for i in range(3)], builds={(GEN, 0, T0): 2})
@@ -116,8 +114,7 @@ async def test_an_empty_series_sends_no_bars_with_the_running_build_in_either_en
 async def test_both_encodings_validate_and_carry_the_meta_and_the_same_bars_at_covering_scales(
     include_delta: bool,
 ) -> None:
-    """`100.25` is finer than the instrument's price scale 1: the frame takes scale 2."""
-    src = _src(await _store(2, px="100.25"))
+    src = _src(await _store(2, px="100.25"))  # finer than the price scale 1: the frame takes 2
     out: list[dict[str, Any]] = []
     emitter = TopicEmitter(
         out.append, connection_id="c", wall_ms=lambda: 1, clock=lambda: 0.0, source=src

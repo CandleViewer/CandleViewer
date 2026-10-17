@@ -64,6 +64,7 @@ MAX_SERIES: Final = 2 * CAP_GLOBAL
 #: Pending reasons that belong to another flow (the subscribe flow, E17's backpressure hold),
 #: so a swap may not use one: the publisher only ever flushes what its own swap left pending.
 _FOREIGN_REASONS: Final = frozenset({"initial", "backpressure"})
+_MIXED: Final = -1  # a baseline no emission carries (generations are epoch ms): its next one swaps
 #: More swaps than `SWAP_STORM` within `SWAP_WINDOW_S` on a channel warn, once per window; the
 #: warning counts up to `SWAP_COUNT_CAP` of them.
 SWAP_STORM: Final = 3
@@ -161,11 +162,13 @@ class BarsPublisher:
     def note_generation(self, symbol: str, spec: BarSpec, generation: int) -> None:
         """Seed the baseline of a series not seen yet with the generation a snapshot of it was
         built at: its first emission takes it. Seeds sit apart from the series map, so they never
-        age a live series out; a seed there stays. A seen series' baseline becomes it, as the client
-        holds it: another generation's emission is a swap, at worst a redundant one (§7.1)."""
+        age a live series out. A baseline or seed in another generation becomes `_MIXED`, as two
+        clients may now hold two: the next emission re-snapshots every one (§7.1 guarantee 3)."""
         key = (symbol, spec.spec_hash)
         if (series := self._series.get(key)) is not None:
-            series.generation = generation  # the snapshot's wins: it is what the client holds
+            series.generation = generation if series.generation == generation else _MIXED
+        elif self._seeds.get(key, generation) != generation:
+            self._seeds[key] = _MIXED
         if key in self._series or key in self._seeds:
             return
         self._seeds[key] = generation
@@ -173,6 +176,8 @@ class BarsPublisher:
             self._seeds.popitem(last=False)
 
     async def emit(self, emission: BarEmission) -> None:
+        """Never awaits: that keeps the store's generation reset and this baseline check atomic, so
+        an `await` here is a protocol change (§7.4: a generation swap is a `snap`, never a `d`)."""
         by_symbol: dict[str, list[BarUpdate]] = {}
         for u in emission.updates:
             by_symbol.setdefault(u.bar.symbol, []).append(u)

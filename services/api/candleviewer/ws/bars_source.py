@@ -15,8 +15,8 @@ reads no storage itself.
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
 - **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
   change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
-  (`BarsPublisher.note_generation`), which makes it the publisher's baseline: an emission in any
-  other generation then re-snapshots (§7.1 guarantee 3).
+  (`BarsPublisher.note_generation`): it seeds an unseen series, and a baseline or seed in another
+  generation then makes the next emission re-snapshot every settled subscriber (§7.1 guarantee 3).
 """
 
 from __future__ import annotations

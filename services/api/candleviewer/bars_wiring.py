@@ -10,7 +10,8 @@ Only the composition root sees the bus, the storage tier and the bars module tog
 * Shutdown order: **set first, then writer** - the set's final closes/blobs are submitted to the
   writer, which is then drained.
 * Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
-  the WS publisher, then the writer: neither WS sink awaits, so a full writer queue delays neither.
+  the WS publisher, then the writer. Neither WS sink awaits, so the store's generation reset and the
+  publisher's baseline check are atomic: an `await` in either is a protocol change (§7.4).
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
