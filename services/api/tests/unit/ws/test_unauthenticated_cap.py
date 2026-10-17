@@ -105,10 +105,11 @@ async def test_a_setup_raise_leaves_nothing_counted(monkeypatch: pytest.MonkeyPa
     assert rig.leftovers() == NOTHING_LEFT
 
 
-@pytest.mark.parametrize("how", EXITS)
+@pytest.mark.parametrize("how", [*EXITS, "enrolment_refused"])
 async def test_the_count_drops_however_the_socket_ends(how: str) -> None:
     """Released at `auth_ok` and on every other exit: a close by either side, a fault (`1011`),
-    an auth call past its bound, a connect-rate refusal, a cancellation; the next socket gets in."""
+    an auth call past its bound, a connect-rate refusal, a cancellation, an enrolment-only
+    refusal (`4403`, #2295, never registered); the next socket gets in."""
     rig, sock, later = Rig(max_unauthenticated=1, max_auths_per_min=1, hangs=True), Sock(), Sock()
     async with asyncio.timeout(DEADLINE_S):
         await _spend_good_dup(rig)
