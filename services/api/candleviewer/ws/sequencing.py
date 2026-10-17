@@ -117,7 +117,7 @@ cv_ws_resync_total = Counter(
 # Bind every counted reason now, so each series exists at 0 from process start. A series born at its
 # first event is a single sample: `increase()` has nothing to subtract, so the first re-snapshot
 # under a reason after every restart goes unseen (#2264 bound the CSRF counter for the same
-# reason). No alert reads this counter yet; #571 plans them.
+# reason). `WsUpstreamDesyncHigh` (#571) reads the `upstream_desync` series.
 for _resync_reason in COUNTED_SNAP_REASONS:
     cv_ws_resync_total.labels(reason=_resync_reason)
 cv_ws_snapshot_bytes = Histogram(

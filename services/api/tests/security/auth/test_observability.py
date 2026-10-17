@@ -41,7 +41,9 @@ ALERTING: dict[str, set[str]] = {
     "auth_stepup_failures_total": set(),  # scraped since #2612, but SR-125's alert is not written
     "users_invites_rejected_total": set(),
     "cv_ws_auth_failures_total": set(),
-    "cv_ws_closes_total": {"WsOriginRefusalsHigh"},  # only reason="origin_forbidden" (#2276)
+    # WsOriginRefusalsHigh reads only reason="origin_forbidden" (#2276); WsSlowConsumerClosed reads
+    # only reason="slow_consumer" (#571).
+    "cv_ws_closes_total": {"WsOriginRefusalsHigh", "WsSlowConsumerClosed"},
     "cv_ws_errors_total": set(),
     "cv_ws_revoked_total": set(),
     "cv_ws_subscribe_total": set(),

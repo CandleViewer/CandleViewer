@@ -219,10 +219,10 @@ cv_ws_closes_total = Counter(
 )
 # Bind every `reason` now, so each series exists at 0 from process start. A series born at its first
 # close is a single sample: `increase()` has nothing to subtract, so the first close under a reason
-# after every restart goes unseen (#2264 bound the CSRF counter for the same reason). Today
-# `infra/prometheus/alerts/ws_origin.yml` reads `origin_forbidden` (`WsOriginRefusalsHigh`); #571
-# plans alerts on others. Bound here, beside the counter, so `export_ws_metrics` serves every series
-# without the gateway. `normal`, `server_shedding_load` and `other` have no counting path today.
+# after every restart goes unseen (#2264 bound the CSRF counter for the same reason). Read by
+# `WsOriginRefusalsHigh` (`origin_forbidden`) and `WsSlowConsumerClosed` (`slow_consumer`, #571).
+# Bound here, beside the counter, so `export_ws_metrics` serves every series without the gateway.
+# `normal`, `server_shedding_load` and `other` have no counting path today.
 # Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by

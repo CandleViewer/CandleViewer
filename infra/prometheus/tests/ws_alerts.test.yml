@@ -1,0 +1,312 @@
+# promtool test rules for the E17-T06 (#571) WS gateway alert set (hand-written, like
+# ingestion_alerts.test.yml: the E04-T05 generator covers system_*.yml only). Run:
+#   promtool test rules infra/prometheus/tests/ws_alerts.test.yml
+# Every alert has a firing case and a not-firing case, and the edges its numbers set: the p95 alert
+# the minimum-rate guard (1120 silent, 1280 fires) and `for` (pending at 6 m, firing at 7 m; a burst
+# of two slow minutes never fires); the desync alert five events (silent) against six (fires) and
+# `for`; the any-event alerts fire on the first evaluation and are held past the 9 h quiet-hours
+# mute by `keep_firing_for`. A firing check that follows another for the same alert repeats it by
+# YAML alias. `cv_ws_fanout_seconds` is
+# sampled 1 in 32 and weighted by 32 (ws/metrics.py SAMPLE_EVERY), so a count moves in steps of 32:
+# 8 sampled frames a minute is +256 a minute.
+# services/api/tests/unit/observability/test_ws_alert_rules.py checks that every alert here has both
+# cases, and pins what no case reaches (`for`, the windows and the thresholds) as text.
+rule_files:
+  - ../alerts/ws_gateway.yml
+  - ../alerts/latency_budget.yml
+evaluation_interval: 1m
+tests:
+  # --- WsFanoutP95OverBudget -------------------------------------------------------------
+  # Every sampled frame in (20 ms, 30 ms]: p95 = 29.5 ms, with 20 sampled frames a minute
+  # (3200 weighted observations in the 5 m window, over the 1280 floor). The guard is first met at
+  # 2 m, so the alert is pending from 2 m: silent at 6 m, firing at 7 m (`for: 5m`), still at 12 m.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.005"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+640x20"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: &fanout_firing
+          - exp_labels:
+              severity: ticket
+              component: gateway
+              env: demo
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-wsfanoutp95overbudget"
+              summary: "WS gateway fan-out p95 29.5ms is over the 20 ms budget (#6)."
+              description: >-
+                The gateway segment of budget #6 (sampled 1 in 32) held a p95 above 20 ms for five
+                minutes, judged on at least 40 sampled frames. Live data reaches clients late. Order entry
+                shares the event loop: if EventLoopLagHigh also fires, treat order latency as affected.
+      - eval_time: 12m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: *fanout_firing
+  # Healthy: every sampled frame under 5 ms, same traffic.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.005"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+640x20"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+640x20"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+  # The minimum-rate guard: the same slow distribution, but one sampled frame a minute (+32 a
+  # minute, 160 in the window, under the 1280 floor). The p95 is over the line and stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.005"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+32x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+32x20"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+32x20"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+  # Just under the floor: 7 sampled frames a minute is 1120 in the window.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.005"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+224x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+224x20"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+224x20"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+  # At the floor: 8 sampled frames a minute is exactly 1280 in the window (40 sampled frames).
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.005"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+0x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+256x20"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+256x20"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+256x20"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: *fanout_firing
+  # A burst: two slow minutes, then it recovers. The 5 m window keeps the p95 over the line until
+  # the slow minutes leave it, so the condition holds from 2 m to 6 m: four minutes, one short of
+  # `for`. Pending at 6 m, gone by 7 m, never firing (a third slow minute holds it to 7 m and fires).
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+0x2 640+640x17"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.03"}'
+        values: "0+640x19"
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="+Inf"}'
+        values: "0+640x19"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+640x19"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: WsFanoutP95OverBudget
+        exp_alerts: []
+  # --- WsUpstreamDesyncHigh --------------------------------------------------------------
+  # The series starts at zero (it is bound at import). Samples come every 59 s against the 60 s
+  # evaluation, so `increase()` extrapolates to the window edges and reads 60/59 of the count, as
+  # it does off the scrape grid in production: five events read 5.08 and a bare `> 5` would fire.
+  # Five events are not above five: silent.
+  - interval: 59s
+    input_series:
+      - series: 'cv_ws_resync_total{env="demo",reason="upstream_desync"}'
+        values: "0+0x5 5+0x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: []
+  # Six are: pending from 6 m, silent at 10 m, firing at 11 m (`for: 5m`), still counted at 64 m and
+  # gone by 66 m: the events sit at about 6 m, so those two bracket the one-hour window.
+  - interval: 59s
+    input_series:
+      - series: 'cv_ws_resync_total{env="demo",reason="upstream_desync"}'
+        values: "0+0x5 6+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: &desync_firing
+          - exp_labels:
+              severity: ticket
+              component: gateway
+              env: demo
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-wsupstreamdesynchigh"
+              summary: "More than 5 upstream_desync re-snapshots on the WS gateway in the last hour."
+              description: >-
+                23-ws-protocol.md section 16.3 puts the hard-fail line at 5 an hour per topic
+                (target: under 1). Each affected subscription counts once, so one desync adds
+                one per subscribed book topic; group the `ws resync` log lines by `ch`.
+      - eval_time: 64m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: *desync_firing
+      - eval_time: 66m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: []
+  # Other reasons never count, however many: backpressure and reconnects are not desyncs.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_resync_total{env="demo",reason="upstream_desync"}'
+        values: "0+0x35"
+      - series: 'cv_ws_resync_total{env="demo",reason="backpressure"}'
+        values: "0+0x5 20+0x30"
+      - series: 'cv_ws_resync_total{env="demo",reason="upstream_reconnect"}'
+        values: "0+0x5 20+0x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: WsUpstreamDesyncHigh
+        exp_alerts: []
+  # --- WsSlowConsumerClosed --------------------------------------------------------------
+  # One slow_consumer close fires on the first evaluation (no `for`), held by `keep_firing_for:
+  # 9h30m` past the 9 h quiet-hours mute. The first empty evaluation is 21 m, so the hold ends at
+  # 9 h 51 m (3.x range selectors: 9 h 50 m): firing at 8 h and 9 h 49 m, resolved at 9 h 52 m.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_closes_total{env="demo",reason="slow_consumer"}'
+        values: "0+0x5 1+0x700"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WsSlowConsumerClosed
+        exp_alerts: &slow_firing
+          - exp_labels:
+              severity: ticket
+              component: gateway
+              env: demo
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-wsslowconsumerclosed"
+              summary: "A WS client was closed as a slow consumer: its live feed stopped."
+              description: >-
+                The connection's outbound queue overflowed and the server closed it with 4429
+                `slow_consumer` (23-ws-protocol.md section 8.4). The client reconnects with
+                backoff and receives fresh snapshots.
+      - eval_time: 8h
+        alertname: WsSlowConsumerClosed
+        exp_alerts: *slow_firing
+      - eval_time: 9h49m
+        alertname: WsSlowConsumerClosed
+        exp_alerts: *slow_firing
+      - eval_time: 9h52m
+        alertname: WsSlowConsumerClosed
+        exp_alerts: []
+  # No close at all, and other close reasons (a refused origin, a heartbeat timeout): silent.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_closes_total{env="demo",reason="slow_consumer"}'
+        values: "0+0x30"
+      - series: 'cv_ws_closes_total{env="demo",reason="origin_forbidden"}'
+        values: "0+0x5 9+0x25"
+      - series: 'cv_ws_closes_total{env="demo",reason="heartbeat_timeout"}'
+        values: "0+0x5 4+0x25"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WsSlowConsumerClosed
+        exp_alerts: []
+  # --- WsSequenceGapDetected -------------------------------------------------------------
+  # One client-reported gap raises a ticket on the first evaluation (no `for`; the ticket text says
+  # critical, see the rule), held by `keep_firing_for: 9h30m`. The first empty evaluation is 16 m,
+  # so the hold ends at 9 h 46 m (3.x: 9 h 45 m): firing at 8 h and 9 h 44 m, resolved at 9 h 47 m.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_sequence_gaps_detected_total{env="demo"}'
+        values: "0+0x5 1+0x700"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WsSequenceGapDetected
+        exp_alerts: &gap_firing
+          - exp_labels:
+              severity: ticket
+              component: gateway
+              env: demo
+            exp_annotations:
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-wssequencegapdetected"
+              summary: "A WS client reported a sequence gap; the server guarantees there is none."
+              description: >-
+                A client sent a `resync` with reason `sequence_gap`. The server numbers every
+                frame of a subscription consecutively (23-ws-protocol.md section 7.1), so this is
+                a bug in the send path or the client, not a load condition. The client already
+                recovered by re-snapshot.
+      - eval_time: 8h
+        alertname: WsSequenceGapDetected
+        exp_alerts: *gap_firing
+      - eval_time: 9h44m
+        alertname: WsSequenceGapDetected
+        exp_alerts: *gap_firing
+      - eval_time: 9h47m
+        alertname: WsSequenceGapDetected
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_sequence_gaps_detected_total{env="demo"}'
+        values: "0+0x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WsSequenceGapDetected
+        exp_alerts: []
+  # --- Budget #6 burn rates now read cv_ws_fanout_seconds ---------------------------------
+  # 10 % of the weighted observations are over 20 ms: bad ratio 0.1 / error budget 0.05 = 2. The
+  # old ingest_stage_seconds{stage="fanout"} series is all good here: a rule still reading it
+  # would record 0.
+  - interval: 1m
+    input_series:
+      - series: 'cv_ws_fanout_seconds_bucket{env="demo",le="0.02"}'
+        values: "0+576x120"
+      - series: 'cv_ws_fanout_seconds_count{env="demo"}'
+        values: "0+640x120"
+      - series: 'ingest_stage_seconds_bucket{env="demo",stage="fanout",le="0.02"}'
+        values: "0+640x120"
+      - series: 'ingest_stage_seconds_count{env="demo",stage="fanout"}'
+        values: "0+640x120"
+    promql_expr_test:
+      # round(): promtool compares a float exactly, and (1 - 0.9) / 0.05 is 1.9999999999999996.
+      - expr: round(cv:slo_backend_fanout:burn_rate_1h, 0.01)
+        eval_time: 100m
+        exp_samples:
+          - labels: '{env="demo"}'
+            value: 2
+      - expr: round(cv:slo_backend_fanout:burn_rate_6h, 0.01)
+        eval_time: 100m
+        exp_samples:
+          - labels: '{env="demo"}'
+            value: 2
