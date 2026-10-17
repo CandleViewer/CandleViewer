@@ -35,8 +35,8 @@ from candleviewer.audit.lane_journal import (
     segment_name,
 )
 
-KEY, OTHER = bytes(range(32)), bytes(range(32, 64))
-KEYS = LaneKeys(KEY)
+KEY, OTHER, THIRD = bytes(range(32)), bytes(range(32, 64)), bytes(range(64, 96))
+KEYS = LaneKeys(KEY, previous=THIRD)  # THIRD only verifies; OTHER is configured nowhere
 LANE, FOREIGN = uuid.UUID(int=1), uuid.UUID(int=2)
 
 
@@ -80,10 +80,12 @@ def marker(
     return encode_marker(LaneKeys(key), LaneMarker(LANE, pos, next_seq, prev, True))
 
 
-def note_of(hold: tuple[int, int], end: tuple[int, int], key: bytes = KEY) -> bytes:
+def note_of(
+    hold: tuple[int, int], end: tuple[int, int], key: bytes = KEY, **change: object
+) -> bytes:
     words = {"operator": "owner", "ticket": "#3009", "operator_reason": "planted"}
     obj = {"v": 1, "lane": str(LANE), "hold": list(hold), "end": list(end), "from_seq": 3}
-    body, tag = sealed(obj | words, b"cv-audit-lane/v1/released\n", key)
+    body, tag = sealed(obj | words | change, b"cv-audit-lane/v1/released\n", key)
     return body + b"\n" + tag + b"\n"
 
 
@@ -142,10 +144,12 @@ def test_lane_rejects_a_tampered_frame(data: bytes, expected: list[object]) -> N
 
 def test_lane_quarantine_names_a_run_by_its_first_byte() -> None:
     gap, bad = runs(run_scan({1: F[0] + F[2]}))[0], runs(run_scan({1: F[0] + TAMPERED + F[2]}))[0]
+    several = runs(run_scan({1: F[0] + b"junk\n" + TAMPERED + F[1]}))[0]
 
     assert gap.data == b"" and gap.quarantined is None and gap.prev_unverified
     assert gap.digest == hashlib.sha256(b"").hexdigest()
     assert bad.data == TAMPERED and bad.quarantined == f"{segment_name(1)}.{len(F[0])}"
+    assert several.quarantined == bad.quarantined and not several.prev_unverified
 
 
 @pytest.mark.parametrize(
@@ -352,6 +356,36 @@ def test_lane_anomaly_ids_are_equal_only_for_byte_identical_runs() -> None:
     assert len(set(distinct)) == len(distinct) == 5
 
 
+HELD, PAST_P3 = (1, len(F[0] + F[1])), (1, len(F[0] + F[1] + P3))
+NOTED = {1: F[0] + F[1] + P3 + F[3]}
+UNPARSED = b"5\nhello\n" + b"0" * 64 + b"\n"  # frame-shaped, but the body is not JSON
+
+
+@pytest.mark.parametrize(
+    ("segments", "mark", "note", "expected"),
+    [
+        ({3: F[2] + F[3]}, marker((1, len(F[0] + F[1])), 3, mac(F[1])), None, [3, 4]),
+        ({1: F[0] + UNPARSED}, START, None, [1, ("segment_corrupt", 2, None)]),
+        ({1: F[0] + b"junk"}, START, None, [1, ("segment_corrupt", 2, None)]),
+        ({1: F[0] + TAMPERED + F[2][:30]}, START, None, [1, ("frame_rejected", 2, None)]),
+        ({1: F[0] + b"\n" + F[1] + F[2]}, START, None, [1, ("segment_corrupt", 2, 1), 2, 3]),
+        ({1: F[0] + F[1] + P3}, START, note_of(HELD, PAST_P3), [1, 2, ("released", 3, 2)]),
+        (NOTED, START, note_of(HELD, PAST_P3, THIRD), [1, 2]),
+        (NOTED, START, note_of(HELD, PAST_P3, lane=str(FOREIGN)), [1, 2]),
+        (NOTED, START, note_of(HELD, PAST_P3, v=2), [1, 2]),
+        (NOTED, START, note_of(HELD, PAST_P3, v=True), [1, 2]),
+    ],
+    ids=(
+        "compacted_marker_segment unparsed_tail newline_less_tail tamper_then_torn stray_newline "
+        "note_to_the_end note_under_the_previous_key note_for_another_lane note_v2 note_v_true"
+    ).split(),
+)
+def test_lane_scan_of_a_layout_matches_its_outline(
+    segments: dict[int, bytes], mark: bytes, note: bytes | None, expected: list[object]
+) -> None:
+    assert outline(run_scan(segments, mark, note)) == expected
+
+
 _EDITS = st.tuples(
     st.integers(0, 2), st.integers(0, 4096), st.sampled_from("fid"), st.integers(1, 255)
 )
@@ -364,13 +398,13 @@ def test_lane_random_damage_never_hands_over_a_bad_frame_or_loses_a_good_one(
     """(a) Accounting, over every input: each byte from the scan start lies in one hand-over or
     one run, and each `seq` from where it starts up to the last hand-over is handed over once or
     inside one run's range. (b) Liveness: every frame intact at a line start before the hold
-    whose `seq` is above all before it is handed over, and nothing else is."""
+    whose `seq` is above all before it is handed over, and nothing else is. Junk before frames
+    (a newline, a glued byte, a junk line) makes resync matter."""
     n = data.draw(st.integers(1, 6))
     order = data.draw(st.just(list(range(n))) | st.lists(st.integers(0, n - 1), max_size=n + 2))
+    items = [data.draw(st.sampled_from([b"", b"\n", b"x", b"junk\n"])) + F[i] for i in order]
     cuts = sorted(data.draw(st.sets(st.integers(0, len(order)), max_size=2)))
-    segments = [
-        bytearray(b"".join(F[i] for i in order[a:b])) for a, b in pairwise([0, *cuts, len(order)])
-    ]
+    segments = [bytearray(b"".join(items[a:b])) for a, b in pairwise([0, *cuts, len(order)])]
     for k, at, kind, value in data.draw(st.lists(_EDITS, max_size=3)):
         seg = segments[k % len(segments)]
         if kind == "i":
