@@ -35,7 +35,6 @@ from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.ops.health import AdminHealthService
-from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
@@ -50,6 +49,7 @@ from candleviewer.admin.wiring import (
     export_secrets_metrics,
 )
 from candleviewer.admin_wiring import (
+    build_admin_incidents,
     build_admin_read_models,
     build_statechart_inspector,
     build_system_settings,
@@ -1571,7 +1571,7 @@ def create_app(
     app.include_router(
         make_admin_ops_router(
             admin_health,
-            AdminIncidentsService(None),
+            build_admin_incidents(resolved, system_settings=admin_settings),
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
         )

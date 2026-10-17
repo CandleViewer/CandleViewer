@@ -1,5 +1,7 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
-`GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`.
+`GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`; and
+(E42-T05) `GET /admin/incidents` (`build_admin_incidents` at the end, which stays `501` until the
+incident materialiser ships).
 
 Real sources on the real storage backend:
 - the Postgres counts repository (users, accounts and keys, open incidents, sub-accounts in use),
@@ -38,6 +40,7 @@ from datetime import datetime
 from typing import Final
 
 from candleviewer.admin.inspector import StatechartInspector
+from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
 from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable, utc_now
 from candleviewer.admin.overview.ports import (
@@ -55,6 +58,7 @@ from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.statechart.lock import DEFAULT_LOCK_PATH, load_lock
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
+from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -223,3 +227,33 @@ def build_statechart_inspector(*, now: Callable[[], datetime] = utc_now) -> Stat
     `snapshots` and `metrics` stay `unavailable` and the list stays empty."""
     lock = {kind: str(entry.get("hash")) for kind, entry in load_lock(DEFAULT_LOCK_PATH).items()}
     return StatechartInspector(SliceFanOut(now=now), machine_key, lock)
+
+
+#: The incident list reads the `incidents` table only once something writes it. Nothing does
+#: until the incident materialiser (a later E42-T05 slice), so a wired reader would answer 200 with
+#: an empty list while `system_events` holds errors: the "no incidents" that the 501 exists to
+#: prevent. The materialiser's PR sets this to True.
+INCIDENTS_MATERIALISED = False
+
+
+def build_admin_incidents(
+    settings: Settings,
+    *,
+    system_settings: SystemSettings | None = None,
+    now: Callable[[], datetime] = utc_now,
+) -> AdminIncidentsService:
+    """The incident list: `501 not_implemented`, never a made-up page, until the incident
+    materialiser fills the `incidents` table. `SqlAlchemyIncidents` is built and tested but
+    unwired: once `INCIDENTS_MATERIALISED` is set the real backend reads the table over the admin
+    area's one engine, and the fake backend never has a store. Until then `/admin/overview` still
+    counts open incidents from raw `system_events`."""
+    store = None
+    if INCIDENTS_MATERIALISED and settings.storage_backend == "real":
+        # The admin area's one engine, shared with the counts and the tier, as above.
+        relational = (
+            system_settings.relational
+            if isinstance(system_settings, SqlAlchemySystemSettings)
+            else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+        )
+        store = SqlAlchemyIncidents(relational)
+    return AdminIncidentsService(store, now=now)
