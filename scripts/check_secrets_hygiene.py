@@ -5,7 +5,8 @@ Subcommands (all offline, deterministic, exit 1 on violation):
 * ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
   and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
-* ``workflows`` - no ``set -x`` / environment dump in workflows (SR-146)
+* ``workflows`` - no ``set -x`` / environment dump in workflows or the shell scripts their
+  steps run (SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
 
@@ -18,7 +19,7 @@ import argparse
 import json
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 #: Documented dummy prefix; the gitleaks allowlist and the fixture test both assert it.
 DUMMY_PREFIX = "DUMMYKEY_"
@@ -192,19 +193,97 @@ _ENV_DUMP = re.compile(
 )
 _SKIP_ALLOW = "# secrets-hygiene: allow"
 
+#: #3274: a step's `run:` text is followed into the repository shell scripts it invokes in command
+#: position: `bash|sh [-flags] <path>`, `source|. <path>`, or a direct `<dir>/<file>` that is a shell
+#: script (`.sh`/`.bash`, or a sh/bash shebang). Shell scripts only: SR-146's rules are shell rules,
+#: which would neither catch a Python leak nor stay quiet on Python text quoting them. A path is
+#: tried from the root and from each `working-directory:` the workflow names (errs toward scanning);
+#: one that resolves outside the root (`..`, a symlink, absolute) is refused, a missing one skipped.
+#: Not followed: `make`/`pnpm` targets, `$GITHUB_WORKSPACE` paths, a `cd` in the step, the scripts
+#: a script runs.
+_RUN_KEY = re.compile(r"^(\s*(?:-\s+)?)run:(.*)$")
+_WORKDIR = re.compile(r"^\s*(?:-\s+)?working-directory:\s*[\"']?([\w./-]+)", re.MULTILINE)
+_COMMENT = re.compile(r"(?:^|\s)#.*$")
+_INVOKES = re.compile(
+    r"(?:^|[;&|(){`])\s*(?:(?:if|then|elif|else|do|while|until|exec|time|sudo)\s+)*"
+    r"(?:\w+=\S*\s+)*(?:(bash|sh|source|\.)\s+(?:[-+]\w+\s+)*)?[\"']?([\w.][\w./-]*)"
+)
+_SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
+
+
+def _sr146_hits(text: str) -> list[tuple[int, str]]:
+    """The SR-146 line rules: (line, finding) per hit; comment and allow-marked lines skip."""
+    hits: list[tuple[int, str]] = []
+    for n, ln in enumerate(text.splitlines(), 1):
+        if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
+            continue
+        body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
+        if _SET_X.search(body):
+            hits.append((n, "'set -x' tracing"))
+        if _ENV_DUMP.search(body):
+            hits.append((n, "environment dump"))
+    return hits
+
+
+def _run_lines(text: str) -> list[str]:
+    """The shell lines of every `run:` value in a workflow (inline or block), comments dropped."""
+    lines: list[str] = []
+    key_col = -1
+    for ln in text.splitlines():
+        if key_col >= 0 and (not ln.strip() or len(ln) - len(ln.lstrip()) > key_col):
+            lines.append(_COMMENT.sub("", ln.strip()))
+            continue
+        m = _RUN_KEY.match(ln)
+        key_col = len(m.group(1)) if m else -1
+        if m and not m.group(2).strip().startswith(("|", ">")):
+            value = _COMMENT.sub("", m.group(2).strip())
+            lines.append(value[1:-1] if value[:1] in "\"'" and value[-1:] == value[:1] else value)
+    return lines
+
+
+def _repo_file(root: Path, rel: PurePosixPath) -> Path | None:
+    """``rel`` from ``root`` as a file that resolves (symlinks, ``..``) inside ``root``, or None."""
+    path = (root / rel).resolve()
+    return path if path.is_relative_to(root) and path.is_file() else None
+
+
+def _is_shell(path: Path) -> bool:
+    if path.suffix in (".sh", ".bash"):
+        return True
+    with path.open(encoding="utf-8", errors="replace") as f:
+        return _SHEBANG.match(f.readline(256)) is not None
+
+
+def workflow_scripts(root: Path) -> dict[str, set[str]]:
+    """Each repository shell script a workflow step runs (root-relative) -> the workflows."""
+    root = root.resolve()
+    found: dict[str, set[str]] = {}
+    wf = root / ".github" / "workflows"
+    for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
+        text = path.read_text(encoding="utf-8")
+        bases = [PurePosixPath(), *map(PurePosixPath, _WORKDIR.findall(text))]
+        for line in _run_lines(text):
+            for interpreter, rel in _INVOKES.findall(line):
+                if not interpreter and "/" not in rel:
+                    continue  # a bare command name is a PATH lookup, not a repository file
+                for base in bases:
+                    script = _repo_file(root, base / rel)
+                    if script and (interpreter or _is_shell(script)):
+                        key = script.relative_to(root).as_posix()
+                        found.setdefault(key, set()).add(path.name)
+    return found
+
 
 def check_workflows(root: Path) -> list[str]:
     errors: list[str] = []
     wf = root / ".github" / "workflows"
     for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
-        for n, ln in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
-                continue
-            body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
-            if _SET_X.search(body):
-                errors.append(f"{path.name}:{n}: 'set -x' tracing (SR-146)")
-            if _ENV_DUMP.search(body):
-                errors.append(f"{path.name}:{n}: environment dump (SR-146)")
+        for n, what in _sr146_hits(path.read_text(encoding="utf-8")):
+            errors.append(f"{path.name}:{n}: {what} (SR-146)")
+    for rel, runners in sorted(workflow_scripts(root).items()):
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        for n, what in _sr146_hits(text):
+            errors.append(f"{rel}:{n}: {what} (SR-146); run by {', '.join(sorted(runners))}")
     return errors
 
 

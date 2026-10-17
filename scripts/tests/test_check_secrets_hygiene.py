@@ -74,6 +74,98 @@ def test_repo_workflows_report() -> None:
     assert h.check_workflows(Path(__file__).resolve().parents[2]) == []
 
 
+# #3274: workflows mode also scans the shell scripts a workflow's `run:` steps invoke.
+WF = ".github/workflows/w.yml"
+
+
+def _runs(command: str) -> str:
+    return f"jobs:\n  a:\n    steps:\n      - run: {command}\n"
+
+
+def test_run_script_tracing_fails_naming_script_and_workflows(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("bash tools/x.sh"))
+    _write(tmp_path, ".github/workflows/nightly.yml", _runs("bash tools/x.sh"))
+    _write(tmp_path, "tools/x.sh", "#!/usr/bin/env bash\nset -euxo pipefail\n")
+    assert h.check_workflows(tmp_path) == [
+        "tools/x.sh:2: 'set -x' tracing (SR-146); run by nightly.yml, w.yml"
+    ]
+    assert h.main(["workflows", "--root", str(tmp_path)]) == 1
+    _write(tmp_path, "tools/x.sh", "#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert h.check_workflows(tmp_path) == []
+
+
+def test_run_script_env_dump_fails(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("./scripts/x.sh"))
+    _write(tmp_path, "scripts/x.sh", "echo start\nprintenv\n")
+    assert h.check_workflows(tmp_path) == [
+        "scripts/x.sh:2: environment dump (SR-146); run by w.yml"
+    ]
+
+
+def test_script_no_workflow_runs_is_not_scanned(tmp_path: Path) -> None:
+    run = "bash tools/run.sh && idle.sh && echo tools/idle.sh  # ; bash tools/idle.sh"
+    _write(tmp_path, WF, _runs(run))
+    _write(tmp_path, "tools/run.sh", "set -x\n")
+    _write(tmp_path, "tools/idle.sh", "set -x\n")
+    _write(tmp_path, "idle.sh", "set -x\n")  # a bare `idle.sh` is a PATH lookup, not this file
+    assert h.check_workflows(tmp_path) == [
+        "tools/run.sh:1: 'set -x' tracing (SR-146); run by w.yml"
+    ]
+
+
+def test_run_script_allow_marker_and_comment_lines_skip(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("sh scripts/x.sh"))
+    _write(
+        tmp_path, "scripts/x.sh", "# never set -x\nset -x  # secrets-hygiene: allow\nenv | sort\n"
+    )
+    assert h.check_workflows(tmp_path) == [
+        "scripts/x.sh:3: environment dump (SR-146); run by w.yml"
+    ]
+
+
+def test_run_script_paths_outside_the_repo_are_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(tmp_path, "out.sh", "set -x\n")
+    run = "bash ../out.sh; . tools/../../out.sh; bash tools/ln.sh; bash out.sh; ./tools/ok.sh"
+    _write(repo, WF, f"      - working-directory: {tmp_path}\n        run: {run}\n")
+    _write(repo, "tools/ok.sh", "printenv\n")
+    (repo / "tools/ln.sh").symlink_to(tmp_path / "out.sh")
+    assert h.check_workflows(repo) == ["tools/ok.sh:1: environment dump (SR-146); run by w.yml"]
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        "bash tools/x.sh",
+        "sh -e tools/x.sh",
+        "source tools/x.sh",
+        ". ./tools/x.sh",
+        "./tools/x.sh",
+        "set -eu; CV_X=1 tools/x.sh",
+        'cd . && bash "tools/x.sh"',
+        '"bash tools/x.sh"',
+        "if true; then ./tools/x.sh; fi",
+        "|\n          set -euo pipefail\n          bash tools/x.sh",
+    ],
+)
+def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
+    _write(tmp_path, WF, _runs(run))
+    _write(tmp_path, "tools/x.sh", "printenv\n")
+    assert h.check_workflows(tmp_path) == ["tools/x.sh:1: environment dump (SR-146); run by w.yml"]
+
+
+def test_run_script_working_directory_shebang_and_in_repo_dotdot(tmp_path: Path) -> None:
+    run = "./x && ./gen.py && python3 gen.py && bash ../scripts/y.sh"
+    _write(tmp_path, WF, f"      - working-directory: tools\n        run: {run}\n")
+    _write(tmp_path, "tools/x", "#!/usr/bin/env bash\nprintenv\n")
+    _write(tmp_path, "tools/gen.py", '#!/usr/bin/env python3\n"""Never set -x in CI."""\n')
+    _write(tmp_path, "scripts/y.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [
+        "scripts/y.sh:1: 'set -x' tracing (SR-146); run by w.yml",
+        "tools/x:2: environment dump (SR-146); run by w.yml",
+    ]
+
+
 def test_inventory_flags_prod_credentials_and_unprotected() -> None:
     errs = h.check_inventory(["BYBIT_LIVE_API_KEY", "PROD_KEK", "CODECOV_TOKEN", "AWS_SECRET_ACCESS_KEY"], {"RELEASE_SIGN": False})
     assert len(errs) == 4 + 0 or len(errs) == 4

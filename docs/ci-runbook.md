@@ -529,7 +529,8 @@ previous entry.
 
 - `python scripts/check_secrets_hygiene.py all` (CI `gitleaks` job): fixtures carry the `DUMMYKEY_`
   prefix (SR-145), `.env` ignored and `.env.example` non-secret (SR-144), no `set -x`/env dumps in
-  workflows (SR-146). `inventory <names.json>` and `logs <paths>` back the secret-inventory (SR-140/141)
+  workflows or in the shell scripts their `run:` steps invoke (`bash`/`sh`/`source`/`.`/`./x.sh`;
+  SR-146). `inventory <names.json>` and `logs <paths>` back the secret-inventory (SR-140/141)
   and log/artefact scans.
 - Full-history sweep (run by the owner/DevSecOps before the pen-test; gitleaks is not installed on
   agent hosts): `gitleaks detect --source . --log-opts="--all" --config .gitleaks.toml --redact -r sweep.json`
