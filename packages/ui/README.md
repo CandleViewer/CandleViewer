@@ -71,6 +71,21 @@ raw `px` length — use a token from `build/ts/tokens.ts` instead
 (`eslint.config.mjs`'s `candleviewer/no-raw-design-values` rule; the token
 source files themselves are exempt).
 
+## Theme runtime (E05-T02)
+
+`src/theme/` owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root attributes
+that the token CSS keys off. They are written on `document.documentElement` only (never a React-owned
+wrapper), so a switch is a CSS custom-property swap with no remount. Contract and event payload:
+[`16-design-system-brief.md` §4](../../docs/plan/16-design-system-brief.md).
+
+- `createThemeStore()` — framework-free store: persistence (`localStorage["cv.theme.v1"]`), OS media
+  listeners, the `candleviewer:themechange` event, an injectable analytics sink (`onAnalytics`).
+- `THEME_PREPAINT_SCRIPT` + `THEME_PREPAINT_SCRIPT_SHA256` — the synchronous no-flash snippet. The shell
+  embeds it byte-for-byte as its only inline script and allows it by hash (a `'sha256-…'` source in
+  `script-src`), never `'unsafe-inline'`.
+- Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
+  `a11y-preferences` feature should call it rather than write the attributes themselves.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/ui build` — runs `build:tokens` (Style
