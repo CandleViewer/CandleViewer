@@ -490,6 +490,7 @@ async def test_a_stale_fan_out_is_refused_on_every_socket_and_never_undoes_the_n
     resume.set()
     await stale
     assert refused._value.get() - before == 3
+    assert world.closed == []  # refused as stale, not evicted
     for s in sockets:
         assert (s.version, s.subs) == (2, {("positions", A), ("trades.BTCUSDT", None)})
     assert [[f["t"] for f in frames] for frames in world.frames] == [
