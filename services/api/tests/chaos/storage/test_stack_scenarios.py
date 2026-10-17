@@ -4,6 +4,10 @@ Run by the CI `integration` job's chaos step (`-m "chaos and integration and not
 which brings up postgres + questdb and a fixed-size loopback image. Each test
 is arrange -> inject -> assert(data, signals, health) -> recover ->
 assert(recovery), restarting any stopped service in `finally`.
+
+Every scenario starts from a healthy stack (`_stack_healthy`) and restarts what it
+stops with `st.stopped`, which waits until the service answers and re-issues
+`compose start` if it did nothing (GH-3087).
 """
 
 from __future__ import annotations
@@ -48,6 +52,16 @@ async def pg() -> AsyncIterator[SqlAlchemyRelationalRepository]:
         yield repo
     finally:
         await repo.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def _stack_healthy() -> None:
+    """No scenario starts while Postgres or QuestDB is down.
+
+    A predecessor that died without restarting what it stopped is healed here (with a warning)
+    or fails loudly, instead of cascading into the next scenario as a refused connection."""
+    await st.ensure_up("postgres", st.pg_up)
+    await st.ensure_up("questdb", st.qdb_up)
 
 
 def _registry(pg: SqlAlchemyRelationalRepository, disk_path: Path) -> HealthRegistry:
@@ -100,15 +114,6 @@ def _trades(symbol: str, start: int, n: int) -> list[dict[str, object]]:
     ]  # fmt: skip
 
 
-@contextlib.asynccontextmanager
-async def _stopped(service: str) -> AsyncIterator[None]:
-    await st.compose("stop", service)
-    try:
-        yield
-    finally:
-        await st.compose("start", service)
-
-
 async def test_s1_questdb_down_mid_ingest_backpressure_and_exactly_once(
     pg: SqlAlchemyRelationalRepository, tmp_path: Path
 ) -> None:
@@ -138,7 +143,7 @@ async def test_s1_questdb_down_mid_ingest_backpressure_and_exactly_once(
 
     producer: asyncio.Task[None] | None = None
     try:
-        async with _stopped("questdb"):
+        async with st.stopped("questdb", st.qdb_up):
             await st.until(lambda: _is(reg, "questdb", ComponentState.DOWN), "health: questdb down")
             assert await _state(reg, "postgres") is ComponentState.HEALTHY, "degraded, not fatal"
             producer = asyncio.create_task(produce())
@@ -225,7 +230,7 @@ async def test_s2_postgres_down_fails_readiness_no_partial_write_and_records_eve
     since = datetime.now(UTC)
     lost = f"chaos-s2-inflight-{uuid.uuid4().hex}"
     after = f"chaos-s2-after-{uuid.uuid4().hex}"
-    async with _stopped("postgres"):
+    async with st.stopped("postgres", st.pg_up):
         await st.until(lambda: _is(reg, "postgres", ComponentState.DOWN), "readiness: pg down")
         snap = reg.snapshot()
         assert snap is not None and snap.overall is ComponentState.DOWN, "fails loudly"

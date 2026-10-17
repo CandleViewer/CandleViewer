@@ -8,6 +8,11 @@ stop/start`; every wait is bounded and polls a condition (no bare sleeps).
 The app side runs in-process with the production wiring: the E04-T04
 `HealthRegistry` + `register_real_probes` + `PgSystemEventWriter`, and the
 E07-T03 `IlpWriter` over a real TCP socket.
+
+`docker compose start` is never trusted to have started anything (GH-3087):
+`start_and_wait` re-issues it until the service answers, `stopped` does that on
+every exit path, and `ensure_up` lets a scenario refuse to run on a stack that a
+predecessor left broken.
 """
 
 from __future__ import annotations
@@ -16,7 +21,10 @@ import asyncio
 import contextlib
 import os
 import subprocess
-from collections.abc import Awaitable, Callable
+import sys
+import warnings
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import asyncpg
@@ -31,6 +39,14 @@ QDB_ILP_PORT = int(os.environ.get("QUESTDB_ILP_PORT", "9009"))
 #: Loopback-image mount for scenario 3b (created by the CI step, never a real volume).
 LOOP_DIR = Path(os.environ.get("CV_CHAOS_LOOPBACK_DIR", "/mnt/cv-chaos-cold"))
 LOOP_MAX_BYTES = 128 * 1024 * 1024
+#: A `docker compose` call that has not exited within this long is killed and fails loudly.
+COMPOSE_TIMEOUT_S = 180.0
+#: Poll interval of the restart wait (the same cadence as `until`).
+POLL_S = 0.5
+#: `start_and_wait` re-issues `compose start` this often until the service answers.
+START_RETRY_S = 10.0
+
+Ready = Callable[[], Awaitable[bool]]
 
 
 def pg_dsn() -> str:
@@ -38,15 +54,66 @@ def pg_dsn() -> str:
     return f"postgresql+asyncpg://cv:{pw}@{HOST}:{PG_PORT}/candleviewer"
 
 
-def _compose(*args: str) -> None:
+class ComposeError(RuntimeError):
+    """`docker compose` exited non-zero or timed out; the message carries its output."""
+
+
+@dataclass(frozen=True)
+class ComposeResult:
+    args: tuple[str, ...]
+    returncode: int
+    stdout: str
+    stderr: str
+
+    @property
+    def output(self) -> str:
+        return (self.stdout + self.stderr).strip()
+
+
+def _run(argv: list[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
+    """The one subprocess call (the seam the unit tests replace with a fake `docker`)."""
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        argv, capture_output=True, text=True, timeout=timeout_s, check=False
+    )
+
+
+def _text(raw: str | bytes | None) -> str:
+    """`TimeoutExpired` hands back bytes even under `text=True`."""
+    return raw.decode(errors="replace") if isinstance(raw, bytes) else (raw or "")
+
+
+def _failure(args: tuple[str, ...], what: str, stdout: str, stderr: str) -> str:
+    detail = "\n".join(s.strip()[-2000:] for s in (stderr, stdout) if s.strip())
+    return f"docker compose {' '.join(args)}: {what}\n{detail or '<no output>'}"
+
+
+def _compose(args: tuple[str, ...], timeout_s: float) -> ComposeResult:
     argv = ["docker", "compose", "--profile", "core"]
     for f in COMPOSE_FILES:
         argv += ["-f", str(f)]
-    subprocess.run([*argv, *args], check=True, timeout=180)  # noqa: S603 - fixed argv
+    try:
+        done = _run([*argv, *args], timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        raise ComposeError(
+            _failure(
+                args, f"timed out after {timeout_s:.0f}s", _text(exc.stdout), _text(exc.stderr)
+            )
+        ) from exc
+    result = ComposeResult(args, done.returncode, _text(done.stdout), _text(done.stderr))
+    # Re-emit what compose said: its Stopping/Stopped/Starting/Started lines are the only record
+    # of what it did, and pytest shows them for a failing test (GH-3087 was diagnosed from them).
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.returncode != 0:
+        raise ComposeError(
+            _failure(args, f"exit {result.returncode}", result.stdout, result.stderr)
+        )
+    return result
 
 
-async def compose(*args: str) -> None:
-    await asyncio.to_thread(_compose, *args)
+async def compose(*args: str, timeout_s: float = COMPOSE_TIMEOUT_S) -> ComposeResult:
+    """Run `docker compose <args>`; a non-zero exit or a timeout raises `ComposeError`."""
+    return await asyncio.to_thread(_compose, args, timeout_s)
 
 
 async def until(pred: Callable[[], Awaitable[bool]], what: str, timeout_s: float = 90.0) -> None:
@@ -57,6 +124,97 @@ async def until(pred: Callable[[], Awaitable[bool]], what: str, timeout_s: float
         if loop.time() >= deadline:
             raise AssertionError(f"timed out after {timeout_s}s waiting for: {what}")
         await asyncio.sleep(0.5)
+
+
+async def _diagnostics(service: str) -> str:
+    """Best-effort `ps -a` and the service's log tail for a failure message; never raises."""
+    parts: list[str] = []
+    for args in (("ps", "-a"), ("logs", "--no-color", "--tail", "20", service)):
+        try:
+            res = await compose(*args, timeout_s=30)
+        except (ComposeError, OSError) as exc:
+            parts.append(f"$ docker compose {' '.join(args)} -> {exc}")
+        else:
+            parts.append(f"$ docker compose {' '.join(args)}\n{res.output or '<no output>'}")
+    return "\n".join(parts)
+
+
+async def start_and_wait(
+    service: str,
+    ready: Ready,
+    *,
+    timeout_s: float = 120.0,
+    retry_every_s: float = START_RETRY_S,
+    now: Callable[[], float] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Start `service` and block until `ready()` holds; a start that did nothing is re-issued.
+
+    `docker compose start` exits 0 without starting anything when its single up-front container
+    listing shows the service as running, or shows no container for it (compose v2.38.2
+    `startService` skips both silently). GH-3087: S2 logged `Stopped`, never `Starting`, and
+    Postgres stayed down for the rest of the run. A listing that trails a `stop` which has just
+    returned fits (Moby publishes the new state to `ContainerList` after `docker stop` returns),
+    but that was not captured. Either way the exit status proves nothing, so this polls `ready()`
+    and re-issues the idempotent `start` every `retry_every_s` until the service answers or
+    `timeout_s` runs out.
+
+    A non-zero exit raises `ComposeError` at once. Running out of time raises `AssertionError`
+    carrying `compose ps -a` and the service's log tail. Needing more than one start recovers but
+    warns (`RuntimeWarning`), so how often the quirk fires shows in the CI warnings summary.
+    `now` and `sleep` are injectable so the unit tests drive this on a fake clock.
+    """
+    clock = now or asyncio.get_running_loop().time
+    deadline = clock() + timeout_s
+    next_start = clock()
+    starts = 0
+    last: ComposeResult | None = None
+    while True:
+        if clock() >= next_start:
+            last = await compose("start", service, timeout_s=max(1.0, deadline - clock()))
+            starts += 1
+            next_start = clock() + retry_every_s
+        if await ready():
+            if starts > 1:  # recovered, but not for free: keep the quirk visible in the CI summary
+                warnings.warn(
+                    f"{service} needed {starts} `compose start` calls; the earlier ones exited 0 "
+                    f"without starting it (GH-3087)",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return
+        if clock() >= deadline:
+            seen = f"exit {last.returncode}, output {last.output!r}" if last else "never ran"
+            raise AssertionError(
+                f"{service} not ready {timeout_s:.0f}s after `compose start` ({starts} start(s), "
+                f"one every {retry_every_s:.0f}s; last start: {seen})\n"
+                f"{await _diagnostics(service)}"
+            )
+        await sleep(POLL_S)
+
+
+async def ensure_up(service: str, ready: Ready, *, timeout_s: float = 60.0) -> None:
+    """Scenario precondition: `service` answers now, or is started and awaited; never assumed.
+
+    A scenario that died without restarting what it stopped must not hand the next one a dead
+    stack (GH-3087: S3b and S8 failed on S2's leftovers). Healing is reported with a warning so a
+    leaked fault stays visible; a service that cannot be brought back fails loudly here."""
+    if await ready():
+        return
+    warnings.warn(
+        f"{service} was down before the scenario; restarting it", RuntimeWarning, stacklevel=2
+    )
+    await start_and_wait(service, ready, timeout_s=timeout_s)
+
+
+@contextlib.asynccontextmanager
+async def stopped(service: str, ready: Ready, *, timeout_s: float = 120.0) -> AsyncIterator[None]:
+    """Stop `service` for the body, then start it and wait until `ready()` on every exit path."""
+    try:
+        await compose("stop", service)
+        yield
+    finally:
+        await start_and_wait(service, ready, timeout_s=timeout_s)
 
 
 async def qdb_connect() -> asyncpg.Connection:
@@ -73,6 +231,18 @@ async def qdb_up() -> bool:
     with contextlib.suppress(OSError, asyncpg.PostgresError):
         conn = await asyncio.wait_for(qdb_connect(), timeout=3)
         await conn.close()
+        return True
+    return False
+
+
+async def pg_up() -> bool:
+    """True once Postgres answers a query (an open port alone is only docker-proxy)."""
+    with contextlib.suppress(OSError, asyncpg.PostgresError, TimeoutError):
+        conn = await asyncpg.connect(pg_dsn().replace("+asyncpg", "", 1), timeout=3)
+        try:
+            await conn.execute("SELECT 1")
+        finally:
+            await conn.close()
         return True
     return False
 
