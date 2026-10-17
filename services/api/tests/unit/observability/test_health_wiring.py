@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
+from candleviewer import app as app_module
 from candleviewer.app import build_auth_service, create_app
 from candleviewer.audit.redact import REDACTION_MARKER, redact
 from candleviewer.bus.models import Topic
@@ -144,6 +145,25 @@ def test_each_production_writer_is_built_with_the_audit_serializer(
     writer = build()
     assert isinstance(writer, PgSystemEventWriter)
     assert writer._redact_details({"api_key": "k"}) == {"api_key": REDACTION_MARKER}
+
+
+def test_every_system_event_writer_create_app_builds_redacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The auth service's, the health registry's and the audit verify route's chain-break writer
+    # (#2468).
+    built: list[PgSystemEventWriter] = []
+    real = app_module.PgSystemEventWriter
+
+    def _spy(*args: Any, **kwargs: Any) -> PgSystemEventWriter:
+        built.append(real(*args, **kwargs))
+        return built[-1]
+
+    monkeypatch.setattr(app_module, "PgSystemEventWriter", _spy)
+    create_app(_real_settings())
+    assert len(built) == 3
+    for writer in built:
+        assert writer._redact_details({"api_key": "k"}) == {"api_key": REDACTION_MARKER}
 
 
 @pytest.mark.parametrize("severity", ["error", "critical"])
