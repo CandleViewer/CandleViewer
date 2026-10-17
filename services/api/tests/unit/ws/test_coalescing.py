@@ -13,7 +13,10 @@ from hypothesis import strategies as st
 
 from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, FLAG_REPLAY, HEATMAP_COLUMN, Frame
 from candleviewer.ws.coalescing import (
+    _EXACT,
+    _MAX_EXPONENT,
     MAX_PENDING_FRAMES,
+    MAX_PENDING_KEYS,
     MERGED_FAMILIES,
     SENT_COLUMNS_MEMORY,
     CoalescingQueue,
@@ -925,17 +928,32 @@ def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window(
     assert queue.refusal == "unmergeable"
 
 
-def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
+def test_coalescer_footprint_a_truthy_confirm_counts_as_confirmed() -> None:
+    """`confirm` is read by truthiness, as `BarCoalescer` reads it: a truthy non-boolean makes
+    the next update to the bar unmergeable (a re-snapshot), not a merge into a confirmed bar."""
     queue = CoalescingQueue("footprint")
-    big = {"price": "1", "bid_volume": "1E+29"}
+    cells = [{"price": "1", "bid_volume": "1"}]
+    assert queue.offer({"bars": [{"t_ms": 0, "confirm": 1, "cells": cells}]})
+    assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
+    assert queue.refusal == "unmergeable"
+
+
+def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
+    """The largest summed value (`1E+_MAX_EXPONENT`) plus a fraction is exact while the sum fits
+    `_EXACT.prec` digits; one more fraction digit is refused, never rounded."""
+    whole = _MAX_EXPONENT + 1  # integer digits of 1E+_MAX_EXPONENT
+    fits = _EXACT.prec - whole  # fraction digits that still fit beside them
+    big = {"price": "1", "bid_volume": f"1E+{_MAX_EXPONENT}"}
+    queue = CoalescingQueue("footprint")
     queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
-    queue.offer({"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1E-8"}]}]})
+    queue.offer({"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": f"1E-{fits}"}]}]})
     [frame] = queue.take()
-    assert frame.body["bars"][0]["cells"][0]["bid_volume"] == "1" + "0" * 29 + ".00000001"
-    tiny = {"price": "1", "bid_volume": "1E-140"}  # 1E+29 + 1E-140 needs 170 digits: inexact
+    exact = "1" + "0" * _MAX_EXPONENT + "." + "0" * (fits - 1) + "1"
+    assert frame.body["bars"][0]["cells"][0]["bid_volume"] == exact
+    over = {"price": "1", "bid_volume": f"1E-{fits + 1}"}  # `_EXACT.prec` + 1 digits: inexact
     queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
-    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [tiny]}]})
-    assert queue.overflowed
+    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [over]}]})
+    assert queue.overflowed and queue.error == "Inexact"
 
 
 def test_coalescer_heatmap_discarded_stale_column_keeps_the_next_lone_update_verbatim() -> None:
@@ -951,12 +969,16 @@ def test_coalescer_heatmap_discarded_stale_column_keeps_the_next_lone_update_ver
 
 
 def test_coalescer_heatmap_root_fields_seen_are_bounded() -> None:
-    queue = CoalescingQueue("heatmap", max_keys=8)
-    for i in range(8):
-        queue.offer({"symbol": "X", f"k{i}": i})
+    """Every in-bound offer is accepted; the first root field past the bound is refused. Each
+    update carries `symbol`, so it takes one of the `MAX_PENDING_KEYS` slots itself."""
+    fixed = {"symbol": "X"}
+    queue = CoalescingQueue("heatmap")
+    for i in range(MAX_PENDING_KEYS - len(fixed)):
+        assert queue.offer({**fixed, f"k{i}": i})
         queue.take()
-    assert not queue.offer({"symbol": "X", "k8": 8})
-    assert queue.overflowed
+    assert not queue.overflowed
+    assert not queue.offer({**fixed, "past-the-bound": 0})
+    assert queue.refusal == "full"
     queue.clear()
     assert queue.offer({"symbol": "X"})  # the refusal discarded the overgrown merge
 

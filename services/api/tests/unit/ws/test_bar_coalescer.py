@@ -45,6 +45,18 @@ def test_confirmed_replaced_only_when_amended() -> None:
     assert co.flush()[0][0]["c"] == "9"
 
 
+def test_truthy_confirm_counts_as_confirmed() -> None:
+    """`confirm` is read by truthiness; the footprint merge reads it the same way (#2998)."""
+    co = BarCoalescer()
+    co.add({**_bar(0, 0, "1"), "confirm": 1})
+    co.add(_bar(0, 0, "2"))  # unconfirmed: never replaces a confirmed bar
+    co.add({**_bar(0, 0, "3"), "confirm": 1})  # confirmed again: only an amendment replaces it
+    assert co.flush()[0][0]["c"] == "1"
+    co.add({**_bar(0, 0, "1"), "confirm": 1})
+    co.add({**_bar(0, 0, "9"), "confirm": 1, "amended": True})
+    assert co.flush()[0][0]["c"] == "9"
+
+
 def test_overflow_flags_resnapshot() -> None:
     co = BarCoalescer(max_pending=1)
     co.add(_bar(0, 0, "1"))
