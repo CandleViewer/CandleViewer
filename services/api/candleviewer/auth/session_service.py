@@ -51,6 +51,7 @@ from candleviewer.auth.errors import (
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import (
+    auth_disabled_user_sessions_revoked_total,
     auth_idle_locks_total,
     auth_refresh_reuse_total,
     auth_refresh_total,
@@ -151,7 +152,9 @@ def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
 
     The `allow_locked=True` path (logout, revoke) is laxer on purpose: an idle-locked session
     can still act there, which this predicate does not model, so a CSRF refusal on those
-    routes for such a session draws on the per-IP audit budget (conservative)."""
+    routes for such a session draws on the per-IP audit budget (conservative). The user's
+    status is not part of it either: `peek_access_token` reads none, and `require_active`
+    refuses and revokes a disabled user's session itself (#2911)."""
     return (
         not session.is_revoked
         and not session.is_absolute_expired(now=now)
@@ -386,6 +389,10 @@ class SessionService:
         own (cosmetic) lock overlay believes.
 
         Raises `SessionNotFound`, `SessionRevoked`, or `SessionIdleLocked`.
+        A live session of a disabled user, or of one whose row is gone (read
+        with the session row, #2911), is revoked as `user_disabled` and refused:
+        SR-029 fails closed on any session no disable revoked, and the publish
+        ends its sockets with `bye user_disabled` + 4403.
         """
         session = await self._repository.find_by_id(session_id)
         if session is None:
@@ -403,6 +410,21 @@ class SessionService:
 
         if session.is_revoked:
             raise SessionRevoked(session.revoked_reason or "revoked")
+
+        if session.user_status in (UserStatus.DISABLED, None):
+            # A session no disable revoked (SR-029 breach signal): counted and logged here,
+            # and its revocation is counted under `user_disabled` like the disable's own. No
+            # audit row: `auth` may not import `audit` (`forbidden-M18`) and any route reaches
+            # this, so the counter and this log are the trail (runbook auth-rbac section 4).
+            auth_disabled_user_sessions_revoked_total.inc()
+            _log().warning(
+                "auth.disabled_user_session_revoked",
+                session_id=session_id,
+                user_id=str(session.user_id),
+                user_status=session.user_status,
+            )
+            await self.revoke(session_id, reason="user_disabled")
+            raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now):
             auth_idle_locks_total.inc()

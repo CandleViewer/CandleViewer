@@ -1295,7 +1295,7 @@ Then one `revoked` frame per affected subscription:
 
 `reason` ∈ `permission_revoked` | `account_scope_changed` | `user_disabled` | `session_revoked` | `key_revoked` | `account_disabled` | `replay_session_ended` | `resync_rate_limited` | `topic_removed`.
 
-If the user is disabled entirely, the server sends `bye` with `4403` and closes. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set.
+If the user is disabled entirely, the server sends `bye` with `4403` and closes. A live session of a disabled (or deleted) user that no disable revoked (#2911) is revoked as `user_disabled` the first time a strict-path request presents its access token: a REST request that authenticates the session, or a socket `auth`. `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` read the session with `allow_locked` and do not revoke it. The revocation is published, so the REST request answers 401 and every socket already running on that session ends with `bye` `user_disabled` and `4403`. The socket whose first `auth` presented the token is not registered yet: it gets `err` `auth_failed` like any refused `auth` (§4.3), not `bye` `user_disabled`. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set.
 
 ---
 

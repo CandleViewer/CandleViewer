@@ -219,6 +219,31 @@ What exists and may be used as separate primitives (no endpoint wires them to a 
   the metrics listener since #2319); `auth_revocation_latency_seconds` is process-local and not served.
 - `users.status = disabled` makes login refuse with `403 Account disabled` after a correct password.
 
+What a `disabled` status does to sessions (#2911). It holds however the status was set, and it is
+the backstop for a session that no disable revoked. A `locked` or `invited` status changes none of
+it (login refuses `disabled` only):
+
+- `POST /auth/mfa/verify` for a user disabled since the password step answers `401` and mints no
+  session. The refusal is audited as `auth.login_failed` (`denied`, reason `user_disabled`).
+- `POST /auth/refresh` with a disabled (or deleted) user's refresh token answers `401`
+  `refresh_token_invalid`, before the session is claimed: it is neither rotated nor revoked. The
+  refusal is audited as `auth.session_refreshed` (`denied`, reason `user_disabled`), after the
+  write-ahead record of the attempt. A disable that commits after the claim leaves no live
+  successor either: the mint reads the status under a lock on the user row, and the disable's own
+  lock queues behind it.
+- A session that survives is revoked on its next strict-path use, with reason `user_disabled`: the
+  first REST request that authenticates it (every route but `POST /auth/logout` and
+  `DELETE /me/sessions/{sessionId}`, which accept it so the user can still sign out) or the first
+  socket `auth` that presents its token. The request answers `401`, and the sockets already on that
+  session end with `bye` `user_disabled` and `4403`; the socket whose first `auth` presented the
+  token gets `err` `auth_failed` (`docs/plan/23-ws-protocol.md` §9.5).
+- Each such revocation increments `auth_disabled_user_sessions_revoked_total` (no label; on the
+  metrics registry: the private listener `127.0.0.1:9108`) and logs a `WARNING`
+  `auth.disabled_user_session_revoked` with `session_id`, `user_id` and `user_status` (`None`: the
+  user row is gone). It writes **no audit row**: `auth` may not import `audit`, so the counter and
+  the log line are the whole trail. Any increase means a session outlived a disable (SR-029):
+  escalate with the log line.
+
 Until #965 lands, an operator cannot disable a user end to end. Escalate. The in-process drill
 `services/api/tests/security/auth/test_disable_user_drill.py` is a test counterpart only.
 

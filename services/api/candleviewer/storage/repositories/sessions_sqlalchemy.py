@@ -12,7 +12,7 @@ written only from a read taken under the row lock (`update_step_up_state`)
 or by one conditional statement (`consume_step_up_key`), never from a stale
 copy of the row (#2304). A session is inserted only for a user who exists and is
 not `disabled`, read under the user-row lock in the insert's transaction, and the
-read by refresh hash carries the user's status (#2911).
+reads by id and by refresh hash carry the user's status (#2911).
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def _sql(template: str) -> sa.TextClause:
     return sa.text(template.replace("@COLS@", _COLUMNS).replace("@STATUS@", _USER_STATUS))
 
 
-_BY_ID_SQL = _sql("SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid)")
+_BY_ID_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid)")
 _BY_HASH_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE refresh_token_hash = :h")
 _BY_JTI_SQL = _sql("SELECT @COLS@ FROM sessions WHERE access_token_jti = CAST(:j AS uuid)")
 _LIVE_BY_USER_SQL = _sql(

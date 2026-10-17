@@ -1915,6 +1915,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_disabled_user_sessions_revoked_total",
+        "counter",
+        "sessions",
+        (),
+        "Live sessions of a disabled or deleted user that no disable revoked, found and revoked "
+        "on use (SR-029).",
+        "none yet (any increase is a breach signal; WARNING log "
+        "auth.disabled_user_session_revoked; runbook auth-rbac section 4)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",

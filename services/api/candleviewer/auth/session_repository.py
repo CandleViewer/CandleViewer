@@ -35,7 +35,11 @@ class SessionRepository(Protocol):
         on it waits for (and vice versa), in the insert's transaction."""
         ...
 
-    async def find_by_id(self, session_id: str) -> SessionRecord | None: ...
+    async def find_by_id(self, session_id: str) -> SessionRecord | None:
+        """The row with its user's `users.status` (`user_status`, #2911), like
+        `find_by_refresh_hash`: always populated for a user that exists, because
+        `require_active` reads `None` as a gone user and revokes the session."""
+        ...
 
     async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:
         """Look up the *live or revoked* row for a hash — reuse detection
