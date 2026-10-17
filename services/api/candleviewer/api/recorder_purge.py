@@ -23,7 +23,7 @@ from typing import Protocol
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from candleviewer.api.recorder_admin import (
     RECORDING_WRITE,
@@ -36,6 +36,7 @@ from candleviewer.api.recorder_admin import (
     logger,
 )
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.recorder.retention import Protected, PrunePlan, RetentionBusy, RunReport
 
 PURGE_JOB_KIND = "retention_purge"
@@ -57,6 +58,11 @@ class PurgeRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=280)
     before: datetime | None = None
     include_pinned: bool = False
+
+    @field_validator("reason")
+    @classmethod
+    def _storable_reason(cls, value: str) -> str:
+        return refuse_unstorable_text(value)
 
 
 class PurgeBackend(Protocol):

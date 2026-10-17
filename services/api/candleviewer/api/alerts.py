@@ -25,12 +25,13 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from candleviewer.alerts.compiler import AlertCompiler, validate_template
 from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.models import AuditOutcome
+from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 from candleviewer.storage.repositories.alerts import (
@@ -71,6 +72,11 @@ class AlertInput(BaseModel):
     expires_at: datetime | None = None
     webhook_url: str | None = None
     enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _storable_name(cls, value: str) -> str:
+        return refuse_unstorable_text(value)
 
 
 class _EnabledBody(BaseModel):

@@ -9,6 +9,8 @@ import pytest
 from _alert_api_env import PRICE_CROSS, USER_B, Env
 from fastapi.testclient import TestClient
 
+from candleviewer.domain.text import UNSTORABLE_TEXT
+
 ACTION = {"node_id": "a1", "type": "place_order", "params": {"side": "buy", "qty": "1"}}
 
 
@@ -56,6 +58,14 @@ def test_create_action_bearing_ir_422_nothing_persisted(env: Env, mut: Any, node
 def test_create_actions_key_at_body_level_rejected(env: Env) -> None:
     r = env.c.post("/alerts", json=PRICE_CROSS | {"actions": [ACTION]})
     assert r.status_code == 422 and env.repo.rows == {}
+
+
+def test_create_name_with_nul_is_the_field_422_nothing_persisted(env: Env) -> None:
+    r = env.c.post("/alerts", json=PRICE_CROSS | {"name": "price\x00cross"})
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    message = f"Value error, {UNSTORABLE_TEXT}"
+    assert r.json()["errors"] == [{"field": "name", "rule": "value_error", "message": message}]
+    assert env.repo.rows == {} and env.audit.calls == []
 
 
 def test_router_module_never_imports_the_oms() -> None:

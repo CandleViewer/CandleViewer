@@ -15,7 +15,9 @@ import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from candleviewer.domain.text import refuse_unstorable_text
 
 
 class UserStatus(StrEnum):
@@ -39,6 +41,11 @@ class LoginRequest(BaseModel):
     identifier: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=512)
     device_name: str | None = Field(default=None, max_length=120)
+
+    @field_validator("identifier")
+    @classmethod
+    def _storable_identifier(cls, value: str) -> str:
+        return refuse_unstorable_text(value)
 
 
 class MfaVerifyRequest(BaseModel):
