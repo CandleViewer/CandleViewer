@@ -1932,8 +1932,7 @@ def _catalogue_scales(ctx: AppContext, symbol: str) -> tuple[int, int] | None:
     return None if inst is None else (_places(inst.tick_size), _places(inst.qty_step))
 
 
-def _places(step: Decimal) -> int:
-    """`0.10` -> 1, `0.001` -> 3, `5` -> 0."""
+def _places(step: Decimal) -> int:  # `0.10` -> 1, `0.001` -> 3, `5` -> 0
     exponent = step.normalize().as_tuple().exponent
     return max(0, -exponent) if isinstance(exponent, int) else 0
 

@@ -144,8 +144,7 @@ async def test_both_encodings_validate_and_carry_the_meta_and_the_same_bars_at_c
 async def test_the_whole_snapshot_goes_structured_when_kind_4_cannot_carry_it(
     px: str, scales: tuple[int, int] | None
 ) -> None:
-    """§3.4's trigger: no instrument scales, or a value outside its 64-bit field."""
-    store = await _store(2, px=px)
+    store = await _store(2, px=px)  # §3.4's trigger: no scales, or a value outside i64
     with capture_logs() as logs:
         body = _build(_src(store, scales), _sub(encoding="binary"))
     assert body.parts == () and len(body.structured["bars"]) == 3
@@ -154,10 +153,13 @@ async def test_the_whole_snapshot_goes_structured_when_kind_4_cannot_carry_it(
 
 
 async def test_a_bar_neither_form_can_carry_keeps_the_subscription_pending() -> None:
-    store = await _store(1, px="NaN")
-    with capture_logs() as logs:
-        assert _src(store).build(_sub(encoding="structured")) is None
-    assert [(e["event"], e["log_level"]) for e in logs] == [("ws_bars_snapshot_refused", "error")]
+    """Rebuilt on every emission while a swap left it pending: logged once until a success."""
+    src = _src(await _store(1, px="NaN"))
+    with capture_logs() as logs:  # `history: 0` sends no bar, so that build succeeds
+        built = [src.build(_sub(encoding="binary", history=h)) for h in (1, 1, 0, 1)]
+    assert [b is None for b in built] == [True, True, False, True]
+    once = [("ws_bars_snapshot_structured", "warning"), ("ws_bars_snapshot_refused", "error")]
+    assert [(e["event"], e["log_level"]) for e in logs] == once * 2
 
 
 async def test_generation_is_the_store_version_and_continuity_is_always_false() -> None:
@@ -172,8 +174,7 @@ async def test_generation_is_the_store_version_and_continuity_is_always_false() 
 @pytest.mark.parametrize(("ch", "rs"), [(CH, RS), ("bars.ETHUSDT.time.5", None),
                                         ("bars.BTCUSDT.renko.atr:14", None)])  # fmt: skip
 async def test_a_replay_unheld_or_unbuildable_series_builds_none(ch: str, rs: str | None) -> None:
-    """The live store is no replay state; a series it does not keep has nothing to send."""
-    src = _src(await _store(1))
+    src = _src(await _store(1))  # live only, and it keeps BTCUSDT's `time.5` only
     assert src.build(_sub(ch, rs=rs)) is None and src.generation(_sub(ch, rs=rs)) == 0
 
 

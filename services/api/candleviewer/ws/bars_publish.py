@@ -161,9 +161,11 @@ class BarsPublisher:
     def note_generation(self, symbol: str, spec: BarSpec, generation: int) -> None:
         """Seed the baseline of a series not seen yet with the generation a snapshot of it was
         built at: its first emission takes it. Seeds sit apart from the series map, so they never
-        age a live series out. A baseline or seed already there stays, which at worst costs one
-        redundant re-snapshot per subscriber after a swap made while the series was quiet."""
+        age a live series out; a seed there stays. A seen series' baseline becomes it, as the client
+        holds it: another generation's emission is a swap, at worst a redundant one (§7.1)."""
         key = (symbol, spec.spec_hash)
+        if (series := self._series.get(key)) is not None:
+            series.generation = generation  # the snapshot's wins: it is what the client holds
         if key in self._series or key in self._seeds:
             return
         self._seeds[key] = generation

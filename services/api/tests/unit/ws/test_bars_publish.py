@@ -28,7 +28,7 @@ from tests.unit.ws._seq_support import Clock, OwnerMetaConn, Source
 SPEC = BarSpec(kind="time", interval_ms=300_000)
 CH = "bars.BTCUSDT.time.5"
 RS = "bb000000-0000-4000-8000-000000000001"
-SWAP: Final = "upstream_reconnect"  # a test value: §7.4 names no reason for a generation swap
+SWAP: Final = "generation_swap"
 T0_US = 1_700_000_000_000_000
 EMPTY = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
 EXACT = ("generation", "index", "t_ms", "trades", "confirm")
@@ -329,6 +329,8 @@ async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> 
     hub.register(conn.authz, conn.emitter)
 
     class Leases:  # the builder replays its tape through the router while `sub` is in flight
+        def check(self, spec: BarSpec, symbol: str, user: Any = None) -> None: ...
+
         async def register(
             self, spec: BarSpec, symbol: str, consumer: str, user: Any = None
         ) -> None:
@@ -381,7 +383,7 @@ async def test_groups_count_only_the_subscriptions_a_frame_reaches(
 async def test_note_generation_seeds_a_missing_baseline_and_keeps_an_existing_one() -> None:
     _, pub, [(conn, _)] = _world({"encoding": "structured"})
     pub.note_generation("BTCUSDT", SPEC, 5)
-    pub.note_generation("BTCUSDT", SPEC, 7)  # kept at 5: only emissions move a baseline
+    pub.note_generation("BTCUSDT", SPEC, 7)  # kept at 5: a seed already there stays
     for generation in (7, 7):
         await pub.emit(_em(_up(), generation=generation))
     assert [f["t"] for f in conn.take()] == ["snap", "d"]  # 7 differs from the seeded 5: a swap
@@ -401,7 +403,7 @@ async def test_note_generation_seeds_aside_and_never_ages_out_an_emitting_series
     assert swapped == [CH, "bars.BTCUSDT.time.1", "bars.BTCUSDT.time.60"]
 
 
-async def test_note_generation_leaves_an_emitting_series_baseline_alone() -> None:
+async def test_note_generation_takes_no_seed_for_an_emitting_series() -> None:
     _, pub, [(conn, _)] = _world({"encoding": "structured"}, max_series=2)
     await pub.emit(_em(_up(), generation=3))
     pub.note_generation("BTCUSDT", SPEC, 1)  # the series is live: no seed is taken

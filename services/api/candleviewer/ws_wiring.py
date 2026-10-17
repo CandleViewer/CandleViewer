@@ -110,8 +110,7 @@ class IngestionUpstreamSink:
 
 def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
     """Family -> the ingestion stream that owns its upstream demand (resolved per call: the
-    streams are attached by `wire_public_ws` only when its flag is on). A `bars` series is built
-    from its symbol's trades, so it demands the trade stream (#399)."""
+    streams are attached by `wire_public_ws` only when its flag is on); `bars` needs trades."""
 
     def resolve(family: str) -> _Demand | None:
         ing = ctx.ingestion

@@ -244,8 +244,7 @@ async def test_ingestion_sink_leases_one_consumer_per_key_and_tolerates_refusal(
     await refusing.open(("NOPEUSDT", "book", ("50",)))  # logged, never raised
 
 
-def test_a_bars_series_leases_its_symbols_trades() -> None:
-    """#399 D2: a bars series is built from its symbol's trades, so `bars` demands that stream."""
+def test_a_bars_series_leases_its_symbols_trades() -> None:  # #399 D2: built from its trades
     trades = _Stream()
     ctx: Any = SimpleNamespace(ingestion=SimpleNamespace(trades=trades, books=None, tickers=None))
     assert ingestion_streams(ctx)("bars") is trades and ingestion_streams(ctx)("footprint") is None

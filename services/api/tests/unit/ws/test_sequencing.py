@@ -389,6 +389,8 @@ def test_client_resync_of_a_backpressure_pended_topic_waits_for_drain() -> None:
 
 
 class _CappedBars:
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None: ...
+
     async def register(
         self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
     ) -> None:

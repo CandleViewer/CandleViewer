@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Final
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -27,19 +28,14 @@ from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import IngestionUpstreamSink, default_snapshot_router, ingestion_streams
-from tests.unit.ws._seq_support import _SCHEMAS, Clock, principal, validate
+from tests.unit.ws._seq_support import Clock, principal, validate
 from tests.unit.ws.test_app_wiring import _Stream
 from tests.unit.ws.test_bars_source import CH, SPEC, SYM, _bar, _up
 from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
 from tests.unit.ws.test_sequencing_socket import _open
 from tests.unit.ws.test_subscriptions import _Bars
 
-_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 KEY: Final = (SYM, "bars", ("time", "5"))
-#: TODO(#399): the A2 contract slice adds `generation_swap` to `snapMeta.reason`; until it merges,
-#: a swap `snap` is schema-checked with a reason this schema knows.
-_META: Final = _SCHEMAS["cv://ws/v1/common.schema.json"]["$defs"]["snapMeta"]["properties"]
-_SWAP_KNOWN: Final = "generation_swap" in _META["reason"]["enum"]
 
 
 class _World:
@@ -66,7 +62,7 @@ class _World:
             return principal()
 
         async def authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
-            return "sess-1", principal().user_id, _EXPIRES
+            return "sess-1", principal().user_id, datetime(2100, 1, 1, tzinfo=UTC)
 
         app = FastAPI()
         app.include_router(
@@ -93,16 +89,12 @@ class _World:
 def _rx(ws: Any) -> dict[str, Any]:
     while True:
         frame = _recv(ws)
-        if frame["t"] == "ping":
-            continue
-        meta = frame.get("meta", {})
-        swap = meta.get("reason") == "generation_swap" and not _SWAP_KNOWN
-        validate({**frame, "meta": {**meta, "reason": "reconfigure"}} if swap else frame)
-        return frame
+        if frame["t"] != "ping":
+            validate(frame)
+            return frame
 
 
-def _subscribe(ws: Any, opts: dict[str, Any]) -> dict[str, Any]:
-    """Open the socket and subscribe `CH`; the `snap` that follows `sub_ok`."""
+def _subscribe(ws: Any, opts: dict[str, Any]) -> dict[str, Any]:  # the `snap` after `sub_ok`
     _open(ws)
     ws.send_json({"t": "sub", "id": "s", "p": {"topics": [{"ch": CH, "opts": opts}]}})
     assert _rx(ws)["p"]["results"][0]["ok"] is True
@@ -114,11 +106,18 @@ def _items(frame: dict[str, Any]) -> list[tuple[int, int, bool]]:
     return [(b["generation"], b["index"], b["confirm"]) for b in bars]
 
 
-def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings() -> None:
-    """The store hydrates generation 7 from storage, which the publisher never saw: only the
-    snapshot's seed makes the first emission, of a new epoch, a swap and not a `d`."""
+@pytest.mark.parametrize("before", ["nothing", "an emission", "a hold, then an emission"])
+def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings(before: str) -> None:
+    """Rows at 7; the publisher saw nothing, or 9 while no hold kept the series (a `footprint`
+    lessee): the snapshot's 7 is its baseline, so 9 is a swap, never a `d` (§7.1 guarantee 3)."""
     w = _World(rows=((7, _bar(0)), (7, _bar(1))))
     with w.client:
+        if before.startswith("a hold"):  # its snapshot seeds 7, then the socket's end frees it
+            with w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+                _subscribe(ws, {})
+            assert _freed(w)
+        if before != "nothing":
+            w.emit(9, _up("open", 0))  # held by no one: only the publisher sees generation 9
         with (
             w.client.websocket_connect("/ws", subprotocols=JSON) as j,
             w.client.websocket_connect("/ws", subprotocols=JSON) as b,
@@ -131,11 +130,11 @@ def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings() ->
                 owner = {"spec_hash": SPEC.spec_hash, "build_version": 1, "include_delta": flow}
                 assert snap["meta"] == {"reason": "initial", "source": "live", **owner}
                 assert _items(snap) == [(7, 0, True), (7, 1, True)]
-            w.emit(9, _up("open", 0))  # a builder cold start: a new epoch, index 0 again
+            w.emit(9, _up("open", 0))  # the new epoch reaches the held series: index 0 again
             for ws, _ in flows:
                 snap = _rx(ws)
                 meta = snap["meta"]
-                assert (snap["t"], snap["s"], meta["reason"], meta["previous_seq"]) == (
+                assert (snap["t"], snap["s"], meta.get("reason"), meta.get("previous_seq")) == (
                     "snap", 2, "generation_swap", 1)  # fmt: skip
                 assert _items(snap) == [(9, 0, False)]  # the whole series replaced
             w.emit(9, _up("close", 0))
@@ -144,13 +143,12 @@ def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings() ->
                 assert (d["t"], d["s"], d["e"], d["meta"]) == ("d", 3, "j" if flow else "b64",
                                                                {"include_delta": flow})  # fmt: skip
                 assert _items(d) == [(9, 0, True)]
-    assert w.trades.calls == [("acquire", "ws:bars:time:5", SYM)]  # one lease for both sockets
-    assert len(w.bars.registered) == 2
+    assert w.trades.calls == [("acquire", "ws:bars:time:5", SYM)]  # one lease for every socket
+    assert len(w.bars.registered) == 2 + before.startswith("a hold")
 
 
-def _freed(w: _World) -> bool:
-    """Whether the store let the series go: past its 0 s grace, the next `ensure` frees it."""
-    w.now += 1.0
+def _freed(w: _World) -> bool:  # whether the store let the series go
+    w.now += 1.0  # past its 0 s grace: the next `ensure` frees an expired series
     w.call(w.store.ensure, "ETHUSDT", SPEC)
     return w.store.latest(SYM, SPEC.spec_hash, 1) is None
 

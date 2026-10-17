@@ -1095,8 +1095,7 @@ def _holding(
 
 
 def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it() -> None:
-    """Closes the builder emits while it restores reach the held series (§6.1)."""
-    conn, store, _ = _holding()
+    conn, store, _ = _holding()  # the hold first: a restoring builder's closes reach it
     assert all(r["ok"] for r in _sub(conn, "bars.BTCUSDT.time.5", "footprint.BTCUSDT.time.5"))
     assert _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS)[0]["ok"]
     assert store.log == ["ensure", "register", "register"]  # footprint and replay hold nothing
@@ -1130,13 +1129,15 @@ def test_a_full_series_store_is_a_subscription_limit_and_takes_no_lease() -> Non
     [(SpecCaps(per_user=1), "bars.BTCUSDT.time.5", "subscription_limit"),
      (SpecCaps(per_symbol=1), "bars.BTCUSDT.time.5", "subscription_limit"),
      (SpecCaps(global_=1), "bars.BTCUSDT.time.5", "subscription_limit"),
-     (SpecCaps(), "bars.BTCUSDT.renko.10", "invalid_topic_format")],
-    ids=["per-user", "per-symbol", "process-wide", "unbuildable-kind"])  # fmt: skip
+     (SpecCaps(), "bars.BTCUSDT.renko.10", "invalid_topic_format"),
+     (None, "bars.BTCUSDT.time.5", "internal_error")],
+    ids=["per-user", "per-symbol", "process-wide", "unbuildable-kind", "stopping"])  # fmt: skip
 def test_a_spec_the_bar_set_refuses_takes_no_series_hold(
-    tmp_path: Path, caps: SpecCaps, ch: str, code: str
+    tmp_path: Path, caps: SpecCaps | None, ch: str, code: str
 ) -> None:
     """The set's own checks run before `ensure`: the store keeps no series and reads nothing."""
-    bars, store = make_set(tmp_path, caps=caps), SeriesStore()
+    bars, store = make_set(tmp_path, caps=caps or SpecCaps()), SeriesStore()
+    bars._stopping = caps is None  # `stop()` has begun
     bars._leases.acquire(("BTCUSDT", "x"), "x", str(MGR_ID))  # the user's other series
     (r,) = _sub(ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), ch)
     assert (r["error"]["code"], store.series_count()) == (code, 0)

@@ -9,9 +9,8 @@ Only the composition root sees the bus, the storage tier and the bars module tog
   queue is bounded (`BarWriter(max_buffered)`, lane `maxsize`).
 * Shutdown order: **set first, then writer** - the set's final closes/blobs are submitted to the
   writer, which is then drained.
-* Emit path (E12-T06, #399): the WS series store, then the WS publisher, then the writer. The store
-  comes first so a generation swap's re-snapshot reads the new generation; neither awaits, so both
-  run before the writer, whose full queue would otherwise hold every WS delta back.
+* Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
+  the WS publisher, then the writer: neither WS sink awaits, so a full writer queue delays neither.
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
@@ -201,8 +200,7 @@ def wire_bars(
     publisher: BarSink | None = None,
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`
-    and `publisher`: the WS series store and bars publisher, emitted to in that order (module
-    docstring)."""
+    and `publisher` (the WS sinks) are emitted to before the writer (module docstring)."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",

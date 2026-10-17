@@ -359,7 +359,10 @@ class BarBuilderSet:
 
     # -- leases ----------------------------------------------------------------------------
     def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None:
-        """Raise what `register` would refuse now (a cap; a new series' kind); change nothing."""
+        """Raise what `register` would refuse now (stopping, a cap, a new series' kind); change no
+        lease or series state."""
+        if self._stopping:
+            raise BarServiceStopping("The bar service is shutting down.")
         self._leases.check((symbol, spec.spec_hash), user)
         if (symbol, spec.spec_hash) not in self._leases:
             self._factory(spec, symbol)

@@ -156,8 +156,7 @@ class SubscriptionServices:
 
     upstream: UpstreamRefs = field(default_factory=UpstreamRefs)
     bars: BarLeases | None = None
-    #: E12-T06: the `bars` snapshot store; `None` (no hold taken) without the bar service.
-    series: SeriesHolds | None = None
+    series: SeriesHolds | None = None  # E12-T06: the `bars` snapshot store; None: no hold
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
@@ -504,18 +503,14 @@ class ConnectionAuthz:
         return f"{self.connection_id}/{sub.sub_id}"
 
     async def subscribe_upstream(self, sub: Subscription) -> dict[str, Any] | None:
-        """Take what a subscription needs upstream, or refuse it: drop it and return the failure
-        result. A `bars.*` one first passes `_bars_refusal`. A `bars.*` or `footprint.*` spec is
-        bounded (`_bar_spec`, SR-E12-03) wherever a builder could serve it: live with the bar
-        service wired, or replay. Replay and private subscriptions take nothing. A live public one
-        takes, in order: for `bars.*`, if the set's `check` passes (a refused spec takes no hold), a
-        hold on its series in the snapshot store (`ensure`, so the closes a restoring builder emits
-        reach it); for `bars.*` and `footprint.*`, the `BarBuilderSet` lease (`register` checks
-        again), with `user=` the authenticated principal id, never a client value; then the shared
-        upstream refs (`bars.*` leases its symbol's trades, `ws_wiring.ingestion_streams`). A spec
-        cap is `subscription_limit`, a stopping bar service `internal_error` (retryable), any other
-        bars refusal `invalid_topic_format`. `_drop` releases what was taken, on a refusal, an
-        `unsub`, a revocation (one during these awaits: #2896) or the connection's end."""
+        """Take what a subscription needs upstream, or refuse it (drop it, return the failure). A
+        `bars.*` one first passes `_bars_refusal`; a `bars.*` or `footprint.*` spec is bounded
+        (`_bar_spec`, SR-E12-03) wherever a builder could serve it, live or replay. Only a live
+        public one takes anything, in order: for `bars.*`, once the set's `check` passes, a hold on
+        its series (`ensure`: a restoring builder's closes reach it); the `BarBuilderSet` lease
+        (`register` checks again; `user=` the authenticated principal id, never a client value);
+        the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
+        refusal, an `unsub`, a revocation (one during these awaits: #2896) or the socket's end."""
         family = sub.topic.family.family
         spec: BarSpec | None = None
         if family in {"bars", "footprint"}:

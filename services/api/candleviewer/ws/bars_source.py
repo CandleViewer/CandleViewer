@@ -1,39 +1,35 @@
 """`bars.{symbol}.{bar_type}.{param}` snapshots (E12-T06 slice D2, #2195, #399; `23-ws-protocol.md`
-§3.4, §6.1, §7.6, §14.3).
+§3.4, §6.1, §7.6, §14.3): the `bars` family's `SnapshotSource`. It renders, with `bars_wire`, the
+series a live subscription holds in the series store (`subscribe_upstream` takes the hold), and
+reads no storage itself.
 
-The `bars` family's `SnapshotSource`. It reads the series a live subscription holds in the series
-store (`bars.series_store`; `subscribe_upstream` takes the hold before the builder lease), never
-storage (C-2.20), and renders it with `bars_wire`.
-
-- **Bars.** Up to the subscription's `history`, oldest first, the forming bar last with
-  `confirm: false`. A series the store keeps that no emission or read has named a generation for
-  sends an empty `bars` array. `None` keeps the subscription `snapshot_pending`: a replay
-  subscription (the live store is no replay state), a series the store does not keep, or a bar
-  neither form can carry (§3.4, logged).
-- **`meta`.** `spec_hash`, `build_version` (the lowest among the bars sent; the running
-  `BUILD_VERSIONS[kind]` when none is older, an empty snapshot included) and the `include_delta`
-  echo.
+- **Bars.** Up to `history`, oldest first, the forming bar last with `confirm: false`; none while
+  no emission or read has named a generation. `None` keeps the subscription `snapshot_pending`: a
+  replay one, a series the store does not keep, or a bar neither form can carry (§3.4). One a swap
+  left pending is rebuilt on every emission, so `ws_bars_snapshot_{refused,structured}` are each
+  logged once per channel until a build of it succeeds (a memory reset at `MAX_SERIES` entries).
+- **`meta`.** `spec_hash`, `build_version` (the lowest among the bars sent, else the running
+  `BUILD_VERSIONS[kind]`) and the `include_delta` echo.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
-  `covering_scales` of the bars sent (no bars: one empty frame), and the body's `structured` is the
-  topic head with no bars, which `render` never reads. The whole snapshot goes structured when the
-  instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
-- **Generation.** `generation` is the store's per-series `version` (0 while it does not keep the
-  series), so the shared render cache refreshes on every change; `continuity` is False (bars always
-  snapshot, §7.6). A build seeds `seed` (`BarsPublisher.note_generation`) with the generation it
-  sent, so a swap the publisher has no baseline for still re-snapshots.
+  `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
+  when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
+- **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
+  change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
+  (`BarsPublisher.note_generation`), which makes it the publisher's baseline: an emission in any
+  other generation then re-snapshots (§7.1 guarantee 3).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS
-from candleviewer.bars.series_store import Latest
+from candleviewer.bars.series_store import MAX_SERIES, SeriesStore
 from candleviewer.bars.spec import WireBarType, from_wire, to_wire
 from candleviewer.ws.bars_publish import Scales
 from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales
@@ -47,14 +43,6 @@ if TYPE_CHECKING:
 #: `(symbol, spec, generation)` of a built snapshot: `BarsPublisher.note_generation`.
 Seed = Callable[[str, BarSpec, int], None]
 Item = dict[str, Any]
-
-
-class SeriesView(Protocol):
-    """The slice of `SeriesStore` read here."""
-
-    def latest(self, symbol: str, spec_hash: str, history: int) -> Latest | None: ...
-
-    def version(self, symbol: str, spec_hash: str) -> int: ...
 
 
 def _log() -> Any:
@@ -78,8 +66,9 @@ def _series(sub: Subscription) -> tuple[str, BarSpec, WireBarType, str] | None:
 class BarsSnapshotSource:
     """The `SnapshotSource` described in the module docstring."""
 
-    def __init__(self, store: SeriesView, scales: Scales, *, seed: Seed | None = None) -> None:
+    def __init__(self, store: SeriesStore, scales: Scales, *, seed: Seed | None = None) -> None:
         self._store, self._scales, self._seed = store, scales, seed
+        self._logged: set[tuple[str, str]] = set()  # (ch, what) logged: module docstring
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
         series = _series(sub)
@@ -93,8 +82,7 @@ class BarsSnapshotSource:
         bars = list(latest.closed)
         if latest.forming is not None:
             bars.append(latest.forming)
-        # None only while the series holds no bar: an emission or a read names it first.
-        gen = 0 if latest.generation is None else latest.generation
+        gen = 0 if latest.generation is None else latest.generation  # None: no bar held yet
         flow = sub.effective.get("include_delta") is True
         build = BUILD_VERSIONS[spec.kind] if latest.oldest_build is None else latest.oldest_build
         meta = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
@@ -107,9 +95,10 @@ class BarsSnapshotSource:
                 items = [bar_item(b, generation=gen, bar_kind=bar_type, include_delta=flow)
                          for b in bars]  # fmt: skip
             except FrameEncodeError as exc:
-                _log().error("ws_bars_snapshot_refused", ch=sub.ch, reason=str(exc))
+                self._once(sub.ch, "refused", "error", reason=str(exc))
                 return None
             body = SnapshotBody({**head, "bars": items}, meta=meta)
+        self._logged -= {(sub.ch, "refused"), (sub.ch, "structured")}
         if latest.generation is not None and self._seed is not None:
             self._seed(symbol, spec, latest.generation)
         return body
@@ -120,7 +109,7 @@ class BarsSnapshotSource:
         """The kind-4 body, or None when §3.4's trigger sends the whole snapshot structured."""
         scales = self._scales(symbol)
         if scales is None:
-            _log().warning("ws_bars_snapshot_structured", ch=ch, cause="no_scales")
+            self._once(ch, "structured", "warning", cause="no_scales")
             return None
         ps, qs = covering_scales(
             bars, price_scale=scales[0], qty_scale=scales[1], include_delta=flow
@@ -130,12 +119,17 @@ class BarsSnapshotSource:
                 bars, generation=gen, include_delta=flow, price_scale=ps, qty_scale=qs
             )
         except FrameEncodeError as exc:
-            _log().warning(
-                "ws_bars_snapshot_structured", ch=ch, cause="binary_refused", reason=str(exc)
-            )
+            self._once(ch, "structured", "warning", cause="binary_refused", reason=str(exc))
             return None
         parts = parts or (Frame(BARS, price_scale=ps, qty_scale=qs),)  # no bars: one empty frame
         return SnapshotBody(head, parts, price_scale=ps, qty_scale=qs, meta=meta)
+
+    def _once(self, ch: str, what: str, level: str, **fields: Any) -> None:
+        if (ch, what) not in self._logged:
+            if len(self._logged) >= MAX_SERIES:
+                self._logged.clear()
+            self._logged.add((ch, what))
+            getattr(_log(), level)(f"ws_bars_snapshot_{what}", ch=ch, **fields)
 
     def generation(self, sub: Subscription) -> int:
         series = _series(sub)
