@@ -57,13 +57,17 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
     # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
     ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",
-    # 04 row 22 (own rules, no step-up). Rows 26 (raising an action budget, loosening a stop) and
-    # 27 (import) mark step-up, but the contract documents none for `updateRule` or `createRule`:
-    # `Problem.action_summary` says `rules:write` changes a rule without one and hands the rule
-    # questions that raises to the route slice of #2304. That slice settles rows 26 and 27; its PR
-    # deletes each rule row below that it gates and makes this note cite 04 for any it keeps.
-    ("POST", "/rules"): "createRule: stored `disabled`; arming is `setRuleMode`, gated",
-    ("PUT", "/rules/{ruleId}"): "updateRule: the contract (`Problem`) says no step-up",
+    # `rules:write` is seeded `dangerous`, so the sweep flags each rule write. 04 §7.2.2 rows 22,
+    # 26 and 27 (#3209) say no step-up applies: a saved version reaches an order only when
+    # `setRuleMode` arms the rule, and the step-up comes at that arm when the rule's scope
+    # includes `live` (`rules:arm_live` and a fresh one-shot live-enablement step-up bound to that
+    # request; row 23a).
+    ("POST", "/rules"): (
+        "createRule: no step-up (04 §7.2.2 rows 22, 27); stored disabled, live arming is gated"
+    ),
+    ("PUT", "/rules/{ruleId}"): (
+        "updateRule: no step-up (04 §7.2.2 rows 22, 26); an armed rule keeps its active version"
+    ),
     ("DELETE", "/rules/{ruleId}"): "deleteRule: refused while the rule is `armed`",
     ("PUT", "/rules/{ruleId}/active-version"): "setActiveRuleVersion: `Problem` says no step-up",
 }
@@ -629,7 +633,10 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     "listUserSessions": "a read: the contract says listing needs no step-up (04 row 40a)",
     # The lock lift is no elevation: it takes the password only and restores no grant.
     "authUnlock": "lifts the idle lock with the password only; restores no step-up (#2290)",
-    # The contract rules a step-up out in so many words.
+    # The contract rules a step-up out in so many words, so the registry gates none of these:
+    # the rule writes (`_NOT_DANGEROUS`) say none applies to a saved version (#3209).
+    "createRule": "no step-up: stored disabled, runs nothing (04 §7.2.2 rows 22, 27)",
+    "updateRule": "no step-up: an armed rule keeps its active version (04 §7.2.2 rows 22, 26)",
     "setSubaccountTier": "the contract says No step-up: `admin:write` is no SR-025 action class",
     "endViewAs": "ends the caller's own view-as; the contract says it needs no step-up (#3085)",
     # Gated, but the text demands the step-up and names no class: each class is pinned below.
