@@ -19,10 +19,16 @@ its filter did not name the workflow, so a PR that edited only the workflow skip
 #3175: the required `a11y` job runs on the `e2e` filter, which did not name the design system
 (`packages/ui/**`, its Storybook included) or the job's other inputs (`tools/contrast/**` and the
 token formats it imports for the contrast gate, `tools/a11y/**` for the axe baseline and gates, the
-job's workflow and its meta-tests), so a PR that changed only those skipped the axe sweep."""
+job's workflow and its meta-tests), so a PR that changed only those skipped the axe sweep.
+
+#3230: the `js` filter, which gates `lint`, `typecheck`, `unit-frontend`, `unit-engine` and, through
+`js`, the `security` and `coverage-thresholds` jobs, did not name `packages/chart-engine` or
+`packages/protocol`, so a PR that changed only one of them merged without any of those checks.
+"""
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -41,6 +47,9 @@ SEMGREP_PATHS = (
 )
 RESOLVER_STEP = "Resolve ci-required conclusion"
 XSTATE_NIGHTLY = ".github/workflows/xstate-nightly.yml"
+WORKSPACE = ROOT / "pnpm-workspace.yaml"
+#: The package.json scripts the js lane runs for a workspace package (_job-js.yml).
+JS_LANE_SCRIPTS = frozenset({"lint", "typecheck", "test", "test:cov", "build"})
 A11Y_PATHS = (
     "packages/ui/**",
     "tools/contrast/**",
@@ -154,7 +163,7 @@ def test_pr_yml_resolver_security_lane_names_the_same_filters_as_the_job() -> No
     assert _resolver_security_filters() == _outputs_in(_jobs()["security"]["if"])
 
 
-@pytest.mark.parametrize("lane", ["security", "a11y"])
+@pytest.mark.parametrize("lane", ["security", "a11y", "js"])
 def test_pr_yml_resolver_reads_each_lane_filter_from_its_changed_paths_output(lane: str) -> None:
     env = _resolver_step()["env"]
     for name in sorted(_resolver_lane_filters(lane)):
@@ -188,3 +197,29 @@ def test_pr_yml_a11y_job_and_resolver_lane_read_the_same_filters() -> None:
     job = _outputs_in(_jobs()["a11y"]["if"])
     assert "e2e" in job
     assert _resolver_lane_filters("a11y") == job
+
+
+def _js_workspace_packages() -> list[str]:
+    """Workspace packages (pnpm-workspace.yaml) whose package.json has a script the js lane runs."""
+    patterns: list[str] = yaml.safe_load(WORKSPACE.read_text(encoding="utf-8"))["packages"]
+    found: list[str] = []
+    for pattern in patterns:
+        for manifest in sorted(ROOT.glob(pattern + "/package.json")):
+            scripts = json.loads(manifest.read_text(encoding="utf-8")).get("scripts") or {}
+            if JS_LANE_SCRIPTS & set(scripts):
+                found.append(manifest.parent.relative_to(ROOT).as_posix())
+    return found
+
+
+def test_pr_yml_js_filter_covers_every_workspace_package_the_js_lane_checks() -> None:
+    # A package the js lane lints, type-checks or tests must start the lane when only it changes.
+    packages = _js_workspace_packages()
+    assert {"packages/chart-engine", "packages/protocol"} <= set(packages)
+    covered = set(_filters()["js"])
+    assert [p for p in packages if p + "/**" not in covered] == []
+
+
+def test_pr_yml_js_job_and_resolver_lane_read_the_same_filters() -> None:
+    job = _outputs_in(_jobs()["js"]["if"])
+    assert "js" in job
+    assert _resolver_lane_filters("js") == job
