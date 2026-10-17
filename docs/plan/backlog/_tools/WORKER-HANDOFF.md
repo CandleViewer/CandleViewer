@@ -102,7 +102,13 @@ and not roundtrip and not fuzz and not harness and not perf"`. JS/TS: `pnpm veri
    - The `pr-metadata` CI gate is new and strict: title scope must be in `commitlint.config.cjs`
      scope-enum (`docs(docs)`, not `docs(security)`); body needs `Closes #N` **or** `Refs #N` plus a
      separate `Partial: <reason>` line; >400 LOC needs a "Why this can't be split" note; >800 or
-     any change to `.github/CODEOWNERS` needs `large-pr-approved` (ask on #1778).
+     any change to `.github/CODEOWNERS` needs `large-pr-approved` (ask on #1778). A `Partial:` PR
+     closes nothing: it carries `Refs #N` only, with no close/fix/resolve keyword before an issue
+     reference anywhere in the body (prose, checklists, code spans and comments included), or
+     PR-BODY-003 fails it (#2964; owner: `tools/ci/check_pr_metadata.py`). The PR's GraphQL
+     `closingIssuesReferences` must be empty too (`gh pr view <N> --json closingIssuesReferences`),
+     which also catches Development-sidebar links. Write "the closing line is on slice N" instead;
+     the closing line lives on the last slice only.
 
 ### 3.2 Board tools (`docs/plan/backlog/_tools/`, run with `PYTHONUTF8=1`)
 
