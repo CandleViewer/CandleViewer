@@ -7,9 +7,11 @@ keeps the names the pack tests import.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Final
 
+from cvdev.account_fixture import pack as resolver
 from cvdev.account_fixture.pack import (
     ACCOUNT_PARENTS,
     EGRESS_IP,
@@ -40,9 +42,9 @@ __all__ = [
 
 PACK_ROOT: Final = Path(__file__).resolve().parents[3] / "packages" / "fixtures" / "accounts"
 PACK: Final = Pack(PACK_ROOT)
-schema = PACK.schema
-scenario_names = PACK.scenario_names
-manifest = PACK.manifest
-load = PACK.load
-load_rotation = PACK.load_rotation
-_payload = PACK.payload
+schema = partial(resolver.schema, PACK)
+scenario_names = partial(resolver.scenario_names, PACK)
+manifest = partial(resolver.manifest, PACK)
+load = partial(resolver.load, PACK)
+load_rotation = partial(resolver.load_rotation, PACK)
+_payload = partial(resolver._payload, PACK)
