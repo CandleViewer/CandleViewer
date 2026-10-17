@@ -7,7 +7,13 @@ export type HelloPayload = generated.ws.CvWsV1HelloSchemaJson;
 export type AuthPayload = generated.ws.CvWsV1AuthSchemaJson;
 export type SubPayload = generated.ws.CvWsV1SubSchemaJson;
 export type UnsubPayload = generated.ws.CvWsV1UnsubSchemaJson;
-export type CtlPayload = generated.ws.CvWsV1CtlSchemaJson;
+/**
+ * 13.6 `ctl.schema.json` has `minProperties: 1` but the generated type admits `{}`; this one does
+ * not. A property set to `undefined` is refused too (`exactOptionalPropertyTypes`): JSON drops it,
+ * which would put an empty `ctl` on the wire.
+ */
+type AtLeastOne<T> = { [K in keyof T]-?: Required<Pick<T, K>> & Partial<T> }[keyof T];
+export type CtlPayload = AtLeastOne<generated.ws.CvWsV1CtlSchemaJson>;
 export type ResyncPayload = generated.ws.CvWsV1ResyncSchemaJson;
 export type HeartbeatPayload = generated.ws.PingPongPayloads;
 export type SubOptions = generated.ws.Options;
@@ -33,7 +39,8 @@ export const SUBPROTOCOLS = ["cv.v1.json"] as const;
 export const CLIENT_NAME = "candleviewer-web";
 /** 23 13.1: the server drops a longer correlation `id`, so its reply could not be matched. */
 export const MAX_ID_LENGTH = 64;
-export const CAPABILITIES: NonNullable<HelloPayload["capabilities"]> = [
+type Capability = NonNullable<HelloPayload["capabilities"]>[number];
+export const CAPABILITIES: readonly Capability[] = [
   "binary_book",
   "binary_bars",
   "binary_trades",

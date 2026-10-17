@@ -40,6 +40,15 @@ describe("client frames validate against the generated WS schemas (C1)", () => {
     expect(validateClientFrame(longId).join()).toMatch(/more than 64 characters/);
     expect(validateClientFrame(subWith(topics(50)))).toEqual([]);
   });
+
+  it("ctl needs at least one property: the type refuses what ctl.schema.json refuses (minProperties 1)", () => {
+    // @ts-expect-error -- the generated CtlPayload admits {} (a #572 gap); the one used here does not
+    const empty = F.ctl("c-9", "heatmap.BTCUSDT", {});
+    expect(validateClientFrame(empty).join()).toMatch(/fewer than 1 properties/);
+    // @ts-expect-error -- undefined is dropped by JSON, so this would also put an empty ctl on the wire
+    const dropped = F.ctl("c-9", "heatmap.BTCUSDT", { throttle_ms: undefined });
+    expect(encodeFrame(dropped)).not.toContain("throttle_ms");
+  });
 });
 
 describe("handshake pins", () => {

@@ -8,29 +8,34 @@ import {
   type DataFrame,
 } from "../../../src/lib/ws/protocol/codec";
 import { ping } from "../../../src/lib/ws/protocol/frames";
+import { b64, bookDelta, cvwb } from "./support/cvwb";
 import { repoFile } from "./support/schemaHarness";
 
-const le = (n: number): number[] => [...new Uint8Array(new BigUint64Array([BigInt(n)]).buffer)];
-
-/** 24-byte common header (23 3.4: magic "CVWB", version, kind, flags, scales 2 and 3) + `body`. */
-function cvwb(kind: number, version: number, count: number, body: readonly number[] = []) {
-  const out = new Uint8Array(24 + body.length);
-  out.set([0x42, 0x57, 0x56, 0x43, version, kind, 0, 2, 3]);
-  new DataView(out.buffer).setUint32(12, count, true);
-  out.set(body, 24);
-  return out;
-}
-
-const bookDelta = () => cvwb(2, 1, 1, [0, ...le(10050), ...le(1500)]); // one 17-byte level
-const b64 = (bin: Uint8Array): string => btoa(String.fromCharCode(...bin));
 const wire = (frame: object): string => JSON.stringify(frame);
 const DATA = { t: "d", ch: "book.BTCUSDT.50", s: 1001, ts: 1_789_132_262_452 };
+/** A valid structured delta: a row built from it is malformed only for the field it changes. */
+const DELTA = { ...DATA, p: {} };
 const WELCOME = {
   connection_id: "ws_1",
+  server_time_ms: 1_789_132_262_000,
   heartbeat: { interval_ms: 15_000, timeout_ms: 45_000 },
   limits: { max_subscriptions: 200, max_topics_per_request: 50, min_throttle_ms: 50 },
 };
-const AUTH_OK = { user_id: "u", token_expires_at_ms: 1, roles: ["owner"], account_scope: [] };
+const AUTH_OK = {
+  user_id: "u",
+  session_id: "s_1",
+  token_expires_at_ms: 1,
+  roles: ["owner"],
+  permissions: ["marketdata:read"],
+  account_scope: [],
+};
+const RS = "bb000000-0000-4000-8000-000000000001";
+const KILL = { engaged: true, scope: "accounts", exchange_account_ids: ["a1"] };
+const authOkWith = (kill_switch: unknown) => wire({ t: "auth_ok", p: { ...AUTH_OK, kill_switch } });
+const bye = (code: number) => wire({ t: "bye", p: { code, reason: "x", message: "x" } });
+const sub_ok_with = (ch: string) => wire({ t: "sub_ok", p: { results: [{ ch, ok: true }] } });
+const without = (p: Record<string, unknown>, key: string) =>
+  Object.fromEntries(Object.entries(p).filter(([k]) => k !== key));
 
 describe("decodeFrame", () => {
   it("decodes a b64 book delta into an owned buffer that validates as CVWB", () => {
@@ -44,8 +49,8 @@ describe("decodeFrame", () => {
   it("decodes structured frames (C15), keeping a null chunk seq, replay fields and an unknown reason (C18)", () => {
     const chunk = { t: "snap", id: "snap-3", ch: "trades.BTCUSDT", s: null, ts: 1, p: { x: 1 } };
     expect(decodeFrame(wire(chunk))).toMatchObject({ id: "snap-3", s: null, body: { e: "j" } });
-    const next = { ...chunk, s: 7, rs: "bb", meta: { reason: "from_the_future" } };
-    expect(decodeFrame(wire(next))).toMatchObject({ s: 7, rs: "bb", meta: next.meta });
+    const next = { ...chunk, s: 7, rs: RS, meta: { reason: "from_the_future" } };
+    expect(decodeFrame(wire(next))).toMatchObject({ s: 7, rs: RS, meta: next.meta });
   });
 
   it("decodes the handshake frames, kill switch included", () => {
@@ -76,12 +81,75 @@ describe("decodeFrame", () => {
     ["a welcome without limits", wire({ t: "welcome", p: { connection_id: "c" } })],
     ["a sub_ok result without ok", wire({ t: "sub_ok", p: { results: [{ ch: "orders" }] } })],
     ["a bad kill switch", wire({ t: "auth_ok", p: { ...AUTH_OK, kill_switch: { engaged: 1 } } })],
+    // S1 lens C: the five guards that survived mutation until they were pinned here.
+    ["a kill switch with an unknown scope", authOkWith({ engaged: true, scope: "galaxy" })],
+    ["a kill switch with no scope", authOkWith({ engaged: true })],
+    ["a non-list exchange_account_ids", authOkWith({ ...KILL, exchange_account_ids: "a1" })],
+    [
+      "exchange_account_ids holding a non-string among strings",
+      authOkWith({ ...KILL, exchange_account_ids: ["a1", 2] }),
+    ],
+    ["valid JSON `null`", "null"],
+    ["a valid JSON array", "[]"],
+    ["base64 that is not a whole number of quads (`%4`)", wire({ ...DATA, e: "b64", p: "AAA" })],
+    // S1 lens S: server-controlled strings are bounded where they enter.
+    ["a ch that is not a topic name", wire({ ...DELTA, ch: "Book BTC" })],
+    ["a 121-character ch", wire({ ...DELTA, ch: `book.${"A".repeat(116)}` })],
+    ["a replay session id that is not a UUID", wire({ ...DELTA, rs: "bb000000" })],
+    [
+      "a 36-character rs that is not a UUID",
+      wire({ ...DELTA, rs: "zz000000-0000-4000-8000-000000000001" }),
+    ],
+    ["a span id of the wrong shape", wire({ ...DELTA, sp: "0123456789ABCDEF" })],
+    ["an all-zero span id", wire({ ...DELTA, sp: "0".repeat(16) })],
+    ["a meta that is an array", wire({ ...DELTA, meta: [] })],
+    ["a heartbeat payload that is an array", wire({ t: "pong", p: [] })],
+    ["a sub_ok result whose ch is not a topic", sub_ok_with("x y")],
+    // S1 lens C: fields S4 reads, now verified rather than only typed.
+    [
+      "a welcome without server_time_ms",
+      wire({ t: "welcome", p: without(WELCOME, "server_time_ms") }),
+    ],
+    ["an auth_ok without session_id", wire({ t: "auth_ok", p: without(AUTH_OK, "session_id") })],
+    ["an auth_ok without permissions", wire({ t: "auth_ok", p: without(AUTH_OK, "permissions") })],
+    ["an err without a message", wire({ t: "err", p: { code: "internal_error" } })],
+    ["a revoked without a message", wire({ t: "revoked", ch: "orders", p: { reason: "x" } })],
+    ["a bye code below 1000", bye(999)],
+    ["a bye code above 4999", bye(5000)],
+    ["a fractional bye code", bye(4000.5)],
   ])("%s is frame_malformed", (_what, input) => {
     expect(decodeFrame(input)).toMatchObject({ t: "decode_error", code: "frame_malformed" });
   });
 
   it("names the topic of a malformed data frame so the caller can resync it", () => {
     expect(decodeFrame(wire({ ...DATA, ts: "now" }))).toMatchObject({ ch: "book.BTCUSDT.50" });
+  });
+
+  it("echoes ch only when it is a topic name: an unbounded server string is never carried (C-12.6)", () => {
+    const error = decodeFrame(wire({ ...DATA, ts: "now", ch: "x".repeat(10_000) }));
+    expect(error).toMatchObject({ t: "decode_error" });
+    expect((error as { ch?: string }).ch).toBeUndefined();
+  });
+
+  it("accepts every limit exactly: a 64-character id, a 120-character topic, a UUID rs, a close code in range", () => {
+    expect(decodeFrame(wire(DELTA))).toMatchObject({ t: "d" }); // the control for the rows above
+    expect(decodeFrame(wire({ t: "pong", id: "x".repeat(64) }))).toMatchObject({ t: "pong" });
+    const ch = `book.${"A".repeat(115)}`;
+    expect(decodeFrame(wire({ ...DELTA, ch, rs: RS }))).toMatchObject({ ch, rs: RS });
+    for (const code of [1000, 1012, 4429, 4999]) {
+      expect(decodeFrame(bye(code))).toMatchObject({ t: "bye", p: { code } });
+    }
+    const results = { results: [{ ch: "book.BTCUSDT.50", ok: true }] };
+    expect(decodeFrame(wire({ t: "sub_ok", p: results }))).toMatchObject({ t: "sub_ok" });
+    const err = { t: "err", p: { code: "internal_error", message: "m" } };
+    expect(decodeFrame(wire(err))).toMatchObject({ t: "err" });
+    const revoked = { t: "revoked", ch: "orders", p: { reason: "session_revoked", message: "m" } };
+    expect(decodeFrame(wire(revoked))).toMatchObject({ t: "revoked" });
+  });
+
+  it("carries the span id and the message size of a data frame (13.1)", () => {
+    const text = wire({ ...DATA, sp: "0123456789abcdef", p: { x: 1 } });
+    expect(decodeFrame(text)).toMatchObject({ sp: "0123456789abcdef", size: text.length });
   });
 });
 
