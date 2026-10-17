@@ -83,6 +83,8 @@ def test_late_heartbeat_without_rest_is_degraded_ws_silent() -> None:
     clock.advance(0.001)
     (transition,) = monitor.tick()
     assert (transition.to_state, transition.reason) == (HealthState.DEGRADED, "ws_silent")
+    view = monitor.view(ACC)
+    assert view is not None and view.rest_only is True
 
 
 def test_down_exactly_at_the_down_window_commits_one_transition() -> None:
@@ -127,11 +129,15 @@ def test_a_wall_clock_step_changes_no_state(step: timedelta) -> None:
     assert monitor.tick() == [] and monitor.current(ACC) is HealthState.HEALTHY
 
 
-def test_thresholds_come_from_settings_and_must_be_ordered() -> None:
+def test_thresholds_come_from_settings() -> None:
     settings_ = Settings(account_heartbeat_s=5, account_down_s=20)
     assert HealthThresholds.from_settings(settings_) == HealthThresholds(5, 20)
-    with pytest.raises(ValueError, match="heartbeat_s < down_s"):
-        HealthThresholds(10, 10)
+
+
+@pytest.mark.parametrize(("heartbeat", "down"), [(10, 10), (0, 5), (-1, 5)])
+def test_thresholds_must_be_positive_and_ordered(heartbeat: float, down: float) -> None:
+    with pytest.raises(ValueError, match="0 < heartbeat_s < down_s"):
+        HealthThresholds(heartbeat, down)
 
 
 @pytest.mark.parametrize(("heartbeat", "down"), [(10.001, 30), (10, 30.001), (11, 31)])
@@ -197,6 +203,17 @@ def test_a_read_before_tick_and_the_commit_after_it_agree() -> None:
     assert view.changed_at == transition.at == T0 + timedelta(seconds=10)
 
 
+def test_each_of_two_lapses_a_late_tick_finds_is_dated_when_it_lapsed() -> None:
+    monitor, clock = _monitor()
+    monitor.ws_heartbeat(ACC)
+    clock.advance(12)
+    (degraded,) = monitor.tick()
+    clock.advance(28)
+    (down,) = monitor.tick()
+    assert (degraded.to_state, degraded.at) == (HealthState.DEGRADED, T0 + timedelta(seconds=10))
+    assert (down.to_state, down.at) == (HealthState.DOWN, T0 + timedelta(seconds=30))
+
+
 def test_evidence_after_an_unticked_lapse_still_records_the_down_episode() -> None:
     monitor, clock = _monitor()
     monitor.ws_heartbeat(ACC)
@@ -205,6 +222,18 @@ def test_evidence_after_an_unticked_lapse_still_records_the_down_episode() -> No
         transition = monitor.ws_heartbeat(ACC)
     assert transition is not None and transition.to_state is HealthState.HEALTHY
     assert [e["to_state"] for e in logs] == ["down", "healthy"]
+
+
+@pytest.mark.parametrize("first", ["ws_heartbeat", "rest_ok"])
+def test_a_rest_success_after_an_unticked_lapse_still_records_the_down_episode(first: str) -> None:
+    monitor, clock = _monitor()
+    getattr(monitor, first)(ACC)
+    clock.advance(600)  # resumed from suspend; the next REST poll succeeds before any tick
+    with capture_logs() as logs:
+        transition = monitor.rest_ok(ACC)
+    assert transition is not None and transition.to_state is HealthState.DEGRADED
+    assert (transition.from_state, transition.reason) == (HealthState.DOWN, "rest_only")
+    assert [e["to_state"] for e in logs] == ["down", "degraded"]
 
 
 @pytest.mark.parametrize("evidence", ["ws_heartbeat", "ws_dropped", "rest_ok"])
