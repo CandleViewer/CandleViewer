@@ -94,6 +94,16 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "5m",
         {"env": "live"},
     ),
+    # #2496 review: a run that was already on record (2) and one more (3). The page reads the rise
+    # against the maximum before the last 15 minutes, so the case evaluates once the 3 has been in
+    # for a few scrapes and the right-hand window (which ends 15m earlier) still holds only 2s.
+    "AuthBreakGlassAttempted": (
+        'auth_break_glass_attempts{env="live"}',
+        "2+0x10 3+0x10",
+        "2+0x20",
+        "20m",
+        {"env": "live"},
+    ),
     "CredentialVerificationFailures": (
         "credential_verification_failures_total",
         "0+0x10 1+0x10",
@@ -127,6 +137,15 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("1+0x4 _x8", "12m", True),
         ("1+0x4 _x25", "25m", False),
         ("2+0x20", "5m", True),
+    ],
+    # #2496 review. `_xN` is N missed scrapes: the restart after a run is a gap, and the first
+    # scrape after it carries the new count. The page rises over what was seen before the gap, ends
+    # 15m after the first scrape that shows it, and sees no rise without a sample from before.
+    "AuthBreakGlassAttempted": [
+        ("0+0x20", "20m", False),  # no run on record
+        ("2+0x10 _x20 3+0x10", "35m", True),  # a run while cv-api was stopped, then the restart
+        ("2+0x10 _x20 3+0x40", "55m", False),  # 15m on: the window has moved past the rise
+        ("_x30 3+0x20", "35m", False),  # no sample from before the run to compare with
     ],
 }
 

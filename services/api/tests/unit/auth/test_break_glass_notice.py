@@ -53,10 +53,12 @@ _TASK = "break-glass-notice-refresh"
 
 
 class _Events:
-    """`BreakGlassEvents` fake: the scripted count, or the error to raise."""
+    """`BreakGlassEvents` fake: the scripted counts, or the error to raise. `reads` counts the
+    unresolved-events reads only: the attempts read is the second statement of each refresh."""
 
-    def __init__(self, answer: int | BaseException) -> None:
+    def __init__(self, answer: int | BaseException, attempts: int = 0) -> None:
         self.answer = answer
+        self.attempts = attempts
         self.reads = 0
 
     async def unresolved_break_glass_count(self) -> int:
@@ -64,6 +66,9 @@ class _Events:
         if isinstance(self.answer, BaseException):
             raise self.answer
         return self.answer
+
+    async def break_glass_attempt_count(self) -> int:
+        return self.attempts
 
 
 class _Ticks:
@@ -246,7 +251,11 @@ def store_reads(monkeypatch: pytest.MonkeyPatch) -> list[SqlAlchemyBreakGlassEve
         reads.append(self)
         return 1
 
+    async def attempts(self: SqlAlchemyBreakGlassEvents) -> int:
+        return 3
+
     monkeypatch.setattr(SqlAlchemyBreakGlassEvents, "unresolved_break_glass_count", unresolved)
+    monkeypatch.setattr(SqlAlchemyBreakGlassEvents, "break_glass_attempt_count", attempts)
     return reads
 
 
@@ -303,10 +312,15 @@ async def test_hung_read_is_bounded_by_the_timeout() -> None:
             await asyncio.Event().wait()
             return 1
 
+        async def break_glass_attempt_count(self) -> int:
+            await asyncio.Event().wait()
+            return 1
+
     source = BreakGlassNotice(_Hung(), timeout_s=0.0)  # a deadline already due
-    async with asyncio.timeout(5):  # an unbounded wait on the read fails here
+    async with asyncio.timeout(5):  # an unbounded wait on a read fails here
         await source.refresh()
-    assert (source.unresolved, source.read_failures, source.notices()) == (None, 1, [])
+    # each of the two reads is bounded on its own, and each failure is counted
+    assert (source.unresolved, source.read_failures, source.notices()) == (None, 2, [])
 
 
 async def test_cancellation_is_never_swallowed() -> None:

@@ -115,6 +115,16 @@ auth_break_glass_unresolved_events = Gauge(
     "auth_break_glass_unresolved_events",
     "Break-glass resets (system events auth/break_glass_used) not yet resolved.",
 )
+# SR-023 (#2496 review): how many break-glass CLI runs `audit_log` holds a record of, counted as
+# the rows of action `auth.break_glass_attempt`, the write-ahead first record of every run
+# whatever its outcome. It only ever rises. `BreakGlassNotice` sets it from each successful read
+# and `AuthBreakGlassAttempted` pages when it has risen since Prometheus last saw it. A run that
+# changed nothing (refused, cut short) leaves audit rows and no `break_glass_used` event, so
+# `AuthBreakGlassUsed` cannot see it; a completed reset raises this count too.
+auth_break_glass_attempts = Gauge(
+    "auth_break_glass_attempts",
+    "Break-glass CLI runs on record in audit_log (auth.break_glass_attempt rows); only rises.",
+)
 
 _KNOWN_REASONS = frozenset(
     {
@@ -180,6 +190,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_totp_clock_skew_total",
         "auth_recovery_codes_used_total",
         "auth_break_glass_unresolved_events",
+        "auth_break_glass_attempts",
     }
 )
 
