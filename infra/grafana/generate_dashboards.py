@@ -336,8 +336,9 @@ def market() -> Board:
         "Server-initiated closes by bye reason; the close code is fixed per reason. Any "
         "slow_consumer raises WsSlowConsumerClosed (a user lost their feed); a burst of "
         "origin_forbidden raises WsOriginRefusalsHigh. Every reason exists from process start, "
-        "so the first close of any reason is counted; normal, server_shedding_load and other "
-        "have no counting path yet, so they read zero whatever happens.",
+        "so the first close of any reason is counted; server_shedding_load counts sockets shed at "
+        "the cap on sockets awaiting auth; normal and other have no counting path yet, so they "
+        "read zero whatever happens.",
     )
     b.flush()
     return b

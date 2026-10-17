@@ -18,6 +18,8 @@ Single home for every bound the gateway enforces. Overflow policy:
 - A subscription that would grow a connection past `MAX_SUBSCRIPTIONS` ->
   rejected per-topic with `subscription_limit`; the set never grows past it.
 - No successful `auth` within `AUTH_TIMEOUT_S` -> `bye auth_timeout` + close `4401`.
+- An `auth` call past `AUTH_CALL_TIMEOUT_S` -> `bye internal_error` + close `1011` (#2155).
+- A socket past `MAX_UNAUTHENTICATED_SOCKETS` awaiting auth -> `bye server_shedding_load` + `1013`.
 - `permission_change` / `revoked` fan-out: each socket's frame is sent under
   `FANOUT_SEND_TIMEOUT_S`; a stalled or failing socket is dropped from the
   registry and closed (`4429` slow consumer) so it cannot block the role-change
@@ -67,6 +69,15 @@ MAX_BARS_SUBSCRIPTIONS = 16
 #: machine's state is lost.
 MACHINE_ENTRIES_MAX = 20_000
 AUTH_TIMEOUT_S = 10.0
+#: #2155 (C-2.18): the bound on each call an `auth` makes (the session service's `authenticate`,
+#: the principal read and its SR-189 re-read). Past it: `bye internal_error` + `1011`. Longer than
+#: the store loader's own 5 s bound, whose deny-all answer comes first; shorter than the default
+#: auth window.
+AUTH_CALL_TIMEOUT_S = 6.0
+#: #2155: sockets between `accept` and their first `auth_ok`, per process. 8 users (one owner, a few
+#: managers) x `MAX_CONNECTIONS_PER_USER` (8 by default) all reconnecting at once; reachable only
+#: over loopback or the tailnet (C-12.9). The next socket gets `bye server_shedding_load` + `1013`.
+MAX_UNAUTHENTICATED_SOCKETS = 64
 FANOUT_SEND_TIMEOUT_S = 2.0
 #: Bound on each audit row of that fan-out, like `CLOSE_AUDIT_TIMEOUT_S` on a close's row.
 FANOUT_AUDIT_TIMEOUT_S = 2.0

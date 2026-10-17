@@ -287,7 +287,7 @@ class RefusalLogLimiter:
     """Fixed-window cap on §2.5 refusal log lines, per cause: the first `limit` refusals of
     a cause in a window log a line, the next logs one summary, the rest are only counted.
 
-    Bounded (C-2.18): one entry per `OriginRefusal` value; time is an injected monotonic
+    Bounded (C-2.18): one entry per `OriginRefusal` and the §4.3 shed; time is an injected monotonic
     clock reading, so tests drive windows without sleeping."""
 
     def __init__(
@@ -295,9 +295,9 @@ class RefusalLogLimiter:
     ) -> None:
         self._limit = limit
         self._window_s = window_s
-        self._seen: dict[OriginRefusal, tuple[float, int]] = {}
+        self._seen: dict[str, tuple[float, int]] = {}
 
-    def admit(self, cause: OriginRefusal, now: float) -> RefusalLog:
+    def admit(self, cause: str, now: float) -> RefusalLog:
         start, count = self._seen.get(cause, (now, 0))
         if now - start >= self._window_s:
             start, count = now, 0
