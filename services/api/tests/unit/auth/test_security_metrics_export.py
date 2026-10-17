@@ -23,10 +23,12 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import (
     AUTH_EXPORTED_NAMES,
     ENROLMENT_ONLY_ROLES,
+    ENROLMENT_OUTCOMES,
     LOGIN_FAILURE_METHODS,
     authz_denied_total,
     export_auth_metrics,
     normalise_permission,
+    normalise_reason,
     normalise_role,
 )
 from candleviewer.auth.models import MfaMethodKind
@@ -58,6 +60,7 @@ print(json.dumps(series))
 #: #2295 (U34 monitoring): each enrolment counter with its one label and closed value set.
 _ENROLMENT_SERIES = {
     "auth_enrolment_only_sessions_total": ("role", ENROLMENT_ONLY_ROLES),
+    "auth_enrolments_total": ("outcome", ENROLMENT_OUTCOMES),
 }
 
 
@@ -267,3 +270,7 @@ def test_normalise_role_keeps_the_highest_system_role_and_clamps_the_rest() -> N
     assert normalise_role(["viewer"]) == "viewer"
     for hostile in ([], ["admin"], ["OWNER"], ["owner "], ["x" * 500]):
         assert normalise_role(hostile) == "other", hostile
+
+
+def test_a_confirmed_enrolment_is_its_own_revocation_reason_not_other() -> None:
+    assert normalise_reason("mfa_enrolled") == "mfa_enrolled"

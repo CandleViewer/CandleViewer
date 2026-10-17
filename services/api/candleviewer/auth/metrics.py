@@ -167,6 +167,16 @@ auth_enrolment_only_sessions_total = Counter(
 )
 for _role in ENROLMENT_ONLY_ROLES:
     auth_enrolment_only_sessions_total.labels(role=_role)
+#: `auth_enrolments_total{outcome}` (#2295) closed set: a confirmation that activated the method,
+#: or one refused for a wrong code or a method that cannot be confirmed (422).
+ENROLMENT_OUTCOMES: tuple[str, ...] = ("completed", "refused")
+auth_enrolments_total = Counter(
+    "auth_enrolments_total",
+    "TOTP enrolment confirmations (#2295), by outcome: completed or refused.",
+    ["outcome"],
+)
+for _outcome in ENROLMENT_OUTCOMES:
+    auth_enrolments_total.labels(outcome=_outcome)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, another user's, or rotated away, presented"
@@ -247,6 +257,7 @@ _KNOWN_REASONS = frozenset(
         "timeout",
         "unlock_attempts_exceeded",
         "user_disabled",
+        "mfa_enrolled",  # a confirmed enrolment ends every session of the user (#2295)
     }
 )
 
@@ -323,6 +334,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_session_fixation_attempts_total",
         "auth_enrolment_refused_total",
         "auth_enrolment_only_sessions_total",
+        "auth_enrolments_total",
         "auth_lockouts_total",
         "auth_stepup_failures_total",
         "authz_denied_total",

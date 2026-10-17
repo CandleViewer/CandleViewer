@@ -2840,6 +2840,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_enrolments_total",
+        "counter",
+        "confirmations",
+        ("outcome",),
+        "TOTP enrolment confirmations (#2295) by outcome: completed or refused.",
+        "none yet (detection rules: E09-X03); audited as auth.mfa_enrolled / auth.mfa_failed",
+        _L,
+        "E09",
+        max_series=2,
+        exported=True,
+    ),
+    _s(
         "auth_totp_clock_skew_total",
         "counter",
         "rejections",
