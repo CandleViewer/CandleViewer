@@ -132,7 +132,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Bybit per-UID rate budget exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error (correlation id in `instance`)"),
     ErrorCode.NOT_IMPLEMENTED: ErrorMeta(("rest",), None, False, None, None, "Operation declared but its backing provider is not wired yet; nothing was done"),
-    ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero retCode"),
+    ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero exchange refusal code"),
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),

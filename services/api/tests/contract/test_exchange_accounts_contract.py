@@ -342,7 +342,8 @@ _DESCRIBED = (
         "|**Permission allow-list** (C-2.8, SR-030a, #2270)"
         "|must report `readOnly: 0` and hold"
         "|mandatory in every environment (C-2.8, owner decision #5)"
-        "|Expiry, if set, must be at least 14 days away",
+        "|Expiry, if set, must be at least 14 days away"
+        "|must pass: the exchange answers with return code 0 within the `recv_window`",
     ),
     (
         ("paths", _KEY, "delete"),
@@ -429,7 +430,8 @@ _DESCRIBED = (
         "|`clock_drift`: `10002`"
         "|`rate_limited`: `10006`, `10018`, `10429` or HTTP 429"
         "|`service_unavailable`: `10016`, `10019` or HTTP 5xx"
-        "|`exchange_unknown`: any other non-zero `retCode` (the code itself is in `ret_code`)"
+        "|`exchange_unknown`: any other non-zero exchange refusal code (the code itself is in "
+        "`ret_code`)"
         "|No exchange error text, header, URL or request fragment is echoed.",
     ),
     (
@@ -826,12 +828,14 @@ def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
     # `api_key.revoke` is in `audit/actions.py` (AUDIT_ACTIONS); `account.disabled` is in the
     # closed vocabulary of 24-internal-schemas.md §15.5, and E27-S04 registers it with the route.
     # §15.5 spells the revoke `apikey.revoked` and the threat model's ticket column
-    # `account.key_revoked`: E27-S04 reconciles the three (a follow-up note on #898), and this
-    # change edits no registry. The spelling `accounts.disable` is in none.
+    # `account.key_revoked`: E27-S04 reconciles the three (see the Follow-ups of the PR for
+    # #2417), and this change edits no registry. The spelling `accounts.disable` is in none.
     doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
     vocabulary = doc[doc.index("### 15.5 Audited action vocabulary") : doc.index("## 16.")]
     assert "`account.disabled`" in vocabulary
     assert "api_key.revoke" in AUDIT_ACTIONS
+    # E27-S04 (#898) registers `account.disabled` with its route and flips this line.
+    assert "account.disabled" not in AUDIT_ACTIONS
     assert "accounts.disable" not in OPENAPI_SPEC_PATH.read_text(encoding="utf-8")
 
 
@@ -948,6 +952,9 @@ def test_the_failed_read_answers_are_the_existing_retryable_problem_shapes() -> 
     components = _SPEC["components"]["responses"]
     bad_gateway = components["ExchangeError"]["content"]["application/problem+json"]
     assert bad_gateway["examples"]["bybitReject"]["value"]["code"] == "exchange_error"
+    title = "Bybit returned a non-zero exchange refusal code"
+    assert registered["exchange_error"]["title"] == title
+    assert bad_gateway["examples"]["bybitReject"]["value"]["title"] == title
     unavailable = components["ServiceUnavailable"]
     assert "Retry-After" in unavailable["headers"]
     shapes = unavailable["content"]["application/problem+json"]["examples"]
@@ -1155,7 +1162,8 @@ def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
         "`10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it "
         "is not signable"
     ) in status
-    assert "retCode" not in status  # the Bybit wire name stays inside the adapter (see below)
+    # The descriptions that reach openapi_models.py avoid the Bybit wire name (see the next test).
+    assert "retCode" not in status
     assert "invalid" in _SCHEMAS["KeyStatus"]["enum"]
     assert "invalid" not in _SIGNABLE_STATUSES
     # §8.6 marks a key `invalid` on the two credential refusals that the probe calls `auth_error`.
@@ -1171,15 +1179,39 @@ def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
 
 
 def test_generated_models_carry_no_bybit_wire_vocabulary_outside_the_adapter() -> None:
-    # A spec description is copied into the generated models, which sit outside the adapter, so a
-    # wire identifier in one (`retCode` in `KeyStatus` was one) fails the cv-bybit-vocabulary-leak
-    # rule (P3, C-2.2). The test takes its identifier list from that rule, so there is one list.
+    # This contract's own P3 guard (C-2.2). A spec description is copied into openapi_models.py,
+    # which sits outside the adapter, but Semgrep skips that file (`**/_generated/` in
+    # .semgrepignore), so cv-bybit-vocabulary-leak never scans it in CI. The test applies the
+    # identifier list of that rule to the file itself, and reads the list from the rule, so there
+    # is one list.
     rules = yaml.safe_load(
         (_REPO_ROOT / ".semgrep/cv-bybit-vocabulary-leak.yml").read_text(encoding="utf-8")
     )
     [leak] = [rule for rule in rules["rules"] if rule["id"] == "cv-bybit-vocabulary-leak"]
     models = Path(api.__file__).read_text(encoding="utf-8")
-    assert re.findall(leak["pattern-regex"], models) == []
+    found = sorted(set(re.findall(leak["pattern-regex"], models)))
+    assert found == [], (
+        f"openapi_models.py carries the Bybit wire identifiers {found} "
+        "(the list of cv-bybit-vocabulary-leak): a spec description that reaches it names them, "
+        "and Semgrep does not scan the file (`**/_generated/` in .semgrepignore), so this test "
+        "is its only guard"
+    )
+
+
+def test_the_contract_prose_says_exchange_refusal_code_and_never_the_wire_name_retcode() -> None:
+    # Bybit's wire name stays out of the contract's own words: the probe vocabulary, `createApiKey`
+    # step 7 and the `exchange_error` title say "exchange refusal code" (`ret_code` is a field the
+    # contract owns, not the wire name). None of that prose reaches openapi_models.py, so the
+    # guard above does not cover it.
+    prose = [
+        node[key]
+        for node in _walk(_PATHS)
+        if isinstance(node, dict)
+        for key in ("description", "summary", "title", "detail")
+        if isinstance(node.get(key), str)
+    ]
+    assert len(prose) >= 100  # the walk reaches the operations, their schemas and their examples
+    assert [text for text in prose if "retCode" in text] == []
 
 
 def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:
@@ -1287,6 +1319,11 @@ def test_probe_errors_have_their_own_table_and_timeout_refines_transport_error()
     probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
     assert "`timeout`, which refines §8.6's `TRANSPORT_ERROR`" in probe
     assert "own translation table, owned and tested by E27-T03 (#836)" in probe
+    assert (
+        "it does not reuse the adapter's general mapping of exchange refusal codes "
+        "(`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and "
+        "`10019` into a rate-limit error"
+    ) in probe
     # The stated reason holds: the adapter's mapping folds codes this vocabulary keeps apart.
     assert type(map_ret_code(10005, "")) is type(map_ret_code(10003, ""))
     assert type(map_ret_code(10010, "")) is type(map_ret_code(10003, ""))

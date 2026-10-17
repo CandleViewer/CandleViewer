@@ -1824,8 +1824,9 @@ export interface paths {
      *        `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
      *     6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
      *        is attached.
-     *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must return `retCode=0`
-     *        within the `recv_window`, which also validates clock sync (`key_probe_failed`).
+     *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
+     *        with return code 0 within the `recv_window`, which also validates clock sync
+     *        (`key_probe_failed`).
      *
      *     The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
      *     keyring / age-encrypted file) before it touches disk; the plaintext exists only in
@@ -6467,7 +6468,7 @@ export interface components {
       rule_id?: string | null;
     };
     /**
-     * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero `retCode` (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general retCode mapping (`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or request fragment is echoed.
+     * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or request fragment is echoed.
      * @enum {string}
      */
     KeyProbeError:

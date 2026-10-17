@@ -421,7 +421,7 @@ x-error-codes:
     retryable: false
   - code: exchange_error
     status: 502
-    title: Bybit returned a non-zero retCode
+    title: Bybit returned a non-zero exchange refusal code
     retryable: true
   - code: exchange_unavailable
     status: 503
@@ -2080,8 +2080,9 @@ paths:
            `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
         6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
            is attached.
-        7. A signed no-op probe (`GET /v5/account/wallet-balance`) must return `retCode=0`
-           within the `recv_window`, which also validates clock sync (`key_probe_failed`).
+        7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
+           with return code 0 within the `recv_window`, which also validates clock sync
+           (`key_probe_failed`).
 
         The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
         keyring / age-encrypted file) before it touches disk; the plaintext exists only in
@@ -12017,7 +12018,7 @@ components:
             bybitReject:
               value:
                 type: "https://candleviewer.local/errors/exchange_error"
-                title: "Bybit returned a non-zero retCode"
+                title: "Bybit returned a non-zero exchange refusal code"
                 status: 502
                 detail: "Order rejected: insufficient available balance."
                 instance: "urn:cv:req:0193f2bb-cccc"
@@ -13181,11 +13182,11 @@ components:
         `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx.
         `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's
         `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other
-        non-zero `retCode` (the code itself is in `ret_code`). The probe has its own translation
-        table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general
-        retCode mapping (`map_ret_code`), which folds `10005` and `10010` into an auth error and
-        `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or
-        request fragment is echoed.
+        non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own
+        translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's
+        general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and
+        `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange
+        error text, header, URL or request fragment is echoed.
     ApiKeyWithVerification:
       type: object
       properties:
