@@ -64,3 +64,7 @@ class OpsNotWired(AdminError):
 class OpsUnavailable(AdminError):
     """The ops source failed, timed out or has nothing yet (E42-T05): 503, retryable. The
     message is a fixed literal, never an exception's text."""
+
+
+class InvalidCursor(AdminError):
+    """A pagination cursor that is malformed, expired or issued for another listing (400)."""
