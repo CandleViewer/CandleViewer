@@ -51,6 +51,7 @@ from candleviewer.ws.metrics import (
     SAMPLE_EVERY,
     FastHistogramChild,
     cv_ws_closes_total,
+    cv_ws_malformed_updates_total,
     cv_ws_overflow_total,
 )
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES, Queued
@@ -169,10 +170,12 @@ class _Rig:
         self.source.books["BTCUSDT"] = book
         self.source.bodies["orders"] = SnapshotBody({"orders": []})
         self.expires_at = datetime(2100, 1, 1, tzinfo=UTC)
+        #: What `resolve` reads, so a test can change the principal mid-connection (§9.5).
+        self.perms: frozenset[Permission] = _PERMS
+        self.grants: tuple[AccountGrant, ...] = (AccountGrant(ACC_A, True, False, False),)
 
         async def resolve(uid: Any) -> PrincipalSnapshot:
-            grants = (AccountGrant(ACC_A, True, False, False),)
-            return PrincipalSnapshot(uid, frozenset({"manager"}), _PERMS, grants)
+            return PrincipalSnapshot(uid, frozenset({"manager"}), self.perms, self.grants)
 
         async def authenticate(token: str) -> tuple[str, Any, datetime]:
             return SESSION, USER, self.expires_at
@@ -472,7 +475,7 @@ def test_an_unencodable_frame_fails_closed(
 ) -> None:
     """D9 (S2a-i): whatever the encoder raises closes the connection `internal_error`, logged by
     error class; it is never dropped silently and never raises into the caller (the fan-out). A
-    market-data frame fails closed too until the ladder can re-snapshot it."""
+    throttled topic's `d` fails closed too before `attach`: no subscription to re-snapshot."""
     pipe, asked = _pipe(encoding)
     with capture_logs() as logs:
         pipe.push(make())
@@ -490,8 +493,8 @@ def test_a_non_finite_number_fails_closed_on_either_codec(
     """§10.1 (the 23:55Z ruling on #412): with the flag on both encoders refuse a NaN or an
     infinity, a producer bug either way, so it is the encode failure above on either codec:
     `internal_error`, logged as `ValueError`, nothing queued. That holds at any depth, for a
-    priority `orders` frame and for a droppable market-data one (the ladder's re-snapshot of a
-    droppable topic is a later slice)."""
+    priority `orders` frame and, before `attach`, for a droppable `d` of a throttled topic (after
+    it, that one drops its topic to a re-snapshot instead)."""
     assert outbound.encode(_d(ch, levels=[[1.5, 2.0]])).droppable is (ch == _BOOK)
     pipe, asked = _pipe(encoding)
     with capture_logs() as logs:
@@ -806,13 +809,9 @@ async def test_an_eviction_sends_the_step_3_bye_under_the_flag() -> None:
     assert sock.closed_with == 4429 and sock.sent.empty()
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="S2a-ii: the control-frame lane rule (§8.4 Lanes)"
-)
 async def test_auth_ok_precedes_the_system_notices_after_it_under_the_flag() -> None:
-    """§8.4 Lanes: `auth_ok` precedes the `system` frames after it. Until the control-frame lane
-    rule lands, control frames ride the normal lane, so a notice queued in the same turn
-    (E27-T02's degraded or read-only state) overtakes `auth_ok`; S2a-ii flips this case."""
+    """§8.4 Lanes: `auth_ok` precedes the `system` frames after it, a notice queued in the same
+    turn (E27-T02's degraded or read-only state) included: both ride the priority lane (D1)."""
     rig, sock = _Rig(BackpressureConfig(), system_notices=lambda: [{"kind": "notice"}]), _Wire()
     async with asyncio.timeout(_DEADLINE_S):
         handler = asyncio.create_task(rig.endpoint(sock))
@@ -1053,24 +1052,36 @@ async def test_orders_encode_failure_closes_internal_error_audited_counted_redac
 
 
 @_ENCODINGS
-async def test_a_non_finite_number_fails_closed_through_the_router(encoding: str) -> None:
-    """§10.1 (the 23:55Z ruling on #412): the book delta that the flag-off transcript sends with
-    a NaN in it (`NaN` on JSON, a float on MessagePack) fails closed with the flag on, on either
-    codec: `bye internal_error` and 1011, counted, audited, and logged as a `ValueError`."""
-    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
-    before = _closes("internal_error")
+async def test_a_droppable_encode_failure_marks_backpressure_and_the_fanout_continues(
+    encoding: str,
+) -> None:
+    """§10.1 (D9): a droppable frame its encoder refuses (a book delta with a NaN, on either codec)
+    drops its topic to a `backpressure` re-snapshot and counts as a malformed update; the
+    connection stays open and the fan-out reaches the next one. Logged at `warning` by type,
+    family and error class, never the payload (C-12.6), at most once per family per interval."""
+    rig, socks = _Rig(BackpressureConfig()), [_Wire(encoding), _Wire(encoding)]
+    before = _closes("internal_error"), _counter(cv_ws_malformed_updates_total, topic="book")
     with capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
-            handler, _ = await rig.open(sock)
-            await rig.sub(sock)
-            rig.book_delta(1, x=float("nan"))
-            (bye,) = await sock.next()
-            await handler
-    assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "internal_error", 1011)
-    assert _closes("internal_error") == before + 1
-    assert _rows(rig) == [("ws.connection.closed", "internal_error", Severity.WARNING)]
+            handlers = []
+            for sock in socks:
+                handlers.append((await rig.open(sock))[0])
+                await rig.sub(sock)
+            for i in (1, 2):  # the second refusal is counted, inside the first one's log window
+                assert rig.book_delta(i, x=float("nan"), note=_MARK) == 2
+                for sock in socks:
+                    (snap,) = await sock.next()
+                    assert (snap["t"], snap["meta"]["reason"]) == ("snap", "backpressure")
+                    sock.feed({"t": "ping", "id": "p", "p": {"client_ms": BASE_MS}})
+                    assert [f["t"] for f in await sock.next()] == ["pong"]
+            for handler in handlers:
+                handler.cancel()
+            await asyncio.wait(handlers)
+    after = _closes("internal_error"), _counter(cv_ws_malformed_updates_total, topic="book")
+    assert after == (before[0], before[1] + 4)
     events = [e for e in logs if e["event"] == "ws frame unencodable"]
-    assert [(e["t"], e["family"], e["error"]) for e in events] == [("d", "book", "ValueError")]
+    named = [(e["t"], e["family"], e["error"], e["log_level"]) for e in events]
+    assert named == [("d", "book", "ValueError", "warning")] * 2 and _MARK not in repr(logs)
 
 
 async def test_an_outbound_frame_over_4_mib_is_logged_and_sent() -> None:
@@ -1254,5 +1265,6 @@ async def test_teardown_releases_the_pipeline() -> None:
     pipe = conn.pipeline
     assert pipe is not None and pipe.released
     assert (len(pipe.queue), pipe.queue.bytes) == (0, 0)
+    assert conn.authz is not None and (conn.authz.on_drop, conn.authz.on_settle) == (None, None)
     pipe.push(_d("system"))
     assert len(pipe.queue) == 0

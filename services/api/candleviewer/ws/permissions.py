@@ -7,7 +7,8 @@
 - `ConnectionAuthz`: per-connection subscription manager. `sub` (partial success, results in
   request order, clamped `effective`), idempotent `unsub`, `ctl` (retune / resnapshot), the §16.2
   limits and §6.2 silent account-scope narrowing. `apply_snapshot` re-evaluates every live
-  subscription after a role/grant change and returns the `revoked` frames (§9.5, S7).
+  subscription after a role/grant change and returns the `revoked` frames (§9.5, S7). With the
+  backpressure flag on, `on_drop` hears of every subscription an operation ends or resets.
 - `ConnectionRegistry`: live sockets per user; role/grant change, kill-switch transition and
   user-disabled fan-out.
 """
@@ -334,6 +335,13 @@ class ConnectionAuthz:
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
         self.refusal_reason: str | None = None
+        #: E17-T03 (flag on, the outbound pipeline): called once per operation, before its reply
+        #: or `revoked` is queued, with every subscription whose queued frames and throttle
+        #: window it made stale (§8.4 Lanes, §9.5). While it is set, a narrowing re-pends what it
+        #: kept (`settling`), for `on_settle` after the change's frames (the registry's `settle`).
+        self.on_drop: Callable[[list[Subscription]], None] | None = None
+        self.on_settle: Callable[[list[Subscription]], None] | None = None
+        self.settling: list[Subscription] = []
 
     # -- views ------------------------------------------------------------------------------
 
@@ -458,6 +466,7 @@ class ConnectionAuthz:
     def revoke(self, sub: Subscription, reason: RevokedReason, now_ms: int) -> dict[str, Any]:
         """Drop one subscription and return its `revoked` frame (e.g. §7.5 resync loop)."""
         self._drop(sub)
+        self._dropped([sub])
         return self._revoked(sub, reason, now_ms)
 
     def _authorise(self, topic: ParsedTopic, opts: Mapping[str, Any]) -> frozenset[uuid.UUID]:
@@ -511,6 +520,12 @@ class ConnectionAuthz:
         (`register` checks again; `user=` the authenticated principal id, never a client value);
         the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
         refusal, an `unsub`, a revocation (one during these awaits: #2896) or the socket's end."""
+        refused = await self._upstream(sub)
+        if refused is not None:  # what was queued of it meanwhile goes too (`on_drop`)
+            self._dropped([sub])
+        return refused
+
+    async def _upstream(self, sub: Subscription) -> dict[str, Any] | None:
         family = sub.topic.family.family
         spec: BarSpec | None = None
         if family in {"bars", "footprint"}:
@@ -576,11 +591,18 @@ class ConnectionAuthz:
         ids = self._by_topic.get(topic)
         if not ids:
             return False
-        for sid in list(ids):
-            self._drop(self.by_id[sid])
+        subs = [self.by_id[sid] for sid in sorted(ids)]
+        for sub in subs:
+            self._drop(sub)
+        self._dropped(subs)
         return True
 
+    def _dropped(self, subs: list[Subscription]) -> None:
+        if self.on_drop is not None:
+            self.on_drop(subs)
+
     def _drop(self, sub: Subscription) -> None:
+        """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
         self.by_id.pop(sub.sub_id, None)
         ids = self._by_topic.get(sub.ch)
         if ids is not None:
@@ -603,7 +625,8 @@ class ConnectionAuthz:
         Each subscription is released under its own guard: one whose release raises (`BarsError`,
         for a lease another connection's failed `register` dropped) is logged and the
         subscriptions after it are still released, not left holding their leases for good."""
-        for sub in list(self.by_id.values()):
+        subs = list(self.by_id.values())
+        for sub in subs:
             try:
                 self._drop(sub)
             except Exception:
@@ -613,6 +636,7 @@ class ConnectionAuthz:
                         consumer=self._consumer(sub),
                         exc_info=True,
                     )
+        self._dropped(subs)
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
@@ -659,6 +683,7 @@ class ConnectionAuthz:
             if not sub.snapshot_pending:
                 sub.pending_reason = "reconfigure"
             sub.snapshot_pending = True
+            self._dropped([sub])  # its old stream is stale before `ctl_ok` (§8.4 Lanes)
         echoed = {
             k: v for k, v in effective.items() if k in changes or k in ("throttle_ms", "paused")
         }
@@ -678,10 +703,19 @@ class ConnectionAuthz:
         frames: list[dict[str, Any]] = [
             {"t": "permission_change", "ts": now_ms, "p": auth_ok_payload(new.principal)}
         ]
+        affected: list[Subscription] = []
         for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
             frame = self._reevaluate(sub, now_ms)
             if frame is not None:
                 frames.append(frame)
+                affected.append(sub)
+        self._dropped(affected)  # the discard comes first (§9.5)
+        if self.on_drop is not None:  # flag on: then a narrowed subscription is re-pended
+            for sub in affected:  # unless paused: its resume re-snapshots it (§5.4, §8.4 step 1)
+                paused = sub.effective.get("paused") is True
+                if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
+                    sub.snapshot_pending, sub.pending_reason = True, "reconfigure"
+                    self.settling.append(sub)
         return frames
 
     def _reevaluate(self, sub: Subscription, now_ms: int) -> dict[str, Any] | None:
@@ -896,6 +930,21 @@ class ConnectionRegistry:
                 # C-2.18: a stalled/broken client must not block the change or other sockets.
                 self.unregister(authz)
                 await self._close_evicted(close)
+            else:
+                await self.settle(authz, close)  # the snapshots that follow them (§9.5)
+
+    async def settle(self, authz: ConnectionAuthz, close: Any) -> None:
+        """Once a change's frames are queued: `authz.on_settle` with what it re-pended (§9.5).
+        One that raises evicts its socket like a stalled send; the fan-out goes on (C-2.18)."""
+        subs, authz.settling = authz.settling, []
+        try:
+            if authz.on_settle is not None:
+                authz.on_settle(subs)
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the eviction
+                _log().error("ws settle failed", connection_id=authz.connection_id, exc_info=True)
+            self.unregister(authz)
+            await self._close_evicted(close)
 
     def _swap_or_evict(
         self, authz: ConnectionAuthz, snap: VersionedSnapshot, rows: list[_AuditRow]

@@ -61,9 +61,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
   stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
   budget, which the §8.4 ladder holds from the first `auth_ok` (drop, `backpressure`
-  re-snapshot, `slow_consumer` close); the writer drains it. The `bye` takes a terminal slot,
-  and every close flushes under one deadline, past which the socket goes with no `bye` (§4.4,
-  §8.4); the close audit records the ladder's trigger and an expired flush (§4.3).
+  re-snapshot, `slow_consumer` close); the writer drains it. A control frame that ends or resets
+  a subscription's stream drops what it overtakes of it (§8.4 Lanes). The `bye` takes a terminal
+  slot, and every close flushes under one deadline, past which the socket goes with no `bye`
+  (§4.4, §8.4); the close audit records the ladder's trigger and an expired flush (§4.3).
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
@@ -155,6 +156,7 @@ from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
+    Subscription,
     auth_ok_payload,
     handle_ctl,
     handle_unsub,
@@ -995,6 +997,7 @@ def make_ws_router(
                 svc.sequencing.register(conn.authz, conn.emitter)
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
                 conn.pipeline.attach(conn.authz, conn.emitter)
+                conn.authz.on_settle = lambda subs: settle(conn, subs)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
         view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
@@ -1013,6 +1016,7 @@ def make_ws_router(
                 conn.push_system(body)
         for f in revoked:
             conn.push(f)
+        await registry.settle(conn.authz, conn.evict)  # §9.5: a narrowing's snaps follow
         structlog.contextvars.bind_contextvars(user_id=str(user_id), session_id=session_id)
         _log().info(
             "ws authenticated",
@@ -1045,6 +1049,20 @@ def make_ws_router(
             conn.emitter.flush_pending(
                 [s for s in subs if s.topic.entity_kind is None or s.sub_id in fresh]
             )
+
+    def settle(conn: _Connection, subs: list[Subscription]) -> None:
+        """Flag on, once a permission change's frames are queued: the `reconfigure` snapshots of
+        what its narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One
+        that raises fails closed, `internal_error` (§10.1); if this raises, the registry evicts."""
+        try:
+            if conn.emitter is not None:
+                conn.emitter.flush_pending(subs)
+        except Exception as exc:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the close
+                _log().error(
+                    "ws snapshot failed", connection_id=conn.connection_id, error=type(exc).__name__
+                )
+            conn.close_with("internal_error")
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
@@ -1351,6 +1369,7 @@ def make_ws_router(
                     with _step(conn, "pipeline"):
                         conn.pipeline.release()
                 if conn.authz is not None:
+                    conn.authz.on_settle = None  # its `on_drop` went with the pipeline
                     with _step(conn, "sequencing"):
                         if registry.services.sequencing is not None:
                             registry.services.sequencing.unregister(conn.authz)

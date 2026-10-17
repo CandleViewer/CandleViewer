@@ -14,6 +14,10 @@ rebuild names it or the coarse timer (`classify_interval_ms`), never retried onc
 3's `bye` carries `hint.most_expensive_topics`; the close audit's `after_state` its trigger and an
 expired flush (§4.3). Before `auth_ok` there is no topic: over budget is step 3 alone.
 
+From `attach` the pipeline is `ConnectionAuthz.on_drop` (§8.4 Lanes, §9.5): a control frame that
+ends or resets a subscription's stream overtakes what the normal lane holds of it, so those frames
+and its throttle window go before it is queued; its priority-lane frames stay, ahead of it.
+
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
@@ -39,10 +43,13 @@ only an `asyncio.Timeout` can cancel a send that a peer which stopped reading ha
 reads the loop's clock. So a test cannot advance it; it bounds it with a short `close_flush_s` and
 a send that never completes, which leaves the deadline as the only way out.
 
-A frame its encoder refuses is a server fault and fails closed: `internal_error` (§10.1). The
-droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
-instead) arrives in a later slice; until then it fails closed too. A NaN or an infinity is refused
-on both subprotocols, a producer bug either way (§10.1): JSON refuses it as it encodes, and
+A frame its encoder refuses is a server fault (§10.1). After `attach`, a droppable one (a `d` or
+`snap` of a throttled topic the connection subscribes) drops its topic to a `backpressure`
+re-snapshot: its queued frames go, the ladder's `drain` will snapshot it, the rest of its chunk set
+is never queued, and it counts as a malformed update, logged at `warning` at most once per family
+per `classify_interval_ms`; the connection stays open. Any other fails closed: `internal_error`.
+A NaN or an infinity is refused on both
+subprotocols, a producer bug either way (§10.1): JSON refuses it as it encodes, and
 `msgpack_payload` after packing, as a `ValueError` too. The log line names the frame's type,
 family and error class, never its payload or the error's text (C-12.6). Whatever the encoder
 raises is caught, so nothing raises into the caller and one bad frame never stops a fan-out.
@@ -55,7 +62,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from time import perf_counter
@@ -72,11 +79,13 @@ from candleviewer.ws.metrics import (
     MSGPACK_ENCODE_SECONDS,
     MSGPACK_FRAME_BYTES,
     SAMPLE_EVERY,
+    cv_ws_malformed_updates_total,
     cv_ws_overflow_total,
 )
 from candleviewer.ws.outbound import (
     Backpressure,
     FrameEncoder,
+    Key,
     LadderEvent,
     OutboundQueue,
     encode,
@@ -209,6 +218,12 @@ class ConnectionPipeline:
         #: The coarse retry of parked snapshots, on the gateway's clock (`service`).
         self._retry_s = config.classify_interval_ms / 1000
         self._retry_at: float | None = None
+        #: Per log line and family: when it may log again, and the lines held back (`_quiet`).
+        self._now, self._held = 0.0, dict[tuple[str, str], tuple[float, int]]()
+        #: From `attach`: the authorisation (its `on_drop` is `_invalidate`) and the pacer.
+        self._attached: tuple[ConnectionAuthz, Pacer] | None = None
+        #: §10.1: per key, a chunk set whose chunk its encoder refused; its rest is never queued.
+        self._skips: dict[Key, str] = {}
 
     @property
     def deadline(self) -> float | None:
@@ -218,20 +233,23 @@ class ConnectionPipeline:
     def attach(self, authz: ConnectionAuthz, emitter: TopicEmitter) -> None:
         """The first `auth_ok`: the ladder over this queue. Its `Pacer` holds the topics marked
         for a `backpressure` snapshot; no update is routed through it yet (a later slice)."""
-        self._live = authz.by_id
-        self.ladder = Backpressure(self.queue, Pacer(emitter), partial(self._snapshot, emitter))
+        self._live, pacer = authz.by_id, Pacer(emitter)
+        self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
         emitter.on_rebuild = self._rebuilt
+        authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
         stamped (`received`) has its encode timed and sized here, once (module docstring)."""
-        if self.terminal is not None or self.released:
+        if self.terminal is not None or self.released or (self._skips and self._skipped(frame)):
             return
         try:
             item = encode(
                 frame, self._dumps if received is None else self._timed_dumps, received=received
             )
         except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
+            if self._recovers(frame, exc):
+                return
             _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
             self._close("internal_error")
             return
@@ -256,6 +274,7 @@ class ConnectionPipeline:
         """The writer's turn before each pop (after every send and wake): `drain` while a topic
         awaits its snapshot, unparking all once per `classify_interval_ms` (the coarse timer)."""
         ladder = self.ladder
+        self._now = now  # `_quiet`'s clock, as of the writer's last turn
         if ladder is None or self.terminal is not None or not ladder.pacer.resnapshot_required:
             self._retry_at = None
             return
@@ -265,6 +284,52 @@ class ConnectionPipeline:
             self._retry_at = now + self._retry_s
             ladder.unpark()
         self._apply(ladder.drain(self._live))
+
+    def _recovers(self, frame: Mapping[str, Any], exc: Exception) -> bool:
+        """§10.1 (module docstring): True when `frame`, refused by its encoder, is a `d` or `snap`
+        of a throttled topic the connection subscribes, dropped to a re-snapshot; else False."""
+        attached, key = self._attached, _droppable(frame)
+        if attached is None or key is None:
+            return False
+        authz, pacer = attached
+        sub = authz.find(*key)
+        if sub is None:
+            return False
+        family = sub.topic.family.family
+        cv_ws_malformed_updates_total.labels(topic=family).inc()
+        if (held := self._quiet(("unencodable", family))) is not None:
+            fields = {**self._fields(frame), "error": type(exc).__name__, "suppressed": held}
+            _log().warning("ws frame unencodable", **fields)
+        self.queue.drop({key})
+        pacer.drop(sub)  # held for the ladder's `drain` (§8.4 steps 1 and 2)
+        if frame.get("s") is None:  # a snapshot chunk with more to come (§3.6)
+            self._skips[key] = str(frame.get("id"))
+        self.queue.wake()
+        return True
+
+    def _quiet(self, key: tuple[str, str]) -> int | None:
+        """None holds a log line back: one per `key` (event, family) per `classify_interval_ms`, on
+        `service`'s clock. Else how many it held back since the last line (`suppressed`)."""
+        until, held = self._held.get(key, (-math.inf, 0))
+        self._held[key] = (until, held + 1) if self._now < until else (self._now + self._retry_s, 0)
+        return None if self._now < until else held
+
+    def _skipped(self, frame: Mapping[str, Any]) -> bool:
+        """The rest of a chunk set whose chunk its encoder refused: never queued, as no client
+        could assemble it (§3.6, §7.2). Its last chunk ends the skip."""
+        key = _droppable(frame)
+        if key is None or self._skips.get(key, "") != frame.get("id"):
+            return False
+        if frame.get("s") is not None:
+            del self._skips[key]
+        return True
+
+    def _invalidate(self, pacer: Pacer, subs: Sequence[Subscription]) -> None:
+        """`ConnectionAuthz.on_drop` (module docstring). A `backpressure` mark stays: `drain`
+        deletes an ended subscription's entry unsent, and snapshots a held one as it is then."""
+        self.queue.drop({(sub.ch, sub.replay_session_id) for sub in subs})
+        for sub in subs:
+            pacer.lanes.pop(sub.sub_id, None)
 
     def _apply(self, events: list[LadderEvent]) -> None:
         """A drop wakes the writer, whose `service` drains (never a drain from here); a close is
@@ -363,10 +428,12 @@ class ConnectionPipeline:
         )
 
     def release(self) -> None:
-        """Teardown: free both lanes; nothing is queued after it."""
+        """Teardown: free both lanes and the subscriptions' hook; nothing is queued after it."""
         self.released = True
         self.queue.clear()
         self._timeout = None
+        if self._attached is not None:
+            self._attached[0].on_drop = None
 
     def _fields(self, frame: Mapping[str, Any]) -> dict[str, Any]:
         """A frame as a log line may name it: bounded type and family, never the payload."""
@@ -377,6 +444,12 @@ class ConnectionPipeline:
             "t": t if isinstance(t, str) and t in _SERVER_TYPES else "other",
             "family": family if family is None or family in FAMILIES else "other",
         }
+
+
+def _droppable(frame: Mapping[str, Any]) -> Key | None:
+    """The key of a frame step 1 may drop, as `encode` lays it out (D1), without serialising it."""
+    probe = encode(frame, lambda _: "")
+    return probe.key if probe.droppable else None
 
 
 def _log() -> Any:

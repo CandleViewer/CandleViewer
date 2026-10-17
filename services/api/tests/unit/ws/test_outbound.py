@@ -106,9 +106,10 @@ def test_outbound_encode_classifies_lanes_and_droppable_frames() -> None:
     assert encode(_frame("d", "system")).priority
     assert encode(_frame("ping")).priority
     assert encode(_frame("pong")).priority
-    sub_ok = encode(_frame("sub_ok", "book.BTCUSDT.50"))
-    assert (sub_ok.priority, sub_ok.key) == (False, None)  # control frames are never dropped
-    assert encode(_frame("err")).family is None
+    for t in ("sub_ok", "ctl_ok", "revoked", "err"):  # D1: every control frame, `ch` or not
+        control = encode(_frame(t, "book.BTCUSDT.50"))
+        assert (control.priority, control.key, control.droppable) == (True, None, False)
+    assert encode(_frame("err")).family is None and encode(_frame("welcome")).priority
 
 
 def test_outbound_encode_marks_only_backpressure_snapshots() -> None:
@@ -246,7 +247,7 @@ def test_outbound_drop_never_touches_the_priority_lane() -> None:
 def test_outbound_clear_discards_the_normal_lane_or_every_lane_exactly() -> None:
     queue = OutboundQueue()
     queue.push(encode(_frame("snap", "book.BTCUSDT.50") | {"meta": {"reason": "backpressure"}}))
-    queue.push(encode(_frame("sub_ok")))
+    queue.push(encode(_frame("d", "trades.BTCUSDT")))
     kept = encode(_frame("d", "system", n=1))
     queue.push(kept)
     assert queue.clear(normal_only=True) == 2
@@ -393,6 +394,22 @@ def test_backpressure_drain_keeps_a_topic_whose_snapshot_is_not_ready() -> None:
     source.unavailable.clear()
     assert not ladder.unpark(["another"]) and ladder.unpark([book.sub_id])
     assert ladder.drain() == [LadderEvent("resnapshot", ("book.BTCUSDT.50",))]
+
+
+def test_backpressure_drain_keeps_an_entry_its_own_snapshot_re_marked() -> None:
+    """§10.1 (the S2b hand-off): a refused frame of the snapshot `drain` is queuing re-marks its
+    topic from inside it; `drain` keeps the entry, parked, so a held topic is never stranded."""
+    conn, pacer, queue, _ = _setup()
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+
+    def refused(sub: Subscription) -> bool:  # the pipeline's droppable branch, from a push
+        pacer.drop(sub)
+        return True  # the emitter pushed every frame: it cannot tell
+
+    ladder = Backpressure(queue, pacer, refused)
+    pacer.drop(book)
+    assert ladder.drain() == [] and pacer.resnapshot_required == {book.sub_id: book}
+    assert (book.pending_reason, book.sub_id in ladder._parked) == ("backpressure", True)
 
 
 def test_outbound_budget_allows_exactly_its_bytes_and_frames() -> None:
