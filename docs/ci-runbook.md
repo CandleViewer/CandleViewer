@@ -156,6 +156,11 @@ diff` cannot see because they were never tracked. `git add` them in the
   never go over WS matched no specs — either the tag was renamed/removed by
   accident or the harness itself regressed. This must never silently pass;
   restore the tag or the specs it should match.
+- **CI-BUILD-001** (a workspace package's built exports are missing): a lane that runs
+  `apps/web`'s tests with pnpm directly (the `a11y-axe` job, `cold-cache.yml`) must build the
+  packages `apps/web` imports first, because turbo's `^build` does not apply there (#3244). Check
+  that the lane's `pnpm --filter "@candleviewer/web^..." run build` step ran and succeeded, and
+  that the package's `exports` in `package.json` point at files its `build` produces.
 - **CI-A11Y-001** (new serious/critical axe-core violation): open the axe
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a
