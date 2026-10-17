@@ -35,7 +35,15 @@ from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws_wiring import SnapshotRouter
-from tests.contract.test_market_bars_contract import _NOW, _SERIES, _STORE, _T0, _TAPE, _build
+from tests.contract.test_market_bars_contract import (
+    _NOW,
+    _SERIES,
+    _STORE,
+    _T0,
+    _TAPE,
+    _build,
+    _tape_totals,
+)
 from tests.contract.ws import _harness as h
 from tests.unit.ws._seq_support import USER
 from tests.unit.ws.test_subscriptions import _Bars
@@ -104,12 +112,14 @@ class _Rig:
         self.w.call(self.router.emit, spec, updates, generation)
 
     def rest(self, bar_type: str, param: str, **query: object) -> list[dict[str, Any]]:
-        """`GET /market/bars` over the same reader: the bars of one 200 response."""
+        """`GET /market/bars` over the same reader (a non-time kind also needs the tape's trade
+        totals, SR-E12-02): the bars of one 200 response."""
         app = FastAPI()
         app.include_router(
             make_market_bars_router(
                 lambda: self.reader,
                 recording_started_at_us=_started,
+                trade_totals=_tape_totals,
                 principal_resolver=_Allow(),
                 symbol_listed=lambda symbol: symbol == "BTCUSDT",
                 now_us=lambda: _NOW,
