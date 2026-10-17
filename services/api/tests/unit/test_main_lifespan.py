@@ -101,7 +101,7 @@ def _fake_ctx() -> SimpleNamespace:
     ]
     modules = {name: _FakeModule() for name in module_names}
     return SimpleNamespace(
-        settings=SimpleNamespace(metrics_enabled=False, test_clock=False),
+        settings=SimpleNamespace(metrics_enabled=False, test_clock=False, account_fixture=None),
         mesh_self_check=_FakeSelfCheck(),
         oms_read_only_gate=_FakeGate(),
         **modules,
@@ -164,6 +164,7 @@ def _test_clock_ctx(audit: _FakeAudit) -> SimpleNamespace:
         test_clock=True,
         test_clock_file="/run/cv-test-clock/offset",
         environment=Environment.TESTNET,
+        account_fixture=None,
     )
     ctx.audit = audit
     return ctx

@@ -11,22 +11,29 @@ re-checks it as well.
 
 S4 threads the handle into the exchange adapter's account REST clients and private socket. Until
 the guard and serving slices land, the package's transport and connector refuse every request.
+
+S8: the lifespan awaits `account_fixture_boot`, the dev package's boot guard, which writes its
+audit record through the writer injected here: `cvdev` never imports `candleviewer.audit`.
 """
 
 from __future__ import annotations
 
 import importlib
 from collections.abc import Awaitable, Callable
-from typing import Final, Protocol
+from types import ModuleType
+from typing import Any, Final, Protocol
 
 import httpx
 import structlog
 
 from candleviewer.settings import Settings
 
-#: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`.
+#: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`
+#: and (S8) the boot guard `guard_boot(settings, audit) -> None`, which refuses by raising.
 _DEV_PACKAGE: Final = "cvdev"
 _DEV_WIRING: Final = "cvdev.account_fixture.wiring"
+#: S8 (FX-R01): one record per boot while the fixture is on, written once its guard passed.
+ACCOUNT_FIXTURE_AUDIT_ACTION: Final = "system.config.account_fixture_enabled"
 NO_FIXTURE_TRANSPORT: Final = (
     "CV_ACCOUNT_FIXTURE is set but this build carries no fixture transport"
 )
@@ -59,16 +66,7 @@ def build_account_fixture(settings: Settings) -> AccountFixture | None:
     scenario = settings.account_fixture
     if scenario is None:
         return None
-    refusal = settings.account_fixture_refusal()
-    if refusal is not None:
-        raise AccountFixtureRefused(refusal)
-    try:
-        module = importlib.import_module(_DEV_WIRING)
-    except ModuleNotFoundError as exc:
-        if not _names_the_dev_package(exc.name):
-            raise
-        raise AccountFixtureRefused(NO_FIXTURE_TRANSPORT) from exc
-    build: Callable[[Settings], AccountFixture] = module.build
+    build: Callable[[Settings], AccountFixture] = _dev_module(settings, _DEV_WIRING).build
     fixture = build(settings)
     structlog.get_logger(__name__).warning(
         "exchange.account_fixture_enabled",
@@ -78,6 +76,70 @@ def build_account_fixture(settings: Settings) -> AccountFixture | None:
         detail="the dev-only account fixture transport stands in for the exchange",
     )
     return fixture
+
+
+class AccountFixtureAudit(Protocol):
+    """The slice of `AuditWriter.emit` the boot record needs, injected into the dev package."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        severity: Any = ...,
+        env: Any = None,
+        after_state: dict[str, Any] | None = None,
+    ) -> None: ...
+
+
+class _AuditModule(Protocol):
+    @property
+    def is_active(self) -> bool: ...
+
+    @property
+    def writer(self) -> AccountFixtureAudit: ...
+
+
+class BootContext(Protocol):
+    """What `account_fixture_boot` reads of the `AppContext`."""
+
+    @property
+    def settings(self) -> Settings: ...
+
+    @property
+    def audit(self) -> _AuditModule: ...
+
+
+async def account_fixture_boot(ctx: BootContext) -> None:
+    """#2893 S8, for the lifespan, after the modules start and before the app serves: the dev
+    package's boot guard refuses boot (`AccountFixtureRefused`) while the database holds a key the
+    stub must never answer for, then logs a warning and writes the boot record through the audit
+    writer. The fake backend has no audit writer, so there the warning is the only record. Unset,
+    it imports nothing and does nothing."""
+    settings = ctx.settings
+    if settings.account_fixture is None:
+        return
+    guard: Callable[[Settings, AccountFixtureAudit | None], Awaitable[None]] = _dev_module(
+        settings, _DEV_WIRING
+    ).guard_boot
+    await guard(settings, ctx.audit.writer if ctx.audit.is_active else None)
+
+
+def _dev_module(settings: Settings, name: str) -> ModuleType:
+    """A module of the dev package, imported only after the dev/test gate is re-checked. A build
+    without the package (a release image) refuses boot; a module the package itself misses is a
+    broken checkout, so that `ModuleNotFoundError` propagates as is."""
+    refusal = settings.account_fixture_refusal()
+    if refusal is not None:
+        raise AccountFixtureRefused(refusal)
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError as exc:
+        if not _names_the_dev_package(exc.name):
+            raise
+        raise AccountFixtureRefused(NO_FIXTURE_TRANSPORT) from exc
 
 
 def _names_the_dev_package(module: str | None) -> bool:

@@ -5,7 +5,8 @@
 `build_test_clock` does, so settings that skipped validation never reach a transport. The REST
 transport and the private-socket connector it returns refuse every request, as a closed port
 would: no reply is ever produced, so nothing is served before the host, key-id and signature
-guards land. Nothing here imports `candleviewer.secrets`.
+guards land. `guard_boot` is the boot guard (S8, `boot.run`), named here so this module stays the
+package's one entry point. Nothing here imports `candleviewer.secrets`.
 """
 
 from __future__ import annotations
@@ -16,8 +17,13 @@ from typing import Final, NoReturn
 
 import httpx
 
-from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused
+from candleviewer.account_fixture_wiring import (
+    AccountFixture,
+    AccountFixtureAudit,
+    AccountFixtureRefused,
+)
 from candleviewer.settings import Settings
+from cvdev.account_fixture import boot
 
 #: Why every request is refused for now.
 REFUSAL: Final = "the account fixture transport answers nothing until its guards land (#2893)"
@@ -47,3 +53,8 @@ def build(settings: Settings) -> AccountFixture:
     if refusal is not None:
         raise AccountFixtureRefused(refusal)
     return _Fixture(rest_transport=RefusingTransport(), private_ws_connect=refuse_private_socket)
+
+
+async def guard_boot(settings: Settings, audit: AccountFixtureAudit | None) -> None:
+    """The boot guard (`boot.run`): refuses boot by raising, or passes and writes the record."""
+    await boot.run(settings, audit)
