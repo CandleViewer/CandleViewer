@@ -71,9 +71,12 @@ class ComposeResult:
 
 
 def _run(argv: list[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
-    """The one subprocess call (the seam the unit tests replace with a fake `docker`)."""
+    """The one subprocess call (the seam the unit tests replace with a fake `docker`).
+
+    `errors="replace"`: a stray non-UTF-8 byte in compose's output must not raise a
+    `UnicodeDecodeError` (a `ValueError`): it would escape `_diagnostics` and hide the failure."""
     return subprocess.run(  # noqa: S603 - fixed argv, no shell
-        argv, capture_output=True, text=True, timeout=timeout_s, check=False
+        argv, capture_output=True, text=True, errors="replace", timeout=timeout_s, check=False
     )
 
 
@@ -161,8 +164,13 @@ async def start_and_wait(
 
     A non-zero exit raises `ComposeError` at once. Running out of time raises `AssertionError`
     carrying `compose ps -a` and the service's log tail. Needing more than one start recovers but
-    warns (`RuntimeWarning`), so how often the quirk fires shows in the CI warnings summary.
-    `now` and `sleep` are injectable so the unit tests drive this on a fake clock.
+    warns (`RuntimeWarning`): a second call means no answer within `retry_every_s` of the first,
+    which a slow start looks like too, so the CI warnings summary is an upper bound on how often
+    the quirk fires, not a count of it. A start gets the time left but never less than
+    `retry_every_s`, so the one issued at the deadline can finish: with a 1 s floor a slow `start`
+    there died as "timed out after 1s" and the failure lost its diagnostics (GH-3167). The last
+    start can overrun `timeout_s` by at most `retry_every_s`. `now` and `sleep` are injectable so
+    the unit tests drive this on a fake clock.
     """
     clock = now or asyncio.get_running_loop().time
     deadline = clock() + timeout_s
@@ -171,14 +179,15 @@ async def start_and_wait(
     last: ComposeResult | None = None
     while True:
         if clock() >= next_start:
-            last = await compose("start", service, timeout_s=max(1.0, deadline - clock()))
+            budget = max(retry_every_s, deadline - clock())  # the time left, but enough to finish
+            last = await compose("start", service, timeout_s=budget)
             starts += 1
             next_start = clock() + retry_every_s
         if await ready():
-            if starts > 1:  # recovered, but not for free: keep the quirk visible in the CI summary
+            if starts > 1:  # recovered, but not for free: show it in the CI warnings summary
                 warnings.warn(
-                    f"{service} needed {starts} `compose start` calls; the earlier ones exited 0 "
-                    f"without starting it (GH-3087)",
+                    f"{service} needed {starts} `compose start` calls; no answer within "
+                    f"{retry_every_s:.0f}s of an earlier one (GH-3087)",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -236,11 +245,15 @@ async def qdb_up() -> bool:
 
 
 async def pg_up() -> bool:
-    """True once Postgres answers a query (an open port alone is only docker-proxy)."""
+    """True once Postgres answers a query (an open port alone is only docker-proxy).
+
+    The connect and the query each have their own 3 s bound: a server that takes the connection
+    and then stalls would otherwise hold this, and so `start_and_wait`'s deadline check, for as
+    long as it likes."""
     with contextlib.suppress(OSError, asyncpg.PostgresError, TimeoutError):
         conn = await asyncpg.connect(pg_dsn().replace("+asyncpg", "", 1), timeout=3)
         try:
-            await conn.execute("SELECT 1")
+            await conn.execute("SELECT 1", timeout=3)
         finally:
             await conn.close()
         return True
