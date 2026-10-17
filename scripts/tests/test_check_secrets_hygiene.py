@@ -134,6 +134,16 @@ def test_run_prose_is_not_read_as_sourcing_a_file(tmp_path: Path) -> None:
     assert h.check_workflows(tmp_path) == []
 
 
+@pytest.mark.parametrize(
+    "run", ["source scripts/ci/lib", ". scripts/ci/lib", "source scripts/ci/lib.env"]
+)
+def test_run_sourced_file_without_a_shell_suffix_is_scanned(tmp_path: Path, run: str) -> None:
+    lib = run.split()[1]
+    _write(tmp_path, WF, _runs(run))
+    _write(tmp_path, lib, "set -x\n")
+    assert h.check_workflows(tmp_path) == [f"{lib}:1: 'set -x' tracing (SR-146); run by w.yml"]
+
+
 @pytest.mark.parametrize("skipped", ["# never set -x", "set -x  # secrets-hygiene: allow"])
 def test_run_script_comment_or_allow_marked_line_is_skipped(tmp_path: Path, skipped: str) -> None:
     _write(tmp_path, WF, _runs("sh scripts/x.sh"))
@@ -184,6 +194,14 @@ def test_run_script_paths_outside_the_repo_are_refused(tmp_path: Path) -> None:
         "bash --noprofile --norc tools/x.sh",
         "bash -eu tools/x.sh",
         "bash -euo pipefail tools/x.sh",
+        'bash "$GITHUB_WORKSPACE/tools/x.sh"',
+        "${GITHUB_WORKSPACE}/tools/x.sh",
+        "/bin/bash tools/x.sh",
+        "/usr/bin/bash -euo pipefail tools/x.sh",
+        "/bin/sh -e tools/x.sh",
+        "/usr/bin/sh tools/x.sh",
+        "/usr/bin/env bash --noprofile tools/x.sh",
+        "/usr/bin/env sh tools/x.sh",
     ],
 )
 def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
@@ -192,8 +210,9 @@ def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
     assert h.check_workflows(tmp_path) == ["tools/x.sh:1: environment dump (SR-146); run by w.yml"]
 
 
-def test_run_script_path_is_tried_from_the_working_directory(tmp_path: Path) -> None:
-    _write(tmp_path, WF, "      - working-directory: tools\n        run: ./x.sh\n")
+@pytest.mark.parametrize("workdir", ["tools", "${{ github.workspace }}/tools"])
+def test_run_script_path_is_tried_from_the_working_directory(tmp_path: Path, workdir: str) -> None:
+    _write(tmp_path, WF, f"      - working-directory: {workdir}\n        run: ./x.sh\n")
     _write(tmp_path, "tools/x.sh", "printenv\n")
     assert h.check_workflows(tmp_path) == ["tools/x.sh:1: environment dump (SR-146); run by w.yml"]
 
@@ -204,7 +223,21 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
     assert h.check_workflows(tmp_path) == ["tools/x:2: environment dump (SR-146); run by w.yml"]
 
 
-@pytest.mark.parametrize("run", ["./tools/gen.py", "python3 tools/gen.py"])
+@pytest.mark.parametrize(
+    ("shebang", "traced"),
+    [("#!/bin/bash -x", 1), ("#!/bin/sh -ex", 1), ("#!/usr/bin/env -S bash -x", 1)]
+    + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)],
+)
+def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
+    _write(tmp_path, WF, _runs("./tools/x.sh"))
+    _write(tmp_path, "tools/x.sh", f"{shebang}\nprintenv\n")
+    hits = ["tools/x.sh:1: 'set -x' tracing"] * traced + ["tools/x.sh:2: environment dump"]
+    assert h.check_workflows(tmp_path) == [f"{hit} (SR-146); run by w.yml" for hit in hits]
+
+
+@pytest.mark.parametrize(
+    "run", ["./tools/gen.py", "python3 tools/gen.py", 'bash -c "tools/gen.py --check"']
+)
 def test_run_python_script_is_not_followed(tmp_path: Path, run: str) -> None:
     _write(tmp_path, WF, _runs(run))
     _write(tmp_path, "tools/gen.py", '#!/usr/bin/env python3\n"""Never set -x in CI."""\n')
