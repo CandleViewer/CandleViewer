@@ -171,10 +171,11 @@ async def test_create_app_hands_the_bars_route_its_storages_trade_totals(
     repo = FakeMarketDataRepository()
     app.state.app_context.storage._market_data = repo  # after composition: resolved per call
     await repo.write_trades([
-        TradeRow(ts_us=5, symbol="BTCUSDT", price="1", qty="0.5", side="buy", trade_id="t1")
+        TradeRow(ts_us=ts, symbol=sym, price="1", qty=qty, side="buy", trade_id=f"{sym}{ts}")
+        for ts, sym, qty in [(5, "BTCUSDT", "0.5"), (50, "BTCUSDT", "8"), (5, "ETHUSDT", "4")]
     ])  # fmt: skip
     got = await seen["trade_totals"]("BTCUSDT", TimeRange(start_us=0, end_us=10))
-    assert got == TradeTotals(1, Decimal("0.5"))
+    assert got == TradeTotals(1, Decimal("0.5"))  # this symbol, this range only
 
 
 async def _ctx_with(trade_ts: list[int], session_first: datetime | None) -> Any:
