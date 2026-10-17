@@ -11,17 +11,18 @@ operational routes) are left alone whatever bearer they carry, so sign-in stays 
 request without a bearer, or whose bearer has no live session, is left to the route (401, or
 a pre-session operation). A session lookup or a classification that fails answers
 `503 store_unavailable`: deny by default (C-12.4). An enrolment-only session that would
-outlive `ENROLMENT_ONLY_LIFETIME` was not minted as one (Q7) and gets 401 like an expired
-session, except on `POST /auth/logout`.
+outlive `ENROLMENT_ONLY_LIFETIME` was not minted as one (Q7), and one past its expiry is dead
+(a refreshed access handle outlives it): both get 401 like an expired session, except on
+`POST /auth/logout`.
 
-The guard is inert while `AuthService.enrolment_gate_is_active` is false: the session and user
-stores are not both wired. `build_auth_service` wires both or neither, and without the user
-store nobody can sign in, so no enrolment-only session can exist there.
+The guard is inert only while `AuthService.enrolment_gate_is_active` is false: no session store
+is wired, so nothing authenticates. Wired without the user store, every classification fails and
+the guard answers 503 (deny by default).
 
 Every refusal is counted (`auth_enrolment_refused_total{channel, reason}`, SR-125) and logged
 with the method and the contract route template, never the raw path. A 403 also writes an
 `auth.mfa_enrollment_required` audit record (C-2.9; 04 section 7.3: a denied request is
-audited) through `EnrolmentRefusals`, the CSRF guard's bounded writer path: a per-session
+audited) through `EnrolmentRefusals`, the CSRF guard's bounded writer path: a per-user
 budget, the shared `RefusalAuditTracker` in-flight cap and a shielded write. Past either the
 answer is the same and the metric counts `audit_throttled`. The WebSocket refuses such a session
 at `auth` through the same recorder (`app._session_authenticator`, `23-ws-protocol.md` §4.3).
@@ -184,13 +185,17 @@ class EnrolmentRefusals:
     the HTTP guard and the WS authenticator alike.
 
     `auth_enrolment_refused_total{channel, reason}` counts every refusal once under its reason
-    (`enrolment_only`: 403 or `bye mfa_enrollment_required`; `expired`: an overlong session,
-    401 or a failed `auth`; `unclassified`: the session could not be checked, 503 or a failed
-    `auth`) and, for an `enrolment_only` refusal whose audit record was not written normally,
+    (`enrolment_only`: 403 or `bye mfa_enrollment_required`; `expired`: an overlong or dead
+    session, 401 or a failed `auth`; `unclassified`: the session could not be checked, 503 or a
+    failed `auth`) and, for an `enrolment_only` refusal whose audit record was not written normally,
     again under `audit_throttled`, `audit_slow` or `audit_unavailable`. Only the
     `enrolment_only` refusal is an authorisation denial, so only it is audited: within a
-    per-session budget and the shared tracker's in-flight cap, under `asyncio.shield`, so a
-    timeout never cancels the writer mid-append (as the CSRF guard). A slow or failed write
+    per-user budget (every session of a user shares it, so minting sessions buys no rows) and
+    the shared tracker's in-flight cap, under `asyncio.shield`, so a timeout never cancels the
+    writer mid-append. As the CSRF guard's `_emit_audit`: the write's own outcome decides
+    between `audit_slow` and `audit_unavailable`, and a write that fails after the caller
+    stopped waiting (timeout, or the request or socket was cancelled), or that is still running
+    when the tracker drains at shutdown, counts `audit_unavailable` then. A slow or failed write
     never changes the answer."""
 
     def __init__(
@@ -198,12 +203,12 @@ class EnrolmentRefusals:
         audit: _Emitter,
         *,
         tracker: RefusalAuditTracker,
-        per_session: PerIpLoginThrottle | None = None,
+        per_user: PerIpLoginThrottle | None = None,
         audit_timeout_s: float = AUDIT_TIMEOUT_S,
     ) -> None:
         self._audit = audit
         self._tracker = tracker
-        self._per_session = per_session or PerIpLoginThrottle(
+        self._per_user = per_user or PerIpLoginThrottle(
             max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
         )
         self._audit_timeout_s = audit_timeout_s
@@ -224,7 +229,7 @@ class EnrolmentRefusals:
         )
 
     def expired(self, record: SessionRecord, *, channel: Channel, method: str, path: str) -> None:
-        """An enrolment-only session that would outlive its 15 minutes (Q7): sign in again."""
+        """An enrolment-only session past its 15 minutes, or one that would outlive them (Q7)."""
         self._count(channel, "expired")
         _log().warning(
             "auth.enrolment_only.expired",
@@ -232,6 +237,7 @@ class EnrolmentRefusals:
             method=method,
             path=path,
             session_id=str(record.id),
+            user_id=str(record.user_id),
         )
 
     async def refused(
@@ -248,13 +254,14 @@ class EnrolmentRefusals:
         self._count(channel, "enrolment_only")
         log = _log()
         fields = {"channel": channel, "method": method, "path": path}
-        key = f"sid:{record.id}"
-        if self._tracker.full or self._per_session.is_blocked(key):
+        ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
+        key = f"uid:{record.user_id}"
+        if self._tracker.full or self._per_user.is_blocked(key):
             self._count(channel, "audit_throttled")
-            log.warning("auth.enrolment_only.refused_unaudited", **fields)
+            log.warning("auth.enrolment_only.refused_unaudited", **ids, **fields)
             return
-        self._per_session.record_failure(key)
-        log.warning("auth.enrolment_only.refused", session_id=str(record.id), **fields)
+        self._per_user.record_failure(key)
+        log.warning("auth.enrolment_only.refused", **ids, **fields)
         task = self._tracker.track(
             self._audit.emit(
                 REFUSAL_ACTION,
@@ -266,17 +273,30 @@ class EnrolmentRefusals:
                 severity=Severity.WARNING,
                 reason="mfa_enrollment_required",
                 after_state=fields,
-            )
+            ),
+            on_lost=lambda: self._count(channel, "audit_unavailable"),
+            late_failure_event="auth.enrolment_only.audit_failed_late",
         )
         try:
             await asyncio.wait_for(asyncio.shield(task), self._audit_timeout_s)
         except TimeoutError:
+            failure = task.exception() if task.done() and not task.cancelled() else None
+            if failure is not None:  # the writer raised `TimeoutError` itself: it failed
+                self._audit_failed(channel, failure, fields)
+                return
             self._tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             self._count(channel, "audit_slow")
             log.warning("auth.enrolment_only.audit_slow", **fields)
+        except asyncio.CancelledError:
+            self._tracker.mark_timed_out(task)  # a later failure is still counted
+            raise
         except Exception as exc:
-            self._count(channel, "audit_unavailable")
-            log.error("auth.enrolment_only.audit_unavailable", error=type(exc).__name__, **fields)
+            self._audit_failed(channel, exc, fields)
+
+    @staticmethod
+    def _audit_failed(channel: Channel, exc: BaseException, fields: Mapping[str, str]) -> None:
+        EnrolmentRefusals._count(channel, "audit_unavailable")
+        _log().error("auth.enrolment_only.audit_unavailable", error=type(exc).__name__, **fields)
 
 
 def make_enrolment_only_guard(
