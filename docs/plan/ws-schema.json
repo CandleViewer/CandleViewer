@@ -296,6 +296,16 @@
           "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
           "description": "Replay session id; present only on replay frames."
         },
+        "sp": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16,
+          "pattern": "^[0-9a-f]{16}$",
+          "not": {
+            "const": "0000000000000000"
+          },
+          "description": "Span id of a sampled frame (W3C span-id form, never all zeros); only on a snap or d that carries s, never on the system topic (§3.1)."
+        },
         "e": {
           "enum": ["j", "b", "b64"],
           "default": "j"
@@ -349,6 +359,27 @@
                 "contentEncoding": "binary"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "required": ["sp"]
+          },
+          "then": {
+            "properties": {
+              "t": {
+                "enum": ["snap", "d"]
+              },
+              "ch": {
+                "not": {
+                  "const": "system"
+                }
+              },
+              "s": {
+                "type": "integer"
+              }
+            },
+            "required": ["s"]
           }
         }
       ]

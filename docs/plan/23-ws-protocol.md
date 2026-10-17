@@ -170,6 +170,14 @@ Every frame in both directions is a single map with this shape. Field order is i
 
 **The correlation `id` (#2572).** `id` is a string of at most 64 characters (§13.1). The server echoes a request's `id` on its replies only when it is one. Any other `id` (not a string, or longer than 64 characters) is dropped before the frame is handled, so no reply carries it. The frame is otherwise handled as sent, and its reply has no `id` to correlate it by. This holds for every client frame, `hello` and `auth` included.
 
+**The span id `sp` (E17-T06, #571).** `sp` is a synthetic span id. It names the fan-out span the server times for a frame (`cv_ws_fanout_seconds`: the hub's turn to the socket), and is not an OpenTelemetry id (ADR-0014 §5). It is 16 lowercase hex characters, the W3C Trace Context `span-id` form (8 random bytes, never all zeros). It lets one frame be followed from the gateway to the client's paint (`06-performance-and-load-standard.md` §7.2, budgets #3 and #6): the server can log the frame's fan-out under it, and a client that keeps performance marks can tag them with it. A server data frame (`snap` or `d`) carries one when it is sampled and latency telemetry is on; no other frame does.
+
+- **Sampled.** Only a subset of data frames is sampled: at most one frame in `N` of a subscription, where `N` is a server constant (today 32: the frames whose fan-out is timed). In a chunked `snap`, only the chunk that carries `s` can be sampled (§3.6). Control frames and `system` frames never are. With latency telemetry off (`CV_TELEMETRY_ENABLED=false`), no frame carries `sp`.
+- **Fresh.** Each `sp` is drawn for one frame on one connection from a cryptographically secure generator (8 bytes, e.g. `secrets.token_hex(8)`), fresh for every frame: never a counter or a seeded PRNG. It is never reused, never shared between connections and never derived from an order, account, user, session or request identifier. It names the frame and nothing else.
+- **Inert.** It has no protocol meaning. A client MUST NOT change how it sequences, applies, acknowledges or resyncs a frame because `sp` is present or absent (tagging its own performance marks with it is allowed), and MUST NOT send it in any frame. The server ignores an `sp` on a client frame: it never reads, echoes or logs it. It is a string under both `cv.v1.json` and `cv.v1.msgpack` (24 bytes of JSON text, 20 of MessagePack), and it lives on the envelope, never in a CVWB body (§3.4).
+- **Room.** Every frame the server sizes against the 4 MiB cap (§3.6) is sized with at least 24 bytes set aside for `sp`, so the sizing never depends on whether a frame ends up sampled, and no frame, `sp` included, exceeds the cap.
+- **Additive.** It changes no version (§2.3): a client that does not know `sp` ignores it.
+
 ### 3.2 Encoding field `e`
 
 | Value | Meaning                                                                                                                                                                                           |
@@ -1529,6 +1537,10 @@ S→C {"t":"d","ch":"book.BTCUSDT.50","s":1001,"ts":1789132262452,"e":"b","p":"<
 S→C {"t":"d","ch":"bars.BTCUSDT.time.1","s":2,"ts":1789132262480,"e":"b","meta":{"include_delta":true},"p":"<CVWB kind=4, 1 record (forming bar)>"}
 S→C {"t":"d","ch":"trades.BTCUSDT","s":2,"ts":1789132262500,"e":"b","p":"<CVWB kind=3, 14 records>"}
 S→C {"t":"d","ch":"metrics.BTCUSDT","s":2,"ts":1789132262650,"e":"j","p":{"symbol":"BTCUSDT","series":[{"metric":"cvd","estimated":false,"unit":"base_volume","t_ms":1789132262600,"v":"-453.122"},{"metric":"tape_acceleration","estimated":false,"unit":"ratio","t_ms":1789132262600,"v":"1.42"},{"metric":"adx","estimated":false,"unit":"index","t_ms":1789132262600,"v":"28.10"}]}}
+// ... book s=1002 to 1023 omitted ...
+// s=1024 is a multiple of 32, so the book frame is sampled: it alone carries a span id (§3.1)
+S→C {"t":"d","ch":"book.BTCUSDT.50","s":1024,"ts":1789132263604,"e":"b","sp":"7c1e9a04d3b58f62","p":"<CVWB kind=2, 2 records>"}
+S→C {"t":"d","ch":"book.BTCUSDT.50","s":1025,"ts":1789132263656,"e":"b","p":"<CVWB kind=2, 3 records>"}
 ```
 
 ### 12.2 A fill arriving while a trade group is filling
@@ -1793,6 +1805,14 @@ Shared definitions used throughout:
       "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
       "description": "Replay session id; present only on replay frames."
     },
+    "sp": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 16,
+      "pattern": "^[0-9a-f]{16}$",
+      "not": { "const": "0000000000000000" },
+      "description": "Span id of a sampled frame (W3C span-id form, never all zeros); only on a snap or d that carries s, never on the system topic (§3.1)."
+    },
     "e": { "enum": ["j", "b", "b64"], "default": "j" },
     "meta": { "$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta" },
     "p": {}
@@ -1810,6 +1830,17 @@ Shared definitions used throughout:
     {
       "if": { "properties": { "e": { "const": "b" } }, "required": ["e"] },
       "then": { "properties": { "p": { "type": "string", "contentEncoding": "binary" } } }
+    },
+    {
+      "if": { "required": ["sp"] },
+      "then": {
+        "properties": {
+          "t": { "enum": ["snap", "d"] },
+          "ch": { "not": { "const": "system" } },
+          "s": { "type": "integer" }
+        },
+        "required": ["s"]
+      }
     }
   ]
 }
@@ -3901,6 +3932,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | S11 | Send `bye` before every server-initiated close. The exceptions are in §4.4 and §9.4; on deadline expiry the flush is abandoned and the transport closes with no `bye`. |
 | S12 | Reject unknown option keys rather than ignoring them.                                                |
 | S13 | Refuse the upgrade before `accept` when §2.5 fails; never negotiate, read or authenticate first.     |
+| S14 | Put `sp` only on a sampled `snap`/`d` while CV_TELEMETRY_ENABLED is on; draw it fresh from a CSPRNG. |
 
 **Client MUST:**
 
@@ -3979,6 +4011,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Contract         | `error_registry_single_source`: §10.2 code column == union of `x-error-codes-ws` and `x-error-codes[surface⊃ws]` in `22-api-openapi.yaml`; `$defs.errorCode` regenerated and byte-identical.          | One canonical error registry across REST + WS; no drift.  |
 | Contract         | `ws_message_schemas`: every §13–§15 fenced schema passes JSON-Schema-2020-12 meta-validation; every `$ref` resolves inside the bundle; every §12 example frame validates against its declared schema. | Structural validity at a size manual review cannot cover. |
 | Contract         | `machines.{entity}.state` frames validate against §15.10; kinds, states and tags match the charts; `context_summary` keys stay within the kind's §6.4 list.                                           | §6.4 grammar and redaction.                               |
+| Contract         | A sampled `snap` or `d` carries an `sp` matching §13.1, only while CV_TELEMETRY_ENABLED is on. Unsampled, control and `system` frames and intermediate chunks carry none; no two frames share one.    | §3.1 `sp`, S14.                                           |
 | Unit             | `heatmap_bucket_selection`: the §6.1.1 formula + ladder clamp returns the documented value for every row of the reference-display table, and the server applies `500` when the option is absent.      | W3 resolution is enforced, not aspirational.              |
 | Unit             | Sequence generator never skips/reuses under concurrent topic writes.                                                                                                                                  | S3.                                                       |
 | Unit             | Coalescer produces state identical to applying every source update.                                                                                                                                   | §8.2 correctness.                                         |

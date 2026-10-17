@@ -751,6 +751,34 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "sp"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ch": {
+                "not": {
+                  "const": "system"
+                }
+              },
+              "s": {
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "snap",
+                  "d"
+                ]
+              }
+            },
+            "required": [
+              "s"
+            ]
+          }
         }
       ],
       "properties": {
@@ -780,6 +808,16 @@
         },
         "s": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/seq"
+        },
+        "sp": {
+          "description": "Span id of a sampled frame (W3C span-id form, never all zeros); only on a snap or d that carries s, never on the system topic (§3.1).",
+          "maxLength": 16,
+          "minLength": 16,
+          "not": {
+            "const": "0000000000000000"
+          },
+          "pattern": "^[0-9a-f]{16}$",
+          "type": "string"
         },
         "t": {
           "enum": [
