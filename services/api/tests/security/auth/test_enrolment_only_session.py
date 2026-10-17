@@ -220,6 +220,7 @@ def test_refresh_fails_closed_when_the_session_cannot_be_classified(
     )
 
     assert resp.status_code == 503 and "unreachable" not in resp.text
+    assert (resp.json()["code"], resp.headers["Retry-After"]) == ("store_unavailable", "5")
     assert stack.audit.of("auth.session_refreshed") == []
     presented = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
     assert presented is not None and not presented.is_revoked  # nothing rotated

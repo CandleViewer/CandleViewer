@@ -88,6 +88,7 @@ from candleviewer.api.csrf import (
     verify_refresh_csrf,
 )
 from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exported (contract name)
+from candleviewer.api.enrolment_guard import _unavailable as _session_unchecked
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -650,7 +651,7 @@ def make_session_router(
         minted as one, and one past them is dead; the enrolment guard answers their every
         request 401. Refresh ends them the same way, before any audit write or rotation, so
         "sign in again" is reached without a bearer too. A session that cannot be classified
-        is refused (fail closed)."""
+        is refused (fail closed); a disabled or deleted user's goes on to #2911's refusal."""
         if not auth_service.enrolment_gate_is_active:
             return None  # no session store: nothing authenticates, so no such session exists
         try:
@@ -664,7 +665,7 @@ def make_session_router(
                 session_id=str(record.id),
                 user_id=str(record.user_id),
             )
-            return _problem(503, "Service unavailable", "the session could not be checked")
+            return _session_unchecked()  # the guard's `503 store_unavailable` and Retry-After
         if verdict is not SessionClass.ENROLMENT_ONLY_EXPIRED:
             return None
         auth_enrolment_refused_total.labels(transport="http", reason="expired").inc()
