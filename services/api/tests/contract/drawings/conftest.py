@@ -26,4 +26,7 @@ def _drawings_world() -> Iterator[World]:
 def api(_drawings_world: World) -> Api:
     _drawings_world.audit.records.clear()
     _drawings_world.app.state.drawings_repository = repo = FakeDrawingRepo()
+    # E15-T01: `GET ?layout_id` asks `app.state.workspaces_repository` (None on the fake backend,
+    # so that filter would answer 503); the fake repository is the layout store (`repo.layouts`).
+    _drawings_world.app.state.workspaces_repository = repo
     return Api(_drawings_world, repo)

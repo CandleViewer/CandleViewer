@@ -144,7 +144,8 @@ class Api:
         return list(r.json()["items"])
 
     def seed(self, actor: str, **over: Any) -> str:
-        """A live drawing of `actor` stored directly: viewers cannot write; layouts need E15-T01."""
+        """A live drawing of `actor` stored directly: viewers cannot write; a `layout_id` must be
+        a live layout of `actor` in `repo.layouts`, as on every write (E15-T01)."""
         values = DrawingIn.model_validate(drawing(**over)).db_values()
         fields = DrawingFields(**(values | {"layout_id": over.get("layout_id")}))
         drawing_id = str(uuid.uuid4())
