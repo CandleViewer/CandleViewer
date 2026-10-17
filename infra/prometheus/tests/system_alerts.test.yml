@@ -580,6 +580,37 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: auth_break_glass_state_read_failures_total{env="live"}
+    values: 0+1x15
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthBreakGlassStateReadFailing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: alerting
+        env: live
+      exp_annotations:
+        summary: 'The break-glass state cannot be read: its pages are blind'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_state_read_failures_total{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthBreakGlassStateReadFailing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_state_read_failures_total{env="live"}
+    values: 0+0x5 4+0x14
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthBreakGlassStateReadFailing
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
     values: 300+0x1700
   alert_rule_test:

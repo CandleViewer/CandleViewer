@@ -94,6 +94,7 @@ def test_required_rules_present() -> None:
         "NetBindingUnsafe",  # #2496 E09-T04
         "AuthBreakGlassUsed",  # #2496 SR-023
         "AuthBreakGlassAttempted",  # #2496 SR-023, a run that changed nothing
+        "AuthBreakGlassStateReadFailing",  # #2496 SR-125, the two pages above going blind
     }
     assert required <= names
 
@@ -414,6 +415,34 @@ def test_break_glass_attempt_alert_pages_on_a_rise_of_the_run_count() -> None:
     assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_break_glass_attempt"] == [
         "AuthBreakGlassAttempted"
     ]
+
+
+def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> None:
+    """#2496 review (SR-125, detection health): a failed read keeps the last value of both
+    break-glass gauges (0 in a fresh process) and the `absent()` guards cannot see it, so the
+    pages go silent with nothing to say so. A ticket on the failure counter, at a threshold a
+    Postgres restart of a couple of minutes (PostgresDown's page) stays under. It is filed under
+    `alerting`, where only the alert drill pages, because a page for a component hides that
+    component's tickets and a break-glass page must not hide the report that they are blind."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuthBreakGlassStateReadFailing"]
+    assert rule["expr"] == (
+        "sum by (env) (increase(auth_break_glass_state_read_failures_total[15m])) >= 10"
+    )
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "ticket", "component": "alerting"}
+    # the page-over-ticket inhibit rule hides a ticket while a page of its component fires: the
+    # only page filed under `alerting` is the alert drill's, so no break-glass page can hide it
+    same_component_pages = [
+        r["alert"]
+        for r in rules
+        if r["labels"]["severity"] == "page" and r["labels"]["component"] == "alerting"
+    ]
+    assert same_component_pages == ["SyntheticAlert"]
+    route = _route_for(_alert_labels(rule))
+    assert route["receiver"] == "ticket" and route["mute_time_intervals"] == ["quiet_hours"]
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing"
 
 
 #: #2931: pages whose resolution only means "the window elapsed", not "someone acted". A

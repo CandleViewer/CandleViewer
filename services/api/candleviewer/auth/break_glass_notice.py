@@ -20,6 +20,11 @@ as it was. The same refresh reads how many CLI runs `audit_log` holds a record o
 `auth_break_glass_attempts`, which `AuthBreakGlassAttempted` pages on: a run that changed nothing
 leaves audit rows and no unresolved event. The two are separate statements with separate
 failures, so a broken attempts read cannot silence the unresolved-events page or the notice.
+
+Every failed read is also counted in `auth_break_glass_state_read_failures_total`: a failed read
+keeps the last value of both gauges (0 in a fresh process), so without the counter a reader that
+cannot read leaves both pages silent with nothing to say so. `AuthBreakGlassStateReadFailing`
+raises a ticket on it.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import structlog
 
 from candleviewer.auth.metrics import (
     auth_break_glass_attempts,
+    auth_break_glass_state_read_failures_total,
     auth_break_glass_unresolved_events,
 )
 from candleviewer.observability.context import spawn
@@ -105,6 +111,7 @@ class BreakGlassNotice:
                 return await count()
         except Exception as exc:  # TimeoutError included; CancelledError propagates
             self._read_failures += 1
+            auth_break_glass_state_read_failures_total.inc()
             _log().error(
                 "auth.break_glass_state_read_failed",
                 series=series,
