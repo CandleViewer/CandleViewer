@@ -15,9 +15,11 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.users import make_users_router
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.storage.errors import StorageQueryFailed
@@ -34,10 +36,13 @@ _CONTRACT = "/users/{userId}/account-access"
 
 
 class _Emitter:
-    def __init__(self) -> None:
+    def __init__(self, error: Exception | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.error = error
 
     async def emit(self, action: str, **kw: Any) -> None:
+        if self.error is not None:
+            raise self.error
         self.calls.append({"action": action, **kw})
 
 
@@ -208,6 +213,30 @@ def test_get_forbidden_manager_viewer_audited(
     assert _users_read_denied() == before + 1  # SR-125: counted with the audit row
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        AuditUnavailable("audit WAL unavailable: OSError"),
+        AuditWriterStopped(),
+        RuntimeError("audit not started"),
+    ],
+    ids=["wal-unavailable", "writer-stopped", "audit-not-started"],
+)
+def test_get_refusal_that_cannot_be_audited_is_503_audit_unavailable(
+    error: Exception, spec: dict[str, Any]
+) -> None:
+    """A refused caller whose `rbac.denied` record cannot be written is not told `403`: nothing
+    is looked up, and no traceback is logged for it."""
+    store, before = _Store({TARGET: [_grant(_A)]}), _users_read_denied()
+    with capture_logs() as logs:
+        r = _client(store, _principal("manager", spec), _Emitter(error)).get(_PATH.format(TARGET))
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
+    assert r.headers["Retry-After"] == str(r.json()["retry_after_seconds"])
+    assert str(error) not in r.text and store.calls == []
+    assert _users_read_denied() == before + 1  # SR-125: counted before the write
+    assert [e["log_level"] for e in logs] == ["warning"] and "exc_info" not in logs[0]
+
+
 def test_get_403_is_identical_for_existing_and_missing_users(spec: dict[str, Any]) -> None:
     """Threat U25: a manager cannot tell an id that exists from one that does not (only the
     contract's request id, if any, may differ)."""
@@ -254,9 +283,10 @@ def test_get_store_failure_is_503_without_driver_text(
 
 
 def test_get_then_put_round_trips(spec: dict[str, Any]) -> None:
-    """Each listed item, cut down to the two input fields, is a valid `PUT` body naming exactly
-    the set the store holds, so sending it back is a no-op (the store's own round trip is in
-    tests/unit/storage and the Postgres suite). The read-only fields are not input."""
+    """Each listed item, cut down to the two input fields, is a valid `PUT` body naming the listed
+    grants, so sending it back is a no-op (the store's round trip: tests/unit/storage and the
+    Postgres suite), but for a live grant on a soft-deleted account: it is not listed, so a `PUT`
+    of the listing would revoke it (#3027). The read-only fields are not input."""
     held = [_grant(_A, "trade", "main", "live"), _grant(_B, "read", "sub-1", "demo", None)]
     c = _client(_Store({TARGET: held}), _principal("owner", spec))
     items = c.get(_PATH.format(TARGET)).json()["items"]

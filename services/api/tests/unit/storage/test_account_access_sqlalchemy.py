@@ -770,7 +770,8 @@ async def test_list_grants_whose_unit_of_work_fails_to_open_raises_only_the_sqls
 
 
 async def test_list_grants_then_replacing_with_the_same_set_changes_nothing() -> None:
-    """GET then PUT round-trips: the listed grants, sent back as they are, are a no-op."""
+    """The listed grants, sent back as they are, are a no-op, but for a live grant on a
+    soft-deleted account: it is not listed, so replacing with the listing revokes it (#3027)."""
     rows: tuple[_Row, ...] = ((_A, True, False), (_B, True, True), (_D, False, False))
     rel = _Rel(rows=rows, listing=_LISTED)  # _D is soft-revoked: not live, not listed
     audit = _Audit(rel)

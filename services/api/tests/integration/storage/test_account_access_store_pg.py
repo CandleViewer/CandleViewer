@@ -8,7 +8,7 @@ UUIDs. Onboarding ignores revoked grants. S9a: a grant and an account soft delet
 each other in either order, as a user soft delete does; a lock wait past `lock_timeout` changes
 nothing; no grant write leaves a frozen manager an unfrozen grant, and an inherited freeze
 never copies the cap. S9b: the read behind `GET /users/{userId}/account-access` lists only the
-user's live grants of live accounts, takes no row lock, and its listing sent back is a no-op.
+user's live grants of live accounts and takes no row lock.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -628,7 +628,8 @@ async def test_list_grants_takes_no_row_lock_and_sees_only_committed_grants(db: 
 
 
 async def test_list_grants_then_replacing_with_the_same_set_is_a_no_op(db: Any) -> None:
-    """GET then PUT round-trips: the listing sent back changes nothing and audits nothing."""
+    """The listing sent back changes nothing and audits nothing, but for a live grant on a
+    soft-deleted account: it is not listed, so replacing with the listing revokes it (#3027)."""
     rel, engine = db
     owner, user, (a, b, c) = await _setup(engine, 3)
     store = _store(rel)

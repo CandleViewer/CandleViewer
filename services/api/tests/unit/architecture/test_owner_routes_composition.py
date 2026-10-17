@@ -255,6 +255,9 @@ def test_deployed_app_lists_the_target_users_grants_through_the_real_account_acc
         assert denied.status_code == 403 and deployed.access.calls[start:] == [viewer]
         (record,) = deployed.audit.records[audited:]
         assert record["action"] == "rbac.denied" and record["object_id"] == str(viewer)
+        session = uuid.uuid5(rbac.user_id_of("manager_with_grant"), "session")  # the harness's
+        assert (record["actor_ip"], record["session_id"]) == ("127.0.0.1", session)
+        assert str(record["request_id"]) == denied.headers["x-correlation-id"]
     finally:
         deployed.access.grants[viewer] = []
 

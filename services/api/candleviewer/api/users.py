@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Annotated, Any, Protocol
 
 import structlog
@@ -25,13 +26,16 @@ from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.step_up import _AuthLike, _bearer, require_elevation_for
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.observability.context import current_request_id
 from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories.account_access import AccessGrant, AccessUserNotFoundError
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
@@ -135,16 +139,21 @@ def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
 
 
 class _NamesTarget:
-    """`enforce` audits a denial without its target; this names the user whose grants were asked
-    for, so a probe of ids leaves a trail."""
+    """`enforce` audits a denial without its target or the caller's session; this names the user
+    whose grants were asked for, so a probe of ids leaves a trail, and the session, which is read
+    only now, for a refusal."""
 
-    def __init__(self, emitter: _Emitter, target: uuid.UUID) -> None:
-        self._emitter, self._target = emitter, target
+    def __init__(
+        self,
+        emitter: _Emitter,
+        target: uuid.UUID,
+        session: Callable[[], Awaitable[uuid.UUID | None]],
+    ) -> None:
+        self._emitter, self._target, self._session = emitter, target, session
 
     async def emit(self, action: str, **kwargs: Any) -> None:
-        await self._emitter.emit(
-            action, **kwargs | {"object_kind": "user", "object_id": str(self._target)}
-        )
+        named = {"object_kind": "user", "object_id": str(self._target)}
+        await self._emitter.emit(action, **kwargs | named | {"session_id": await self._session()})
 
 
 def _log() -> Any:
@@ -205,6 +214,15 @@ def make_users_router(
     if emitter is None or notifier is None:
         raise TypeError("make_users_router: audit emitter and notifier are required")
     router = APIRouter()
+
+    async def session_of(request: Request) -> uuid.UUID | None:
+        """The session behind the bearer token, as the audit record of a refusal names it. A
+        read-only peek: it authorises nothing, and `None` when there is no session to name."""
+        token = _bearer(request)
+        if auth is None or token is None or not auth.sessions_is_active:
+            return None
+        found: SessionRecord | None = await auth.sessions.peek_access_token(token)
+        return None if found is None else found.id
 
     @router.put("/users/{userId}/roles")
     async def put_user_roles(
@@ -334,15 +352,25 @@ def make_users_router(
             return _registered(
                 ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request"
             )
+        correlation = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
         try:  # before any lookup: the same 403 for an id that exists and one that does not
             await enforce(
                 principal,
                 Permission.USERS_READ,
                 scope=Scope.NONE,
-                emitter=_NamesTarget(emitter, user_id),
+                emitter=_NamesTarget(emitter, user_id, partial(session_of, request)),
+                actor_ip=source_ip(request.scope),
+                request_id=uuid.UUID(correlation) if correlation else None,
             )
         except ForbiddenError as exc:
             return _forbidden(exc.deny.reason.value)
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+            _log().warning(
+                "account access refusal not audited",
+                error=type(exc).__name__,
+                target_user_id=str(user_id),
+            )
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
         try:
             grants = await account_access.list_grants(user_id)
         except AccessUserNotFoundError:  # a deleted user and a missing one answer alike
