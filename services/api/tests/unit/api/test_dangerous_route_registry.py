@@ -631,6 +631,7 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     "authUnlock": "lifts the idle lock with the password only; restores no step-up (#2290)",
     # The contract rules a step-up out in so many words.
     "setSubaccountTier": "the contract says No step-up: `admin:write` is no SR-025 action class",
+    "endViewAs": "ends the caller's own view-as; the contract says it needs no step-up (#3085)",
     # Gated, but the text demands the step-up and names no class: each class is pinned below.
     "overrideRiskLockout": "owner-only and step-up-gated (04 row 34)",
     "setSessionEnvironment": "switching to `live` needs an elevation (04 row 11)",
