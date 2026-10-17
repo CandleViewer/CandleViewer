@@ -289,13 +289,13 @@ def test_every_contract_flag_write_is_registered() -> None:
 
 
 def test_registered_classes_are_the_documented_classes() -> None:
-    """A registered operation whose contract text names step-up classes is gated with exactly
-    those classes."""
+    """A registered operation is gated with exactly the classes its contract text names or, where
+    that text names a step-up and no class, the class pinned by hand (#3210)."""
     drift = {
         op["operationId"]: (sorted(registered), sorted(documented))
         for key, op in _contract_operations().items()
         if (registered := _registered_classes(*key))
-        and (documented := _documented_classes(op))
+        and (documented := _documented_or_pinned_classes(op))
         and registered != documented
     }
     assert drift == {}
@@ -610,3 +610,144 @@ def test_every_registered_route_names_a_known_action_class() -> None:
     route for everyone instead of gating it (#2738 aligns to the `recorder` class)."""
     named = {c for *_, c in DANGEROUS_ROUTES} | {c for *_, c in HANDLER_GATED_ROUTES}
     assert named <= ACTION_CLASSES
+
+
+# -- #3210: the operations whose contract text names a step-up and no class ----------------------
+
+#: Operations whose text names a step-up but backticks no class of the `authStepUp` enum, so
+#: `_documented_classes` reads nothing from them -> why they name none. Such an operation passes
+#: the sweep above unread: `test_every_operation_the_parser_cannot_read_is_classified` fails until
+#: a new one is listed here, and when a listed one leaves the contract or starts to name a class.
+_UNPARSED_STEP_UP_TEXT: dict[str, str] = {
+    # Reads of the caller's own state: they report a step-up deadline and demand none.
+    "authGetSession": "reads the session's own `step_up_expires_at`; demands no step-up",
+    "getMe": "reads the session's own `elevated_until`, the step-up grace expiry; demands none",
+    # A read of another user's sessions: only revoking one is gated (`users`, 04 row 40a).
+    "listUserSessions": "a read: the contract says listing needs no step-up (04 row 40a)",
+    # The lock lift is no elevation: it takes the password only and restores no grant.
+    "authUnlock": "lifts the idle lock with the password only; restores no step-up (#2290)",
+    # The contract rules a step-up out in so many words.
+    "setSubaccountTier": "the contract says No step-up: `admin:write` is no SR-025 action class",
+    # Gated, but the text demands the step-up and names no class: each class is pinned below.
+    "overrideRiskLockout": "owner-only and step-up-gated (04 row 34)",
+    "setSessionEnvironment": "switching to `live` needs an elevation (04 row 11)",
+}
+
+#: The listed operations the registry gates, each with its class pinned by hand -> the contract
+#: line that demands the step-up. `_documented_or_pinned_classes` reads the pin, so
+#: `test_registered_classes_are_the_documented_classes` checks the registry against it, and
+#: `test_a_pinned_contract_line_is_in_the_operations_text` fails when the contract rewords the
+#: line, so the pin is read again against the new wording.
+_PINNED_STEP_UP_CLASSES: dict[str, tuple[str, str]] = {
+    # 04 §7.2.2 row 34 (Owner, step-up): the registry gates the route with `risk_caps`.
+    "overrideRiskLockout": ("risk_caps", "an owner-only, step-up-gated, always-audited action"),
+    # 04 §7.2.2 row 11 (step-up to enable live): the registry gates the switch to `live` with the
+    # no-grace `live_enablement`.
+    "setSessionEnvironment": ("live_enablement", "requires an elevated session (`/auth/step-up`)"),
+}
+
+_Operations = Mapping[tuple[str, str], dict[str, Any]]
+
+
+def _squash(text: str) -> str:
+    """`text` with each run of whitespace as one space, as a folded contract block reads."""
+    return " ".join(text.split())
+
+
+def _documented_or_pinned_classes(op: dict[str, Any]) -> frozenset[str]:
+    """The classes the contract documents for an operation: the ones its text names or, where
+    that text names a step-up and no class, the one pinned by hand."""
+    documented = _documented_classes(op)
+    pinned = _PINNED_STEP_UP_CLASSES.get(op["operationId"])
+    if documented or pinned is None:
+        return documented
+    return frozenset({pinned[0]})
+
+
+def _unparsed_step_up_operations(operations: _Operations) -> frozenset[str]:
+    """The operationIds of the operations whose text names a step-up and no class."""
+    return frozenset(
+        op["operationId"]
+        for op in operations.values()
+        if _STEP_UP_TEXT.search(_text(op)) and not _documented_classes(op)
+    )
+
+
+def _classification_drift(
+    operations: _Operations, classification: Mapping[str, str]
+) -> dict[str, list[str]]:
+    """The unparsed operations `classification` lacks, and its entries for operations that are no
+    longer unparsed: gone from the contract, or its text now names a class."""
+    unparsed = _unparsed_step_up_operations(operations)
+    classified = set(classification)
+    return {"unclassified": sorted(unparsed - classified), "stale": sorted(classified - unparsed)}
+
+
+def test_every_operation_the_parser_cannot_read_is_classified() -> None:
+    """#3210: an operation whose text names a step-up and no class would pass the sweep unread.
+    A new one fails here until `_UNPARSED_STEP_UP_TEXT` gives its reason (and
+    `_PINNED_STEP_UP_CLASSES` its class, if the registry gates it); a listed one that leaves the
+    contract, or whose text now names a class, fails until its entries are dropped."""
+    drift = _classification_drift(_contract_operations(), _UNPARSED_STEP_UP_TEXT)
+    assert drift == {"unclassified": [], "stale": []}
+
+
+#: Synthetic operations for the self-tests below: `unread` names a step-up and no class, `named`
+#: its class, `field` a step-up only in a field name, `silent` neither.
+_SYNTHETIC: _Operations = {
+    ("GET", "/unread"): {"operationId": "unread", "description": "Needs a step-up."},
+    ("GET", "/named"): {"operationId": "named", "description": "Needs a step-up: `users`."},
+    ("GET", "/field"): {"operationId": "field", "summary": "Reports step_up_expires_at."},
+    ("GET", "/silent"): {"operationId": "silent", "description": "Needs `users` access."},
+}
+
+
+def test_unparsed_operations_are_those_that_name_a_step_up_and_no_class() -> None:
+    assert _unparsed_step_up_operations(_SYNTHETIC) == {"unread", "field"}
+
+
+def test_an_unparsed_operation_with_no_entry_is_reported_unclassified() -> None:
+    """Stands for an operation added to the contract with no entry (#3210)."""
+    drift = _classification_drift(_SYNTHETIC, {"field": "reason"})
+    assert drift == {"unclassified": ["unread"], "stale": []}
+
+
+def test_an_entry_for_an_operation_gone_or_now_naming_its_class_is_reported_stale() -> None:
+    """`gone` is not in the contract; the text of `named` backticks its class, so the parse reads
+    it and its entry (and pin) must go (#3210)."""
+    classification = dict.fromkeys(["unread", "field", "named", "gone"], "reason")
+    drift = _classification_drift(_SYNTHETIC, classification)
+    assert drift == {"unclassified": [], "stale": ["gone", "named"]}
+
+
+def test_every_classified_operation_has_a_reason() -> None:
+    assert [op for op, reason in _UNPARSED_STEP_UP_TEXT.items() if not reason.strip()] == []
+
+
+def test_registered_unparsed_operations_are_exactly_the_pinned_ones() -> None:
+    """The cross-check against the registry reads a documented class, so a registered operation
+    with none would pass it unread (#3210): one the registry gates needs its class pinned, and a
+    pin needs an operation the registry gates."""
+    registered = {
+        op["operationId"]
+        for key, op in _contract_operations().items()
+        if op["operationId"] in _UNPARSED_STEP_UP_TEXT and _registered_classes(*key)
+    }
+    assert registered == set(_PINNED_STEP_UP_CLASSES)
+
+
+@pytest.mark.parametrize("operation_id", sorted(_PINNED_STEP_UP_CLASSES))
+def test_a_pinned_class_is_the_class_the_registry_gates_the_operation_with(
+    operation_id: str,
+) -> None:
+    key, op = _operation(operation_id)
+    action_class, _line = _PINNED_STEP_UP_CLASSES[operation_id]
+    assert _documented_or_pinned_classes(op) == {action_class}
+    assert _registered_classes(*key) == {action_class}
+
+
+@pytest.mark.parametrize("operation_id", sorted(_PINNED_STEP_UP_CLASSES))
+def test_a_pinned_contract_line_is_in_the_operations_text(operation_id: str) -> None:
+    _, op = _operation(operation_id)
+    _action_class, line = _PINNED_STEP_UP_CLASSES[operation_id]
+    assert line in _squash(_text(op))
