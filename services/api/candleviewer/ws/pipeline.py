@@ -8,7 +8,9 @@ included. It is encoded once in the negotiated subprotocol (`outbound.encode`), 
 step 3); the ladder's drop and re-snapshot steps before it arrive in a later slice. The writer
 (`gateway.py`) sends each payload as it was encoded.
 
-A close takes the terminal slot (`Terminal`), in no lane and never counted. A close that ends the
+A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
+marker are the only items admitted past the budget, one small frame, so the bound holds to within
+one frame and the budget never refuses a `bye` (§8.4, WS-D01). A close that ends the
 identity (token expiry, revocation, a disabled user) and every `slow_consumer` close clear both
 lanes, so the `bye` is next; any other close keeps the priority lane ahead of the `bye` and
 discards the normal lane. Nothing is queued after a close. The flush runs under one deadline,
@@ -25,11 +27,11 @@ a send that never completes, which leaves the deadline as the only way out.
 
 A frame its encoder refuses is a server fault and fails closed: `internal_error` (§10.1). The
 droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
-instead) arrives with the ladder; until then it fails closed too. A non-finite number fails only
-on JSON: MessagePack carries it (a producer bug either way). The log line names the frame's
-type, family and error class, never its payload or the error's text (C-12.6). Whatever the
-encoder raises is caught, so nothing raises into the caller and one bad frame never stops a
-fan-out.
+instead) arrives with the ladder; until then it fails closed too. A NaN or an infinity is refused
+on both subprotocols, a producer bug either way (§10.1): JSON refuses it as it encodes, and
+`msgpack_payload` after packing, as a `ValueError` too. The log line names the frame's type,
+family and error class, never its payload or the error's text (C-12.6). Whatever the encoder
+raises is caught, so nothing raises into the caller and one bad frame never stops a fan-out.
 
 Plain synchronous code: no I/O and no task of its own; the gateway's writer drives it.
 """
@@ -37,6 +39,8 @@ Plain synchronous code: no I/O and no task of its own; the gateway's writer driv
 from __future__ import annotations
 
 import asyncio
+import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
@@ -62,6 +66,11 @@ _SERVER_TYPES: Final = frozenset(
         "welcome auth_ok sub_ok unsub_ok ctl_ok err permission_change revoked ping pong bye d snap"
     ).split()
 )
+#: A NaN or an infinity as `codec.encode_server_frame` packs a float: `0xcb` (float64), then a sign
+#: bit and an exponent of all ones. Every non-finite float of a packed frame matches. A match can
+#: also fall inside other bytes (a binary part, an integer, a finite float's mantissa), so it only
+#: says that the frame itself must be looked at.
+_NON_FINITE_FLOAT64: Final = re.compile(rb"\xcb[\x7f\xff][\xf0-\xff]")
 
 
 class Close(Protocol):
@@ -76,6 +85,34 @@ def slow_consumer_bye(now_ms: int) -> dict[str, Any]:
     frame = bye_frame("slow_consumer", now_ms=now_ms, retry_after_ms=SLOW_CONSUMER_RETRY_AFTER_MS)
     frame["p"]["message"] = SLOW_CONSUMER_MESSAGE
     return frame
+
+
+def msgpack_payload(frame: Mapping[str, Any]) -> bytes:
+    """`cv.v1.msgpack` with the flag on: `codec.encode_server_frame`, refusing a NaN or an
+    infinity with `ValueError`, as `outbound.json_payload` does (§10.1). Only a frame whose packed
+    bytes match `_NON_FINITE_FLOAT64` is walked, so any other costs one search of its bytes."""
+    payload = encode_server_frame(frame)
+    if _NON_FINITE_FLOAT64.search(payload) is not None and _holds_non_finite(frame):
+        raise ValueError("non-finite number")
+    return payload
+
+
+def _holds_non_finite(value: Any) -> bool:
+    """A NaN or an infinity anywhere the packer writes a float: map keys and values and array
+    items, at any depth (the packer takes no other container). Iterative; the packer has already
+    refused deeper nesting than it allows."""
+    stack: list[Any] = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, float):
+            if not math.isfinite(node):
+                return True
+        elif isinstance(node, dict):
+            stack.extend(node.keys())
+            stack.extend(node.values())
+        elif isinstance(node, list | tuple):
+            stack.extend(node)
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +142,7 @@ class ConnectionPipeline:
         self.terminal: Terminal | None = None
         self.released = False
         self._dumps: FrameEncoder = (
-            encode_server_frame if encoding == SUBPROTOCOL_MSGPACK else json_payload
+            msgpack_payload if encoding == SUBPROTOCOL_MSGPACK else json_payload
         )
         self._close = close
         self._wall_ms = wall_ms

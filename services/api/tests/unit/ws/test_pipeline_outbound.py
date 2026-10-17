@@ -16,8 +16,10 @@ not to drain them meanwhile.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
+import struct
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -31,7 +33,7 @@ from candleviewer.audit.models import Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S, Settings
-from candleviewer.ws import gateway, outbound, pipeline
+from candleviewer.ws import codec, gateway, outbound, pipeline
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import encode_b64
 from candleviewer.ws.cvwb_vectors import vector_frames
@@ -304,7 +306,8 @@ def _d(ch: str, **p: Any) -> dict[str, Any]:
 @_ENCODINGS
 async def test_queued_payload_matches_send_frame(encoding: str) -> None:
     """#2897 parity: the payload queued at push is, byte for byte, what `send_frame` writes (a
-    CVWB part raw on msgpack); only a non-finite number differs (JSON refuses it, below)."""
+    CVWB part raw on msgpack); only a non-finite number differs: with the flag on both codecs
+    refuse it (below), and `send_frame`, the flag-off path, does not."""
     part = dict(vector_frames())["trades"]
     frames: list[dict[str, Any]] = [
         {"t": "welcome", "id": "h", "ts": 1, "p": {"limits": {"a": 1}, "note": "é"}},
@@ -428,6 +431,97 @@ def test_an_unencodable_frame_fails_closed(
     assert asked == [("internal_error", None)]
     assert len(pipe.queue) == 0
     assert [e["error"] for e in logs if e["event"] == "ws frame unencodable"] == [error]
+
+
+@_ENCODINGS
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=str)
+@pytest.mark.parametrize("ch", ["orders", _BOOK], ids=["non_droppable", "droppable"])
+def test_a_non_finite_number_fails_closed_on_either_codec(
+    encoding: str, value: float, ch: str
+) -> None:
+    """§10.1 (the 23:55Z ruling on #412): with the flag on both encoders refuse a NaN or an
+    infinity, a producer bug either way, so it is the encode failure above on either codec:
+    `internal_error`, logged as `ValueError`, nothing queued. That holds at any depth, for a
+    priority `orders` frame and for a droppable market-data one (the ladder's re-snapshot of a
+    droppable topic is a later slice)."""
+    assert outbound.encode(_d(ch, levels=[[1.5, 2.0]])).droppable is (ch == _BOOK)
+    pipe, asked = _pipe(encoding)
+    with capture_logs() as logs:
+        pipe.push(_d(ch, levels=[[1.5, value]]))
+    assert asked == [("internal_error", None)]
+    assert len(pipe.queue) == 0
+    assert [e["error"] for e in logs if e["event"] == "ws frame unencodable"] == ["ValueError"]
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        pytest.param(
+            {
+                "t": "d",
+                "ch": "trades.BTCUSDT",
+                "s": 2,
+                "ts": 1,
+                "e": "b64",
+                "p": base64.b64encode(b"\x00\xcb\x7f\xf8\x00" * 4).decode("ascii"),
+            },
+            id="binary_part",
+        ),
+        pytest.param(
+            _d(_BOOK, n=int.from_bytes(bytes.fromhex("00cb7ff000000001"), "big")), id="integer"
+        ),
+        pytest.param(
+            _d(_BOOK, px=struct.unpack(">d", bytes.fromhex("4009cb7ff8000000"))[0]),
+            id="finite_float",
+        ),
+    ],
+)
+def test_bytes_that_only_look_non_finite_are_queued_unchanged_on_msgpack(
+    frame: dict[str, Any],
+) -> None:
+    """The MessagePack refusal searches the packed bytes for a non-finite float and confirms on
+    the frame itself: the same bytes inside a binary part, an integer or a finite float's
+    mantissa refuse nothing, and the payload queued is `encode_server_frame`'s."""
+    payload = codec.encode_server_frame(frame)
+    assert pipeline._NON_FINITE_FLOAT64.search(payload) is not None  # the bytes do look non-finite
+    pipe, asked = _pipe(_MSGPACK)
+    pipe.push(frame)
+    item = pipe.queue.pop()
+    assert asked == [] and item is not None and item.payload == payload
+
+
+@pytest.mark.parametrize("half", ["frames", "bytes"])
+@pytest.mark.parametrize("flush", [True, False], ids=["flush", "bye_next"])
+async def test_at_a_full_budget_a_close_admits_only_its_bye_and_close_marker(
+    half: str, flush: bool
+) -> None:
+    """§8.4 (the 23:55Z ruling on #412): the `bye` and the close marker are the only items
+    admitted past the budget, so the bound holds to within one small frame and the budget never
+    refuses the `bye` (WS-D01). A queue filled to exactly its budget, by frames or by bytes,
+    still takes the close; what the close keeps stays inside the budget, and nothing pushed after
+    it is queued, on either lane."""
+    frames = [_d("system", n=1), _d(_BOOK, n=2), _d("system", n=3), _d(_BOOK, n=4)]
+    probe, _ = _pipe()
+    for frame in frames:
+        probe.push(frame)
+    budget: dict[str, Any] = (
+        {"max_frames": len(frames)} if half == "frames" else {"max_bytes": probe.queue.bytes}
+    )
+    pipe, asked = _pipe(**budget)
+    for frame in frames:
+        pipe.push(frame)
+    queue = pipe.queue
+    exactly_full = (
+        len(queue) == queue.max_frames if half == "frames" else queue.bytes == queue.max_bytes
+    )
+    assert exactly_full and not queue.over_budget() and asked == []
+    bye = bye_frame("shutdown", now_ms=BASE_MS)
+    pipe.close(bye, 1001, flush=flush)
+    for frame in frames:
+        pipe.push(frame)
+    assert pipe.terminal == Terminal(bye, 1001, flush)
+    assert asked == [] and not queue.over_budget()
+    assert [f["p"]["n"] for f in _queued(pipe)] == ([1, 3] if flush else [])
 
 
 @_ENCODINGS
@@ -689,6 +783,31 @@ async def test_nothing_but_bye_after_the_close() -> None:
     assert sock.sent.empty()
 
 
+async def test_a_close_at_a_full_budget_still_sends_its_bye_and_close_frame() -> None:
+    """§8.4 (the 23:55Z ruling on #412), on the wire: with the budget exactly full, a close still
+    gets its `bye` and close frame out. The priority lane it keeps goes first; the normal lane and
+    everything pushed after the close never reach the socket."""
+    rig, sock = _Rig(BackpressureConfig(max_frames=8)), _Wire()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        await rig.sub(sock)
+        assert conn.pipeline is not None
+        queue = conn.pipeline.queue
+        for i in range(4):  # in one turn: exactly the budget, four frames on each lane
+            rig.book_delta(i)
+            rig.hub.broadcast_system({"kind": "tick", "n": i})
+        assert len(queue) == queue.max_frames and not queue.over_budget() and not conn.closing
+        conn.close_with("heartbeat_timeout")
+        rig.hub.broadcast_system({"kind": "after"})
+        rig.book_delta(4)
+        sent = await sock.next(5)
+        await handler
+    assert [(f["ch"], f["p"]["n"]) for f in sent[:4]] == [("system", i) for i in range(4)]
+    end = (sent[4]["t"], sent[4]["p"]["reason"], sock.closed_with)
+    assert end == ("bye", "heartbeat_timeout", 1001)
+    assert sock.sent.empty()
+
+
 async def test_a_frame_taken_before_a_sealing_close_is_never_sent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -828,6 +947,27 @@ async def test_orders_encode_failure_closes_internal_error_audited_counted_redac
     named = [(e["t"], e["family"], e["error"], e["log_level"]) for e in events]
     assert named == [("d", "orders", "TypeError", "error")] * 2
     assert _MARK not in repr(logs) and all("exc_info" not in e for e in events)
+
+
+@_ENCODINGS
+async def test_a_non_finite_number_fails_closed_through_the_router(encoding: str) -> None:
+    """§10.1 (the 23:55Z ruling on #412): the book delta that the flag-off transcript sends with
+    a NaN in it (`NaN` on JSON, a float on MessagePack) fails closed with the flag on, on either
+    codec: `bye internal_error` and 1011, counted, audited, and logged as a `ValueError`."""
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
+    before = _closes("internal_error")
+    with capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S):
+            handler, _ = await rig.open(sock)
+            await rig.sub(sock)
+            rig.book_delta(1, x=float("nan"))
+            (bye,) = await sock.next()
+            await handler
+    assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "internal_error", 1011)
+    assert _closes("internal_error") == before + 1
+    assert _rows(rig) == [("ws.connection.closed", "internal_error", Severity.WARNING)]
+    events = [e for e in logs if e["event"] == "ws frame unencodable"]
+    assert [(e["t"], e["family"], e["error"]) for e in events] == [("d", "book", "ValueError")]
 
 
 async def test_an_outbound_frame_over_4_mib_is_logged_and_sent() -> None:
