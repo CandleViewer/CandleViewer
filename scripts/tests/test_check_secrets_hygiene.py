@@ -202,6 +202,10 @@ def test_run_script_paths_outside_the_repo_are_refused(tmp_path: Path) -> None:
         "/usr/bin/sh tools/x.sh",
         "/usr/bin/env bash --noprofile tools/x.sh",
         "/usr/bin/env sh tools/x.sh",
+        'bash "$GITHUB_WORKSPACE"/tools/x.sh',
+        'bash -c "./tools/x.sh"',
+        "sh -ec 'tools/x.sh arg'",
+        'timeout 300 bash -o pipefail -c "./tools/x.sh"',
     ],
 )
 def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
@@ -270,7 +274,7 @@ def test_run_script_sourced_helper_is_scanned(tmp_path: Path) -> None:
 
 def test_run_script_nested_scripts_are_followed_transitively_once_each(tmp_path: Path) -> None:
     _write(tmp_path, WF, _runs("bash tools/a.sh"))
-    _write(tmp_path, "tools/a.sh", ". tools/b.sh\n")
+    _write(tmp_path, "tools/a.sh", '. "$GITHUB_WORKSPACE/tools/b.sh"\n')
     _write(tmp_path, "tools/b.sh", "bash tools/a.sh  # a cycle\n./tools/c.sh\n")
     _write(tmp_path, "tools/c.sh", "printenv\n")
     assert h.check_workflows(tmp_path) == [
