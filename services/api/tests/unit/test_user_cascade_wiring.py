@@ -21,6 +21,7 @@ from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, Rule
 from candleviewer.rules.scope_state import ARM_LIVE, SnapshotScopeState
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.user_cascade_wiring import (
+    _DISARM_LOCKS,
     RuleDisarmAdapter,
     RuleNotOwned,
     RulesNotRunning,
@@ -156,6 +157,7 @@ async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_a
     assert await e.mode(theirs) == ("armed", None)
     assert e.manager.lifecycle.leaf(theirs) == "armed"
     assert e.audits == audited
+    assert not _DISARM_LOCKS  # a raise inside the lock frees it
 
 
 def test_idempotency_key_deterministic() -> None:
@@ -211,6 +213,50 @@ async def test_overlapping_disarms_of_one_rule_write_one_record_and_park_nothing
     assert e.manager.lifecycle._charts[rid].deferred_count == 0
     await e.manager.set_mode(rid, "armed", _actor(_A), "arm-again")  # E42-T09 enable, then arm
     assert await e.mode(rid) == ("armed", None)
+
+
+async def test_two_adapters_do_not_disarm_one_rule_concurrently() -> None:
+    """The lock is not the instance's: an adapter built per request, or E42-T09's PATCH with its
+    own, must not bring the double DISARM back. The lock is per rule id and shared, so two
+    adapters over one manager write one record and park nothing (a lock per adapter wrote two)."""
+    e = _Engine()
+    rid = await e.rule(_A, "a-one")
+    second = RuleDisarmAdapter(e.store, lambda: e.manager)
+    later = _T0 + timedelta(milliseconds=3)
+    await asyncio.gather(
+        e.disarm(rid), second.disarm(rid, user_id=_A, actor=_OWNER, disabled_at=later)
+    )
+    assert e.disarmed() == [(rid, str(_OWNER), "DISARM")]
+    assert e.manager.lifecycle._charts[rid].deferred_count == 0
+    await e.manager.set_mode(rid, "armed", _actor(_A), "arm-again")
+    assert await e.mode(rid) == ("armed", None) and not _DISARM_LOCKS
+
+
+async def test_disarms_of_different_rules_do_not_wait_for_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock is per rule: a slow disarm (a stalled audit write, another user's cascade) must not
+    hold up another rule's, whose step bound (2 s) the wait would eat, perhaps mid write-ahead.
+    No lock outlives its disarms."""
+    e = _Engine()
+    slow, quick = await e.rule(_A, "a-slow"), await e.rule(_B, "b-quick")
+    real, entered, release = e.manager.set_mode, asyncio.Event(), asyncio.Event()
+
+    async def stall_slow(rule_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if rule_id == slow:
+            entered.set()
+            await release.wait()
+        return await real(rule_id, *args, **kwargs)
+
+    monkeypatch.setattr(e.manager, "set_mode", stall_slow)
+    first = asyncio.create_task(e.disarm(slow))
+    async with asyncio.timeout(5):  # a lock shared by all rules would hang here: fail instead
+        await entered.wait()
+        await e.adapter.disarm(quick, user_id=_B, actor=_OWNER, disabled_at=_T0)
+    assert await e.mode(quick) == ("disabled", "disarmed") and await e.mode(slow) == ("armed", None)
+    release.set()
+    await first
+    assert await e.mode(slow) == ("disabled", "disarmed") and not _DISARM_LOCKS
 
 
 async def test_rules_module_not_running_is_a_failed_disarm() -> None:
