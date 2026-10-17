@@ -39,6 +39,7 @@ from candleviewer.bars.errors import (
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire
+from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
@@ -51,6 +52,7 @@ from candleviewer.ws.limits import (
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
 )
+from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -116,6 +118,9 @@ cv_ws_permission_snapshots_refused_total = Counter(
 SnapshotEvent = Literal["reauth", "grant_change", "handshake"]  # the step that was refused
 #: `ws audit rows abandoned` names at most this many users; its `users` counts them all (#2824).
 _ABANDONED_USERS_LOGGED: Final = 10
+#: SR-186 (#2174): the one `ws.subscribe.granted` record of a `sub` frame lists the `ch` and
+#: account ids of at most this many of its new private subscriptions; its `count` holds them all.
+MAX_GRANTS_LISTED: Final = 10
 
 
 def _log() -> Any:
@@ -792,9 +797,12 @@ def _log_abandoned(
     """`ws audit rows abandoned`: `rows` counts the `lost` rows, never handed to the writer, and
     `in_flight` names the row a cancellation interrupted, which still lands if it already held
     the writer's lock. `actor_user_ids` names the users of both, the first
-    `_ABANDONED_USERS_LOGGED` (`users` counts them): ids, never a row's content (C-12.6).
-    Nothing may replace the cancellation, so a failing logger is ignored."""
+    `_ABANDONED_USERS_LOGGED` (`users` counts them): ids, never a row's content (C-12.6). Both
+    are counted in `cv_ws_audit_failures_total`, as `cancelled` or, for `writer_down`, `abandoned`
+    (SR-E17-04). Nothing may replace the cancellation, so a failing logger is ignored."""
     with contextlib.suppress(Exception):
+        reason = "abandoned" if cause == "writer_down" else "cancelled"
+        count_audit_failure(len(lost) + (0 if in_flight is None else 1), reason)
         users = list(dict.fromkeys(r.fields.get("actor_user_id") for r in [in_flight, *lost] if r))
         _log().warning(
             "ws audit rows abandoned",
@@ -1007,6 +1015,7 @@ class ConnectionRegistry:
                 raise
             except Exception:
                 failed += 1
+                count_audit_failure()  # SR-E17-04: `timeout` or `error`
                 with contextlib.suppress(Exception):  # a failing logger must not stop the rows
                     # "Not confirmed": a timed-out row may still land (the writer shields it).
                     _log().warning(
@@ -1021,6 +1030,11 @@ class ConnectionRegistry:
                     return
             else:
                 failed = 0
+
+    async def audit_revoked(self, authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> None:
+        """The `ws.subscription.revoked` rows of `revoked` frames made outside a change, a resync
+        loop's (§7.5; SR-187, #2174), through the same bounded writer as a fan-out's."""
+        await self._write_rows(_revocation_rows(authz, frames))
 
     async def grants_changed(self, user_id: uuid.UUID) -> None:
         """Account-grant change: same re-evaluation path as a role change."""
@@ -1127,7 +1141,7 @@ async def handle_sub(
     flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
     flush then sends it. A refused topic is dropped unannounced. One left unannounced by a
     raise or a cancellation never gets a `snap`: the connection ends (a raise closes it 1011)
-    and its teardown releases the subscription."""
+    and its teardown releases the subscription. Its private ones are audited next (SR-186)."""
     body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
     fid = _frame_id(frame)
     shape = sub_shape_error(body)
@@ -1165,6 +1179,7 @@ async def handle_sub(
     await send(out)
     for sub in admitted:  # with no await since `send` queued the reply
         sub.announced = True
+    await _audit_grants(authz, admitted)  # after the reply is queued, never ahead of it
 
 
 def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:
@@ -1278,7 +1293,11 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             **detail,
         )
     except Exception:
+        count_audit_failure()  # SR-E17-04: the row is lost
         _log().warning("ws subscribe-denied audit not written", exc_info=True)
+    except asyncio.CancelledError:
+        count_audit_failure()  # lost unless its append had begun; the cancel still propagates
+        raise
 
 
 #: §6.4: a `machines` revocation's internal reason. `_reevaluate_entity` revokes with
@@ -1315,6 +1334,43 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
             )
         )
     return rows
+
+
+async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> None:
+    """`ws.subscribe.granted` (SR-186, WS-R01): ONE record for the private-topic subscriptions a
+    `sub` frame made, never one per topic, as for its refusals (SR-192). Its `object_id` is the
+    connection, and `after_state` holds their `count` and the `ch` and account ids of the first
+    `MAX_GRANTS_LISTED` in request order (`subscriptions`). Written once the `sub_ok` is queued,
+    best effort (threat model WS-R04) and bounded at `FANOUT_AUDIT_TIMEOUT_S`: a row not
+    confirmed is logged and counted, and so is a cancellation, which still propagates."""
+    audit = authz.services.audit
+    private = [s for s in subs if s.topic.family.private]
+    if audit is None or not private:
+        return
+    listed = [[s.ch, sorted(str(a) for a in s.accounts)] for s in private[:MAX_GRANTS_LISTED]]
+    try:
+        async with asyncio.timeout(FANOUT_AUDIT_TIMEOUT_S):
+            await audit.emit(
+                "ws.subscribe.granted",
+                actor_label="ws",
+                actor_user_id=authz.principal.user_id,
+                object_kind="ws_connection",
+                object_id=authz.connection_id,
+                outcome=AuditOutcome.SUCCESS,
+                severity=Severity.INFO,
+                after_state={"count": len(private), "subscriptions": listed},
+                request_id=current_request_id(),
+            )
+    except asyncio.CancelledError:
+        count_audit_failure()
+        raise
+    except Exception:
+        count_audit_failure()  # `timeout` (it may still land) or `error`
+        _log().warning(
+            "ws subscribe-granted audit not confirmed",
+            connection_id=authz.connection_id,
+            exc_info=True,
+        )
 
 
 def close_connection(registry: ConnectionRegistry, authz: ConnectionAuthz) -> None:

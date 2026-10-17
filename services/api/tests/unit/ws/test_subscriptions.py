@@ -749,8 +749,9 @@ def test_registry_grants_changed_pushes_revoked_and_audits() -> None:
 
     asyncio.run(scenario())
     assert [f["t"] for f in sent] == ["sub_ok", "permission_change", "revoked"]
-    assert [r["action"] for r in audit.records] == ["ws.subscription.revoked"]
-    assert audit.records[0]["after_state"] == {"removed_accounts": [str(B)]}
+    actions = [r["action"] for r in audit.records]  # the sub's grant record first (SR-186)
+    assert actions == ["ws.subscribe.granted", "ws.subscription.revoked"]
+    assert audit.records[1]["after_state"] == {"removed_accounts": [str(B)]}
 
 
 def test_registry_kill_switch_reevaluates_every_user() -> None:

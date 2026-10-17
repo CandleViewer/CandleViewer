@@ -15,7 +15,8 @@ The writes are bounded as the REST CSRF refusals are (C-2.18, `api/csrf.py`):
   bounded drain at shutdown;
 - the write is a tracked task under `asyncio.shield`, awaited for at most `timeout_s`: a slow write
   is left to finish (never cancelled mid-append) and a failed one is logged. Either way the caller
-  closes `4403` next, so the upgrade is never admitted.
+  closes `4403` next, so the upgrade is never admitted. Each is counted once, when the wait ends,
+  in `cv_ws_audit_failures_total` (`timeout` or `error`; SR-E17-04, #2174).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import structlog
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.ws.lifecycle import OriginRefusal
+from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.permissions import AuditSink
 
 OBJECT_KIND: Final = "ws_upgrade"
@@ -103,11 +105,13 @@ class OriginRefusalAudit:
             await asyncio.wait_for(asyncio.shield(task), self._timeout_s)
         except TimeoutError:
             self._tracker.mark_timed_out(task)  # left to finish; the tracker reports a late failure
+            count_audit_failure(reason="timeout")
             _log().warning("auth.ws_origin_refused.audit_slow", check=check.value)
         except asyncio.CancelledError:
             self._tracker.mark_timed_out(task)  # nobody awaits it now; the cancel still propagates
             raise
         except Exception as exc:
+            count_audit_failure(reason="error")
             _log().error(
                 "auth.ws_origin_refused.audit_unavailable",
                 check=check.value,

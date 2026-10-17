@@ -15,6 +15,8 @@ three series observed per frame are also sampled, one frame in `SAMPLE_EVERY`, w
 
 from __future__ import annotations
 
+import sys
+from asyncio import CancelledError
 from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import accumulate, pairwise
@@ -284,6 +286,33 @@ AUTH_FAILURE_REASONS: Final = frozenset(
     {"missing_token", "rejected", "token_expired", "user_mismatch"}
 )
 
+# -- SR-186 / SR-E17-04 (#2174): WS audit rows not confirmed written -----------------------------
+#: How a best-effort WS audit row (threat model WS-R04) failed. `error`: the sink raised, so the
+#: row is lost. `timeout`: its bound expired first; it may still land (the writer finishes an
+#: append it began). `cancelled`: a cancellation ended the wait, and the row is lost unless its
+#: append had begun. `abandoned`: never handed to the writer, after `FANOUT_AUDIT_MAX_FAILURES`
+#: failed rows in a row (the fan-out's `ws audit rows abandoned`, cause `writer_down`).
+AUDIT_FAILURE_REASONS: Final = ("error", "timeout", "cancelled", "abandoned")
+cv_ws_audit_failures_total = Counter(
+    "cv_ws_audit_failures_total",
+    "WS audit rows not confirmed written (SR-186): error, timeout, cancelled or abandoned.",
+    labelnames=("reason",),
+)
+for _audit_reason in AUDIT_FAILURE_REASONS:  # bound now, so increase() sees the first failure
+    cv_ws_audit_failures_total.labels(reason=_audit_reason)
+
+
+def count_audit_failure(rows: int = 1, reason: str | None = None) -> None:
+    """Count `rows` WS audit rows not confirmed written. Without `reason`, call it in the `except`
+    that caught the failure: the exception being handled names it (`TimeoutError`: `timeout`, a
+    cancellation: `cancelled`, anything else: `error`)."""
+    if reason is None:
+        exc = sys.exception()
+        reason = "timeout" if isinstance(exc, TimeoutError) else "error"
+        reason = "cancelled" if isinstance(exc, CancelledError) else reason
+    cv_ws_audit_failures_total.labels(reason=reason).inc(rows)
+
+
 # -- E17-T06 send path (sequencing.py stamps, gateway.py writer observes, binary.py encodes) ---
 #: The send path observes one frame in `SAMPLE_EVERY`, with that weight (see `FastHistogram`). The
 #: sampled frame is the one whose subscription counter, its `s`, reaches a multiple of it: the
@@ -328,6 +357,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_auth_failures_total",
         "cv_ws_closes_total",
         "cv_ws_connect_rate_limited_total",
+        "cv_ws_audit_failures_total",
         "cv_ws_clock_skew_ms",
         "cv_ws_system_frames_withheld_total",
         "cv_ws_subscribe_total",
