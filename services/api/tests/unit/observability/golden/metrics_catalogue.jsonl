@@ -7,6 +7,7 @@
 ["auth_disabled_user_sessions_revoked_total", "counter", [], "live", "E09"]
 ["auth_enrolment_only_sessions_total", "counter", ["role"], "live", "E09"]
 ["auth_enrolment_refused_total", "counter", ["transport", "reason"], "live", "E09"]
+["auth_enrolments_total", "counter", ["outcome"], "live", "E09"]
 ["auth_lockouts_total", "counter", [], "live", "E09"]
 ["auth_login_failures_total", "counter", ["method"], "live", "E09"]
 ["auth_readonly_downgrades_total", "counter", [], "live", "E09"]
