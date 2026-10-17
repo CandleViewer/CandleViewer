@@ -11,8 +11,8 @@
 - Method: the `04-security-program.md` §5 template (L x I = risk), STRIDE per element (C-12.1). D1–D6 and the E09
   U-rows are referenced, not repeated. Each mitigation traces to a decision recorded on #965 (O1–O7, R1–R7; R8 is
   still a proposal, #2710) or to an SR row. "Verify" names the slice and the test its Task plans (#965, #2648, #2649,
-  #2650); "owed" marks a test this appendix asks for (§5). This is not E42-X01 (#890), which waits on E42-D02 (#831)
-  and will absorb this appendix.
+  #2650); "owed" marks a test this appendix asks for (§5). E42-X01 (#890) has absorbed it (`e42-admin.md` §8), and
+  registers its findings and residuals there (§13).
 - Inputs, read at `b11174a3`: the four Task issues; `22-api-openapi.yaml` `/me/sessions*`, `/me/preferences`, the
   `/auth/*` request bodies, and `/users/{userId}*` before slice S1 (#2658) amends it; `23-ws-protocol.md` §9.5;
   `21-database-schema.md` §3.1 and §12; `04-security-program.md` §4, §9.1 and IR-03 (§10.3);

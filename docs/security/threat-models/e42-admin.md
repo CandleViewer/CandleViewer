@@ -1,8 +1,8 @@
 # E42 — STRIDE threat model: the admin area
 
-- Ticket: E42-X01 (issue #890). Owner: Security engineer (CODEOWNER). Status: **Draft**, slices S1 to S3 of 4.
+- Ticket: E42-X01 (issue #890). Owner: Security engineer (CODEOWNER). Status: **Draft**, slices S1 to S4 of 4.
   Sign-off follows the E27 precedent (C-10.1): independent agent security and code reviews go in the review log
-  (§13, S4), Owner acceptance of the residuals is queued on #2701, and the security engineer and Architect sign-off
+  (§13), Owner acceptance of the residuals is queued on #2701, and the security engineer and Architect sign-off
   on #890 and on the epic (#63) stay human.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1), in the four-question frame: what are we building (§1 to §3), what can go wrong (§4, §6 to §9), what
@@ -35,14 +35,13 @@
   deliverable (#1026). Every slice says `Refs #890`; #890 stays open until E42-X03 and the remediations land.
 - Absorbs: `e42-user-lifecycle.md` (#2729), the user-lifecycle appendix. §8 (S3) absorbs it; the file stays as an
   annex marked absorbed, so its L, UL and UL-AC ids keep resolving.
-- Slices: S1 to S3 of 4 are in, and the model is incomplete until S4 merges. S1: §1 to §3 (scope, build state,
-  classification map, rating, data flows, boundaries, structural controls). S2: §4 to §7 (STRIDE per boundary
-  with the coverage matrix, decisions, the restore path, the audit read side under load). S3: §8 to §11 (user
-  lifecycle, abuse cases for E42-X03, observability, requirements `SR-E42-nn`). S4: §12 and §13 (control map,
-  findings register, residuals, review log, `32-risk-register.md` and `04-security-program.md` updates).
-  Findings AD-F01 to AD-F22 are reserved by the design pass and cited here by id with a one-line description.
-  Four have remediation issues: #3083 (AD-F01), closed by #3160 after S2 (§3.3), and #3084 (AD-F02), #3085
-  (AD-F03) and #3086 (AD-F10), which are open.
+- Slices: S1 to S4 of 4. S1: §1 to §3 (scope, build state, classification map, rating, data flows, boundaries,
+  structural controls). S2: §4 to §7 (STRIDE per boundary with the coverage matrix, decisions, the restore path,
+  the audit read side under load). S3: §8 to §11 (user lifecycle, abuse cases for E42-X03, observability,
+  requirements `SR-E42-nn`). S4: §12 and §13 (control map, findings register, residuals, review log,
+  `32-risk-register.md` and `04-security-program.md` updates). §13.1 registers findings AD-F01 to AD-F25. Five
+  issues were filed from this model: #3083 (AD-F01), done by #3160 after S2 (§3.3), and #3084 (AD-F02), #3085
+  (AD-F03), #3086 (AD-F10) and #3196 (AD-F08, AD-F23), which are open.
 - Open decisions: the owner-equivalent band-raise (§1.4, security engineer) and D8, SCR-149's 15-minute window
   against per-action step-up (§2, Owner, through the E42-T06 ADR, #1085). That ADR's planned number, ADR-0022, is
   taken (`docs/plan/27-adrs/ADR-0022-hot-tier-questdb-vs-timescaledb.md`); ADR-0031 is reserved by E45-K01 and
@@ -209,7 +208,7 @@ served with the `users` step-up in code (`api/step_up.py:391-393`), but their op
 `revokeUserSession` (yaml:1665, :1711, :1749, :1909). The code is stricter than the contract, so nothing is
 weakened, but a client generated from the contract cannot expect their `403 step_up_required`. The contract must
 declare the step-up on all three. This is routed to #3086 (the small `createUser` contract fix filed from AD-F10)
-as an addition; whether the register needs a finding id for it is S4's call.
+as an addition, and the register tracks it under AD-F10 (§13.1).
 
 ### 1.4 Rating
 
@@ -507,10 +506,10 @@ is unique there); migrations by file name; `yaml:n` is a line of `22-api-openapi
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AD-T01 | AO: DS2, F8 | Audit-row mutation through the app role: UPDATE, DELETE or TRUNCATE on `audit_log` or `audit_checkpoints` | L | H | Medium | Two layers, each proven alone (§3.1): grants (`test_audit_guard_cv_app.py:353`, :427) and triggers (`_assert_guard_enforces`, :301-318, run by :448, :464 and :473); E09 U14 | Owed: a trigger-only case for a privileged role that is not the owner (§3.1) | E42-X03, #1238 | integration | M | Low |
 | AD-T02 | AO: DS2, E4 | The owner role or a superuser rewrites audit history: the REVOKE covers `cv_app` and `cv_ro` only (`0003_audit_log.py:166-175`), the triggers are not `ENABLE ALWAYS` (:150-155, unlike `0024_api_keys_write_once.py:74`), and the chain is unkeyed (yaml:7902-7905) | L | H | Medium | Detection after the fact by a verify walk (`test_audit_repository.py:100`) | A consistent rebuild passes every in-database check: no external anchor exists (SR-068, #1238), the daily checkpoint job has no caller in the app (`audit/checkpoint.py:33`), and no verify runner is wired (`main.py:79-83`, #2966). AD-F14: accepted until #1238 lands; consider `ENABLE ALWAYS` in a new revision (C-5.4) | Owner (#2701); #1238, #2966 | drill | A, M | Medium until #1238 |
-| AD-T03 | SB: DS3, F10 | Flags changed out of band: a database writer sets `trading.live_enabled`, releases `maintenance.mode` or a `killswitch.*` flag, or adds overrides | L | H | Medium OE | Safety flags ignore every override at resolution (`test_flag_resolver.py:108`, :117). Contract, not built: the API path writes `flags.change` ahead with before and after (SR-065; yaml:8890-8898) | `cv_app` holds UPDATE and DELETE on `feature_flags` (`pg_bootstrap.sql:95-96`), and a stored value takes effect within 5 s (`test_flag_service.py:58`) with no record of its writer. AD-F08: change capture into an append-only table, or a reconciliation of each key against its last `flags.change`, with a P1 alert | new (S4) | integration, chaos | T | Low |
+| AD-T03 | SB: DS3, F10 | Flags changed out of band: a database writer sets `trading.live_enabled`, releases `maintenance.mode` or a `killswitch.*` flag, or adds overrides | L | H | Medium OE | Safety flags ignore every override at resolution (`test_flag_resolver.py:108`, :117). Contract, not built: the API path writes `flags.change` ahead with before and after (SR-065; yaml:8890-8898) | `cv_app` holds UPDATE and DELETE on `feature_flags` (`pg_bootstrap.sql:95-96`), and a stored value takes effect within 5 s (`test_flag_service.py:58`) with no record of its writer. AD-F08: change capture into an append-only table, or a reconciliation of each key against its last `flags.change`, with a P1 alert | #3196 | integration, chaos | T | Low |
 | AD-T04 | TB-4: F1, P3 | Grant or role sets forged client-side: roles outside the system set, accounts outside the grant, freeze or cap fields, or a pre-elevated invitee | L | H | Medium OE | Server-side only (C-2.12): role names come from the system set (`api/users.py:275-283`); invites grant `viewer` only (yaml:13195-13200; `test_stepup_invite_abuse.py:100`); `extra="forbid"` models (SR-040); scope from the session, never the body (E09 U15, U31; E27 KV-E01) | Grant replacement is contract-only: the soft revoke keeps freezes and caps (UL2-T1), and an unknown account rolls the change back (UL2-E1) | E42-T08, E42-T09 | contract, integration | M | Low |
 | AD-T05 | SUB: TB-6, DS4, DS5, F11 | Backup artefact substitution before restore: the file at `target_path` is replaced, or `target_path`, `checksum_sha256` or `status` is edited, so a restore loads chosen contents | L | H | Medium OE | Contract, not built: encryption at rest (SR-091); verify compares the stored digest (`checksum_mismatch`, yaml:9116-9120); restore refuses an unusable status (yaml:11393-11394). E42-T05 owes their tests | Digest, path and status are mutable columns with no trigger or grant (`0028_incidents_backups.py:13-14`, :88, :89, :91), and verify and restore are separate calls. AD-F07: bind the digest in the append-only `backup.run` record, re-check it immediately before restore, make the columns write-once (the `0024` pattern) | E42-T05 (#966) | integration | M | Low |
-| AD-T06 | SB: DS1, F7 | Roles, grants or a session's step-up grants written out of band: an Owner self-promotion, accounts added to a Manager, an elevation minted in `sessions` | L | H | Medium OE | The owner floor stops removal only (`0001_identity_rbac_sessions_mfa.py:271-298`); API writes are recorded ahead in the same transaction (`api/users.py:289-308`) | `cv_app` holds UPDATE and DELETE on every identity table (`pg_bootstrap.sql:95-96`), and nothing compares rows with their records. AD-F08, as AD-T03 | new (S4) | integration | T | Low |
+| AD-T06 | SB: DS1, F7 | Roles, grants or a session's step-up grants written out of band: an Owner self-promotion, accounts added to a Manager, an elevation minted in `sessions` | L | H | Medium OE | The owner floor stops removal only (`0001_identity_rbac_sessions_mfa.py:271-298`); API writes are recorded ahead in the same transaction (`api/users.py:289-308`) | `cv_app` holds UPDATE and DELETE on every identity table (`pg_bootstrap.sql:95-96`), and nothing compares rows with their records. AD-F08, as AD-T03 | #3196 | integration | T | Low |
 | AD-T07 | TB-4: F1, P6 | A flag write races another: a stale console overwrites a newer value, or the elevation is chosen from a cached value | M | M | Medium | Contract: `expected_updated_at` checked under the row lock, 409 with `current`, never last-write-wins (yaml:8876-8879); the class is chosen from the value read under that lock (yaml:8862-8869) | Not built; the route's tests are owed with it | E42-T03 (#964) | integration | M | Low |
 | AD-T08 | SUB: P4, P8 | The health or incident view is falsified to hide a degraded subsystem | L | M | Low | Computed server-side from a cached registry snapshot, with no write path (`api/health_report.py:1-7`); E04 H2 | None new | E04; E42-T05 | integration | R | Low |
 | AD-T09 | TB-4: F12, WS | A `system` frame (kill switch, maintenance, flags) is forged or altered, so a client shows a false safety state | L | M | Low | Server-only frames on the authenticated socket, and client envelopes cannot carry server fields (E17 WS-T05); enforcement never reads the mirror (C-2.21; E17 WS-E06) | None new | E17 | unit | R | Low |
@@ -528,9 +527,9 @@ is unique there); migrations by file name; `yaml:n` is a line of `22-api-openapi
 | AD-R03 | AO: F8 | An entry lacks the actor's type and role at the time (SR-062): a rule, system or human action, or an Owner acting under another role, cannot be told apart | M | M | Medium | Actor id, label, address and session are recorded (`0003_audit_log.py:88-91`) | No `actor_type` or `role_at_time` column (`0003_audit_log.py:83-105`). AD-F12; #2763 owes the columns and their test | #2763 | integration | M | Low after #2763 |
 | AD-R04 | AO: F8, DS2 | Chain fork under concurrent writes: a row links to a predecessor out of id order, the verifier reports a break that is not tampering, and the break blocks a live start | L | M | Low | `audit_chain()` takes the advisory lock (`0003_audit_log.py:127-132`), and the one app insert path takes it before the INSERT (`storage/repositories/audit_sqlalchemy.py:277-280`), so ids follow lock order | The id is drawn before the trigger runs (`0003_audit_log.py:84`) and the verifier walks id order (`audit/query.py:232-248`), so any path that does not lock first can fork. AD-F15: lock first on every path, or assign the id under the lock; owed `test_two_connection_inserts_link_in_id_order` (§3.1) | E42-T02 (#889) or #1238 | integration | M | Low |
 | AD-R05 | AO: DS2, P7 | A restore erases its own record and the incident's audit tail: `backup.restore` is written into the database being replaced (yaml:11402-11406), and every entry after `covers_to` goes with it | M | H | High OE | None on the restore path: the CI drill proves only that a restored chain verifies (`test_restore_drill.py:191`), which an older prefix also does (`21-database-schema.md:3293`) | AD-F02, D7, §6 | #3084 | integration, drill | T | Low after #3084 |
-| AD-R06 | AO: F9, P5 | Audit reads leave no record, or a Manager's cross-actor filter is narrowed silently | M | M | Medium | Since #2433: one `admin.audit_read` per new filter set, continuations counted (`api/audit.py:507-515`; `test_audit_router.py:802`); the cross-actor attempt is recorded before the narrowed read (`api/audit.py:412-416`, :444-460; `test_audit_router.py:768`); a due record that cannot be written serves nothing (:787, :831) | None on the query. AD-F04 keeps its verify part (AD-R07, AD-D04), and S4 updates its evidence | E42-T02 (#889) | unit | M | Low |
-| AD-R07 | AO: F9, P5 | Integrity is reported without a check: an on-demand verify leaves no `admin.audit_verify`, or a query page answers `chain_verified: true` unchecked | M | M | Medium | Verify is Owner-only (`audit/access.py:45-46`; `test_audit_router.py:457`); since #2443 a page's `chain_verified` is the per-page check yaml:7928-7936 defines, run off the event loop and never true for a row it could not check (`audit/query.py:77-100`, :189; `test_query_chain.py:50`, :58, :67, :76) | The contract records `started` ahead and the result after (yaml:8137-8142); `main` runs the walk directly (`api/audit.py:519-533`). AD-F04, whose page-flag part #2443 closed (S4 updates its evidence) | E42-T02 (#889) | unit | M | Low |
-| AD-R08 | SB: DS1, DS3, DS4, F15 | Out-of-band writes to roles, grants, flags or backups leave no record and raise no signal | L | H | Medium | Every API write is recorded ahead (C-2.9) | Writes outside the API bypass the writer (`pg_bootstrap.sql:95-96`). AD-F08: the change capture of AD-T03 | new (S4) | integration, chaos | T | Low |
+| AD-R06 | AO: F9, P5 | Audit reads leave no record, or a Manager's cross-actor filter is narrowed silently | M | M | Medium | Since #2433: one `admin.audit_read` per new filter set, continuations counted (`api/audit.py:507-515`; `test_audit_router.py:802`); the cross-actor attempt is recorded before the narrowed read (`api/audit.py:412-416`, :444-460; `test_audit_router.py:768`); a due record that cannot be written serves nothing (:787, :831) | None on the query. AD-F04 keeps its verify part (AD-R07, AD-D04; §13.1) | E42-T02 (#889) | unit | M | Low |
+| AD-R07 | AO: F9, P5 | Integrity is reported without a check: an on-demand verify leaves no `admin.audit_verify`, or a query page answers `chain_verified: true` unchecked | M | M | Medium | Verify is Owner-only (`audit/access.py:45-46`; `test_audit_router.py:457`); since #2443 a page's `chain_verified` is the per-page check yaml:7928-7936 defines, run off the event loop and never true for a row it could not check (`audit/query.py:77-100`, :189; `test_query_chain.py:50`, :58, :67, :76) | The contract records `started` ahead and the result after (yaml:8137-8142); `main` runs the walk directly (`api/audit.py:519-533`). AD-F04, whose page-flag part #2443 closed (§13.1) | E42-T02 (#889) | unit | M | Low |
+| AD-R08 | SB: DS1, DS3, DS4, F15 | Out-of-band writes to roles, grants, flags or backups leave no record and raise no signal | L | H | Medium | Every API write is recorded ahead (C-2.9) | Writes outside the API bypass the writer (`pg_bootstrap.sql:95-96`). AD-F08: the change capture of AD-T03 | #3196 | integration, chaos | T | Low |
 | AD-R09 | TB-4: F2, P5 | The audit export answers 202 with a job that does not exist, so a client believes an export ran | M | L | Low | Since #2444 the export answers 501 `not_implemented` after authorisation, creates no job and writes no record, as the contract says until decision D1 of E42-T02 (yaml:8265-8278; `api/audit.py:535-548`; `test_audit_router.py:201`, :209, :217) | None: AD-F05 is fixed | E42-T02 (#889) | unit | M | Low |
 | AD-R10 | EB: P2, F5 | A one-shot grant is spent with no record of the spend, so a restore, delete or link cannot be tied to the code that authorised it | M | M | Medium | `auth.step_up_granted` names the class (`test_step_up_audit_backups.py:111-126`); a mismatched request is recorded ahead, never answered unaudited (`api/step_up.py:294-313`; `test_step_up_binding_router.py:128`) | B16 records no spend (#2799); the restore's write-ahead record must name the challenge (`api/step_up.py:431-432`) | #2799; E42-T05 | integration | M | Low |
 | AD-R11 | TB-4: E1 | The Owner, or whoever holds the session, disowns an admin action | L | M | Low | Each admin record carries the user, session and address (`admin/http.py:132-145`); a dangerous action needs password and code (#2154); E09 U7 | The chain is unkeyed until its anchors exist (AD-T02) | E09; #1238 | integration | R | Low |
@@ -554,7 +553,7 @@ is unique there); migrations by file name; `yaml:n` is a line of `22-api-openapi
 | AD-I12 | EB: F5 | A step-up challenge or its problem body names an object or account the caller's scope would hide | L | M | Low | Server-composed `action_summary` and `target` (E09 U35, #2304) | None new | E09 | contract | R | Low |
 | AD-I13 | TB-4: F2 | Validation errors echo the caller's input (a filter value, a body key) into responses and logs | L | M | Low | `test_audit_router.py:656`, :667, :680 (nothing echoed); fixed log fields (SR-120) | None | E42-T02 (#889) | unit | M | Low |
 | AD-I14 | EB: F4 | The step-up password or code leaks into logs, records or errors | L | H | Medium | Never logged (SR-122; E09 U22); a refused step-up records the rule and the challenge id, never a factor (`api/step_up.py:579-598`) | None | E09 | unit | R | Low |
-| AD-I15 | SB: DS1, DS2 | The analytics role reads every identity and audit column: `cv_ro` holds SELECT on every table (`pg_bootstrap.sql:97-98`) and is the role the DuckDB attachment uses (`storage/cold/duckdb_views.py:88-97`, :170-173) | L | M | Low | The attachment is read-only and its views are fixed queries over `journal_trades` (`storage/cold/duckdb_views.py:174-177`); hashes and seeds are not stored in plain text | Least privilege: grant `cv_ro` only the tables the views read, never identity, session, MFA or audit tables, with a privilege test like `test_audit_guard_cv_app.py:353`. New; S4 registers it | new (S4) | integration | T | Low |
+| AD-I15 | SB: DS1, DS2 | The analytics role reads every identity and audit column: `cv_ro` holds SELECT on every table (`pg_bootstrap.sql:97-98`) and is the role the DuckDB attachment uses (`storage/cold/duckdb_views.py:88-97`, :170-173) | L | M | Low | The attachment is read-only and its views are fixed queries over `journal_trades` (`storage/cold/duckdb_views.py:174-177`); hashes and seeds are not stored in plain text | Least privilege: grant `cv_ro` only the tables the views read, never identity, session, MFA or audit tables, with a privilege test like `test_audit_guard_cv_app.py:353`. AD-F23 | #3196 | integration | T | Low |
 
 ### 4.5 Denial of service
 
@@ -579,7 +578,7 @@ is unique there); migrations by file name; `yaml:n` is a line of `22-api-openapi
 <!-- prettier-ignore -->
 | ID | Boundary: element | Threat | L | I | Risk | Existing control and test | Gap → mitigation | Owner | Verify | Disp. | Residual |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AD-E01 | EB: P1, P4 | Admin routes reached without elevation: SCR-149 asks for a re-auth no older than 15 minutes on every `/admin/*` route (`14-screens-catalogue.md:2216`, :2704), while the server records `reauth_age_s` and never refuses | M | M | Medium OE | Each dangerous write needs its own class (SR-025, §3.3); every admin route is Owner-only (SR-017, SR-018) | Observability only (`admin/http.py:19-26`), pinned by `test_admin_http.py:288`. AD-F06, D8: an `admin` window enforced in `admin_area`, or an accepted residual with the catalogue amended | E42-T06 (#1085), E42-S01 | unit | M | Low; Medium if accepted |
+| AD-E01 | EB: P1, P4 | Admin routes reached without elevation: SCR-149 asks for a re-auth no older than 15 minutes on every `/admin/*` route (`14-screens-catalogue.md:2216`, :2704), while the server records `reauth_age_s` and never refuses | M | M | Medium OE | Each dangerous write needs its own class (SR-025, §3.3); every admin route but three is Owner-only (SR-017, SR-018): Managers reach `GET /admin/audit` (scoped, AD-R06) and recorder compact and import (AD-E10) | Observability only (`admin/http.py:19-26`), pinned by `test_admin_http.py:288`. AD-F06, D8: an `admin` window enforced in `admin_area`, or an accepted residual with the catalogue amended | E42-T06 (#1085), E42-S01 | unit | M | Low; Medium if accepted |
 | AD-E02 | EB: P2, F5 | The step-up tripwire misses flag writes and dangerous reads, so `setFeatureFlag` or `downloadAuditExport` mounts without its elevation, or a flag write demands a class the service does not know | M | H | High OE | Since #3160 (§3.3): the contract sweep covers every mounted method (`test_dangerous_route_registry.py:201`, :243), both operations are pending handler gates whose mount fails the build until their handler test lands (:216, :542), and `flags` is a grace class (`auth/step_up.py:90`; `test_step_up_flags_class.py:30`, :66; `test_step_up_audit_backups.py:145`) | None in the registry: AD-F01 is fixed (#3083 closed). E42-T03 and E42-T02 owe the handler tests with their mounts | #3160; E42-T03 (#964), E42-T02 (#889) | unit, contract | M | Low |
 | AD-E03 | SUB: P6 | A flag weakens a security control (C-4.14): a definition gates authentication, RBAC, audit, the native stop, risk limits, the withdrawal check, the rate reserve or demo/live isolation, or a lookup in such a module consults a flag | L | H | Medium | Import- and construction-time refusal (§3.2; `test_flag_registry.py:56`, :78); safety flags ignore overrides (`test_flag_resolver.py:108`) | AD-F09: categories are self-declared (`trading.one_click` is `UI_SURFACE`, `admin/flags/catalogue.py:36-38`), the boot refusal is not composed into the app, and no Semgrep rule bars flag lookups in safety modules (#1026); E42-T03 owes `test_create_app_refuses_a_denied_flag` | E42-T03 (#964), E42-X03 (#1026) | unit, ci-gate | M | Low |
 | AD-E04 | EB: P9, F17 | View-as becomes writable: with no server context, a client-side read-only mode could still send writes or WS actions as the Owner, or target another Owner | M | H | High OE | None | AD-F03, D6: a server-side context refuses every unsafe method and WS action (403 `view_as_read_only`, recorded), refuses Owner targets, holds the 30-minute limit and never widens the target's grants | #3085 | contract, integration | T | Low after #3085 |
@@ -591,7 +590,7 @@ is unique there); migrations by file name; `yaml:n` is a line of `22-api-openapi
 | AD-E10 | SUB: P8 | Recorder administration (compact, import, purge) reached beyond the caller's role, or a purge without its `recorder` step-up | M | H | High | E16 R-E1: purge is Owner-only before its step-up (`api/step_up.py:423-425`); compact and import are allowed to Managers by 04 row 51 | None new | E16 | contract | R | Low |
 | AD-E11 | SB: F7, P3 | An injection in an admin input reaches SQL: audit filters, a flag key, a backup id, a user id | L | H | Medium | Typed models with `extra="forbid"` (SR-040; `test_audit_router.py:578`, :656); bound parameters, with raw SQL interpolation flagged by `.semgrep/cv-raw-sql-string-interpolation.yml` | AD-F08's change capture detects what an injection would change | E42-X02, E42-X03 | unit, ci-gate | M | Low |
 | AD-E12 | EB: P2 | One elevation covers several actions: after one `users` or `flags` step-up, a session that is stolen or left open makes further changes of that class for 5 minutes | L | H | Medium OE | Grace by design for grace classes (SR-025); destructive classes are no-grace (`auth/step_up.py:96`); three wrong codes make the session read-only (E09) | Accepted design residual, unless the E42-T06 ADR moves owner-equivalent writes (roles, grants) to no-grace; the live gate already needs `live_enablement` | Owner (#2701); E42-T06 | manual-review | A | Medium |
-| AD-E13 | AO: F8 | The app role gains mutation rights on an append-only table: a migration widens a grant, or a new append-only table inherits `cv_app`'s default UPDATE and DELETE (`pg_bootstrap.sql:95-96`) | L | H | Medium | `cv_app`'s exact privileges on the audit tables are pinned (`test_audit_guard_cv_app.py:353`); audit migrations need security code-owner approval (SR-066); E09 U17 | The bootstrap backstop matches only `audit_log` and `%_audit_log` (`pg_bootstrap.sql:121`). Requirement: each append-only table E42 adds (AD-F08's capture table, a restore tail) ships its REVOKE, triggers and a privilege test like `test_audit_guard_cv_app.py:353` in the same revision | E42-T05; new (S4) | integration | M | Low |
+| AD-E13 | AO: F8 | The app role gains mutation rights on an append-only table: a migration widens a grant, or a new append-only table inherits `cv_app`'s default UPDATE and DELETE (`pg_bootstrap.sql:95-96`) | L | H | Medium | `cv_app`'s exact privileges on the audit tables are pinned (`test_audit_guard_cv_app.py:353`); audit migrations need security code-owner approval (SR-066); E09 U17 | The bootstrap backstop matches only `audit_log` and `%_audit_log` (`pg_bootstrap.sql:121`). Requirement: each append-only table E42 adds (AD-F08's capture table, a restore tail) ships its REVOKE, triggers and a privilege test like `test_audit_guard_cv_app.py:353` in the same revision | E42-T05; #3196 | integration | M | Low |
 
 ### 4.7 Coverage matrix
 
@@ -621,9 +620,10 @@ AD-T02 (accepted until #1238), AD-E01 (if D8 accepts the gap) and AD-E12 (accept
 
 ### 5.1 The elevation and store boundaries carry the epic
 
-The deny-by-default router and the route matrix keep Managers and Viewers out of every admin route (04 §5.7 D1,
-E09 U3; AD-S06, AD-E05). What remains is what the Owner's own session can do, and what a database writer can do
-with no session at all.
+The deny-by-default router and the route matrix keep Viewers out of every admin route and Managers out of every
+Owner-only one (04 §5.7 D1, E09 U3; AD-S06, AD-E05); Managers keep their scoped audit reads (AD-R06, AD-I07) and
+recorder compact and import (AD-E10), each a Low residual. What remains is what the Owner's own session can do, and
+what a database writer can do with no session at all.
 
 - **Elevation.** Three of this model's own High rows are elevation gaps: the tripwire reached only writes under its
   path pattern (AD-E02, fixed by #3160 after S2), view-as has no server context (AD-E04, AD-I05), and a restore
@@ -781,9 +781,8 @@ AD-R02 (UL3-S2, UL4-R1). Since `b11174a3`: #2508 merged (UL3-R1, UL3-E1); #2318 
 landed, the two conditions the annex set for UL1-E2's residual to fall to Low; #2658 landed E42-T04's contract
 deltas, while `createUser` still accepts `mfa_required: false` (AD-S04, AD-F10, #3086), the creation-side twin of
 UL3-T2; and the disable counts its post-commit steps (`admin/lifecycle_metrics.py:13-17`) with no alert yet
-(§10.2). UL-F1 to UL-F13 keep their routes (annex §5) and enter S4's findings register with their status; the annex's
-§6 residuals enter S4's residuals table with their review dates, still awaiting the Owner on #2701. No UL rating
-changes here.
+(§10.2). UL-F1 to UL-F13 keep their routes (annex §5) and enter the findings register with their status (§13.1); the
+annex's §6 residuals are carried in §13.2, still awaiting the Owner on #2701. No UL rating changes here.
 
 ## 9. Abuse cases
 
@@ -795,11 +794,13 @@ log with addresses, health and capacity are exposed while the session lives. Eve
 `403 step_up_required` for its class and writes `auth.step_up_required` (§3.3), unless the Owner opened a grace
 window of that class in the last 5 minutes (AD-E12). Wrong codes count toward the lockout, and three make the
 session read-only (AD-D10). A client-only view-as would hand over every user's scope (AD-E04, #3085). Signals:
-`auth_stepup_failures_total` and the `admin.area_entered` trail with its session id (§10).
+`auth_stepup_failures_total`, the `admin.area_entered` trail with its session id, and one `auth.step_up_grace_used`
+record for each write inside a grace window (AD-E12; §10.1).
 
 **N2. A coerced Manager.** The Manager calls every `/admin/*` and `/users*` route, filters the audit log by another
-actor, asks for verify and the security summary, and watches the `system` topic. Expected: one 403 per admin route,
-each recorded and counted (AD-S06, AC-ADM-01); the cross-actor filter narrowed and recorded as `admin.audit_denied`
+actor, asks for verify and the security summary, and watches the `system` topic. Expected: one 403 per Owner-only route,
+each recorded and counted (AD-S06, AC-ADM-01), and the scoped audit read and recorder compact and import allowed
+(AD-R06, AD-E10); the cross-actor filter narrowed and recorded as `admin.audit_denied`
 (AD-R06); verify refused (AD-E08); and on the socket only role-neutral frames that name its own accounts (AD-I06,
 AC-ADM-35). `AuthzDeniedSpike` opens a ticket; the refusal records are budgeted on `/admin/audit*` only (AD-D06).
 
@@ -834,18 +835,18 @@ AC-INV-05 to AC-INV-08), and the annex's UL-AC01 to UL-AC16 belong to this list 
 <!-- prettier-ignore -->
 | Id | Rows | Preconditions | Steps | Expected denial | Expected audit | Test or owner |
 | --- | --- | --- | --- | --- | --- | --- |
-| AC-ADM-01 | AD-S06, AD-E05, AD-R01 | M and V signed in; every `/admin/*` and `/users*` operation of §1.3, enumerated from the app's router | Call each with a valid body | 403 `forbidden` with one body shape; nothing changes | `admin.area_entered` (outcome `denied`) on `admin_router` routes, `rbac.denied` on the users routes, `admin.audit_denied` on `/admin/audit*`; `authz_denied_total` +1 each. `GET /admin/health` and `GET /admin/jobs/{jobId}` write and count nothing today (AD-F22) | `test_admin_http.py:94`; `test_route_matrix.py:240`; E42-T05 and E42-X03 for AD-F22 |
-| AC-ADM-02 | AD-S06 | U, no session cookie | Call each admin and users operation | 401 `unauthenticated`, before any handler or validation | none required | `test_admin_http.py:136`. The users and step-up routers answer `unauthorized` (`api/users.py:239`, `api/step_up.py:563`; `test_users_router.py:392`), a code missing from the contract's registry (yaml:322-325, C-6.5): S4 registers it |
+| AC-ADM-01 | AD-S06, AD-E05, AD-R01 | M and V signed in; every `/admin/*` and `/users*` operation of §1.3, enumerated from the app's router | Call each with a valid body | 403 `forbidden` with one body shape; nothing changes. Except for M on `queryAuditLog` (scoped to self, AD-R06), `compactRecorder` and `importTradeArchive` (AD-E10), which the route matrix allows | `admin.area_entered` (outcome `denied`) on `admin_router` routes, `rbac.denied` on the users routes, `admin.audit_denied` on `/admin/audit*`; `authz_denied_total` +1 each. `GET /admin/health` and `GET /admin/jobs/{jobId}` write and count nothing today (AD-F22) | `test_admin_http.py:94`; `test_route_matrix.py:240`; E42-T05 and E42-X03 for AD-F22 |
+| AC-ADM-02 | AD-S06 | U, no session cookie | Call each admin and users operation | 401 `unauthenticated`, before any handler or validation; a write meets the CSRF guard first, 403 `csrf_token_invalid` (SR-041) | none required | The route matrix's `unauthenticated` actor on every row (`test_route_matrix.py:240`, :247; a CSRF refusal satisfies a write's 401 cell, :226-235) and the admin guard's `unauthenticated` case (`test_admin_http.py:94`, :90). The users and step-up routers answer `unauthorized` (`api/users.py:239`, `api/step_up.py:563`; `test_users_router.py:392`), a code missing from the contract's registry (yaml:322-325, C-6.5): AD-F24 |
 | AC-ADM-03 | AD-E02, AD-S05 | O signed in, no live grant | Call each of the 16 step-up operations of §1.3 | 403 `step_up_required` with the class §1.3 gives (`flags`, `killswitch` or `live_enablement` for a flag write, by key and stored value); nothing changes | `auth.step_up_required` naming the class; no change record | `test_dangerous_route_registry.py:201`; `test_step_up_audit_backups.py:31`; each mounting ticket adds its route |
 | AC-ADM-04 | AD-S07, AD-S08 | O holds a `users` grant in session S1 and a no-grace `backups` grant bound to restore R1; O2 holds session S2 | Use S1's grant from S2 and for the `audit` class; use the `backups` grant for restore R2, or for R1 with another body | 403 `step_up_required` each time; the bound grant survives the refused request | `auth.step_up_required`; `auth.step_up_mismatch` ahead of the bound grant's refusal | `test_stepup_invite_abuse.py:32` (AC-STEP-01); `test_step_up_binding_router.py:48`, :128 |
 | AC-ADM-05 | AD-S02, AD-D10 | O at the step-up dialog; a code already accepted in this time step | `POST /auth/step-up` with that code, three times | 401 `mfa_invalid` with `failures_remaining`; no grant; after the third, `403 session_read_only` on every write | `auth.step_up_failed` each; `auth.session_readonly_downgrade` at the third; `auth_stepup_failures_total` +1 each | `test_step_up.py:156`; `test_stepup_invite_abuse.py:43` (AC-STEP-02) |
 | AC-ADM-06 | AD-E02, AD-T07 | O with a `flags` grant only; `trading.live_enabled` false | `PUT /admin/feature-flags/trading.live_enabled` to `true` with `reason`, `expected_updated_at` and `evidence_url`; then without `evidence_url` | 403 `step_up_required` (`live_enablement`); then 422 `validation_failed`, rule `gate_evidence_required`, before any step-up; nothing written | `auth.step_up_required` only; then `flags.change` for the 422 | E42-T03 (#964) |
-| AC-ADM-07 | AD-D02, AD-E02 | `killswitch.order_entry` engaged; O with a `flags` grant only | `PUT` it to `false`; then engage `maintenance.mode` with the same grant | 403 `step_up_required` (`killswitch`) for the release; the engage is 200 | `auth.step_up_required`; `flags.change` and `maintenance.enabled` for the engage | E42-T03 (#964) |
+| AC-ADM-07 | AD-D02, AD-E02 | `killswitch.order_entry` engaged; O with a `flags` grant only | `PUT` it to `false`; then engage `maintenance.mode` with the same grant | 403 `step_up_required` (`killswitch`) for the release; the engage is 200 | `auth.step_up_required`; `auth.step_up_grace_used`, `flags.change` and `maintenance.enabled` for the engage | E42-T03 (#964) |
 | AC-ADM-08 | AD-T03, AD-E03 | O with a `flags` grant | `PUT` `trading.live_enabled`, then a kill-switch-class flag, each with `overrides` | 422 `validation_failed`, rule `overrides_not_allowed`; nothing written | `flags.change` for each 422 | E42-T03 (#964) |
 | AC-ADM-09 | AD-T03 | A fixture inserts override rows for `maintenance.mode` and `trading.live_enabled` straight into `feature_flag_overrides` | Resolve both for M and for O (`GET /admin/feature-flags`, the order-entry gate) | The override rows are ignored; each flag resolves to its stored or fail-closed value | none through the API; detecting the write is AC-ADM-31 | `test_flag_resolver.py:108`, :117; `test_flag_service.py:405` |
 | AC-ADM-10 | AD-T07, AD-T11 | O reads flag K at `updated_at` t1; O2 then writes K | O writes K with `expected_updated_at` t1 | 409 `conflict` carrying `current`; never last-write-wins | `flags.change` for the refused write | E42-T03 (#964) |
 | AC-ADM-11 | AD-I06 | M and V sockets open; an `owner_only` and an `all_roles` flag | O changes each | No frame for the owner-only key reaches M or V; today no `feature_flags` frame reaches them at all, and after E42-T03 the all-roles key does within 2 s | none (a left-out frame is the contract, `ws/system_filter.py:10-11`) | `test_system_filter.py:220`; `test_scope_and_ws.py:687`; E42-T03 adds the per-key case |
-| AC-ADM-12 | AD-D02 | Positions open under native SLs; M holds a resting entry order | O engages `maintenance.mode`; M submits an entry order, closes a position and tightens a stop | The entry is 403 `trading_disabled` (`reason: maintenance`) within 200 ms; the close and the tighter stop succeed; no native SL changes; every session gets the `notice` within 2 s | `flags.change` and `maintenance.enabled` | `test_order_entry.py:103`, :108; E42-T03 (#964) owes the end-to-end case |
+| AC-ADM-12 | AD-D02 | Positions open under native SLs; M holds a resting entry order | O engages `maintenance.mode`; M submits an entry order (`POST /orders`, yaml:4481), closes a position and tightens a stop | The entry is 403 `trading_disabled` with `reason: maintenance` (yaml:8902-8905) within 200 ms; the close and the tighter stop succeed; no native SL changes; every session gets the `notice` within 2 s | `flags.change` and `maintenance.enabled` | `test_order_entry.py:103`, :108; E42-T03 (#964) owes the end-to-end case |
 | AC-ADM-13 | AD-E03 | A test catalogue adds a definition declaring `Category.AUTH` | Import it; build `create_app` with it | The definition is refused at import or construction, and the app refuses to boot | none (no process starts) | `test_flag_registry.py:56`, :78; `test_create_app_refuses_a_denied_flag` owed by E42-T03 (#964) |
 | AC-ADM-14 | AD-E03 | Fixture modules in the authentication, RBAC, audit, OMS, risk, secrets and exchange packages and `ws/permissions.py` each read a flag | Run the E42-X03 Semgrep rules, with a negative fixture under `admin/` | Each positive fixture fails the run, naming the call site; the negative passes | none (a CI gate) | E42-X03 (#1026) rule 2 |
 | AC-ADM-15 | AD-T01, AD-T02 | Integration stack; audit rows present | As `cv_app`, then as `cv_owner`, UPDATE, DELETE and TRUNCATE `audit_log` and `audit_checkpoints` | `cv_app`: permission denied; `cv_owner`: refused as append-only; rows unchanged | none; a verify run still passes | `test_audit_guard_cv_app.py:427`, :448; `test_audit_repository.py:112` |
@@ -854,21 +855,21 @@ AC-INV-05 to AC-INV-08), and the annex's UL-AC01 to UL-AC16 belong to this list 
 | AC-ADM-18 | AD-D06 | M | 130 calls of `GET /admin/audit` with an `ip` filter in one hour | 403 `forbidden` each time, with `Retry-After` past the cap | `admin.audit_denied` up to the cap of 120, then counted and carried as `suppressed` or one `suppressed_summary` | `test_audit_router.py:711`, :759 |
 | AC-ADM-19 | AD-D04, AD-R07 | O; a chain longer than `audit_verify_max_span` | `POST /admin/audit/verify` over a span above the cap; 31 runs in an hour; a call while a run holds the slot | 422 `validation_failed` (rule `max_verify_span`); 429 `rate_limited`; 409 `conflict`; the walk never blocks the event loop | `admin.audit_verify` `started` ahead and the result after each run that starts | E42-T02 (#889); M's 403 is `test_audit_router.py:457` |
 | AC-ADM-20 | AD-R09, AD-D03 | O with an `audit` grant | `POST /admin/audit/export`; after decision D1, a window over the maximum, a second export, a sixth in an hour | Until D1, 501 `not_implemented` with no job (as `main` answers since #2444); after D1: 422 (`max_export_range`), 409 `conflict`, 429 | none for the 501; after D1, `admin.audit_export` before the job exists | `test_audit_router.py:201`, :209, :217 hold the 501; E42-T02 (#889) owes the rest |
-| AC-ADM-21 | AD-I09 | O requested export J; O2 is another Owner | O2 fetches and polls J (`GET /admin/audit/exports/{jobId}`, `GET /admin/jobs/{jobId}`); O fetches J outside the `audit` grace window, after `expires_at`, and 21 times in an hour | 404 `not_found` for O2 by both routes; 403 `step_up_required` (`audit`) after the requester check; 410 `gone`; 429 | a record ahead of any byte; refusals within the audit budget | E42-T02 (#889); `getJob` returns any job today (`api/recorder_admin.py:418-430`) |
+| AC-ADM-21 | AD-I09 | O requested export J; O2 is another Owner | O2 fetches and polls J (`GET /admin/audit/exports/{jobId}`, `GET /admin/jobs/{jobId}`); O fetches J outside the `audit` grace window, after `expires_at`, and 21 times in an hour | 404 `not_found` for O2 by both routes; 403 `step_up_required` (`audit`) after the requester check; 410 `gone`; 429 | `admin.audit_export` for O's request (yaml:8314); the download's record ahead of any byte (yaml:8307-8309) has no action name yet, a contract gap for E42-T02; refusals within the audit budget | E42-T02 (#889); `getJob` returns any job today (`api/recorder_admin.py:418-430`) |
 | AC-ADM-22 | AD-E04, AD-I05 | #3085's contract; O starts view-as on M (`POST /admin/view-as`) | While viewing: every unsafe method and every WS action frame; start view-as on O2; wait 30 minutes; end it (`DELETE /admin/view-as`) | 403 `view_as_read_only` and nothing changes; the Owner target refused; the context ends at 30 minutes; reads use M's grants only | `admin.view_as_started`, `admin.view_as_ended`, and `admin.view_as_refused` per refusal | #3085 |
 | AC-ADM-23 | AD-D08, AD-T05 | O with a fresh `backups` grant per attempt | `POST /admin/backups/{backupId}/restore` with maintenance off; with a job running; for an unusable status; with positions unknown, then open, without the acknowledgements | 409 `conflict` (`maintenance_mode_required`, `backup_or_restore_running`, `backup_not_usable`), 409 `positions_unknown`, 409 `conflict` (`open_positions_unacknowledged`), in that order; each refusal spends its code | `backup.restore`, outcome `failure` with the rule as `reason`, ahead of each answer | E42-T05 (#966); `test_step_up_audit_backups.py:76`, :91 hold the one-code rule |
 | AC-ADM-24 | AD-E07, AD-R05 | Backup B at `covers_to` t0; after t0, M disabled, a key revoked, a grant removed, a kill switch engaged | Restore B | Per D7: every later revocation in force and every session revoked at cut-over, or the restore refused until O acknowledges the server's list | `backup.restore` and the pre-restore chain head survive and are re-appended; the tail is checked against that head | `test_restore_keeps_revocations_after_backup_point` (or `test_restore_refuses_without_acknowledged_revocations`) and `test_restore_record_survives_restore`, #3084 |
-| AC-ADM-25 | AD-T05, AD-S11 | A verified backup | A fixture changes `checksum_sha256` or `target_path`, or swaps the artefact for one encrypted to the same recipient; verify, then restore | Verify fails `checksum_mismatch`; restore refuses before any decrypt | `backup.verified` (failure); `backup.restore` (failure) | E42-T05 (#966) |
+| AC-ADM-25 | AD-T05, AD-S11 | A verified backup | A fixture changes `checksum_sha256` or `target_path`, or swaps the artefact for one encrypted to the same recipient; verify, then restore | Verify is accepted (202) and its job ends `failed` with `error: checksum_mismatch` (yaml:9116-9118), a job outcome, not an HTTP status; the row's status is then `failed`, so restore answers 409 `conflict` (`backup_not_usable`, yaml:11393-11394); with the digest edited to match, restore still refuses before any decrypt (SR-E42-05) | `backup.verified` (failure); `backup.restore` (failure) | E42-T05 (#966) |
 | AC-ADM-26 | AD-I04 | O issues a link (`POST /admin/backups/{backupId}/download`) | Fetch it twice; fetch a second link after 5 minutes; O2 fetches O's link; read the logs and records | 200 once, then 410 `gone`; 410 for the expired link; 404 `not_found` for O2; no log, trace or record holds the token | `backup.downloaded` at `stage: issued`, then at `stage: served` before the first byte | E42-T05 (#966) |
 | AC-ADM-27 | AD-S01, AD-S04 | An invite already redeemed; O with a `users` grant | Validate and redeem the used link; `POST /users` with `mfa_required: false` | 404 `not_found`, as for an unknown token; 400 `validation_failed` with no user row or invite created | per E09 AC-INV-01..04; no `users.invited` | `test_stepup_invite_abuse.py:92`; #3086's red-first test |
 | AC-ADM-28 | AD-D01, AD-E06 | O and O2 the only enabled Owners | Ten rounds of O and O2 demoting each other in parallel (`PUT /users/{userId}/roles`) | One winner per round, the loser 409 `conflict`; an enabled Owner always remains | `roles.revoke` for the winner; one `rbac.denied` (`owner_floor`) for the loser | `test_user_roles_sqlalchemy.py:98`; `test_users_router.py:162`, :228; `test_ten_parallel_demotions_one_wins` owed by E42-T09; UL-AC03 races disable against demotion |
 | AC-ADM-29 | AD-E06, AD-S03 | O2 holds a live `users` grant | O demotes O2 to Manager; O2 retries a `users` write with the grant | 403 `forbidden`: roles are re-read per request and the grant carries no role | `roles.revoke`; `rbac.denied` for O2's retry | `test_role_revoked_mid_step_up.py:415`, :447, :478, :505; rotation is #2101 |
 | AC-ADM-30 | AD-E01 | O's last step-up older than 15 minutes; D8 decided | Call any `/admin/*` read | (a) a server window: 403 `step_up_required`; (b) per-action step-up: 200, with the catalogue amended | `admin.area_entered` with `reauth_age_s`; under (a), `admin.session_elevated` on re-auth | `test_admin_http.py:288` pins (b) and flips under (a); E42-T06 (#1085), E42-S01 |
-| AC-ADM-31 | AD-T03, AD-T06, AD-R08 | Integration stack | As `cv_app`, a fixture adds an Owner role row, widens M's grant, sets `trading.live_enabled` and changes a `backups` digest, outside the API | Each write is captured in a table `cv_app` cannot alter, and a P1 alert fires within the reconciliation window | the capture rows; no API record matches them | SR-E42-06; new (S4) |
+| AC-ADM-31 | AD-T03, AD-T06, AD-R08 | Integration stack | As `cv_app`, a fixture adds an Owner role row, widens M's grant, sets `trading.live_enabled` and changes a `backups` digest, outside the API | Each write is captured in a table `cv_app` cannot alter, and a P1 alert fires within the reconciliation window | the capture rows; no API record matches them | SR-E42-06; #3196 |
 | AC-ADM-32 | AD-I01 | V signed in | Call an unknown `/admin/*` path and a known one | 404 for the unknown path, before any handler; 403 `forbidden` naming the permission for the known one, accepted (E09 U25) | `admin.area_entered` (denied) for the known path only | `test_deny_by_default.py:47`; `test_admin_http.py:94` |
 | AC-ADM-33 | AD-I10 | O and M | O sets a log-level override with `ttl_seconds` 3601, then 900; M sets one | 400 `validation_failed` for 3601; the 900 override reverts when the fake clock passes it and does not survive a restart; 403 `forbidden` for M | `settings.change` for O's write and for M's refusal | `test_log_level_override.py:33`, :79; the route answers 501 today (§1.3), and its refusals carry no `code` (`api/log_level.py:32-35`) |
 | AC-ADM-34 | AD-E08 | M holds `audit:read` | `GET /admin/security/summary`; `POST /admin/audit/verify` | 403 `forbidden` for both | `admin.audit_denied` for verify; `admin.area_entered` (denied) for the summary once it is on `admin_router` | `test_audit_router.py:457`; the summary's matrix row (`matrix.yaml:192-198`), E43-S02 |
-| AC-ADM-35 | AD-I06 | A kill switch engaged with `scope: accounts` over A and B; M granted A; V with no grant | Sockets as O, M and V, each then re-authenticated in place | O gets the frame whole; M gets `engaged`, `scope`, `engaged_at_ms` and `[A]`, never `engaged_by`, `engaged_by_username`, `reason` or `actions`; V gets `[]`; `auth_ok.kill_switch` is cut the same way | none (a left-out field is the contract) | `test_system_filter.py:122`, :220; `test_system_topic_roles.py:193`; `test_scope_and_ws.py:687` |
+| AC-ADM-35 | AD-I06 | A kill switch engaged with `scope: accounts` over A and B; M granted A; V with no grant | Sockets as O, M and V, each then re-authenticated in place | O gets the frame whole; M gets `engaged`, `scope`, `engaged_at_ms` and `[A]`, never `engaged_by`, `engaged_by_username`, `reason` or `actions`; V gets `[]`; `auth_ok.kill_switch` is cut the same way | none (a left-out field is the contract) | `test_system_filter.py:122`, :220; `test_system_topic_roles.py:193`; `test_scope_and_ws.py:687`. The engage-to-frame case waits on #956 (E39-S03), the producer: nothing in production calls `kill_switch_changed` yet (`ws_wiring.py:328`) |
 
 ## 10. Observability: audit events and detection signals
 
@@ -896,7 +897,7 @@ slice registers, with its test, the names it first emits (AD-F17).
 | `admin.view_as_started`, `.view_as_ended`, `.view_as_refused` | AD-I05, AD-E04 | no | #3085 |
 | `admin.session_elevated`, if D8 picks the server window | AD-E01 | no | E42-T06 (#1085), E42-S01 |
 | `users.enable`, `.delete`, `.anonymise` | UL3-S2, UL4-R1 | no; `users.disable` and `users.access_change` are (`audit/actions.py:97`, :100) | E42-T09, E42-T10 |
-| `auth.step_up_required`, `.step_up_granted`, `.step_up_failed`, `.step_up_mismatch` | AD-S02, AD-S08, AD-R10 | yes (`audit/actions.py:58-62`); the spend of a one-shot grant is not recorded (#2799) | E09 |
+| `auth.step_up_required`, `.step_up_granted`, `.step_up_failed`, `.step_up_mismatch`, `.step_up_grace_used` | AD-S02, AD-S08, AD-R10, AD-E12 | yes (`audit/actions.py:58-63`); B16 writes `.step_up_grace_used` for each action a grace grant allows (`statechart/bindings/b16_session.py:368`), the AD-E12 signal; the spend of a one-shot grant is not recorded (#2799) | E09 |
 | `rbac.denied`, `roles.grant`, `roles.revoke` | AD-E05, UL3-R1 | yes (`audit/actions.py:103-104`, :176) | E09, E42-T09 |
 | A refusal by `GET /admin/health` or `GET /admin/jobs/{jobId}` | AD-R01 | nothing is written (AD-F22) | E42-T05, E42-X03 |
 
@@ -920,7 +921,7 @@ These must reach the Owner's out-of-band channel (SR-126): a chain break or no p
 
 ### 10.3 Threats with no detection signal
 
-A threat with no signal is itself a finding; S4's register records each of these:
+A threat with no signal is itself a finding; §13.1 registers each of these:
 
 - **AD-F02** (AD-R05, AD-E07): a restore that rolls back revocations or erases its tail raises nothing, and the CI
   drill checks only that a restored chain verifies (`test_restore_drill.py:191`).
@@ -930,6 +931,8 @@ A threat with no signal is itself a finding; S4's register records each of these
 - **AD-F08** (AD-T03, AD-T06, AD-R08): an out-of-band write to roles, grants, flags or backups.
 - **AD-F22** (AD-R01): the 403s of `GET /admin/health` and `GET /admin/jobs/{jobId}` are neither recorded nor counted
   (`api/health_report.py:131-132`, `api/recorder_admin.py:425-426`).
+- **AD-F25** (UL1-T1, UL2-I1): a failed post-commit step of the disable cascade is counted
+  (`cv_user_lifecycle_steps_total`) but alerts nobody, although the annex's R7 says it is alerted (§10.2).
 - **Tail truncation** (AD-T02, AD-F14): entries removed from the end of the chain by the owner role or a superuser
   leave a consistent prefix that every in-database check accepts, until the SR-068 mirror and the external anchors
   exist (#1238).
@@ -937,8 +940,8 @@ A threat with no signal is itself a finding; S4's register records each of these
 ## 11. Requirements added by this model
 
 `SR-E42-nn` are epic-local ids (the convention of `SR-E27-nn`), promoted into `04-security-program.md` numbering when
-their owning ticket lands; S4 traces each in §12 and adds the 04 summary rows. SR-E42-01 is met on `main`, and
-SR-E42-02, SR-E42-08 and SR-E42-14 are met in part.
+their owning ticket lands; §12 traces each to its ticket, and `04-security-program.md` §5.15 summarises them.
+SR-E42-01 is met on `main`, and SR-E42-02, SR-E42-08 and SR-E42-14 are met in part.
 
 <!-- prettier-ignore -->
 | ID | Requirement | Rows, finding | Owner | State at `b37d1c9d` |
@@ -948,7 +951,7 @@ SR-E42-02, SR-E42-08 and SR-E42-14 are met in part.
 | SR-E42-03 | View-as is a server-held context defined contract-first: every unsafe method and WS action refused with `403 view_as_read_only` and recorded, Owner targets refused, a 30-minute limit, reads with the target's grants only, start and end recorded and the target told | AD-I05, AD-E04, AD-F03 | #3085 | open; blocks E42-S03's view-as PR |
 | SR-E42-04 | A restore never rolls back security state or erases its own record: later revocations survive or the restore is refused without the Owner's acknowledgement, every session is revoked at cut-over, and the record and the pre-restore head survive outside the database being replaced | AD-R05, AD-E07, AD-I11, AD-F02 | #3084, E42-T05 (#966) | open; Owner decision D7 |
 | SR-E42-05 | Restore and verify check the artefact's origin and digest before any decrypt: a signature by a key `cv_app` never holds, or an authenticated repository format; the digest bound in the append-only `backup.run` record; write-once location and digest columns | AD-S11, AD-T05, AD-F07 | E42-T05 (#966) | open |
-| SR-E42-06 | Writes to `user_roles`, `user_account_access`, `feature_flags`, `feature_flag_overrides` and `backups` are captured in an append-only table `cv_app` cannot alter, or each row is reconciled against its last audit record, with a P1 alert on a change no record explains | AD-T03, AD-T06, AD-R08, AD-F08 | new (S4) | open |
+| SR-E42-06 | Writes to `user_roles`, `user_account_access`, `feature_flags`, `feature_flag_overrides` and `backups` are captured in an append-only table `cv_app` cannot alter, or each row is reconciled against its last audit record, with a P1 alert on a change no record explains | AD-T03, AD-T06, AD-R08, AD-F08 | #3196 | open |
 | SR-E42-07 | No flag lookup in the authentication, RBAC, audit, OMS, risk, secrets or exchange code, `ws/permissions.py` or the rule arm gate (a Semgrep rule with fixtures), and `create_app` composes the flag registry so a denied definition refuses boot | AD-E03, AD-F09 | E42-X03 (#1026), E42-T03 (#964) | open |
 | SR-E42-08 | The audit read side runs as contracted: on-demand verify through the slot, span cap, rate, deadline and `admin.audit_verify` records, hashed off the event loop; export answers 501 until decision D1, then ships its limits; `getJob` applies the requester rule to export jobs | AD-R07, AD-R09, AD-D03, AD-D04, AD-I09, AD-F04, AD-F05 | E42-T02 (#889) | open; the page check (#2443) and the 501 (#2444) are met |
 | SR-E42-09 | One budgeted guard for every admin refusal: the per-user record budget of `/admin/audit*` extended to the admin guard, and no admin route with a guard of its own | AD-R01, AD-D06, AD-F13, AD-F22 | #2836; E42-T05, E42-X03 | open |
@@ -957,3 +960,254 @@ SR-E42-02, SR-E42-08 and SR-E42-14 are met in part.
 | SR-E42-12 | An ADR decides the admin elevation model: a server-enforced window in `admin_area`, or per-action step-up with the catalogue amended and the residual accepted | AD-E01, AD-F06 | E42-T06 (#1085) | open; Owner decision D8 |
 | SR-E42-13 | `createUser` accepts `mfa_required: true` only, in the contract and the model, and the contract declares the `users` step-up of `createUser`, `reissueInvite` and `revokeInvite` (§1.3) | AD-S04, AD-F10 | #3086 | open |
 | SR-E42-14 | Each `system` frame and `auth_ok.kill_switch` is cut per connection and role when queued, and a flag frame carries only the keys the role may see | AD-I06, AD-D11, AD-F16 | #3136; E42-T03 (#964) | met for the topic by #3136; per-key visibility owed |
+
+## 12. Control-to-ticket map
+
+Every E42 ticket appears here; a missing ticket is a model defect (GOV-008, `scripts/check_threat_model_ticket_map.py`).
+Provenance tags, as in E27: `[ticket body]` means already in the ticket text; `shipped in #N` means merged; `required
+by this model` means not yet in the ticket, for the orchestrator to request on the issue named. Controls trace to
+`04-security-program.md` ids (SR-nnn and Area 7's D1 to D6) and to this model's SR-E42-nn (§11); §12.2 lists the issues
+this model filed.
+
+<!-- prettier-ignore -->
+| Ticket | Obligation |
+| --- | --- |
+| E42-D01 (#830) | UX research: no control. Synthetic fixtures only, never production data; recordings hold PII and are deleted when the epic closes `[ticket body]` |
+| E42-D02 (#831) | Wireframes: no audit mutation affordance, no path to the live gate from the flag console, an obviously read-only view-as, no secret on screen, a 404 for non-owners `[ticket body]`. This model's blocker: the view-as and SCR-149 rows are re-triaged when it lands (D5) |
+| E42-D03 (#886) | Hi-fi users and re-auth gate: the invite link shown once, an unmissable impersonation banner, no route disclosure to non-owners `[ticket body]`. Required by this model: the SCR-149 gate drawn as D8 decides (AD-E01), and view-as as #3085's server context (AD-E04) |
+| E42-D04 (#887) | Hi-fi audit and flags: no path that enables live trading, a diff that renders a fingerprint, never a value, and a blocking security sign-off `[ticket body]` |
+| E42-D05 (#960) | Hi-fi health, backups and onboarding: restore and download behind typed confirmation and step-up; no hostname, connection string or stack trace on health `[ticket body]`. Required by this model: the restore preview names the revocations D7 keeps or asks the Owner to acknowledge (AD-E07) |
+| E42-D06 (#961) | A11y and handoff: the copy deck reviewed for understated consequences (delete, unbind, restore, purge, flag change) `[ticket body]` |
+| E42-D07 (#1214) | Design QA: the impersonation banner present, no audit mutation affordance, the live gate still blocked, no secret, typed confirmations kept `[ticket body]` |
+| E42-K01 (#888) | Spike, closed: synthetic data only, and no index opens a disclosure path `[ticket body]`. Its 10 M-row sizing (ADR-0025) bounds §7; #1719 re-measures the write rate |
+| E42-Q01 (#962) | Black-box plan and fixtures: synthetic only; the corrupted-chain fixture refuses a non-test database `[ticket body]`. Required by this model: fixtures for the seeds that need state outside the API (AC-ADM-09, AC-ADM-15, AC-ADM-16, AC-ADM-24, AC-ADM-25, AC-ADM-31) |
+| E42-Q02 (#1215) | E2E of the legitimate paths and the visible denials, with synthetic credentials and never against production; escalation specs are E42-X03's `[ticket body]` |
+| E42-Q03 (#1216) | Load and chaos: the export's rate and range limits checked as exfiltration bounds; the harness and the chain-break fixture guarded `[ticket body]`. Required by this model: §7 requirement 4 (a full-span verify and a Manager refusal flood, with order-path latency and the audit WAL asserted) and ADR-0025's query budgets (AD-D05) |
+| E42-Q04 (#1217) | Exploratory charters: an escalation or scope-leak finding is P0; synthetic staging data `[ticket body]`. Required by this model: narratives N1 to N5 (§9.1) as charters |
+| E42-Q05 (#1218) | A11y audit: a control disabled for RBAC reasons states why, and E42-X03 proves it is still enforced server-side `[ticket body]` |
+| E42-Q06 (#1219) | No enable path for the live gate ships from E42, and finding one is Critical `[ticket body]`. It mitigates AD-E02 and AD-E03; AC-ADM-06 is its API case |
+| E42-S01 (#1022) | Admin shell and re-auth gate: deny by default, router 404 and API 403 with a record, a 15-minute admin token bound server-side `[ticket body]`. Required by this model: build to D8 (AD-E01, SR-E42-12), either the server window with `admin.session_elevated` or per-action step-up with SCR-149 amended; the served codes and names (§13.3) |
+| E42-S02 (#1023) | Users and invites: roles only from `GET /roles`, the invite link shown once and never logged, the last-owner 409, every destructive action stepped up and audited `[ticket body]`. Required by this model: expect `403 step_up_required` on `createUser`, `reissueInvite` and `revokeInvite` (#3086) |
+| E42-S03 (#1134) | User detail and view-as: server-side grants, step-up on save, impersonation start and end audited `[ticket body]`. Required by this model: the view-as PR waits on #3085 (SR-E42-03, D6) |
+| E42-S04 (#1135) | Audit browser: no mutation affordance, fingerprint-only diffs, reads audited, a chain break shown loudly `[ticket body]`. Required by this model: attribute and filter by `actor_id`, never the label (UL-F4); the served `admin.audit_*` names (§13.3) |
+| E42-S05 (#1024) | Flag console and maintenance: the server allowlist, a required `reason`, maintenance failing closed, no path to the live gate `[ticket body]`. Required by this model: the 409 with `current` and the 422 rules surfaced as contracted (AC-ADM-06, AC-ADM-10); no client gating of a safety value (AD-T09) |
+| E42-S06 (#1084) | Health, incidents and backups: `HealthReport` fields only; restore with typed confirmation, step-up, the maintenance precondition and an accurate preview `[ticket body]`. Required by this model: the preview follows D7 (SR-E42-04) |
+| E42-S07 (#1136) | Onboarding wizard: secrets straight to the vault, every step stepped up and audited `[ticket body]`; key handling is E27's |
+| E42-S08 (#1137) | Statechart inspector screen: the acknowledge is dangerous and audited; no unredacted context `[ticket body]` |
+| E42-T01 (#963) | Overview and capacity: no secret in a response, deny by default, a recorded 403 `[ticket body]`; the audited guard and `settings.change` `shipped in #2874, #2901, #2930, #2946`. Required by this model: the guard's denial budget (#2836, SR-E42-09) |
+| E42-T02 (#889) | Audit query, verify and export: no write path, Manager scoping in the repository, a signed and limited export `[ticket body]`; the contract, the verify slot, the read budget, the page check and the 501 `shipped in #2392, #2446, #2917, #2433, #2443, #2444`. Required by this model: SR-E42-08, SR-E42-10, the download's handler test (§3.3) and its record's name (AC-ADM-21) |
+| E42-T03 (#964) | Flags: the allowlist, server-side resolution, every change audited, restrictive defaults when the store fails `[ticket body]`; the contract, `0027`, the registry and the read path `shipped in #2592, #2796, #2928, #2981`. Required by this model: SR-E42-02, SR-E42-07, SR-E42-11 (`maintenance.*`), SR-E42-14 and AD-I02's `reason` check; AC-ADM-06 to AC-ADM-13 |
+| E42-T04 (#965) | Lifecycle: Owner-only, stepped up, never self, write-ahead audit, the soft revoke `[ticket body]`; the contract, store, service and cascade `shipped in #2658, #3062, #3096, #3135`. Required by this model: an alert on failed cascade steps (AD-F25) |
+| E42-T05 (#966) | Health, incidents and backups: restore preconditions, step-up, high-severity audit, single-use download links `[ticket body]`; `0028` and the guard contract `shipped in #2820, #2957`. Required by this model: SR-E42-04 with #3084, SR-E42-05, SR-E42-11 (`backup.*`, `incident.acknowledged`) and health behind the audited guard (AD-F22) |
+| E42-T06 (#1085) | Runbooks and the re-auth ADR, with no secret or exploit detail and the audit-integrity runbook reviewed by the Security engineer `[ticket body]`. Required by this model: record D8 (SR-E42-12) under the next free ADR number (§13.3) |
+| E42-T07 (#1025) | Statechart inspector API: redacted summaries, an export of chart structure only `[ticket body]`; the contract, list and export `shipped in #2958, #3131` |
+| E42-T08 (#2648) | Grants: Owner-only, stepped up, never self, audited, the soft revoke, an unknown account rolling the change back `[ticket body]`; the store and the listing `shipped in #3028, #3161`. Required by this model: AD-T04's and AD-E05's route tests when the replacement mounts |
+| E42-T09 (#2649) | User read, PATCH, roles and admin sessions: Owner-only, stepped up, never self, no token material, a 404 across users `[ticket body]`. Required by this model: the ten-parallel-demotion test (AC-ADM-28) and the registry's 401 code on `api/users.py` (AD-F24) |
+| E42-T10 (#2650) | Deferred purge: a surrogate not reversible from PII, records written ahead, audit rows never updated `[ticket body]`. Required by this model: a restore replays the purges recorded after `covers_to` (AD-I11, with #3084) |
+| E42-X01 (#890) | This model |
+| E42-X02 (#1220) | White-box review of every admin route, the elevation model, the audit read side, append-only storage, the flag registry and the destructive paths `[ticket body]`. Required by this model: review against §12.1 and §13.1 |
+| E42-X03 (#1026) | RBAC suite, abuse cases, Semgrep rules 1 to 4 and ZAP `[ticket body]`. Required by this model: AC-ADM-01 to AC-ADM-35 with UL-AC01 to UL-AC16; rule 2 widened to OMS, risk, secrets, exchange and `ws/permissions.py` (SR-E42-07); own-guard routes (AD-F22); the registry's error codes (AD-F24); UL-F2's `can_view` rule |
+| E09 / E04 / E16 / E17 / E39 / E43 | Referenced: sessions, step-up and B16 (AD-S02, AD-S03, AD-R10; #2101, #2799); health and support bundles (AD-I03, AD-I10); recorder administration (AD-E10); the `system` topic (AD-I06, #3136); kill-switch frames (#956); the security summary (AD-E08, E43-S02) and the audit anchors (#1238) |
+
+### 12.1 Control checklist
+
+Each control a High row relies on, and the two structural controls the ticket singles out, with the automated check
+that fails when the control is removed. "Owed" means the check does not exist yet and the named ticket adds it; no row
+closes by documentation alone.
+
+<!-- prettier-ignore -->
+| Control | 04 and model ids | Rows | Automated check | Ticket |
+| --- | --- | --- | --- | --- |
+| Deny by default and the route matrix | SR-017, SR-018; D1 | AD-S06, AD-E05, AD-E08 | `test_deny_by_default.py:19`, :47; `test_route_matrix.py:240` on every row and role, the `unauthenticated` actor included; owed: E42-X03's suite enumerated from the router | E09 (shipped), E42-X03 |
+| The audited admin guard | SR-060; SR-E42-09 | AD-R01, AD-S06, AD-D06 | `test_admin_http.py:94`, :136; owed: the denial budget and the own-guard rule | E42-T01 (shipped), #2836, E42-X03 |
+| Per-class step-up on every dangerous operation | SR-025; SR-E42-01, SR-E42-02 | AD-E02, AD-S05 | `test_dangerous_route_registry.py:89`, :201, :216, :542; `test_step_up_flags_class.py:30`; owed: the `setFeatureFlag` and `downloadAuditExport` handler tests | #3160 (shipped), E42-T03, E42-T02 |
+| Request-bound, single-use no-grace grants | SR-025 | AD-S08, AD-R10, AD-E07 | `test_step_up_binding_router.py:122`, :128; `test_step_up_grant_race_pg.py:173`; owed: the spend record | E09 (shipped), #2799 |
+| Append-only audit: grants | SR-066; C-5.7 | AD-T01, AD-E13 | `test_audit_guard_cv_app.py:353`, :427; owed: the same pin for each new append-only table | E09 (shipped), #3196 |
+| Append-only audit: triggers | SR-066 | AD-T01, AD-T02 | `_assert_guard_enforces` (`test_audit_guard_cv_app.py:448`, :464, :473); `test_audit_repository.py:112`; owed: a trigger-only case for a privileged role that is not the owner | E09 (shipped), E42-X03, #1238 |
+| The flag registry's refusal | C-4.14; SR-E42-07 | AD-E03, AD-T03 | `test_flag_registry.py:56`, :78; `test_flag_resolver.py:108`; owed: `test_create_app_refuses_a_denied_flag` and the Semgrep rule | E42-T03 (partly shipped), E42-X03 |
+| A server-side view-as context | SR-E42-03 | AD-E04, AD-I05 | Owed: #3085's red-first tests (unsafe method, WS action, Owner target, TTL, records) and its matrix row | #3085 |
+| A restore keeps revocations and its own record | SR-093; SR-E42-04, SR-E42-05 | AD-E07, AD-R05, AD-I11, AD-T05, AD-S11 | `test_restore_drill.py:191` proves consistency only; owed: `test_restore_keeps_revocations_after_backup_point` (or the refusal variant), `test_restore_record_survives_restore` and the origin check | #3084, E42-T05 |
+| Session and grace limits | SR-012, SR-024, SR-041; SR-E42-12 | AD-S05, AD-E01, AD-E12 | `test_csrf_double_submit.py:317`; `test_stepup_invite_abuse.py:43`; `test_admin_http.py:288` pins the observability-only window until D8 | E09 (shipped), E42-T06, E42-S01 |
+| The referenced Highs | E04 H4; E16 R-E1 | AD-I10, AD-E10 | E04's secret scan of every bundle artefact; the purge's Owner check before its step-up (`api/step_up.py:423-425`) | E04, E16 |
+
+### 12.2 New issues filed by this model
+
+- **#3083** (AD-F01, High): the contract-driven step-up registry and the `flags` class, done by #3160.
+- **#3084** (AD-F02, High): a restore keeps later revocations and its own audit tail. It needs the Owner's choice (D7,
+  on #2701) and sits on the E42-T05 chain (#966); RSK-072.
+- **#3085** (AD-F03, High): contract-first view-as with a server-side read-only context. Its contract PR, #3164, is
+  open, and it blocks E42-S03's view-as PR (#1134); RSK-073.
+- **#3086** (AD-F10, Medium): `createUser` refuses `mfa_required: false`, and three served writes declare their `users`
+  step-up (SR-E42-13).
+- **#3196** (AD-F08, AD-F23, Medium): change capture for the admin security tables, `cv_ro` narrowed, and no
+  append-only table inheriting mutation rights (SR-E42-06, AD-I15, AD-E13); RSK-075.
+
+Schedule of the three Highs: #3083 is done. #3084 and #3085 carry no milestone yet; each gates an R3 ticket, E42-T05
+(#966) and E42-S03 (#1134), so each is to be set to R3, and neither route mounts before it lands (D7, D6). Not
+filed, both Low: AD-F24 and AD-F25 are requests on E42-T09 and #2304, and on E42-T04 (§12, §12.3); UL-F8's E40
+follow-up is still unfiled.
+
+### 12.3 Existing follow-up issues this model relies on
+
+<!-- prettier-ignore -->
+| Issue | Scope | Rows |
+| --- | --- | --- |
+| #2101 | SR-013: rotate the session on role change and step-up (E09) | AD-S03, AD-E06, AD-F11 |
+| #2304 | Bind the step-up challenge to the refused request (merged in part by #3088 and #3144). Required by this model: the router's 401 code | AD-S08, AD-I12, AD-F24 |
+| #2799 | B16 records the spend of a one-shot grant | AD-R10 |
+| #2763 | The actor's type and role at the time on every audit row (SR-062) | AD-R03, AD-S10, AD-F12 |
+| #2836 | The admin guard's denial budget and write timeout | AD-D06, AD-F13 |
+| #1238 | E43-T10: chain integrity, append-only grants and the off-box mirror (SR-068) | AD-T02, AD-R04, AD-F14, AD-F15 |
+| #2111 | E09 R-5: the scheduled nightly chain verifier | AD-D12, AD-T02 |
+| #2966 | The `VerifyRunner` built and injected, so the verify alerts can fire | AD-D12, §10.2 |
+| #2904 | Owner decision: the trading posture after a chain break | AD-D12 |
+| #2119 | E09-S11: the break-glass owner-recovery CLI (SR-023) | AD-S09 |
+| #2710 | Decisions still open after the E42-T04 split: SR-016's admin unlock, R8's purge flag | UL-F3, UL4-D1 |
+| #2658 | E42-T04's contract deltas (merged) | §8, UL-F9 |
+| #964 | E42-T03: the flag routes, the handler gate, push visibility, the maintenance gate | AD-E02, AD-E03, AD-D02, AD-I06, AD-T07 |
+| #889 | E42-T02: verify limits, the export and the download's handler gate | AD-R07, AD-D03, AD-D04, AD-I09 |
+| #966 | E42-T05: health, incidents, backups and the restore | AD-D08, AD-T05, AD-S11, AD-I04, AD-R01 |
+| #1085 | E42-T06: the admin re-auth ADR (D8) | AD-E01, AD-E12 |
+| #1026 | E42-X03: the abuse-case suite and the Semgrep rules | §9.2, AD-E03, AD-F22 |
+| #2850 | Reconcile `04-security-program.md` §7.2.2 with the contract's `x-rbac` and the RBAC matrix. Required by this model: the 18 admin operations | AD-F18 |
+| #956 | E39-S03: the kill-switch engine, the producer of kill-switch frames | AD-I06, AC-ADM-35 |
+
+## 13. Findings, residual risks, review and sign-off
+
+### 13.1 Findings register
+
+Risk is the inherent L x I of the rows whose gap the finding is (§1.4, OE as there). A finding marked contract,
+detection or traceability leaves its rows' controls standing and is rated on its own L x I (AD-F18, AD-F21, AD-F24,
+AD-F25). `04-security-program.md` §5.15 rates threats, not findings: AD4 is High from AD-S05, while AD-F06 is the
+gap in AD-E01. Dispositions are §1.4's T, M and A. AD-F01 to AD-F22 were reserved by the design pass, and AD-F23 to
+AD-F25 come from S3's reviews. The three High findings have remediation tickets: #3083 is done, and #3084 and #3085
+are to be scheduled in R3 (§12.2), whose gate allows no open Critical or High (`30-release-roadmap.md` §7.4,
+2027-02-04). The epic (#63) cannot close until they are Done.
+
+<!-- prettier-ignore -->
+| Id | Finding | STRIDE | Rows | L x I, risk | Disp. | Owner | Remediation and state |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AD-F01 | The step-up tripwire missed flag writes and dangerous reads, and the `flags` class did not exist | E, T | AD-E02 | M x H, High OE | T | Security engineer | #3083, done by #3160; the handler tests ship with the mounts (E42-T03, E42-T02) |
+| AD-F02 | A restore rolls back revocations and erases its own record and the incident's audit tail | R, E | AD-R05, AD-E07, AD-I11 | M x H, High OE | T | Owner/PO (D7) | #3084, open; before any restore route mounts (RSK-072) |
+| AD-F03 | View-as has no contract and no server owner, so "read-only" and "audited" are client properties | E, I | AD-E04, AD-I05 | M x H, High OE | T | Security engineer | #3085, open, with contract PR #3164; before E42-S03's view-as PR (RSK-073) |
+| AD-F04 | On-demand verify lacks the contract's slot, span cap, rate, deadline and records | D, R | AD-R07, AD-D04 | M x M, Medium | M | Backend lead | E42-T02 (#889), SR-E42-08; the read records (#2433) and the page check (#2443) are merged |
+| AD-F05 | The export stub answered 202 with a job that did not exist | R | AD-R09 | M x L, Low | M | Backend lead | Done by #2444 (501 as contracted) |
+| AD-F06 | SCR-149's 15-minute admin window is not enforced on the server | E, I | AD-E01 | M x M, Medium OE | M | Owner/PO (D8) | E42-T06 (#1085), E42-S01; SR-E42-12 (RSK-074) |
+| AD-F07 | Backup integrity rests on mutable columns and on encryption that does not show who made the artefact | T, S | AD-T05, AD-S11 | L x H, Medium OE | M | Backend lead | E42-T05 (#966), SR-E42-05 |
+| AD-F08 | Out-of-band writes to roles, grants, flags or backup rows leave no record and raise no signal, and a new append-only table inherits mutation rights | T, R | AD-T03, AD-T06, AD-R08, AD-E13 | L x H, Medium OE | T | Security engineer | #3196, open; SR-E42-06 (RSK-075) |
+| AD-F09 | The flag registry trusts each definition's declared categories, and its boot refusal is not composed into the app | E | AD-E03 | L x H, Medium | M | Security engineer | E42-T03 (#964), E42-X03 (#1026); SR-E42-07 |
+| AD-F10 | `createUser` accepts `mfa_required: false` (C-12.2), and three served writes do not declare their step-up | S | AD-S04 | L x H, Medium | T | Backend lead | #3086, open; SR-E42-13 |
+| AD-F11 | The session is not rotated on step-up or role change (SR-013) | S | AD-S03, AD-E06 | L x H, Medium | M | Security engineer | #2101 (E09), open |
+| AD-F12 | Audit rows carry no actor type or role at the time (SR-062) | R | AD-R03 | M x M, Medium | M | Backend lead | #2763, open |
+| AD-F13 | Admin denials are recorded once per request with no budget | D | AD-D06 | M x M, Medium | M | Backend lead | #2836, open; SR-E42-09; the WS path is bounded since #3165 |
+| AD-F14 | The owner role and superusers can rewrite audit history; the chain is unkeyed and its anchors are not built | T, R | AD-T02 | L x H, Medium | A, M | Owner/PO | Accepted until #1238 (§13.2); #2966 runs the verify |
+| AD-F15 | A chain link can diverge from id order on an insert path that does not lock first | R | AD-R04, AD-D12 | L x M, Low | M | Backend lead | E42-T02 (#889) or #1238; SR-E42-10 |
+| AD-F16 | `system` frames were role-blind; flag frames still need per-key visibility | I | AD-I06, AD-D11 | M x L, Low | M | Backend lead | Per role since #3136; per key E42-T03 (#964), SR-E42-14 |
+| AD-F17 | The E42 audit vocabulary is not registered: `maintenance.*`, `backup.verified`, `.deleted`, `.downloaded`, `incident.acknowledged`, `admin.view_as_*`, `admin.session_elevated`, `users.enable`, `.delete`, `.anonymise` | R | AD-R02 | M x L, Low | M | Backend lead | SR-E42-11: E42-T03, E42-T05, E42-T09, E42-T10, #3085 |
+| AD-F18 | `04-security-program.md` §7.2.2 has no capability row for 18 permission-bearing admin operations | — (traceability) | §1.3 | M x L, Low | M | Security engineer | Amendment note 3 (§13.3), required by this model on #2850 |
+| AD-F19 | Admin route existence and permission names reach non-owners | I | AD-I01 | M x L, Low | A | Owner/PO | Accepted as E09 U25 (§13.2) |
+| AD-F20 | Owner-only operations are declared with `audit:read`, which Managers hold | E | AD-E08 | L x M, Low | M | Security engineer | E43-S02; `test_route_matrix.py:240` once the summary mounts |
+| AD-F21 | Detection-signal and code names in the tickets do not exist under those names | R (detection) | §10 | H x L, Low | M | Security engineer | Amendment note 1 (§13.3) |
+| AD-F22 | Two admin routes with their own guard deny without a record or a count | R | AD-R01 | M x L, Low | M | Backend lead | E42-T05 (#966), E42-X03 (#1026); SR-E42-09 |
+| AD-F23 | The analytics role reads every identity and audit column (from S3) | I | AD-I15 | L x M, Low | T | Security engineer | #3196, open |
+| AD-F24 | The users and step-up routers answer 401 `unauthorized`, a code the registry lacks; its 401 is `unauthenticated` (C-6.5; from S3) | — (contract) | AD-S06 | M x L, Low | M | Backend lead | Not filed: required by this model on E42-T09 (#2649) for `api/users.py` and on #2304 for `api/step_up.py`; E42-X03 (#1026) pins the code; amendment note 6 |
+| AD-F25 | A failed post-commit step of the disable cascade is counted but not alerted, although the annex's R7 says it is (from S3) | T, I (detection) | UL1-T1, UL2-I1 | M x L, Low | M | Backend lead | Not filed: E42-T04 (#965) |
+
+States are as read at `b37d1c9d`. Two E42 changes merged after it, during S4, and are not re-read here: #3199
+(E42-T05) serves `GET /admin/health` behind the audited guard, half of AD-F22, and #2449 (E42-T02) anchors verify on
+the stored predecessor and hashes its batches off the loop, which bears on AD-F04. E42-X02 (#1220) re-reads both.
+
+The annex's findings keep their ids and routes (annex §5). STRIDE and L x I are those of the annex rows they cite
+(annex §3); UL-F8 cites a §6 residual, out of the annex's STRIDE scope. Their state at `b37d1c9d`:
+
+<!-- prettier-ignore -->
+| Id | STRIDE | Rows | L x I, risk | Disp. | Owner | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| UL-F1 | I | UL1-I1 | L x M, Low | M | E42-T04 (#965) | Met for the disable (`test_lifecycle_audit_has_no_pii`, #3096); each later slice repeats it |
+| UL-F2 | T | UL2-T2 | M x H, High | M | E42-X03 (#1026) | Open |
+| UL-F3 | T | UL3-T2 | M x H, High | M | E42-T09 (#2649) | Open; SR-016's admin unlock still has no owning ticket (#2710) |
+| UL-F4 | S | UL4-S1 | L x M, Low | A, M | E42-T02 (#889), E42-S04 | Open; the residual awaits the Owner (annex §6) |
+| UL-F5 | T | UL4-T2 | L x H, Medium | M | E42-T10 (#2650) | Open |
+| UL-F6 | D | UL4-D1 | M x M, Medium | M | E42-T10 (#2650) | Open |
+| UL-F7 | T, I | UL4-T1, UL4-I1 | M x H and H x M, High | M | E42-T10 (#2650) | Open |
+| UL-F8 | — (residual O7) | O7 (annex §6) | Medium (the §6 level) | M | E40 follow-up | Not filed (main-orchestrator) |
+| UL-F9 | R, D | UL1-R2, UL2-D1 | M x M, Medium | M | E42-T04 (#965), E42-T08 (#2648) | Met for the disable (`test_open_orders_left_and_counted`, #3096); E42-T08 S9 owes the unbind |
+| UL-F10 | R, S | UL3-R1, UL3-S2 | M x M and L x H, Medium | M | E42-T09 (#2649) | Open |
+| UL-F11 | E | UL3-E3 | M x H, High | M | E42-T09 (#2649) | Open |
+| UL-F12 | T | UL2-T2 | M x H, High | M | E42-T08 (#2648) | Met: `test_onboarding_ignores_revoked` covers both readers (#2843) |
+| UL-F13 | D, R | UL1-D1, UL3-R1 | L x H and M x M, Medium | M | E42-T04 (#965), E42-T09 (#2649) | Met for the store (`test_concurrent_demote_and_disable_keep_owner`, #3062); E42-T04 S6 and E42-T09 S11 owe the route cases |
+
+### 13.2 Accepted residual risks
+
+Owner acceptance pending, queued on #2701 (agent-delivery adaptation). Each has an owner and a review date; an expired
+acceptance is re-decided, not extended (`32-risk-register.md` §1.3). The rows below and the annex's §6 residuals are
+recorded as RR-17 in `04-security-program.md` §16.1 (RR-16 is ADR-0037's sink-refusal residual, from #2914).
+
+<!-- prettier-ignore -->
+| Row | Residual | Level | Owner | Review by |
+| --- | --- | --- | --- | --- |
+| AD-T02 (AD-F14) | The owner role or a superuser can rewrite audit history consistently until the SR-068 mirror and the anchors exist (#1238); detection is a verify walk, not yet scheduled (#2966) | Medium until #1238 | Owner/PO | 2027-02-04 (R3 gate) |
+| AD-E12 | One `users` or `flags` grace grant allows further writes of its class for 5 minutes, each recorded as `auth.step_up_grace_used` | Medium | Owner/PO | 2027-02-04 (R3 gate), or when the E42-T06 ADR records D8 |
+| AD-E01 (AD-F06) | If D8 keeps per-action step-up, admin reads need no fresh re-auth and SCR-149 is amended | Medium if accepted | Owner/PO | When D8 is recorded, and by 2027-02-25 (R4) |
+| AD-D02 | An unreachable flag store resolves the halt engaged: trading stops, while cancels, flatten and native stops stay (C-2.6) | Low | Owner/PO | 2027-02-25 (R4) |
+| AD-I02 | A token in the path of a live-gate `evidence_url` is recorded as given, a residual the contract accepts (yaml:8880-8886) | Low | Security engineer | 2027-02-25 (R4) |
+| AD-S10 | Code running in cv-api can insert an audit row naming any actor; SR-062's actor type (#2763) makes a writer-side check testable | Low | Security engineer | 2027-03-25 (GA cut) |
+| AD-I01 (AD-F19) | Refusals name the missing permission and the contract is public, so route existence is known (E09 U25) | Low | Security engineer | 2027-03-25 (GA cut) |
+| AD-D07 | A flag change can stop ingestion or recording, an operational choice shown on SCR-145 | Low | Owner/PO | 2027-03-25 (GA cut) |
+
+The annex's twelve §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
+(#2318; #2272, via #2690), so it is Low. AD-S05 stays Medium until D8 and #3085, and is not accepted. AD-R05,
+AD-E07, AD-I05 and AD-E04 are High until #3084 and #3085 land, but no restore or view-as route can mount before then
+(D6, D7), so none is an open residual and none is accepted. No High residual remains once the tickets in §13.1 ship.
+The register entries are RSK-072 (AD-F02), RSK-073 (AD-F01, AD-F03, AD-F09), RSK-074 (AD-F06) and RSK-075 (AD-F08,
+AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
+
+### 13.3 Amendment notes owed
+
+1. **Signal and code names (AD-F21).** #890 names `cv_audit_chain_verified` and `admin.access_denied`; E42-S01 names
+   `admin.access_denied` and the code `stepup_required`; E42-S04 names `audit.viewed`, `audit.record_viewed`,
+   `audit.exported` and a `cv_audit_chain_verified` gauge; E42-T03 labels its metrics `{key}`, which SR-125 refuses
+   (`admin/flags/metrics.py:3-4`). The served names are in §10: `cv_audit_verify_*`, `admin.area_entered` with
+   outcome `denied`, `step_up_required`, `admin.audit_read` and `admin.audit_export`; draft PR #2462 plans the gauge
+   `cv_audit_chain_verified_state`. The orchestrator amends the ticket bodies.
+2. **ADR number.** E42-T06 (#1085) plans ADR-0022, which is
+   `docs/plan/27-adrs/ADR-0022-hot-tier-questdb-vs-timescaledb.md`; ADR-0031 is reserved by E45-K01 and ADR-0037 is
+   #3009's (#3127), so the author takes the next free number (ADR-0038 at the time of writing).
+3. **`04-security-program.md` §7.2.2 (AD-F18).** No capability row names `listUsers`, `getUser`,
+   `listUserAccountAccess`, `listRoles`, `listPermissions`, `listPendingInvites`, `reissueInvite`, `revokeInvite`,
+   `previewMfaReset`, `resetUserMfa`, `setLogLevelOverride`, `createSupportBundle`, `getSupportBundle`, `getJob`,
+   `setSubaccountTier`, `listFeatureFlags`, `listBackups` or `getBackup`. The five public operations and
+   `getBuildInfo` need none, and #3164 adds row 40b for view-as. The rows are required by this model on #2850, the
+   open reconciliation of §7.2.2 with the contract.
+4. **`CreateUserRequest` (#3086).** `mfa_required` becomes `enum: [true]`, and `createUser`, `reissueInvite` and
+   `revokeInvite` declare the `users` step-up and its 403, contract-first (C-6.1).
+5. **Stale comments.** `pg_bootstrap.sql:106-108` names `0012_governance` as the revision that creates `audit_log`
+   (`0003` does), and `0003_audit_log.py:164-165` says the bootstrap's REVOKE "re-asserts this the moment both exist",
+   although a fresh install runs the bootstrap before `0003` (§3.1). `0003` is immutable (C-5.4), so this note is its
+   correction. The bootstrap comment is required by this model on #3196, which edits the same file under security
+   review (AD-I15, AD-E13).
+6. **The 401 code (AD-F24).** `api/users.py:239` and `api/step_up.py:563`, :567 and :678 answer `unauthorized`,
+   pinned by `test_users_router.py:392`, while the registry's code for a missing session is `unauthenticated`
+   (yaml:322-325; C-6.5). The code follows the registry, or the registry gains the code contract-first (C-6.1).
+   Owners as AD-F24 (§13.1): E42-T09 (#2649), #2304 and E42-X03 (#1026).
+7. **`validation_failed`.** The registry gives it status 400 (yaml:298-299), while verify, export and flag writes
+   specify `422 validation_failed` (yaml:8121-8122, :8286, :8874) and the `UnprocessableEntity` example carries it
+   (yaml:12233-12238). Required by this model on E42-X03 (#1026): one rule, settled contract-first (C-6.1, C-6.5);
+   until then the seeds follow each operation's text.
+
+### Review log
+
+<!-- prettier-ignore -->
+| Date | Reviewer | Result |
+| --- | --- | --- |
+| 2026-10-17 | author (agent, S1; PR #3124) | §1 to §3 at 27d7abc8 |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3124 | Round 1 at 27d7abc8: APPROVE x2, five MINORs (a drifted WS citation, the TB-6 decrypt wording, the contract's missing step-up declarations, the overstated bootstrap backstop, the independence sentence), fixed at dd701d79; round 2 at dd701d79: APPROVE x2, NITs only. Merged as 752a6a49 |
+| 2026-10-17 | author (agent, S2; PR #3178) | §4 to §7 at 50b02ebf |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3178 | Round 1 at 50b02ebf: APPROVE x2 (MINORs: the read-at anchors and drifted yaml citations, two rows naming no test), fixed at 84fee557; round 2 at 84fee557: APPROVE x2, two MINORs (#3136 landing after the anchor, recorded under the PR's Deviations and re-read in S3; the why-not-split note, in the PR body) and three NITs carried to S3. Merged as c19a8e98 |
+| 2026-10-17 | author (agent, S3; PR #3195) | §8 to §11 at 37448846, on `main` b37d1c9d |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3195 | Round 1 at 37448846: APPROVE x2, five MINORs and six NITs. The model's items were carried to S4 and closed there: the grace-window signal, #3196 as owner, AC-ADM-02, -12, -21, -25 and -35, the 401 and 422 notes, the cascade alert, the annex's Method bullet. The size MINOR and NIT and the gitleaks NIT were PR-process items, handled in #3195's body. Merged as 9be04b43 |
+| 2026-10-17 | author (agent, S4) | §12 and §13; RSK-072 to RSK-075 and three refinements; `04-security-program.md` §5.15 and RR-17, at 77085426 |
+| 2026-10-17 | security-reviewer and code-reviewer, independent; S4 | Round 1 at 77085426: security APPROVE, code REQUEST_CHANGES. One MAJOR: RR-16 is ADR-0037's residual, so this model's row is RR-17. MINORs: the rating rule against AD-F06 and AD-F24 (AD-F25 too), the R3 schedule of #3084 and #3085, STRIDE and L x I in the UL-F rows, fixed in a second commit after S4 was rebased onto `main` 9a9daa29 (77085426 became 3f40e033); the §5.11 overlap with #3213 and the C-4.8 note are PR-process items. NITs fixed: the heat-map rule, the review-log rows, owners for notes 3, 5 to 7 |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; S4 | Round 2 at 66ac2100: APPROVE x2. Two register wording MINORs (RSK-046's restore note, RSK-020's Manager scope), fixed at 65436df2; delta at 65436df2: APPROVE x2, with the same Manager-scope overstatement found in §5.1, AD-E01, N2 and AC-ADM-01 and fixed in this slice. Process items (the R3 milestones of #3084 and #3085, the §5.11 overlap with #3213 and #3220) are the orchestrator's |
+| Pending | Security engineer and Architect (human) | Review comments and sign-off on #890 and #63, with the H\* band-raise question (§1.4, D2) |
+| Pending | Owner (human) | D7 (#3084), D8 (E42-T06, #1085) and the §13.2 residuals (RR-17), queued on #2701 |
