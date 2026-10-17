@@ -695,4 +695,4 @@ def test_contract_error_registry_matches_openapi_x_error_codes_ws() -> None:
     ws_only = {e["code"] for e in spec["x-error-codes-ws"]}
     dual = {e["code"] for e in spec["x-error-codes"] if "ws" in (e.get("surface") or ())}
     assert wire_error_codes() == ws_only | dual
-    assert len(dual) == 6  # the six dual-surface codes the document names
+    assert len(dual) == 7  # the seven dual-surface codes the document names

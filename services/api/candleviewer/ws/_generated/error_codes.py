@@ -33,8 +33,13 @@ class ErrorCode(StrEnum):
     ACCOUNT_SCOPE_DENIED = "account_scope_denied"
     TRADING_DISABLED = "trading_disabled"
     RISK_LIMIT_BREACHED = "risk_limit_breached"
+    VIEW_AS_READ_ONLY = "view_as_read_only"
+    VIEW_AS_EXPIRED = "view_as_expired"
+    VIEW_AS_SELF_TARGET = "view_as_self_target"
+    VIEW_AS_OWNER_TARGET = "view_as_owner_target"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
+    VIEW_AS_ACTIVE = "view_as_active"
     IDEMPOTENCY_KEY_REUSE = "idempotency_key_reuse"
     IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
     OPEN_EXPOSURE = "open_exposure"
@@ -115,8 +120,13 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded"),
+    ErrorCode.VIEW_AS_READ_ONLY: ErrorMeta(("rest", "ws",), "any", False, None, None, "Session is viewing as another user, read-only; end view-as to make changes"),
+    ErrorCode.VIEW_AS_EXPIRED: ErrorMeta(("rest",), None, False, None, None, "View-as context ended by the server; clear it with DELETE /auth/session/view-as"),
+    ErrorCode.VIEW_AS_SELF_TARGET: ErrorMeta(("rest",), None, False, None, None, "A session cannot view as its own user"),
+    ErrorCode.VIEW_AS_OWNER_TARGET: ErrorMeta(("rest",), None, False, None, None, "An Owner is never viewed as"),
     ErrorCode.NOT_FOUND: ErrorMeta(("rest",), None, False, None, None, "Resource does not exist or is out of the caller's scope"),
     ErrorCode.CONFLICT: ErrorMeta(("rest",), None, False, None, None, "Concurrent modification or state conflict"),
+    ErrorCode.VIEW_AS_ACTIVE: ErrorMeta(("rest",), None, False, None, None, "Session already holds a view-as context; end it with DELETE /auth/session/view-as"),
     ErrorCode.IDEMPOTENCY_KEY_REUSE: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different request payload"),
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
     ErrorCode.OPEN_EXPOSURE: ErrorMeta(("rest",), None, False, None, None, "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"),

@@ -22,6 +22,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "DELETE /auth/session/view-as": {
+      "reason": "contract-first operation (#3085 contract slice); the view-as server slice serves it",
+      "ticket": "#3085"
+    },
     "DELETE /chart-templates/{templateId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -105,6 +109,10 @@
     "GET /auth/_perf/argon2-params": {
       "reason": "perf instrumentation: mounted only while CV_AUTH_PERF_ENABLED is on (keyless testnet); the default app runs with it off",
       "ticket": "#2097"
+    },
+    "GET /auth/session/view-as": {
+      "reason": "contract-first operation (#3085 contract slice); the view-as server slice serves it",
+      "ticket": "#3085"
     },
     "GET /chart-templates": {
       "reason": "contract-first operation; implementation lands with its owning epic",
@@ -393,6 +401,10 @@
     "POST /admin/incidents/{incidentId}/acknowledge": {
       "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
       "ticket": "E42-T05"
+    },
+    "POST /admin/view-as": {
+      "reason": "contract-first operation (#3085 contract slice); the view-as server slice serves it",
+      "ticket": "#3085"
     },
     "POST /alerts/deliveries/ack-all": {
       "reason": "contract-first operation; implementation lands with its owning epic",

@@ -55,6 +55,8 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
     ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
+    # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
+    ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",
     # 04 row 22 (own rules, no step-up). Rows 26 (raising an action budget, loosening a stop) and
     # 27 (import) mark step-up, but the contract documents none for `updateRule` or `createRule`:
     # `Problem.action_summary` says `rules:write` changes a rule without one and hands the rule
@@ -532,6 +534,7 @@ _PENDING_HANDLER_GATES = {
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
     ("PUT", "/admin/feature-flags/{flagKey}"),
     ("GET", "/admin/audit/exports/{jobId}"),
+    ("POST", "/admin/view-as"),  # #3085: its server slice mounts it and drops this row
 }
 
 

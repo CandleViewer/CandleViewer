@@ -173,6 +173,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "admin.audit_denied",
         # E42-T01: entering any /admin/* route (allowed or denied), {route, reauth_age_s}.
         "admin.area_entered",
+        # #3085 (E42 AD-F03): read-only view-as, emitted by its server slice. Their fields,
+        # reasons and severity are 22-api-openapi.yaml's (`startViewAs`, `endViewAs`, "View-as
+        # session"); not restated here (C-16.5).
+        "admin.view_as_started",
+        "admin.view_as_ended",
+        "admin.view_as_refused",
         "rbac.denied",
         "health.diagnostics_exported",
         # E27-T02: credential broker / KEK lifecycle (e27-kek.md §5-§6).
