@@ -128,7 +128,9 @@ def _page_chain_verified(rows: list[dict[str, Any]]) -> bool:
     `prev_hash` is the `entry_hash` of the row before it in the chain (genesis for the
     first), whether or not that row is on the page. A row whose canonical form was not
     fetched in full (`chain` is `None`, over the render caps) is unverified, never
-    verified. This proves the returned rows, not the rest of the chain (`verify` does).
+    verified. It shows the returned rows match their stored hashes and links, not that the
+    rest of the chain does (`verify` checks a range). The hash is unkeyed SHA-256: a writer
+    with database access could rebuild a consistent chain, which only external anchors detect.
 
     So `False` means either that a row or a link does not check out, or that the page was
     not fully checked because a rendering or the page is over the render caps. It is not by

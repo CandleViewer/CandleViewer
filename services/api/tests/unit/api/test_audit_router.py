@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
-from candleviewer.api.audit import make_audit_router
+from candleviewer.api.audit import _read_capped, make_audit_router
 from candleviewer.api.audit_budget import (
     FLUSH_REASON,
     SUMMARY_REASON,
@@ -353,25 +353,57 @@ def test_query_audit_log_rejects_from_after_to_with_422_not_500() -> None:
     assert response.status_code == 422
 
 
-def test_verify_audit_chain_rejects_unknown_body_field() -> None:
+@pytest.mark.parametrize(
+    ("body", "rule"),
+    [
+        (b'{"unexpected": "x"}', "extra_forbidden"),
+        (b'{"from_id": 10, "to_id": 5}', "value_error"),  # from_id > to_id
+        (b'{"from_id": "not-an-id"}', "int_parsing"),
+        (b'{"from_id": 0}', "greater_than_equal"),
+        (b'{"to_id": 9223372036854775808}', "less_than_equal"),  # past int64
+        (b"{not json", "json_invalid"),
+        (b"[1, 2]", "model_type"),
+    ],
+)
+def test_verify_audit_chain_invalid_body_is_422_validation_failed(body: bytes, rule: str) -> None:
+    """Design gap 9 and #2392: verify answered 400 for a bad body; the contract says 422."""
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post("/admin/audit/verify", json={"unexpected": "x"})
-    assert response.status_code == 400
+    r = client.post("/admin/audit/verify", content=body)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert [e["rule"] for e in r.json()["errors"]] == [rule]
+    assert service.query_service.verify_calls == []
 
 
-def test_verify_audit_chain_rejects_from_id_greater_than_to_id() -> None:
+@pytest.mark.parametrize(
+    ("principal", "status"), [(None, 401), (_manager_with_read(), 403), (_viewer_no_export(), 403)]
+)
+def test_verify_audit_chain_checks_the_caller_before_reading_the_body(
+    principal: AuditPrincipal | None, status: int
+) -> None:
+    """401 and 403 come before body validation: a malformed body tells an unauthorised
+    caller nothing, and the denial is still recorded."""
     service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post("/admin/audit/verify", json={"from_id": 10, "to_id": 5})
-    assert response.status_code == 400
+    client = TestClient(_app(service, _FakeResolver(principal)))
+    r = client.post("/admin/audit/verify", content=b"{not json")
+    assert r.status_code == status and service.query_service.verify_calls == []
+    recorded = [a for a, _ in service.writer_service.emitted]
+    assert recorded == ([] if principal is None else ["admin.audit_denied"])
 
 
-def test_verify_audit_chain_rejects_non_integer_from_id() -> None:
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), AuditReadFailed("08006"), AuditReadBusy(), ChainHasherBusy()]
+)
+def test_verify_audit_chain_store_failure_is_503_without_a_result(error: Exception) -> None:
     service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post("/admin/audit/verify", json={"from_id": "not-an-id"})
-    assert response.status_code == 400
+
+    async def failing(**_kw: Any) -> VerifyResult:
+        raise error
+
+    service.query_service.verify = failing  # type: ignore[method-assign]  # fault injection
+    r = TestClient(_app(service, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
+    assert "verified" not in r.json() and "08006" not in r.text
 
 
 def test_query_audit_log_from_alias_matches_openapi_and_reaches_service() -> None:
@@ -680,7 +712,7 @@ def test_validation_error_from_the_query_service_is_422_without_the_input() -> N
 def test_unknown_body_key_is_not_echoed() -> None:
     client, _ = _limited(_owner())
     r = client.post("/admin/audit/verify", json={"<img src=x>": 1})
-    assert r.status_code == 400 and r.json()["errors"] == [
+    assert r.status_code == 422 and r.json()["errors"] == [
         {"field": "(unknown)", "rule": "extra_forbidden"}
     ]
     assert "img" not in r.text
@@ -1131,3 +1163,44 @@ def test_served_page_time_is_observed_under_a_closed_filter_class(
     assert _budgeted(principal())[0].get("/admin/audit", params=params).status_code == 200
     assert REGISTRY.get_sample_value(name, labels) == before + 1
     assert label in FILTER_CLASSES
+
+
+def test_verify_body_over_one_kib_is_422_without_a_run() -> None:
+    """Review of #2451: the body is read at most 1 KiB; past that it is refused."""
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_owner())))
+    r = client.post("/admin/audit/verify", content=b'{"from_id": 1' + b" " * 1100 + b"}")
+    assert (r.status_code, r.json()["errors"]) == (422, [{"field": "", "rule": "max_body_bytes"}])
+    assert service.query_service.verify_calls == []
+    fits = b'{"from_id": 1' + b" " * 900 + b"}"
+    assert client.post("/admin/audit/verify", content=fits).status_code == 200
+
+
+class _Body:
+    """A request whose body arrives in `chunks`, with an optional `Content-Length`."""
+
+    def __init__(self, chunks: list[bytes], declared: str | None = None) -> None:
+        self.chunks, self.pulled = chunks, 0
+        self.headers = {} if declared is None else {"content-length": declared}
+
+    async def stream(self) -> Any:
+        for chunk in self.chunks:
+            self.pulled += 1
+            yield chunk
+
+
+async def _capped(body: _Body) -> bytes | None:
+    return await _read_capped(body, 1024)  # type: ignore[arg-type]  # a fake request
+
+
+async def test_capped_body_read_stops_once_past_the_limit() -> None:
+    body = _Body([b"x" * 600] * 10)
+    assert await _capped(body) is None
+    assert body.pulled == 2  # nothing read past the chunk that would cross the limit
+
+
+async def test_capped_body_read_is_exact_and_refuses_a_long_declared_length_unread() -> None:
+    assert await _capped(_Body([b"x" * 1024])) == b"x" * 1024
+    assert await _capped(_Body([b"x" * 1024, b"y"])) is None
+    declared = _Body([b"{}"], declared="5000")
+    assert await _capped(declared) is None and declared.pulled == 0

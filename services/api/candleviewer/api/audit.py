@@ -207,6 +207,24 @@ def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 42
     )
 
 
+#: The verify body holds two ids at most; a longer one is refused without reading the rest.
+_VERIFY_BODY_MAX_BYTES = 1024
+
+
+async def _read_capped(request: Request, limit: int) -> bytes | None:
+    """The request body, or `None` once it would pass `limit` bytes: a declared
+    `Content-Length` over it is refused unread, and no chunk past it is kept."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > limit:
+            return None
+        body += chunk
+    return bytes(body)
+
+
 def _unavailable(detail: str = "audit record could not be written") -> JSONResponse:
     return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
 
@@ -517,19 +535,31 @@ def make_audit_router(
         return JSONResponse(status_code=200, content=_jsonable(page), headers=_NO_STORE)
 
     @router.post("/verify")
-    async def verify_audit_chain(
-        request: Request,
-        body: dict[str, Any] | None = None,
-    ) -> JSONResponse:
+    async def verify_audit_chain(request: Request) -> JSONResponse:
         try:
             service, _, _ = await _authorize_or_raise(request, "verify")
         except _HttpProblem as problem:
             return problem.response
+        # The optional body is read only now: 401 and 403 come before its validation.
+        raw = await _read_capped(request, _VERIFY_BODY_MAX_BYTES)
+        if raw is None:
+            detail = f"the body is over {_VERIFY_BODY_MAX_BYTES} bytes"
+            errors = [{"field": "", "rule": "max_body_bytes"}]
+            return _problem(
+                422, "Request validation failed", detail, code="validation_failed", errors=errors
+            )
         try:
-            req = AuditVerifyRequest.model_validate(body or {})
+            req = AuditVerifyRequest.model_validate_json(raw or b"{}")
         except ValidationError as exc:
-            return _invalid(exc, AuditVerifyRequest, 400)
-        result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
+            return _invalid(exc, AuditVerifyRequest)
+        try:
+            result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
+        except TimeoutError:
+            return _unavailable("audit verify exceeded its time budget")
+        except ChainHasherBusy:
+            return _unavailable("audit read capacity reached")
+        except StorageTierUnavailable:
+            return _unavailable("audit store unavailable")  # logged where it is raised
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
