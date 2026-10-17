@@ -271,15 +271,24 @@ class _Result:
     def all(self) -> list[Any]:
         return [tuple(r.values()) for r in self._rows]
 
+    def one(self) -> dict[str, object]:
+        (row,) = self._rows
+        return row
+
+    def first(self) -> dict[str, object] | None:
+        return self._rows[0] if self._rows else None
+
 
 class _Session:
     def __init__(self, script: list[list[dict[str, object]]]) -> None:
         self._script = script
         self.statements: list[str] = []
+        self.executed: list[sa.TextClause] = []
         self.params: list[dict[str, Any]] = []
 
     async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
         self.statements.append(str(stmt)[:20])
+        self.executed.append(stmt)
         self.params.append(params)
         return _Result(self._script.pop(0))
 
@@ -407,4 +416,143 @@ async def test_apply_batch_accepts_exactly_the_cap_and_reaches_the_snapshot() ->
     result = await repo.apply_batch("o", ops)
     assert len(result.created) == mod.MAX_BATCH_OPS_STORAGE
     assert len(rel.uow.session.statements) == 2  # snapshot + one INSERT
+    assert rel.uow.commits == 1
+
+
+# --- the anchor columns are written by every write path (#2994, QA of #357) ---------------
+#
+# `anchor_start` and `anchor_end` are nullable, so a write that forgets them stores NULL or keeps
+# the old values without any error, and nothing else notices. Two layers pin them: the text of
+# each write statement pairs each anchor column with its own value, and the repository hands
+# each write the anchors of the fields it was given.
+
+_A_START = datetime(2026, 10, 1, 8, 15, tzinfo=UTC)
+_A_END = datetime(2026, 10, 3, 17, 45, tzinfo=UTC)
+_B_START = datetime(2026, 11, 2, 9, 5, tzinfo=UTC)
+_B_END = datetime(2026, 11, 9, 21, 30, tzinfo=UTC)
+
+
+def _anchored(start: datetime, end: datetime) -> DrawingFields:
+    """`_fields()` with its own anchors; start and end differ, so a swap of the two shows."""
+    return dataclasses.replace(_fields(), anchor_start=start, anchor_end=end)
+
+
+def _split_top_level(text: str) -> list[str]:
+    """`a, f(b, c), d` -> [`a`, `f(b, c)`, `d`]: a comma inside parentheses does not split."""
+    parts: list[str] = []
+    depth = begin = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(text[begin:i].strip())
+            begin = i + 1
+    return [*parts, text[begin:].strip()]
+
+
+def _insert_pairs(name: str) -> dict[str, str]:
+    """Column -> the expression an INSERT statement stores in it (VALUES or SELECT list)."""
+    text = str(_STATEMENTS[name])
+    columns = _split_top_level(text.split("INSERT INTO drawings (", 1)[1].split(") ", 1)[0])
+    if name == "_INSERT":  # ... VALUES (...) RETURNING ...
+        values = text.split(" VALUES (", 1)[1].split(") RETURNING", 1)[0]
+    else:  # `_INSERT_MANY`: ... ) SELECT ... FROM jsonb_to_recordset(...) ...
+        values = text.split(") SELECT ", 1)[1].split(" FROM ", 1)[0]
+    assert len(columns) == len(_split_top_level(values))  # a dropped value must not mis-pair
+    return dict(zip(columns, _split_top_level(values), strict=True))
+
+
+def _set_pairs(name: str) -> dict[str, str]:
+    """Column -> the expression an UPDATE statement assigns to it (its SET list)."""
+    set_list = str(_STATEMENTS[name]).split(" SET ", 1)[1].split(" FROM ", 1)[0]
+    pairs = (a.partition(" = ") for a in _split_top_level(set_list.split(" WHERE ", 1)[0]))
+    return {column: expression for column, _, expression in pairs}
+
+
+#: Write statement -> anchor column -> the expression it must store there.
+_ANCHOR_WRITES = {
+    "_INSERT": {"anchor_start": ":anchor_start", "anchor_end": ":anchor_end"},
+    "_UPDATE": {"anchor_start": ":anchor_start", "anchor_end": ":anchor_end"},
+    "_INSERT_MANY": {"anchor_start": "n_anchor_start", "anchor_end": "n_anchor_end"},
+    "_UPDATE_MANY": {"anchor_start": "r.n_anchor_start", "anchor_end": "r.n_anchor_end"},
+}
+
+
+def test_every_statement_that_writes_geometry_is_pinned_for_its_anchors() -> None:
+    """Self-discovering: a statement added later that stores a drawing's points must say where
+    its anchors come from."""
+    writers = {
+        name
+        for name, stmt in _STATEMENTS.items()
+        if str(stmt).startswith("INSERT INTO drawings")
+        or (str(stmt).startswith("UPDATE drawings SET") and "geometry" in _set_pairs(name))
+    }
+    assert writers == set(_ANCHOR_WRITES)
+
+
+@pytest.mark.parametrize("name", sorted(_ANCHOR_WRITES))
+def test_every_write_statement_stores_each_anchor_from_its_own_value(name: str) -> None:
+    pairs = _insert_pairs(name) if name.startswith("_INSERT") else _set_pairs(name)
+    stored = {column: pairs.get(column) for column in _ANCHOR_WRITES[name]}
+    assert stored == _ANCHOR_WRITES[name]
+
+
+def _statement_names(session: _Session) -> list[str]:
+    """The module-level names of the statements `session` executed, in order."""
+    return [next(n for n, v in _STATEMENTS.items() if v is s) for s in session.executed]
+
+
+def _row_anchors(params: dict[str, Any]) -> dict[str, tuple[str, str]]:
+    """Op id -> the anchors its row carries in a set-based statement's `rows` parameter."""
+    rows = json.loads(params["rows"])
+    return {r["n_id"]: (r["n_anchor_start"], r["n_anchor_end"]) for r in rows}
+
+
+async def test_create_binds_the_anchors_of_its_fields() -> None:
+    rel = _Rel([[_mapping(id="i")]])
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    await repo.create("o", "i", _anchored(_A_START, _A_END))
+    assert _statement_names(rel.uow.session) == ["_INSERT"]
+    bound = rel.uow.session.params[0]
+    assert (bound["anchor_start"], bound["anchor_end"]) == (_A_START, _A_END)
+    assert rel.uow.commits == 1
+
+
+async def test_put_binds_the_anchors_of_its_fields() -> None:
+    rel = _Rel([[_mapping(id="i")]])
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    await repo.update("o", "i", _anchored(_B_START, _B_END), if_match=None)
+    assert _statement_names(rel.uow.session) == ["_UPDATE"]
+    bound = rel.uow.session.params[0]
+    assert (bound["anchor_start"], bound["anchor_end"]) == (_B_START, _B_END)
+    assert rel.uow.commits == 1
+
+
+async def test_a_batch_carries_each_ops_own_anchors_into_its_statement() -> None:
+    ops: list[Any] = [
+        CreateOp("c1", _anchored(_A_START, _A_END)),
+        CreateOp("c2", _anchored(_B_START, _A_END)),
+        UpdateOp("u1", _T, _anchored(_B_START, _B_END)),
+        UpdateOp("u2", _T, _anchored(_A_START, _B_END)),
+    ]
+    script = [
+        [_snap_row("u1"), _snap_row("u2")],
+        [_mapping(id="c1"), _mapping(id="c2")],
+        [_mapping(id="u1"), _mapping(id="u2")],
+    ]
+    rel = _Rel(script)
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    await repo.apply_batch("o", ops)
+    session = rel.uow.session
+    assert _statement_names(session) == ["_SNAPSHOT", "_INSERT_MANY", "_UPDATE_MANY"]
+    assert _row_anchors(session.params[1]) == {
+        "c1": (_A_START.isoformat(), _A_END.isoformat()),
+        "c2": (_B_START.isoformat(), _A_END.isoformat()),
+    }
+    assert _row_anchors(session.params[2]) == {
+        "u1": (_B_START.isoformat(), _B_END.isoformat()),
+        "u2": (_A_START.isoformat(), _B_END.isoformat()),
+    }
     assert rel.uow.commits == 1
