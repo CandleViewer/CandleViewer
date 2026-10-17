@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -96,7 +96,7 @@ def stack(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> It
     """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` off and on (#412 S2a)."""
     clock = _Clock()
     auth = AuthService(session_repository=FakeSessionRepository(), clock=clock)
-    auth._repository = FullUsers()  # #2295: the WS classifies every session; these are full
+    cast(Any, auth)._repository = FullUsers()  # #2295: the WS classifies every session
     monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(
         app_module,
