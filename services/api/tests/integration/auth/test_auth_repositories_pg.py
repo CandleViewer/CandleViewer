@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.hashing import Hasher
@@ -64,6 +65,14 @@ async def _login_challenge(mfa: SqlAlchemyMfaRepository, uid: str) -> str:
         expires_at=_NOW + timedelta(minutes=5),
     )
     return str(challenge.id)
+
+
+async def _rows(rel: SqlAlchemyRelationalRepository, statement: str, **params: str) -> list[Any]:
+    """The rows of the static *statement*, run in its own committed unit of work."""
+    async with rel.unit_of_work() as uow:
+        rows = (await uow.session.execute(sa.text(statement), params)).all()
+        await uow.commit()
+    return list(rows)
 
 
 async def test_login_lockout_and_reset_round_trip(pg_dsn: str) -> None:
@@ -180,8 +189,9 @@ async def test_recovery_spends_once_revokes_every_method_and_rolls_back_a_lost_r
     pg_dsn: str,
 ) -> None:
     """#2344, one transaction: the code is spent and its challenge satisfied at most once, only
-    as the user's own, and every method of the user is revoked with them; a lost race (a spent
-    code, a satisfied challenge, another user's code) changes nothing."""
+    as the user's own, and every method of the user is revoked with them, with one
+    `security.mfa_recovery_used` system event; a lost race (a spent code, a satisfied challenge,
+    another user's code) changes nothing, and neither does the user's disable (#2911)."""
     await seed(pg_dsn, "dave", "correct horse battery")
     await seed(pg_dsn, "erin", "correct horse battery")
     rel = SqlAlchemyRelationalRepository(pg_dsn)
@@ -215,5 +225,19 @@ async def test_recovery_spends_once_revokes_every_method_and_rolls_back_a_lost_r
         assert await mfa.count_unused_recovery_codes(uid) == 1
         assert await mfa.count_unused_recovery_codes(erin) == 1
         assert await mfa.satisfy_challenge(second, now=_NOW) is True  # still open
+        events = await _rows(
+            rel,
+            "SELECT details->>'challenge_id' AS c FROM system_events WHERE component = 'auth' "
+            "AND kind = 'security.mfa_recovery_used' AND details->>'user_id' = :u",
+            u=uid,
+        )
+        assert [row.c for row in events] == [first]
+
+        disable = "UPDATE users SET status = 'disabled' WHERE id = CAST(:u AS uuid) RETURNING id"
+        await _rows(rel, disable, u=uid)
+        third = await _login_challenge(mfa, uid)
+        assert await mfa.complete_recovery(uid, challenge_id=third, code_id=other, now=_NOW) is None
+        assert await mfa.count_unused_recovery_codes(uid) == 1
+        assert await mfa.satisfy_challenge(third, now=_NOW) is True  # still open
     finally:
         await rel.dispose()

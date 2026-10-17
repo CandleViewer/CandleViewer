@@ -20,6 +20,7 @@ from candleviewer.auth.errors import (
     MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    UserDisabled,
 )
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
 from candleviewer.auth.models import (
@@ -261,6 +262,7 @@ async def test_recovery_code_use_forces_totp_reenrollment() -> None:
     method = next(iter(repo.methods.values()))
     assert (method.confirmed_at is not None, method.revoked_at) == (True, _NOW)
     assert next(iter(repo.challenges.values())).satisfied_at == _NOW
+    assert repo.recovery_events == [str(user_id)]  # contract: `security.mfa_recovery_used`
 
 
 @pytest.mark.parametrize("unused_before", [10, 4, 3, 2, 1])
@@ -322,6 +324,27 @@ async def test_complete_recovery_revokes_every_method_of_that_user_only() -> Non
     assert len(mine) == 2 and {m.revoked_at for m in mine} == {_NOW}
     assert await repo.find_pending_method(str(pending.method_id), str(user_id)) is None
     assert [m.revoked_at for m in repo.methods.values() if m.user_id == other] == [None]
+
+
+async def test_complete_recovery_of_a_user_disabled_since_the_check_changes_nothing() -> None:
+    """#2911: a disable that committed after the check is read under the user-row lock in the
+    spend's own transaction: `UserDisabled`, no attempt counted, no event, nothing spent."""
+    repo = FakeMfaRepository()
+    service = _service(repo)
+    user_id = uuid.uuid4()
+    await _enroll_and_confirm(service, repo, user_id)
+    codes = await _with_recovery_codes(repo, user_id, 10)
+    check = await service.check_recovery(await _make_login_challenge(repo, user_id), codes[0])
+    methods = dict(repo.methods)
+    repo.disabled_users.add(str(user_id))
+
+    with pytest.raises(UserDisabled):
+        await service.complete_recovery(check)
+
+    challenge = next(iter(repo.challenges.values()))
+    assert (challenge.satisfied_at, challenge.attempts) == (None, 0)
+    assert (repo.methods, repo.recovery_events) == (methods, [])
+    assert await repo.count_unused_recovery_codes(str(user_id)) == 10
 
 
 async def test_recovery_codes_exhausted_raises_and_creates_no_session() -> None:
