@@ -78,6 +78,13 @@ def test_lane_kid_is_one_way_and_the_previous_key_only_verifies() -> None:
     assert isinstance(decode_frame(rotated, GOOD, lane=LANE), LaneFrame)
     assert rotated.current_kid == key_id(PREVIOUS) != key_id(KEY)
     assert decode_frame(KEYS, newer, lane=LANE) == "hold"
+    assert isinstance(decode_frame(LaneKeys(PREVIOUS), newer, lane=LANE), LaneFrame)  # signed so
+
+
+@pytest.mark.parametrize("keys", [(KEY[:31], None), (KEY, KEY[:31]), (KEY, KEY + b"x")])
+def test_lane_refuses_a_key_of_the_wrong_length(keys: tuple[bytes, bytes | None]) -> None:
+    with pytest.raises(LaneKeyInvalid):
+        LaneKeys(*keys)
 
 
 @pytest.mark.parametrize(
@@ -157,10 +164,13 @@ def test_lane_frame_limit_is_the_whole_encoded_frame() -> None:
     pad = MAX_FRAME_BYTES - len(frame_of(envelope(rec={"pad": ""}))) - 2  # `len` gains 2 digits
     largest = frame_of(envelope(rec={"pad": "x" * pad}))
     rec: dict[str, object] = {"pad": "x" * (pad + 1)}
+    second = frame_of(envelope(seq=2, prev=GOOD[-65:-1].decode(), rec={"pad": "x" * pad}))
+    both = scan(KEYS, marker=None, names=[segment_name(1)], read=lambda _: GOOD + second)
 
     assert len(largest) == MAX_FRAME_BYTES
     assert isinstance(decode_frame(KEYS, largest, lane=LANE), LaneFrame)
     assert decode_frame(KEYS, frame_of(envelope(rec=rec)), lane=LANE) is None
+    assert both.state.next_seq == 3  # each frame counted from its own start
     with pytest.raises(LaneFrameTooLarge):
         encode_frame(KEYS, lane=LANE, seq=1, prev=ZERO_MAC, cls="reserved", rec=rec)
 
