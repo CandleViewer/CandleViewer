@@ -33,9 +33,12 @@ def _script() -> str:
 def _run_step(failing_pass: int) -> subprocess.CompletedProcess[str]:
     """The step's script in a bare `bash`, with `uv` stubbed so its `failing_pass`-th call fails.
 
-    The environment is empty on purpose: `BASH_ENV` or `SHELLOPTS=errexit` inherited from the
-    caller would put `-e` back and let the script pass without saying it. The script is builtins
-    and the stub only, so it needs no `PATH`."""
+    The environment is nothing but a `PATH` that leads nowhere, on purpose. `BASH_ENV` or
+    `SHELLOPTS=errexit` inherited from the caller would put `-e` back and let the script pass
+    without saying it. With no `PATH` at all bash falls back to a default one and would find the
+    real `uv`, or any other real command, without a sound; an empty `PATH` makes it look in the
+    current directory. Here a real command is "command not found" and fails the pass, and the
+    test with it. The script is builtins and the stub only, so it needs no `PATH`."""
     stub = f'calls=0\nuv() {{ calls=$((calls + 1)); [ "$calls" -ne {failing_pass} ]; }}\n'
     return subprocess.run(
         ["/bin/bash", "--noprofile", "--norc"],
@@ -44,7 +47,7 @@ def _run_step(failing_pass: int) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=30,
         check=False,
-        env={},
+        env={"PATH": "/nonexistent"},
     )
 
 

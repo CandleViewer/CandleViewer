@@ -253,21 +253,23 @@ async def test_start_and_wait_raises_at_once_when_compose_start_fails(
 async def test_start_and_wait_warns_without_naming_a_cause_when_a_slow_start_needs_a_second_call(
     docker: FakeDocker, clock: FakeClock
 ) -> None:
-    # GH-3167: the first start worked, Postgres only answers after 12 s. The 10 s re-issue fires
-    # all the same, so the warning cannot say the earlier start "exited 0 without starting it".
+    # GH-3167: the first start worked, Postgres only answers after 9 s. The 7 s re-issue fires all
+    # the same, so the warning cannot say the earlier start "exited 0 without starting it". The
+    # interval is not the default (10 s) on purpose: a message built from `START_RETRY_S` instead
+    # of the interval the call was given fails here.
     docker.running.discard("postgres")
 
     async def ready() -> bool:
-        return "postgres" in docker.running and clock.t >= 12
+        return "postgres" in docker.running and clock.t >= 9
 
     with pytest.warns(RuntimeWarning) as caught:
         await st.start_and_wait(
-            "postgres", ready, retry_every_s=10, now=clock.now, sleep=clock.sleep
+            "postgres", ready, retry_every_s=7, now=clock.now, sleep=clock.sleep
         )
     assert len(docker.starts()) == 2
     (message,) = [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)]
     assert message.startswith("postgres needed 2 `compose start` calls")
-    assert "no answer within 10s of an earlier one" in message
+    assert "no answer within 7s of an earlier one" in message
     assert "without starting" not in message  # not known: a slow start trips this warning too
 
 
@@ -425,19 +427,40 @@ async def test_ensure_up_fails_loudly_when_the_service_cannot_be_started(
 # --- pg_up(): ready means "answers a query", not "the port is open" --------
 
 
+async def _no_answer() -> None:
+    """Wait for an answer that never comes, but not for ever. A task is cancelled once, so code
+    that awaits this again after its own cancel was spent would never leave, and no outer
+    timeout could end it: the run would hang with it. Fail loudly instead, as whoever awaits
+    this had no bound of its own."""
+    try:
+        async with asyncio.timeout(1):
+            await asyncio.Event().wait()
+    except TimeoutError:
+        raise AssertionError(
+            "awaited an answer that never comes, with no bound of its own"
+        ) from None
+
+
 class _Conn:
     """The slice of an asyncpg connection `pg_up` uses."""
 
-    def __init__(self, *, stalls: bool = False) -> None:
+    def __init__(
+        self, *, stalls: bool = False, hangs: bool = False, close_hangs: bool = False
+    ) -> None:
         self.queries: list[str] = []
         self.timeouts: list[float | None] = []
         self.closed = False
+        self.terminated = False
         self.stalls = stalls  # the server took the connection, then never answers the query
+        self.hangs = hangs  # ... and the query's own bound is further off than the probe's
+        self.close_hangs = close_hangs  # ... and never answers the cancel or the Terminate either
 
     async def execute(self, sql: str, **kwargs: float | None) -> str:
         timeout = kwargs.get("timeout")  # asyncpg: `Connection.execute(query, *args, timeout=None)`
         self.queries.append(sql)
         self.timeouts.append(timeout)
+        if self.hangs:
+            await _no_answer()
         if self.stalls:
             # asyncpg raises TimeoutError at its deadline; given none it waits indefinitely.
             assert timeout is not None, "an unbounded query would hang pg_up"
@@ -445,7 +468,15 @@ class _Conn:
         return "SELECT 1"
 
     async def close(self) -> None:
+        if self.close_hangs:
+            # asyncpg's `close()` first waits for the server to answer the cancel of a timed-out
+            # query, which a stalled server never does; after a good one it waits for the server
+            # to drop the connection once the Terminate is sent.
+            await _no_answer()
         self.closed = True
+
+    def terminate(self) -> None:
+        self.terminated = True
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, conn: _Conn) -> list[tuple[str, dict[str, object]]]:
@@ -481,13 +512,38 @@ async def test_pg_up_bounds_both_the_connect_and_the_query(monkeypatch: pytest.M
     assert conn.timeouts == [3]
 
 
-async def test_pg_up_is_false_and_closes_the_connection_when_the_query_stalls(
+async def test_pg_up_is_false_and_drops_the_connection_when_the_query_stalls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = _Conn(stalls=True)
     _serve(monkeypatch, conn)
     assert await st.pg_up() is False
-    assert conn.closed
+    assert conn.terminated  # abandoned, not closed: a stalled server would not answer a close
+
+
+@pytest.mark.parametrize(
+    "conn_kwargs",
+    [
+        {"stalls": True, "close_hangs": True},
+        {"hangs": True, "close_hangs": True},
+        {"close_hangs": True},
+    ],
+    ids=["query-timed-out", "query-outlasts-the-bound", "query-answered"],
+)
+async def test_pg_up_is_false_within_its_bound_when_the_close_never_returns(
+    monkeypatch: pytest.MonkeyPatch, conn_kwargs: dict[str, bool]
+) -> None:
+    # GH-3167: a server that takes the connection and then stalls never answers the cancel of a
+    # timed-out query, so asyncpg's `close()` never returns and `pg_up`, and `start_and_wait`'s
+    # deadline check with it, hung. The probe's own bound has to end it, whichever await it is in.
+    # `query-outlasts-the-bound`: a slow connect used up the time, so the bound lands inside the
+    # query and cancels it, once. Nothing may be awaited after that. A regression fails here
+    # through `_no_answer` (an `AssertionError` after 1 s), not by hanging.
+    monkeypatch.setattr(st, "PG_PROBE_TIMEOUT_S", 0.05)
+    conn = _Conn(**conn_kwargs)
+    _serve(monkeypatch, conn)
+    assert await st.pg_up() is False
+    assert conn.terminated  # dropped, not left open
 
 
 @pytest.mark.parametrize(
