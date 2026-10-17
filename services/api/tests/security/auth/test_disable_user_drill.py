@@ -96,6 +96,7 @@ class _Env:
         )
         # The composition root wires these only with a real database; same seams, fake storage.
         auth._sessions = self.sessions
+        auth._repository = FullUsers()  # #2295: classified as full
         auth._step_up = self.step_up
         self.audit: list[dict[str, Any]] = []
         self.app.state.app_context.audit._writer = self  # stand-in for the started AuditWriter
@@ -221,7 +222,6 @@ def _with_the_hubs_sink(env: Any) -> Any:
         clock=env.clock,
         publish_revocation=app_module._hub_publisher(env.hub),
     )
-    auth._repository = FullUsers()  # #2295: classified as full
     return auth
 
 

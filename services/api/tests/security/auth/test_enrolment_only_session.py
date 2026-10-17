@@ -14,6 +14,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord, UserStatus
@@ -245,6 +246,39 @@ def test_refresh_leaves_a_disabled_users_session_to_the_audited_refusal(stack: S
     assert _refusals(stack, "http", "expired") == before
 
 
+def _dead_successor(stack: Stack) -> tuple[MintedSession, dict[str, str]]:
+    """Refreshed at minute 10, its access handle lives to minute 22; the session ends at 15."""
+    minted, _ = _mint(stack, _enrolling(stack))
+    stack.clock.now += timedelta(minutes=10)
+    successor: MintedSession = stack.call(stack.auth.sessions.refresh, minted.refresh_token).minted
+    stack.clock.now = T0 + timedelta(minutes=16)
+    return successor, _headers(stack, successor)
+
+
+def test_a_dead_enrolment_only_session_is_refused_as_expired_not_as_enrolment_only(
+    stack: Stack,
+) -> None:
+    _, headers = _dead_successor(stack)
+    before = _refusals(stack, "http", "expired")
+
+    resp = stack.client.get("/auth/sessions", headers=headers)
+
+    assert (resp.status_code, resp.json()["code"]) == (401, "unauthenticated")
+    assert _refusals(stack, "http", "expired") == before + 1
+    assert stack.audit.of(REFUSAL_ACTION) == []  # a dead session, not an authorisation denial
+
+
+def test_refresh_of_a_dead_enrolment_only_session_is_refused_before_any_audit(
+    stack: Stack,
+) -> None:
+    successor, _ = _dead_successor(stack)
+
+    resp = _refresh(stack, successor)
+
+    assert (resp.status_code, resp.json()["detail"]) == (401, "refresh_token_invalid")
+    assert stack.audit.of("auth.session_refreshed") == []  # refused before the write-ahead row
+
+
 def test_refresh_rotates_an_enrolment_only_session_inside_its_window(stack: Stack) -> None:
     minted, _ = _mint(stack, _enrolling(stack))
     stack.clock.now += timedelta(minutes=5)
@@ -298,20 +332,27 @@ def test_ws_refuses_an_enrolment_only_session_at_auth_and_never_registers_it(
 
 
 def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack) -> None:
-    """The socket refusal leaves the trail the HTTP one does, though the socket never
-    authenticated (its close is not audited: `ws.connection.closed` needs a user)."""
+    """The socket refusal leaves the trail the HTTP one does, source address included, though
+    the socket never authenticated (its close is not audited: `ws.connection.closed` needs a
+    user)."""
     user = _enrolling(stack)
     minted, _ = _mint(stack, user)
     before = _refusals(stack, "ws", "enrolment_only")
 
-    with _socket(stack) as ws:
+    with capture_logs() as logs, _socket(stack) as ws:
         _hello_auth(ws, minted.access_token)
         _closed(ws)
 
     (record,) = stack.audit.of(REFUSAL_ACTION)
-    assert (record["actor_user_id"], record["session_id"]) == (user.id, minted.session_id)
+    assert (record["actor_user_id"], record["session_id"], record["actor_ip"]) == (
+        user.id,
+        minted.session_id,
+        "127.0.0.1",
+    )
     assert record["after_state"] == {"channel": "ws", "method": "GET", "path": "/ws"}
     assert _refusals(stack, "ws", "enrolment_only") == before + 1
+    (line,) = [e for e in logs if e["event"] == "ws auth refused"]
+    assert (line["reason"], line["source_ip"]) == (_CODE, "127.0.0.1")
 
 
 def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_must_enrol(
@@ -331,6 +372,24 @@ def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_mu
         code = _closed(ws)
 
     assert (bye["p"]["reason"], code) == (_CODE, 4403)
+
+
+def test_ws_serves_a_full_verdict_only(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deny by default (C-12.4), as the HTTP guard's allow-list: a verdict the socket does not
+    know (a later class, or a fake's plain string) is a failed `auth`, never `auth_ok`."""
+    headers, _ = _member(stack)
+
+    async def unknown(_session: Any) -> Any:
+        return "full"  # equal to `SessionClass.FULL`, yet not that member
+
+    monkeypatch.setattr(stack.auth, "classify", unknown)
+    before = _refusals(stack, "ws", "expired")
+
+    with _socket(stack) as ws:
+        reply = _hello_auth(ws, headers["Authorization"].removeprefix("Bearer "))
+
+    assert (reply["t"], reply["p"]["code"]) == ("err", "auth_failed")
+    assert _refusals(stack, "ws", "expired") == before + 1
 
 
 def test_ws_refuses_an_overlong_session_like_an_expired_token(stack: Stack) -> None:

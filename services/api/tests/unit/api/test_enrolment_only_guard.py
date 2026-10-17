@@ -7,6 +7,7 @@ answer and that no handler logic ran. The composed app is covered by
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -26,7 +27,7 @@ from candleviewer.api import csrf as csrf_module
 from candleviewer.api import sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import RefusalAuditTracker
-from candleviewer.api.deny_by_default import declared_operations
+from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.enrolment_guard import (
     ENROLMENT_OPERATIONS,
     REFUSAL_ACTION,
@@ -240,6 +241,48 @@ def test_guard_allow_list_matches_method_and_exact_path(world: _World, request_l
     assert world.hits == []
 
 
+@pytest.mark.parametrize(
+    "request_line", ["HEAD /auth/session", "HEAD /auth/sessions", "OPTIONS /auth/mfa/enroll"]
+)
+def test_guard_allow_list_never_widens_a_method(world: _World, request_line: str) -> None:
+    """HEAD is not GET and OPTIONS is no pass: only the exact (method, path) pair is allowed."""
+    resp = world.call(*request_line.split(" "))
+
+    assert resp.status_code == 403  # a HEAD answer has no body to read the code from
+    assert world.hits == []
+
+
+async def test_guard_allow_list_never_matches_a_lower_case_method() -> None:
+    hits: list[str] = []
+
+    async def handler(request: Request) -> Response:
+        hits.append(request.method)
+        return Response(status_code=204)
+
+    request = _request("Bearer tok-enrolling", method="get", path="/auth/session")
+    resp = await _guard(_Auth(), _refusals(_Audit()))(request, handler)
+
+    assert (resp.status_code, hits) == (403, [])
+
+
+def test_every_served_operation_a_refresh_cookie_alone_reaches_is_allow_listed() -> None:
+    """The guard classifies a bearer only, so an operation whose contract admits the `cv_refresh`
+    cookie alone would skip it: each one served must be allow-listed, or the guard must classify
+    that cookie first (`POST /auth/unlock` once mounted, #2300)."""
+    from candleviewer import app as appmod
+
+    cookie = {
+        (method.upper(), path)
+        for path, item in _SPEC["paths"].items()
+        for method, op in item.items()
+        if isinstance(op, dict) and {"refreshCookie": []} in (op.get("security") or [])
+    }
+    served = cookie & served_operations(appmod.create_app())
+
+    assert ("POST", "/auth/refresh") in served  # the sweep sees the cookie operations
+    assert served <= ENROLMENT_OPERATIONS
+
+
 def test_guard_matches_the_routed_path_under_a_root_path() -> None:
     """#2752 parity: the path the router matches, not the raw URL path."""
     world = _World(root_path="/api/v1")
@@ -324,10 +367,9 @@ class _TokenRecorder:
         raise SessionNotFound("recorded only")
 
 
-def _request(header: str) -> Request:
+def _request(header: str, method: str = "GET", path: str = "/auth/sessions") -> Request:
     headers = [(b"authorization", header.encode())] if header else []
-    scope = {"type": "http", "method": "GET", "path": "/auth/sessions", "headers": headers}
-    return Request(scope)
+    return Request({"type": "http", "method": method, "path": path, "headers": headers})
 
 
 async def _ok(request: Request) -> Response:
@@ -530,6 +572,97 @@ def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -
         "OSError",
         "/auth/sessions",
     )
+
+
+async def test_refusal_audit_budget_is_shared_by_every_session_of_a_user() -> None:
+    """Minting sessions on one stolen password buys no audit rows: the budget is per user."""
+    audit = _Audit()
+    refusals = _refusals(audit, budget=1)
+    first, second = (
+        SessionRecord.model_construct(id=uuid.uuid5(_OTHER, sid), user_id=_OTHER) for sid in "ab"
+    )
+    before = _count("http", "audit_throttled")
+
+    for record in (first, second):
+        await refusals.refused(record, channel="http", method="GET", path="/x", ip=None)
+
+    assert [r["session_id"] for r in audit.records] == [first.id]
+    assert _count("http", "audit_throttled") == before + 1
+
+
+class _Writer:
+    """An audit writer held at `release`, then failing with *error* (or writing nothing)."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.started, self.release, self.error = asyncio.Event(), asyncio.Event(), error
+
+    async def emit(self, action: str, **_kw: Any) -> None:
+        self.started.set()
+        await self.release.wait()
+        if self.error is not None:
+            raise self.error
+
+
+def _record() -> SessionRecord:
+    return SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
+
+
+async def test_refusal_audit_whose_writer_raises_timeout_itself_is_unavailable() -> None:
+    """The write's own outcome decides, not the clock (as the CSRF guard's `_emit_audit`)."""
+    writer = _Writer(TimeoutError())
+    writer.release.set()
+    refusals = EnrolmentRefusals(writer, tracker=RefusalAuditTracker())
+    slow, lost = _count("ws", "audit_slow"), _count("ws", "audit_unavailable")
+
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    assert (_count("ws", "audit_slow"), _count("ws", "audit_unavailable")) == (slow, lost + 1)
+
+
+async def test_refusal_audit_failing_after_the_wait_is_counted_under_its_own_event() -> None:
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=0.01)
+    slow, lost = _count("ws", "audit_slow"), _count("ws", "audit_unavailable")
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    with capture_logs() as logs:
+        writer.release.set()
+        assert await tracker.drain() == 0
+
+    assert (_count("ws", "audit_slow"), _count("ws", "audit_unavailable")) == (slow + 1, lost + 1)
+    assert [e["event"] for e in logs] == ["auth.enrolment_only.audit_failed_late"]
+
+
+async def test_refusal_audit_of_a_cancelled_caller_is_still_counted_when_it_fails() -> None:
+    """A cancelled request or WS `auth` hands its write to the tracker before re-raising."""
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=60.0)
+    lost = _count("http", "audit_unavailable")
+    caller = asyncio.create_task(
+        refusals.refused(_record(), channel="http", method="GET", path="/x", ip=None)
+    )
+    await writer.started.wait()
+
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    writer.release.set()
+
+    assert await tracker.drain() == 0
+    assert _count("http", "audit_unavailable") == lost + 1
+
+
+async def test_refusal_audit_still_running_when_the_tracker_drains_is_counted_lost() -> None:
+    writer, tracker = _Writer(), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=0.01)
+    lost = _count("ws", "audit_unavailable")
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    assert await tracker.drain(timeout_s=0.01) == 1
+    assert _count("ws", "audit_unavailable") == lost + 1
+    writer.release.set()  # let it end; a write the drain gave up on is never counted twice
+    assert await tracker.drain() == 0
+    assert _count("ws", "audit_unavailable") == lost + 1
 
 
 # -- its slot in the composed app --------------------------------------------------------------

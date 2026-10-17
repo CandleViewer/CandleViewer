@@ -31,7 +31,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
   An `AuthRefused` from `authenticate` (an enrolment-only session, #2295) closes
-  at once with its own `bye` (`4403`): not a failure, and nothing is registered.
+  at once with its own `bye` (`4403`): not a failure, and nothing is registered. It
+  is logged and audited with the socket's source address.
 - **Connect rate** (§4.3, #2558): a new socket's first successful `auth` is counted per user
   (`GatewayHub.admit_connect`, `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` per sliding minute). Past the
   limit the socket gets `bye client_rate_limited` + `4429` instead of `auth_ok`: it never
@@ -249,15 +250,21 @@ class AuthenticatorContractError(RuntimeError):
     nothing is served (fail closed, #2259)."""
 
 
+#: Writes the record of an `AuthRefused` once the gateway supplies the socket's source address.
+RefusalAudit = Callable[[str | None], Awaitable[None]]
+
+
 class AuthRefused(Exception):
     """Raised by the injected `authenticate` for a live token whose session may not use the
     socket: an enrolment-only session (#2295, §4.3). The socket closes at once with a `bye`
     carrying `reason` (a `CLOSE_REASONS` key); it is not a failed `auth`, and the socket is
-    never registered."""
+    never registered. *audit*, when given, is awaited first with the socket's source address,
+    so the refusal's audit record names it as the HTTP twin's does (C-2.9)."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, audit: RefusalAudit | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.audit = audit
 
 
 def _token_expiry_ms(result: AuthResult) -> int:
@@ -1285,6 +1292,16 @@ def make_ws_router(
         except AuthRefused as refused:
             # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
             # registered; a re-auth ends the earlier identity too (#2295).
+            source_ip = _source_ip(conn.ws.scope)
+            _log().warning(
+                "ws auth refused",
+                connection_id=conn.connection_id,
+                reason=refused.reason,
+                reauth=reauth,
+                source_ip=source_ip,
+            )
+            if refused.audit is not None:
+                await refused.audit(source_ip)
             conn.close_with(refused.reason, seal=True)
             return
         except Exception:

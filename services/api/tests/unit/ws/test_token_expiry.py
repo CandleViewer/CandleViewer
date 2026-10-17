@@ -38,6 +38,7 @@ from candleviewer.ws.metrics import (
 )
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
+from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.ws.test_lifecycle_socket import _closed, _no_sleep, _recv, _recv_type
 
@@ -95,6 +96,7 @@ def stack(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> It
     """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` off and on (#412 S2a)."""
     clock = _Clock()
     auth = AuthService(session_repository=FakeSessionRepository(), clock=clock)
+    auth._repository = FullUsers()  # #2295: the WS classifies every session; these are full
     monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(
         app_module,

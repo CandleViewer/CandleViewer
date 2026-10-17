@@ -916,11 +916,12 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
     time grounds; the gateway ends the socket's identity there (#2259). Raises
     (fail closed) while no session repository is wired.
 
-    #2295: an enrolment-only session is refused with `AuthRefused` (`bye
-    mfa_enrollment_required`, 4403), counted and audited through *refusals* as the HTTP
-    guard's 403 is. One that would outlive its 15 minutes (Q7), and a classification that
-    fails, raise like any failed `auth` (as an expired token does, `23-ws-protocol.md` §4.3),
-    so HTTP (401) and the socket (`auth_failed`) both lead to a new sign-in."""
+    #2295: only a full session is served. An enrolment-only one is refused with `AuthRefused`
+    (`bye mfa_enrollment_required`, 4403), counted and audited through *refusals*, with the
+    source address the gateway supplies, as the HTTP guard's 403 is. One past or beyond its 15
+    minutes (Q7), any other verdict (deny by default, C-12.4) and a classification that fails
+    raise like any failed `auth` (as an expired token does, `23-ws-protocol.md` §4.3), so HTTP
+    (401) and the socket (`auth_failed`) both lead to a new sign-in."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
@@ -934,13 +935,16 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
         except Exception as exc:
             refusals.unclassified(exc, channel="ws", method="GET", path="/ws")
             raise
-        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED:
-            refusals.expired(record, channel="ws", method="GET", path="/ws")
-            raise PermissionError("enrolment-only session outlived its lifetime")
+        if verdict is SessionClass.FULL:
+            return
         if verdict is SessionClass.ENROLMENT_ONLY:
-            # The authenticator sees only the token, so the record has no source address.
-            await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
-            raise AuthRefused("mfa_enrollment_required")
+
+            async def _audit(ip: str | None) -> None:
+                await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=ip)
+
+            raise AuthRefused("mfa_enrollment_required", audit=_audit)
+        refusals.expired(record, channel="ws", method="GET", path="/ws")
+        raise PermissionError("not a live enrolment-only session")
 
     return _authenticate
 
