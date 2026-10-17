@@ -4459,7 +4459,10 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** List the exchange accounts a user may see/trade */
+    /**
+     * List the exchange accounts a user may see/trade
+     * @description A call refused for a forbidden role is audited (`rbac.denied`, naming the target user); when that record cannot be written the refusal is answered `503 audit_unavailable`, not `403`, and nothing is looked up. `503 store_unavailable` when the grants cannot be read. Both carry `Retry-After`.
+     */
     get: operations["listUserAccountAccess"];
     /**
      * Replace a user's account-access grants
@@ -17291,6 +17294,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setUserAccountAccess: {

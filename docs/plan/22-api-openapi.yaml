@@ -1792,6 +1792,11 @@ paths:
       tags: [users]
       operationId: listUserAccountAccess
       summary: List the exchange accounts a user may see/trade
+      description: >
+        A call refused for a forbidden role is audited (`rbac.denied`, naming the target user);
+        when that record cannot be written the refusal is answered `503 audit_unavailable`, not
+        `403`, and nothing is looked up. `503 store_unavailable` when the grants cannot be read.
+        Both carry `Retry-After`.
       x-rbac: { permissions: [users:read], scope: none }
       responses:
         "200":
@@ -1805,6 +1810,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [users]
       operationId: setUserAccountAccess
