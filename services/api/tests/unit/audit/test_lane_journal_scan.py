@@ -1,8 +1,8 @@
 """ADR-0037 S1a, second half: the scan transition table and quarantine
 (`docs/plan/24-internal-schemas.md` §15.6 Scan, Hold, Release and Ingest step 1).
 
-`outline()` shows a scan as hand-overs (their `seq`) and runs (`reason, from_seq, to_seq`); row
-numbers count the table's rows from the top. Keys are test vectors.
+`outline()` shows a scan as hand-overs (their `seq`) and runs (`reason, from_seq, to_seq`); "row n"
+is the table's row `#` n. Keys are test vectors.
 """
 
 from __future__ import annotations
@@ -190,6 +190,14 @@ def test_lane_rescans_everything_when_the_marker_is_lost_or_ahead(
     assert runs(result)[0].marker_ahead is ahead
 
 
+def test_lane_marker_ahead_accounts_from_its_next_seq_when_that_is_smaller() -> None:
+    ahead = marker((1, 10_000), 3)  # row 2: past the end of its segment
+    released = run_scan({1: P3 + F[3]}, ahead, note_of((1, 0), (1, len(P3))))
+
+    assert outline(run_scan({1: F[4] + F[5]}, ahead)) == [("marker_lost", 3, 4), 5, 6]
+    assert outline(released) == [("marker_lost", 3, None), ("released", 3, 2), ("seq_gap", 3, 3), 4]
+
+
 @pytest.mark.parametrize(
     ("segments", "expected", "lane"),
     [
@@ -354,9 +362,9 @@ def test_lane_random_damage_never_hands_over_a_bad_frame_or_loses_a_good_one(
     data: st.DataObject,
 ) -> None:
     """(a) Accounting, over every input: each byte from the scan start lies in one hand-over or
-    one run, and each `seq` up to the last hand-over is handed over once or inside one run's
-    range. (b) Liveness: every frame intact at a line start before the hold whose `seq` is above
-    all before it is handed over, and nothing else is."""
+    one run, and each `seq` from where it starts up to the last hand-over is handed over once or
+    inside one run's range. (b) Liveness: every frame intact at a line start before the hold
+    whose `seq` is above all before it is handed over, and nothing else is."""
     n = data.draw(st.integers(1, 6))
     order = data.draw(st.just(list(range(n))) | st.lists(st.integers(0, n - 1), max_size=n + 2))
     cuts = sorted(data.draw(st.sets(st.integers(0, len(order)), max_size=2)))

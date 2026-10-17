@@ -4,7 +4,8 @@
 quarantine rules (C-16.5); this module implements them and restates none. It is pure: no I/O,
 clock or log. `scan()` takes the marker, the file names, a segment reader and the `released` note,
 so the drain (S2a2) owns every file operation; appends, segments and quotas are S1b's. No error
-message carries a key, a MAC or a record.
+message carries a key, a MAC or a record, and no `repr` a key or a record (U41). The envelope is
+checked field by field, not by a pydantic model, whose lax mode would coerce `"1"` and `true` to 1.
 """
 
 from __future__ import annotations
@@ -121,7 +122,7 @@ class LaneFrame:
     prev: str
     kid: str
     cls: Literal["reserved", "shared"]
-    rec: dict[str, Any]
+    rec: dict[str, object] = field(repr=False)
     mac: str
 
 
@@ -132,7 +133,7 @@ def encode_frame(
     seq: int,
     prev: str,
     cls: Literal["reserved", "shared"],
-    rec: dict[str, Any],
+    rec: dict[str, object],
 ) -> bytes:
     envelope = {"v": 1, "lane": str(lane), "seq": seq, "prev": prev, "cls": cls, "rec": rec}
     body = _canonical(envelope | {"kid": keys.current_kid})
@@ -143,7 +144,7 @@ def encode_frame(
 
 
 def decode_frame(
-    keys: LaneKeys, data: bytes, *, lane: uuid.UUID | None = None
+    keys: LaneKeys, data: bytes, *, lane: uuid.UUID | None
 ) -> LaneFrame | Refused | None:
     """The frame that is exactly `data`; None when it does not parse (steps 1 and 2)."""
     framed = _framed(data, 0)
@@ -321,8 +322,8 @@ class LaneState:
 class Handover:
     """An authentic frame in sequence for `AuditWriter.ingest()`; `state` is the state after it."""
 
-    frame: LaneFrame
-    raw: bytes
+    frame: LaneFrame = field(repr=False)
+    raw: bytes = field(repr=False)
     start: Pos
     end: Pos
     state: LaneState
@@ -336,7 +337,7 @@ class Run:
     reason: str
     from_seq: int | None
     to_seq: int | None
-    data: bytes
+    data: bytes = field(repr=False)
     start: Pos | None
     end: Pos
     state: LaneState
@@ -376,12 +377,12 @@ class LaneScan:
     `released` note that did not apply sets `note_ignored`, which the drain logs."""
 
     lane: uuid.UUID | None
-    units: tuple[Handover | Run, ...]
+    units: tuple[Handover | Run, ...] = field(repr=False)
     state: LaneState
     held: bool
     hold: Pos | None
     note_ignored: bool
-    sealed: bool  # row 14: the next append starts a new segment
+    sealed: bool  # row 16: the next append starts a new segment
 
 
 @dataclass(slots=True)
@@ -406,7 +407,7 @@ class _OpenRun:
 
 
 class _Scan:
-    """One pass of the §15.6 table; "row n" counts its rows from the top."""
+    """One pass of the §15.6 table; "row n" names the row whose `#` is n."""
 
     def __init__(self, keys: LaneKeys, names: Iterable[str], read: Callable[[str], bytes]) -> None:
         found = sorted((int(m[1]), name) for name in names if (m := _SEGMENT.fullmatch(name)))
@@ -425,7 +426,7 @@ class _Scan:
         return self.cache[i]
 
     def begin(self, marker: bytes | None) -> Pos | None:
-        """Rows 1 to 4: the state, and the segment index and offset to scan from."""
+        """Rows 1 to 6: the state, and the segment index and offset to scan from."""
         found = None if marker is None else decode_marker(self.keys, marker)
         if isinstance(found, str):
             self.held = True
@@ -443,8 +444,8 @@ class _Scan:
             if offset <= len(self.data(i)) and _at_boundary(self.data(i), offset):
                 return i, offset
         elif not self.firsts and found.pos == (1, 0):
-            return None  # a new lane before its frame 1
-        elif self.firsts and self.firsts[-1] > first:  # its segment was deleted
+            return None  # row 6: a new lane before its frame 1
+        elif self.firsts and self.firsts[-1] > first:  # its segment was deleted: rows 4 and 5
             if self.firsts[0] > found.next_seq:  # row 4
                 self.run = _OpenRun("seq_gap", found.next_seq, marker_behind=True)
                 self.state = replace(self.state, anchored=False)
@@ -470,29 +471,31 @@ class _Scan:
                     return
                 i, off = resume
                 continue
-            else:  # rows 9, 12 and 13
+            else:  # rows 11, 14 and 15
                 self.join(found, data[off:end], unanchor=found != "torn_tail")
             off = end
-        if self.run is not None:  # row 14
+        if self.run is not None:  # row 16
             self.units.append(self.run.close(None, self.at, self.state, False))
             self.run, self.sealed = None, bool(self.firsts)
 
     def frame(self, frame: LaneFrame, raw: bytes, end: Pos) -> None:
-        """Rows 5 to 8. A rescan without a verifiable marker starts at the first authentic frame,
-        which in row 3 also sets the lane."""
+        """Rows 7 to 10. A rescan without a verifiable marker starts at the first authentic frame,
+        which in row 3 also sets the lane; in row 2 `next_seq` is the smaller of the marker's and
+        that frame's `seq`, so row 8 puts any `seq` between them in the run."""
         if self.lost:
             self.lost, self.lane = False, frame.lane if self.lane is None else self.lane
-            self.state = replace(self.state, next_seq=frame.seq)
+            first = min(frame.seq, self.state.next_seq or frame.seq)
+            self.state = replace(self.state, next_seq=first)
             if self.run is not None:
-                self.run.from_seq = frame.seq
+                self.run.from_seq = first
         expected = frame.seq if self.state.next_seq is None else self.state.next_seq
-        if frame.seq > expected:  # row 6
+        if frame.seq > expected:  # row 8
             self.join("seq_gap", b"", unanchor=True)
             self.state, expected = replace(self.state, next_seq=frame.seq), frame.seq
         if frame.seq != expected or (self.state.anchored and frame.prev != self.state.prev):
-            self.join("frame_rejected", raw, unanchor=True)  # rows 7 and 8
+            self.join("frame_rejected", raw, unanchor=True)  # rows 9 and 10
             return
-        if self.run is not None:  # row 5
+        if self.run is not None:  # row 7
             unverified = frame.prev != self.state.prev
             self.units.append(self.run.close(frame.seq - 1, self.at, self.state, unverified))
             self.run = None
@@ -507,7 +510,7 @@ class _Scan:
             self.state = replace(self.state, anchored=False)
 
     def release(self, i: int, off: int, note: bytes | None) -> Pos | None:
-        """Rows 10 and 11: close the open run as at the end of the data, then resume after a
+        """Rows 12 and 13: close the open run as at the end of the data, then resume after a
         `released` note's bytes if it applies here, else hold."""
         hold = self.at
         if self.run is not None:
