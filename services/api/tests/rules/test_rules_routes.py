@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.rules.limits import LIMIT_CAPS, LIMIT_DEFAULTS
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
 from candleviewer.rules.vocabulary import default_registry
 
@@ -255,3 +256,44 @@ def test_manager_gets_404_on_another_accounts_rule_everywhere() -> None:
     assert m.c.put(f"/rules/{rid}/mode", json={"mode": "simulate"}, headers=hdr).status_code == 404
     assert m.c.get("/rules").json()["items"] == []
     assert owner.c.get(f"/rules/{rid}").status_code == 200
+
+
+def _budget(field: str, value: int) -> dict[str, Any]:
+    return {"ir": _ir(limits={field: value})}
+
+
+def test_create_raised_limits_by_a_manager_is_a_403_forbidden_problem() -> None:
+    """#3232 (04 §7.2.2 row 26): the refusal names each raised field; nothing is stored."""
+    hour = "max_fires_per_hour"
+    e = _Env(owner=False, granted=frozenset({A1}))
+    r = e.c.post("/rules", json=_budget(hour, LIMIT_DEFAULTS[hour] + 1))
+    assert (r.status_code, r.headers["content-type"]) == (403, "application/problem+json")
+    body = r.json()
+    assert (body["code"], body["type"]) == (
+        "forbidden",
+        "https://candleviewer.local/errors/forbidden",
+    )
+    assert [(x["field"], x["rule"]) for x in body["errors"]] == [
+        ("limits.max_fires_per_hour", "owner_only_above_default")
+    ]
+    assert e.c.get("/rules").json()["items"] == []
+
+
+def test_create_limits_above_the_cap_is_a_422_rule_ir_invalid_problem() -> None:
+    day = "max_fires_per_day"
+    r = _Env().c.post("/rules", json=_budget(day, LIMIT_CAPS[day] + 1))
+    assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid")
+    (issue,) = r.json()["issues"]
+    assert (issue["path"], issue["code"], issue["class"]) == (
+        "limits.max_fires_per_day",
+        "schema_error",
+        "safety",
+    )
+
+
+def test_viewer_saving_raised_limits_is_refused_at_the_permission_gate() -> None:
+    hour = "max_fires_per_hour"
+    viewer = _Env({"rules:read"}, owner=False, granted=frozenset({A1}))
+    r = viewer.c.post("/rules", json=_budget(hour, LIMIT_DEFAULTS[hour] + 1))
+    assert (r.status_code, r.json()["detail"]) == (403, "requires rules:write")
+    assert viewer.audits == []

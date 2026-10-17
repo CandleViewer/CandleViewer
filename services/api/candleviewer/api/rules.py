@@ -220,7 +220,7 @@ def make_rules_router(
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, perms)
+        result = validate_rule(rule, registry, perms, limit_caps=True)
         return JSONResponse(result.to_dict())
 
     @router.post("/rules/{ruleId}/compile")
@@ -246,7 +246,7 @@ def make_rules_router(
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, perms)
+        result = validate_rule(rule, registry, perms, limit_caps=True)
         on_compile(editor, "ok" if result.valid else "issues")
         issues = [*result.errors, *result.warnings]
         payload: dict[str, Any] = {

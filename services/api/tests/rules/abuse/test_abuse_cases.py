@@ -1,4 +1,4 @@
-"""E35-X02: automated abuse-case suite (AC-a..n). Each case asserts refusal, no state change
+"""E35-X02: automated abuse-case suite (AC-a..o). Each case asserts refusal, no state change
 and (where the control exists today) an audit row. Cases whose control is not built yet are
 documented in docs/security/e35/abuse-case-suite.md."""
 
@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from candleviewer.rules.ir.models import RuleScope
+from candleviewer.rules.limits import LIMIT_CAPS, LIMIT_DEFAULTS
 from candleviewer.rules.scope import (
     AccountState,
     ActionRequest,
@@ -333,3 +334,25 @@ def test_ac_n_other_users_rules_are_invisible() -> None:
         == 404
     )
     assert owner.c.get(f"/rules/{rid}").json()["mode"] == "disabled"  # untouched
+
+
+def test_ac_o_manager_cannot_raise_a_rules_action_budget() -> None:
+    """Abuse case o (04 §7.2.2 row 26, #3232): a Manager raising a rule's action budget above
+    its default is refused and audited at save, with no state change; above the hard cap no
+    role can save it."""
+    hour = "max_fires_per_hour"
+    owner = _Env()
+    low = _Env(
+        {"rules:read", "rules:write"}, owner=False, granted=frozenset({str(A)}), mgr=owner.mgr
+    )
+    raised = {"ir": _ir(limits={hour: LIMIT_DEFAULTS[hour] + 1})}
+    assert low.c.post("/rules", json=raised).status_code == 403
+    rid = low.create()
+    r = low.c.put(f"/rules/{rid}", json=raised, headers={"If-Match": "1"})
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert low.c.get(f"/rules/{rid}").json()["latest_version"] == 1
+    refused = [(p["op"], p["reason"]) for a, p in owner.audits if a == "rule.scope_refused"]
+    assert refused == [("create", "limits_owner_only"), ("update", "limits_owner_only")]
+    capped = {"ir": _ir(name="capped", limits={hour: LIMIT_CAPS[hour] + 1})}
+    assert owner.c.post("/rules", json=capped).status_code == 422
+    assert [r["name"] for r in _rules(owner)] == ["form0"]

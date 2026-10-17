@@ -25,6 +25,7 @@ from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
+from candleviewer.rules.limits import LIMIT_DEFAULTS, above_default, owner_message
 from candleviewer.rules.validator import validate_rule
 from candleviewer.rules.vocabulary import MetricRegistry
 
@@ -201,6 +202,16 @@ def quarantine_path(ir: dict[str, Any]) -> str | None:
     return None
 
 
+def _raised_limits(rule: Rule) -> dict[str, Any]:
+    """Audit member for a version whose action budget is above its defaults (04 §8.3 rule 4):
+    each raised field, with the default it is raised from and its value; empty when none is."""
+    raised = above_default(rule.limits)
+    if not raised:
+        return {}
+    by_field = {f: {"default": LIMIT_DEFAULTS[f], "value": v} for f, v in raised.items()}
+    return {"limits_above_default": by_field}
+
+
 class RulesManager:
     def __init__(
         self,
@@ -277,6 +288,30 @@ class RulesManager:
                 raise RuleError(
                     403, "forbidden", "You do not have access to one of the accounts in scope."
                 )
+
+    async def _require_owner_for_raised_limits(
+        self, rule: Rule, actor: Actor, op: str, rule_id: str
+    ) -> None:
+        """04 §7.2.2 row 26 (#3232): an action budget above its default needs the Owner role,
+        compared with the default, never with an earlier version. Refusals are audited."""
+        raised = above_default(rule.limits)
+        if actor.is_owner or not raised:
+            return
+        await self._refuse_scope(rule_id, op, "limits_owner_only", actor)
+        errors = [
+            {
+                "field": f"limits.{f}",
+                "rule": "owner_only_above_default",
+                "message": owner_message(f),
+            }
+            for f in raised
+        ]
+        raise RuleError(
+            403,
+            "forbidden",
+            "Only the Owner can raise a rule's action budget above the default.",
+            errors=errors,
+        )
 
     async def _guard_system(self, row: RuleRow, actor: Actor, op: str) -> None:
         """Protected built-ins can never be disabled, edited or deleted by any API path."""
@@ -405,7 +440,7 @@ class RulesManager:
                 f"The rule document is not valid: {first['msg']}",
                 path="/" + "/".join(str(p) for p in first["loc"]),
             ) from exc
-        res = validate_rule(rule, self._reg)
+        res = validate_rule(rule, self._reg, limit_caps=True)
         if res.errors:
             raise RuleError(
                 422,
@@ -441,6 +476,7 @@ class RulesManager:
         rid = str(uuid.uuid4())
         rule, h = self._validated({**ir, "mode": "disabled", "enabled": False}, rid)
         await self._require_grants(rule, actor, "create", rid)
+        await self._require_owner_for_raised_limits(rule, actor, "create", rid)
         if is_reserved_name(rule.name):
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
         existing = await self._s.all()
@@ -450,9 +486,8 @@ class RulesManager:
         v = self._new_version(row, rule, h, notes, actor)
         row.active_version_id = v.id
         await self._s.put(row)
-        await self._audit(
-            "rule.created", {"rule_id": rid, "version": 1, "ir_hash": h, "actor": actor.user_id}
-        )
+        created = {"rule_id": rid, "version": 1, "ir_hash": h, "actor": actor.user_id}
+        await self._audit("rule.created", created | _raised_limits(rule))
         return {**await self._present(row), "version": self._version_view(v)}
 
     async def list_rules(
@@ -510,6 +545,7 @@ class RulesManager:
             {**ir, "mode": row.mode, "enabled": row.mode != "disabled"}, rule_id
         )
         await self._require_grants(rule, actor, "update", rule_id)
+        await self._require_owner_for_raised_limits(rule, actor, "update", rule_id)
         if rule.name != row.name:
             await self._check_rename(row, rule.name, actor)
         existing = next((v for v in row.versions if v.ir_hash == h), None)
@@ -517,10 +553,8 @@ class RulesManager:
             return {"created": False, "version": self._version_view(existing)}
         v = self._new_version(row, rule, h, notes, actor)
         row.name = rule.name
-        await self._audit(
-            "rule.updated",
-            {"rule_id": rule_id, "version": v.version, "ir_hash": h, "actor": actor.user_id},
-        )
+        updated = {"rule_id": rule_id, "version": v.version, "ir_hash": h, "actor": actor.user_id}
+        await self._audit("rule.updated", updated | _raised_limits(rule))
         # A simulating/armed rule keeps running its previously active version (US-RULE-006).
         if row.mode == "disabled":
             row.active_version_id = v.id
@@ -580,7 +614,9 @@ class RulesManager:
         v = next((x for x in row.versions if x.id == version_id), None)
         if v is None:
             raise RuleError(404, "not_found", "That version does not exist.")
-        await self._require_grants(Rule.model_validate(v.ir), actor, "set_active_version", rule_id)
+        rule = Rule.model_validate(v.ir)
+        await self._require_grants(rule, actor, "set_active_version", rule_id)
+        await self._require_owner_for_raised_limits(rule, actor, "set_active_version", rule_id)
         # Switching an armed rule to a different version must never keep it armed: arming
         # checks (live step-up, perms, flatten ack) only run via set_mode, so demote always.
         demote = row.mode == "armed" and v.id != row.active_version_id
@@ -594,7 +630,8 @@ class RulesManager:
                 "note": note,
                 "actor": actor.user_id,
                 "activated": True,
-            },
+            }
+            | _raised_limits(rule),
         )
         if demote:
             # An unsimulated version must never run armed: B9 `armed --EDIT--> simulating`.
