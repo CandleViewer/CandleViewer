@@ -119,14 +119,15 @@ async def test_a_row_reopened_while_its_batch_is_deleted_is_kept(
     async with rel.unit_of_work() as writer:  # a new occurrence, uncommitted: it holds the row lock
         await writer.session.execute(reopen.values(status="open", resolved_at=None))
         purge = asyncio.create_task(SqlAlchemyIncidents(rel).purge_resolved(24, 1))
-        async with rel.unit_of_work() as probe:
-            # No event to wait on: poll until the DELETE, which picked row 7 while resolved, waits.
-            for _ in range(500):
+        # No event to wait on: poll until the DELETE, which picked row 7 while resolved, waits.
+        # One transaction per poll: pg_stat_activity is a snapshot per transaction.
+        for _ in range(500):
+            async with rel.unit_of_work() as probe:
                 if (await probe.session.execute(_DELETE_WAITS)).scalar_one():
                     break
-                await asyncio.sleep(0.01)
-            else:
-                pytest.fail("the purge's DELETE never waited on the row the writer holds")
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("the purge's DELETE never waited on the row the writer holds")
         await writer.commit()
     assert await purge == 0  # re-checked against the reopened row: kept
     assert 7 in await _left(rel)
