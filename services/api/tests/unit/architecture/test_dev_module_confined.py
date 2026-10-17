@@ -1,7 +1,8 @@
 """#2893 S3 (ADR-0036 "Enforcement"): the dev-only `cvdev` package stays behind its one door.
 
-- In `candleviewer/`, only `account_fixture_wiring.py` names `cvdev`, and only as the string it
-  imports lazily. No other module imports it or holds an import string for it
+- In `candleviewer/`, only `account_fixture_wiring.py` names `cvdev`, and never in an import
+  statement: it holds the module it imports lazily and the package name its refusal matches, as
+  strings. No other module imports it or holds an import string for it
   (`importlib.import_module`, `__import__`, `find_spec`, a constant passed to one). A release
   image has no `cvdev`, so any other reference either breaks boot or opens a second way in.
 - `cvdev` never imports `candleviewer.secrets` (C-3.2) or `candleviewer.audit` (C-3.3), directly
@@ -35,8 +36,8 @@ DEV = ("cvdev",)
 PROTECTED = ("candleviewer.secrets", "candleviewer.audit")
 
 
-def _named_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
-    """(line, dotted name) for each absolute import and each string that reads as a module path.
+def _imported_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
+    """(line, dotted name) for each absolute import statement, `TYPE_CHECKING` ones included.
     A relative import stays inside its own top-level package, so it never names another one."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -45,20 +46,30 @@ def _named_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             for alias in node.names:
                 yield node.lineno, f"{node.module}.{alias.name}"
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+
+
+def _named_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
+    """(line, dotted name) for each absolute import and each string that reads as a module path."""
+    yield from _imported_modules(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if all(part.isidentifier() for part in node.value.split(".")):
                 yield node.lineno, node.value
 
 
-def _references(source: str, modules: tuple[str, ...]) -> list[str]:
-    """`line: name` for each name in `source` that is one of `modules` or inside one."""
+def _parse(source: str) -> ast.AST:
     with warnings.catch_warnings():
         # Applied migrations, which must never be edited (C-5.4), may carry a SyntaxWarning.
         warnings.simplefilter("ignore", SyntaxWarning)
-        tree = ast.parse(source)
+        return ast.parse(source)
+
+
+def _references(source: str, modules: tuple[str, ...], *, imports_only: bool = False) -> list[str]:
+    """`line: name` for each name in `source` that is one of `modules` or inside one."""
+    names = (_imported_modules if imports_only else _named_modules)(_parse(source))
     return [
         f"{line}: {name}"
-        for line, name in _named_modules(tree)
+        for line, name in names
         if any(name == module or name.startswith(f"{module}.") for module in modules)
     ]
 
@@ -99,6 +110,21 @@ def test_a_non_reference_is_allowed(source: str, modules: tuple[str, ...]) -> No
     assert _references(source, modules) == []
 
 
+@pytest.mark.parametrize(
+    ("source", "is_import"),
+    [
+        ("import cvdev.account_fixture.wiring", True),
+        ("from cvdev.account_fixture import wiring", True),
+        ("if TYPE_CHECKING:\n    from cvdev import account_fixture", True),
+        ("_DEV_WIRING = 'cvdev.account_fixture.wiring'", False),
+        ("importlib.import_module('cvdev')", False),
+    ],
+)
+def test_only_an_import_statement_is_a_static_import(source: str, is_import: bool) -> None:
+    assert _references(source, DEV) != []
+    assert (_references(source, DEV, imports_only=True) != []) is is_import
+
+
 def _offenders(root: Path, modules: tuple[str, ...], skip: Path | None = None) -> list[str]:
     return [
         f"{path.relative_to(root.parent)}:{reference}"
@@ -116,11 +142,21 @@ def test_only_the_wiring_module_names_cvdev() -> None:
     )
 
 
-def test_the_wiring_module_names_cvdev_only_as_its_lazy_import_string() -> None:
-    """A static import would break every release image's boot; the string is imported only when
-    `CV_ACCOUNT_FIXTURE` is set. This also shows the scan sees a real reference."""
-    names = [ref.split(": ")[1] for ref in _references(WIRING.read_text(encoding="utf-8"), DEV)]
-    assert names == ["cvdev.account_fixture.wiring"]
+def test_the_wiring_module_never_imports_cvdev_statically() -> None:
+    """A static import would break every release image's boot; the module is imported only when
+    `CV_ACCOUNT_FIXTURE` is set. The Semgrep rule skips this file, so this test is its guard."""
+    assert _references(WIRING.read_text(encoding="utf-8"), DEV, imports_only=True) == []
+
+
+def test_the_wiring_module_names_cvdev_only_in_its_two_strings() -> None:
+    """`_DEV_WIRING`, the module imported lazily, and `_DEV_PACKAGE`, the name its refusal matches
+    in `ModuleNotFoundError.name`. Counted, not a set, so a third reference fails. This also shows
+    the scan sees a real reference."""
+    references = _references(WIRING.read_text(encoding="utf-8"), DEV)
+    assert sorted(ref.split(": ")[1] for ref in references) == [
+        "cvdev",
+        "cvdev.account_fixture.wiring",
+    ]
 
 
 def test_cvdev_never_imports_secrets_or_audit() -> None:

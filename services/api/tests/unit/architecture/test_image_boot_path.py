@@ -83,18 +83,25 @@ def test_image_package_is_where_the_dockerfile_installs_the_package() -> None:
     assert str(IMAGE_PACKAGE) in destinations
 
 
-#: Trees no image may carry (#2893): the dev-only fixture transport and the account pack it serves.
-DEV_ONLY_TREES = (PurePosixPath("services/api/cvdev"), PurePosixPath("packages/fixtures/accounts"))
+#: The builder stage's `WORKDIR`, where a copy of `cvdev` would land before a `COPY --from`.
+BUILDER_WORKDIR = PurePosixPath("/build")
+#: Trees no image may carry (#2893): the dev-only fixture transport and the account pack it serves,
+#: and the package in the builder stage, so a whole-stage copy (`--from=builder /build`) counts.
+DEV_ONLY_TREES = (
+    PurePosixPath("services/api/cvdev"),
+    PurePosixPath("packages/fixtures/accounts"),
+    BUILDER_WORKDIR / "cvdev",
+)
 
 
 def _copy_sources(dockerfile: str) -> list[str]:
     """The sources of every `COPY` and `ADD` in every stage, in either form, flags dropped."""
     sources: list[str] = []
     for line in dockerfile.replace("\\\n", " ").splitlines():
-        instruction, _, rest = line.strip().partition(" ")
+        instruction, *rest = line.split(None, 1) or [""]
         if instruction.upper() not in ("COPY", "ADD"):
             continue
-        words = rest.split()
+        words = rest[0].split() if rest else []
         while words and words[0].startswith("--"):
             words.pop(0)
         arguments = json.loads(" ".join(words)) if words[:1] and words[0][0] == "[" else words
@@ -104,7 +111,8 @@ def _copy_sources(dockerfile: str) -> list[str]:
 
 def _carries_a_dev_only_tree(source: str) -> bool:
     """Whether the source names a dev-only tree (`cvdev` anywhere, such as `/build/cvdev` from
-    another stage) or is a directory or glob covering one (`services/api`, `.`, `services/*`)."""
+    another stage) or is a directory or glob covering one (`services/api`, `.`, `services/*`,
+    `/build`)."""
     path = source.removeprefix("./").rstrip("/") or "."
     if "cvdev" in PurePosixPath(path).parts or "fixtures/accounts" in path:
         return True
@@ -129,6 +137,8 @@ def _carries_a_dev_only_tree(source: str) -> bool:
         'COPY --chown=10001:10001 ["services/api/cvdev", "/app/cvdev"]',
         "add services/api/cvdev /app/cvdev",
         "COPY services/api/README.md \\\n    services/api/cvdev ./",
+        "COPY\tservices/api ./api",
+        "COPY --from=builder /build /app",
     ],
 )
 def test_a_copy_of_a_dev_only_tree_is_found(instruction: str) -> None:
@@ -137,7 +147,9 @@ def test_a_copy_of_a_dev_only_tree_is_found(instruction: str) -> None:
 
 def test_the_image_copies_no_dev_only_package() -> None:
     """ADR-0036 decision 1: the image carries `candleviewer` and the synthetic sample only."""
-    sources = _copy_sources(DOCKERFILE.read_text(encoding="utf-8"))
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert f"WORKDIR {BUILDER_WORKDIR}" in dockerfile.splitlines()
+    sources = _copy_sources(dockerfile)
     assert "services/api/candleviewer" in sources
     offenders = [source for source in sources if _carries_a_dev_only_tree(source)]
     assert offenders == [], (
