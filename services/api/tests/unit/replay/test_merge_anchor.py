@@ -7,6 +7,7 @@ session depth; under `auto` both tiers are asked and the latest by `order_key` w
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -15,7 +16,17 @@ from candleviewer.replay.merge import ANCHOR_LOOKBACK_US
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.repositories.recorded import RecordedEvent
-from tests.unit.replay._events import SECOND, SYM, T0, BoundedTier, Harness, request, snapshot
+from tests.unit.replay._events import (
+    SECOND,
+    SYM,
+    T0,
+    BoundedTier,
+    Harness,
+    delta,
+    request,
+    snapshot,
+    trade,
+)
 
 BOOK = (StreamKind.ORDERBOOK_SNAPSHOT,)
 END = 7_200 * SECOND
@@ -224,3 +235,65 @@ async def test_a_lookup_that_never_answers_times_out_as_a_typed_error() -> None:
             await harness.merge(timeout_s=0.001).anchor_at(SYM, T0 + 250 * SECOND)
 
     assert (raised.value.tier, raised.value.reason) == ("questdb", "timeout")
+
+
+class _LaxLookups(BoundedTier):
+    """A tier whose lookup ignores what it was asked and always answers with one fixed row."""
+
+    def __init__(self, row: RecordedEvent) -> None:
+        super().__init__()
+        self._row = row
+
+    async def snapshot_at(
+        self, symbol: str, depth: int, at_us: int, *, not_before_us: int
+    ) -> RecordedEvent | None:
+        return self._row
+
+
+AT = 250 * SECOND  # the anchor instant of the next test; its lookback edge is `AT - 3 600 s`
+_HOUR = 3_600 * SECOND
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        pytest.param(snapshot(100 * SECOND, symbol="ETHUSDT"), id="another-symbol"),
+        pytest.param(snapshot(100 * SECOND, depth=50), id="another-depth"),
+        pytest.param(trade(100 * SECOND), id="not-a-snapshot"),
+        pytest.param(
+            dataclasses.replace(snapshot(100 * SECOND), stream=StreamKind.ORDERBOOK_DELTA),
+            id="not-the-snapshot-stream",
+        ),
+        pytest.param(
+            dataclasses.replace(delta(100 * SECOND), stream=StreamKind.ORDERBOOK_SNAPSHOT),
+            id="a-delta-payload-under-the-snapshot-label",
+        ),
+        pytest.param(snapshot(AT + 1), id="one-microsecond-after-the-instant"),
+        pytest.param(snapshot(AT - _HOUR - 1), id="one-microsecond-before-the-lookback"),
+    ],
+)
+async def test_a_row_outside_what_was_asked_fails_the_lookup_instead_of_seeding_the_book(
+    row: RecordedEvent,
+) -> None:
+    """The merge does not trust a reader to have honoured the bound (as for gap rows): the
+    wrong row would seed the book the seek rebuilds."""
+    harness = Harness(req=WINDOW).replace_ports(hot=_LaxLookups(row))
+
+    with pytest.raises(ReplaySourceUnavailable) as raised:
+        await harness.merge().anchor_at(SYM, T0 + AT)
+
+    error = raised.value
+    assert (error.tier, error.stream, error.reason) == (
+        "questdb",
+        StreamKind.ORDERBOOK_SNAPSHOT,
+        "anchor_out_of_bounds",
+    )
+    assert error.__cause__ is None and error.__context__ is None
+
+
+@pytest.mark.parametrize("at", [AT - _HOUR, AT])
+async def test_a_row_on_either_edge_of_the_bound_is_a_valid_anchor(at: int) -> None:
+    row = snapshot(at)
+    harness = Harness(req=WINDOW).replace_ports(hot=_LaxLookups(row))
+
+    assert await harness.merge().anchor_at(SYM, T0 + AT) == row

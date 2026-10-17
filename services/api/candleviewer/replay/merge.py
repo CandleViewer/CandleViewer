@@ -36,7 +36,8 @@ read, so a span archived mid-session ends it with a typed error, never a hole. A
 is an operator override: no coverage checks, so a span it lacks reads empty.
 
 **Anchor.** `anchor_at` is the seek engine's lookup (E26-T04): one row, so under `auto` it asks
-both tiers and the latest by `order_key` wins, and the answer never depends on roll-off.
+both tiers and the latest by `order_key` wins, and the answer never depends on roll-off. A row a
+tier returns outside the asked bound fails the lookup rather than seed a wrong book.
 
 **Memory and failure.** The cursors share `budget_bytes`: each read is capped at its cursor's
 share in rows and at `DEFAULT_MAX_ROWS_PER_READ` whatever the budget, so a stream too dense for
@@ -438,8 +439,10 @@ class RecordedMerge:
         intersects `[start, end)`, at `max(gap_start, start)`. The read asks for one row past the
         ceiling, and a symbol that fills it is refused whole rather than reported in part. The
         reader is not trusted to have filtered: symbol, stream and the half-open intersection are
-        re-checked, and rows identical in symbol, stream, start, end and cause report once. The
-        build yields to the event loop every `_MARKER_YIELD_EVERY` rows (C-2.17)."""
+        re-checked, and rows identical in symbol, stream, start, end and cause report once. A row
+        that ends before it starts cannot exist (`rg_window` CHECK, 21 Sec.3.6.2): its shape is
+        the table's to guard, not re-checked here. The build yields to the event loop every
+        `_MARKER_YIELD_EVERY` rows (C-2.17)."""
         req = self._request
         start_us, end_us = req.start_us, req.end_us
         window = TimeRange(start_us=start_us, end_us=end_us)
@@ -481,7 +484,9 @@ class RecordedMerge:
         both tiers are asked and the latest by `order_key` wins (a row both hold maps
         identically), so the answer never depends on how far roll-off has got; an explicit tier
         looks only there. A symbol outside the replay or an instant outside its window (the end
-        included, where a finished replay sits) is refused with `ReplayRequestInvalid`."""
+        included, where a finished replay sits) is refused with `ReplayRequestInvalid`. A tier
+        that answers with a row outside the bound fails the lookup (`anchor_out_of_bounds`)
+        rather than seed a wrong book."""
         req = self._request
         if symbol not in req.symbols:
             raise ReplayRequestInvalid("symbol is not part of this replay")
@@ -498,6 +503,24 @@ class RecordedMerge:
             )
             stream = StreamKind.ORDERBOOK_SNAPSHOT
             hit = await self._guarded(lookup, tier=tier, symbol=symbol, stream=stream)
-            if hit is not None:
-                found.append(hit)
+            if hit is None:
+                continue
+            if not self._is_anchor(hit, symbol, at_us):  # a reader is not trusted to have filtered
+                raise ReplaySourceUnavailable(
+                    tier=tier, symbol=symbol, stream=stream, reason="anchor_out_of_bounds"
+                )
+            found.append(hit)
         return max(found, key=order_key, default=None)
+
+    def _is_anchor(self, row: RecordedEvent, symbol: str, at_us: int) -> bool:
+        """Whether `row` is what `anchor_at` asked a tier for: a snapshot of `symbol` at the
+        session depth inside the two-sided bound. A row outside it fails the lookup (never
+        silently a wrong anchor)."""
+        payload = row.payload
+        return (
+            row.symbol == symbol
+            and row.stream is StreamKind.ORDERBOOK_SNAPSHOT
+            and isinstance(payload, RecordedBookSnapshot)
+            and payload.depth == self._request.depth
+            and at_us - ANCHOR_LOOKBACK_US <= row.ts_us <= at_us
+        )

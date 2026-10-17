@@ -19,6 +19,7 @@ from candleviewer.replay import (
     ReplayMemoryCeilingExceeded,
     ReplaySourceUnavailable,
 )
+from candleviewer.replay.merge import approx_bytes
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent, RecordedGap
@@ -348,3 +349,32 @@ async def test_a_symbol_with_more_gap_rows_than_the_ceiling_is_refused_whole(sym
     assert isinstance(error, ReplayMemoryCeilingExceeded)
     assert (error.symbol, error.stream, error.max_rows) == (symbol, None, CEILING)
     assert "recording_gaps" in str(error) and str(CEILING) in str(error)
+
+
+class _OverReturningGaps(StaticGapReader):
+    """A reader that ignores `limit` and hands back every row it holds."""
+
+    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+        self.limits.append(limit)
+        return list(self._gaps)
+
+
+async def test_a_reader_that_ignores_the_limit_is_still_refused_past_the_ceiling() -> None:
+    harness = Harness(hot=[trade(START, trade_id="x")], req=request(start_us=START, end_us=END))
+    harness.replace_ports(gaps=_OverReturningGaps(dense_gaps(CEILING + 50)))
+
+    delivered, error = await drain(harness.merge(), batch=8)
+
+    assert delivered == [] and harness.hot.reads == 0
+    assert isinstance(error, ReplayMemoryCeilingExceeded) and error.max_rows == CEILING
+
+
+async def test_a_marker_counts_as_one_event_toward_the_batch_byte_cut() -> None:
+    """Slice 6's read-ahead sizes its buffer from these estimates."""
+    rows = [gap(START + i, START + i + 1) for i in range(5)]
+    merge = Harness(gaps=rows, req=request(start_us=START, end_us=END)).merge()
+    two_events = 2 * approx_bytes(trade(0))
+
+    sizes = [len(batch) async for batch in merge.batches(max_events=100, max_bytes=two_events)]
+
+    assert sizes == [2, 2, 1]
