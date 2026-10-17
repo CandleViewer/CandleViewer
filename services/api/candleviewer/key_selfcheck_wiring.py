@@ -3,14 +3,15 @@
 M13 judges keys and may import neither M3 nor M4 (C-3.1); M4 makes the signed calls and may not
 import M13. This glue binds them: a refusal that is a verdict about the key becomes `KeyRefused`,
 every other adapter error `VerificationInconclusive` carrying the venue code or the taxonomy code,
-never exchange text (SR-E27-08). Each call, its budget wait and its signing included, is bounded
-at `CALL_TIMEOUT_S` (ticket performance notes). The store, the calls and the job are bound to the
-process environment, so a key is read, signed and sent on its own environment only (C-2.11,
-US-ACCT-007). Requests carry the exchange's clock once the ingestion clock guard has measured the
-offset (E08-S07), so a skewed host clock shows in the verdict's offset instead of a refusal. Only
-the real backend gets a self-check: the fake one (dev/CI) stores no key and makes no call
-(C-13.5). Nothing here does I/O: `AccountsService.start()` runs the check, and `stop()` releases
-its Postgres pool.
+never exchange text (SR-E27-08). Each call, its budget wait and its signing included, is cut at the
+adapter's own per-call bound, read from the adapter surface (`key_call_timeout_s`; ticket
+performance notes), so this file imports no venue module (C-2.2). The store, the calls and the job
+are bound to the process environment, so a key is read, signed and sent on its own environment
+only (C-2.11, US-ACCT-007). Requests carry the exchange's clock once the ingestion clock guard has
+measured the offset (E08-S07), so a skewed host clock shows in the verdict's offset instead of a
+refusal. Only the real backend gets a self-check: the fake one (dev/CI) stores no key and makes no
+call (C-13.5). Nothing here does I/O: `AccountsService.start()` runs the check, and `stop()`
+releases its Postgres pool.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ from candleviewer.accounts.verification import (
     VerificationPolicy,
 )
 from candleviewer.exchange.base.errors import ExchangeError
-from candleviewer.exchange.bybit.key_verify import CALL_TIMEOUT_S
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from candleviewer.app import AppContext
 
 __all__ = [
-    "CALL_TIMEOUT_S",
     "JudgedCalls",
     "KeyVerifyingExchange",
     "VenueCalls",
@@ -59,6 +58,10 @@ class VenueCalls(Protocol):
 class KeyVerifyingExchange(Protocol):
     """The exchange adapter surface the self-check uses (`AppContext.exchange_bybit`)."""
 
+    @property
+    def key_call_timeout_s(self) -> float:
+        """The adapter's bound on one call, its budget wait and its signing included."""
+
     def key_verification_calls(
         self,
         env: str,
@@ -74,9 +77,10 @@ class KeyVerifyingExchange(Protocol):
 
 @asynccontextmanager
 async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
-    """One signed call within `CALL_TIMEOUT_S`, its errors in the M13 verdict vocabulary."""
+    """One signed call within the adapter's per-call bound, its errors in the M13 verdict
+    vocabulary."""
     try:
-        async with asyncio.timeout(CALL_TIMEOUT_S):
+        async with asyncio.timeout(exchange.key_call_timeout_s):
             yield
     except TimeoutError:
         raise VerificationInconclusive("timeout") from None

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -46,6 +47,7 @@ from tests._corpus import rest
 from tests._signing import Call, fake_capability
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "key_verification"
+ROOT = Path(__file__).resolve().parents[4]
 HOSTS = ("api.bybit.com", "api-demo.bybit.com", "api-testnet.bybit.com")
 KEY, TEXT = UUID(int=11), "exchange text that must never be echoed"
 NOW, EGRESS, SKEW_MS = datetime(2026, 10, 15, 9, tzinfo=UTC), "203.0.113.7", 12_000
@@ -86,9 +88,13 @@ def ctx(
     )
 
 
-async def judge(error: BaseException | None, call: str = "key_info") -> BaseException:
-    venue = Venue(error)
-    calls = wiring.JudgedCalls(ExchangeBybitService(), cast(Any, venue))
+async def judge(
+    error: BaseException | None, call: str = "key_info", *, bound_s: float | None = None
+) -> BaseException:
+    venue, exchange = Venue(error), ExchangeBybitService()
+    if bound_s is not None:
+        exchange.key_call_timeout_s = bound_s
+    calls = wiring.JudgedCalls(exchange, cast(Any, venue))
     with pytest.raises((KeyRefused, VerificationInconclusive)) as caught:
         await getattr(calls, call)()
     await calls.aclose()
@@ -127,10 +133,9 @@ async def test_a_refusal_about_the_key_is_a_verdict(code: int, reason: Refusal, 
     ids=["10004", "10002", "10018", "10006", "5xx", "malformed", "untyped", "timeout"],
 )
 async def test_any_other_error_is_inconclusive_with_a_code_only(
-    error: ExchangeError | None, code: str, monkeypatch: pytest.MonkeyPatch
+    error: ExchangeError | None, code: str
 ) -> None:
-    monkeypatch.setattr(wiring, "CALL_TIMEOUT_S", 0.0)  # the hang is cut at once
-    inconclusive = await judge(error)
+    inconclusive = await judge(error, bound_s=0.0)  # the adapter's bound cuts the hang at once
     assert isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == code
     assert inconclusive.__cause__ is None and inconclusive.__suppress_context__
 
@@ -157,7 +162,18 @@ def test_the_real_backend_attaches_a_self_check_bound_to_the_process_environment
 
 
 def test_each_call_is_bounded_by_the_adapters_own_per_call_timeout() -> None:
-    assert wiring.CALL_TIMEOUT_S is CALL_TIMEOUT_S  # one constant: the bounds cannot drift
+    assert ExchangeBybitService().key_call_timeout_s == CALL_TIMEOUT_S == 5.0
+    assert not hasattr(wiring, "CALL_TIMEOUT_S")  # read from the adapter, never a second copy
+
+
+def test_the_wiring_names_no_exchange_venue() -> None:
+    """C-2.2: `cv-adapter-isolation` (a blocking Semgrep rule) flags any venue name outside
+    `exchange/bybit/`, an import included; the wiring reads the bound from the adapter instead."""
+    rule = (ROOT / ".semgrep" / "cv-adapter-isolation.yml").read_text(encoding="utf-8")
+    found = re.search(r"^\s*pattern-regex:\s*'([^']+)'", rule, re.MULTILINE)
+    assert found is not None, "cv-adapter-isolation no longer declares a quoted `pattern-regex`"
+    source = Path(wiring.__file__).read_text(encoding="utf-8")
+    assert re.findall(found.group(1), source) == []
 
 
 @pytest.fixture
