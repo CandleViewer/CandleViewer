@@ -14,7 +14,8 @@ replay session)`, so a drop never touches the live and the replay subscription o
 1. drop the queued frames and pending state of every throttled topic that holds any, and mark it
    `resnapshot_required` (its deltas are held until then); queued frames of a topic already
    awaiting its snapshot, or no longer subscribed, are dropped as well, and so is the pacer
-   window of a topic awaiting another sender's snapshot (it predates that snapshot);
+   window of a topic awaiting another sender's snapshot (it predates that snapshot); a paused
+   topic is shed the same way, without the mark: its resume re-snapshots it (D16);
 2. once the queue has drained below 50 %, send one `snap` with reason `backpressure` per marked
    topic, one at a time while the queue stays below 50 %;
 3. if the queue is still over budget after the drop, what remains cannot be dropped (`orders` /
@@ -32,7 +33,10 @@ caller runs `check` after every push and every pacer update; recovery needs `dra
 send and after every `check` that dropped. `drain` queues one snapshot per call; a `check` from its
 pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a redrop).
 `drain` is the only sender of `backpressure` snapshots: the wiring must keep
-`TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them.
+`TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them. It deletes, unsent, an entry
+that no longer awaits that snapshot or (given the connection's subscriptions) is no longer
+subscribed. A snapshot that does not queue (not ready, or failed) is parked: `drain` skips it
+until `unpark`, which the wiring calls on a source rebuild and on a coarse timer.
 """
 
 from __future__ import annotations
@@ -260,13 +264,23 @@ class Backpressure:
     """The §8.4 ladder for one connection: `check` after anything grows the queue or the pacer's
     pending state, `drain` after the writer sends and after a `check` that dropped."""
 
-    def __init__(self, queue: OutboundQueue, pacer: Pacer) -> None:
+    def __init__(
+        self,
+        queue: OutboundQueue,
+        pacer: Pacer,
+        snapshot: Callable[[Subscription], bool] | None = None,
+    ) -> None:
         self.queue = queue
         self.pacer = pacer
+        #: Queues one `backpressure` snapshot, True when it did; the wiring passes one that
+        #: contains the emitter's failures (a failure then reads as not queued).
+        self._snapshot = snapshot or (lambda sub: pacer.emitter.snapshot(sub, "backpressure"))
         #: Subscriptions (id -> key) whose `backpressure` snapshot may still be queued.
         self._snapped: dict[str, Key] = {}
         #: Consecutive drops that found a subscription's `backpressure` snapshot unsent.
         self._redrops: dict[str, int] = {}
+        #: Marked subscriptions whose snapshot did not queue: `drain` skips them until `unpark`.
+        self._parked: set[str] = set()
         #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
         self._draining = False
         self._deferred: list[Subscription] | None = None
@@ -298,16 +312,18 @@ class Backpressure:
             for sub in subs
             if not sub.topic.family.never_throttled
             and not sub.snapshot_pending
+            and not _paused(sub)
             and (_key(sub) in queued or self._pending(sub))
         ]
         for sub in offending:
             self.pacer.drop(sub)
-        live = {_key(sub) for sub in subs if not sub.snapshot_pending}
-        # Frames of a topic awaiting another snapshot, or no longer subscribed, go too. That
-        # drop is not a redrop: `_settle` forgets its record and the count starts afresh.
+        live = {_key(sub) for sub in subs if not sub.snapshot_pending and not _paused(sub)}
+        # Frames of a topic awaiting another snapshot, paused (D16: no mark, its resume
+        # re-snapshots it), or no longer subscribed, go too. That drop is not a redrop:
+        # `_settle` forgets its record and the count starts afresh.
         self.queue.drop({key for key in queued if key not in live} | {_key(s) for s in offending})
         for sub in subs:
-            self.pacer.shed(sub)  # a window that predates another sender's pending `snap`
+            self.pacer.shed(sub)  # a window that predates a pending `snap`, or a paused one
         events = []
         if offending:
             events.append(LadderEvent("drop", tuple(sorted(sub.ch for sub in offending))))
@@ -355,31 +371,60 @@ class Backpressure:
                 looping = looping or self._redrops[sub.sub_id] >= MAX_REDROPS
         return looping
 
-    def drain(self) -> list[LadderEvent]:
-        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per call (module docstring)."""
-        if self._closed:
+    def drain(self, live: Mapping[str, Subscription] | None = None) -> list[LadderEvent]:
+        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per call (module docstring). `live`
+        is the connection's subscriptions by id: an entry not among them is deleted unsent."""
+        if self._closed or self._draining:  # #2998: never re-entered from a snapshot's push
             return []
         self._settle()  # before a new snapshot replaces the record of a sent one
         sent: list[str] = []
         held: list[LadderEvent] = []
-        for sub_id, sub in list(self.pacer.resnapshot_required.items()):
+        required = self.pacer.resnapshot_required
+        for sub_id, sub in list(required.items()):
+            if not _awaits(sub) or (live is not None and live.get(sub_id) is not sub):
+                del required[sub_id]  # resnapshotted by another path, or ended: never sent
+                self._parked.discard(sub_id)
+                continue
+            if sub_id in self._parked:
+                continue
             if self.queue.pct(self.pacer.pending_bytes) >= DRAIN_PCT:
                 break
             self._draining = True
             try:
-                queued = self.pacer.emitter.snapshot(sub, "backpressure")
-            finally:
+                queued = self._snapshot(sub)
+            finally:  # #2998: a snapshot that raises leaves no held check behind
                 self._draining = False
+                deferred, self._deferred = self._deferred, None
             if queued:
-                del self.pacer.resnapshot_required[sub_id]
+                del required[sub_id]
                 self._snapped[sub_id] = _key(sub)  # before the held check: a drop is a redrop
                 sent.append(sub.ch)
-            deferred, self._deferred = self._deferred, None
+            else:
+                self._parked.add(sub_id)  # not ready, or failed: until a rebuild or the timer
             if deferred is not None:
                 held += self.check(deferred)
             if queued:
                 break
         return _record([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
+
+    def unpark(self, sub_ids: Iterable[str] | None = None) -> bool:
+        """Let `drain` retry the parked snapshots of `sub_ids` (all of them by default); True
+        when one was parked."""
+        before = len(self._parked)
+        if sub_ids is None:
+            self._parked.clear()
+        else:
+            self._parked.difference_update(sub_ids)
+        return len(self._parked) < before
+
+
+def _awaits(sub: Subscription) -> bool:
+    """Still marked for its `backpressure` snapshot (`Pacer.drop`)."""
+    return sub.snapshot_pending and sub.pending_reason == "backpressure"
+
+
+def _paused(sub: Subscription) -> bool:
+    return sub.effective.get("paused") is True
 
 
 def _key(sub: Subscription) -> Key:
