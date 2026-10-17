@@ -36,9 +36,14 @@ from candleviewer.observability.metrics_runtime import (
 _UNIT_SUFFIX = re.compile(
     r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts)$"
 )
-#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules),
-#: by the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998), and
-#: the E42-T03 ticket's 1/0 order-gate gauge `cv_maintenance_mode`.
+#: The samples a histogram serves beside its base name.
+_SAMPLES = ("_bucket", "_count", "_sum")
+#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules), by
+#: the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998), by the
+#: E42-T03 ticket's 1/0 order-gate gauge `cv_maintenance_mode`, and by E17-T06
+#: (`cv_ws_connection_class`, a gauge per class; `cv_ws_queue_frames`, a histogram of frames).
+#: `cv_ws_coalesced_updates`, a histogram of updates, is #412's ruling D6 name
+#: `cv_ws_coalesced_count` without the `_count` end that a histogram may not have (see below).
 _SUFFIX_EXCEPTIONS = frozenset(
     {
         "disk_used_ratio",
@@ -47,6 +52,9 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
         "bars_symbol_cardinality",
+        "cv_ws_connection_class",
+        "cv_ws_coalesced_updates",
+        "cv_ws_queue_frames",
     }
 )
 
@@ -84,6 +92,14 @@ def test_catalogue_names_are_unique_and_documented() -> None:
 def test_catalogue_live_names_are_unit_suffixed() -> None:
     for s in live_specs():
         assert _UNIT_SUFFIX.search(s.name) or s.name in _SUFFIX_EXCEPTIONS, s.name
+
+
+def test_catalogue_histogram_names_do_not_end_in_a_sample_suffix() -> None:
+    """`_bucket`, `_count` and `_sum` are the samples a histogram serves. A base name that ends in
+    one serves `x_count_count`, reads like a counter that has no samples (`increase(x_count[5m])`
+    is empty) and names a family that a later `x` histogram could not register (E17-T06 review)."""
+    ending = [s.name for s in CATALOGUE if s.kind == "histogram" and s.name.endswith(_SAMPLES)]
+    assert ending == []
 
 
 def test_catalogue_every_planned_entry_has_owning_epic() -> None:

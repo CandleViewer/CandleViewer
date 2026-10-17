@@ -38,7 +38,9 @@ priority lane, after a budget check, since `apply` may fold a window. Right afte
 through `pong`, where any other id costs one comparison and keeps nothing (an unanswered probe is
 retired after 10 s). The gateway's idle heartbeat `ping` is unchanged, but the probe keeps the
 outbound traffic from idling for its 20 s, so it does not fire while the probe runs; a socket with
-no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1).
+no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1). E17-T06 counts each attached
+connection under its class in `cv_ws_connection_class` until `release`, and each classification
+observes the depth it read; `Pacer` counts merged windows and each RTT sample (`ws/pacing.py`).
 
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
@@ -106,6 +108,8 @@ from candleviewer.ws.metrics import (
     SAMPLE_EVERY,
     cv_ws_malformed_updates_total,
     cv_ws_overflow_total,
+    cv_ws_queue_bytes,
+    cv_ws_queue_frames,
     frame_bytes,
 )
 from candleviewer.ws.outbound import (
@@ -117,7 +121,7 @@ from candleviewer.ws.outbound import (
     encode,
     json_payload,
 )
-from candleviewer.ws.pacing import Pacer
+from candleviewer.ws.pacing import CLASS_COUNTS, ConnectionClass, Pacer
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, TopicEmitter
 from candleviewer.ws.topics import FAMILIES
 
@@ -260,6 +264,9 @@ class ConnectionPipeline:
         #: When the writer's last idle wait ends (`wait_s`); None once a window armed to close
         #: sooner has woken it (`_wake_for`).
         self._wake_by: float | None = None
+        #: E17-T06: the class this connection counts under in `cv_ws_connection_class`, from
+        #: `attach` to `release`; None while it counts under none.
+        self._counted: ConnectionClass | None = None
 
     @property
     def deadline(self) -> float | None:
@@ -282,6 +289,7 @@ class ConnectionPipeline:
         emitter.on_rebuild = self._rebuilt
         authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
         self._notify, self._classify_at = notify, emitter.clock() + self._interval_s
+        self._count_as(pacer.cls)
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
@@ -345,16 +353,25 @@ class ConnectionPipeline:
     def _classify(
         self, ladder: Backpressure, notify: Callable[[dict[str, Any]], None], now: float
     ) -> None:
-        """One §8.3 sample (module docstring): the depth with the pending state, the class, and
-        on a change the budget check and the notice; then the probe's `ping`, if one is due and
-        neither closed the connection. The next classification is the schedule's first tick after
-        `now`."""
+        """One §8.3 sample (module docstring): the depth with the pending state, observed once
+        (E17-T06: `cv_ws_queue_bytes`, `cv_ws_queue_frames`), the class, which the connection's
+        `cv_ws_connection_class` count follows, and on a change the budget check and the notice;
+        then the probe's `ping`, if one is due and neither closed the connection. The next
+        classification is the schedule's first tick after `now`. Nothing once `released`: the
+        connection stays out of the class count, takes no depth sample and retires no probe."""
+        if self.released:  # `release` parks the schedule: this is the second line
+            return
         step = self._interval_s
         self._classify_at += step * (1 + (now - self._classify_at) // step)
         if self._classify_at <= now:  # the float sum rounded onto `now`: one sample per tick
             self._classify_at += step
-        pacer = ladder.pacer
-        notice = pacer.classify(self.queue.pct(pacer.pending_bytes), self._live.values(), now)
+        pacer, queue = ladder.pacer, self.queue
+        pending = pacer.pending_bytes
+        cv_ws_queue_bytes.observe(queue.bytes + pending)  # E17-T06: the depth this sample reads
+        cv_ws_queue_frames.observe(len(queue))
+        notice = pacer.classify(queue.pct(pending), self._live.values(), now)
+        if pacer.cls is not self._counted:
+            self._count_as(pacer.cls)
         if notice is not None:
             self._apply(ladder.check(self._live.values()))  # `apply` may have folded a window
             notify(notice)  # never dropped: over the budget, it closes (§8.4 step 3)
@@ -370,6 +387,8 @@ class ConnectionPipeline:
         an RTT sample. Any other id (a heartbeat's, an answered or retired probe's, one the
         client made up) is ignored at the cost of one comparison and keeps nothing: a client
         answers at will, and its `pong`s are exempt from the inbound rate limit (§8.5)."""
+        if self.released:  # E17-T06: a late `pong` is no RTT sample, and retires no probe
+            return
         if self.ladder is not None:
             self.ladder.pacer.probe.pong(probe, now)
 
@@ -620,12 +639,26 @@ class ConnectionPipeline:
         )
 
     def release(self) -> None:
-        """Teardown: free both lanes and the subscriptions' hook; nothing is queued after it."""
+        """Teardown: free both lanes and the subscriptions' hook; nothing is queued after it. The
+        connection leaves `cv_ws_connection_class` first, once (E17-T06), and the classification
+        schedule is parked, as before `attach`: a writer turn classifies nothing, and an idle one
+        waits its tick."""
+        self._count_as(None)
         self.released = True
+        self._classify_at = math.inf
         self.queue.clear()
         self._timeout = None
         if self._attached is not None:
             self._attached[0].on_drop = None
+
+    def _count_as(self, cls: ConnectionClass | None) -> None:
+        """E17-T06: move this connection's count in `cv_ws_connection_class` to `cls` (None: out
+        of it), so the gauge is exact across `attach`, each class change and `release`."""
+        if self._counted is not None:
+            CLASS_COUNTS[self._counted].dec()
+        if cls is not None:
+            CLASS_COUNTS[cls].inc()
+        self._counted = cls
 
     def _fields(self, frame: Mapping[str, Any]) -> dict[str, Any]:
         """A frame as a log line may name it: bounded type and family, never the payload."""

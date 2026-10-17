@@ -364,7 +364,7 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith(("cv_ws_", "cv_machine_ws_"))}
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 28  # + cv_ws_rebuild_refused_total
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 34
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth
@@ -395,6 +395,12 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
         "cv_ws_fanout_seconds",  # the `FastHistogram`s, served as histograms with `env`
         "cv_ws_frame_encode_seconds",
         "cv_ws_frame_bytes",
+        "cv_ws_conflated",  # E17-T06 flag on: served from the start, whatever the flag says
+        "cv_ws_connection_class",
+        "cv_ws_coalesced_updates",
+        "cv_ws_rtt_seconds",
+        "cv_ws_queue_bytes",
+        "cv_ws_queue_frames",
     ):
         samples = families[name].samples
         assert samples and all(x.labels["env"] == "demo" for x in samples), name

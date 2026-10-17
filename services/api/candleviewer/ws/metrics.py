@@ -1,5 +1,6 @@
 """CVWB encode metrics (E17-T02 follow-up, docs/plan/20-architecture.md section 12.1) and the
-send-path series of the gateway (E17-T06: fan-out span, frame encode time and size).
+send-path series of the gateway (E17-T06: fan-out span, frame encode time and size); with the
+backpressure flag on, also its conflation, class, RTT and queue depth series (below).
 
 Module-level series (the encoder is a pure function with no facade); `export_cvwb_metrics()` and
 `export_ws_metrics()` serve them on the scraped registry. ``kind`` is the six-name body-kind enum
@@ -7,7 +8,7 @@ of section 3.4 (plus ``json`` and ``msgpack``, a data frame as its connection's 
 the E17-T06 series), so children are pre-bound once and the hot path does no label lookup or
 formatting.
 
-The E17-T06 series are `FastHistogram`s: a `prometheus_client` `Histogram.observe` takes a lock
+The send-path series are `FastHistogram`s: a `prometheus_client` `Histogram.observe` takes a lock
 per value and builds an iterator per call (~0.5-1 us), several times what #571's < 2 % overhead
 budget leaves for a frame on the send path. Even the lock-free one costs ~0.25 us in situ, so the
 three series observed per frame are also sampled, one frame in `SAMPLE_EVERY`, with that weight.
@@ -32,12 +33,22 @@ from candleviewer.observability.metrics import (
     check_label_names,
 )
 from candleviewer.observability.metrics_catalogue import (
+    CLASS_HELP,
+    COALESCED_BUCKETS,
+    COALESCED_HELP,
+    CONFLATED_HELP,
     FANOUT_BUCKETS,
     FANOUT_HELP,
     FRAME_BYTES_BUCKETS,
     FRAME_BYTES_HELP,
     FRAME_ENCODE_BUCKETS,
     FRAME_ENCODE_HELP,
+    QUEUE_BYTES_BUCKETS,
+    QUEUE_BYTES_HELP,
+    QUEUE_FRAMES_BUCKETS,
+    QUEUE_FRAMES_HELP,
+    RTT_BUCKETS,
+    RTT_HELP,
 )
 from candleviewer.ws._generated.cvwb_layout import KINDS
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
@@ -360,6 +371,23 @@ cv_ws_frame_bytes = FastHistogram(
     label_values=[(k,) for k in FRAME_KINDS],
 )
 
+# -- E17-T06 with CV_WS_BACKPRESSURE_ENABLED on (#412's wiring, ruling D6) ----------------------
+# Per process: no connection, user, symbol or channel in any label. The two labelled series bind
+# their closed sets where those sets live, at import (`pacing.CONFLATED`, `pacing.CLASS_COUNTS`).
+# `cv_ws_coalesced_updates` is observed as a merged window leaves (a `FastHistogram`, as the send
+# path's are). The RTT and the two depths are plain `Histogram`s: one observation per probe sample
+# or classification (about once per `classify_interval_ms` per connection), never per frame.
+cv_ws_conflated_total = Counter("cv_ws_conflated_total", CONFLATED_HELP, labelnames=("topic",))
+cv_ws_connection_class = Gauge("cv_ws_connection_class", CLASS_HELP, labelnames=("state",))
+cv_ws_coalesced_updates = FastHistogram(
+    "cv_ws_coalesced_updates", COALESCED_HELP, buckets=COALESCED_BUCKETS
+)
+cv_ws_rtt_seconds = Histogram("cv_ws_rtt_seconds", RTT_HELP, buckets=RTT_BUCKETS)
+cv_ws_queue_bytes = Histogram("cv_ws_queue_bytes", QUEUE_BYTES_HELP, buckets=QUEUE_BYTES_BUCKETS)
+cv_ws_queue_frames = Histogram(
+    "cv_ws_queue_frames", QUEUE_FRAMES_HELP, buckets=QUEUE_FRAMES_BUCKETS
+)
+
 #: Every series the ws package owns (module-level, re-exported on the app registry): the `cv_ws_*`
 #: ones and the 23 section 6.4 `cv_machine_ws_*` ones (`machines.py`).
 CV_WS_NAMES: Final[frozenset[str]] = frozenset(
@@ -389,6 +417,12 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_frame_bytes",
         "cv_ws_overflow_total",
         "cv_ws_malformed_updates_total",
+        "cv_ws_conflated_total",
+        "cv_ws_connection_class",
+        "cv_ws_coalesced_updates",
+        "cv_ws_rtt_seconds",
+        "cv_ws_queue_bytes",
+        "cv_ws_queue_frames",
         "cv_machine_ws_publish_total",
         "cv_machine_ws_scope_missing_total",
         "cv_machine_ws_registry_full_total",
@@ -444,6 +478,8 @@ def frame_bytes(payload: str | bytes, sp: str | None, *, msgpack: bool) -> int:
 #: The one fan-out series; the writer observes it for each stamped data frame it sends, and the
 #: hub stamps one data frame of a subscription in `SAMPLE_EVERY`.
 FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()
+#: The one `cv_ws_coalesced_updates` series: `Pacer` observes each merged window that leaves.
+COALESCED_UPDATES: Final = cv_ws_coalesced_updates.labels()
 
 
 def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
@@ -451,6 +487,7 @@ def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportColle
     # The owning modules declare their series at import; import them so every family exists.
     from candleviewer.ws import (  # noqa: F401
         machines,
+        pacing,
         permissions,
         rebuild_budget,
         revocation,
