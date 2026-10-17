@@ -130,7 +130,6 @@ def test_py_job_combines_every_lane_and_keeps_the_floor_and_the_gate_artifact() 
     (upload,) = [s for s in py["steps"] if s.get("with", {}).get("name") == "py-coverage"]
     assert upload["with"]["path"] == "services/api/coverage.xml"
     assert '[ "$CHECKS_RESULT" = success ] && [ "$TESTS_RESULT" = success ]' in runs
-    assert jobs["architecture"]["needs"] == "py"
     assert "uv run lint-imports" in _runs(jobs["py-checks"])
 
 

@@ -55,7 +55,7 @@ release tag
 ### Binding rules
 
 1. **Required checks for merge**: commitlint, lint, typecheck, unit, generated-code freshness, contract, integration, e2e (web), a11y, security (SAST + secrets + SCA), and — when `packages/chart-engine` changed — the engine benchmarks. Two approvals including one code owner (`.github/CODEOWNERS`).
-2. **Path filtering** decides which jobs run, but the *required* set is computed from the same filter so a skipped-but-required job reports success only when genuinely not applicable (a "required checks resolver" job emits the conclusion).
+2. **Path filtering** decides which jobs run, but the _required_ set is computed from the same filter so a skipped-but-required job reports success only when genuinely not applicable (a "required checks resolver" job emits the conclusion).
 3. **Generated-code freshness is a hard gate.** `packages/protocol` is regenerated from `22-api-openapi.yaml` and the WS schema; any diff fails the build. Generated files are committed so consumers need no codegen step.
 4. **Benchmarks run on a pinned self-hosted runner** (the reference machine class, fixed GPU driver, fixed Chromium). Results are compared to a stored baseline; a > 10 % regression fails. Baseline updates require an explicit reviewer-approved commit that states the cause.
 5. **Caching**: Turborepo remote cache for JS, `uv` cache for Python, Playwright browser cache, Docker layer cache. Target: PR feedback ≤ 15 minutes end-to-end.
@@ -68,11 +68,13 @@ release tag
 ### Consequences
 
 Positive:
+
 - One platform for code, planning, review, CI and releases — no context switching and no second permissions model.
 - Path filtering keeps the common case fast while the full matrix still runs nightly.
 - The freshness gate makes protocol drift structurally impossible, which is the highest-value guarantee in a polyglot monorepo.
 
 Negative / risks:
+
 - A self-hosted GPU runner is infrastructure we must maintain and secure (isolated, ephemeral workspace, no secrets, restricted to this repository). Documented in `04-security-program.md`.
 - GitHub Actions minutes and LFS bandwidth are real costs; mitigated by caching, path filters and concurrency cancellation.
 - Benchmark stability depends on that one machine; if it is unavailable, the engine check blocks merges. Mitigated by a documented manual-override procedure requiring the architect's approval, recorded in the PR.
@@ -87,3 +89,9 @@ Negative / risks:
 - Measure PR feedback time weekly; if the p90 exceeds 15 minutes, rebalance the job matrix.
 - Quarterly review of action pins and workflow permissions as part of the security programme.
 - A deliberate "break the protocol" PR must fail the freshness gate (tested once during Sprint 01).
+
+## Amendment 1 (2026-10-17, #3076)
+
+- **Pipeline shape (refined, not reversed).** The `[always]` gates and the other sub-minute gates run as steps of one `gates` job in `pr.yml`, each step keeping its path filter; the `architecture` mirror runs beside `coverage-thresholds` instead of after the last `py` job; PR runs skip the informational sync-parity job, which runs nightly.
+- **Rule 2.** A resolver lane may be a step outcome that `gates` exports under the lane's name. It is judged exactly like a job result: an applicable lane passes only on `success`, and a lane that is not applicable passes. `gates` is a lane too, so a failed setup or verdict step fails the resolver.
+- **Validation (2026-10-17, 30 completed `pr.yml` runs, GitHub API).** A median run executed 32 jobs against a 20-job runner cap, 23 of them under a minute (27 % of billed minutes), and queueing was about 75 % of the time to `ci-required`. By the workflow graph a `py` PR now executes 22 jobs (31 before). Re-measure on the next 30 runs with the same method, and report how many runs were created in that window, since queue time depends on load.

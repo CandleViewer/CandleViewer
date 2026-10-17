@@ -21,19 +21,21 @@ measuring it and periodically breaking it on purpose.
 ```
 PR opened/updated (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
-├─ pin-check (SR-132)       → tools/ci/check_action_pins.py            (CI-GATE-003)
-├─ spike-containment        → tools/ci/check_spike_containment.py      (CI-SPIKE-001/002)
-├─ commitlint / licence-header / docs-link  → always on
+├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
+│  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
+│  │                licence-header, docs-link-check (GOV-002), commitlint (last: installs run husky)
+│  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
+│  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
+├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
 ├─ _job-gen.yml   (always)           → generated-code freshness gate    (CI-GEN-001..004)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001)
 ├─ _job-security.yml (always)        → CodeQL/Semgrep/Bandit/pip-audit/npm-audit/gitleaks/licence (CI-SEC-001..005)
 ├─ _job-coverage.yml (always)        → per-package threshold + ratchet  (CI-COV-001..003)
-├─ _job-statechart-lint.yml (statechart filter) → machine_hashes.lock diff, contract tests
 ├─ _job-engine-bench.yml (engine filter) → GPU benchmark vs baseline    (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
 
@@ -71,6 +73,10 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   "gate misconfiguration": the workflow itself is broken (a lane that
   should have run did not). This is a pipeline bug, not a PR bug — do not
   try to work around it; open an `infra-devops` issue.
+- A gate inside `gates` reports under its own lane name: read the `gates` step named after it
+  (its job summary lists every gate's outcome). `gates` red while every gate lane is green
+  means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
+  or an empty result means the 45-minute job cap or a run cancellation stopped `gates` first.
 - `CI-GATE-003` on `pin-check` means an action reference in `.github/workflows/**`
   is not pinned to a full commit SHA, or a workflow uses `pull_request_target`
   unsafely. Fix the reference; do not add an exception.
@@ -89,8 +95,8 @@ here, or the check fails the `governance` lane.
   the resolver.
 - **CI-GATE-002** (gate misconfiguration): a required lane was skipped while
   its path filter said it applied. Compare `changed-paths` outputs against
-  the lane's `if:` condition in `pr.yml`; this is almost always a filter/if
-  mismatch introduced by an edit to `pr.yml` itself.
+  the lane's `if:` condition in `pr.yml` (a step's `if:` for a gate inside `gates`);
+  this is almost always a filter/if mismatch introduced by an edit to `pr.yml` itself.
 - **CI-GATE-003** (unpinned action / unsafe trigger): `tools/ci/check_action_pins.py`
   names the offending `uses:` line; replace the tag with the commit SHA
   GitHub shows for that release and keep the `# vX.Y.Z` comment.

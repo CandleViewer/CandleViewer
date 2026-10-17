@@ -2,8 +2,8 @@ name: pr
 
 # E03-T01: entry-point workflow for every pull request into `main`.
 # ADR-0013-ci-pipeline.md binding rules 1, 2, 5, 6, 7. This workflow only
-# computes the change-path filters, wires the always-on jobs (commitlint,
-# licence-header, docs-link), calls the (still-stub) reusable per-lane
+# computes the change-path filters, runs the always-on and sub-minute gates
+# as steps of one `gates` job (#3076), calls the (still-stub) reusable per-lane
 # workflows, and resolves the final `ci-required` conclusion. Lane *contents*
 # are out of scope here (T02 js, T03 py, T06 contract, T07 security,
 # T14 engine-bench) — each reusable workflow below is a `workflow_call` stub
@@ -143,116 +143,155 @@ jobs:
               - 'security/semgrep/**'
               - 'tools/ci/check_semgrep_rule_tests.py'
 
-  pin-check:
-    name: pin-check (SR-132)
+  # --- Gates (#3076): one step per always-on or sub-minute gate. A step's id is its
+  # `ci-required` lane and `gates` exports its outcome under it, so each gate is judged as its
+  # old job was. Tree-reading gates run first; installers (PR build/lifecycle scripts) last.
+  gates:
+    name: gates
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.infra == 'true' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45 # under the steps' sum: a hang cancels later gates, failing their lanes
     permissions:
       contents: read
+    env:
+      PYTHONIOENCODING: utf-8
+    outputs:
+      spike-containment: ${{ steps.spike-containment.outcome }}
+      changelog-fragment: ${{ steps.changelog-fragment.outcome }}
+      licence-header: ${{ steps.licence-header.outcome }}
+      docs-link-check: ${{ steps.docs-link-check.outcome }}
+      pin-check: ${{ steps.pin-check.outcome }}
+      statechart-lint: ${{ steps.statechart-lint.outcome }}
+      event-coverage: ${{ steps.event-coverage.outcome }}
+      xstate-pin-attestation: ${{ steps.xstate-pin-attestation.outcome }}
+      machine-hash-lock: ${{ steps.machine-hash-lock.outcome }}
+      commitlint: ${{ steps.commitlint.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # commitlint and docs-link-check read history
+          persist-credentials: false # no gate pushes or fetches after checkout
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      - name: Check action pins and pull_request_target (CI-GATE-003)
-        run: python tools/ci/check_action_pins.py .github/workflows
-      - name: Check image digest pins are real (CI-IMG-002)
-        run: python tools/ci/resolve_image_digests.py --check
-
-  spike-containment:
-    name: spike-containment
-    # E06-X02: always-on, unconditional on path filters — a spike-only path
-    # reaching a PR must fail regardless of which `changed-paths` filter it
-    # happens to trip (CI-SPIKE-001/002). Deliberately crude per the ticket's
-    # own "Technical notes": a path-existence assertion plus a static import
-    # scan, not a policy engine.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-      - name: Enforce spike/throwaway-code containment (E06-X02)
+      - name: spike-containment (E06-X02, CI-SPIKE-001/002)
+        id: spike-containment
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
         run: python tools/ci/check_spike_containment.py --root .
-
-  # --- Always-on jobs (ADR-0013 pipeline shape "[always]") ------------------
-
-  commitlint:
-    name: commitlint
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "20"
-      - name: Enable pnpm via corepack
-        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
-      - name: Install commitlint (pinned via lockfile)
-        run: pnpm install --frozen-lockfile --filter . --prod=false
-      - name: Lint PR commits against Conventional Commits (01-sdlc-and-branching.md §6)
-        run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
-
-  changelog-fragment:
-    name: changelog-fragment
-    # E03-T11: CI-REL-001 — every PR needs a conventional title or a
-    # `Changelog:` footer, except chore/ci/docs-only PRs (acceptance
-    # scenarios "A PR without a usable changelog line is blocked" /
-    # "A docs-only PR is exempt").
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-      - name: "Check changelog fragment (title or Changelog: footer)"
+      - name: changelog-fragment (E03-T11, CI-REL-001)
+        id: changelog-fragment
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          python tools/ci/check_changelog_fragment.py --title "$PR_TITLE" --body "$PR_BODY"
-
-  licence-header:
-    name: licence-header
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-      - name: Verify SPDX/licence headers where required
+        run: python tools/ci/check_changelog_fragment.py --title "$PR_TITLE" --body "$PR_BODY"
+      - name: licence-header
+        id: licence-header
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
         run: python scripts/check_licence_headers.py
-
-  docs-link-check:
-    name: docs-link-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-      - name: Rule-reference and internal link check (GOV-002)
+      - name: docs-link-check (GOV-002)
+        id: docs-link-check
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
         run: python scripts/check_rule_refs.py
+      - name: pin-check (SR-132; CI-GATE-003, CI-IMG-002)
+        id: pin-check
+        if: ${{ !cancelled() && needs.changed-paths.outputs.infra == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          python tools/ci/check_action_pins.py .github/workflows
+          python tools/ci/resolve_image_digests.py --check
+      - name: statechart-lint (E50-T11; the CV lint set, then the fixtures proving each rule fires)
+        id: statechart-lint
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+        run: |
+          python -m pip install --quiet pytest
+          python -m py_compile tools/lint_statecharts.py
+          python tools/lint_statecharts.py
+          python -m pytest tests/lint_statecharts -q
+      - name: event-coverage (E50-T05, MUST-10)
+        id: event-coverage
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+        run: |
+          python -m pip install --quiet pytest
+          python tools/statechart/event_coverage.py
+          python -m pytest scripts/tests/test_event_coverage.py -q -W error::RuntimeWarning
+      - name: xstate-pin-attestation (E50-T57; exact pin, wheel sha256, PEP 740 attestation)
+        id: xstate-pin-attestation
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          XSTATE_VERSION: "0.9.1"
+          XSTATE_WHEEL: "xstate_statemachine-0.9.1-py3-none-any.whl"
+          XSTATE_WHEEL_SHA256: "d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162"
+          XSTATE_REPO: "basiltt/xstate-statemachine"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/ci/check_pin.py --root .
+          python -m pip download --no-deps "xstate-statemachine==${XSTATE_VERSION}" -d /tmp/xstate-pin
+          (cd /tmp/xstate-pin && echo "${XSTATE_WHEEL_SHA256}  ${XSTATE_WHEEL}" > expected.sha256 && sha256sum -c expected.sha256)
+          python -m pip install --quiet pypi-attestations && python -m pypi_attestations verify pypi --repository "https://github.com/${XSTATE_REPO}" "pypi:${XSTATE_WHEEL}" ||
+            gh attestation verify "/tmp/xstate-pin/${XSTATE_WHEEL}" --repo "${XSTATE_REPO}" # fallback
+      - name: Install uv (cache keyed on uv.lock)
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+      - name: machine-hash-lock (E50-T02; the registry imports the runtime, so uv sync is part of it)
+        id: machine-hash-lock
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+        run: |
+          (cd services/api && uv sync --frozen --all-groups)
+          uv run --project services/api python tools/statechart/check_machine_hash_lock.py
+          cd services/api && uv run pytest tests/xstate_contract/test_golden_upcaster.py -q --no-cov -W error::RuntimeWarning
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !cancelled() }}
+        with:
+          node-version: "20"
+      - name: commitlint (Conventional Commits, 01-sdlc-and-branching.md §6)
+        id: commitlint
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.5.1 --activate
+          pnpm install --frozen-lockfile --filter . --prod=false
+          pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+      # `ci-required` reads each gate's own outcome; this keeps the gates job's own result honest.
+      - name: Verdict (every gate succeeded or was skipped)
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        shell: python
+        run: |
+          import json, os
+          outcomes = {gate: step["outcome"] for gate, step in json.loads(os.environ["OUTCOMES"]).items()}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("| gate | outcome |\n| --- | --- |\n")
+              summary.writelines(f"| {gate} | {outcome} |\n" for gate, outcome in outcomes.items())
+          failed = [gate for gate, outcome in outcomes.items() if outcome not in ("success", "skipped")]
+          raise SystemExit(f"gates not successful: {', '.join(failed)}" if failed else 0)
 
   gen:
     name: gen
@@ -278,14 +317,19 @@ jobs:
     if: ${{ needs.changed-paths.outputs.py == 'true' }}
     uses: ./.github/workflows/_job-py.yml
 
-  # `_job-py.yml`'s internal `architecture` job (import-linter, ADR-0004)
-  # cannot itself be `needs:`-ed from the caller because reusable-workflow
-  # jobs aren't addressable individually — but `py`'s conclusion already
-  # reflects it (the architecture-contract step runs inside that job and
-  # fails it on a violation). No separate top-level job is added here; the
-  # `architecture` required-check name is the job of that name inside
-  # `_job-py.yml`, visible in the PR checks list once GitHub Actions exposes
-  # reusable-workflow job names ("_job-py / architecture").
+  # Mirrors the `py` lane (import-linter runs in py-checks), beside coverage-thresholds (#3076).
+  architecture:
+    name: architecture
+    needs: [changed-paths, py]
+    if: ${{ always() && needs.changed-paths.outputs.py == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Reflect the py lane's result (its py-checks job runs the architecture contract)
+        run: |
+          [ "${{ needs.py.result }}" = "success" ] || { echo "py lane (it runs the import-linter architecture contract) did not succeed"; exit 1; }
 
   # E35-Q02: rule IR round-trip gate (corpus goldens + mutation check + 10 000-doc property run).
   rule-roundtrip:
@@ -293,22 +337,6 @@ jobs:
     needs: changed-paths
     if: ${{ needs.changed-paths.outputs.rules == 'true' }}
     uses: ./.github/workflows/_job-rule-roundtrip.yml
-
-  statechart-lint:
-    name: statechart-lint
-    # E50-T11: blocking gate for tools/lint_statecharts.py (29 §1.6).
-    # Applies whenever backend/statechart Python changes.
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
-    uses: ./.github/workflows/_job-statechart-lint.yml
-
-  machine-hash-lock:
-    name: machine-hash-lock
-    # E50-T02: blocking gate for machine_hashes.lock (MUST-12/MUSTNOT-09).
-    # Applies whenever backend/statechart Python changes.
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
-    uses: ./.github/workflows/_job-machine-hash-lock.yml
 
   xstate-contract:
     name: xstate-contract
@@ -318,74 +346,8 @@ jobs:
     needs: changed-paths
     if: ${{ needs.changed-paths.outputs.py == 'true' }}
     uses: ./.github/workflows/_job-xstate-contract.yml
-
-  event-coverage:
-    name: event-coverage
-    # E50-T05 (MUST-10): every literal Gateway.send event must exist in the
-    # target machine descriptor (tools/statechart/event_coverage.py).
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
-    uses: ./.github/workflows/_job-event-coverage.yml
-
-  xstate-pin-attestation:
-    name: xstate-pin-attestation
-    # E50-T57: verify the xstate-statemachine==0.9.1 pin is exact and
-    # hash-locked (tools/ci/check_pin.py), then re-download the pinned
-    # wheel, re-check its sha256, and verify its PEP 740 publish
-    # attestation against the upstream GitHub repository. A tampered
-    # wheel or missing/mismatched provenance fails this job.
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: none
-    env:
-      XSTATE_VERSION: "0.9.1"
-      XSTATE_WHEEL: "xstate_statemachine-0.9.1-py3-none-any.whl"
-      XSTATE_WHEEL_SHA256: "d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162"
-      XSTATE_REPO: "basiltt/xstate-statemachine"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-
-      - name: Check pin is exact and hash-locked (bans ~=, >=, drift)
-        run: python tools/ci/check_pin.py --root .
-
-      - name: Download pinned wheel from PyPI
-        run: |
-          set -euo pipefail
-          python -m pip download --no-deps \
-            "xstate-statemachine==${XSTATE_VERSION}" \
-            -d /tmp/xstate-pin
-
-      - name: Verify wheel sha256 matches the pin (fails closed on tamper)
-        run: |
-          set -euo pipefail
-          cd /tmp/xstate-pin
-          echo "${XSTATE_WHEEL_SHA256}  ${XSTATE_WHEEL}" > expected.sha256
-          sha256sum -c expected.sha256
-
-      - name: Verify PEP 740 publish attestation (primary)
-        id: attest_primary
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          python -m pip install --quiet pypi-attestations
-          python -m pypi_attestations verify pypi \
-            --repository "https://github.com/${XSTATE_REPO}" \
-            "pypi:${XSTATE_WHEEL}"
-
-      - name: Verify PEP 740 publish attestation (fallback - gh attestation)
-        if: steps.attest_primary.outcome != 'success'
-        run: |
-          set -euo pipefail
-          gh attestation verify "/tmp/xstate-pin/${XSTATE_WHEEL}" --repo "${XSTATE_REPO}"
-        env:
-          GH_TOKEN: ${{ github.token }}
+    with:
+      sync_parity: false # informational; xstate-contract-nightly.yml still runs it (#3076)
 
   contract:
     name: contract
@@ -469,21 +431,13 @@ jobs:
     if: always()
     needs:
       - changed-paths
-      - pin-check
-      - spike-containment
-      - commitlint
-      - changelog-fragment
-      - licence-header
-      - docs-link-check
+      - gates
       - gen
       - js
       - py
+      - architecture
       - rule-roundtrip
-      - statechart-lint
-      - machine-hash-lock
       - xstate-contract
-      - event-coverage
-      - xstate-pin-attestation
       - contract
       - integration
       - migrations
@@ -513,21 +467,23 @@ jobs:
           FILTER_RULES: ${{ needs.changed-paths.outputs.rules }}
           FILTER_SEMGREP: ${{ needs.changed-paths.outputs.semgrep }}
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
-          RESULT_PIN_CHECK: ${{ needs.pin-check.result }}
-          RESULT_SPIKE_CONTAINMENT: ${{ needs.spike-containment.result }}
-          RESULT_COMMITLINT: ${{ needs.commitlint.result }}
-          RESULT_CHANGELOG_FRAGMENT: ${{ needs.changelog-fragment.result }}
-          RESULT_LICENCE_HEADER: ${{ needs.licence-header.result }}
-          RESULT_DOCS_LINK_CHECK: ${{ needs.docs-link-check.result }}
+          RESULT_GATES: ${{ needs.gates.result }}
+          RESULT_PIN_CHECK: ${{ needs.gates.outputs.pin-check }}
+          RESULT_SPIKE_CONTAINMENT: ${{ needs.gates.outputs.spike-containment }}
+          RESULT_COMMITLINT: ${{ needs.gates.outputs.commitlint }}
+          RESULT_CHANGELOG_FRAGMENT: ${{ needs.gates.outputs.changelog-fragment }}
+          RESULT_LICENCE_HEADER: ${{ needs.gates.outputs.licence-header }}
+          RESULT_DOCS_LINK_CHECK: ${{ needs.gates.outputs.docs-link-check }}
           RESULT_GEN: ${{ needs.gen.result }}
           RESULT_JS: ${{ needs.js.result }}
           RESULT_PY: ${{ needs.py.result }}
+          RESULT_ARCHITECTURE: ${{ needs.architecture.result }}
           RESULT_RULE_ROUNDTRIP: ${{ needs.rule-roundtrip.result }}
-          RESULT_STATECHART_LINT: ${{ needs.statechart-lint.result }}
-          RESULT_MACHINE_HASH_LOCK: ${{ needs.machine-hash-lock.result }}
+          RESULT_STATECHART_LINT: ${{ needs.gates.outputs.statechart-lint }}
+          RESULT_MACHINE_HASH_LOCK: ${{ needs.gates.outputs.machine-hash-lock }}
           RESULT_XSTATE_CONTRACT: ${{ needs.xstate-contract.result }}
-          RESULT_EVENT_COVERAGE: ${{ needs.event-coverage.result }}
-          RESULT_XSTATE_PIN_ATTESTATION: ${{ needs.xstate-pin-attestation.result }}
+          RESULT_EVENT_COVERAGE: ${{ needs.gates.outputs.event-coverage }}
+          RESULT_XSTATE_PIN_ATTESTATION: ${{ needs.gates.outputs.xstate-pin-attestation }}
           RESULT_CONTRACT: ${{ needs.contract.result }}
           RESULT_INTEGRATION: ${{ needs.integration.result }}
           RESULT_MIGRATIONS: ${{ needs.migrations.result }}
@@ -541,6 +497,7 @@ jobs:
             const isTrue = (v) => v === "true";
             const lanes = {
               "changed-paths": { applicable: true, result: process.env.RESULT_CHANGED_PATHS },
+              gates: { applicable: true, result: process.env.RESULT_GATES },
               "pin-check": { applicable: isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK },
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
               commitlint: { applicable: true, result: process.env.RESULT_COMMITLINT },
@@ -550,6 +507,7 @@ jobs:
               gen: { applicable: true, result: process.env.RESULT_GEN },
               js: { applicable: isTrue(process.env.FILTER_JS), result: process.env.RESULT_JS },
               py: { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_PY },
+              architecture: { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_ARCHITECTURE },
               "rule-roundtrip": { applicable: isTrue(process.env.FILTER_RULES), result: process.env.RESULT_RULE_ROUNDTRIP },
               "statechart-lint": { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_STATECHART_LINT },
               "machine-hash-lock": { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_MACHINE_HASH_LOCK },

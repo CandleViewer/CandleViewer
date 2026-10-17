@@ -13,9 +13,14 @@ name: _job-xstate-contract
 #
 # The informational sync-engine parity job (`xstate-sync-parity`) never
 # gates: `continue-on-error: true` and it is not listed in ci-required.
+# pr.yml passes `sync_parity: false`; the nightly runs it (#3076).
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      sync_parity:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -63,6 +68,7 @@ jobs:
 
   xstate-sync-parity:
     name: xstate-sync-parity (informational)
+    if: ${{ inputs.sync_parity }}
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 10
