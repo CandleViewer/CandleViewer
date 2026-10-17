@@ -521,8 +521,8 @@ Scope: the repository itself, `main` branch integrity, branch-protection configu
 (W3-W5) to the gateway as built by E17-S01/S02/T02. Three concerns get dedicated analysis: the bounded 10 s
 unauthenticated window (pre-auth slots are capped only by the auth timeout until #2155), continuous topic
 authorisation (synchronous drop/narrow before any send; snapshot ordering requirement SR-189), and resource
-exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 50 rows
-(WS-S01..E06, incl. WS-D15..D17), two inherent Highs (slow consumer WG2; audit-store flooding WG9 = WS-D15); residual High on WG9 until #2292 merges
+exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 51 rows
+(WS-S01..E06, incl. WS-D15..D17 and WS-I09), two inherent Highs (slow consumer WG2; audit-store flooding WG9 = WS-D15); residual High on WG9 until #2292 merges
 (release blocker, RR-08 in §16.1); residual Medium on WG1, WG3 and WG8. Controls SR-183..
 SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
 
@@ -904,7 +904,7 @@ existing numbering after SR-182; no existing SR is renumbered. Each names its ow
 | SR-186 | Successful subscriptions to private topics, session-revocation closes and user-disabled closes MUST write audit records; a failed WS audit write MUST increment an alerting metric (E17-S02, E17-T06).        | integration         |
 | SR-187 | WS auth failures, slow-consumer closes, resync-rate-limit revocations and denied cross-account subscribes MUST each have an audit action and a metric, aggregatable per identity/source (E17-T06).            | integration         |
 | SR-188 | The implicit `system` topic MUST carry only role-neutral fields; anything role-specific is filtered per subscriber before emission (E17-S03).                                                                 | unit                |
-| SR-189 | Principal snapshots applied to WS connections MUST be versioned so an older snapshot never replaces a newer one, including for a connection that completes `auth` during a grant change (E17-S02 follow-up).  | integration, chaos  |
+| SR-189 | Principal snapshots applied to WS connections MUST be versioned so an older snapshot never replaces a newer one, including for a connection that completes `auth` during a grant change (E17-S02, #2318).     | integration, chaos  |
 | SR-190 | Shared upstream references and encode-once fan-out buffers MUST be used only for public topic families; account-scoped frames are filtered and encoded per subscription (E17-S02, E17-T03).                   | unit, integration   |
 | SR-191 | The ASGI server's WebSocket limits — maximum message size, inbound compression, per-connection queue, handshake/keep-alive timeouts — MUST be set explicitly and consistently with the protocol caps (#2176). | integration         |
 | SR-192 | A single WS `sub` frame MUST NOT cause work, reply size or audit writes proportional to its entry count beyond a fixed cap; denial audit records MUST be aggregated per frame (E17-S02, #2292).               | unit, load          |
