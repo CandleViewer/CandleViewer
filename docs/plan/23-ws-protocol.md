@@ -536,6 +536,8 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 | `encoding`    | `"binary"`\|`"structured"` | binary where supported | Rejected with `encoding_unsupported` if the topic has no binary form. Under `cv.v1.json`, binary frames are `e: "b64"` (§3.2).                     |
 | `coalesce`    | bool                       | `true`                 | Disabling is honoured only while the client keeps up; the server re-enables it under pressure and says so in a `connection_quality` notice (§8.3). |
 
+**As built (#2823).** `encoding_unsupported` is answered only for a topic with no binary form (§6.1), on either subprotocol: there is no `b64` capability to negotiate. The server does not read `hello.capabilities` or `hello.encodings`, so neither changes a reply. A `cv.v1.json` client that asks for `binary`, or leaves `encoding` to default on a topic that has a binary form, gets that topic's binary frames as `e: "b64"` (§3.2). The default is `binary` where the topic has a binary form and `structured` where it has none.
+
 ### 5.2 `sub_ok`
 
 Every requested topic gets exactly one result. Partial success is normal — one bad topic never fails the batch.
@@ -604,7 +606,7 @@ When more than one applies, the first in this list names the code and the `field
         "ok": false,
         "error": {
           "code": "account_scope_denied",
-          "message": "Account a1000000-…-0001 is not in your scope.",
+          "message": "None of the requested accounts are in scope.",
         },
       },
     ],
@@ -636,14 +638,16 @@ When more than one applies, the first in this list names the `field`. A topic na
 
 ### 5.4 `ctl` — retuning a live subscription
 
-Changing throttle or depth without tearing down and re-snapshotting:
+Retuning the throttle without tearing down the subscription or re-snapshotting:
 
 ```jsonc
 { "t": "ctl", "id": "c-0030", "ch": "book.BTCUSDT.50", "p": { "throttle_ms": 200 } }
 { "t": "ctl_ok", "id": "c-0030", "ch": "book.BTCUSDT.50", "ts": 1789133000000, "p": { "effective": { "throttle_ms": 200 } } }
 ```
 
-Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
+Changing `depth`, `price_grouping`, `time_bucket_ms` or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
+
+**As built (#2823).** `ctl` takes the keys of §13.6, and of those only the ones the topic's own options include (§6.1): `throttle_ms`, `coalesce` and `paused` on every topic the client subscribed to, `min_size` on `trades`, `price_grouping` on `footprint`, `heatmap` and `profile`, `depth` and `time_bucket_ms` on `heatmap`, and `metrics` on `metrics`. `system` is attached to every connection (§6.2), not held as a subscription, so a `ctl` for it gets `not_subscribed`. A change to `depth`, `price_grouping`, `time_bucket_ms` or `metrics` re-snapshots when the effective value changes. `throttle_ms`, `coalesce` and `min_size` never do, and a resume does (below). `bar_type` and `param` are not `ctl` keys: on `bars` and `footprint` they are in the topic name, and on `metrics` they are options of `sub` (§6.1), echoed in `effective` and fixed there. A `ctl` that names one of them, or any other key (`encoding`, `from_seq`, `from_ts_ms`, a scope option of §6.2, `depth` on `book`, a typo), gets `err` `invalid_options` with the key as `field`, and changes nothing. To change a bar series, `unsub` and `sub` again.
 
 **Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. The pause holds until a `ctl` sets `paused: false`: a `ctl` that omits `paused` (a hidden window's throttle change, §8.5) leaves it in place, and its `ctl_ok.effective` echoes `paused: true`. A `ctl` that resumes the subscription (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` comes before any further `d`, as for an identity change. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
 
@@ -669,11 +673,13 @@ Topic names are dot-separated, lower-case, with symbols in Bybit's native upper-
 | `footprint.{symbol}.{bar_type}.{param}` | `price_grouping`, `imbalance_ratio`, `min_stack`, `min_imbalance_volume`, `history` (≤200)                                                                          | Last `history` bars of cells                       | 250 ms                                    | ✔ kind 5   | [`FootprintUpdate`](#144-footprintupdate)                    |
 | `heatmap.{symbol}`                      | `time_bucket_ms` ∈ {100,250,500,1000,5000} (**client-derived, see §6.1.1**; server fallback `500`), `price_grouping`, `depth`, `window_seconds` (≤900, default 900) | Window of columns, capped at the 2 000 most recent | = `time_bucket_ms`                        | ✔ kind 6   | [`HeatmapColumn`](#145-heatmapcolumn)                        |
 | `profile.{symbol}.{kind}`               | `kind` ∈ {volume, delta, tpo}, `split`, `session_anchor`, `price_grouping`, `value_area_pct`                                                                        | Current period profile                             | 1 000 ms                                  | ✖          | [`ProfileUpdate`](#146-profileupdate)                        |
-| `metrics.{symbol}`                      | `metrics` (array of metric codes), `bar_type`, `param`, per-metric `params`                                                                                         | Current values                                     | 250 ms                                    | ✖          | [`MetricsUpdate`](#147-metricsupdate)                        |
+| `metrics.{symbol}`                      | `metrics` (array of metric codes), `bar_type`, `param`                                                                                                              | Current values                                     | 250 ms                                    | ✖          | [`MetricsUpdate`](#147-metricsupdate)                        |
 | `ticker.{symbol}`                       | —                                                                                                                                                                   | Current ticker                                     | 250 ms                                    | ✖          | [`TickerUpdate`](#148-tickerupdate)                          |
-| `ticker`                                | `symbols` (≤40)                                                                                                                                                     | All requested tickers                              | 500 ms                                    | ✖          | `TickerUpdate` (batched)                                     |
+| `ticker`                                | `symbols` (≤40)                                                                                                                                                     | All requested tickers                              | 250 ms                                    | ✖          | `TickerUpdate` (batched)                                     |
 | `liquidations.{symbol}`                 | `min_notional_usd`, `cluster_window_ms`                                                                                                                             | Last 100                                           | 500 ms                                    | ✖          | [`LiquidationBatch`](#149-liquidationbatch)                  |
 | `liquidations`                          | `symbols`, `min_notional_usd`                                                                                                                                       | Last 100 across symbols                            | 500 ms                                    | ✖          | `LiquidationBatch`                                           |
+
+**As built (#2823).** The registry keeps one option map per family and, but for `book` (by depth) and `heatmap` (its `time_bucket_ms`), one default throttle per family. So a family's two shapes share both: the batched `ticker` defaults to 250 ms, like `ticker.{symbol}`. §13.5 lists the union of every topic's options without saying which topic takes which. The registry decides, and refuses any other key with `invalid_options` (§5.1). Beyond the options in the table, `ticker.{symbol}` and `liquidations.{symbol}` also accept `symbols`, and the batched `liquidations` also accepts `cluster_window_ms`. On a per-symbol shape `symbols` is checked and echoed in `sub_ok.effective` and counts toward the 40-symbol limit (§16.2), but what is served is the symbol in the name. `params` is in §13.5, yet no topic takes it yet: `metrics` with `params` is `invalid_options` (`field`: `params`). E23-T02 (#658) plans per-metric `params` on `metrics`.
 
 Notes that bite if ignored:
 
@@ -741,25 +747,29 @@ The 2 000-column snapshot cap applies at every bucket size: the server sends the
 
 ### 6.2 Private topics
 
-All private topics are **account-scoped**: the server intersects the requested `exchange_account_ids` with the caller's granted scope and silently narrows (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`). The exception is `machines.{entity}.state`, which is scoped by the entity it names (§6.4).
+The account-scoped private topics (below) intersect the requested `exchange_account_ids` with the caller's granted scope and silently narrow (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`). `machines.{entity}.state` is scoped by the entity it names (§6.4).
 
-| Topic          | Options                                        | Snapshot                             | Default throttle       | Payload schema                              |
-| -------------- | ---------------------------------------------- | ------------------------------------ | ---------------------- | ------------------------------------------- |
-| `orders`       | `exchange_account_ids`, `symbols`, `open_only` | All open orders                      | 0 ms (never throttled) | [`OrderUpdate`](#151-orderupdate)           |
-| `positions`    | `exchange_account_ids`, `symbols`              | All open positions                   | 100 ms                 | [`PositionUpdate`](#152-positionupdate)     |
-| `executions`   | `exchange_account_ids`, `symbols`              | Last 100 fills                       | 0 ms (never throttled) | [`ExecutionUpdate`](#153-executionupdate)   |
-| `wallet`       | `exchange_account_ids`                         | Current balances + account health    | 500 ms                 | [`WalletUpdate`](#154-walletupdate)         |
-| `trade_groups` | `exchange_account_ids`, `status`               | Active groups                        | 100 ms                 | [`TradeGroupUpdate`](#155-tradegroupupdate) |
-| `rules`        | `rule_ids`, `include_events`                   | Armed/simulating rules + state       | 250 ms                 | [`RuleUpdate`](#156-ruleupdate)             |
-| `alerts`       | `unacked_only`                                 | Unacked deliveries                   | 250 ms                 | [`AlertUpdate`](#157-alertupdate)           |
-| `recorder`     | `symbols`                                      | Current recorder status              | 1 000 ms               | [`RecorderUpdate`](#158-recorderupdate)     |
-| `system`       | —                                              | Current health + flags + kill-switch | 1 000 ms               | [`SystemUpdate`](#159-systemupdate)         |
+| Topic          | Options                                              | Snapshot                             | Default throttle       | Payload schema                              |
+| -------------- | ---------------------------------------------------- | ------------------------------------ | ---------------------- | ------------------------------------------- |
+| `orders`       | `exchange_account_ids`, `symbols`, `open_only`       | All open orders                      | 0 ms (never throttled) | [`OrderUpdate`](#151-orderupdate)           |
+| `positions`    | `exchange_account_ids`, `symbols`                    | All open positions                   | 100 ms                 | [`PositionUpdate`](#152-positionupdate)     |
+| `executions`   | `exchange_account_ids`, `symbols`                    | Last 100 fills                       | 0 ms (never throttled) | [`ExecutionUpdate`](#153-executionupdate)   |
+| `wallet`       | `exchange_account_ids`                               | Current balances + account health    | 500 ms                 | [`WalletUpdate`](#154-walletupdate)         |
+| `trade_groups` | `exchange_account_ids`, `status`                     | Active groups                        | 100 ms                 | [`TradeGroupUpdate`](#155-tradegroupupdate) |
+| `rules`        | `exchange_account_ids`, `rule_ids`, `include_events` | Armed/simulating rules + state       | 250 ms                 | [`RuleUpdate`](#156-ruleupdate)             |
+| `alerts`       | `unacked_only`                                       | Unacked deliveries                   | 250 ms                 | [`AlertUpdate`](#157-alertupdate)           |
+| `recorder`     | `symbols`                                            | Current recorder status              | 1 000 ms               | [`RecorderUpdate`](#158-recorderupdate)     |
+| `system`       | —                                                    | Current health + flags + kill-switch | 1 000 ms               | [`SystemUpdate`](#159-systemupdate)         |
 
 **`orders` and `executions` are never throttled or coalesced.** Losing an intermediate order state or dropping a fill would corrupt the OMS mirror the UI renders and the journal derives from. If a client cannot keep up with these two topics, the server closes the connection (`4429`) rather than silently degrading them — a slow client must not be able to see a wrong position.
 
 **`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes and planned-shutdown warnings. A client may not unsubscribe from it.
 
 **As built (#377).** Kill-switch transitions are pushed on `system` as a `kill_switch` frame (§12.5) before the re-evaluation in §9.5 runs, so the UI can disable order entry on that frame alone. A live public subscription takes one shared upstream lease per `(symbol, family)` on the E08 ingestion streams. The lease is released 30 s after the last consumer leaves. Families with no ingestion stream yet stay `snapshot_pending`.
+
+**As built (#2823).** Of the private topics, `orders`, `positions`, `executions`, `wallet`, `trade_groups` and `rules` are account-scoped, and each needs `exchange_account_ids` on `sub`. Without it the result is `account_scope_denied`, for an Owner and a Manager alike: an absent list is an empty request, so nothing is in scope, and an Owner's all-accounts scope (`account_scope: []`, §4.3) is not read as a default. An explicit empty list is `invalid_options` (`field`: `exchange_account_ids`), although §13.5 sets no `minItems`, so an Owner must not forward its own `account_scope` (`[]`). A client names its accounts from `auth_ok.account_scope` or, as an Owner, from REST `GET /exchange-accounts`. `alerts` is scoped to its user, and `recorder` and `system` are not scoped, so none of the three takes accounts.
+
+**Metrics as built (E17-S02, #2823).** `cv_ws_subscribe_total{topic,result}` counts each topic result of a `sub_ok`: `topic` holds the topic family (`unknown` for a name no family owns) and `result` is `ok` or the §10.2 code (the ticket's `{family,result}`). `cv_ws_client_topics_depth`, a histogram, observes the subscriptions a connection holds after each `sub_ok` and `unsub_ok` (the ticket's `cv_ws_topics_per_client` gauge). `cv_ws_upstream_consumers_in_use{symbol,topic}` is the number of consumers of the shared upstream leases above, per symbol and topic family (the ticket's `cv_ws_upstream_refcount{symbol,family}`): symbols past the first 20 share `symbol="other"`, and a series is removed when it reaches 0. `cv_ws_revoked_total{reason}` is as the ticket names it. `20-architecture.md` §12.1 lists all four.
 
 #### 6.2.1 `alerts` topic (contract only)
 
@@ -1512,12 +1522,16 @@ S→C {"t":"welcome","id":"c-1","ts":1789132262002,"p":{"protocol":"cv.v1","enco
 
 // 3. authenticate
 C→S {"t":"auth","id":"c-2","p":{"access_token":"eyJhbGciOiJFZERTQSJ9…","environments":["live","demo"]}}
-S→C {"t":"auth_ok","id":"c-2","ts":1789132262110,"p":{"user_id":"9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001","username":"basiltt","roles":["owner"],"permissions":["marketdata:read","orders:read","orders:write","positions:write","executions:read","accounts:read","rules:read","alerts:read","recording:read","audit:read"],"account_scope":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"],"allowed_environments":["live","demo"],"session_id":"5e1a0c33-2b44-4f10-9a22-77aa11bb22cc","token_expires_at_ms":1789132862110,"kill_switch":{"engaged":false,"scope":"global"}}}
+S→C {"t":"auth_ok","id":"c-2","ts":1789132262110,"p":{"user_id":"9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001","username":"basiltt","roles":["owner"],"permissions":["marketdata:read","orders:read","orders:write","positions:read","positions:write","executions:read","accounts:read","rules:read","alerts:read","recording:read","audit:read"],"account_scope":[],"allowed_environments":["live","demo"],"session_id":"5e1a0c33-2b44-4f10-9a22-77aa11bb22cc","token_expires_at_ms":1789132862110,"kill_switch":{"engaged":false,"scope":"global"}}}
 S→C {"t":"snap","ch":"system","s":1,"ts":1789132262112,"e":"j","p":{"kind":"health","health":"healthy","kill_switch":{"engaged":false,"scope":"global"},"feature_flags":{"trading.live_enabled":false,"rules.graph_editor":true},"exchange":{"public_ws":"connected","private_ws":"connected","rest":"healthy"},"clock_offset_ms":4,"degraded_topics":[]}}
 
-// 4. subscribe (private first, then the focused pane)
+// 4. subscribe (private first, then the focused pane). An Owner's account_scope is [] (§4.3), so an
+//    account-scoped private topic takes its ids from REST GET /exchange-accounts (§6.2)
 C→S {"t":"sub","id":"c-3","p":{"snapshot":true,"topics":[
-      {"ch":"orders"},{"ch":"positions"},{"ch":"executions"},{"ch":"wallet"},
+      {"ch":"orders","opts":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"]}},
+      {"ch":"positions","opts":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"]}},
+      {"ch":"executions","opts":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"]}},
+      {"ch":"wallet","opts":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"]}},
       {"ch":"book.BTCUSDT.50","opts":{"throttle_ms":50,"encoding":"binary"}},
       {"ch":"trades.BTCUSDT","opts":{"encoding":"binary"}},
       {"ch":"bars.BTCUSDT.time.1","opts":{"encoding":"binary","include_delta":true,"history":500}},
@@ -1526,9 +1540,9 @@ C→S {"t":"sub","id":"c-3","p":{"snapshot":true,"topics":[
       {"ch":"ticker.BTCUSDT"}]}}
 S→C {"t":"sub_ok","id":"c-3","ts":1789132262290,"p":{"results":[
       {"ch":"orders","ok":true,"sub_id":"s_01","snapshot_pending":true,"effective":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"],"throttle_ms":0}},
-      {"ch":"positions","ok":true,"sub_id":"s_02","snapshot_pending":true,"effective":{"throttle_ms":100}},
-      {"ch":"executions","ok":true,"sub_id":"s_03","snapshot_pending":true,"effective":{"throttle_ms":0}},
-      {"ch":"wallet","ok":true,"sub_id":"s_04","snapshot_pending":true,"effective":{"throttle_ms":500}},
+      {"ch":"positions","ok":true,"sub_id":"s_02","snapshot_pending":true,"effective":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"],"throttle_ms":100}},
+      {"ch":"executions","ok":true,"sub_id":"s_03","snapshot_pending":true,"effective":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"],"throttle_ms":0}},
+      {"ch":"wallet","ok":true,"sub_id":"s_04","snapshot_pending":true,"effective":{"exchange_account_ids":["a1000000-0000-4000-8000-000000000001","a1000000-0000-4000-8000-000000000002"],"throttle_ms":500}},
       {"ch":"book.BTCUSDT.50","ok":true,"sub_id":"s_05","snapshot_pending":true,"effective":{"throttle_ms":50,"encoding":"binary","depth":50}},
       {"ch":"trades.BTCUSDT","ok":true,"sub_id":"s_06","snapshot_pending":true,"effective":{"throttle_ms":100,"encoding":"binary"}},
       {"ch":"bars.BTCUSDT.time.1","ok":true,"sub_id":"s_07","snapshot_pending":true,"effective":{"throttle_ms":250,"encoding":"binary","include_delta":true,"history":500}},
