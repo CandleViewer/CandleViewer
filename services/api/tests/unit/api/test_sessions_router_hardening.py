@@ -109,12 +109,13 @@ async def test_refresh_audit_record_precedes_rotation() -> None:
     assert order == ["audit:auth.session_refreshed", "revoke:rotated"]
 
 
-async def test_logout_audit_record_precedes_revocation() -> None:
+async def test_logout_intent_record_precedes_revocation_and_the_outcome_record_follows_it() -> None:
     env = _Env()
     m = await env.mint(uuid.uuid4())
     order = _record_order(env)
     assert env.client.post("/api/v1/auth/logout", headers=_h(m.access_token)).status_code == 204
-    assert order == ["audit:auth.logout", "audit:auth.session_revoked", "revoke:logout"]
+    # 04 section 8.3 rule 1: the intent before the side effect, the outcome after it (#2914).
+    assert order == ["audit:auth.logout", "revoke:logout", "audit:auth.session_revoked"]
     assert env.revoked == [(str(m.session_id), "logout")]
 
 

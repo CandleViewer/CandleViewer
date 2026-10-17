@@ -79,14 +79,13 @@ for _csrf_reason in (*CSRF_REFUSAL_REASONS, *CSRF_AUDIT_REASONS):
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
 #: `auth_audit_outcome_lost_total{action}` (#2914, 04-security-program.md section 8.3 rule 2): an
 #: outcome audit record that could not be written after the action was taken. The answer stands;
-#: the count and the alerts tell that the trail has a gap. Nothing increments it yet: the session
-#: routes (`api/sessions.py`) count a lost record from the next slice of #2914 (D2). `action` is a
-#: closed set (else `other`): a route that starts to write an outcome record adds its action here,
-#: and the catalogue's `max_series` (this set plus `other`) with it.
+#: this count, the error log and the alerts tell that the trail has a gap. `action` is a closed set
+#: (else `other`): a route that starts to write an outcome record adds its action here, and the
+#: catalogue's `max_series` (this set plus `other`) with it.
 AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
-    "auth.refresh_reuse_detected",  # the concurrent-refresh race
+    "auth.refresh_reuse_detected",  # the concurrent-refresh race (`api/sessions.py`)
     "auth.session_refreshed",  # a disabled user's refused refresh, reason `user_disabled` (#2911)
-    "auth.session_revoked",  # a session ended by sign-out
+    "auth.session_revoked",  # one per session `POST /auth/logout` revoked
 )
 auth_audit_outcome_lost_total = Counter(
     "auth_audit_outcome_lost_total",
