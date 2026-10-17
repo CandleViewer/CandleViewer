@@ -106,7 +106,7 @@ def _resolver_security_filters() -> set[str]:
 
 
 def _resolver_lane_filters(name: str) -> set[str]:
-    """The filters the resolver ORs together to decide whether lane `name` (an unquoted key) applied.
+    """The filters the resolver ORs together to decide whether lane `name` (unquoted key) applied.
 
     `//` comments are stripped first, so a name that only a comment mentions does not count. Then
     each `||` term must be exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
@@ -138,9 +138,10 @@ def test_pr_yml_semgrep_filter_paths_exist_in_the_repo() -> None:
         assert any(ROOT.glob(pattern)), pattern
 
 
-def test_pr_yml_changed_paths_exports_the_semgrep_output() -> None:
+@pytest.mark.parametrize("name", ["semgrep", "e2e"])
+def test_pr_yml_changed_paths_exports_each_filter_as_its_own_output(name: str) -> None:
     outputs = _jobs()["changed-paths"]["outputs"]
-    assert outputs.get("semgrep") == "${{ steps.filter.outputs.semgrep }}"
+    assert outputs.get(name) == "${{ steps.filter.outputs." + name + " }}"
 
 
 def test_pr_yml_security_job_runs_when_only_semgrep_paths_change() -> None:
@@ -159,6 +160,8 @@ def test_pr_yml_resolver_reads_each_lane_filter_from_its_changed_paths_output(la
     for name in sorted(_resolver_lane_filters(lane)):
         expected = "${{ needs.changed-paths.outputs." + name + " }}"
         assert env.get("FILTER_" + name.upper()) == expected, name
+    # The lane is judged on its own job's result, never another job's.
+    assert env.get("RESULT_" + lane.upper()) == "${{ needs." + lane + ".result }}"
 
 
 def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
