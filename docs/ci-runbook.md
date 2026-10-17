@@ -25,7 +25,8 @@ PR opened/updated (.github/workflows/pr.yml)
 │  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
 │  │                licence-header, docs-link-check (GOV-002), commitlint (last: installs run husky)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
-│  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock
+│  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
+│                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
@@ -81,6 +82,11 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
   or an empty result means the 45-minute job cap or a run cancellation stopped `gates` first.
+- `xstate-contract` is the `gates` step of that name (#3104). It runs
+  `tools/statechart/run_xstate_contract.sh`: `uv sync`, the contract suite, event-name coverage,
+  then the 60 s suite budget, stopping at the first failing command, so the end of the step log
+  names the red check. `xstate-contract-nightly.yml` runs the same script; to reproduce, run
+  `bash tools/statechart/run_xstate_contract.sh` in a checkout.
 - `security` is one lane over every job in `_job-security.yml`. In the folded jobs
   (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
   the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's

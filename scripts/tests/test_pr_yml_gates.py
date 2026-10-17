@@ -1,5 +1,6 @@
 """#3076: ten gates are steps of one `gates` job, each judged under its old `ci-required` lane
-(#2988 semantics); `architecture` mirrors `py` from pr.yml; PRs skip `xstate-sync-parity`."""
+(#2988 semantics); `architecture` mirrors `py` from pr.yml; PRs skip `xstate-sync-parity`.
+#3104: `xstate-contract` is an eleventh step, running the one script the nightly runs too."""
 
 from __future__ import annotations
 
@@ -24,11 +25,15 @@ GATES: dict[str, int | str] = {
     **dict.fromkeys(["docs-link-check", "pin-check", "commitlint"], 5),
     **dict.fromkeys(["statechart-lint", "event-coverage", "machine-hash-lock"], VAR),
     "xstate-pin-attestation": 10,
+    "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at ebb7502f
 }
-OTHER_LANES = ["changed-paths", "gen", "js", "py", "rule-roundtrip", "xstate-contract", "contract"]
+OTHER_LANES = ["changed-paths", "gen", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
+# The blocking statechart contract run, defined once (#3104); it starts with `uv sync`.
+SCRIPT = "tools/statechart/run_xstate_contract.sh"
 # Steps that install toolchains or run the PR's own build and lifecycle scripts.
-INSTALLERS = ("uv sync", "pnpm install", "corepack", "astral-sh/setup-uv@", "actions/setup-node@")
+LIFECYCLE = ("pnpm install", "corepack", "actions/setup-node@")
+INSTALLERS = ("uv sync", "astral-sh/setup-uv@", SCRIPT, *LIFECYCLE)
 FAIL = "CI-GATE-001: %s required and not successful (result: %s)"
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"
 
@@ -117,6 +122,9 @@ def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
 
 NEVER_RAN = {"needs.gates.result": "skipped"} | {f"needs.gates.outputs.{g}": "" for g in GATES}
 GATE_FAILED = {"needs.gates.outputs.licence-header": "failure", "needs.gates.result": "failure"}
+# #3104's live proof: a failing contract test fails only its step, so `gates` and that lane.
+XSTATE_FAILED = {"needs.gates.outputs.xstate-contract": "failure", "needs.gates.result": "failure"}
+XSTATE_RED = {FAIL % ("xstate-contract", "failure"), FAIL % ("gates", "failure")}
 
 
 @pytest.mark.parametrize(
@@ -129,8 +137,11 @@ GATE_FAILED = {"needs.gates.outputs.licence-header": "failure", "needs.gates.res
         (set(), NEVER_RAN, {SKIP % "gates", *(FAIL % (lane, "") for lane in GATES)}),
         (set(), {"needs.architecture.result": "failure"}, {FAIL % ("architecture", "failure")}),
         ({"py"}, {"needs.architecture.result": "skipped"}, set()),
+        (set(), XSTATE_FAILED, XSTATE_RED),
+        ({"py"}, {"needs.gates.outputs.xstate-contract": "skipped"}, set()),
     ],
-    ids=["green", "failed", "filtered", "misconfigured", "never-ran", "arch-failed", "arch-no-py"],
+    ids=["green", "failed", "filtered", "misconfigured", "never-ran", "arch-failed", "arch-no-py"]
+    + ["xstate-failed", "xstate-no-py"],
 )
 def test_resolver_step_judges_each_gate_as_its_old_job(
     off: set[str], context: dict[str, str], expected: set[str]
@@ -175,15 +186,55 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
 @pytest.mark.parametrize(
     ("change", "count"),
     # On 33887603: 8 / 31 / 32 / 51; after #3076: 4 / 22 / 22 / 41. #3104 folds four security
-    # scans into one job and bandit into semgrep's; its own run (py+infra+image+docs) is 19.
-    [("docs", 4), ("py", 18), ("py,infra", 18), ("all", 37)],
+    # scans into one job and bandit into semgrep's (4 / 18 / 18 / 37), then runs xstate-contract
+    # in `gates`; the second PR's own run (py+infra+docs) is 17.
+    [("docs", 4), ("py", 17), ("py,infra", 17), ("all", 36)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
     assert len(_executed("pr.yml", on)) == count
 
 
-def test_pr_runs_skip_xstate_sync_parity_and_the_nightly_still_runs_it() -> None:
+def test_pr_runs_neither_xstate_job_and_the_nightly_runs_both_through_the_script() -> None:
     contract, parity = "xstate-contract / xstate-contract", "xstate-contract / xstate-sync-parity"
-    assert contract in _executed("pr.yml", {"py"}) and parity not in _executed("pr.yml", {"py"})
+    every = set(JOBS["changed-paths"]["outputs"])
+    assert not [job for job in _executed("pr.yml", every) if job.startswith("xstate-contract")]
     assert _executed("xstate-contract-nightly.yml", set()) == [contract, parity]
+    jobs = _load("_job-xstate-contract.yml")["jobs"]
+    contract_job, parity_job = jobs["xstate-contract"], jobs["xstate-sync-parity"]
+    assert [s["run"] for s in contract_job["steps"] if "run" in s] == [f"bash {SCRIPT}"]
+    assert "if" not in parity_job and parity_job["continue-on-error"] is True
+
+
+def test_gates_runs_the_script_on_the_nightly_toolchain_before_any_lifecycle_install() -> None:
+    steps = JOBS["gates"]["steps"]
+    at = [step.get("id") for step in steps].index("xstate-contract")
+    assert steps[at]["run"] == f"bash {SCRIPT}"
+    # Python 3.12 as in the nightly: the same setup-uv step runs first (machine-hash-lock uses it).
+    (uv,) = [s for s in steps[:at] if "astral-sh/setup-uv@" in s.get("uses", "")]
+    nightly = _load("_job-xstate-contract.yml")["jobs"]["xstate-contract"]["steps"]
+    (nightly_uv,) = [s for s in nightly if "astral-sh/setup-uv@" in s.get("uses", "")]
+    assert (uv["uses"], uv["with"]) == (nightly_uv["uses"], nightly_uv["with"])
+    assert uv["with"]["python-version"] == "3.12"
+    # No PR lifecycle script (node, corepack, pnpm install) has run before it.
+    texts = [json.dumps(step) for step in steps]
+    lifecycle = [i for i, text in enumerate(texts) if any(word in text for word in LIFECYCLE)]
+    assert lifecycle and min(lifecycle) > at
+
+
+def test_the_script_is_the_single_tracked_definition_of_the_contract_run() -> None:
+    # The only file under .github/ or tools/ that runs the suite with the gate's marker expression.
+    git = ["git", "ls-files", "-s", "--", ".github", "tools"]
+    listing = subprocess.run(git, cwd=ROOT, capture_output=True, text=True, check=True, timeout=60)
+    runs = []
+    for line in listing.stdout.splitlines():
+        meta, path = line.split("\t", 1)
+        text = (ROOT / path).read_text(encoding="utf-8", errors="replace")
+        if "tests/xstate_contract" in text and "not sync_parity" in text:
+            runs.append((meta.split()[0], path))
+    assert runs == [("100755", SCRIPT)]
+    lines = (ROOT / SCRIPT).read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "#!/usr/bin/env bash" and "set -euo pipefail" in lines
+    assert "uv sync --frozen --all-groups" in lines  # why INSTALLERS names it
+    # SR-146: no tracing (check_secrets_hygiene.py scans workflow files, not this script).
+    assert not [ln for ln in lines if re.search(r"\bset\s+-[a-zA-Z]*x|xtrace|\bbash\s+-x\b", ln)]

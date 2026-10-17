@@ -11,16 +11,15 @@ name: _job-xstate-contract
 # collection. `-W error::RuntimeWarning` turns a dropped action coroutine
 # (CV-C67) into a failure.
 #
-# The informational sync-engine parity job (`xstate-sync-parity`) never
-# gates: `continue-on-error: true` and it is not listed in ci-required.
-# pr.yml passes `sync_parity: false`; the nightly runs it (#3076).
+# The run is tools/statechart/run_xstate_contract.sh, its single definition:
+# pr.yml's `gates` job runs the same script as its `xstate-contract` step, so
+# xstate-contract-nightly.yml is this workflow's only caller (#3104). The
+# informational sync-engine parity job (`xstate-sync-parity`) never gates:
+# `continue-on-error: true` and it is not listed in ci-required; PR runs skip
+# it since #3076 and the nightly runs it.
 
 on:
   workflow_call:
-    inputs:
-      sync_parity:
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -44,31 +43,12 @@ jobs:
           cache-dependency-glob: "services/api/uv.lock"
           python-version: "3.12"
 
-      - name: uv sync --frozen
-        working-directory: services/api
-        run: uv sync --frozen --all-groups
-
-      - name: pytest tests/xstate_contract -W error::RuntimeWarning (blocking)
-        working-directory: services/api
-        run: >
-          uv run pytest tests/xstate_contract tests/xstate_upstream -q --no-cov -m "not sync_parity"
-          -W error::RuntimeWarning --durations=10 --junitxml=xstate-contract-junit.xml
-
-      - name: Event-name coverage over every Gateway.send site (E50-T05, MUST-10)
-        working-directory: services/api
-        run: >
-          uv run python ../../tools/statechart/event_coverage.py &&
-          uv run pytest ../../scripts/tests/test_event_coverage.py -q --no-cov
-          -W error::RuntimeWarning
-
-      - name: Suite budget < 60 s + per-machine throughput (E50-T06)
-        run: >
-          python tools/statechart/suite_budget.py
-          services/api/xstate-contract-junit.xml
+      # uv sync, the blocking pytest run, event-name coverage (E50-T05) and the suite budget (E50-T06).
+      - name: Contract suite, event-name coverage and suite budget (blocking)
+        run: bash tools/statechart/run_xstate_contract.sh
 
   xstate-sync-parity:
     name: xstate-sync-parity (informational)
-    if: ${{ inputs.sync_parity }}
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 10

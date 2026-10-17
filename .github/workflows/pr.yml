@@ -87,7 +87,9 @@ jobs:
               - '.github/workflows/_job-py.yml'
               - 'docs/research/xstate/gate/run_gate.py'
               - 'docs/research/xstate/gate/_paths.py'
-              - 'tools/statechart/nightly_gate.py'
+              # The `gates` steps on this filter run tools/statechart/ (xstate-contract's script, event
+              # coverage, the suite budget, the machine-hash lock): editing one starts them (#3104).
+              - 'tools/statechart/**'
               # The tests that pin xstate-nightly.yml (#2807) run in this lane; a PR that edits
               # only the workflow must run them (#2963).
               - '.github/workflows/xstate-nightly.yml'
@@ -179,6 +181,7 @@ jobs:
       event-coverage: ${{ steps.event-coverage.outcome }}
       xstate-pin-attestation: ${{ steps.xstate-pin-attestation.outcome }}
       machine-hash-lock: ${{ steps.machine-hash-lock.outcome }}
+      xstate-contract: ${{ steps.xstate-contract.outcome }}
       commitlint: ${{ steps.commitlint.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -277,6 +280,14 @@ jobs:
           (cd services/api && uv sync --frozen --all-groups)
           uv run --project services/api python tools/statechart/check_machine_hash_lock.py
           cd services/api && uv run pytest tests/xstate_contract/test_golden_upcaster.py -q --no-cov -W error::RuntimeWarning
+      # E50-T31's blocking contract gate (29 §1.7). The script is its single definition and also
+      # runs nightly through _job-xstate-contract.yml; Python 3.12 from the setup-uv step above.
+      - name: xstate-contract (E50-T31; tools/statechart/run_xstate_contract.sh, as the nightly)
+        id: xstate-contract
+        if: ${{ !cancelled() && needs.changed-paths.outputs.py == 'true' }}
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+        run: bash tools/statechart/run_xstate_contract.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() }}
         with:
@@ -350,17 +361,6 @@ jobs:
     needs: changed-paths
     if: ${{ needs.changed-paths.outputs.rules == 'true' }}
     uses: ./.github/workflows/_job-rule-roundtrip.yml
-
-  xstate-contract:
-    name: xstate-contract
-    # E50-T31: BLOCKING statechart contract gate (29-statechart-adoption-
-    # plan.md §1.7) — every machine, both service spellings, round-trip at
-    # every quiescence point, -W error::RuntimeWarning.
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
-    uses: ./.github/workflows/_job-xstate-contract.yml
-    with:
-      sync_parity: false # informational; xstate-contract-nightly.yml still runs it (#3076)
 
   contract:
     name: contract
@@ -450,7 +450,6 @@ jobs:
       - py
       - architecture
       - rule-roundtrip
-      - xstate-contract
       - contract
       - integration
       - migrations
@@ -494,7 +493,7 @@ jobs:
           RESULT_RULE_ROUNDTRIP: ${{ needs.rule-roundtrip.result }}
           RESULT_STATECHART_LINT: ${{ needs.gates.outputs.statechart-lint }}
           RESULT_MACHINE_HASH_LOCK: ${{ needs.gates.outputs.machine-hash-lock }}
-          RESULT_XSTATE_CONTRACT: ${{ needs.xstate-contract.result }}
+          RESULT_XSTATE_CONTRACT: ${{ needs.gates.outputs.xstate-contract }}
           RESULT_EVENT_COVERAGE: ${{ needs.gates.outputs.event-coverage }}
           RESULT_XSTATE_PIN_ATTESTATION: ${{ needs.gates.outputs.xstate-pin-attestation }}
           RESULT_CONTRACT: ${{ needs.contract.result }}
