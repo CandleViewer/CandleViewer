@@ -109,9 +109,31 @@ const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const isUuid = (v: unknown): v is string => isStr(v) && v.length === 36 && UUID.test(v);
 const SPAN = /^(?!0{16}$)[0-9a-f]{16}$/; // W3C span id: 16 hex digits, never all zeros
 const isSpan = (v: unknown): v is string => isStr(v) && v.length === 16 && SPAN.test(v);
+/** 13.1 `error.message` and `bye.message`: `maxLength 1000`. They reach the log (`errorHandler`), so the bound is checked. */
+const isText = (v: unknown): v is string => isStr(v) && v.length <= 1000;
 /** RFC 6455 close codes; the server's own set (`bye.code`) may grow, so the range is checked, not the list. */
 const isCloseCode = (v: unknown): boolean =>
   typeof v === "number" && Number.isInteger(v) && v >= 1000 && v <= 4999;
+
+/** 13.1 `snapMeta`: the documented fields, each checked. `reason` is an open set (C18), so any short string is kept. */
+const META_FIELDS: Readonly<Record<string, (v: unknown) => boolean>> = {
+  reason: (v) => isStr(v) && v.length <= 64,
+  source: (v) => v === "live" || v === "replay",
+  previous_seq: isSeq,
+  include_delta: (v) => typeof v === "boolean",
+  history_bars: isInt,
+  recording_started_at_ms: isInt,
+  spec_hash: (v) => isStr(v) && v.length === 64 && /^[0-9a-f]{64}$/.test(v),
+  build_version: isInt,
+};
+
+/** `meta` is server-controlled: only the documented fields survive (unknown ones are ignored, 2.3), so it stays small and of known shape. */
+function readMeta(m: Record<string, unknown>): F.SnapMeta {
+  const kept: Record<string, unknown> = {};
+  for (const [key, ok] of Object.entries(META_FIELDS)) if (ok(m[key])) kept[key] = m[key];
+  // Cast: each kept field passed its own check above.
+  return kept as F.SnapMeta;
+}
 
 /** Strict on purpose: the kill switch is safety state (C12), so an inexact shape is refused. */
 const isKillSwitch = (v: unknown): boolean =>
@@ -131,9 +153,9 @@ const REQUIRED: Readonly<Record<ControlType, string>> = {
   sub_ok: "results:array",
   unsub_ok: "results:array",
   ctl_ok: "effective:object",
-  revoked: "reason:string message:string",
-  err: "code:string message:string",
-  bye: "code:number reason:string",
+  revoked: "reason:text message:text",
+  err: "code:text message:text",
+  bye: "code:number reason:text message:text",
 };
 
 const isControl = (t: unknown): t is ControlType => isStr(t) && Object.hasOwn(REQUIRED, t);
@@ -144,6 +166,7 @@ function hasFields(spec: string, p: unknown): boolean {
     const v = path.split(".").reduce<unknown>((o, k) => (isObj(o) ? o[k] : undefined), p);
     if (kind === "array") return Array.isArray(v);
     if (kind === "object") return isObj(v);
+    if (kind === "text") return isText(v);
     return typeof v === kind && (kind !== "number" || Number.isFinite(v));
   });
 }
@@ -225,6 +248,14 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
   // `b` is the MessagePack form of a binary body; on `cv.v1.json` it must be `b64`.
   if (e !== "j" && bytes === undefined) return fail("payload is not a valid j or b64 body");
   const body: DataBody = bytes === undefined ? { e: "j", p } : { e: "b64", bytes };
-  // Cast: every `SnapMeta` field is optional and read defensively by its consumer.
-  return { ...head, t, ch, s, ts, meta: meta as F.SnapMeta | undefined, body, size: data.length };
+  return {
+    ...head,
+    t,
+    ch,
+    s,
+    ts,
+    meta: isObj(meta) ? readMeta(meta) : undefined,
+    body,
+    size: data.length,
+  };
 }

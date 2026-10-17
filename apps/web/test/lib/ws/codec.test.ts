@@ -32,7 +32,9 @@ const AUTH_OK = {
 const RS = "bb000000-0000-4000-8000-000000000001";
 const KILL = { engaged: true, scope: "accounts", exchange_account_ids: ["a1"] };
 const authOkWith = (kill_switch: unknown) => wire({ t: "auth_ok", p: { ...AUTH_OK, kill_switch } });
-const bye = (code: number) => wire({ t: "bye", p: { code, reason: "x", message: "x" } });
+const bye = (code: number, message = "x") => wire({ t: "bye", p: { code, reason: "x", message } });
+const LONG = "m".repeat(1001); // one over the 1000 of `error.message` and `bye.message` (13.1)
+const FULL = "m".repeat(1000);
 const sub_ok_with = (ch: string) => wire({ t: "sub_ok", p: { results: [{ ch, ok: true }] } });
 const without = (p: Record<string, unknown>, key: string) =>
   Object.fromEntries(Object.entries(p).filter(([k]) => k !== key));
@@ -114,6 +116,14 @@ describe("decodeFrame", () => {
     ["an auth_ok without permissions", wire({ t: "auth_ok", p: without(AUTH_OK, "permissions") })],
     ["an err without a message", wire({ t: "err", p: { code: "internal_error" } })],
     ["a revoked without a message", wire({ t: "revoked", ch: "orders", p: { reason: "x" } })],
+    ["an err message over 1000 characters", wire({ t: "err", p: { code: "x", message: LONG } })],
+    ["an err code over 1000 characters", wire({ t: "err", p: { code: LONG, message: "m" } })],
+    [
+      "a revoked message over 1000 characters",
+      wire({ t: "revoked", ch: "orders", p: { reason: "x", message: LONG } }),
+    ],
+    ["a bye message over 1000 characters", bye(4403, LONG)],
+    ["a bye without a message", wire({ t: "bye", p: { code: 4403, reason: "x" } })],
     ["a bye code below 1000", bye(999)],
     ["a bye code above 4999", bye(5000)],
     ["a fractional bye code", bye(4000.5)],
@@ -141,10 +151,35 @@ describe("decodeFrame", () => {
     }
     const results = { results: [{ ch: "book.BTCUSDT.50", ok: true }] };
     expect(decodeFrame(wire({ t: "sub_ok", p: results }))).toMatchObject({ t: "sub_ok" });
-    const err = { t: "err", p: { code: "internal_error", message: "m" } };
+    const err = { t: "err", p: { code: "internal_error", message: FULL } };
     expect(decodeFrame(wire(err))).toMatchObject({ t: "err" });
-    const revoked = { t: "revoked", ch: "orders", p: { reason: "session_revoked", message: "m" } };
+    const revoked = { t: "revoked", ch: "orders", p: { reason: "session_revoked", message: FULL } };
     expect(decodeFrame(wire(revoked))).toMatchObject({ t: "revoked" });
+    expect(decodeFrame(bye(4403, FULL))).toMatchObject({ t: "bye" });
+  });
+
+  it("keeps only the documented meta fields, each of its own type (13.1)", () => {
+    const text = (meta: string) =>
+      `{"t":"snap","ch":"book.BTCUSDT.50","s":1,"ts":1,"p":{},"meta":${meta}}`;
+    const whole = { reason: "initial", source: "replay", previous_seq: null, include_delta: false };
+    const more = {
+      history_bars: 500,
+      recording_started_at_ms: 5,
+      build_version: 2,
+      spec_hash: "a".repeat(64),
+    };
+    const metaOf = (meta: string) => (decodeFrame(text(meta)) as DataFrame).meta;
+    expect(metaOf(JSON.stringify({ ...whole, ...more }))).toEqual({ ...whole, ...more });
+    const hostile =
+      '{"reason":"x","junk":[1],"source":"mars","previous_seq":"7","include_delta":1,"spec_hash":"zz",' +
+      '"history_bars":-1,"recording_started_at_ms":1.5,"build_version":"2","__proto__":{"polluted":true}}';
+    const meta = metaOf(hostile);
+    expect(meta).toEqual({ reason: "x" }); // the rest was unknown or of the wrong type
+    expect(Object.getPrototypeOf(meta)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    // `reason` is an open set (C18), but a short one.
+    expect(metaOf(`{"reason":"${"r".repeat(64)}"}`)).toEqual({ reason: "r".repeat(64) });
+    expect(metaOf(`{"reason":"${"r".repeat(65)}"}`)).toEqual({});
   });
 
   it("carries the span id and the message size of a data frame (13.1)", () => {
