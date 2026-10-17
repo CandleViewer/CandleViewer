@@ -91,6 +91,24 @@ def test_m2_guard_over_every_module(path: Path) -> None:
     assert not m2_violations(rel, ast.parse(path.read_text(encoding="utf-8")))
 
 
+#: #2893 (ADR-0036): the dev-only sibling package. A `cvdev/...` path matches no M2 site, so every
+#: rule holds there in full (the import-linter root and its AST test keep `secrets` out as well).
+_DEV = _PKG.parent / "cvdev"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(_DEV.rglob("*.py")), ids=lambda p: str(p.relative_to(_DEV.parent))
+)
+def test_m2_guard_over_the_dev_package(path: Path) -> None:
+    rel = str(path.relative_to(_DEV.parent))
+    assert not m2_violations(rel, ast.parse(path.read_text(encoding="utf-8")))
+
+
+def test_m2_guard_exempts_no_dev_package_path() -> None:
+    probe = ast.parse("k = settings.bybit_api_key\n")
+    assert m2_violations("cvdev/account_fixture/wiring.py", probe)
+
+
 def test_lifecycle_protocol_has_no_metadata_or_borrow() -> None:
     members = {n for n in dir(SecretsHandle) if not n.startswith("_")}
     assert members == {"start", "stop", "health"}

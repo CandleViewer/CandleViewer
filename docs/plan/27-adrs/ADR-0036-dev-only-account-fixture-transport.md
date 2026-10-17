@@ -154,11 +154,14 @@ demo-only definition need not carry over.
 ### Enforcement
 
 - **Import confinement (S3):** `.semgrep/cv-dev-module-confined.yml` lets only
-  `candleviewer/account_fixture_wiring.py` name `cvdev`. `cvdev/**` gets security-reviewed exclusions in
-  `cv-adapter-isolation.yml` and `cv-bybit-vocabulary-leak.yml`: the stub speaks the venue's vocabulary. C-2.2
-  keeps exchange knowledge in the adapter; this record reads it as governing product code, as those rules
-  already do for the fixture tooling (`tools/fixtures/**`, E08-T05, #1847) and the test tree
+  `candleviewer/account_fixture_wiring.py` name `cvdev`. S3 leaves `cv-adapter-isolation.yml` and
+  `cv-bybit-vocabulary-leak.yml` covering `cvdev/**`, the stricter state. The serving slice, S9, adds their
+  security-reviewed `cvdev/**` exclusions under its own review, because the stub speaks the venue's
+  vocabulary. C-2.2 keeps exchange knowledge in the adapter; this record reads it as governing product code,
+  as those rules already do for the fixture tooling (`tools/fixtures/**`, E08-T05, #1847) and the test tree
   (`.semgrep/cv-adapter-isolation.yml:20-23`, `:30-32`). The owner confirms that reading when ratifying.
+  S3 likewise leaves `cv-untrusted-exchange-response.yml` covering `candleviewer/**` only; whether it reaches
+  `cvdev` is the serving slices' decision.
 - **Fund paths (S7):** `.semgrep/cv-withdrawal-endpoint-ban.yml` has no `paths:` filter, so it reaches `cvdev`
   unchanged (C-2.8). The stub serves only the pack's paths (any other gets a logged non-2xx), and its P0
   tripwire keys on the `/v5/asset/` prefix, which the pack never serves, so no withdraw or transfer literal is

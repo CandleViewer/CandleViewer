@@ -17,7 +17,8 @@ name: main
 #
 # Error codes (ticket "Technical notes"): CI-IMG-001 unpinned base,
 # CI-IMG-002 root user, CI-IMG-003 Trivy High/Critical, CI-IMG-004 cosign
-# verification failed, CI-IMG-005 SBOM generation failed.
+# verification failed, CI-IMG-005 SBOM generation failed, CI-IMG-006 a
+# dev-only package in the image (#2893).
 
 on:
   push:
@@ -137,6 +138,13 @@ jobs:
 
       - name: Non-root hardening assertion (SR-131, CI-IMG-002)
         run: python tools/ci/check_image_non_root.py --image candleviewer-api:ci
+
+      # #2893 (ADR-0036): the binding image fence, with no `if:` of its own, so it holds before
+      # every push below. The dev-only `cvdev` package cannot be imported, and a boot with
+      # CV_ACCOUNT_FIXTURE set stops with the package-absent refusal, offline and read-only.
+      - name: No dev-only package in the image (CI-IMG-006)
+        timeout-minutes: 5
+        run: python tools/ci/check_image_no_dev_modules.py --image candleviewer-api:ci
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

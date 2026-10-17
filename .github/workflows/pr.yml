@@ -103,6 +103,14 @@ jobs:
               - 'services/api/pyproject.toml'
               - 'services/api/uv.lock'
               - '.github/workflows/_job-security.yml'
+              # #2893: the dev-only fence and its image check (ADR-0036), so a PR that touches
+              # either runs the boot smoke before merge, not only main.yml's check before the push.
+              # settings.py holds the fixture gate and app.py calls the wiring: the probe boots both.
+              - 'services/api/cvdev/**'
+              - 'services/api/candleviewer/account_fixture_wiring.py'
+              - 'services/api/candleviewer/settings.py'
+              - 'services/api/candleviewer/app.py'
+              - 'tools/ci/check_image_no_dev_modules.py'
             docs:
               - 'docs/**'
               - '**/*.md'

@@ -39,7 +39,7 @@ PR opened/updated (.github/workflows/pr.yml)
 
 merge to main (.github/workflows/main.yml)
 ├─ dockerfile-pins        → digest-pin check                            (CI-IMG-001)
-├─ build-scan-sign        → non-root hardening, Trivy, SBOM, cosign      (CI-IMG-002..005)
+├─ build-scan-sign        → non-root hardening, Trivy, SBOM, cosign      (CI-IMG-002..006)
 └─ deploy-dev.yml (workflow_run, self-hosted dev-host) → verify+deploy+smoke (CI-DEP-001..004, see §8)
 
 on demand / release branch (.github/workflows/deploy-staging.yml)
@@ -256,6 +256,14 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-IMG-005** (SBOM generation/validation failed): `syft`'s CycloneDX
   output failed structural validation. Check the `syft` step log for a
   parse/tool error; the gate refuses to sign an image with no valid SBOM.
+- **CI-IMG-006** (dev-only package in the image, #2893): the built image can
+  import `cvdev`, or a boot with `CV_ACCOUNT_FIXTURE=compliant` did not stop
+  with the package-absent refusal (`tools/ci/check_image_no_dev_modules.py`,
+  also run by the PR `trivy` job). Check `infra/images/Dockerfile.api`: no
+  `COPY` may name `services/api/cvdev` or a directory above it. A `Settings`
+  refusal means the boot never reached the fence: check the image's `ENV`
+  (a `CV_BYBIT_API_*` or `CV_TEST_CLOCK`) and the gate in `settings.py`. The
+  step log shows the last lines of the boot.
 
 ### CI-SPIKE-* — spike containment (`tools/ci/check_spike_containment.py`)
 

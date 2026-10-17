@@ -199,8 +199,9 @@ jobs:
       - name: Run bandit on services/api (SARIF output)
         # -c: honour [tool.bandit] (exclude_dirs=tests; assert/subprocess in tests are not
         # production findings). Production-code noqa markers are ruff-style; bandit
-        # needs its own `# nosec` — the two guard sites carry both.
-        run: bandit -c services/api/pyproject.toml -r services/api/candleviewer -f sarif -o bandit.sarif -ll || true
+        # needs its own `# nosec` — the two guard sites carry both. `cvdev` is the dev-only
+        # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack.
+        run: bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
 
       - name: Evaluate Bandit findings (security_gate.py, CI-SEC-001/004)
         run: python tools/ci/security_gate.py --tool bandit --report bandit.sarif
@@ -507,6 +508,13 @@ jobs:
           --entrypoint python candleviewer-api:ci
           -c 'import candleviewer.server, candleviewer.main as m;
           print("boot smoke OK:", len(m.app.routes), "routes")'
+
+      # #2893 (ADR-0036): the same image, run the same way: `cvdev` cannot be imported, and a boot
+      # with CV_ACCOUNT_FIXTURE set stops with the package-absent refusal. A PR-time early
+      # warning; main.yml runs the binding copy before every image push.
+      - name: Boot smoke - no dev-only package in the image (CI-IMG-006)
+        timeout-minutes: 5
+        run: python tools/ci/check_image_no_dev_modules.py --image candleviewer-api:ci
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

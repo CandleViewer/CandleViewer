@@ -1,0 +1,36 @@
+rules:
+  - id: cv-dev-module-confined
+    languages: [python]
+    severity: ERROR
+    message: >-
+      #2893 (ADR-0036 decision 1): `cvdev` is a dev-only package, outside the wheel and every
+      image. Only services/api/candleviewer/account_fixture_wiring.py may name it, importing it
+      lazily and refusing boot when it is absent. Anywhere else in `candleviewer`, an import of it
+      breaks the release image and an import string opens a second way in. Reach the fixture
+      through `build_account_fixture` instead.
+    metadata:
+      rule-id: cv-dev-module-confined
+      references:
+        - "#2893 ruling 1 (ADR-0036 decision 1 and Enforcement)"
+        - services/api/tests/unit/architecture/test_dev_module_confined.py
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: import $M
+              - pattern: import $M as $N
+              - pattern: from $M import $X
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^cvdev(\.|$)
+      # An import string: `importlib.import_module`, `__import__`, `find_spec`, a constant
+      # holding one, a `sys.modules` key, or an entry point (`pkgutil.resolve_name`, `mod:attr`).
+      - pattern: '"=~/^cvdev(\.[A-Za-z0-9_.]*)?(:[A-Za-z0-9_.]*)?$/"'
+    # These globs match paths from the repository root, so scan a git checkout from its root, as
+    # the CI `semgrep scan` in `_job-security.yml` does. A scan of an exported, non-git tree
+    # applies this rule to nothing and reports a false clean.
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+        - "**/cv-dev-module-confined*"
+      exclude:
+        - "services/api/candleviewer/account_fixture_wiring.py"
