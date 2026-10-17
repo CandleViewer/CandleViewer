@@ -27,3 +27,14 @@ class OrderLinkIdExhausted(OmsError):
 class InvalidHistoryRetention(OmsError, ValueError):
     """An exchange order retention under 2 days: §8.3 rule 6 expires an id after the
     retention less one day, so 1 day or less would expire every id on creation."""
+
+
+class DuplicateOrderLinkId(OmsError):
+    """`ux_orders_link` already holds this id, so the order was not stored (#845 Gherkin).
+
+    The rule 5 collision check runs before the insert; this is the race it cannot see. The id is
+    taken: the caller never sends under it, and allocates again (24 Sec.8.3 rule 5)."""
+
+    def __init__(self, order_link_id: str) -> None:
+        super().__init__(f"order_link_id {order_link_id} is already stored")
+        self.order_link_id = order_link_id
