@@ -81,6 +81,18 @@ async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
         await relational.dispose()
 
 
+@pytest.fixture
+def row_7(pg_dsn: str) -> Iterator[UUID]:
+    """A resolved row past the horizon for the reopen race, deleted afterwards so that the module's
+    tests pass in any order."""
+    dsn = pg_dsn.replace("+asyncpg", "")
+    with psycopg.connect(dsn, autocommit=True) as c:
+        c.execute(_INSERT, (UUID(int=7), f"{7:016x}", "resolved", "resolved", "resolved", 40, 40))
+    yield UUID(int=7)
+    with psycopg.connect(dsn, autocommit=True) as c:
+        c.execute("DELETE FROM incidents WHERE id = %s", (UUID(int=7),))
+
+
 async def _left(rel: SqlAlchemyRelationalRepository) -> list[int]:
     async with rel.unit_of_work() as uow:
         rows: Any = await uow.session.execute(sa.select(incidents.c.id).order_by(incidents.c.id))
@@ -101,11 +113,9 @@ async def test_resolved_rows_past_the_horizon_are_dropped_oldest_first_in_batche
 
 
 async def test_a_row_reopened_while_its_batch_is_deleted_is_kept(
-    pg_dsn: str, rel: SqlAlchemyRelationalRepository
+    row_7: UUID, rel: SqlAlchemyRelationalRepository
 ) -> None:
-    with psycopg.connect(pg_dsn.replace("+asyncpg", ""), autocommit=True) as c:
-        c.execute(_INSERT, (UUID(int=7), f"{7:016x}", "resolved", "resolved", "resolved", 40, 40))
-    reopen = sa.update(incidents).where(incidents.c.id == UUID(int=7))
+    reopen = sa.update(incidents).where(incidents.c.id == row_7)
     async with rel.unit_of_work() as writer:  # a new occurrence, uncommitted: it holds the row lock
         await writer.session.execute(reopen.values(status="open", resolved_at=None))
         purge = asyncio.create_task(SqlAlchemyIncidents(rel).purge_resolved(24, 1))

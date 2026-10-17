@@ -14,6 +14,8 @@ survives, and one message always normalises to the same text.
 
 `incident_signature` is the first 16 hex characters of sha256 over the JSON array
 `[component, kind, normalised message]`, an encoding in which no two triples share an input.
+Incidents are stored keyed by it (`ux_incidents_group`), so changing a normaliser rule or the
+encoding re-keys them all: a recurring fault then opens a new incident beside its old one.
 `title` is the normalised message and `detail` the event's own message, each through
 `redact_text` and then cut to the contract's length (a cut first could split a secret into a stub
 the redactor no longer matches). A `detail` that cannot be redacted is `None`; a `title` that
