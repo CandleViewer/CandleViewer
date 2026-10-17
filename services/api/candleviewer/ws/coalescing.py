@@ -407,6 +407,9 @@ class _FootprintMerge(_Merge):
         self.keys = 0
 
     def merge(self, body: Payload) -> bool:
+        """Merge one update's bars. Not atomic on a refusal: a raise part-way (an unmergeable bar,
+        a bound, an inexact sum) leaves what it had already merged in place. That is safe, because
+        `CoalescingQueue._refuse` rebuilds the merge, so one that raised is never reused."""
         bars = body.get("bars") or ()
         opened: set[int] = set()
         for bar in bars:
@@ -415,7 +418,9 @@ class _FootprintMerge(_Merge):
                 raise _UnmergeableError("two bars share an open time in one update")
             opened.add(t_ms)
             entry = self.bars.get(t_ms)
-            if entry is not None and entry[0].get("confirm") is True:
+            # By truthiness, as `BarCoalescer` reads `confirm`: a truthy non-boolean refuses the
+            # update (a re-snapshot) rather than merging it silently into a confirmed bar.
+            if entry is not None and entry[0].get("confirm"):
                 raise _UnmergeableError("an update to a bar already confirmed in this window")
             if entry is None:
                 self._grow()
@@ -685,7 +690,12 @@ class CoalescingQueue:
     def take(self) -> list[Emission]:
         """The frames to emit now (none after a refusal), resetting the pending state. They count
         as delivered (a heatmap remembers the complete buckets it sent): a caller that drops any
-        of them must `clear()` the queue and re-snapshot the topic."""
+        of them must `clear()` the queue and re-snapshot the topic.
+
+        Note for the #412 coalescing wiring: that memory is filled only from here, so a queue built
+        after a topic's snapshot does not know the complete columns that snapshot carried. The
+        wiring should seed the heatmap's sent-bucket memory from them, or a live update for one of
+        those buckets is sent again."""
         if self.refusal is not None:
             return []
         merge = self._merge
