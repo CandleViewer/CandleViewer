@@ -744,14 +744,21 @@ class Settings(BaseSettings):
             )
         return drain_s
 
-    @model_validator(mode="after")
-    def _refuse_unordered_account_windows(self) -> Settings:
+    @field_validator("account_down_s")
+    @classmethod
+    def _refuse_unordered_account_windows(cls, down_s: float, info: ValidationInfo) -> float:
         """E27-T04: the heartbeat window must end inside the down window, as `HealthThresholds`
         requires. A bad pair refuses startup here rather than failing wherever the wiring first
-        builds one."""
-        if not 0 < self.account_heartbeat_s < self.account_down_s:
+        builds one.
+
+        A field validator on the second window, not a model one (#2728, #2565): a refusal's
+        `errors()` and `json()` carry only this field's input, never every setting,
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the heartbeat window, declared
+        first; one whose own check failed is absent, and its error is the one to report."""
+        heartbeat_s = info.data.get("account_heartbeat_s")
+        if heartbeat_s is not None and not heartbeat_s < down_s:
             raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
-        return self
+        return down_s
 
     @field_validator("bind_host")
     @classmethod

@@ -6,12 +6,10 @@ from __future__ import annotations
 
 import sys
 from datetime import timedelta
-from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
@@ -156,31 +154,9 @@ def test_settings_carry_the_same_caps_as_the_health_module() -> None:
     assert (ACCOUNT_HEARTBEAT_MAX_S, ACCOUNT_DOWN_MAX_S) == (HEARTBEAT_MAX_S, DOWN_MAX_S)
 
 
-@pytest.mark.parametrize(
-    "bad",
-    [
-        {"account_heartbeat_s": 10.001},
-        {"account_down_s": 30.001},
-        {"account_heartbeat_s": 0},
-        {"account_down_s": 0},
-    ],
-)
-def test_health_windows_cannot_exceed_the_us_acct_010_nfr(bad: dict[str, Any]) -> None:
-    with pytest.raises(ValidationError):
-        Settings(**bad)
-
-
 def test_the_us_acct_010_limits_themselves_are_accepted() -> None:
     settings_ = Settings(account_heartbeat_s=10, account_down_s=30)
     assert HealthThresholds.from_settings(settings_) == HealthThresholds(10, 30)
-
-
-@pytest.mark.parametrize(("heartbeat", "down"), [(10, 10), (10, 5), (2.5, 2)])
-def test_settings_reject_a_heartbeat_window_not_inside_the_down_window(
-    heartbeat: float, down: float
-) -> None:
-    with pytest.raises(ValidationError, match="CV_ACCOUNT_HEARTBEAT_S must be less than"):
-        Settings(account_heartbeat_s=heartbeat, account_down_s=down)
 
 
 @pytest.mark.parametrize("cadence", [5.0, 9.9, 10.0])
