@@ -6158,6 +6158,17 @@ paths:
         a live arm whose body is not I-JSON (RFC 7493: a lone surrogate, an integer beyond 2^53,
         `NaN` or `Infinity`) has no canonical form and is `400 validation_failed`, never a
         challenge.
+
+        **Action budget (SR-104; 04 §7.2.2 row 26).** Arming, the re-arm after a kill included,
+        holds the active version to the action budget of `createRule` again. A version whose
+        `limits.max_fires_per_hour` or `limits.max_fires_per_day` is above its `RuleLimits`
+        default needs the arming actor to be the Owner, whoever saved it: anyone else gets
+        `403 forbidden`, whose `errors` name each such `limits.<field>` with
+        `rule: owner_only_above_default`. A value above its hard cap (`x-cv-limit-caps` on
+        `RuleIr`) is `422 rule_invalid` for every role. Both refusals are audited before they
+        are answered. A rule armed above a hard cap before the caps existed is never clamped:
+        the evaluator skips it, and it is disarmed, audited with the reason `limits_above_cap`,
+        the first time it is read or evaluated.
       x-rbac: { permissions: [rules:write, rules:arm_live], scope: granted_accounts }
       x-idempotency: required
       parameters:
