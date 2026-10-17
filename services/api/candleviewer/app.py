@@ -30,7 +30,7 @@ import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.account_fixture_wiring import build_account_fixture
+from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.ops.health import AdminHealthService
@@ -644,6 +644,7 @@ def build_app_context(
     *,
     auth_clock: Callable[[], datetime] | None = None,
     secrets_bundle: SecretsBundle | None = None,
+    account_fixture: AccountFixture | None = None,
 ) -> AppContext:
     """Construct an `AppContext` with real scaffold modules, no I/O performed.
 
@@ -651,6 +652,10 @@ def build_app_context(
     constructing them does no network/DB work (each `__init__` only sets
     `_started = False`), which is what keeps `create_app()` fast and
     fake-only per the acceptance criteria.
+
+    #2893 S4: `account_fixture` is `create_app()`'s handle from `build_account_fixture`, None
+    unless `CV_ACCOUNT_FIXTURE` is set; its REST transport becomes the exchange adapter's account
+    REST transport. None keeps httpx's own transport.
     """
     resolved = settings or get_settings()
     read_only_gate = ReadOnlyGate()
@@ -676,7 +681,10 @@ def build_app_context(
         metrics=CollectorRegistry(),
         secrets=secrets.lifecycle,
         exchange_base=ExchangeBaseService(),
-        exchange_bybit=ExchangeBybitService(credentials=secrets.exchange_borrower),
+        exchange_bybit=ExchangeBybitService(
+            credentials=secrets.exchange_borrower,
+            rest_transport=None if account_fixture is None else account_fixture.rest_transport,
+        ),
         bus=bus_service,
         ingestion=IngestionService(),
         book=BookService(),
@@ -1017,8 +1025,8 @@ def create_app(
     # #2086: the keyless-testnet server test clock; None (real UTC) unless CV_TEST_CLOCK is on.
     auth_clock = auth_clock or build_test_clock(resolved)
     # #2893: the dev-only account fixture transport; None unless CV_ACCOUNT_FIXTURE is set. A build
-    # without the dev package refuses boot here, before any module is built. Kept on `app.state`
-    # until S4 threads it into the exchange adapter.
+    # without the dev package refuses boot here, before any module is built. S4 hands its REST
+    # transport to the exchange adapter; the handle stays on `app.state` for the private socket.
     account_fixture = build_account_fixture(resolved)
     spec = _cached_spec()
     # #2097: the auth perf switch; refused outside a keyless testnet before anything is built.
@@ -1031,7 +1039,12 @@ def create_app(
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
     app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
-    ctx = build_app_context(resolved, auth_clock=auth_clock, secrets_bundle=secrets_bundle)
+    ctx = build_app_context(
+        resolved,
+        auth_clock=auth_clock,
+        secrets_bundle=secrets_bundle,
+        account_fixture=account_fixture,
+    )
     app.state.app_context = ctx
     app.state.account_fixture = account_fixture
     # #2060: klines hot/cold boundary from the DB-seeded retention policy; the lifespan loads it
