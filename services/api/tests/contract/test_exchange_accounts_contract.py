@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from referencing import Registry, Resource
@@ -382,6 +383,7 @@ _DESCRIBED = (
     ),
     ((*_SUMMARY, "properties", "open_positions"), "with its native stop-loss state"),
     ((*_SUMMARY, "properties", "working_orders"), "Orders working on the exchange"),
+    ((*_SUMMARY, "properties", "running_algos"), "Emulated algos still running"),
     ((*_SUMMARY, "properties", "assigned_users"), "through `user_account_access`"),
     ((*_SUMMARY, "properties", "armed_rules"), "the action disarms them"),
     (
@@ -400,7 +402,7 @@ _DESCRIBED = (
     ),
     (
         (*_SCHEMA, "SecuritySummary", "properties", "keys", "items", "properties", "key_id_masked"),
-        "as `ApiKey.key_id_masked`",
+        "At most the last 4 characters of the key id|as `ApiKey.key_id_masked`",
     ),
     (
         (*_SCHEMA, "KeyVerification", "properties", "uta"),
@@ -409,7 +411,7 @@ _DESCRIBED = (
     ((*_SCHEMA, "KeyVerification", "properties", "read_only"), "which alone decides write access"),
     (
         (*_SCHEMA, "KeyVerification", "properties", "permissions"),
-        "Every right must be on the `createApiKey` allow-list (step 2)",
+        "As reported. Every right must be on the `createApiKey` allow-list (step 2)",
     ),
     (
         (*_SCHEMA, "KeyVerification", "properties", "ip_whitelist_matches_egress"),
@@ -422,7 +424,9 @@ _DESCRIBED = (
     (
         (*_SCHEMA, "KeyProbeError"),
         "Closed vocabulary for a failed probe (SR-E27-08)"
+        "|`permission_denied`: `10005`"
         "|`ip_not_allowed`: `10010` or HTTP 403"
+        "|`clock_drift`: `10002`"
         "|`rate_limited`: `10006`, `10018`, `10429` or HTTP 429"
         "|`service_unavailable`: `10016`, `10019` or HTTP 5xx"
         "|`exchange_unknown`: any other non-zero `retCode` (the code itself is in `ret_code`)"
@@ -479,6 +483,10 @@ def test_key_gate_reads_write_access_from_read_only_and_uta_never_unified() -> N
     assert "`uta`" in gate
     assert "deprecated `unified`" in gate
     assert _all("unified") == []
+    assert (
+        "Write access is read from `readOnly`, never from the permission lists (the reference "
+        "pairs `readOnly: 1` with trading rights)"
+    ) in _steps(_op(_KEYS, "post")["description"])[3]
 
 
 def test_ip_whitelist_is_mandatory_and_no_setting_can_turn_it_off() -> None:
@@ -570,6 +578,9 @@ def test_open_exposure_problem_is_registered_and_its_example_carries_the_summary
         409,
         False,
     )
+    # The example's title is the registry's, and it says what the caller does next.
+    assert example["title"] == registered["open_exposure"]["title"]
+    assert "resend with an open_exposure choice" in example["title"]
 
 
 @pytest.mark.parametrize(("path", "method"), _EXPOSURE_OPS)
@@ -805,14 +816,18 @@ def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
     # It is the only path that lifts a C-2.6 refusal, so its audit record says why (C-2.9).
     dead = _section("**Dead.**")
     assert (
-        "The audit record of that disable or revoke (`account.disabled` or `api_key.revoke`, "
-        "written ahead of the change, C-2.9) carries the code `exposure_unknown`, the "
-        "`KeyProbeError` of each signable key (none for an account without one) and that the "
-        "stop-loss refusal was lifted"
+        "The audit record of that disable or revoke (`account.disabled` of "
+        "`24-internal-schemas.md` §15.5 for the disable, `api_key.revoke` of `audit/actions.py` "
+        "for the revoke, written ahead of the change, C-2.9) carries the code "
+        "`exposure_unknown`, the `KeyProbeError` of each signable key (none for an account "
+        "without one) and that the stop-loss refusal was lifted"
     ) in dead
-    # Both names are registered: `api_key.revoke` in the code registry, `account.disabled` in the
-    # closed vocabulary of 24-internal-schemas.md §15.5 (the threat model gives its registration
-    # to E27-S04, the ticket that mounts the route). The spelling `accounts.disable` is neither.
+    # Each name is its own registry's spelling, and the registries do not spell the revoke alike:
+    # `api_key.revoke` is in `audit/actions.py` (AUDIT_ACTIONS); `account.disabled` is in the
+    # closed vocabulary of 24-internal-schemas.md §15.5, and E27-S04 registers it with the route.
+    # §15.5 spells the revoke `apikey.revoked` and the threat model's ticket column
+    # `account.key_revoked`: E27-S04 reconciles the three (a follow-up note on #898), and this
+    # change edits no registry. The spelling `accounts.disable` is in none.
     doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
     vocabulary = doc[doc.index("### 15.5 Audited action vocabulary") : doc.index("## 16.")]
     assert "`account.disabled`" in vocabulary
@@ -949,7 +964,9 @@ def test_delete_answers_exposure_unknown_whatever_open_exposure_is_sent() -> Non
     assert _section("`deleteExchangeAccount` takes only `flatten_first`") == (
         "`deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers "
         "`409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means "
-        "disabling the account instead (`updateExchangeAccount` with `enabled: false`)."
+        "disabling the account instead (`updateExchangeAccount` with `enabled: false`), a new "
+        "request with a new `Idempotency-Key` that must carry `open_exposure=leave_positions`: "
+        "without a choice that disable is `409 exposure_unknown` again."
     )
 
 
@@ -961,7 +978,8 @@ def test_an_account_with_unknown_exposure_is_never_deleted() -> None:
     )
     assert (
         "its `remedy` says whether the account can be disabled instead (`updateExchangeAccount` "
-        "with `enabled: false`) or a key is to be fixed first, and "
+        "with `enabled: false`, a new request with a new `Idempotency-Key` that must carry "
+        "`open_exposure=leave_positions`) or a key is to be fixed first, and "
         "`components.parameters.OpenExposure` defines both, and what a failed read is answered with"
     ) in delete
     assert "A dead account is disabled, never deleted" in _section("**Dead.**")
@@ -1087,14 +1105,57 @@ def test_the_remedy_follows_the_class_of_the_account_in_the_text_and_in_the_exam
     assert "A failed read has no `remedy`" in _section("**A failed read.**")
 
 
+def test_the_resend_after_exposure_unknown_is_a_new_request_with_a_new_idempotency_key() -> None:
+    # Under the global rule the stored 409 is replayed for 24 h to the same key and body, so a
+    # client that follows the remedy under the old key is answered with the stale refusal, the
+    # key it has just fixed included; the same key with another choice is `idempotency_key_reuse`.
+    rule = _fold(_SPEC["info"]["description"])
+    assert "is stored with the request fingerprint for 24 h" in rule
+    assert "Replay with the same key + same body returns the original response" in rule
+    assert "Same key + different body → `409` with code `idempotency_key_reuse`" in rule
+    assert "exposure_unknown" not in rule  # no exception: this 409 is stored like any other
+    resend = "The resend is a new request with a new `Idempotency-Key`"
+    assert (
+        f"{resend}: under the same key the identical request replays the stored `409` for 24 h, "
+        "and a request with another `open_exposure` is `409 idempotency_key_reuse` (the "
+        "Idempotency rule of `info.description`)"
+    ) in _fold(_SCHEMAS["ExposureRemedy"]["description"])
+    assert (
+        f"{resend}: under the old key a request with `leave_positions` is "
+        "`409 idempotency_key_reuse`, the replay fingerprint covering the choice"
+    ) in _section("**Dead.**")
+    assert (
+        f"{resend}: the identical request under the same key replays the stored `409` for 24 h "
+        "(the Idempotency rule of `info.description`), whether or not the key has been fixed since"
+    ) in _section("**Fixable.**")
+
+
+def test_after_a_refused_delete_the_disable_must_carry_leave_positions() -> None:
+    # A delete never proceeds, so the way out of a refused one is the disable; the disable of an
+    # account whose exposure is unknown is itself refused unless it carries the choice.
+    assert "leave_positions" in _accepted(_ACCOUNT, "patch")
+    assert "leave_positions" not in _accepted(_ACCOUNT, "delete")
+    assert "`flatten_first`, or no choice, is then `409 exposure_unknown`" in _section("**Dead.**")
+    must = "must carry `open_exposure=leave_positions`"
+    assert f"that disable {must}: without a choice it is `409 exposure_unknown` again" in _fold(
+        _SCHEMAS["ExposureRemedy"]["description"]
+    )
+    assert f"a new request with a new `Idempotency-Key` that {must}" in _text(_ACCOUNT, "delete")
+    assert (
+        f"a new request with a new `Idempotency-Key` that {must}: without a choice that disable "
+        "is `409 exposure_unknown` again"
+    ) in _section("`deleteExchangeAccount` takes only `flatten_first`")
+
+
 def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
     status = _fold(_SCHEMAS["KeyStatus"]["description"])
     assert "Only `active` and `rotating` keys are signable" in status
     assert (
-        "`invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), "
-        "which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not "
-        "signable"
+        "`invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or "
+        "`10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it "
+        "is not signable"
     ) in status
+    assert "retCode" not in status  # the Bybit wire name stays inside the adapter (see below)
     assert "invalid" in _SCHEMAS["KeyStatus"]["enum"]
     assert "invalid" not in _SIGNABLE_STATUSES
     # §8.6 marks a key `invalid` on the two credential refusals that the probe calls `auth_error`.
@@ -1107,6 +1168,18 @@ def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
     assert rows["10004"].endswith("| Same |")
     probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
     assert "`auth_error`: key or signature refused (`10003`, `10004`)" in probe
+
+
+def test_generated_models_carry_no_bybit_wire_vocabulary_outside_the_adapter() -> None:
+    # A spec description is copied into the generated models, which sit outside the adapter, so a
+    # wire identifier in one (`retCode` in `KeyStatus` was one) fails the cv-bybit-vocabulary-leak
+    # rule (P3, C-2.2). The test takes its identifier list from that rule, so there is one list.
+    rules = yaml.safe_load(
+        (_REPO_ROOT / ".semgrep/cv-bybit-vocabulary-leak.yml").read_text(encoding="utf-8")
+    )
+    [leak] = [rule for rule in rules["rules"] if rule["id"] == "cv-bybit-vocabulary-leak"]
+    models = Path(api.__file__).read_text(encoding="utf-8")
+    assert re.findall(leak["pattern-regex"], models) == []
 
 
 def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:

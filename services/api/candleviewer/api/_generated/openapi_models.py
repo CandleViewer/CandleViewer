@@ -613,7 +613,7 @@ class ApiKey(BaseModel):
     status: Annotated[
         Literal["pending", "active", "rotating", "revoked", "expired", "invalid"],
         Field(
-            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
         ),
     ]
     read_only: bool | None = None
@@ -5664,7 +5664,7 @@ class Key(BaseModel):
     status: Annotated[
         Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None,
         Field(
-            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
         ),
     ] = None
     age_days: int | None = None
@@ -5841,7 +5841,7 @@ class OpenExposureProblem(Problem):
     remedy: Annotated[
         Literal["leave_positions", "fix_key"] | None,
         Field(
-            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
+            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
         ),
     ] = None
 
