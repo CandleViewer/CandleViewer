@@ -1,7 +1,7 @@
 """SR-188 (#3125): `_Connection.push_system` is the one place a `system` frame is queued.
 
 It asks `ws/system_filter.system_view` what the socket's principal may receive, so a producer that
-queued a frame of its own on the channel, or named `push_system` outside its three senders, would
+queued a frame of its own on the channel, or named `push_system` outside its senders, would
 skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of `candleviewer`:
 
 - a frame on the `system` channel (a dict literal whose `"ch"` is the topic, whatever its other
@@ -10,8 +10,10 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
   `"sub_id"`. The topic is `"system"`, `SYSTEM_TOPIC` (as an import alias too), a name a module
   copies it to (`TOPIC = SYSTEM_TOPIC`, at any scope) and `getattr(m, "SYSTEM_TOPIC")`;
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
-  `GatewayHub.shutdown` and `run_auth` (the notices after the first `auth_ok`). The string
-  "push_system" counts as a name (`getattr(conn, "push_system")`).
+  `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`) and
+  `FlagPush.flag_changed` (E42-T03: a flag change is resolved for each session's user, so there
+  is no one body to broadcast; `push_system` still filters it, the path B3's review asked for).
+  The string "push_system" counts as a name (`getattr(conn, "push_system")`).
 
 A new producer calls `GatewayHub.broadcast_system`. Any other reference fails here and must be
 reviewed as an RBAC change first (C-12.4), as for `test_key_selfcheck_store_callers.py`.
@@ -39,6 +41,7 @@ SENDERS = {
     ("ws/gateway.py", "GatewayHub.broadcast_system"),
     ("ws/gateway.py", "GatewayHub.shutdown"),
     ("ws/gateway.py", "run_auth"),
+    ("admin/flags/push.py", "FlagPush.flag_changed"),
 }
 #: A `sub_ok` result row has no `t` and one of these.
 RESULT_ROW = frozenset({"ok", "sub_id"})
@@ -142,7 +145,7 @@ def test_a_frame_on_the_system_channel_is_built_only_by_push_system() -> None:
     assert built == BUILDERS, "a frame built beside push_system skips the SR-188 filter (C-12.4)"
 
 
-def test_push_system_is_named_only_by_its_three_senders() -> None:
+def test_push_system_is_named_only_by_its_senders() -> None:
     _, named = _scan()
     assert named == SENDERS, "push_system named outside its senders skips the SR-188 filter"
 

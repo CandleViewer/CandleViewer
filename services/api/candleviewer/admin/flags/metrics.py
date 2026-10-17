@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from typing import Final
 
-from candleviewer.observability.metrics import CollectorRegistry, Counter, ReexportCollector
+from candleviewer.observability.metrics import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    ReexportCollector,
+)
 
 flag_evaluations_total = Counter(
     "cv_feature_flag_evaluations_total",
@@ -28,11 +34,23 @@ flag_changes_total = Counter(
     ["flag", "result"],
 )
 
+flag_push_latency_seconds = Histogram(
+    "cv_flag_push_latency_seconds",
+    "Time from a committed flag write to the last session frame queued (budget 2 s).",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0),
+)
+
+maintenance_mode_gauge = Gauge(
+    "cv_maintenance_mode", "1 while the order gate is engaged (maintenance or order kill switch)."
+)
+
 EXPORTED_NAMES: Final = frozenset(
     {
         "cv_feature_flag_evaluations_total",
         "cv_feature_flag_unreadable_overrides_total",
         "cv_feature_flag_changes_total",
+        "cv_flag_push_latency_seconds",
+        "cv_maintenance_mode",
     }
 )
 
