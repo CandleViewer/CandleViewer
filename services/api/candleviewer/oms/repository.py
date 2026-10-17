@@ -195,7 +195,8 @@ class PositionRepository:
 
     async def upsert(self, state: PositionState) -> PositionRow:
         """`PositionStore.upsert`: a stale write returns the stored row, and a time more than
-        `MAX_FUTURE_SKEW` ahead of the store's clock raises `FutureDatedPositionError`."""
+        `MAX_FUTURE_SKEW` ahead of the store's clock raises `FutureDatedPositionError`, a clock
+        fault the writer must log, count, alert and retry after clock sync (21 Sec.3.3.7)."""
         with self._timer.measure("positions"):
             return await self._store.upsert(state)
 

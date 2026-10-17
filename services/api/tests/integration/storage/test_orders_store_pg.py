@@ -438,8 +438,9 @@ Ledger = tuple[ExecutionRepository, PositionRepository, PositionSnapshotReposito
 
 @pytest_asyncio.fixture
 async def ledger(app_dsn: str) -> AsyncIterator[Ledger]:
+    """Stores whose position clock reads `_T0`, the time the position tests stamp their rows at."""
     rel = SqlAlchemyRelationalRepository(app_dsn, "positions-it")
-    positions = SqlAlchemyPositionStore(rel)
+    positions = SqlAlchemyPositionStore(rel, clock=lambda: _T0)
     try:
         yield (
             ExecutionRepository(SqlAlchemyExecutionStore(rel)),
@@ -540,35 +541,59 @@ async def test_a_stale_position_write_leaves_the_newer_row(ledger: Ledger, pg_ds
     assert _sql(pg_dsn, size, account) == [(Decimal(5),)]
 
 
-async def test_a_future_dated_position_time_is_refused_and_a_stored_one_heals(
-    app_dsn: str, pg_dsn: str
-) -> None:
-    """C-2.6: a time more than 5 s ahead of the store's clock is refused and writes nothing. A row
-    stamped an hour ahead (by a store whose clock ran an hour fast) loses the guard, so the next
-    write applies although its own time is older, and the cleared stop is listed; a stored time
-    within the 5 s still keeps an older write out."""
+_HOUR = timedelta(hours=1)
+Skew = tuple[PositionRepository, PositionRepository]
+
+
+@pytest_asyncio.fixture
+async def skew(app_dsn: str) -> AsyncIterator[Skew]:
+    """Two position stores over one database: one whose clock reads `_T0`, one an hour fast."""
     rel = SqlAlchemyRelationalRepository(app_dsn, "positions-skew-it")
-    hour, account = timedelta(hours=1), _account(pg_dsn)
-    on_time = PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0))
-    fast = PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0 + hour))
     try:
-        with pytest.raises(FutureDatedPositionError):
-            await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0 + hour))
-        count = "SELECT count(*) FROM positions WHERE exchange_account_id = %s"
-        assert _sql(pg_dsn, count, account) == [(0,)]
-        stop = Decimal("62000")
-        await fast.upsert(
-            _state(account, "BTCUSDT", stop_loss=stop, exchange_updated_ts=_T0 + hour)
+        yield (
+            PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0)),
+            PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0 + _HOUR)),
         )
-        healed = await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0))
-        assert (healed.stop_loss, healed.exchange_updated_ts) == (None, _T0)
-        assert [p.symbol for p in await on_time.list_unprotected(account)] == ["BTCUSDT"]
-        near = _T0 + timedelta(seconds=4)
-        await on_time.upsert(_state(account, "ETHUSDT", stop_loss=stop, exchange_updated_ts=near))
-        kept = await on_time.upsert(_state(account, "ETHUSDT", exchange_updated_ts=_T0))
-        assert (kept.stop_loss, kept.exchange_updated_ts) == (stop, near)
     finally:
         await rel.dispose()
+
+
+async def test_a_position_time_past_the_skew_is_refused_and_nothing_is_stored(
+    skew: Skew, pg_dsn: str
+) -> None:
+    """C-2.6: a time over 5 s ahead of the store's clock is a parse or unit error, not a push."""
+    on_time, _ = skew
+    account = _account(pg_dsn)
+    with pytest.raises(FutureDatedPositionError):
+        await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0 + _HOUR))
+    count = "SELECT count(*) FROM positions WHERE exchange_account_id = %s"
+    assert _sql(pg_dsn, count, account) == [(0,)]
+
+
+async def test_a_row_stamped_ahead_loses_the_guard_so_the_next_write_heals_it(
+    skew: Skew, pg_dsn: str
+) -> None:
+    """C-2.6: a row stamped an hour ahead (by a store whose clock ran fast) would freeze the
+    position. It loses the guard instead, so the next write applies although its own time is
+    older, and the cleared stop is listed."""
+    on_time, fast = skew
+    account = _account(pg_dsn)
+    ahead = _state(account, "BTCUSDT", stop_loss=Decimal("62000"), exchange_updated_ts=_T0 + _HOUR)
+    await fast.upsert(ahead)
+    healed = await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0))
+    assert (healed.stop_loss, healed.exchange_updated_ts) == (None, _T0)
+    assert [p.symbol for p in await on_time.list_unprotected(account)] == ["BTCUSDT"]
+
+
+async def test_a_stored_time_within_the_skew_still_keeps_an_older_write_out(
+    skew: Skew, pg_dsn: str
+) -> None:
+    """The healing arm opens past the 5 s, not before: a stored time 4 s ahead is a real push."""
+    on_time, _ = skew
+    account, stop, near = _account(pg_dsn), Decimal("62000"), _T0 + timedelta(seconds=4)
+    await on_time.upsert(_state(account, "ETHUSDT", stop_loss=stop, exchange_updated_ts=near))
+    kept = await on_time.upsert(_state(account, "ETHUSDT", exchange_updated_ts=_T0))
+    assert (kept.stop_loss, kept.exchange_updated_ts) == (stop, near)
 
 
 async def test_list_unprotected_is_planned_over_ix_pos_no_sl(ledger: Ledger, pg_dsn: str) -> None:
