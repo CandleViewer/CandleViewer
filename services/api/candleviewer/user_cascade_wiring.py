@@ -8,10 +8,13 @@ does, implements them over the rule engine's own interfaces.
   one per call by `RulesManager.set_mode(rule, "disabled", ...)`, the E35 disarm interface: B9
   `DISARM` goes through `RuleLifecycle` and the statechart gateway to a chart only
   `statechart.factory` builds, and the manager writes `rules.disarm` ahead of the row (C-2.9). A
-  rule the chart refuses is the manager's `RuleError`; the service goes on to the next rule. A
-  rule is disarmed by one call at a time in the process, through whichever adapter (the manager
-  has no per-rule lock), and only the user's own: the adapter acts as the Owner, who sees every
-  rule, so a rule that is not the user's is refused.
+  rule the chart refuses is the manager's `RuleError`; the service goes on to the next rule. B9
+  handles `DISARM` only in armed, cooling_down and paused_degraded, so a rule that is evaluating,
+  acting, pending confirmation or spent stays armed behind O4 and O5 until a repeat, though
+  UL-AC02 of the STRIDE appendix says it "reaches disarmed" (#3226). A rule is disarmed by one
+  call at a time in the process, through whichever adapter (the manager has no per-rule lock; a
+  manual mode change is not covered, #3227), and only the user's own: the adapter acts as the
+  Owner, who sees every rule, so a rule that is not the user's is refused.
 - `ScopeRefreshAdapter` refreshes the user's entry in the rule engine's scope snapshot at once; a
   refresh that fails drops the entry (no grant, no live arming) and re-raises.
 
@@ -119,7 +122,8 @@ class RuleDisarmAdapter:
         """B9 DISARM for one of `user_id`'s rules, one at a time per rule. A rule that is already
         disarmed is a no-op with no record, also when two disarms of it overlap; a rule that is not
         the user's, a stopped rules module and any refusal or failure are raised after one error
-        line that names the rule."""
+        line that names the rule. A cancellation (the step's bound cutting the call) is not logged
+        here (#3227)."""
         key = disarm_key(user_id, rule_id, disabled_at)
         try:
             async with _disarm_lock(rule_id):

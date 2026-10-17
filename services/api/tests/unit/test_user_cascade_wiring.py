@@ -119,7 +119,8 @@ async def test_disarm_of_a_rule_the_chart_refuses_raises_and_leaves_it_armed() -
     """B9 handles DISARM in `armed`, `cooling_down` and `paused_degraded` only (28 §B9.3): a rule
     that is evaluating is refused, never parked to fire later (CV-C06). The adapter lets the
     refusal out, so the cascade counts a failed step, and names the rule in the log; O4 and O5
-    hold the rule meanwhile. (Nothing yet sends TRIGGER outside tests, so none evaluates.)"""
+    hold the rule meanwhile. (Nothing yet sends TRIGGER outside tests, so none evaluates; UL-AC02
+    of the STRIDE appendix wants such a rule disarmed: #3226.)"""
     e = _Engine()
     rid = await e.rule(_A, "a-one")
     await e.manager.lifecycle.send(rid, "TRIGGER")

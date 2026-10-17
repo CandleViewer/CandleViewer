@@ -686,10 +686,10 @@ async def test_disable_disarms_the_users_armed_rules_through_b9_and_closes_their
 async def test_overlapping_repeats_disarm_a_rule_once_and_park_nothing() -> None:
     """AC5, SR-029: a repeat of the DELETE can start while the first cascade still runs (a double
     submit, a client retry), and both list the rule while it is armed. Over the real rule engine
-    the adapter runs one disarm at a time, so the second finds the rule disarmed and writes
-    nothing: one `rule.disarmed` record, no failed step, no DISARM parked on the chart, and the
-    rule arms again the first time. Unserialised, both sent DISARM: two records, one parked, and
-    the next arm refused with 422 `illegal_transition`."""
+    the adapter runs one rule's disarms one at a time, so the second finds the rule disarmed and
+    writes nothing: one `rule.disarmed` record, no failed step, no DISARM parked on the chart, and
+    the rule arms again the first time. Unserialised, both sent DISARM: two records, one parked,
+    and the next arm refused with 422 `illegal_transition`."""
     engine = _Engine()
     rid = await engine.rule(_TARGET, "t-one")
     w = _World(_Rel(status="disabled"), rules=engine.adapter)
