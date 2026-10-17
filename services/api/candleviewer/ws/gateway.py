@@ -154,6 +154,7 @@ from candleviewer.ws.metrics import (
     cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
+    cv_ws_system_frames_withheld_total,
 )
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import (
@@ -168,7 +169,12 @@ from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
-from candleviewer.ws.system_filter import FlagVisible, kill_switch_view, system_view
+from candleviewer.ws.system_filter import (
+    FlagVisible,
+    kill_switch_view,
+    system_view,
+    withheld_reason,
+)
 
 WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
@@ -520,10 +526,14 @@ class _Connection:
 
     def push_system(self, body: dict[str, Any]) -> None:
         """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
-        whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3)."""
+        whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3). A frame
+        left out because of what it is or who the socket is, not its role's cut, is counted by
+        `withheld_reason` (`cv_ws_system_frames_withheld_total`; never its content)."""
         principal = None if self.authz is None else self.authz.principal
         view = system_view(body, principal, flag_visible=self.flag_visible)
         if view is None:
+            if (reason := withheld_reason(body, principal)) is not None:
+                cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
             return
         self.system_seq += 1
         self.push(

@@ -1,14 +1,17 @@
 """SR-188 (#2175): `system_view`, each role's view of a `system` frame (`23-ws-protocol.md` §15.9).
 
 Pure: no socket, no clock. Every expected body is written out here, never derived from the
-module's tables, so a widened table fails a test."""
+module's tables, so a widened table fails a test. The tables are compared with the contract: the
+schema of §15.9, and the prose table and sentence that say who receives what of it."""
 
 from __future__ import annotations
 
 import copy
 import json
+import re
 import uuid
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -16,8 +19,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.ws import system_filter
 from candleviewer.ws.system_filter import (
+    NEUTRAL_APPLIED,
     NEUTRAL_COMPONENT,
+    NEUTRAL_EXCHANGE,
     NEUTRAL_FIELDS,
     NEUTRAL_KILL_SWITCH,
     kill_switch_view,
@@ -29,9 +35,9 @@ ACC_A = uuid.UUID("0a000000-0000-4000-8000-00000000000a")
 ACC_B = uuid.UUID("0a000000-0000-4000-8000-00000000000b")
 ENGAGER = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001"
 _BUNDLE = Path(__file__).resolve().parents[5] / "docs" / "plan" / "ws-schema.json"
-_SCHEMA = json.loads(_BUNDLE.read_text(encoding="utf-8"))["schemas"][
-    "cv://ws/v1/system.schema.json"
-]
+_DOC = _BUNDLE.with_name("23-ws-protocol.md")
+_SCHEMAS = json.loads(_BUNDLE.read_text(encoding="utf-8"))["schemas"]
+_SCHEMA = _SCHEMAS["cv://ws/v1/system.schema.json"]
 
 
 def principal(*roles: str, grants: tuple[AccountGrant, ...] = ()) -> PrincipalSnapshot:
@@ -49,7 +55,21 @@ def _same(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 _PART = {"name": "bybit_rest", "state": "degraded", "last_good_at": "2026-10-17T03:00:00Z"}
-_HEALTH = {"kind": "health", "health": "degraded", "clock_offset_ms": 4, "degraded_topics": []}
+_EXCHANGE = {"public_ws": "connected", "private_ws": "resyncing", "rest": "degraded"}
+_APPLIED = {
+    "throttle_multiplier": 4,
+    "forced_coalesce": True,
+    "degraded_topics": ["heatmap.BTCUSDT"],
+}
+#: Fields no role-neutral list has: `rate_budget_free_pct` is the Owner's until E42-T05 decides.
+_FOREIGN = {"account_id": "acct-b", "uid": "1234", "rate_budget_free_pct": 41.5}
+_HEALTH = {
+    "kind": "health",
+    "health": "degraded",
+    "clock_offset_ms": 4,
+    "degraded_topics": [],
+    "exchange": _EXCHANGE,
+}
 _HALT = {"kind": "kill_switch", "severity": "critical", "message": "Trading halted."}
 _STATE = {"engaged": True, "scope": "accounts", "engaged_at_ms": 1789133000000}
 _WHO = {"engaged_by": ENGAGER, "engaged_by_username": "owner.alice", "reason": "B breached its cap"}
@@ -71,8 +91,12 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
         {"kind": "feature_flags", "feature_flags": {"storage.cold_tier": False}},
         None,
     ),
-    "exchange_state": _same({"kind": "exchange_state", "public_ws": "resyncing"}),
-    "connection_quality": _same({"kind": "connection_quality", "class": "lagging", "rtt_ms": 200}),
+    "exchange_state": _same(
+        {"kind": "exchange_state", "public_ws": "resyncing", "exchange": _EXCHANGE}
+    ),
+    "connection_quality": _same(
+        {"kind": "connection_quality", "class": "lagging", "rtt_ms": 200, "applied": _APPLIED}
+    ),
     "shutdown_notice": _same(
         {"kind": "shutdown_notice", "reason": "deploy", "closing_in_ms": 5000}
     ),
@@ -129,6 +153,25 @@ def test_kill_switch_accounts_are_cut_to_the_connections_account_scope(
     assert view == {"kind": "kill_switch", "kill_switch": state | {"exchange_account_ids": kept}}
 
 
+_FALSY: tuple[Any, ...] = (None, "", 0, {}, ())  # not lists, so `[]`: never passed on as is
+
+
+@pytest.mark.parametrize(
+    ("ids", "kept"),
+    [
+        ((str(ACC_A), str(ACC_B), "x"), [str(ACC_A)]),  # a tuple is a list of ids
+        (str(ACC_A).encode(), []),  # bytes are not
+        *((empty, []) for empty in _FALSY),
+    ],
+)
+def test_kill_switch_accounts_of_another_shape_are_a_tuple_cut_or_none(
+    ids: Any, kept: list[str]
+) -> None:
+    state = {"engaged": True, "scope": "accounts", "exchange_account_ids": ids}
+    view = system_view({"kind": "kill_switch", "kill_switch": state}, VIEWER)
+    assert view == {"kind": "kill_switch", "kill_switch": state | {"exchange_account_ids": kept}}
+
+
 @pytest.mark.parametrize("who", [OWNER, MANAGER, VIEWER, DENY_ALL])
 def test_kill_switch_view_equals_the_system_frames_kill_switch(who: PrincipalSnapshot) -> None:
     state = SAMPLES["kill_switch"][0]["kill_switch"]  # what `auth_ok` carries is the same cut
@@ -153,6 +196,53 @@ def test_a_kill_switch_frame_without_its_state_reaches_only_the_owner(body: dict
 def test_a_health_frame_drops_a_kill_switch_that_is_not_an_object() -> None:
     body = {"kind": "health", "health": "healthy", "kill_switch": ["engaged"]}
     assert system_view(body, VIEWER) == {"kind": "health", "health": "healthy"}
+
+
+_OBJECTS: dict[str, dict[str, Any]] = {"exchange": _EXCHANGE, "applied": _APPLIED}
+_NESTED = pytest.mark.parametrize(
+    ("kind", "nested"),
+    [("health", "exchange"), ("exchange_state", "exchange"), ("connection_quality", "applied")],
+)
+
+
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+@_NESTED
+def test_a_nested_object_reaches_a_manager_or_viewer_with_only_its_neutral_fields(
+    kind: str, nested: str, who: PrincipalSnapshot
+) -> None:
+    body = {"kind": kind, nested: _OBJECTS[nested] | _FOREIGN}
+    assert system_view(body, who) == {"kind": kind, nested: _OBJECTS[nested]}
+
+
+@_NESTED
+def test_a_nested_object_reaches_the_owner_whole(kind: str, nested: str) -> None:
+    body = {"kind": kind, nested: _OBJECTS[nested] | _FOREIGN}
+    assert system_view(body, OWNER) is body
+
+
+@pytest.mark.parametrize(
+    "junk", ["connected", ["public_ws"], 7, None], ids=["str", "list", "int", "none"]
+)
+@_NESTED
+def test_a_nested_object_that_is_not_an_object_is_left_out(
+    kind: str, nested: str, junk: Any
+) -> None:
+    assert system_view({"kind": kind, nested: junk}, VIEWER) == {"kind": kind}
+
+
+@pytest.mark.parametrize(
+    "parts", [(_PART | {"detail": "acct 1"},), (_PART,)], ids=["cut", "neutral"]
+)
+def test_a_tuple_of_components_reaches_a_viewer_as_a_list(
+    parts: tuple[dict[str, str], ...],
+) -> None:
+    body = {"kind": "health", "components": parts}
+    assert system_view(body, VIEWER) == {"kind": "health", "components": [_PART]}
+
+
+@pytest.mark.parametrize("junk", ["bybit_rest", b"bybit_rest", _PART], ids=["str", "bytes", "dict"])
+def test_components_that_are_not_a_list_or_tuple_are_left_out(junk: Any) -> None:
+    assert system_view({"kind": "health", "components": junk}, VIEWER) == {"kind": "health"}
 
 
 @pytest.mark.parametrize("who", [OWNER, MANAGER, VIEWER, DENY_ALL, None])
@@ -193,6 +283,98 @@ def test_the_kind_table_is_the_contract_enum_and_names_only_schema_fields() -> N
     assert all(fields <= set(_SCHEMA["properties"]) for fields in NEUTRAL_FIELDS.values())
     assert NEUTRAL_KILL_SWITCH < set(_SCHEMA["$defs"]["killSwitch"]["properties"])
     assert NEUTRAL_COMPONENT < set(_SCHEMA["properties"]["components"]["items"]["properties"])
+    assert NEUTRAL_EXCHANGE <= set(_SCHEMA["properties"]["exchange"]["properties"])
+    assert NEUTRAL_APPLIED <= set(_SCHEMA["properties"]["applied"]["properties"])
+
+
+def _holds_objects(prop: dict[str, Any]) -> bool:
+    """Whether a schema property is an object or an array of objects (`$ref`s followed)."""
+    if "$ref" in prop:
+        uri, _, pointer = prop["$ref"].partition("#")
+        target: Any = _SCHEMAS[uri] if uri else _SCHEMA
+        for part in pointer.strip("/").split("/"):
+            target = target[part]
+        return _holds_objects(target)
+    kind = prop.get("type")
+    return kind == "object" or (kind == "array" and _holds_objects(prop["items"]))
+
+
+_OBJECT_FIELDS = sorted(
+    (kind, field)
+    for kind, fields in NEUTRAL_FIELDS.items()
+    for field in fields
+    if _holds_objects(_SCHEMA["properties"][field])
+)
+
+
+def test_the_probe_reaches_the_five_object_fields_that_have_an_allow_list() -> None:
+    """`feature_flags` is cut by each key's registry `visibility` (E42-T03), the others by a set."""
+    probed = {field for _, field in _OBJECT_FIELDS}
+    assert probed >= {"kill_switch", "components", "exchange", "applied", "feature_flags"}
+
+
+@pytest.mark.parametrize(
+    ("kind", "field"), _OBJECT_FIELDS, ids=[f"{k}.{f}" for k, f in _OBJECT_FIELDS]
+)
+def test_an_object_field_of_a_neutral_list_reaches_a_viewer_cut_to_an_allow_list(
+    kind: str, field: str
+) -> None:
+    """An object-typed property that joins a list without a nested allow-list passes whole."""
+    for probe in ({"zz_probe": 1}, [{"zz_probe": 1}]):
+        view = system_view({"kind": kind, field: probe}, VIEWER)
+        assert "zz_probe" not in json.dumps(view), f"`{kind}.{field}` reaches a Viewer whole"
+
+
+def test_no_table_of_the_filter_can_be_widened_at_run_time() -> None:
+    tables = {name: value for name, value in vars(system_filter).items() if name[:2] != "__"}
+    assert [name for name, value in tables.items() if isinstance(value, dict | set | list)] == []
+    assert isinstance(NEUTRAL_FIELDS, MappingProxyType)
+    assert all(isinstance(fields, frozenset) for fields in NEUTRAL_FIELDS.values())
+
+
+def _section_15_9() -> str:
+    text = _DOC.read_text(encoding="utf-8")
+    return text[text.index("### 15.9 `SystemUpdate`") : text.index("### 15.10")]
+
+
+def _rows() -> dict[str, str]:
+    """kind -> the cell of the §15.9 table that lists what a Manager or Viewer also receives."""
+    rows = re.findall(r"^\| `(\w+)` +\| (.+?) +\|$", _section_15_9(), flags=re.MULTILINE)
+    assert len({kind for kind, _ in rows}) == len(rows), "a kind has two rows in the §15.9 table"
+    return {kind: cell for kind, cell in rows if kind != "kind"}  # `kind`: the header row
+
+
+def _fields(cell: str) -> set[str]:
+    """The fields a table cell lists for the frame itself: its code spans outside parentheses
+    and outside a `with only` list (the fields of a nested object). `none` lists no field."""
+    if cell.startswith("none"):
+        return set()
+    return set(re.findall(r"`(\w+)`", re.sub(r"\([^()]*\)", "", cell).split(" with only ")[0]))
+
+
+def test_the_section_15_9_table_has_a_row_for_each_contract_kind_and_no_other() -> None:
+    assert sorted(_rows()) == sorted(_SCHEMA["properties"]["kind"]["enum"])
+
+
+@pytest.mark.parametrize("kind", sorted(NEUTRAL_FIELDS))
+def test_the_section_15_9_row_of_a_kind_is_what_the_filter_keeps_for_a_manager_or_viewer(
+    kind: str,
+) -> None:
+    row = _rows().get(kind)
+    assert row is not None, f"the §15.9 table has no row for `{kind}`"
+    assert _fields(row) == NEUTRAL_FIELDS[kind] - {"kind", "severity", "message"}, f"kind {kind}"
+
+
+@pytest.mark.parametrize(
+    ("name", "neutral"), [("exchange", NEUTRAL_EXCHANGE), ("applied", NEUTRAL_APPLIED)]
+)
+def test_section_15_9_names_the_fields_of_each_nested_object_a_manager_or_viewer_receives(
+    name: str, neutral: frozenset[str]
+) -> None:
+    listed = r"((?:`\w+`(?:,\s+and\s+|,\s+|\s+and\s+)?)+)"  # a, b and c; wrapped lines too
+    said = re.search(rf"`{name}`[^|]*?\swith\s+only\s+{listed}", _section_15_9())
+    assert said, f"§15.9 does not say which fields of `{name}` a Manager or Viewer receives"
+    assert set(re.findall(r"`(\w+)`", said.group(1))) == neutral, f"fields of `{name}`"
 
 
 # -- feature flags: each key by its registry `visibility` (E42-T03, §15.9) ---------------------
@@ -328,6 +510,9 @@ _VALUES = st.recursive(
 )
 _IDS = st.lists(st.sampled_from([str(ACC_A), str(ACC_B), str(ACC_B).upper(), "x"]), max_size=3)
 _PART_KEYS = st.sampled_from(["name", "state", "detail", "last_good_at", "x"])
+_NESTED_KEYS = st.sampled_from(
+    ["public_ws", "rest", "forced_coalesce", "degraded_topics", "uid", "rate_budget_free_pct"]
+)
 _STATE_KEYS = st.sampled_from([*sorted(_SCHEMA["$defs"]["killSwitch"]["properties"]), "x"])
 _FLAG_KEYS = st.sampled_from([*sorted(_FLAG_ROLES), "x.y"]) | st.integers() | st.text(max_size=4)
 
@@ -338,8 +523,12 @@ _FLAG_KEYS = st.sampled_from([*sorted(_FLAG_ROLES), "x.y"]) | st.integers() | st
     extra=st.dictionaries(
         st.sampled_from(sorted(_SCHEMA["properties"])) | st.text(max_size=6), _VALUES
     ),
-    state=st.dictionaries(_STATE_KEYS, _VALUES | _IDS) | _VALUES,
-    parts=st.lists(st.dictionaries(_PART_KEYS, _VALUES), max_size=3) | _VALUES,
+    state=st.dictionaries(_STATE_KEYS, _VALUES | _IDS | _IDS.map(tuple)) | _VALUES,
+    parts=st.lists(st.dictionaries(_PART_KEYS, _VALUES), max_size=3).flatmap(
+        lambda parts: st.sampled_from([parts, tuple(parts)])
+    )
+    | _VALUES,
+    nested=st.dictionaries(_NESTED_KEYS, _VALUES) | _VALUES,
     flags=st.dictionaries(_FLAG_KEYS, _VALUES) | _VALUES,
     flag_visible=st.sampled_from([None, _visible]),
     who=st.sampled_from([MANAGER, VIEWER, principal("manager"), principal("viewer", "manager")]),
@@ -349,11 +538,13 @@ def test_no_manager_or_viewer_view_carries_an_owner_only_field_or_a_foreign_acco
     extra: dict[str, Any],
     state: Any,
     parts: Any,
+    nested: Any,
     flags: Any,
     flag_visible: Any,
     who: PrincipalSnapshot,
 ) -> None:
     body = extra | {"kind": kind, "kill_switch": state, "components": parts, "feature_flags": flags}
+    body |= {"exchange": nested, "applied": nested}
     view = system_view(body, who, flag_visible=flag_visible)
     if view is None:
         return
@@ -365,6 +556,8 @@ def test_no_manager_or_viewer_view_carries_an_owner_only_field_or_a_foreign_acco
         assert all(isinstance(k, str) and _visible(k, who.roles) for k in shown)
     for item in view.get("components") or ():
         assert set(item) <= {"name", "state", "last_good_at"}  # never `detail`
+    assert set(view.get("exchange") or ()) <= set(_EXCHANGE)  # never `uid`
+    assert set(view.get("applied") or ()) <= set(_APPLIED)
     held = view.get("kill_switch")
     if held is None:
         return

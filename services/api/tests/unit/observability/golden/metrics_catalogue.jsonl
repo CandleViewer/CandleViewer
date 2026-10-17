@@ -129,6 +129,7 @@
 ["cv_ws_snapshot_bytes", "histogram", ["topic"], "live", "E17"]
 ["cv_ws_stale_topics_in_use", "gauge", [], "live", "E17"]
 ["cv_ws_subscribe_total", "counter", ["topic", "result"], "live", "E17"]
+["cv_ws_system_frames_withheld_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_upstream_consumers_in_use", "gauge", ["symbol", "topic"], "live", "E17"]
 ["cvwb_bytes_encoded_total", "counter", ["kind"], "live", "E17"]
 ["cvwb_frames_encoded_total", "counter", ["kind"], "live", "E17"]

@@ -28,6 +28,7 @@ from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
+from candleviewer.ws.metrics import WITHHELD_REASONS
 from candleviewer.ws.sequencing import (
     COUNTED_SNAP_REASONS,
     INCIDENT_REASONS,
@@ -67,6 +68,7 @@ print(
                 "cv_ws_closes_total",
                 "cv_ws_resync_total",
                 "cv_ws_sequence_gaps_detected_total",
+                "cv_ws_system_frames_withheld_total",
             )
         }
     )
@@ -119,6 +121,13 @@ def test_snap_reason_type_and_tuple_name_the_same_reasons() -> None:
 
 def test_the_sequence_gap_counter_starts_at_zero(fresh: dict[str, dict[str, float]]) -> None:
     assert fresh["cv_ws_sequence_gaps_detected_total"] == {"": 0.0}
+
+
+def test_every_withheld_system_frame_reason_starts_at_zero(
+    fresh: dict[str, dict[str, float]],
+) -> None:
+    """SR-188 (#3125): the first frame left out after a restart is not a lone sample."""
+    assert fresh["cv_ws_system_frames_withheld_total"] == {r: 0.0 for r in WITHHELD_REASONS}
 
 
 # -- the zeros are truthful: a bound reason whose event happens is counted ----------------------
