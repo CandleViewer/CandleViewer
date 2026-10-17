@@ -1,13 +1,12 @@
 """Integration: the order stores and the M14 repositories on real Postgres 16 (E29-T01 #845).
 
-`testcontainers` in CI; run locally on a scratch PostgreSQL 16.2 (no docker on the laptop). The
-database is set up like production (`pg_bootstrap.sql`'s roles, the migrations as `cv_owner`) and
-the stores run as `cv_app`. What only a database proves: the one-statement create and its
-atomicity, `ux_orders_link` surfacing as `DuplicateOrderLinkId`, numeric(38,18) through asyncpg
-with no float, the named constraints the store reports, account scoping, a dense `seq` under
-concurrent appends, `list_open` planned over `ix_orders_open`, the store's statement cap on a
-lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest. The DDL itself is
-`test_oms_core_migration.py`'s.
+The database (`testcontainers`) is set up like production (`pg_bootstrap.sql`'s roles, the
+migrations as `cv_owner`) and the stores run as `cv_app`. What only a database proves: the
+one-statement create and its atomicity, `ux_orders_link` surfacing as `DuplicateOrderLinkId`,
+numeric(38,18) through asyncpg with no float, the named constraints the store reports, account
+scoping, a dense `seq` under concurrent appends, `list_open` planned over `ix_orders_open`, the
+store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest.
+The DDL itself is `test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations
