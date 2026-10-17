@@ -26,7 +26,8 @@ new tag and the diff. Everything else waits until after the retest.
 
 ### 2.1 Dependency bumps and the freeze manifest (all year, not only in the window)
 
-`license-scan` compares the installed graph to `security/freeze-manifest.sha256` (§8.3), so
+The `freeze` step of `read-only-scans` compares the installed graph to
+`security/freeze-manifest.sha256` (§8.3), so
 **every** dependency change is red until the manifest is regenerated in the same PR. That is
 intended: the manifest is the reviewer's proof that the graph only changed where the PR says it
 did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-human**:
@@ -35,8 +36,8 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
    week (`github-actions`, `pip`, `npm` minor+patch, `docker`), labelled
    `dependencies` plus the area / `sla/*` labels. Ungrouped single-package PRs from before this
    policy are closed in favour of the next grouped run (`@dependabot recreate` is acceptable).
-2. **CI proposes, never commits.** `check_freeze_manifest.py --propose` runs in `license-scan`
-   on every PR. On a mismatch it still fails, prints the expected/actual digests, writes the
+2. **CI proposes, never commits.** `check_freeze_manifest.py --propose` runs in that `freeze`
+   step on every PR. On a mismatch it still fails, prints the expected/actual digests, writes the
    regenerated manifest + unified diff to the job **step summary**, and (only for
    `dependabot[bot]` or `dependencies`-labelled PRs) uploads the `freeze-manifest-proposal`
    artifact (14 days). No workflow has write access to the branch; nothing is auto-committed.
@@ -52,7 +53,7 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
    on top; if it force-pushes, re-run `--write`). Alternatively the orchestrator bundles several
    approved groups into one `chore(deps): weekly dependency bumps <date>` PR with a single
    `--write` — this is the preferred path when more than one ecosystem is red in the same week.
-   Only after that commit is `license-scan` green and the PR mergeable (no admin merge, C-9.1).
+   Only after that commit is `read-only-scans` green and the PR mergeable (no admin merge, C-9.1).
 5. **Majors on pinned-runtime-sensitive packages are ignored**, not merely left red: `size-limit`
    / `@size-limit/*` >= 12 need Node 22 while `package.json` `engines` pins Node 20 — ignored
    until the Node 22 upgrade ticket lands, which removes the `ignore` entry in the same PR.
@@ -110,7 +111,7 @@ Adding any vendored or forked code requires a row here in the same PR.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | pip-audit (Python) | `uv export --frozen --no-emit-project` (services/api/uv.lock, hashed) then `pip-audit -r <file> --no-deps --disable-pip` | **No known vulnerabilities found**; no Python exceptions needed                                                                                                                                 |
 | Trivy (container)  | `trivy` job on `infra/images/Dockerfile.api`                                                                             | **Not run locally: no docker / trivy binary.** Runs in the required CI `trivy` job; base image is digest-pinned. Any High/Critical it reports needs a fix or an exception before the freeze tag |
-| Licences           | `license-scan` job, allowlist `tools/ci/licenses-allowlist.json`                                                         | CI-only; gate behaviour proven by fixture tests in `scripts/tests/test_dependency_freeze.py`                                                                                                    |
+| Licences           | `license-scan` step of `read-only-scans`, allowlist `tools/ci/licenses-allowlist.json`                                   | CI-only; gate behaviour proven by fixture tests in `scripts/tests/test_dependency_freeze.py`                                                                                                    |
 
 Tests in `scripts/tests/test_dependency_freeze.py`: known-vulnerable finding fails the SCA gate
 (CI-SEC-001); prohibited licence fails with a message naming package and licence (CI-SEC-002);
@@ -133,7 +134,7 @@ The freeze-manifest `pnpm-graph` hash mismatch (defect 2) is only mitigated here
 
 ### 8.3 Freeze assertion and tag procedure
 
-- CI (`license-scan` job, `_job-security.yml`) runs `tools/ci/check_freeze_manifest.py` after
+- CI (the `freeze` step of `read-only-scans`, `_job-security.yml`) runs `tools/ci/check_freeze_manifest.py` after
   `pnpm install --frozen-lockfile` and `uv sync --frozen`: SHA-256 of `pnpm-lock.yaml`, `uv.lock`,
   the normalised `pnpm ls -r --json --depth Infinity` graph and `uv export --frozen` must equal
   `security/freeze-manifest.sha256`. It does not depend on any tag. Any approved freeze change

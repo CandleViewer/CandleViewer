@@ -34,7 +34,10 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
-├─ _job-security.yml (always)        → CodeQL/Semgrep/Bandit/pip-audit/npm-audit/gitleaks/licence (CI-SEC-001..005)
+├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
+│                                      folded jobs, one step per scan (#3104): semgrep-bandit;
+│                                      read-only-scans (security-auth, pip-audit, npm-audit,
+│                                      license-scan)                    (CI-SEC-001..005)
 ├─ _job-coverage.yml (always)        → per-package threshold + ratchet  (CI-COV-001..003)
 ├─ _job-engine-bench.yml (engine filter) → GPU benchmark vs baseline    (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
@@ -78,6 +81,11 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
   or an empty result means the 45-minute job cap or a run cancellation stopped `gates` first.
+- `security` is one lane over every job in `_job-security.yml`. In the folded jobs
+  (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
+  the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's
+  step holds its log. A red folded job with every scan green means a setup step failed. Re-running
+  it re-runs every scan in that job (#3104).
 - `CI-GATE-003` on `pin-check` means an action reference in `.github/workflows/**`
   is not pinned to a full commit SHA, or a workflow uses `pull_request_target`
   unsafely. Fix the reference; do not add an exception.
@@ -192,7 +200,8 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-SEC-005** (scanner infrastructure failure): a scanner produced no
   output at all (crashed, mis-configured, or a > 1 non-finding exit code).
   This never passes by default — check the scanner's own step log for a
-  setup problem before assuming the codebase is clean.
+  setup problem before assuming the codebase is clean (in a folded job the
+  scan's step installs its own tools, so a failed install shows there).
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

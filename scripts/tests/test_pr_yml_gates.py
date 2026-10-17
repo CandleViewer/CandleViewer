@@ -174,8 +174,9 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
 
 @pytest.mark.parametrize(
     ("change", "count"),
-    # On 33887603: 8 / 31 / 32 / 51. This PR's own run is py+infra+docs: 22.
-    [("docs", 4), ("py", 22), ("py,infra", 22), ("all", 41)],
+    # On 33887603: 8 / 31 / 32 / 51; after #3076: 4 / 22 / 22 / 41. #3104 folds four security
+    # scans into one job and bandit into semgrep's; its own run (py+infra+image+docs) is 19.
+    [("docs", 4), ("py", 18), ("py,infra", 18), ("all", 37)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

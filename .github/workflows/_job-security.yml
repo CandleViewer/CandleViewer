@@ -1,26 +1,35 @@
 name: _job-security
 
 # E03-T07: SAST, SCA, secrets, licence and container scanning lane.
-# ADR-0013 pipeline shape; 04-security-program.md §6.13/§6.14/§12.1/§12.3;
+# ADR-0013 pipeline shape (Amendment 2); 04-security-program.md §6.13/§6.14/§12.1/§12.3;
 # CONSTITUTION §9 checks #10-#14 (sast, sca, secrets-scan, container-scan,
-# license-check). Ticket "Technical notes": "Each tool is its own job so
-# branch protection can name them individually ... a single flaky scanner
-# does not mask the others" — this reusable workflow therefore declares one
-# job per tool (codeql, semgrep, bandit, pip-audit, npm-audit, gitleaks,
-# license-scan, trivy); each surfaces as its own check run under the calling
-# `security` job in `pr.yml`.
+# license-check). E03-T07 gave each tool its own job, so branch protection could
+# name each one and a flaky scanner could not mask the others. #3104 folds the
+# jobs that hold the same permissions: protection requires only `ci-required`,
+# which judges this whole workflow as the one `security` lane, and every job
+# costs a runner slot and its own setup.
+# - `read-only-scans` (contents: read): security-auth, pip-audit, npm-audit and
+#   license-scan;
+# - `semgrep-bandit` (security-events: write, for their SARIF uploads).
+# Each scan is a step with an `id`, `continue-on-error` and its old job's
+# time budget, so a red scan neither stops nor hides another. The last step, the
+# verdict, writes every scan's outcome to the job summary and fails the job
+# unless each one succeeded or was skipped. Uploads have no `id`, so an upload
+# outage never gates. codeql, gitleaks and trivy stay separate jobs: folding
+# codeql would make SAST serial, gitleaks must scan a tree and history that no
+# install has touched, and trivy builds and boots the image.
 #
 # Error codes (tools/ci/security_gate.py): CI-SEC-001 blocking finding,
 # CI-SEC-002 licence violation, CI-SEC-003 LGPL needs approval,
 # CI-SEC-004 accepted risk expired, CI-SEC-005 scanner infrastructure
-# failure (never pass-by-default — every job below fails, not skips, on a
+# failure (never pass-by-default — every scan below fails, not skips, on a
 # scanner error).
 #
 # Out of scope here (ticket "Out of scope"): image signing/SBOM (E03-T08),
 # ZAP DAST (E03-X04, deferred), the STRIDE model itself (E03-X01), authoring
-# the cv-* Semgrep rules (E03-X02, deferred — this lane runs Semgrep's
-# registry packs only until `.semgrep/` lands; picked up automatically with
-# no workflow change once it does), pen-test (R4/E43).
+# the cv-* Semgrep rules (E03-X02; the rules already in `.semgrep/`,
+# such as cv-unpinned-action, run in `semgrep-bandit` with no workflow
+# change), pen-test (R4/E43).
 
 on:
   workflow_call:
@@ -68,9 +77,9 @@ jobs:
           languages: javascript-typescript,python
           config-file: ./.github/codeql/codeql-config.yml
 
-      # analyze writes SARIF then errors on a workflow-run API call the
-      # reusable-workflow token cannot make (no actions: read from pr.yml).
-      # Not a pass-by-default: the gate step fails CI-SEC-005 if no SARIF.
+      # analyze's own outcome does not gate: the gate step below judges its
+      # SARIF and fails CI-SEC-005 when there is none (a crash before any
+      # SARIF is written never passes; one SARIF per language is #3261).
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         continue-on-error: true
         with:
@@ -108,37 +117,42 @@ jobs:
           category: codeql
 
   # ---------------------------------------------------------------------
-  # semgrep — CONSTITUTION §9 #10 (sast). Registry packs per 12.2; the
-  # cv-* custom rules (incl. cv-unpinned-action, SR-132) load from
-  # `.semgrep/` once E03-X02 lands it.
+  # semgrep-bandit — CONSTITUTION §9 #10 (sast); one job since #3104, as both
+  # upload SARIF. Semgrep: registry packs per 12.2 plus the cv-* custom rules in
+  # `.semgrep/` (incl. cv-unpinned-action, SR-132). Bandit: services/api only
+  # (12.1 table: "High/Medium confidence+severity blocks; `# nosec` requires an
+  # inline justification and security approval").
   # ---------------------------------------------------------------------
-  semgrep:
-    name: semgrep
+  semgrep-bandit:
+    name: semgrep-bandit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30 # semgrep 15 + bandit 10 + 5 for setup
     permissions:
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install gate helper deps (PyYAML for security_gate.py)
-        run: pip install -r scripts/requirements-ci.txt
-
-      - name: Install semgrep
-        # setuptools>=81 dropped pkg_resources, which semgrep 1.99 imports.
-        run: pip install "setuptools<81" "semgrep==1.99.0"
-
-      - name: Semgrep custom-rule fixture tests (incl. E10-X02 electron rules)
-        run: python tools/ci/check_semgrep_rule_tests.py
-
-      - name: Run Semgrep (registry packs + .semgrep/ custom rules if present)
+      # Semgrep first: it scans the whole tree, so no other tool's report may sit in it yet.
+      # Each scanner gets its own venv: setuptools>=81 dropped pkg_resources, which
+      # semgrep 1.99 imports, and one tool's install must never re-resolve another's pins.
+      - name: semgrep (custom-rule fixture tests, then registry packs + .semgrep/ rules)
+        id: semgrep
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
         run: |
           set -euo pipefail
+          python -m venv "$RUNNER_TEMP/semgrep-venv"
+          export PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH"
+          pip install -r scripts/requirements-ci.txt "setuptools<81" "semgrep==1.99.0"
+          python tools/ci/check_semgrep_rule_tests.py # incl. the E10-X02 electron rules
           CONFIGS="p/python p/typescript p/react p/electron-desktop-app p/docker p/github-actions \
                    p/secrets p/owasp-top-ten p/sql-injection p/jwt p/insecure-transport"
           # Rule files only (glob); YAML fixtures live in .semgrep-fixtures/.
@@ -157,128 +171,57 @@ jobs:
             echo "CI-SEC-005: semgrep exited $status (engine/config error) — scanner infrastructure failure" >&2
             exit "$status"
           fi
-
-      - name: Evaluate Semgrep findings (security_gate.py, CI-SEC-001/004)
-        run: python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif
+          python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        # Upload only when the scanner wrote a report; the gate step above (not
-        # this upload) decides pass/fail. continue-on-error: code scanning is not
-        # enabled on this private repo (no GHAS), so the API 403s.
-        if: always() && hashFiles('semgrep.sarif') != ''
+        # Upload only when the scanner wrote a report; the semgrep step (not this upload)
+        # decides pass/fail. Code scanning is on: run 39041114804 posted the Semgrep OSS and
+        # Bandit check runs. continue-on-error and no `id` keep an upload outage out of the verdict.
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
         continue-on-error: true
         with:
           sarif_file: semgrep.sarif
           category: semgrep
 
-  # ---------------------------------------------------------------------
-  # bandit — CONSTITUTION §9 #10 (sast), scoped to services/api (12.1 table:
-  # "High/Medium confidence+severity blocks; `# nosec` requires an inline
-  # justification and security approval").
-  # ---------------------------------------------------------------------
-  bandit:
-    name: bandit
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install gate helper deps (PyYAML for security_gate.py)
-        run: pip install -r scripts/requirements-ci.txt
-
-      - name: Install bandit
-        run: pip install "bandit[sarif]==1.8.6"
-
-      - name: Run bandit on services/api (SARIF output)
+      - name: bandit (services/api, SARIF)
+        id: bandit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
         # -c: honour [tool.bandit] (exclude_dirs=tests; assert/subprocess in tests are not
         # production findings). Production-code noqa markers are ruff-style; bandit
         # needs its own `# nosec` — the two guard sites carry both. `cvdev` is the dev-only
         # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack.
-        run: bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
-
-      - name: Evaluate Bandit findings (security_gate.py, CI-SEC-001/004)
-        run: python tools/ci/security_gate.py --tool bandit --report bandit.sarif
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/bandit-venv"
+          export PATH="$RUNNER_TEMP/bandit-venv/bin:$PATH"
+          pip install -r scripts/requirements-ci.txt "bandit[sarif]==1.8.6"
+          bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
+          python tools/ci/security_gate.py --tool bandit --report bandit.sarif
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        # Upload only when the scanner wrote a report; the gate step above (not
-        # this upload) decides pass/fail. continue-on-error: code scanning is not
-        # enabled on this private repo (no GHAS), so the API 403s.
-        if: always() && hashFiles('bandit.sarif') != ''
+        # As the semgrep upload above: the bandit step decides, the upload never gates.
+        if: ${{ !cancelled() && hashFiles('bandit.sarif') != '' }}
         continue-on-error: true
         with:
           sarif_file: bandit.sarif
           category: bandit
 
-  # ---------------------------------------------------------------------
-  # pip-audit — CONSTITUTION §9 #11 (sca), Python dependency advisories.
-  # ---------------------------------------------------------------------
-  pip-audit:
-    name: pip-audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install gate helper deps (PyYAML for security_gate.py)
-        run: pip install -r scripts/requirements-ci.txt
-
-      - name: Install pip-audit
-        run: pip install "pip-audit==2.7.3"
-
-      - name: Run pip-audit against services/api dependencies
+      # `ci-required` judges this job's result (the `security` lane); this keeps it honest per scan.
+      - name: Verdict (every scan succeeded or was skipped)
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        shell: python
         run: |
-          set -euo pipefail
-          # Audit exactly what ships: the uv lockfile (all groups), exported as
-          # pinned requirements. Auditing the runner's own site-packages mixed
-          # CI tooling (scripts/requirements-ci.txt) into the product SBOM.
-          pip install "uv==0.12.19" --quiet
-          # --no-emit-project: the editable `file://` self-reference is not a third-party dependency.
-          uv export --frozen --no-hashes --all-groups --no-emit-project --project services/api -o /tmp/api-requirements.txt
-          pip-audit -r /tmp/api-requirements.txt --no-deps --format json --output pip-audit.json --progress-spinner off || true
-
-      - name: Evaluate pip-audit findings (security_gate.py, CI-SEC-001/004)
-        run: python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
-
-  # ---------------------------------------------------------------------
-  # npm-audit — CONSTITUTION §9 #11 (sca), JS/TS dependency advisories.
-  # ---------------------------------------------------------------------
-  npm-audit:
-    name: npm-audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Enable pnpm via corepack
-        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
-
-      - name: Install dependencies (ignore-scripts, C-12.3)
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Run pnpm audit (JSON output)
-        run: pnpm audit --json > npm-audit.json || true
-
-      - name: Evaluate npm audit findings (security_gate.py, CI-SEC-001/004)
-        run: python tools/ci/security_gate.py --tool npm-audit --report npm-audit.json
+          import json, os
+          outcomes = {scan: step["outcome"] for scan, step in json.loads(os.environ["OUTCOMES"]).items()}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("| scan | outcome |\n| --- | --- |\n")
+              summary.writelines(f"| {scan} | {outcome} |\n" for scan, outcome in outcomes.items())
+          failed = [scan for scan, outcome in outcomes.items() if outcome not in ("success", "skipped")]
+          raise SystemExit(f"scans not successful: {', '.join(failed)}" if failed else 0)
 
   # ---------------------------------------------------------------------
   # gitleaks — CONSTITUTION §9 #12 (secrets-scan). Any finding blocks; a
@@ -364,46 +307,26 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------
-  # security-auth — E09-X03 (SR-011/012/017/025/026/051/112/122). Proves
-  # every auth Semgrep rule on its fixtures (missing fixture = fail), scans the
-  # auth surface with the pack (any finding blocks; triage path in
-  # docs/security/auth-security-gates.md), and polices suppressions.
+  # read-only-scans — the contents: read scans, one step each (#3104):
+  # - security-auth — E09-X03 (SR-011/012/017/025/026/051/112/122). Proves every
+  #   auth Semgrep rule on its fixtures (missing fixture = fail), scans the auth
+  #   surface with the pack (any finding blocks; triage path in
+  #   docs/security/auth-security-gates.md), and polices suppressions.
+  # - pip-audit, npm-audit — CONSTITUTION §9 #11 (sca), Python and JS/TS advisories.
+  # - license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy, after its
+  #   backend install and package-scope check (license-scope) and the freeze check.
+  # The tree readers (security-auth, pip-audit) run before the pnpm and uv installs.
   # ---------------------------------------------------------------------
-  security-auth:
-    name: security-auth
+  read-only-scans:
+    name: read-only-scans
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45 # four scans of 10 + 5 for setup
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install tooling
-        run: pip install -r scripts/requirements-ci.txt "setuptools<81" "semgrep==1.99.0"
-
-      - name: Rule fixtures + suppression policy
-        run: python tools/ci/check_auth_semgrep.py
-
-      - name: Scan auth surface with the auth rule pack
-        run: |
-          semgrep scan --config security/semgrep/auth --error --metrics=off \
-            --exclude fixtures services/api/candleviewer apps packages/ui
-
-  # ---------------------------------------------------------------------
-  # license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy.
-  # ---------------------------------------------------------------------
-  license-scan:
-    name: license-scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          persist-credentials: false # nothing here pushes or fetches
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -412,27 +335,80 @@ jobs:
       - name: Install gate helper deps (PyYAML for security_gate.py)
         run: pip install -r scripts/requirements-ci.txt
 
+      # Scanners get their own venvs: semgrep 1.99 needs setuptools<81, and one tool's
+      # install must never re-resolve another's pins.
+      - name: security-auth (auth rule fixtures + suppression policy, then the auth pack scan)
+        id: security-auth
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/security-auth-venv"
+          export PATH="$RUNNER_TEMP/security-auth-venv/bin:$PATH"
+          pip install -r scripts/requirements-ci.txt "setuptools<81" "semgrep==1.99.0"
+          python tools/ci/check_auth_semgrep.py
+          semgrep scan --config security/semgrep/auth --error --metrics=off \
+            --exclude fixtures services/api/candleviewer apps packages/ui
+
+      - name: pip-audit (services/api dependencies)
+        id: pip-audit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/pip-audit-venv"
+          export PATH="$RUNNER_TEMP/pip-audit-venv/bin:$PATH"
+          pip install -r scripts/requirements-ci.txt "pip-audit==2.7.3" "uv==0.12.19"
+          # Audit exactly what ships: the uv lockfile (all groups), exported as
+          # pinned requirements. Auditing the runner's own site-packages mixed
+          # CI tooling (scripts/requirements-ci.txt) into the product SBOM.
+          # --no-emit-project: the editable `file://` self-reference is not a third-party dependency.
+          uv export --frozen --no-hashes --all-groups --no-emit-project --project services/api -o "$RUNNER_TEMP/api-requirements.txt"
+          pip-audit -r "$RUNNER_TEMP/api-requirements.txt" --no-deps --format json --output pip-audit.json --progress-spinner off || true
+          python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !cancelled() }}
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Enable pnpm via corepack
+        if: ${{ !cancelled() }}
         run: corepack enable && corepack prepare pnpm@12.5.1 --activate
 
       - name: Install dependencies (ignore-scripts, C-12.3)
+        if: ${{ !cancelled() }}
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Verify internal package scope (STRIDE R2 dependency-confusion delta)
-        run: python tools/ci/check_internal_package_scope.py --root .
+      - name: npm-audit (pnpm audit, JSON)
+        id: npm-audit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          pnpm audit --json > npm-audit.json || true
+          python tools/ci/security_gate.py --tool npm-audit --report npm-audit.json
 
-      - name: Install the locked backend environment (uv, all groups)
+      - name: license-scope (the locked backend environment, then the internal package scope, STRIDE R2)
+        id: license-scope
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        # The install comes first: freeze and license-scan need it, so a scope violation
+        # stays this step's failure alone.
         run: |
           set -euo pipefail
           pip install "uv==0.12.19" --quiet
           uv sync --frozen --all-groups --project services/api
+          python tools/ci/check_internal_package_scope.py --root .
 
-      - name: Assert frozen dependency graph matches security/freeze-manifest.sha256 (E43-T05, SR-130)
+      - name: freeze (dependency graph matches security/freeze-manifest.sha256; E43-T05, SR-130)
         id: freeze
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 2
         # Byte-identical check of pnpm-lock.yaml + uv.lock + resolved graphs after the frozen
         # installs above. Does not depend on any pentest-freeze-* tag existing.
         # `--propose` (35-dependency-freeze-policy.md §2.1): on mismatch the regenerated
@@ -442,11 +418,13 @@ jobs:
 
       - name: Upload freeze-manifest proposal for the reviewer (Dependabot / dependencies PRs)
         # Dependabot cannot run --write itself (policy §2.1). Only on a mismatch, and only for
-        # dependency-bump PRs, so ordinary red runs do not grow an artifact.
+        # dependency-bump PRs, so ordinary red runs do not grow an artifact. Keyed on the freeze
+        # step's outcome: continue-on-error leaves the job status at success when that step fails.
         if: >-
-          failure() && steps.freeze.outcome == 'failure' &&
+          ${{ !cancelled() && steps.freeze.outcome == 'failure' &&
           (github.actor == 'dependabot[bot]' ||
-           contains(github.event.pull_request.labels.*.name, 'dependencies'))
+          contains(github.event.pull_request.labels.*.name, 'dependencies')) }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: freeze-manifest-proposal
@@ -454,23 +432,39 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - name: Collect JS/TS licences
-        # license-checker does not understand pnpm workspaces ("No packages found").
-        # pnpm licenses is workspace-aware and reads the lockfile CI just installed.
-        run: pnpm licenses list --json --prod > pnpm-licenses.json
-
-      - name: Combine licence reports
-        # Python licences are read from the uv venv via importlib.metadata
-        # (PEP 639 License-Expression first) — pip-licenses 5.x reports UNKNOWN
-        # for urllib3/uvicorn/websockets that only carry License-Expression.
+      - name: license-scan (licences against the allowlist; CI-SEC-002/003/004, SR-136)
+        id: license-scan
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 3
         run: |
+          set -euo pipefail
+          # license-checker does not understand pnpm workspaces ("No packages found").
+          # pnpm licenses is workspace-aware and reads the lockfile CI just installed.
+          pnpm licenses list --json --prod > pnpm-licenses.json
+          # Python licences are read from the uv venv via importlib.metadata
+          # (PEP 639 License-Expression first) — pip-licenses 5.x reports UNKNOWN
+          # for urllib3/uvicorn/websockets that only carry License-Expression.
           services/api/.venv/bin/python tools/ci/collect_licenses.py \
             --python-env \
             --pnpm-licenses pnpm-licenses.json \
             --out licenses.json
+          python tools/ci/security_gate.py --tool license-scan --report licenses.json
 
-      - name: Evaluate licences against allowlist (security_gate.py, CI-SEC-002/003/004, SR-136)
-        run: python tools/ci/security_gate.py --tool license-scan --report licenses.json
+      # `ci-required` judges this job's result (the `security` lane); this keeps it honest per scan.
+      - name: Verdict (every scan succeeded or was skipped)
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        shell: python
+        run: |
+          import json, os
+          outcomes = {scan: step["outcome"] for scan, step in json.loads(os.environ["OUTCOMES"]).items()}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("| scan | outcome |\n| --- | --- |\n")
+              summary.writelines(f"| {scan} | {outcome} |\n" for scan, outcome in outcomes.items())
+          failed = [scan for scan, outcome in outcomes.items() if outcome not in ("success", "skipped")]
+          raise SystemExit(f"scans not successful: {', '.join(failed)}" if failed else 0)
 
   # ---------------------------------------------------------------------
   # trivy — CONSTITUTION §9 #13 (container-scan). Scoped to the one
@@ -541,8 +535,8 @@ jobs:
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Upload only when the scanner wrote a report; the gate step above (not
-        # this upload) decides pass/fail. continue-on-error: code scanning is not
-        # enabled on this private repo (no GHAS), so the API 403s.
+        # this upload) decides pass/fail. Code scanning is on: run 39045664778 posted
+        # the Trivy check run. continue-on-error: an upload outage must never mask the gate.
         if: always() && hashFiles('trivy.sarif') != ''
         continue-on-error: true
         with:
