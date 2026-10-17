@@ -40,7 +40,7 @@ from candleviewer.ws.cvwb_vectors import vector_frames
 from candleviewer.ws.gateway import GatewayHub, _Connection, make_ws_router
 from candleviewer.ws.lifecycle import bye_frame
 from candleviewer.ws.metrics import cv_ws_closes_total, cv_ws_overflow_total
-from candleviewer.ws.outbound import Queued
+from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES, Queued
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.pipeline import (
     SLOW_CONSUMER_MESSAGE,
@@ -337,6 +337,28 @@ def test_close_flush_s_can_only_be_lowered() -> None:
         with pytest.raises(ValueError, match="close_flush_s"):
             BackpressureConfig(close_flush_s=bad)
     assert BackpressureConfig.from_settings(Settings()).close_flush_s == CLOSE_FLUSH_TIMEOUT_S
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        *[
+            (field, bad)
+            for field in ("max_bytes", "max_frames", "classify_interval_ms")
+            for bad in (0, -1, True, 1.0)
+        ],
+        ("max_bytes", QUEUE_BYTES + 1),
+        ("max_frames", QUEUE_FRAMES + 1),
+    ],
+)
+def test_a_raised_budget_or_one_that_is_not_a_positive_int_is_refused(field: str, bad: Any) -> None:
+    """C-2.18, WS-D01 (#412, third review round): a config checks its budget as it is built, so
+    no consumer runs on an unchecked one, hand-built or not. The budget may be lowered, never
+    raised (E17 threat model §6): over its ceiling, zero, negative, a `bool` or a `float` fails
+    closed. The floors stay with `Settings`, so a harness may still build a budget of one."""
+    with pytest.raises(ValueError, match=field):
+        BackpressureConfig(**{field: bad})
+    assert getattr(BackpressureConfig(**{field: 1}), field) == 1
 
 
 @pytest.mark.parametrize("order", ["closed_first", "armed_first"])

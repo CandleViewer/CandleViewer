@@ -6,14 +6,13 @@ binds first), the cadence of the adaptive classification and the close flush dea
 (`None`, the default) the gateway keeps today's 1 024-frame push bound: the flag swaps the bounding
 mechanism and never removes the bound (C-2.18).
 
-The defaults are the contract values. `Settings` owns the budget's ceilings (the same numbers as
-`le=`: the budget may be lowered, never raised, E17 threat model §6) and floors, so the budget is
-not checked here: a harness may build a config with a small one. The code that first consumes a
-config must therefore check it (`0 < max_bytes <= QUEUE_BYTES`, `0 < max_frames <= QUEUE_FRAMES`,
-`classify_interval_ms > 0`) or accept only `Settings`-built ones: a hand-built config must not
-stand in for a checked one (carried review finding, #412). The one check here is the close
-deadline's, which `Settings` never sets: it may only be lowered, because the stop budget counts
-`CLOSE_FLUSH_TIMEOUT_S`. Plain data: no I/O, no clock.
+The defaults are the contract values. A config is checked as it is built and fails closed with
+`ValueError` (C-2.18, WS-D01), so no consumer runs on an unchecked budget, hand-built or not:
+`max_bytes` and `max_frames` are `int`s above zero and at most `QUEUE_BYTES` and `QUEUE_FRAMES`,
+the ceilings `Settings` gives as `le=` (the budget may be lowered, never raised, E17 threat model
+§6), and `classify_interval_ms` is an `int` above zero. The floors stay with `Settings`, so a
+harness may build a small budget. The close deadline, which `Settings` never sets, may only be
+lowered too, because the stop budget counts `CLOSE_FLUSH_TIMEOUT_S`. Plain data: no I/O, no clock.
 """
 
 from __future__ import annotations
@@ -47,6 +46,15 @@ class BackpressureConfig:
                 f"close_flush_s must lie in (0, {CLOSE_FLUSH_TIMEOUT_S:g}] s: the stop budget "
                 "counts the close flush, so it may only be lowered"
             )
+        # Fail closed: an `int` (never a `bool` or a `float`), above zero, at most its ceiling.
+        for name, value, ceiling in (
+            ("max_bytes", self.max_bytes, QUEUE_BYTES),
+            ("max_frames", self.max_frames, QUEUE_FRAMES),
+            ("classify_interval_ms", self.classify_interval_ms, None),
+        ):
+            if type(value) is not int or value <= 0 or (ceiling is not None and value > ceiling):
+                bound = "above 0" if ceiling is None else f"in (0, {ceiling}] (lower only)"
+                raise ValueError(f"{name} must be an int {bound}")
 
     @classmethod
     def from_settings(cls, settings: Settings) -> BackpressureConfig:
