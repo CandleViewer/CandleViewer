@@ -314,11 +314,15 @@ def _flood(w: World, family: str, ch: str, n: int) -> int:
     return int(w.call(lambda: sum(w.hub.publish(ch, body, account=ACC_A) for _ in range(n))))
 
 
-def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_4429() -> None:
+@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
+def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_4429(
+    backpressure: BackpressureConfig | None,
+) -> None:
     """§8.4 step 3: `orders` cannot be dropped, so on overflow the socket is closed with
     `bye slow_consumer` / 4429. Bound asserted against the SPEC budget (2 000 frames), produced in
-    one event-loop turn so the writer cannot drain. Memory itself is E17-Q02."""
-    w = World()
+    one event-loop turn so the writer cannot drain. Memory itself is E17-Q02. With the flag on
+    (#412) the `orders` snapshot follows its `sub_ok` on the priority lane (§8.4 Lanes)."""
+    w = World(backpressure=backpressure)
     with connect(w) as c:
         all_private(c, "orders")
         assert _flood(w, "orders", "orders", SPEC_QUEUE_FRAMES + 500) == SPEC_QUEUE_FRAMES + 500

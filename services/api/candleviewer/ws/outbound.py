@@ -1,7 +1,7 @@
 """Bounded outbound budget and the overflow ladder (E17-T03, `23-ws-protocol.md` §8.4).
 
 `OutboundQueue` holds one connection's encoded frames on two lanes. The priority lane carries
-`orders`, `executions`, `system` and ping / pong: never dropped, always drained first. The normal
+every control frame and `orders`, `executions`, `system` (D1): never dropped, sent first. The normal
 lane carries everything else, in order. Every frame is encoded once, in the connection's
 subprotocol (`encode`: MessagePack bytes, or JSON text that refuses a non-finite number), and
 counted at that exact length, so the budget, `max_bytes` (8 MiB) or `max_frames` (2 000) whichever
@@ -35,8 +35,9 @@ pushes runs once it is whole, its events returned by `drain` (a drop is whole, a
 `drain` is the only sender of `backpressure` snapshots: the wiring must keep
 `TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them. It deletes, unsent, an entry
 that no longer awaits that snapshot or (given the connection's subscriptions) is no longer
-subscribed. A snapshot that does not queue (not ready, or failed) is parked: `drain` skips it
-until `unpark`, which the wiring calls on a source rebuild and on a coarse timer.
+subscribed. A snapshot that does not queue (not ready, failed, or re-marked by its own pushes:
+§10.1) is parked: `drain` skips it until `unpark`, which the wiring calls on a source rebuild and
+on a coarse timer.
 """
 
 from __future__ import annotations
@@ -60,9 +61,8 @@ DRAIN_PCT: Final = 50.0
 MOST_EXPENSIVE: Final = 5
 #: Consecutive drops of a subscription's unsent `backpressure` snapshot before the close.
 MAX_REDROPS: Final = 3
-#: Families whose frames ride the priority lane, with the ping / pong control frames.
+#: The families whose `d` / `snap` frames ride the priority lane, with every control frame (D1).
 PRIORITY_FAMILIES: Final = frozenset({"orders", "executions", "system"})
-_PRIORITY_CONTROL: Final = frozenset({"ping", "pong"})
 _DATA_FRAMES: Final = frozenset({"d", "snap"})
 
 #: A subscription's frames: `(ch, replay_session_id)` (D13).
@@ -110,13 +110,12 @@ def encode(
     payload = dumps(frame)
     ch, kind, meta, rs = frame.get("ch"), frame.get("t"), frame.get("meta"), frame.get("rs")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
-    priority = family in PRIORITY_FAMILIES or kind in _PRIORITY_CONTROL
     key = None
     if kind in _DATA_FRAMES and isinstance(ch, str):
         key = (ch, rs if isinstance(rs, str) else None)
+    priority = key is None or family in PRIORITY_FAMILIES  # D1: all but what step 1 may drop
     resnap = (
-        key is not None
-        and not priority
+        not priority
         and kind == "snap"
         and isinstance(meta, Mapping)
         and meta.get("reason") == "backpressure"
@@ -395,12 +394,12 @@ class Backpressure:
             finally:  # #2998: a snapshot that raises leaves no held check behind
                 self._draining = False
                 deferred, self._deferred = self._deferred, None
-            if queued:
+            if queued and not _awaits(sub):  # its own pushes may have re-marked it (§10.1)
                 del required[sub_id]
                 self._snapped[sub_id] = _key(sub)  # before the held check: a drop is a redrop
                 sent.append(sub.ch)
             else:
-                self._parked.add(sub_id)  # not ready, or failed: until a rebuild or the timer
+                self._parked.add(sub_id)  # not ready, failed or re-marked: until a rebuild or timer
             if deferred is not None:
                 held += self.check(deferred)
             if queued:
