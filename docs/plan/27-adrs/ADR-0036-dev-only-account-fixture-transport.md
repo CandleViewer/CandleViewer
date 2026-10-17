@@ -172,13 +172,13 @@ demo-only definition need not carry over.
   tripwire keys on the `/v5/asset/` prefix, which the pack never serves, so no withdraw or transfer literal is
   ever written in `cvdev`.
 - **Image check (S3):** `tools/ci/check_image_no_dev_modules.py`, in `main.yml` before the push (`:164-176`)
-  and in the offline boot smoke (`_job-security.yml:496-509`): `find_spec("cvdev")` is `None`, and a boot with
+  and in the offline boot smoke (`_job-security.yml:506-511`): `find_spec("cvdev")` is `None`, and a boot with
   `CV_ACCOUNT_FIXTURE=compliant` and the structural values (`CV_ENVIRONMENT=demo`, `CV_FEED=synthetic`, no
   `CV_BYBIT_API_*`) exits non-zero with the exact package-absent message. Any other exit, a `Settings`
   refusal included, fails the check. The `main.yml` step is the binding one: S3 adds it before the push with
   no `if:` of its own, so it runs on every image push (the workflow runs on any `services/api/**` change,
   `.github/workflows/main.yml:22-28`). The boot-smoke run is a PR-time early warning only: it sits in the
-  `trivy` job, which runs only `if: inputs.image_changed` (`_job-security.yml:484`), and
+  `trivy` job, which runs only `if: inputs.image_changed` (`_job-security.yml:479`), and
   `.github/workflows/pr.yml:98-102` sets that for the image paths alone. S3 adds `services/api/cvdev/**` and
   `services/api/candleviewer/account_fixture_wiring.py` to that filter; if it cannot, it names the gap: a PR
   that touches the fence then meets the image check only after merge, before the push.
@@ -226,7 +226,7 @@ behind the E29 OMS lane.
   `services/api/candleviewer/**` (such as `.semgrep/cv-no-debug-probe-in-prod.yml:53-55`) are extended in S3
   or the gap is recorded. The repo-wide withdrawal rule needs nothing (Enforcement).
 - Risk: the image fence holds for the image as built. Its venv's editable `.pth` names `/build`
-  (`_job-security.yml:500-501`) and it runs from `/app` (`infra/images/Dockerfile.api:53`), so a bind mount of
+  (`_job-security.yml:495-496`) and it runs from `/app` (`infra/images/Dockerfile.api:53`), so a bind mount of
   `cvdev` there or a `PYTHONPATH` entry would make the stub importable again. S14's compose tests keep the
   documented path on the builder stage, and the boot and per-request guards still refuse a real key.
 - Risk: a guard trip latches the process read-only until the offending key row is revoked and the stack

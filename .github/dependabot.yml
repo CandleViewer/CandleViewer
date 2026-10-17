@@ -2,7 +2,7 @@ version: 2
 # Dependency-freeze flow: docs/plan/35-dependency-freeze-policy.md §2.1 (E43-T05, Refs #1234).
 # Every bump changes security/freeze-manifest.sha256, which Dependabot cannot regenerate, so
 # bumps are GROUPED (one PR per ecosystem per week) and labelled `dependencies`; the
-# license-scan job then publishes the regenerated manifest as a proposal for the reviewer.
+# read-only-scans CI job then publishes the regenerated manifest as a proposal for the reviewer.
 # Majors on pinned-runtime-sensitive packages are ignored until the runtime moves (§2.1.3).
 updates:
   # SR-132/SR-134: keep pinned GitHub Actions SHAs current. Dependabot opens
@@ -27,7 +27,7 @@ updates:
       prefix: "chore(infra-devops)"
 
   # E03-T07: SCA coverage (CONSTITUTION §9 #11) for pip, npm and Docker base
-  # images, mirroring the pip-audit / npm-audit / trivy CI jobs above.
+  # images, mirroring the pip-audit / npm-audit / trivy CI scans above.
   # E09-X03: covers the auth dependency set (argon2-cffi Argon2 binding, pyotp/TOTP,
   # cryptography envelope encryption, starlette cookie/session middleware). Those
   # bumps land in their own `crypto` group (separate PR, never batched with the

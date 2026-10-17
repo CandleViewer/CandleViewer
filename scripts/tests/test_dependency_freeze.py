@@ -243,6 +243,10 @@ def test_license_scan_proposes_manifest_and_uploads_only_for_dependency_prs() ->
     assert "git push" not in text and "git commit" not in text
     assert "contents: write" not in text
     assert "pull_request_target" not in text
+    # #3104: the freeze step is continue-on-error in a folded job, where failure() never fires.
+    steps = [s for job in yaml.safe_load(text)["jobs"].values() for s in job["steps"]]
+    (upload,) = [s for s in steps if s.get("with", {}).get("name") == "freeze-manifest-proposal"]
+    assert "steps.freeze.outcome == 'failure'" in upload["if"] and "failure()" not in upload["if"]
 
 
 def test_write_proposal_writes_manifest_diff_and_step_summary(tmp_path: Path, monkeypatch) -> None:

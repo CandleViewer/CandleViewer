@@ -893,7 +893,7 @@ on their own:
    Enforcement), boots it with the structural values and accepts only the package-absent refusal. This is
    the `:dev`-tagged release image, which staging deploys (`.github/workflows/main.yml:172-174`,
    `deploy-staging.yml:104-105`). It holds for the image as built: the venv's editable `.pth` names `/build`
-   (`_job-security.yml:500-501`), so a bind mount of `cvdev` there or a `PYTHONPATH` entry would restore the
+   (`_job-security.yml:495-496`), so a bind mount of `cvdev` there or a `PYTHONPATH` entry would restore the
    import. S14's compose tests pin the fixture stack to the builder stage and no published image, and layers
    2 and 3 come with `cvdev`.
 2. **The boot guard (S2, S8).** `Settings` (S2, in every image) refuses the variable unless the environment

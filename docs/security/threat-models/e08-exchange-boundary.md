@@ -241,7 +241,7 @@ or a new/existing E08 ticket:
 `E08-X03` converts three of the mitigations above from claims into automated CI gates. Each rule lives
 in `.semgrep/` (with a true-positive/true-negative fixture under `.semgrep/tests/`, checked by
 `tools/ci/check_semgrep_rule_tests.py`) and runs in the `security` lane (`.github/workflows/_job-security.yml`,
-`semgrep` job) on every PR touching `exchange/`, `ingestion/` or `bus/` (the lane's existing `js`/`py`/`infra`
+`semgrep-bandit` job) on every PR touching `exchange/`, `ingestion/` or `bus/` (the lane's existing `js`/`py`/`infra`
 path filters already cover these paths; see `pr.yml`).
 
 | Threat model reference                                                                                               | Enforcing rule id                                                        |
