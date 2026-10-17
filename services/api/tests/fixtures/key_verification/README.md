@@ -24,3 +24,8 @@ identifier. The UID is the synthetic `1000001` of `packages/fixtures/accounts/ac
 Tests derive the other scenarios (fund rights, read-only, `uta` 0, wildcard or extra IPs, near
 or past expiry, clock skew, a slow probe) from these files in-test. The 10002, 10018 and 5xx replies are in the shared
 corpus `packages/fixtures/bybit/2026-10-05/rest/`.
+
+`key_info_trade.json` gives an IP-bound key an expiry, but the venue's reference fills `expiredAt`
+only for keys with no IP binding, and the reply for an IP-bound key is undocumented. Until #2240's
+capture shows it, the parser reads an empty `expiredAt`, one at or before the Unix epoch, or a
+`deadlineDay` of -1 as no expiry; `test_key_info.py` pins these forms.

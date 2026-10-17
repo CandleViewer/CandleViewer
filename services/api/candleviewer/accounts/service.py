@@ -16,10 +16,10 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
 - The fake backend attaches nothing: no loop runs and the gauges stay unset.
 
 `attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`). Nothing
-attaches it yet: its Postgres adapter, exchange calls and wiring are #836 slice 2b. Once attached,
-`start()` awaits its boot assertion, so it ends before the app serves, `stop()` stops its loop,
-and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed latch or its loop
-has ended.
+attaches it yet: its Postgres adapter and exchange calls exist, and the wiring is #836 slice
+2a3c. Once attached, `start()` awaits its boot assertion, so it ends before the app serves,
+`stop()` stops its loop, and `health()` reads DEGRADED while a key fails it, the job holds a
+fail-closed latch or its loop has ended.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class AccountsService:
         self._env = env
 
     def attach_key_selfcheck(self, selfcheck: KeySelfCheck) -> None:
-        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet)."""
+        """Wire the stored-key self-check (nothing calls it yet: the wiring is #836 slice 2a3c)."""
         self._selfcheck = selfcheck
 
     async def start(self, ctx: AppContext) -> None:

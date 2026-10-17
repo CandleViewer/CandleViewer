@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -37,6 +37,13 @@ _VERDICTS: Final[Mapping[int, tuple[str, tuple[type[ExchangeError], ...]]]] = {
 VERDICT_REASONS: Final = frozenset(reason for reason, _ in _VERDICTS.values())
 #: Plausible exchange clock (ms): 2020-01-01 to 2100-01-01.
 _MS_MIN, _MS_MAX = 1_577_836_800_000, 4_102_444_800_000
+#: No-expiry forms (#836). The venue's reference fills the expiry only for a key with no IP
+#: binding, and every key this pipeline accepts is IP-bound, but the reply for one is undocumented.
+#: Until #2240's capture shows it, an empty `expiredAt`, one at or before the Unix epoch (a zero
+#: time) or a `deadlineDay` of -1 reads as no expiry, never as expired: the venue refuses an
+#: expired key's signed call itself (33004).
+_ZERO_TIME: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_NO_DEADLINE: Final = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +74,7 @@ class _KeyInfo(BaseModel):
     permissions: dict[str, Any]
     ips: list[str] = []
     expiredAt: datetime | None = None
+    deadlineDay: Any = None
 
     @field_validator("userID", mode="before")
     @classmethod
@@ -84,7 +92,7 @@ class _KeyInfo(BaseModel):
         parsed = datetime.fromisoformat(value) if isinstance(value, str) else None
         if parsed is None or parsed.utcoffset() is None:
             raise ValueError("expiredAt must be a timezone-aware ISO 8601 time")
-        return parsed
+        return None if parsed <= _ZERO_TIME else parsed
 
 
 def parse_key_info(body: Mapping[str, Any]) -> ApiKeyFacts:
@@ -103,7 +111,7 @@ def parse_key_info(body: Mapping[str, Any]) -> ApiKeyFacts:
         read_only=info.readOnly == 1,
         permissions=info.permissions,
         ip_whitelist=tuple(info.ips),
-        expires_at=info.expiredAt,
+        expires_at=None if info.deadlineDay == _NO_DEADLINE else info.expiredAt,
     )
 
 
