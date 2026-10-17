@@ -5,10 +5,13 @@ observation per request, labelled `route`, `method`, `status_class`:
 
 - `route` is the matched route *template* (`/v1/drawings/{drawingId}`), read from
   `scope["route"].path` after the downstream app ran. The raw path is never a label.
-- Requests that never reach a route (404s, and refusals produced by an inner middleware before
-  routing: CSRF 403, 413, 401) fall into the single `unmatched` series. Matching them against the
-  router would re-run Starlette's route scan on every refused request, so the cheap, bounded
-  choice is taken; they are still timed.
+- Requests that never reach a served route fall into the single `unmatched` series: 404s, refusals
+  produced by an inner middleware before routing (CSRF 403, 413, 401), and wrong-method requests.
+  The router sets `scope["route"]` on a 405 too, so a route whose declared `methods` lack the
+  request method counts as unmatched; labelling it would let HEAD/OPTIONS/PUT against any template
+  mint its own series and fill the cap first-come-first-served. Matching refused requests against
+  the router would re-run Starlette's route scan on every one, so the cheap, bounded choice is
+  taken; they are still timed.
 - `method` is a closed set; anything else is `other`.
 - `status_class` is `1xx`..`5xx` from the first `http.response.start`; an exception that escapes
   before any response was sent counts as `5xx` and is re-raised unchanged.
@@ -19,10 +22,11 @@ NOT recorded and the error is re-raised: a disconnect is not a server error and 
 5xx-based alerts. Any other escaping exception counts as `5xx`.
 
 No user, account, symbol, query-string or header label exists (C-12.6, C-2.18). The series bound
-is route templates x observed method/status combinations, capped by `HTTP_DURATION_MAX_SERIES`
-on the catalogue entry (buckets live there too). At the cap `BoundedMetric` hands back a no-op
-child: new series are dropped, each refused observation is counted in
-`metric_cardinality_breach_total` and existing series keep recording, so memory cannot grow.
+is route templates x the methods each serves x observed status classes, plus `unmatched`, capped
+by `HTTP_DURATION_MAX_SERIES` on the catalogue entry (buckets live there too). At the cap
+`BoundedMetric` hands back a no-op child: new series are dropped, each refused observation is
+counted in `metric_cardinality_breach_total` and existing series keep recording, so memory cannot
+grow.
 """
 
 from __future__ import annotations
@@ -45,8 +49,14 @@ def _status_class(status: int) -> str:
 
 
 def _route_template(scope: MutableMapping[str, Any]) -> str:
-    path = getattr(scope.get("route"), "path", None)
-    return path if isinstance(path, str) and path else UNMATCHED_ROUTE
+    route = scope.get("route")
+    path = getattr(route, "path", None)
+    if not isinstance(path, str) or not path:
+        return UNMATCHED_ROUTE
+    methods = getattr(route, "methods", None)
+    if methods and scope.get("method") not in methods:
+        return UNMATCHED_ROUTE  # 405: the path matched but this route was not served
+    return path
 
 
 class HttpDurationMiddleware:

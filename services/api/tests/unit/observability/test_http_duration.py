@@ -107,6 +107,35 @@ def test_custom_method_is_other() -> None:
     assert {k[1] for k in _keys(m)} == {"other"}
 
 
+@pytest.mark.parametrize("method", ["PUT", "HEAD", "OPTIONS"])
+def test_wrong_method_on_a_template_is_unmatched_not_a_template_series(method: str) -> None:
+    # The router sets scope["route"] on a 405 too. Labelling it would let any method a route does
+    # not serve mint a series per template and fill the cap before the real traffic arrives.
+    m, hist = _hist()
+    r = TestClient(_app(hist)).request(method, "/v1/things/a")  # a GET-only template
+    assert r.status_code == 405
+    assert _keys(m) == {("unmatched", method, "4xx")}
+
+
+def test_route_serving_two_methods_keeps_its_template_for_each() -> None:
+    m, hist = _hist()
+    app = FastAPI()
+
+    @app.api_route("/v1/both", methods=["GET", "POST"], include_in_schema=False)
+    def both() -> dict[str, str]:
+        return {}
+
+    app.add_middleware(HttpDurationMiddleware, histogram=hist, clock=_Clock())
+    client = TestClient(app)
+    for method in ("GET", "POST", "DELETE"):
+        client.request(method, "/v1/both")
+    assert _keys(m) == {
+        ("/v1/both", "GET", "2xx"),
+        ("/v1/both", "POST", "2xx"),
+        ("unmatched", "DELETE", "4xx"),
+    }
+
+
 def test_status_classes_and_raised_exception() -> None:
     m, hist = _hist()
     client = TestClient(_app(hist), raise_server_exceptions=False)
@@ -211,6 +240,7 @@ def test_catalogue_entry_is_live_and_bracketing_budgets() -> None:
     assert spec.labels == ("route", "method", "status_class")
     assert spec.buckets is not None
     assert 0.15 in spec.buckets and 0.3 in spec.buckets
+    assert max(spec.buckets) > 0.3  # a p95 over 0.3 s clamps to the top finite edge
     text = generate_latest(_hist()[0].registry).decode()
     assert f"# TYPE {METRIC_NAME} histogram" in text
 

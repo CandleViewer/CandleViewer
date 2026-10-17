@@ -1319,7 +1319,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Domain | Metric | Type | Purpose / alert |
 |---|---|---|---|
 | Runtime | `event_loop_lag_seconds` | histogram | p99 ≤ 50 ms; alert > 100 ms for 5 min |
-| Runtime | `cv_http_request_duration_seconds{route,method,status_class}` | histogram | HTTP request duration per route template (`unmatched` for no-route/pre-routing refusals); read p95 ≤ 150 ms, write p95 ≤ 300 ms (#2421). Buckets 0.05/0.15/0.3/1 s (edges on the two budgets); capped at 300 series so the max-cardinality scrape stays < 50 ms, overflow dropped and counted in `metric_cardinality_breach_total` |
+| Runtime | `cv_http_request_duration_seconds{route,method,status_class}` | histogram | HTTP request duration per route template (`unmatched` for no-route, wrong-method and pre-routing refusals); read p95 ≤ 150 ms, write p95 ≤ 300 ms (#2421). Buckets 0.05/0.15/0.3/1.0 s (edges on the two budgets); capped at 300 series so the max-cardinality scrape stays < 50 ms, overflow dropped and counted in `metric_cardinality_breach_total` |
 | Ingestion | `ws_connection_state{socket}` | gauge | alert on `down` > 10 s |
 | Ingestion | `ingest_dispatch_overflow_total{stream}` | counter | frames dropped by a full per-topic dispatch lane (§4.2); each drop run resyncs that symbol. Sustained growth = a stuck consumer on one topic |
 | Statechart | `cv_machine_live_count{kind}` | gauge | live interpreters per family; **alert on monotonic growth** (the reaper is failing) |

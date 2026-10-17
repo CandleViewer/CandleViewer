@@ -135,8 +135,10 @@ FE_DECODE_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 5.0, 10.0)
 #: a quantile clamps to the top finite edge, so a p95 over 0.3 s needs an edge above 0.3.
 HTTP_DURATION_BUCKETS: Final = (0.05, 0.15, 0.3, 1.0)
 #: Series cap: a series is `len(buckets) + 4` scrape samples (~7 us each) and the max-cardinality
-#: /metrics scrape must stay < 50 ms (ADR-0014). 300 covers the 238 contract operations plus 4xx/5xx
-#: and `unmatched` (99 are served today); re-measure the scrape budget test before raising it.
+#: /metrics scrape must stay < 50 ms (ADR-0014). 300 covers the 238 contract operations at 2xx with
+#: 62 to spare; the full declared set (238 2xx + 222 4xx + 72 5xx + 1 3xx = 533) does not fit, so
+#: late series would be dropped and counted in `metric_cardinality_breach_total`. Re-measure the
+#: scrape budget test before raising it.
 HTTP_DURATION_MAX_SERIES: Final = 300
 
 
