@@ -68,9 +68,13 @@ def test_uta_flag_decides_unified_not_the_deprecated_flag(
     assert parse_key_info(key_info(uta=uta, unified=deprecated)).unified is unified
 
 
-@pytest.mark.parametrize("raw", ["", None])
-def test_absent_expiry_is_none(raw: str | None) -> None:
+@pytest.mark.parametrize("raw", ["", None, "1970-01-01T00:00:00Z", "0001-01-01T00:00:00Z"])
+def test_absent_or_zero_time_expiry_is_none(raw: str | None) -> None:
     assert parse_key_info(key_info(expiredAt=raw)).expires_at is None
+
+
+def test_a_deadline_day_of_minus_one_means_no_expiry() -> None:
+    assert parse_key_info(key_info(deadlineDay=-1)).expires_at is None
 
 
 def test_key_id_and_secret_fields_never_reach_the_facts() -> None:

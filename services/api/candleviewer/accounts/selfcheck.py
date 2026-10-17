@@ -33,11 +33,11 @@ display (US-ACCT-003 NFR).
 Restarts: the latch, the standing results and an owed record live in memory, so a restart forgets a
 standing failure. The boot check judges the key afresh: one that is inconclusive inside the window
 latches nothing. What was written persists: `last_error_*`, the verified columns and a per-account
-disarm (`trading_enabled` false); slice 2b decides how a boot check treats them.
+disarm (`trading_enabled` false); how a boot check treats them is an open decision on #836.
 
 Not here yet (#836 slice 2c, SR-E27-18): the freshness check independent of this job (at order
 admission or by a watchdog), its missed-run alert and the age metric. Until then a stalled job
-trips nothing by itself. Nothing runs this before slice 2b.
+trips nothing by itself. Nothing builds this job before #836 slice 2a3c.
 """
 
 from __future__ import annotations
