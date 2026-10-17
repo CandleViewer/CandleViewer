@@ -8,10 +8,12 @@ ticket per entry); stale entries fail too, so the list can only shrink.
 
 `openapi_pending` holds two kinds of entry. The FROZEN E49 baseline (ticket
 ``E49-K01-F4-baseline``, 136 ops; was 158 before E15-T01 served workspaces) may only
-shrink. Contract-first entries carry a real ticket (``#123`` or ``E12-S03``) and are
-dropped by the stale check once served. The total is capped (148; raised from 147 by
-the idle-lock contract #2389 landing on top of E42-T05/T07): a contract PR that adds
-an operation either serves it or raises the cap by exactly its overflow, in that PR.
+shrink. Contract-first entries carry a real ticket (``#123`` or ``E12-S03``) and must
+be removed once served (the stale check fails until they are). The total cap is
+148 = 136 frozen + 12 contract-first (#3048). Keep both caps tight: a contract PR
+that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, in that
+PR; a PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and
+``PENDING_BASELINE`` by the same amount, in that PR.
 """
 
 from __future__ import annotations
