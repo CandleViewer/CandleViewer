@@ -25,12 +25,27 @@ GATES: dict[str, int | str] = {
     **dict.fromkeys(["docs-link-check", "pin-check", "commitlint"], 5),
     **dict.fromkeys(["statechart-lint", "event-coverage", "machine-hash-lock"], VAR),
     "xstate-pin-attestation": 10,
-    "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at ebb7502f
+    "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at 59bec409
 }
 OTHER_LANES = ["changed-paths", "gen", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
 # The blocking statechart contract run, defined once (#3104); it starts with `uv sync`.
 SCRIPT = "tools/statechart/run_xstate_contract.sh"
+# The script's commands, verbatim: the old job's steps (_job-xstate-contract.yml at 59bec409), so
+# no suite, flag (`-W error::RuntimeWarning`, CV-C67) or check drops out unnoticed. Its `uv sync` is
+# why INSTALLERS names the script.
+SCRIPT_COMMANDS = [
+    "set -euo pipefail",
+    'cd "$(dirname "${BASH_SOURCE[0]}")/../.."',
+    "cd services/api",
+    "uv sync --frozen --all-groups",
+    'uv run pytest tests/xstate_contract tests/xstate_upstream -q --no-cov -m "not sync_parity" \\',
+    "-W error::RuntimeWarning --durations=10 --junitxml=xstate-contract-junit.xml",
+    "uv run python ../../tools/statechart/event_coverage.py",
+    "uv run pytest ../../scripts/tests/test_event_coverage.py -q --no-cov -W error::RuntimeWarning",
+    "cd ../..",
+    "python tools/statechart/suite_budget.py services/api/xstate-contract-junit.xml",
+]
 # Steps that install toolchains or run the PR's own build and lifecycle scripts.
 LIFECYCLE = ("pnpm install", "corepack", "actions/setup-node@")
 INSTALLERS = ("uv sync", "astral-sh/setup-uv@", SCRIPT, *LIFECYCLE)
@@ -234,7 +249,9 @@ def test_the_script_is_the_single_tracked_definition_of_the_contract_run() -> No
             runs.append((meta.split()[0], path))
     assert runs == [("100755", SCRIPT)]
     lines = (ROOT / SCRIPT).read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "#!/usr/bin/env bash" and "set -euo pipefail" in lines
-    assert "uv sync --frozen --all-groups" in lines  # why INSTALLERS names it
+    assert lines[0] == "#!/usr/bin/env bash"
+    assert [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")] == (
+        SCRIPT_COMMANDS
+    )
     # SR-146: no tracing (check_secrets_hygiene.py scans workflow files, not this script).
     assert not [ln for ln in lines if re.search(r"\bset\s+-[a-zA-Z]*x|xtrace|\bbash\s+-x\b", ln)]
