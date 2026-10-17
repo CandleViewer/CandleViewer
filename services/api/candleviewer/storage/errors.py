@@ -14,6 +14,9 @@ from typing import Literal
 #: Why a `DROP PARTITION` could not be confirmed (closed set: safe as a metric label).
 DropNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape"]
 
+#: Why a WAL table's apply could not be confirmed caught up (closed set: safe as a metric label).
+WalNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape"]
+
 
 class StorageError(Exception):
     """Base exception for the M10 `storage` module."""
@@ -72,6 +75,32 @@ class StorageSchemaDrift(StorageError):
     """A tier's on-disk/on-wire schema no longer matches this package's models."""
 
     code = "STORAGE_SCHEMA_DRIFT"
+
+
+class StorageWalNotApplied(StorageError):
+    """A WAL table's apply job did not catch up with its sequencer, so a read cannot be trusted.
+
+    QuestDB acknowledges a write once it is committed to the sequencer; a `SELECT` sees it only
+    after the apply job ran (#3064). `reason`: `suspended` (an operator must resume the apply),
+    `timeout` (still behind after the wall-clock bound) or `unexpected_shape` (the status row
+    lacks the txn columns: fail closed). `table` and `waited_s` say where and how long. Never a
+    success: the caller does not read the table.
+    """
+
+    code = "STORAGE_WAL_NOT_APPLIED"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: WalNotAppliedReason,
+        table: str = "",
+        waited_s: float = 0.0,
+    ) -> None:
+        super().__init__(f"{message} (reason={reason})")
+        self.reason: WalNotAppliedReason = reason
+        self.table = table
+        self.waited_s = waited_s
 
 
 class StorageRetentionBlockedByPin(StorageError):
@@ -176,6 +205,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageExportVerifyFailed: StorageExportVerifyFailed.code,
     StoragePartitionDropNotApplied: StoragePartitionDropNotApplied.code,
     StorageSchemaDrift: StorageSchemaDrift.code,
+    StorageWalNotApplied: StorageWalNotApplied.code,
     StorageRetentionBlockedByPin: StorageRetentionBlockedByPin.code,
     StorageRetentionBlockedUnverified: StorageRetentionBlockedUnverified.code,
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,

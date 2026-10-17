@@ -23,6 +23,7 @@ from candleviewer.storage.errors import (
     StorageRetentionBlockedUnverified,
     StorageSchemaDrift,
     StorageTierUnavailable,
+    StorageWalNotApplied,
     UnknownIlpTable,
     WriteAheadTimeout,
 )
@@ -35,6 +36,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageExportVerifyFailed: "STORAGE_EXPORT_VERIFY_FAILED",
         StoragePartitionDropNotApplied: "STORAGE_PARTITION_DROP_NOT_APPLIED",
         StorageSchemaDrift: "STORAGE_SCHEMA_DRIFT",
+        StorageWalNotApplied: "STORAGE_WAL_NOT_APPLIED",
         StorageRetentionBlockedByPin: "STORAGE_RETENTION_BLOCKED_BY_PIN",
         StorageRetentionBlockedUnverified: "STORAGE_RETENTION_BLOCKED_UNVERIFIED",
         StorageRetentionBlockedByReplay: "STORAGE_RETENTION_BLOCKED_REPLAY",
