@@ -324,11 +324,16 @@ class RotationPair:
 
 
 def _chain(pack: Pack, name: str) -> tuple[dict[str, Any], ...]:
+    """The manifests `name` resolves through, nearest first. A cycle is found by the scenario
+    directories looked up, never by the `scenario` a manifest gives itself, so no directory name is
+    looked up twice and the walk ends within the pack's own entries."""
     chain: list[dict[str, Any]] = []
+    visited: set[str] = set()
     current: str | None = name
     while current is not None:
-        if any(m["scenario"] == current for m in chain):
+        if current in visited:
             raise ValueError(f"{name}: extends cycle through {current}")
+        visited.add(current)
         entry = manifest(pack, current)
         chain.append(entry)
         current = entry.get("extends")

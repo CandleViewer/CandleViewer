@@ -4,10 +4,10 @@ The resolver moved from the test tree into the dev-only `cvdev` package, so a ru
 the same scenarios as the tests (ADR-0036). A stack may mount the pack anywhere but at or directly
 under a filesystem root, so its root is explicit (`Pack(root)`, resolved once): manifests stay
 inside the pack, payloads inside the pack's parent (the pack and the shared corpus beside it), the
-payload cache never answers one root with another root's file, and a scenario name is never a
-path. Each pack here is a copy of the checkout's pack under `tmp_path`; every write goes to a path
-built from `tmp_path`, never through a `Pack`, so a broken resolver cannot redirect a write into
-the checkout.
+payload cache never answers one root with another root's file, a scenario name is never a path and
+an `extends` cycle is refused. Each pack here is a copy of the checkout's pack under `tmp_path`;
+every write goes to a path built from `tmp_path`, never through a `Pack`, so a broken resolver
+cannot redirect a write into the checkout.
 """
 
 from __future__ import annotations
@@ -131,6 +131,29 @@ def test_scenario_directory_linked_outside_the_pack_is_refused(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="outside the pack"):
         load(Pack(root), "planted", now=NOW)
+
+
+def test_extends_cycle_is_found_by_directory_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest that extends its own directory under another `scenario` name is a cycle, not an
+    endless walk. Manifest reads are counted, so a walk that never ends fails instead of hanging."""
+    root = _copy_pack(tmp_path / "fixtures", "compliant")
+    shutil.copytree(root / "compliant", root / "loopy")
+    _edit(root / "loopy" / "manifest.json", scenario="other", extends="loopy")
+    read = resolver.manifest
+    reads: list[str] = []
+
+    def counted(pack: Pack, name: str) -> dict[str, Any]:
+        reads.append(name)
+        if len(reads) > 10:
+            pytest.fail(f"the extends walk has not ended after {len(reads)} manifest reads")
+        return read(pack, name)
+
+    monkeypatch.setattr(resolver, "manifest", counted)
+
+    with pytest.raises(ValueError, match="extends cycle through loopy"):
+        load(Pack(root), "loopy", now=NOW)
 
 
 def test_scenario_name_rule_is_the_schemas() -> None:
