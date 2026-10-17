@@ -92,6 +92,16 @@ class SecretsLifecycle(Protocol):
     def health(self) -> HealthReport: ...
 
 
+class SigningCapability(Protocol):
+    """What the exchange adapter signs with (C-2.7), so the signer it builds is injectable
+    (#3233): today the stored-key `CredentialBorrower`. M2 MACs `message` and returns the key id
+    and the hex MAC, never the API secret."""
+
+    async def sign(
+        self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
+    ) -> RequestSignature: ...
+
+
 def _sealed_borrower(resolve: Callable[[], RotatingBroker], caller: str) -> CredentialBorrower:
     """Build a signer whose broker resolver lives only in a closure (no attribute to reach)."""
     if caller not in ALLOWED_CALLERS:

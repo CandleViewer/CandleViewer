@@ -43,7 +43,7 @@ from candleviewer.exchange.bybit.signer import BybitSigner
 if TYPE_CHECKING:
     import httpx
 
-    from candleviewer.secrets import CredentialBorrower
+    from candleviewer.secrets import SigningCapability
 
 #: Ticket performance notes: at most 5 s per signed call.
 CALL_TIMEOUT_S: Final = 5.0
@@ -106,7 +106,7 @@ class KeyVerificationCalls:
 
 
 def key_verification_calls(
-    credentials: CredentialBorrower,
+    credentials: SigningCapability,
     env: str,
     credential_id: UUID,
     *,
@@ -114,11 +114,13 @@ def key_verification_calls(
     recv_window_ms: int,
     governor: TokenBucketGovernor,
     clock_offset_ms: Callable[[], int] | None = None,
-    transport: httpx.AsyncBaseTransport | None = None,
+    transport: httpx.AsyncBaseTransport | None,
 ) -> KeyVerificationCalls:
     """Calls for `credential_id` on `env`'s host; an unknown `env` is refused, never defaulted.
-    `clock_offset_ms` (exchange minus host) stamps each request on the exchange's clock.
-    `transport` is the adapter's account REST transport (#2893 S4): None keeps httpx's own."""
+    `credentials` is the M2 signing capability that signs them. `clock_offset_ms` (exchange minus
+    host) stamps each request on the exchange's clock. `transport` is the adapter's account REST
+    transport (#2893 S4), with no default, so no signed client can miss it: None keeps httpx's own
+    (`test_signed_client_transport.py`)."""
     base = SIGNED_REST_BASES.get(env)
     if base is None:
         raise ValueError("unknown environment")

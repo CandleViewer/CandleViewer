@@ -8,6 +8,7 @@ Moves only ciphertext, nonces and wrapped-DEK refs; never logs a row. Static SQL
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -27,10 +28,13 @@ _INSERT = sa.text(
 _GET = sa.text(
     "SELECT k.id, k.exchange_account_id, ea.env::text AS env, k.label, k.key_id_enc, "
     "k.key_id_last4, k.secret_enc, k.enc_nonce, k.dek_ref, k.kek_version, k.enc_alg, "
-    "k.permission_snapshot, k.status::text AS status, (k.revoked_at IS NOT NULL) AS revoked "
+    "k.permission_snapshot, k.status::text AS status, (k.revoked_at IS NOT NULL) AS revoked, "
+    "k.can_withdraw, k.can_transfer "
     "FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
     "WHERE k.id = :id AND ea.env::text = :env"
 )
+#: Record fields `insert` never writes: the database sets them (0017 defaults, the CHECKs).
+_READ_ONLY = frozenset({"revoked", "status", "can_withdraw", "can_transfer"})
 _REVOKE = sa.text(
     "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()), status = 'revoked', "
     "updated_at = now() WHERE id = :id"
@@ -60,6 +64,17 @@ _KCV_PUT = sa.text(
 )
 
 
+def _decode(value: object) -> dict[str, Any]:
+    """`permission_snapshot` jsonb arrives as `str` (no asyncpg codec) or as a mapping, as in
+    `accounts_sqlalchemy._decode`. Any other shape fails closed (`ak_snapshot_shape` already makes
+    it an object in the database). The borrow's C-2.8 re-check (SR-E27-14) refuses a snapshot that
+    is no dict, so a `str` left as it came would fail every borrow as `snapshot_invalid`."""
+    parsed: object = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, Mapping):
+        raise TypeError("permission_snapshot is not a JSON object")
+    return dict(parsed)
+
+
 class SqlAlchemyCredentialStore:
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._rel = relational
@@ -72,7 +87,7 @@ class SqlAlchemyCredentialStore:
             return rows
 
     async def insert(self, record: dict[str, Any]) -> None:
-        params = {k: v for k, v in record.items() if k not in ("revoked", "status")}
+        params = {k: v for k, v in record.items() if k not in _READ_ONLY}
         params["permission_snapshot"] = json.dumps(record["permission_snapshot"])
         params["read_only"] = bool(record["permission_snapshot"].get("readOnly"))
         if int(await self._exec(_INSERT, params)) != 1:
@@ -85,6 +100,7 @@ class SqlAlchemyCredentialStore:
         rec = dict(rows[0])
         rec["key_id_enc"], rec["secret_enc"] = bytes(rec["key_id_enc"]), bytes(rec["secret_enc"])
         rec["enc_nonce"] = bytes(rec["enc_nonce"])
+        rec["permission_snapshot"] = _decode(rec["permission_snapshot"])
         return rec
 
     async def mark_revoked(self, key_id: UUID) -> None:

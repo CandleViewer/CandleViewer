@@ -17,7 +17,9 @@ AuditSink = Callable[[str, dict[str, str]], Awaitable[None]]
 class CredentialStore(Protocol):
     async def insert(self, record: dict[str, Any]) -> None: ...
     async def get(self, key_id: UUID, env: str) -> dict[str, Any] | None:
-        """The row only if its account is in `env` (C-2.11: env-namespaced read)."""
+        """The row only if its account is in `env` (C-2.11: env-namespaced read). It carries
+        `can_withdraw` and `can_transfer` as bools and `permission_snapshot` as a dict: the
+        borrow's C-2.8 re-check (SR-E27-14) refuses anything else, a missing flag included."""
         ...
 
     async def mark_revoked(self, key_id: UUID) -> None: ...

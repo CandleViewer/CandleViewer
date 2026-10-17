@@ -23,12 +23,18 @@ from candleviewer.observability.tracing import span
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._kek import LoadedKek
-from candleviewer.secrets._permissions import project_snapshot
+from candleviewer.secrets._permissions import (
+    project_snapshot,
+    reject_withdraw,
+    require_allow_listed,
+)
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
     KekLoadError,
     KekUnavailable,
     SecretsError,
+    SnapshotInvalid,
+    WithdrawPermissionRejected,
 )
 from candleviewer.secrets.models import CredentialRow, StoredCredential
 from candleviewer.secrets.secret import Secret
@@ -36,9 +42,8 @@ from candleviewer.secrets.signing import (
     RequestSignature,
     SigningMessage,
     check_message,
-    mac_hex,
     message_sha256,
-    scrub_frames,
+    request_signature,
 )
 from candleviewer.secrets.store import AuditSink, CredentialStore
 
@@ -201,9 +206,9 @@ class CredentialBroker:
             raise CredentialUnavailable("environment_mismatch")
         snapshot = project_snapshot(permission_snapshot)
         kek = self._require_kek()
-        key_plain = api_key.reveal()
-        last4 = key_plain[-4:]
-        if len(key_plain) < 4 or not last4.isascii() or not last4.isalnum():
+        # The pasted key id, like the secret, is never a local: no rendered frame shows it (C-12.6).
+        last4 = api_key.reveal()[-4:]
+        if len(api_key.reveal()) < 4 or not last4.isascii() or not last4.isalnum():
             raise CredentialUnavailable("credential_shape_invalid")
         key_id = uuid4()
         dek = env.new_dek()
@@ -211,7 +216,7 @@ class CredentialBroker:
             dek_ref = kek.wrap_dek(dek, credential_id=key_id)
             aad_k = env.cred_aad(env_name, account_id, key_id, "key_id")
             aad_s = env.cred_aad(env_name, account_id, key_id, "secret")
-            key_enc = env.seal(dek, key_plain.encode(), aad_k)
+            key_enc = env.seal(dek, api_key.reveal().encode(), aad_k)
             secret_enc = env.seal(dek, api_secret.reveal().encode(), aad_s)
         finally:
             env.zero(dek)
@@ -240,7 +245,10 @@ class CredentialBroker:
 
     async def _load(self, key_id: UUID) -> CredentialRow | None:
         rec = await self._io(self._store.get(key_id, self._env), "store_unavailable")
-        return CredentialRow(**rec) if rec is not None else None
+        if rec is None:
+            return None
+        # A fund flag the store did not return is `None`, never false: refused (SR-E27-14).
+        return CredentialRow(**{"can_withdraw": None, "can_transfer": None, **rec})
 
     @staticmethod
     def _fields(
@@ -332,14 +340,38 @@ class CredentialBroker:
                 write.cancel()
             _, pending = await asyncio.wait(pending, timeout=self._timeout)
 
-    def _check_row(self, row: CredentialRow | None, key_id: UUID, purpose: str) -> CredentialRow:
+    def _check_row(
+        self, row: CredentialRow | None, key_id: UUID, purpose: str, *, fence: bool = False
+    ) -> CredentialRow:
+        """`fence`: the post-audit check of the row already checked, so C-2.8 runs once."""
         if row is None or row.revoked or key_id in self._destroyed or row.env != self._env:
             self._cache.flush(key_id)
             raise CredentialUnavailable("credential_unavailable")
+        if not fence:  # C-2.8 first (SR-E27-14), before the status check
+            self._recheck_fund_rights(row)
         allowed = _SIGNABLE | ({"pending"} if purpose == "key_verify" else set())
         if row.status not in allowed or row.enc_alg != "AES-256-GCM":
             raise CredentialUnavailable("credential_unavailable")
         return row
+
+    def _recheck_fund_rights(self, row: CredentialRow) -> None:
+        """SR-E27-14: a stored row must still pass C-2.8 before anything decrypts it. Its
+        withdraw and transfer flags are false (`ak_no_withdraw`, `ak_no_transfer`), and the rights
+        in its snapshot pass the allow-list and the deny-list `store()` applied (#2270). The
+        database CHECK keeps only the deny-list, so a row edited since it was stored (KV-T03) is
+        refused here, fail closed, before the audit and the decrypt, and its DEK is flushed."""
+        snapshot: object = row.permission_snapshot
+        rights = snapshot.get("permissions") if isinstance(snapshot, dict) else None
+        try:
+            if row.can_withdraw is not False or row.can_transfer is not False:
+                raise WithdrawPermissionRejected("key_withdraw_permission")
+            if not isinstance(rights, dict):
+                raise SnapshotInvalid("snapshot_invalid")
+            require_allow_listed(rights)
+            reject_withdraw(rights)
+        except WithdrawPermissionRejected:
+            self._cache.flush(row.id)
+            raise
 
     async def _borrow[T](
         self,
@@ -371,14 +403,14 @@ class CredentialBroker:
         if digest is not None:
             extra["message_sha256"] = digest
         result = "error"
-        audited: CredentialRow | None = None
+        audited: dict[str, str] | None = None
         try:
             kek = self._require_kek()
             row = self._check_row(await self._load(key_id), key_id, purpose)
             fields = self._fields(row, actor=actor, **extra)
             await self._audit("security.credential_borrowed", fields)
-            audited = row
-            row = self._check_row(row, key_id, purpose)  # fence: destroyed during the audit?
+            audited = fields
+            row = self._check_row(row, key_id, purpose, fence=True)  # destroyed during the audit?
             self._touch(key_id)  # started, never awaited: metadata never delays a signing
             attrs = {k: fields[k] for k in ("key_id", "env", "kek_version")}
             started = time.perf_counter()
@@ -421,8 +453,7 @@ class CredentialBroker:
             return out
         except BaseException as exc:
             if audited is not None:  # close the write-ahead record (C-2.9)
-                reason = _failure_reason(exc)
-                await self._outcome(_SIGN_FAILED, audited, actor, reason=reason, **extra)
+                await self._sign_failed(audited, exc)
             raise
         finally:
             m.credential_borrow_total.labels(stage=caller_module, result=result).inc()
@@ -438,16 +469,7 @@ class CredentialBroker:
         parts = check_message(message)
 
         async def mac(k: Secret[str], s: Secret[str]) -> RequestSignature:
-            # No plaintext is bound to a name here: a traceback keeps this frame, and its `k`/`s`
-            # are wrappers `_borrow` invalidates. Any failure leaves as a typed `signing_failed`
-            # with nothing chained (the frames below hold plaintext and are cleared) (C-12.6).
-            try:
-                return RequestSignature(Secret(k.reveal()), mac_hex(k, s, parts))
-            except BaseException as exc:
-                scrub_frames(exc)
-                if not isinstance(exc, Exception):
-                    raise  # KeyboardInterrupt, CancelledError: not the MAC's doing; propagate
-            raise CredentialUnavailable("signing_failed")
+            return request_signature(k, s, parts)  # `k`/`s`: wrappers `_borrow` invalidates
 
         return await self._borrow(key_id, mac, caller_module, purpose, digest=message_sha256(parts))
 
@@ -480,6 +502,14 @@ class CredentialBroker:
         """Best-effort failure-outcome record; never replaces the original exception."""
         try:
             await self._audit(action, self._fields(row, actor=actor, **extra))
+        except Exception:
+            m.credential_outcome_audit_failures_total.inc()
+
+    async def _sign_failed(self, borrowed: dict[str, str], exc: BaseException) -> None:
+        """Close a write-ahead `security.credential_borrowed` record with the bounded `reason`
+        of `exc`, best effort like `_outcome`. Every signing path closes its record here."""
+        try:
+            await self._audit(_SIGN_FAILED, {**borrowed, "reason": _failure_reason(exc)})
         except Exception:
             m.credential_outcome_audit_failures_total.inc()
 

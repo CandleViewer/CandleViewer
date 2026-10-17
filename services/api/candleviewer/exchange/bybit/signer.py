@@ -16,7 +16,7 @@ from uuid import UUID
 from candleviewer.secrets import KEY_ID_SLOT
 
 if TYPE_CHECKING:
-    from candleviewer.secrets import CredentialBorrower, Purpose
+    from candleviewer.secrets import Purpose, SigningCapability
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,8 @@ class BybitSignature:
 
 
 class BybitSigner:
-    """Signs requests for one stored credential (`api_keys.id`) through the M2 capability.
+    """Signs requests for one stored credential (`api_keys.id`) through an M2 signing
+    capability (`SigningCapability`: injectable, #3233).
 
     Holds the capability, the credential id and the borrow purpose, never key material, so
     `repr` and tracebacks cannot show a key or a secret."""
@@ -37,7 +38,7 @@ class BybitSigner:
 
     def __init__(
         self,
-        credentials: CredentialBorrower,
+        credentials: SigningCapability,
         credential_id: UUID,
         *,
         purpose: Purpose = "sign_rest",
@@ -48,8 +49,10 @@ class BybitSigner:
 
     async def sign(self, *, timestamp_ms: int, recv_window_ms: int, payload: str) -> BybitSignature:
         """Sign one request. `payload` must be the exact bytes sent: the query string (no
-        leading `?`) for `GET`/`DELETE`, the JSON body string for `POST`. M2 errors
-        (`CredentialUnavailable`, `KekUnavailable`) propagate: a request is never sent unsigned.
+        leading `?`) for `GET`/`DELETE`, the JSON body string for `POST`. M2 errors propagate
+        unchanged (`CredentialUnavailable`, `KekUnavailable`, and `WithdrawPermissionRejected` or
+        its subclass `SnapshotInvalid` when the borrow's C-2.8 re-check refuses the stored row,
+        SR-E27-14): a request is never sent unsigned.
         """
         message = (
             str(timestamp_ms).encode(),

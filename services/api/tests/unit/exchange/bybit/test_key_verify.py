@@ -86,7 +86,7 @@ def build(
     governor = Governor()
     calls = key_verification_calls(
         fake_capability("test-key", signed), env, CREDENTIAL_ID, uid=UID, recv_window_ms=5000,
-        governor=governor, clock_offset_ms=offset,
+        governor=governor, clock_offset_ms=offset, transport=None,
     )  # fmt: skip
     return calls, governor
 
@@ -262,7 +262,7 @@ async def test_a_hold_within_one_calls_bound_is_waited_out_and_the_call_is_sent(
     )
     calls = key_verification_calls(
         fake_capability("test-key"), "demo", CREDENTIAL_ID, uid=UID, recv_window_ms=5000,
-        governor=governor,
+        governor=governor, transport=None,
     )  # fmt: skip
     governor.hold_ip(CALL_TIMEOUT_S)
     assert (await calls.key_info()).uid == UID
