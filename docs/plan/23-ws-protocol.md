@@ -159,7 +159,7 @@ Every frame in both directions is a single map with this shape. Field order is i
 | `snap`              | snapshot              | S→C       | Full state for a topic; resets the sequence baseline.                            |
 | `d`                 | delta                 | S→C       | Incremental update; requires an unbroken sequence.                               |
 | `resync`            | resync request        | C→S       | Client asks for a fresh snapshot on a topic.                                     |
-| `revoked`           | subscription revoked  | S→C       | Server terminated a subscription (permission/scope/kill).                        |
+| `revoked`           | subscription revoked  | S→C       | Server ended a subscription (permission/scope/kill), or narrowed it (§9.5).      |
 | `permission_change` | authorisation changed | S→C       | Live re-resolved identity, permissions and scope; precedes any `revoked` (§9.5). |
 | `ping`              | ping                  | both      | Liveness probe.                                                                  |
 | `pong`              | pong                  | both      | Liveness reply, echoes `id`.                                                     |
@@ -255,7 +255,7 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | Max `bars.*` subs per connection   | 16      | Further `bars.*` subscribes rejected with `subscription_limit` (SR-E12-07, §6.1).                                                                                                                                                                                                                                                                                             |
 | Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
-Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
+Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`. The frames of one set share that `id`; a single-frame `snap` has none. A set is left incomplete only when the server drops the subscription's queued frames after the head was sent (§8.4: the ladder, or a control frame that supersedes them; §10.1: a chunk that cannot be encoded, or whose emission raises), and the client then replaces it as §7.2 says. The server never starts a ladder check between the chunks of one snapshot it is queuing, so a check never drops the head of a set and leaves its tail queued.
 
 Time span of a bars or footprint frame: per-bar times are `u32` offsets from the header's `ts_base_ms` (§3.4), so one frame spans at most 2³²−1 ms (about 49.7 days). Footprint (body_kind 5) follows the bars rule (body_kind 4, §6.1): a new frame starts when a bar's open time is more than 2³²−1 ms after the frame's `ts_base_ms`, and inside a snapshot those frames are `partial` chunks as above, each with its own `ts_base_ms` (200 daily footprint bars span about 1.7 × 10¹⁰ ms). Clients key bars by `(generation, index)` (§8.2), never by frame or chunk.
 
@@ -348,6 +348,8 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 
 `clock_skew_ms` = server time minus the client's `clock_ms`. The UI surfaces a warning above ±2 000 ms because a skewed client mis-renders "bar closes in N seconds" countdowns.
 
+`features.coalescing` reports whether this server coalesces (§8.2). It mirrors `CV_WS_BACKPRESSURE_ENABLED` (§4.3, §8.4): `true` while the flag is on, `false` while it is off, and the flag is switched on only once the §8 mechanisms are all wired and the chaos scenarios have passed (§8.4 Rollout). The `welcome` example above shows a server with the flag on. The schema is unchanged: §13.3 already types every `features` value as a boolean.
+
 ### 4.3 `auth` → `auth_ok`
 
 ```jsonc
@@ -409,11 +411,12 @@ Rules:
 - Both subprotocols are served, `cv.v1.msgpack` first (§2.2, #2483). Its client frames are decoded under the SR-185 bounds (§3.6), and its data frames carry CVWB payloads raw, as `e: "b"` (§3.2).
 - New connections per user are rate limited (#2558): at most `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20 by default, 1 to 600) sockets may complete their first successful `auth` in any sliding 60 s window. A failed `auth` (it has its own 3 strikes) and an in-place re-`auth` do not count; only a new socket's first successful `auth` does. The socket that would exceed the limit gets `bye` `client_rate_limited` with `retry_after_ms` (the time until the oldest counted `auth` leaves the window, at least 1 000) and `reconnect: true`, then close `4429`, **instead of** `auth_ok`. It never becomes authenticated, so it writes no `ws.connection.closed` row, which is the point: a valid token cannot open and close sockets in a tight loop and add one audit row per close. Every refusal is counted in `cv_ws_connect_rate_limited_total` (and in `cv_ws_closes_total{reason="client_rate_limited"}`, a series the inbound frame limiter's `4429` shares). The warning that names the user and the peer address is capped: it is logged for a user's first refusal in a window. The count is per user, kept in memory per process, and forgotten once a user's window is empty.
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
-- Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608), `CV_WS_QUEUE_FRAMES` (2 000) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4.
+- Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608, floor 4 194 304), `CV_WS_QUEUE_FRAMES` (2 000, floor 256) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4. `CV_WS_BACKPRESSURE_ENABLED` (off) turns on the §8 mechanisms, and `welcome.features.coalescing` follows it (§4.2); it is a C-4.13 flag, removed with #2900. `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` may be lowered down to their floors and never below them, and never raised above the values here (a raise needs a security review, E17 threat model §6); `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000. The floors, 4 194 304 bytes and 256 frames, are typo guards that refuse, at startup, a byte budget under one maximum outbound frame or a frame budget under the 200 allowed subscriptions (§3.6), either of which would close a connection at its first large frame or its first round of snapshots. At a floor nothing more than one maximum frame is promised to fit.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is attempted (#2486):
   - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket (uvicorn's own `1012`, or the cancellation of the handler when uvicorn's graceful timeout expires); else `client_closed`: a close the client sent, a drop that a read or a failed send saw, or its own `1012` while the server runs. While the server is shutting down the label is best effort: a client's own `1012`, and a client that drops unseen just before the host cancels the handler, cannot be told from the host and read `shutdown`; and a send that fails in that window cannot be told from a socket the host has already closed, so a host's `1012` can read `client_closed` (the failed send ends the writer, which stops a reader that is busy, in a re-auth that hangs, before it reads the `1012`). Both labels are `info` rows. uvicorn's own `1012` under `--reload` reads `client_closed`, because `--reload` does not mark the server as shutting down;
   - it is `warning` for `auth_failed`, `slow_consumer` and `internal_error`, and `info` otherwise;
+  - with the backpressure flag on, a close also carries an `after_state` of at most two bounded fields (E17-T03). `trigger` says what drove the close, from a closed vocabulary of three values: `budget` or `redrop` for a `slow_consumer` close of §8.4 step 3, and `flush_deadline` only for a close that had no step 3 trigger and whose `bye` flush missed its 2 s deadline (§4.4, §8.4). `flush_abandoned: true` is added whenever that deadline expired, whatever the close's reason, and is never written as `false`. So a step 3 close whose flush also expires keeps `budget` or `redrop` and gains `flush_abandoned: true`, and any other close whose flush expires carries `{"trigger": "flush_deadline", "flush_abandoned": true}`. The row's reason stays the `bye`'s, no other field or value is written, and it stays one row, not a second action. The other `slow_consumer` closes carry no step 3 trigger: the flag-off 1 024-frame close carries nothing, and the registry's eviction of a connection whose `permission_change` or `revoked` send stalled or failed (the 2 s fan-out send timeout, E17 threat model §6), which is also a `slow_consumer` close, carries `trigger` `flush_deadline` and `flush_abandoned: true` when its own flush expires and nothing otherwise;
   - it carries E04's `request_id` and never the token;
   - it is best effort, bounded at 2 s, and a write that has not started is abandoned if the handler is cancelled while waiting for it (E17 threat model WS-R04).
 
@@ -439,7 +442,7 @@ Rules:
 
 A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`.
 
-`bye` is always sent _before_ the close frame so the client has a machine-readable reason:
+`bye` is always sent _before_ the close frame (S11, §16.1; the gateway's two exceptions are noted below the example, and the host's own `1012` closes are in §9.4) so the client has a machine-readable reason:
 
 ```jsonc
 {
@@ -455,7 +458,7 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 }
 ```
 
-**As built (#2486): one exception.** A frame over the transport limit (`SERVER_WS_MAX_SIZE`, 260 KiB: the 256 KiB cap plus 4 KiB of headroom, #2182) is closed with `1009` by the server layer before the gateway sees it, so no `bye` comes first. A frame between 256 KiB and 260 KiB gets the gateway's `bye frame_too_big`, then `1009`.
+**Two gateway exceptions.** First (#2486, as built), a frame over the transport limit (`SERVER_WS_MAX_SIZE`, 260 KiB: the 256 KiB cap plus 4 KiB of headroom, #2182) is closed with `1009` by the server layer before the gateway sees it, so no `bye` comes first. A frame between 256 KiB and 260 KiB gets the gateway's `bye frame_too_big`, then `1009`. Second (#2132), the flush deadline: on deadline expiry the flush is abandoned and the transport closes with no `bye`. The deadline is the close flush the gateway already has, `CLOSE_FLUSH_TIMEOUT_S` (2 s, the term §9.4 budgets; there is no second 2 s); at it the writer is cancelled, because a peer that is not reading could not receive a `bye`. The `bye` is always enqueued (on the priority lane with the flag on) before the 2 s starts: the server abandons an undeliverable flush, never the attempt. The client sees the connection end without a `bye` and reconnects as for any drop (§9.2). With the backpressure flag on an expiry is observable: the close's `ws.connection.closed` audit row carries `flush_abandoned: true` in its `after_state`, next to the `trigger` that §4.3 defines for it (`flush_deadline` only when the close had no step 3 trigger), and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it (§8.4, "Closing under the budget"); flag off, as built, neither is recorded. As built, the 2 s starts when the reader returns (the next frame the peer sends, a disconnect or a decode fault), so a peer that is silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout). With the backpressure flag on, it starts when the close is queued, after the `bye` is enqueued (§8.4). The host's own `1012` closes (§9.4: the development reloader, a forced exit, a failed planned shutdown) are uvicorn's and also come with no `bye`.
 
 ---
 
@@ -945,6 +948,8 @@ Every `snap` payload additionally carries, for _any_ topic:
 | `estimated`                | True on topics whose content is heuristic (some `metrics` series).                                       |
 | `source`                   | `"live"` or `"replay"`.                                                                                  |
 
+A `snap` over 4 MiB arrives as a chunk set (§3.6). The client assembles the set in order and applies it when its final chunk, the one with `partial` cleared and a non-null `s`, has arrived. A `snap` of the same subscription (the same `ch` and, on replay, the same `rs`) with a new `id`, or with none, replaces an incomplete set whatever its `reason`: the client discards the chunks it holds and starts again from that frame. When `unsub_ok`, or a `revoked` that ends the subscription (§9.5), arrives, the client discards the set with the rest of that subscription's state.
+
 ### 7.3 Delta frame
 
 Book delta, structured form:
@@ -985,6 +990,7 @@ The server sends a fresh `snap` without being asked when:
 | Upstream reconnect / resubscribe                           | Continuity across the upstream gap cannot be proven.                                       |
 | Backpressure overflow on that topic (§8.4)                 | Cheaper and safer than replaying a deep queue.                                             |
 | `ctl` that invalidates state (depth, grouping, metric set) | New state identity.                                                                        |
+| A scope narrowing (§9.5)                                   | A removed account's rows must not outlive the narrowing. Flag on only.                     |
 | Instrument metadata revision (tick size change)            | Scales in prior frames are no longer valid.                                                |
 | Replay seek                                                | The replay clock jumped.                                                                   |
 
@@ -1135,14 +1141,20 @@ Class changes, in both directions, are announced so the UI can be honest about d
 
 Each connection has a **bounded** outbound budget: 8 MiB or 2 000 frames, whichever binds first. There is no growth path — this is the property that makes a pathological client harmless.
 
+**Rollout (E17-T03, #412).** §8.1 to §8.4, and the two figures elsewhere that repeat them (the RTT probe in §9.1, the queue budget in §16.2), describe the server with `CV_WS_BACKPRESSURE_ENABLED` on (§4.3): a C-4.13 flag, off by default, removed with #2900. While it is off, the gateway keeps its previous bound: one FIFO queue with a 1 024-frame push bound, and no byte budget, lanes, ladder, coalescing or throttling (a `throttle_ms` that a client asks for is echoed in `effective` and not applied); its overflow closes the connection `slow_consumer` (`4429`). The flag swaps the mechanism that enforces the bound; the bound itself exists in both states (C-2.18), so the flag gates no safety invariant (C-4.14). The _flag off_ notes below say where the previous gateway differs. The wiring lands in slices (#412), flag first, so a build can carry the flag, its settings and `welcome.features.coalescing` (§4.2) before it carries every mechanism: the flag is switched on in staging only after the last slice and #410's chaos scenarios 2 (slow consumer) and 3 (burst) pass.
+
+**Lanes.** The queue has two lanes, and the priority lane is sent first. The priority lane carries every control frame (`welcome`, `auth_ok`, `sub_ok`, `unsub_ok`, `ctl_ok`, `err`, `permission_change`, `revoked`, `ping`, `pong`, `bye`) and every `orders`, `executions` and `system` frame: the frames that step 1 never drops. The normal lane carries the rest. Order holds within a lane, so `sub_ok` precedes an `orders` snapshot, `auth_ok` precedes the `system` frames after it, and `permission_change` precedes an `orders` `revoked`. A control frame can overtake queued market data, so one that ends or resets a subscription's stream makes the frames of that subscription still queued on the normal lane stale, and queuing it drops them together with the subscription's throttle window: nothing of the old stream arrives after `unsub_ok`, after the `ctl_ok` of a re-snapshot, after a `revoked`, or after a scope narrowing (§9.5). What the priority lane holds of that subscription (`orders`, `executions`) is queued ahead of the control frame in the same lane and is delivered before it, so it is not dropped. Both lanes count toward the same 8 MiB / 2 000-frame budget: a peer that cannot drain the priority lane gets the step 3 close like any other, and no lane is unbounded (C-2.18). _Flag off:_ one queue in arrival order, so nothing overtakes anything and nothing needs invalidating.
+
+**Closing under the budget.** Every server-initiated close flushes under one 2 s deadline: the close flush the gateway already has (`CLOSE_FLUSH_TIMEOUT_S`, the term §9.4 budgets), never a second 2 s on top of it. With the flag on, the `bye` is always enqueued on the priority lane before the 2 s deadline is armed, and the deadline runs from the moment the close is queued, independently of the writer, so a writer parked in a send is cancelled at the deadline: the server abandons an undeliverable flush, never the attempt. The `bye` and the close marker are the only items admitted past the budget: one small frame, so the bound holds to within one frame, and the budget never refuses the `bye` (WS-D01). A close that ends the identity (token expiry, session revocation, a disabled user: §4.3, §9.5) and every `slow_consumer` close (step 3, and the eviction of a connection whose `permission_change` or `revoked` could not be sent: §4.3) clear both lanes and send the `bye` next. Every other server-initiated close (`shutdown`, `heartbeat_timeout`, `client_rate_limited`, `internal_error` and the rest) sends what the priority lane holds, then the `bye`, and discards the normal lane. On deadline expiry the flush is abandoned and the transport closes with no `bye` (§4.4). The audit row and `cv_ws_closes_total` still carry the reason of the `bye` that was queued, and the expiry is observable: the row carries `flush_abandoned: true`, next to the `trigger` that §4.3 defines for it (`flush_deadline` only when the close had no step 3 trigger), and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it, recorded when the deadline expires, whatever the close reason, in addition to `close_budget` or `close_redrop` when step 3 fired (step 4). So that series counts every expired flush, not only the closes an overflow caused, and a step 3 close whose flush also expires counts under two values. The slow-consumer `bye` carries `retry_after_ms` 3 000 and one fixed, generic `message` for both step 3 triggers: a `redrop` close happens under budget, so the message never quotes a size. The close's audit row records the trigger and any expiry (§4.3). _Flag off:_ the `bye` follows every frame already queued (a close that ends the identity still sends it next), under the same 2 s, which starts when the reader returns (§4.4), and an expiry records no `after_state` field and no label; the closes with no gateway deadline are the `internal_error` close after a writer fault (§10.1), whose `bye` and `1011` the handler sends itself, and a close on a peer that neither reads nor sends, which the transport keepalive ends (§4.4), as built. The slow-consumer `bye` has no `retry_after_ms` or `hint`, and its `message` reads `slow consumer`.
+
 On overflow the server acts in this order:
 
-1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped.
+1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped. A paused subscription (§5.4) is shed without the mark: its queued frames and throttle window are discarded, no `backpressure` snapshot is sent for it, and the `reconfigure` snapshot that its resume answers with recovers it.
 2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %. Snapshots are queued one at a time, each only while the queue, earlier snapshots included, is still below 50 %.
 3. Send `bye` with `slow_consumer` and close `4429` when either:
    - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
    - three drops in a row each remove a topic's `backpressure` snapshot before it was sent: the client drains too slowly for that topic to recover (a snapshot larger than the budget never could).
-4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `unmergeable` (step 1 for a topic whose update cannot be merged, such as footprint bars sharing an open time, #2529), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
+4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `unmergeable` (step 1 for a topic whose update cannot be merged, such as footprint bars sharing an open time, #2529), `resnapshot` (step 2), `close_budget` / `close_redrop` (the two step-3 triggers), or `close_flush_deadline` (not a ladder step: a close of any reason whose 2 s flush expired, counted in addition to its step 3 value when step 3 fired; see "Closing under the budget"), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
 
 A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued plus pending bytes when the overflow began, largest first; empty when no topic held any):
 
@@ -1153,7 +1165,7 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
   "p": {
     "code": 4429,
     "reason": "slow_consumer",
-    "message": "Outbound queue exceeded 8 MiB; client not draining.",
+    "message": "Client is not draining its outbound queue.",
     "retry_after_ms": 3000,
     "reconnect": true,
     "hint": {
@@ -1184,7 +1196,7 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 
 - The **client** sends `ping` every `welcome.heartbeat.interval_ms` (15 s default). The server replies `pong` echoing `id` and including its own clock.
 - The **server** also sends unsolicited `ping` when it has sent nothing for 20 s; the client MUST reply `pong` within 10 s.
-- The **server** also sends `ping` every `CV_WS_CLASSIFY_INTERVAL_MS` (2 s) as the RTT probe for adaptive throttling (§8.3); the client replies `pong` echoing `id`, as for any server ping.
+- With the backpressure flag on (§8.4 Rollout), the **server** also sends `ping` every `CV_WS_CLASSIFY_INTERVAL_MS` (2 s) as the RTT probe for adaptive throttling (§8.3); the client replies `pong` echoing `id`, as for any server ping. Flag off, there is no probe.
 - Either side seeing no traffic at all for `heartbeat.timeout_ms` (45 s) closes the connection.
 
 ```jsonc
@@ -1260,7 +1272,7 @@ A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the l
 
 ### 9.5 Mid-connection authorisation changes
 
-Authorisation is re-evaluated on every change to the user's roles, permissions or account grants, and on kill-switch transitions. Affected subscriptions are terminated with `revoked` — never silently emptied, which would look like a flat book or a closed position.
+Authorisation is re-evaluated on every change to the user's roles, permissions or account grants, and on kill-switch transitions. Affected subscriptions are ended with `revoked` (except a scope narrowing that keeps some accounts, which continues in place, below) — never silently emptied, which would look like a flat book or a closed position.
 
 Before any `revoked` frames, the server sends one `permission_change` frame carrying the connection's re-resolved identity, so the client can refresh its permission-gated UI without a reconnect. It is sent on registry-driven re-evaluations (role, permission and grant changes, and kill-switch transitions, applied through `ConnectionRegistry`), even when no subscription is affected. The in-place re-`auth` path (§4.3) does not send it: it answers with `auth_ok` and forwards only the `revoked` frames. The payload is the identity subset of `auth_ok` (`user_id`, `roles`, `permissions`, `account_scope`), so it carries no `session_id`, `token_expires_at_ms`, `kill_switch`, `username` or `allowed_environments`; the session itself is unchanged. `account_scope` is built as in `auth_ok`: for an **owner** it is `[]`, meaning **all** accounts (an owner holds no per-account grants), while for a manager or viewer it lists the accounts they hold a view grant on, so `[]` there means none. Schema: §13.4.
 
@@ -1295,7 +1307,9 @@ Then one `revoked` frame per affected subscription:
 
 `reason` ∈ `permission_revoked` | `account_scope_changed` | `user_disabled` | `session_revoked` | `key_revoked` | `account_disabled` | `replay_session_ended` | `resync_rate_limited` | `topic_removed`.
 
-If the user is disabled entirely, the server sends `bye` with `4403` and closes. A live session of a disabled (or deleted) user that no disable revoked (#2911) is revoked as `user_disabled` the first time a strict-path request presents its access token: a REST request that authenticates the session, or a socket `auth`. `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` read the session with `allow_locked` and do not revoke it. The revocation is published, so the REST request answers 401 and every socket already running on that session ends with `bye` `user_disabled` and `4403`. The socket whose first `auth` presented the token is not registered yet: it gets `err` `auth_failed` like any refused `auth` (§4.3), not `bye` `user_disabled`. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set.
+If the user is disabled entirely, the server sends `bye` with `4403` and closes. A live session of a disabled (or deleted) user that no disable revoked (#2911) is revoked as `user_disabled` the first time a strict-path request presents its access token: a REST request that authenticates the session, or a socket `auth`. `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` read the session with `allow_locked` and do not revoke it. The revocation is published, so the REST request answers 401 and every socket already running on that session ends with `bye` `user_disabled` and `4403`. The socket whose first `auth` presented the token is not registered yet: it gets `err` `auth_failed` like any refused `auth` (§4.3), not `bye` `user_disabled`. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set. The invitation is optional: that `revoked` does not end the subscription, which continues with the kept accounts. With the backpressure flag on, the next data frame on that `ch` is the `reconfigure` `snap` described next, which the client applies as a new baseline (§7.1, item 4); a new `sub` is needed only to change the set.
+
+**Narrowed subscriptions (E17-T03).** A subscription that kept some accounts is not left holding what it received under the old scope. The discard is part of the narrowing itself: before any frame that announces it (`permission_change`, `revoked`, or `auth_ok` after an in-place re-`auth`) is queued, the server drops the subscription's throttle window and every frame of it still queued on the normal lane (§8.4). What the priority lane holds of it (`orders`, `executions`) is queued ahead of `permission_change` in the same lane and is delivered before it. Only then does the server re-pend the subscription for a `snap` with `reason: "reconfigure"` (§5.4: unless another reason is already pending; §7.7: no `d` is sent until that `snap`); the `snap` is built under the new scope, carries only the kept accounts and replaces everything the client holds for that topic. So no row of a removed account is delivered after the first frame that announces the narrowing: `permission_change`, or `auth_ok` on an in-place re-`auth`, which sends none. A subscription dropped outright loses its window and its queued normal-lane frames the same way. _Flag off:_ the subscription is narrowed in place and not re-snapshotted; the single FIFO queue sends everything already queued ahead of `permission_change`.
 
 ---
 
@@ -1326,6 +1340,13 @@ Errors mirror the REST problem model (`22-api-openapi.yaml` §C2) so the same cl
 - `ch` present → the error is scoped to one topic; other topics are unaffected.
 - Neither present → connection-level error.
 - `close: true` → a `bye` and close frame follow immediately.
+
+**Outbound encode or emit failure (E17-T03).** A frame the server cannot encode, or whose emission raises (a non-finite number, say), is a server fault; a frame that only meets a full queue is not, that is the §8.4 ladder. What follows depends on the frame (§8.4 lanes):
+
+- A **droppable** frame (a `d` or `snap` of a throttled topic): its topic drops to a `backpressure` re-snapshot (§8.4 steps 1 and 2) and the failure counts as a malformed update (`cv_ws_malformed_updates_total`); the connection stays open. A snapshot that itself cannot be built or encoded is parked and retried on the drain cadence (a coarse timer, or when its source rebuilds), never once per send or in a hot loop.
+- A **non-droppable** frame (`orders`, `executions`, a control frame or `system`): the connection closes with `bye` `internal_error` and `1011` (§4.4). It fails closed and never drops silently, because a client that missed an order transition or a `revoked` would act on a false state. The close is audited (`ws.connection.closed`, reason `internal_error`, `warning`: §4.3) and counted (`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type, topic family and error class, never its payload.
+
+_Flag off:_ a frame that the connection's encoder cannot serialise (`json.dumps`, or MessagePack on `cv.v1.msgpack`) faults the writer and closes the connection `internal_error` (`1011`) the same way, droppable or not; that close is audited (§4.3) and counted (`cv_ws_closes_total{reason="internal_error"}`, #2968), but the handler sends its `bye` and `1011` itself, with no flush deadline, as built (§8.4). A non-finite number is not such a frame: `json.dumps` writes `NaN` or `Infinity`, which is not valid JSON, and MessagePack packs it as a float, so the frame is sent. With the flag on, both encoders refuse it (a producer bug either way), so it is the encode failure above on either codec.
 
 ### 10.2 Catalogue
 
@@ -1436,6 +1457,8 @@ sequenceDiagram
 ---
 
 ## 12. Worked example sessions
+
+The sessions show a server with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4), so `welcome.features.coalescing` is `true` in them (§4.2).
 
 ### 12.1 Cold start of a trading workspace (happy path)
 
@@ -3777,6 +3800,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 
 **Server MUST:**
 
+<!-- prettier-ignore -->
 | #   | Requirement                                                                                          |
 | --- | ---------------------------------------------------------------------------------------------------- |
 | S1  | Emit exactly one `sub_ok` result per requested topic, in request order.                              |
@@ -3789,7 +3813,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 | S8  | Tag heuristic payloads `estimated: true` (arch P10).                                                 |
 | S9  | Tag replay frames `source: "replay"` / header flag bit2 and populate `wt`.                           |
 | S10 | Emit only error codes from the §10.2 catalogue.                                                      |
-| S11 | Send `bye` before every server-initiated close.                                                      |
+| S11 | Send `bye` before every server-initiated close. The exceptions are in §4.4 and §9.4; on deadline expiry the flush is abandoned and the transport closes with no `bye`. |
 | S12 | Reject unknown option keys rather than ignoring them.                                                |
 | S13 | Refuse the upgrade before `accept` when §2.5 fails; never negotiate, read or authenticate first.     |
 

@@ -173,7 +173,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 
 | ID     | Flow / element   | Threat                                                                                                                                                                                                                                                                                                                                                            | L   | I   | Risk   | Control                                                                                                                                                                                                                                                                                                                             | Owner            | Verify                    | Disp. | Residual                  |
 | ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------- | ----- | ------------------------- |
-| WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6)                                                                                                                      | E17-T03, #2155   | unit, chaos               | M     | Low                       |
+| WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6); a flush past 2 s is abandoned, never the attempt (S11 exception, 23 §4.4)                                           | E17-T03, #2155   | unit, chaos               | M     | Low                       |
 | WS-D02 | F3, P1           | Slow auth/principal lookup stalls the handshake while sockets accumulate                                                                                                                                                                                                                                                                                          | L   | M   | Low    | Auth timeout closes the socket; wrapping the awaits in `asyncio.timeout` is open (#2155, C-2.18) Requirement: SR-073.                                                                                                                                                                                                               | #2155            | unit                      | M     | Low                       |
 | WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | 5 resyncs / topic / minute, then `resync_rate_limited` and revocation (planned) Requirement: SR-040.                                                                                                                                                                                                                                | E17-S03          | unit, chaos               | M     | Low                       |
 | WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (caps the **accepted** topics only; entries beyond it are still parsed, echoed and audited, so it does not bound per-frame work, reply size or audit writes: see WS-D15), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073. | E17-S02          | unit, load                | M     | Medium (WS-D15 open)      |
@@ -275,7 +275,7 @@ justified it. The merged design (E17-S02) has three parts:
 
 **Gap analysis.** Once a subscription is narrowed or dropped, emission reads the subscription's own account
 set, so a withdrawn account cannot be emitted after the synchronous step. The remaining windows are about
-**which snapshot is applied**, not about emission:
+**which snapshot is applied** and **what is still queued**, not about emission:
 
 - _Snapshot ordering._ Principal resolution is asynchronous, so the design must guarantee that the
   snapshot applied to a connection is never older than the latest grant change, including for a connection
@@ -286,6 +286,21 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   current grants. With SR-E17-07 it cannot inherit a stale snapshot.
 - _Producer-side filtering._ Private-topic producers (E29/E34) must route events by account through the
   subscription's account set, not by user. Recorded as a referenced control (WS-I02).
+- _Queued and windowed data (E17-T03, flag on)._ With two outbound lanes (`23-ws-protocol.md` §8.4),
+  `permission_change` and `revoked` ride the priority lane and overtake what the normal lane still holds, and a
+  throttle window can hold data coalesced under the old scope. Requirement: in the narrowing step itself, before
+  any frame that announces it is queued, the subscription's pre-narrowing window **and** every frame of it still
+  queued on the normal lane are discarded; the subscription is then re-pended `reconfigure` and the snapshot is
+  built under the new scope. What the priority lane holds of it (`orders`, `executions`) is queued ahead of
+  `permission_change` in the same lane and needs no drop (dropping it would lose a kept account's last order
+  transition). A subscription dropped outright loses its window and its queued normal-lane frames the same way.
+  Invariant: no row of a removed account is delivered after the first frame that announces the narrowing:
+  `permission_change`, or `auth_ok` on an in-place re-`auth`, which sends none. Owner: E17-T03 (#412); a test
+  asserts it with a full window and a queued backlog (WS-E02). AC-13 covers a subscription dropped outright; no
+  seed covers the kept-accounts case yet (M1 on `positions` [A, B], O withdraws B: no B row after the announcing
+  frame, and a `reconfigure` snap that carries only A), so E17-T03's own test is its only coverage until E17-X02
+  adds one. With the flag off the single FIFO queue sends everything already queued ahead of `permission_change`,
+  so this window does not exist.
 
 Detection: `ws_revoked_total{reason}`, the `ws.subscription.revoked` and `ws.subscribe.denied` audit actions,
 and a metric for denied cross-account subscribes per identity (§8).
@@ -320,17 +335,39 @@ It is bounded by count, fills only as complete columns are emitted (one per time
 cap, not the 40-symbol one: up to about 42 MB per connection (200 x 210 KB) and about 336 MB per user (8
 connections), on top of the 8 MiB outbound budget.
 
-Wiring requirements (WS-D01, #412): after a `close` event the ladder latches and returns nothing, so the 8 MiB
-budget holds only while the gateway closes the socket promptly. It must feed nothing after the event but the `bye`
-(no push, no `Pacer.offer` or `tick`) and close in a `finally` around the best-effort close audit, so a slow or
-failed audit write cannot leave the queue unbounded; the wiring tests (#412) must assert both. Until #2529,
-footprint bars that share an open time make every update `unmergeable`: the topic is re-snapshotted per window with
-no rate bound (the 5 / topic / min limit covers client resyncs only, WS-D03). It counts apart as
-`cv_ws_overflow_total{reason="unmergeable"}`: alert on its rate.
+Wiring requirements (WS-D01, #412): after a `close` event the ladder latches and returns nothing, so the 8 MiB budget
+holds only while the gateway closes the socket promptly. It must feed nothing after the event but the `bye` (no push,
+no `Pacer.offer` or `tick`) and close in a `finally` around the best-effort close audit, so a slow or failed audit
+write cannot leave the queue unbounded; the wiring tests (#412) must assert both. The `bye` and the close marker are
+the only items admitted past the budget (`23-ws-protocol.md` §8.4): one small frame, so the bound holds to within one
+frame. Until #2529, footprint bars that share an open time make every update `unmergeable`: the topic is
+re-snapshotted per window with no rate bound (the 5 / topic / min limit covers client resyncs only, WS-D03). It
+counts apart as `cv_ws_overflow_total{reason="unmergeable"}`: alert on its rate.
 
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
 heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
 E17-Q03. Tracked as **RSK-063**.
+
+**Outbound budget under `CV_WS_BACKPRESSURE_ENABLED` (E17-T03, WS-D01).** The flag (C-4.13, off by default,
+removal #2900) swaps the mechanism that enforces the outbound bound; the bound itself exists in both states (1 024
+frames while it is off), so the flag gates no safety invariant (C-4.14). With it on, both lanes of the queue are
+inside the same 8 MiB / 2 000-frame accounting: a peer that cannot drain `orders`, `executions`, `system` or
+control frames meets the same `slow_consumer` close as any other (`23-ws-protocol.md` §8.4), and no lane is
+unbounded (C-2.18). `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` accept values from their floors up to this
+table's numbers: lowering never goes below the floor (4 194 304 bytes, one maximum outbound frame, and 256 frames,
+above the 200-subscription cap), and a raise is a change to a number in this table, which needs a security review
+in the same PR. Lowering is the safe direction for this threat, so the floors are typo guards and not a control:
+they stop a misconfiguration from closing every connection at its first large frame, and promise no more than
+that one frame fits. `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000 ms. A closing connection is bound by one
+2 s flush deadline, the close flush the gateway already has and `23-ws-protocol.md` §9.4 already counts once in
+the stop budget: on deadline expiry the flush is abandoned and the transport closes with no `bye` (the S11
+exception of `23-ws-protocol.md` §4.4). The `bye` is always enqueued before the 2 s starts, so the server abandons
+an undeliverable flush, never the attempt. With the flag on an expiry is observable: the close audit row carries
+`flush_abandoned: true` (with the `trigger` that `23-ws-protocol.md` §4.3 defines, `flush_deadline` only when no
+step 3 trigger fired) and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it (`23-ws-protocol.md`
+§8.4). Flag off, as built, neither is recorded, and the same 2 s starts when the reader returns, so a peer that is
+silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout); the
+`internal_error` close after a writer fault has no flush deadline at all (`23-ws-protocol.md` §10.1).
 
 ## 7. Abuse-case seeds (handed to E17-X02)
 
@@ -406,6 +443,28 @@ a user's first refusal in a window. Every close also writes the generic `ws clos
 `cv_ws_closes_total{reason="client_rate_limited"}` ticks for each refusal too, and is shared with the inbound frame
 limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
+**Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
+(`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries an `after_state` of at most two
+bounded fields, as that section states them (flag off: none). `trigger` is `budget` or `redrop` for a close of §8.4
+step 3 (`23-ws-protocol.md`), or `flush_deadline` for a close that had no step 3 trigger and whose `bye` flush missed
+the 2 s deadline (the S11 exception of `23-ws-protocol.md` §4.4); `flush_abandoned: true` is added whenever that
+deadline expired, so a `budget` close whose flush also expires keeps `budget`. The vocabulary is closed (three
+trigger values and one flag, never a topic name or a count), so the row stays one fixed-size record, and the two
+fields keep both facts of a close: an identity whose `redrop` closes repeat (a client that cannot recover its
+snapshots) reads differently from one with `budget` closes (a client that cannot drain at all), and
+`flush_abandoned: true` on either marks a peer that did not take the flush within 2 s. The same expiry counts in
+`cv_ws_overflow_total{reason="close_flush_deadline"}` (`23-ws-protocol.md` §8.4), in addition to the step 3 value.
+The registry's eviction of a connection whose `permission_change` or `revoked` send stalled or failed (the fan-out
+send timeout above) is also a `slow_consumer` close: it carries no step 3 trigger (when its own flush expires it
+carries `trigger` `flush_deadline` and `flush_abandoned: true`), and with the flag on, like every `slow_consumer`
+close, it clears both lanes before the `bye`, so nothing queued under the old scope follows an identity change
+(flag off, as built: the `bye` follows the frames already queued, `23-ws-protocol.md` §8.4). A non-droppable frame
+(`orders`, `executions`, control, `system`) that cannot be encoded, or whose emission raises, closes the connection
+`internal_error`: it fails closed and never drops silently, because a client that missed an order transition or a
+`revoked` would act on a false state. That close is audited (`ws.connection.closed`, reason `internal_error`,
+`warning`) and counted (`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type,
+family and error class, never its payload (C-12.6).
+
 ## 9. Control-to-ticket map
 
 Every E17-* ticket appears here; a missing row is a model defect (GOV-008,
@@ -421,7 +480,7 @@ PR; local aliases `SR-E17-01..07` in the rows above map 1:1 to SR-183..SR-189; S
 | E17-S01                     | Handshake, timeouts, attempts, rate limit, frame cap, re-auth identity, no query-string token (S01-S06, T02, D05-D07, E05, I01); Origin allow-list SR-183; nested-JSON handling SR-184; #2155 follow-ups (pre-auth cap, await timeouts) |
 | E17-S02                     | Registry, option schema, per-account `decide`, generic denial, revocation, audit (T03-T06, I02, I03, E01-E03, R01, R02, D04, D09); snapshot versioning SR-189 (follow-up filed)                                                         |
 | E17-S03                     | Sequencing, `upstream_desync` snap, resync rate limit, 4 MiB chunking (T05, T07, D03, D10); `system` payload filtering SR-188                                                                                                           |
-| E17-T03                     | 8 MiB / 2 000-frame budget, overflow ladder, coalescing, throttles (D01, D08)                                                                                                                                                           |
+| E17-T03                     | 8 MiB / 2 000-frame budget (lower only), both lanes inside it, overflow ladder, coalescing, throttles (D01, D08); narrowing drops queued and windowed data first (E02); an unsendable non-droppable frame closes `internal_error` (D01) |
 | E17-T04                     | Web client `hello`/`auth` (#2155), worker decode, gap detection, no token in URL (T07, D10, I07)                                                                                                                                        |
 | E17-T05                     | Single error builder; `internal_error` carries no text (I01)                                                                                                                                                                            |
 | E17-T06                     | Detection metrics and audit-failure counter (§8, SR-186, SR-187)                                                                                                                                                                        |
@@ -500,3 +559,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler attempts its close row; the shutdown label is best effort in the window (§10)              |
 | 2026-10-16 | author (agent; PR for #2565)                      | WS-D17 added (#2565): the planned shutdown against the stop budget and uvicorn's drain; WS-R04 as built gains the drain floor (#2827)        |
 | 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |
+| 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag, floors and S11 flush deadline (§6), close fields and fail-closed close (§8), row (§9)   |
