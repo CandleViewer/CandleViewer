@@ -14,8 +14,6 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
-    DOWN_MAX_S,
-    HEARTBEAT_MAX_S,
     AccountHealthMonitor,
     HealthState,
     HealthThresholds,
@@ -147,17 +145,12 @@ def test_thresholds_cannot_exceed_the_us_acct_010_caps(heartbeat: float, down: f
 
 
 def test_thresholds_at_the_us_acct_010_caps_are_accepted() -> None:
-    assert HealthThresholds(10, 30) == HealthThresholds(HEARTBEAT_MAX_S, DOWN_MAX_S)
+    assert HealthThresholds(10, 30) == HealthThresholds(ACCOUNT_HEARTBEAT_MAX_S, ACCOUNT_DOWN_MAX_S)
 
 
 def test_the_defaults_are_the_us_acct_010_caps_in_thresholds_and_settings() -> None:
     assert HealthThresholds() == HealthThresholds(10, 30)
     assert HealthThresholds.from_settings(Settings()) == HealthThresholds()
-
-
-def test_settings_carry_the_same_caps_as_the_health_module() -> None:
-    """M1 may not import `accounts`, so `Settings` mirrors the caps; the pair must not drift."""
-    assert (ACCOUNT_HEARTBEAT_MAX_S, ACCOUNT_DOWN_MAX_S) == (HEARTBEAT_MAX_S, DOWN_MAX_S)
 
 
 def test_the_us_acct_010_limits_themselves_are_accepted() -> None:
@@ -175,13 +168,18 @@ def test_a_heartbeat_at_least_every_window_keeps_an_idle_account_healthy(cadence
     assert monitor.current(ACC) is HealthState.HEALTHY
 
 
-def test_system_clock_is_tz_aware_and_monotonic_off_linux_too(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_system_clock_now_is_tz_aware() -> None:
+    assert SystemClock().now().tzinfo is not None
+
+
+def test_system_clock_monotonic_never_runs_backwards() -> None:
     clock = SystemClock()
-    assert clock.now().tzinfo is not None and clock.monotonic() <= clock.monotonic()
+    assert clock.monotonic() <= clock.monotonic()
+
+
+def test_system_clock_monotonic_works_off_linux_too(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert clock.monotonic() > 0
+    assert SystemClock().monotonic() > 0
 
 
 def test_wire_timestamps_are_epoch_milliseconds() -> None:

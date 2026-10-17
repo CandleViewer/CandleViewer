@@ -26,7 +26,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from candleviewer.accounts.models import UtcDatetime
-from candleviewer.settings import Settings
+from candleviewer.settings import ACCOUNT_DOWN_MAX_S, ACCOUNT_HEARTBEAT_MAX_S, Settings
 
 
 class HealthState(StrEnum):
@@ -69,30 +69,26 @@ class SystemClock:
         return datetime.now(UTC)
 
 
-#: US-ACCT-010's caps on the two windows, written once here: a heartbeat older than 10 s must not
-#: show `healthy`, and order entry must close within 30 s of the last WS or REST success. They are
-#: limits, not tuning room, and no flag may move them (C-4.14). `Settings` mirrors them as its
-#: `le=` bounds, because M1 may not import `accounts`; a test pins the pair.
-HEARTBEAT_MAX_S: Final = 10.0
-DOWN_MAX_S: Final = 30.0
-
-
 @dataclass(frozen=True, slots=True)
 class HealthThresholds:
     """`CV_ACCOUNT_HEARTBEAT_S`: max heartbeat age; `CV_ACCOUNT_DOWN_S`: silence before down.
-    Neither may exceed its US-ACCT-010 cap, which is also its default, so no caller can build a
-    monitor that holds an old heartbeat `healthy` or admits orders through a longer silence."""
+    Neither may exceed its US-ACCT-010 cap, which is also its default: `ACCOUNT_HEARTBEAT_MAX_S`
+    and `ACCOUNT_DOWN_MAX_S`, written once in `settings`, where `Settings` bounds both fields by
+    them. A heartbeat older than 10 s must not show `healthy`, and order entry must close within
+    30 s of the last WS or REST success. The caps are limits, not tuning room, and no flag may move
+    them (C-4.14), so no caller can build a monitor that holds an old heartbeat `healthy` or
+    admits orders through a longer silence."""
 
-    heartbeat_s: float = HEARTBEAT_MAX_S
-    down_s: float = DOWN_MAX_S
+    heartbeat_s: float = ACCOUNT_HEARTBEAT_MAX_S
+    down_s: float = ACCOUNT_DOWN_MAX_S
 
     def __post_init__(self) -> None:
         if not 0 < self.heartbeat_s < self.down_s:
             raise ValueError("health thresholds need 0 < heartbeat_s < down_s")
-        if self.heartbeat_s > HEARTBEAT_MAX_S or self.down_s > DOWN_MAX_S:
+        if self.heartbeat_s > ACCOUNT_HEARTBEAT_MAX_S or self.down_s > ACCOUNT_DOWN_MAX_S:
             raise ValueError(
-                f"health thresholds are capped at heartbeat_s <= {HEARTBEAT_MAX_S:g} and "
-                f"down_s <= {DOWN_MAX_S:g} (US-ACCT-010)"
+                f"health thresholds are capped at heartbeat_s <= {ACCOUNT_HEARTBEAT_MAX_S:g} and "
+                f"down_s <= {ACCOUNT_DOWN_MAX_S:g} (US-ACCT-010)"
             )
 
     @classmethod
@@ -131,7 +127,6 @@ class _Account:
     changed_at: datetime
     since: float  # `changed_at` on the monotonic clock
     state: HealthState = HealthState.DOWN
-    reason: HealthReason = "never_connected"
     ws_at: float | None = None
     ws_live: bool = False
     rest_at: float | None = None
@@ -143,6 +138,7 @@ class _Account:
 class AccountHealthMonitor:
     """Health for every tracked account. Feed it evidence as it arrives and call `tick()` at
     least once a second to commit transitions; `current()` and `view()` derive on every read.
+    Meant for one event loop: no locks and no I/O, so not thread-safe.
 
     An evidence call first commits any lapse the old evidence reached, so a down window that
     passed between two ticks is still a transition, and returns the latest transition. Evidence
@@ -181,6 +177,9 @@ class AccountHealthMonitor:
         return self._commit(account_id, acc) or lapse
 
     def ws_dropped(self, account_id: UUID) -> HealthTransition | None:
+        """Call when the account's authenticated private socket closes. The client must not feed
+        `ws_heartbeat` for that socket afterwards: a straggler message would re-arm `healthy` for
+        up to `heartbeat_s`."""
         if (acc := self._accounts.get(account_id)) is None:
             return None
         lapse = self._commit(account_id, acc)
@@ -188,6 +187,9 @@ class AccountHealthMonitor:
         return self._commit(account_id, acc) or lapse
 
     def rest_ok(self, account_id: UUID) -> HealthTransition | None:
+        """Evidence of a successful authenticated REST response for this account: a signed private
+        call that the exchange accepted. Never a public endpoint, a 4xx or a 5xx, so a rejected
+        key cannot count as health."""
         if (acc := self._accounts.get(account_id)) is None:
             return None
         lapse = self._commit(account_id, acc)
@@ -249,11 +251,11 @@ class AccountHealthMonitor:
         return state, reason, began, acc.changed_at + timedelta(seconds=began - acc.since)
 
     def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
-        state, acc.reason, began, at = self._project(acc, self._clock.monotonic())
+        state, reason, began, at = self._project(acc, self._clock.monotonic())
         if state is acc.state:
             return None
-        moved = HealthTransition(account_id, acc.state, state, acc.reason, at)
+        moved = HealthTransition(account_id, acc.state, state, reason, at)
         acc.state, acc.since, acc.changed_at = state, began, at
-        log = structlog.get_logger(__name__).bind(account_id=str(account_id), reason=acc.reason)
+        log = structlog.get_logger(__name__).bind(account_id=str(account_id), reason=reason)
         log.info("account.health_changed", from_state=moved.from_state.value, to_state=state.value)
         return moved
