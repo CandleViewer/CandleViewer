@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 from _drawings_contract import MIN_POINTS, MISSING, SCHEMAS, SPEC, SYMBOLS, TOOLS, Api, drawing
 
+from tests.contract.rbac.rbac_harness import user_id_of
+
 OWNER = "owner"
 
 
@@ -95,10 +97,15 @@ def test_limit_has_the_documented_default_and_bounds(api: Api) -> None:
 
 
 def test_list_holds_both_scopes_and_an_unknown_layout_filter_is_404(api: Api) -> None:
-    """Narrowing to a live layout needs layouts (E15-T01); until then every layout is unknown."""
+    """`GET ?layout_id` asks the layout store (E15-T01): a live layout of the caller narrows the
+    list; once it is gone, like any unknown id, the filter is 404 and a write naming it is 422."""
     layout = str(uuid.uuid4())
+    api.repo.layouts[layout] = str(user_id_of(OWNER))  # live while its drawing is stored
     scoped, unscoped = api.seed(OWNER, layout_id=layout), api.seed(OWNER)
     assert sorted(d["id"] for d in api.listed(OWNER)) == sorted([scoped, unscoped])
+    narrowed = api.send(OWNER, "listDrawings", params={"symbol": SYMBOLS[0], "layout_id": layout})
+    assert [d["id"] for d in narrowed.json()["items"]] == [scoped]
+    del api.repo.layouts[layout]  # the layout is deleted (the fake does not cascade)
     for unknown in (layout, MISSING):
         params = {"symbol": SYMBOLS[0], "layout_id": unknown}
         r = api.send(OWNER, "listDrawings", params=params)
