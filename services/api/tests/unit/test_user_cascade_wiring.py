@@ -214,10 +214,15 @@ async def test_overlapping_disarms_of_one_rule_write_one_record_and_park_nothing
 
 async def test_rules_module_not_running_is_a_failed_disarm() -> None:
     """`RulesService.manager()` is `None` while the module is stopped: nothing can be disarmed,
-    and that is said, not skipped."""
+    and that is said, not skipped: the same one error line as any other failure names the rule."""
     adapter = RuleDisarmAdapter(InMemoryRuleStore(), lambda: None)
-    with pytest.raises(RulesNotRunning):
+    with capture_logs() as logs, pytest.raises(RulesNotRunning):
         await adapter.disarm("rule-1", user_id=_A, actor=_OWNER, disabled_at=_T0)
+    (line,) = [entry for entry in logs if entry["event"] == "users.disable.rule_not_disarmed"]
+    assert (line["rule_id"], line["target_user_id"], line["error"], line["code"]) == (
+        *("rule-1", str(_A), "RulesNotRunning", None),
+    )
+    assert line["log_level"] == "error"
 
 
 class _Source:

@@ -104,13 +104,14 @@ class RuleDisarmAdapter:
     ) -> None:
         """B9 DISARM for one of `user_id`'s rules, one at a time. A rule that is already disarmed
         is a no-op with no record, also when two disarms of it overlap; a rule that is not the
-        user's and any refusal or failure is raised after one error line that names the rule."""
-        manager = self._manager()
-        if manager is None:
-            raise RulesNotRunning(rule_id)
+        user's, a stopped rules module and any refusal or failure are raised after one error line
+        that names the rule."""
         key = disarm_key(user_id, rule_id, disabled_at)
         try:
             async with self._lock:
+                manager = self._manager()
+                if manager is None:
+                    raise RulesNotRunning(rule_id)
                 await self._require_owned(rule_id, user_id)
                 await manager.set_mode(rule_id, DISARMED, _acting_owner(actor), key)
         except Exception as exc:
