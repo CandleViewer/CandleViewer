@@ -36,11 +36,13 @@ from candleviewer.observability.metrics_runtime import (
 _UNIT_SUFFIX = re.compile(
     r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts)$"
 )
-#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules) and
-#: by the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998).
+#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules),
+#: by the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998), and
+#: the E42-T03 ticket's 1/0 order-gate gauge `cv_maintenance_mode`.
 _SUFFIX_EXCEPTIONS = frozenset(
     {
         "disk_used_ratio",
+        "cv_maintenance_mode",
         "recorder_disk_pressure_level",
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
@@ -294,6 +296,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
         | NET_EXPORTED_NAMES
     )
     others |= FLAG_NAMES
+    assert FLAG_NAMES <= {s.name for s in live_specs() if s.exported}
     others |= AUDIT_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES

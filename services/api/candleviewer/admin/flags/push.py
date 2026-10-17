@@ -80,7 +80,7 @@ class FlagPush:
 
     def notify_maintenance(self, on: bool) -> None:
         """The maintenance `notice` to every session, for a stored transition the controller
-        reads (D1c); a write's own transition is announced by `flag_changed`."""
+        reads (`setFeatureFlag`); a write's own transition is announced by `flag_changed`."""
         notice = _notice(on)
         for session in tuple(self._sessions.authenticated()):
             _send(session, notice, MAINTENANCE_MODE)

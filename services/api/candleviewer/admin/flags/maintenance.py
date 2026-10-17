@@ -120,7 +120,7 @@ class MaintenanceController:
         self._values: dict[str, bool | None] = dict.fromkeys(GATE_FLAGS)
         self._entered = False
         self._recorder_paused = False
-        #: The stored `maintenance.mode` last announced; `None` until known (D1c).
+        #: The stored `maintenance.mode` last announced; `None` until known (`setFeatureFlag`).
         self._announced: bool | None = None
 
     def _apply(self) -> None:
@@ -160,8 +160,8 @@ class MaintenanceController:
             await self._effects(maintenance)
 
     async def _announce(self, now: bool | None) -> None:
-        """D1c: notice and audit a stored transition read here: unknown to `True` counts, unknown
-        to `False` does not, and an outage or an unreadable row (`None`) announces nothing."""
+        """Notice and audit a stored transition read here (`setFeatureFlag`): unknown to `True`
+        counts, unknown to `False` does not, and an outage or unreadable row (`None`) is silent."""
         was = self._announced
         if now is None or now == was:
             return

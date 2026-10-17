@@ -183,7 +183,7 @@ async def test_a_boot_that_finds_maintenance_on_announces_it_once() -> None:
     rig = _Rig()
     await rig.store.ensure(rig.service.registry.values())
     rig.db(MAINTENANCE_MODE, True)
-    await rig.controller.refresh()  # boot: unknown to a stored true is a transition (D1c)
+    await rig.controller.refresh()  # a boot: unknown to true is a transition (`setFeatureFlag`)
     await rig.controller.refresh()
     assert rig.algos.calls == ["maintenance.enabled"]
     enabled = [("notice", "maintenance.enabled"), ("maintenance.enabled", "system:maintenance")]

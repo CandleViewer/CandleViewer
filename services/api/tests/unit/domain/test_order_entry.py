@@ -261,7 +261,8 @@ def test_only_the_kernels_exact_refusal_type_is_relayed(
     in_maintenance_slot: bool, result: object, returned: str
 ) -> None:
     maintenance = _LookAlikeMaintenance(result) if in_maintenance_slot else _maintenance(False)
-    accounts = () if in_maintenance_slot else (_Check(result),)  # type: ignore[arg-type]
+    lookalike = (_Check(result),)  # type: ignore[arg-type]  # a look-alike: the guard's subject
+    accounts = () if in_maintenance_slot else lookalike
     check = "_LookAlikeMaintenance" if in_maintenance_slot else "_Check"
     with pytest.raises(TypeError) as exc:
         OrderEntryGate(maintenance, *accounts).refusal(_ACCOUNT)
