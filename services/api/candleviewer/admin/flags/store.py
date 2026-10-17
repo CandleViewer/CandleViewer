@@ -84,7 +84,8 @@ class UserDirectory(Protocol):
 ChangeHook = Callable[[str, StoredFlag | None, StoredFlag], Awaitable[None]]
 #: Demands a fresh elevation of the class for the principal's session; raises to refuse (the
 #: route answers `403 step_up_required` restating the change; auth audits `auth.step_up_required`).
-StepUp = Callable[[AuditPrincipal, StepUpClass, FlagWrite], Awaitable[None]]
+#: A no-grace class passes only with the grant bound to the fingerprint of the route's request.
+StepUp = Callable[[AuditPrincipal, StepUpClass, FlagWrite, str | None], Awaitable[None]]
 
 
 class AuditEmitter(Protocol):

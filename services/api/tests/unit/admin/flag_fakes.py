@@ -109,12 +109,20 @@ class FakeStepUp:
     def __init__(self, missing: frozenset[str] = frozenset()) -> None:
         self.demanded: list[str] = []
         self.changes: list[FlagWrite] = []  # what each demand would restate
+        self.fingerprints: list[str | None] = []  # the route's request hash, as each got it
         self.missing = missing
         self.hold: asyncio.Event | None = None
 
-    async def __call__(self, who: AuditPrincipal, action_class: str, change: FlagWrite) -> None:
+    async def __call__(
+        self,
+        who: AuditPrincipal,
+        action_class: str,
+        change: FlagWrite,
+        fingerprint: str | None = None,
+    ) -> None:
         self.demanded.append(action_class)
         self.changes.append(change)
+        self.fingerprints.append(fingerprint)
         if self.hold is not None:
             await self.hold.wait()
         if action_class in self.missing:

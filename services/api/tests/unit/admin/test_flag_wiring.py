@@ -31,7 +31,7 @@ from candleviewer.admin.flags.policy import StepUpClass
 from candleviewer.admin.flags.store import FlagWrite
 from candleviewer.api.step_up import StepUpRefused, step_up_port
 from candleviewer.audit.access import AuditPrincipal
-from candleviewer.auth.errors import StepUpRequired
+from candleviewer.auth.errors import StepUpMismatch, StepUpRequired
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES, StepUpChallenge
 from candleviewer.settings import Environment, Settings
 from candleviewer.statechart.bindings import b16_session
@@ -239,9 +239,10 @@ def test_the_sessions_are_the_hubs_authenticated_sockets() -> None:
 
 
 _CHANGE = FlagWrite("a.b", False, {}, _T0, _OWNER.user_id)
+_FP = "f" * 64  # the route's fingerprint of its request
 
 
-@pytest.mark.parametrize("action_class", ["flags"])  # the no-grace classes need #3088's fingerprint
+@pytest.mark.parametrize("action_class", ["flags", "killswitch", "live_enablement"])
 @pytest.mark.parametrize(
     ("elevated", "session", "status"),
     [(True, _OWNER.session_id, None), (False, _OWNER.session_id, 403), (True, None, 401)],
@@ -256,18 +257,48 @@ async def test_the_step_up_port_demands_the_writers_class_and_raises_what_a_refu
     step_up.record_pending = AsyncMock(return_value=challenge)
     auth = SimpleNamespace(step_up_is_active=True, step_up=step_up)
     who = AuditPrincipal(_OWNER.user_id, "owner", _FLAGS, session)
-    demand = step_up_port(auth, wiring.restate_flag_write)(who, action_class, _CHANGE)
+    demand = step_up_port(auth, wiring.restate_flag_write, None)(who, action_class, _CHANGE, _FP)
     if status is None:  # elevated: let through
         await demand
     else:
         with pytest.raises(StepUpRefused) as refused:
             await demand
         assert refused.value.response.status_code == status
-    assert gate.await_args_list == ([] if session is None else [call(str(session), action_class)])
+    bound = {"fingerprint": _FP} if single else {}  # a no-grace grant is bound to the request
+    assert gate.await_args_list == (
+        [] if session is None else [call(str(session), action_class, **bound)]
+    )
+    if status == 403:
+        assert step_up.record_pending.await_args_list == [call(str(session), action_class, **bound)]
     if status == 403:  # the challenge restates the change (#2304)
         body = json.loads(bytes(refused.value.response.body))
         assert (body["action_class"], body["target"]) == (action_class, None)
         assert body["action_summary"] == "Set feature flag 'a.b' to false, user overrides 0"
+
+
+@pytest.mark.parametrize(
+    "action_class", sorted(NO_GRACE_ACTION_CLASSES & {"killswitch", "live_enablement"})
+)
+async def test_a_grant_bound_to_another_request_is_audited_through_the_ports_emitter(
+    action_class: str,
+) -> None:
+    other = StepUpMismatch(action_class, user_id="u", challenge_id="c", bound="a" * 64, refused=_FP)
+    step_up = SimpleNamespace(consume_single_use=AsyncMock(side_effect=other))
+    step_up.record_pending = AsyncMock(
+        return_value=StepUpChallenge(uuid.uuid4(), action_class, _T0)
+    )
+    auth, emitter = SimpleNamespace(step_up_is_active=True, step_up=step_up), AsyncMock()
+    demand = step_up_port(auth, wiring.restate_flag_write, emitter)(
+        _OWNER, action_class, _CHANGE, _FP
+    )
+    with pytest.raises(StepUpRefused):
+        await demand
+    [mismatch] = emitter.emit.await_args_list
+    assert mismatch.args == ("auth.step_up_mismatch",)
+    assert mismatch.kwargs["after_state"] == {
+        "bound_request_sha256": "a" * 64,
+        "refused_request_sha256": _FP,
+    }
 
 
 def test_a_write_is_restated_from_its_validated_change_alone() -> None:

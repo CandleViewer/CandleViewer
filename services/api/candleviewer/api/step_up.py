@@ -367,17 +367,26 @@ async def require_elevation_for(
 
 
 async def require_session_elevation(
-    auth: _AuthLike, session_id: object | None, action_class: str, text: ChallengeText | None = None
+    auth: _AuthLike,
+    session_id: object | None,
+    action_class: str,
+    text: ChallengeText | None = None,
+    *,
+    fingerprint: str | None = None,
+    emitter: _Emitter | None = None,
 ) -> JSONResponse | None:
     """`require_elevation_for` for a handler that resolved its caller itself (#2304): with no
     session there is nothing to elevate and no challenge to issue (401), and sessions wired
     without step-up are a wiring fault (503, as on the path-gated routes), never a refusal no
-    client could answer. A challenge restates `text`, as there."""
+    client could answer. A challenge restates `text`, and a no-grace class needs the
+    `fingerprint` of the request, as there."""
     if session_id is None:
         return _unauthenticated()
     if not auth.step_up_is_active:
         return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
-    return await require_elevation_for(auth, str(session_id), action_class, text=text)
+    return await require_elevation_for(
+        auth, str(session_id), action_class, text=text, fingerprint=fingerprint, emitter=emitter
+    )
 
 
 class StepUpRefused(Exception):
@@ -387,15 +396,21 @@ class StepUpRefused(Exception):
 
 
 def step_up_port(
-    auth: _AuthLike, restate: Callable[[FlagWrite], ChallengeText]
-) -> Callable[[AuditPrincipal, str, FlagWrite], Awaitable[None]]:
+    auth: _AuthLike, restate: Callable[[FlagWrite], ChallengeText], emitter: _Emitter | None
+) -> Callable[[AuditPrincipal, str, FlagWrite, str | None], Awaitable[None]]:
     """`require_session_elevation` raising `StepUpRefused`, for a writer that picks the action
     class itself under its lock (the feature-flag writer); a challenge restates the validated
-    change the writer gives, by the route's template `restate` (#2304)."""
+    change the writer gives, by the route's template `restate` (#2304). A no-grace class
+    passes only with the grant bound to `fingerprint`, which the route computed from the
+    request it validated; `emitter` writes the `auth.step_up_mismatch` of another request's."""
 
-    async def demand(who: AuditPrincipal, action_class: str, change: FlagWrite) -> None:
+    async def demand(
+        who: AuditPrincipal, action_class: str, change: FlagWrite, fingerprint: str | None
+    ) -> None:
         text = restate(change)
-        refused = await require_session_elevation(auth, who.session_id, action_class, text)
+        refused = await require_session_elevation(
+            auth, who.session_id, action_class, text, fingerprint=fingerprint, emitter=emitter
+        )
         if refused is not None:
             raise StepUpRefused(refused)
 

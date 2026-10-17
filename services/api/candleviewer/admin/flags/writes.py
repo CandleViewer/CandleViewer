@@ -118,11 +118,13 @@ class FlagWriter:
         expected_updated_at: datetime | None,
         evidence_url: str | None = None,
         user_overrides: Mapping[uuid.UUID, object] | None = None,
+        fingerprint: str | None = None,
     ) -> StoredFlag:
         """Write `value`, and `user_overrides` unless `None` (which keeps the stored ones), to the
         flag `key` for `principal`; returns the committed row. Raises `FlagsWriteDenied` (403),
         `UnknownFlagError` (404), `FlagValidationError` (422), the step-up's refusal (403
-        `step_up_required`), `FlagConflictError` (409) or `StoreUnavailableError` (503)."""
+        `step_up_required`), `FlagConflictError` (409) or `StoreUnavailableError` (503).
+        `fingerprint` is the route's hash of its request, which a no-grace step-up binds to."""
         if not principal.has("flags:write"):  # before every lookup and every 422
             raise FlagsWriteDenied("flags:write")
         evidence, audited_url = check_evidence_url(evidence_url)  # once per request
@@ -164,7 +166,8 @@ class FlagWriter:
                         await audit.refused(row, refusal.rule)
                         raise
                     change = FlagWrite(key, new, overrides, expected, principal.user_id)
-                    await self._step_up(principal, step_up_class(spec, row, value), change)
+                    step_class = step_up_class(spec, row, value)
+                    await self._step_up(principal, step_class, change, fingerprint)
                     await audit.intent(row)  # write-ahead: unrecorded, nothing is written
             except TimeoutError:  # nothing commits: answered as a store outage
                 raise StoreUnavailableError("a write await timed out") from None
