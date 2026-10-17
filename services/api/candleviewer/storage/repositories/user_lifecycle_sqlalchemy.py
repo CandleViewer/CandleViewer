@@ -98,7 +98,11 @@ class SqlAlchemyUserLifecycleStore:
         Raises `UserSelfTargetError`, what the owner-floor check raises for the last active
         owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
         `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
-        driver or commit `TimeoutError` is raised as is: the outcome is unknown."""
+        driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
+        landed, the revoked ids are lost with the exception, so no post-commit step runs for
+        those sessions, and a retry, which is AC5's no-op and returns no ids, does not settle
+        them: their sockets stay open until their access token expires (up to 12 min,
+        ADR-0020) and no B16 REVOKE record is written for them."""
         if user_id == actor:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
