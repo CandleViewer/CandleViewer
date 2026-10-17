@@ -124,6 +124,8 @@ def _log() -> Any:
 class BarLeases(Protocol):
     """`BarBuilderSet` lease surface (E12-T03). `user` is ALWAYS the authenticated principal."""
 
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None: ...
+
     async def register(
         self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
     ) -> None: ...
@@ -506,14 +508,14 @@ class ConnectionAuthz:
         result. A `bars.*` one first passes `_bars_refusal`. A `bars.*` or `footprint.*` spec is
         bounded (`_bar_spec`, SR-E12-03) wherever a builder could serve it: live with the bar
         service wired, or replay. Replay and private subscriptions take nothing. A live public one
-        takes, in order: for `bars.*`, a hold on its series in the snapshot store (`ensure`, before
-        the lease, so the closes the builder emits while it restores reach the series); for
-        `bars.*` and `footprint.*`, the `BarBuilderSet` lease, with `user=` the authenticated
-        principal id, never a client value; then the shared upstream refs (`bars.*` leases its
-        symbol's trades, `ws_wiring.ingestion_streams`). A spec cap is `subscription_limit`, a
-        stopping bar service `internal_error` (retryable), any other bars refusal
-        `invalid_topic_format`. `_drop` releases what was taken, on a refusal, an `unsub`, a
-        revocation (one during these awaits: #2896) or the connection's end."""
+        takes, in order: for `bars.*`, if the set's `check` passes (a refused spec takes no hold), a
+        hold on its series in the snapshot store (`ensure`, so the closes a restoring builder emits
+        reach it); for `bars.*` and `footprint.*`, the `BarBuilderSet` lease (`register` checks
+        again), with `user=` the authenticated principal id, never a client value; then the shared
+        upstream refs (`bars.*` leases its symbol's trades, `ws_wiring.ingestion_streams`). A spec
+        cap is `subscription_limit`, a stopping bar service `internal_error` (retryable), any other
+        bars refusal `invalid_topic_format`. `_drop` releases what was taken, on a refusal, an
+        `unsub`, a revocation (one during these awaits: #2896) or the connection's end."""
         family = sub.topic.family.family
         spec: BarSpec | None = None
         if family in {"bars", "footprint"}:
@@ -533,6 +535,7 @@ class ConnectionAuthz:
             if spec is not None and bars is not None:
                 symbol = sub.topic.symbol or ""
                 if family == "bars" and self.services.series is not None:
+                    bars.check(spec, symbol, user=str(self.principal.user_id))
                     sub.series_hold = await self.services.series.ensure(symbol, spec)
                 await bars.register(spec, symbol, consumer, user=str(self.principal.user_id))
                 sub.bar_lease = (spec.spec_hash, symbol)

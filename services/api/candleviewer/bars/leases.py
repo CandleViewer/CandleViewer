@@ -70,11 +70,8 @@ class SpecLeases:
         bars_spec_cap_rejected_total.labels(reason=cap).inc()
         return SpecCapExceeded(cap, limit, active, own)
 
-    def acquire(self, key: Key, consumer: str, user: str | None) -> bool:
-        """Add a lease; returns `True` when `key` is a new series the caller must build.
-
-        Raises `SpecCapExceeded` before changing anything.
-        """
+    def check(self, key: Key, user: str | None) -> None:
+        """Raise the `SpecCapExceeded` (counted) `acquire` would raise now; change nothing."""
         series = self._series.get(key)
         if user is not None:
             mine = self._user_keys(user)
@@ -87,6 +84,12 @@ class SpecLeases:
                 raise self._refuse("per-symbol", self._caps.per_symbol, len(on_sym))
             if len(self._series) >= self._caps.global_:
                 raise self._refuse("process-wide", self._caps.global_, len(self._series))
+
+    def acquire(self, key: Key, consumer: str, user: str | None) -> bool:
+        """`check`, then add a lease; `True` when `key` is a new series the caller must build."""
+        self.check(key, user)
+        series = self._series.get(key)
+        if series is None:
             series = self._series[key] = _Series()
             new = True
         else:

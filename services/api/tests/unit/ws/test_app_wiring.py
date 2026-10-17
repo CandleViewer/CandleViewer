@@ -124,9 +124,8 @@ def test_bars_feature_on_lets_bars_topics_through() -> None:
 def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_source(
     enabled: bool,
 ) -> None:
-    """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399
-    D2: the series store, then the publisher, ahead of the writer on the emit path, the store
-    behind the `bars` snapshots and the subscribe hold, the publisher on the gateway's hub."""
+    """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399 D2:
+    store, publisher, then writer on the emit path; the store behind the snapshots and the hold."""
     app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
     svc = app.state.ws_registry.services
     source = svc.snapshots._sources.get("bars")
@@ -146,9 +145,8 @@ def test_bars_scales_are_the_places_of_the_catalogue_tick_size_and_qty_step() ->
     """§3.4's floor scales; None for a symbol the catalogue does not list, or no catalogue."""
     snap = {"BTCUSDT": SimpleNamespace(tick_size=Decimal("0.10"), qty_step=Decimal("0.001")),
             "XUSDT": SimpleNamespace(tick_size=Decimal("5"), qty_step=Decimal("1E+1"))}  # fmt: skip
-    ctx: Any = SimpleNamespace(
-        ingestion=SimpleNamespace(instruments=SimpleNamespace(snapshot=lambda: snap))
-    )
+    ins = SimpleNamespace(snapshot=lambda: snap)
+    ctx: Any = SimpleNamespace(ingestion=SimpleNamespace(instruments=ins))
     got = [_catalogue_scales(ctx, s) for s in ("BTCUSDT", "XUSDT", "ETHUSDT")]
     assert got == [(1, 3), (0, 0), None]
     bare: Any = SimpleNamespace(ingestion=SimpleNamespace(instruments=None))

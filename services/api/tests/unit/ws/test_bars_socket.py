@@ -1,7 +1,6 @@
 """E12-T06 slice D2 (#399): `bars.*` through the real `/ws` socket, wired as `create_app` wires it:
-the series store, then the publisher, on the emit path; the store behind the `bars` snapshots and
-the subscribe hold; a `bars` subscription leasing its symbol's trades. Every receive is bounded by
-`_recv` (5 s); emissions run on the app's loop through the client portal."""
+the store, then the publisher, on the emit path; the store behind the snapshots and the hold; the
+trades lease. Every receive is bounded (`_recv`, 5 s); emissions run on the app's loop (portal)."""
 
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ from tests.unit.ws._seq_support import _SCHEMAS, Clock, principal, validate
 from tests.unit.ws.test_app_wiring import _Stream
 from tests.unit.ws.test_bars_source import CH, SPEC, SYM, _bar, _up
 from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
+from tests.unit.ws.test_sequencing_socket import _open
 from tests.unit.ws.test_subscriptions import _Bars
 
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
@@ -103,10 +103,7 @@ def _rx(ws: Any) -> dict[str, Any]:
 
 def _subscribe(ws: Any, opts: dict[str, Any]) -> dict[str, Any]:
     """Open the socket and subscribe `CH`; the `snap` that follows `sub_ok`."""
-    ws.send_json({"t": "hello", "id": "h"})
-    assert _rx(ws)["t"] == "welcome"
-    ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "good"}})
-    assert _rx(ws)["t"] == "auth_ok"
+    _open(ws)
     ws.send_json({"t": "sub", "id": "s", "p": {"topics": [{"ch": CH, "opts": opts}]}})
     assert _rx(ws)["p"]["results"][0]["ok"] is True
     return _rx(ws)
@@ -152,8 +149,7 @@ def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings() ->
 
 
 def _freed(w: _World) -> bool:
-    """Whether the store let the series go: past its grace (0 s), the next `ensure` frees an
-    unheld series."""
+    """Whether the store let the series go: past its 0 s grace, the next `ensure` frees it."""
     w.now += 1.0
     w.call(w.store.ensure, "ETHUSDT", SPEC)
     return w.store.latest(SYM, SPEC.spec_hash, 1) is None

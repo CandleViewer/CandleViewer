@@ -1,5 +1,4 @@
-"""E12-T06 slice D2 (#2195, #399): the `bars` snapshot source over the series store,
-`23-ws-protocol.md` §3.4, §6.1, §14.3."""
+"""E12-T06 D2 (#2195, #399): the `bars` snapshot source, `23-ws-protocol.md` §3.4, §6.1, §14.3."""
 
 from __future__ import annotations
 
@@ -51,8 +50,7 @@ async def _store(closes: int = 0, *, forming: bool = True, px: str = "100.5") ->
     store = SeriesStore()
     await store.ensure(SYM, SPEC)
     ups = [_up("close", i, px) for i in range(closes)] + [_up("open", closes, px)] * forming
-    if ups:
-        await store.emit(BarEmission(SPEC, GEN, ups))
+    await store.emit(BarEmission(SPEC, GEN, ups))  # no updates: no generation is named
     return store
 
 
@@ -88,16 +86,6 @@ async def test_build_sends_the_newest_history_bars_oldest_first_and_the_forming_
     assert body.parts == ()  # a structured subscription gets no kind-4 form built
 
 
-@pytest.mark.parametrize("include_delta", [False, True])
-async def test_meta_carries_the_spec_hash_the_running_build_and_the_include_delta_echo(
-    include_delta: bool,
-) -> None:
-    sub = _sub(encoding="structured", include_delta=include_delta)
-    body = _build(_src(await _store(1)), sub)
-    assert dict(body.meta) == {"spec_hash": H, "build_version": 1, "include_delta": include_delta}
-    assert all(("delta" in b) is include_delta for b in body.structured["bars"])
-
-
 async def test_build_version_is_the_lowest_build_among_the_bars_sent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,7 +113,7 @@ async def test_an_empty_series_sends_no_bars_with_the_running_build_in_either_en
 
 
 @pytest.mark.parametrize("include_delta", [False, True])
-async def test_both_encodings_validate_and_carry_the_same_bars_at_covering_scales(
+async def test_both_encodings_validate_and_carry_the_meta_and_the_same_bars_at_covering_scales(
     include_delta: bool,
 ) -> None:
     """`100.25` is finer than the instrument's price scale 1: the frame takes scale 2."""
@@ -136,10 +124,12 @@ async def test_both_encodings_validate_and_carry_the_same_bars_at_covering_scale
     )
     for encoding in ("structured", "binary"):
         assert emitter.snapshot(_sub(encoding=encoding, include_delta=include_delta), "initial")
+    owner = {"spec_hash": H, "build_version": 1, "include_delta": include_delta}
     for frame in out:
         validate(frame)
-        assert frame["meta"]["include_delta"] is include_delta
+        assert frame["meta"] == {"reason": "initial", "source": "live", **owner}
     want, part = out[0]["p"]["bars"], decode_b64(out[1]["p"])
+    assert all(("delta" in b) is include_delta for b in want)
     got = structured(part)["bars"]
     assert (part.price_scale, part.qty_scale, len(got)) == (2, 3, 3)
     for item, dec in zip(want, got, strict=True):
