@@ -379,6 +379,9 @@ class Settings(BaseSettings):
     audit_verify_rate_per_hour: int = Field(default=30, ge=1)
     audit_verify_statement_timeout_ms: int = Field(default=10_000, ge=1, le=30_000)
     audit_verify_deadline_s: float = Field(default=60.0, gt=0.0, le=600.0)
+    # The most rendered UTF-8 bytes one entry may have for verify to fetch it (4 MiB; at most
+    # the 8 MiB batch budget). A larger entry stops the run (503, `entry_too_large@<id>`).
+    audit_verify_max_entry_bytes: int = Field(default=4_194_304, ge=65_536, le=8_388_608)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.

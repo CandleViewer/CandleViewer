@@ -616,6 +616,7 @@ def _build_audit(settings: Settings) -> AuditHandle:
             SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
             read_slots=settings.audit_query_global_max_concurrent,
             verify_read_timeout_ms=settings.audit_verify_statement_timeout_ms,
+            verify_max_entry_bytes=settings.audit_verify_max_entry_bytes,
         )
     )
 
@@ -1383,6 +1384,8 @@ def create_app(
                 tracked_users=resolved.audit_budget_tracked_users,
             ),
             verify_deadline_s=resolved.audit_verify_deadline_s,
+            # A chain break also raises a critical system event, as the recorder's job does.
+            verify_events=PgSystemEventWriter(health_pg) if health_pg is not None else None,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))

@@ -9,13 +9,20 @@ from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api import audit_verify as mod
 from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity, VerifyResult
 from candleviewer.observability.audit_query_metrics import cv_audit_chain_verified_state
+from candleviewer.observability.health_probes import SystemEvent
 
 
-def _result(*, verified: bool, full: bool = False) -> VerifyResult:
+def _result(
+    *,
+    verified: bool,
+    full: bool = False,
+    kind: ChainBreakKind = ChainBreakKind.PREV_HASH_MISMATCH,
+) -> VerifyResult:
     return VerifyResult(
         verified=verified,
         entries_checked=4,
@@ -25,7 +32,7 @@ def _result(*, verified: bool, full: bool = False) -> VerifyResult:
         to_id=4,
         anchor_hash="0" * 64,
         last_hash="a" * 64,
-        kind=None if verified else ChainBreakKind.PREV_HASH_MISMATCH,
+        kind=None if verified else kind,
         full_chain=full,
     )
 
@@ -104,3 +111,52 @@ async def test_a_record_write_past_its_timeout_counts_as_not_written(
         after_state={"from_id": 1, "to_id": 2},
     )
     assert written is False
+
+
+class _Events:
+    """A `SystemEventWriter` that keeps what it is given, or fails, or never answers."""
+
+    def __init__(self, fail: Exception | None = None, hang: bool = False) -> None:
+        self.written: list[SystemEvent] = []
+        self.fail, self.hang = fail, hang
+
+    async def write(self, event: SystemEvent) -> None:
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.fail is not None:
+            raise self.fail
+        self.written.append(event)
+
+
+@pytest.mark.parametrize("kind", list(ChainBreakKind))
+async def test_a_break_of_each_kind_raises_one_critical_db_event(kind: ChainBreakKind) -> None:
+    events = _Events()
+    await mod.raise_break_event(events, _result(verified=False, kind=kind), "req-1")
+    [event] = events.written
+    assert (event.component, event.kind, event.severity) == ("db", "audit_chain_break", "critical")
+    assert (event.message, event.correlation_id) == ("audit chain break at id 4", "req-1")
+    assert event.details == {"first_bad_id": "4", "kind": kind.value, "from_id": "1", "to_id": "4"}
+
+
+async def test_a_verified_run_or_no_writer_raises_nothing() -> None:
+    events = _Events()
+    await mod.raise_break_event(events, _result(verified=True), None)
+    await mod.raise_break_event(None, _result(verified=False), None)  # not wired
+    assert events.written == []
+
+
+@pytest.mark.parametrize(
+    ("events", "error"),
+    [
+        (_Events(fail=OSError("pg down at 10.0.0.9")), "OSError"),
+        (_Events(hang=True), "TimeoutError"),
+    ],
+)
+async def test_an_event_that_cannot_be_written_is_logged_by_class_only(
+    events: _Events, error: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod, "EVENT_TIMEOUT_S", 0.01)
+    with capture_logs() as logs:
+        await mod.raise_break_event(events, _result(verified=False), None)  # never raises
+    assert [(e["event"], e["error"]) for e in logs] == [("audit.verify.event_write_failed", error)]
+    assert "10.0.0.9" not in repr(logs)

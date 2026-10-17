@@ -50,6 +50,7 @@ from candleviewer.observability.audit_query_metrics import (
     cv_audit_chain_verified_state,
 )
 from candleviewer.settings import Settings
+from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
 _TS = datetime(2026, 10, 1, 12, 0, 0, 123456, tzinfo=UTC)
@@ -418,7 +419,14 @@ def test_verify_audit_chain_checks_the_caller_before_reading_the_body(
 
 @pytest.mark.parametrize("stage", ["plan_verify", "run_verify"])
 @pytest.mark.parametrize(
-    "error", [TimeoutError(), AuditReadFailed("08006"), AuditReadBusy(), ChainHasherBusy()]
+    "error",
+    [
+        TimeoutError(),
+        AuditReadFailed("08006"),
+        AuditReadBusy(),
+        ChainHasherBusy(),
+        AuditEntryTooLarge(42),
+    ],
 )
 def test_verify_audit_chain_store_failure_is_503_without_a_result(
     error: Exception, stage: str
@@ -432,8 +440,15 @@ def test_verify_audit_chain_store_failure_is_503_without_a_result(
     r = TestClient(_app(service, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and "08006" not in r.text
+    # Every verify 503 carries Retry-After but an entry over the cap: no retry can pass it.
+    retry = None if isinstance(error, AuditEntryTooLarge) else "1"
+    assert r.headers.get("Retry-After") == retry
     # A run that stopped is recorded with why; nothing started when the plan failed.
-    why = {TimeoutError: "timeout", ChainHasherBusy: "hasher_busy"}.get(type(error))
+    why = {
+        TimeoutError: "timeout",
+        ChainHasherBusy: "hasher_busy",
+        AuditEntryTooLarge: "entry_too_large@42",  # names the entry it could not check
+    }.get(type(error))
     span = {"from_id": 1, "to_id": 1}
     stopped = [("success", "info", "started", span)]
     stopped.append(("failure", "warning", why or "store_unavailable", span))
@@ -1338,10 +1353,37 @@ def _failures() -> float:
     return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
 
 
+def test_verify_over_the_entry_cap_logs_the_entry_id_and_the_class_only() -> None:
+    svc = _FakeAuditService()
+
+    async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise AuditEntryTooLarge(42)
+
+    svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
+    with capture_logs() as logs:
+        r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert r.status_code == 503
+    assert [e for e in logs if e["event"] == "audit.verify.entry_too_large"] == [
+        {
+            "event": "audit.verify.entry_too_large",
+            "entry_id": 42,
+            "error": "AuditEntryTooLarge",
+            "log_level": "warning",
+        }
+    ]
+
+
 @pytest.mark.parametrize("before", [1.0, 0.0])
 @pytest.mark.parametrize("full", [True, False])
 @pytest.mark.parametrize(
-    "error", [TimeoutError(), ChainHasherBusy(), AuditReadFailed("08006"), RuntimeError("x")]
+    "error",
+    [
+        TimeoutError(),
+        ChainHasherBusy(),
+        AuditReadFailed("08006"),
+        RuntimeError("x"),
+        AuditEntryTooLarge(42),  # an entry over the cap can neither freeze a 1 nor clear a 0
+    ],
 )
 def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
     error: Exception, full: bool, before: float
@@ -1496,3 +1538,59 @@ def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
     expected = 200 if ending == "verified" else 503
     assert _limited_verify(svc).post(_VERIFY, json={}).status_code == expected
     assert not svc.query_service.verify_slot.held
+
+
+# ---- verify break: the critical system event, best effort (#2392) --------------------------
+
+
+class _SystemEvents:
+    def __init__(self, fail: bool = False, svc: _FakeAuditService | None = None) -> None:
+        self.written: list[Any] = []
+        self.fail, self.svc = fail, svc
+        self.records_before: list[int] = []  # verify records already written, per event
+
+    async def write(self, event: Any) -> None:
+        if self.svc is not None:
+            self.records_before.append(len(_verify_records(self.svc)))
+        if self.fail:
+            raise RuntimeError("system_events unavailable")
+        self.written.append(event)
+
+
+def _evented(svc: _FakeAuditService, events: _SystemEvents) -> TestClient:
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), verify_events=events))
+    return TestClient(app)
+
+
+def test_verify_break_raises_the_system_event_and_a_verified_run_none() -> None:
+    svc, events = _FakeAuditService(), _SystemEvents()
+    client = _evented(svc, events)
+    assert client.post(_VERIFY, json={}).status_code == 200  # verified: no event
+    assert events.written == []
+    svc.query_service.verify_result = _broken()
+    assert client.post(_VERIFY, json={}).json()["first_bad_id"] == 3
+    [event] = events.written
+    assert (event.kind, event.details["kind"]) == ("audit_chain_break", "entry_hash_mismatch")
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_verify_break_event_follows_the_result_record_even_an_unwritten_one(
+    recorded: bool,
+) -> None:
+    """Review of #2468: the fail-closed record first, then the best-effort event."""
+    svc = _FakeAuditService()
+    svc.writer_service = _FakeWriter() if recorded else _WriterFailingAfter(1)
+    svc.query_service.verify_result = _broken()
+    events = _SystemEvents(svc=svc)
+    r = _evented(svc, events).post(_VERIFY, json={})
+    assert r.status_code == (200 if recorded else 503) and len(events.written) == 1
+    assert events.records_before == [2 if recorded else 1]  # started, and the result if any
+
+
+def test_verify_event_that_fails_changes_neither_the_response_nor_the_record() -> None:
+    svc = _FakeAuditService()
+    svc.query_service.verify_result = _broken()
+    r = _evented(svc, _SystemEvents(fail=True)).post(_VERIFY, json={})
+    assert (r.status_code, r.json()["verified"], r.json()["first_bad_id"]) == (200, False, 3)
+    assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")

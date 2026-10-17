@@ -57,6 +57,7 @@ from candleviewer.api.audit_verify import (
     VERIFY_DEADLINE_S,
     observe_stop,
     observe_verify,
+    raise_break_event,
     result_record,
     write_verify_record,
 )
@@ -79,7 +80,8 @@ from candleviewer.audit.models import (
 from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.observability.health_probes import SystemEventWriter
+from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
 
 def _log() -> Any:
@@ -250,10 +252,12 @@ def _unavailable(detail: str = "audit record could not be written") -> JSONRespo
 
 
 #: Why a verify stopped early: the record's reason and the 503 detail. A store error carries
-#: only its SQLSTATE and is logged where it is raised.
+#: only its SQLSTATE and is logged where it is raised. An entry over the per-entry cap is
+#: named in the reason, `entry_too_large@<id>`: never a pass, as it was not checked.
 _VERIFY_STOPS: tuple[tuple[type[Exception], str, str], ...] = (
     (TimeoutError, "timeout", "audit verify exceeded its time budget"),
     (ChainHasherBusy, "hasher_busy", "audit read capacity reached"),
+    (AuditEntryTooLarge, "entry_too_large", "an audit entry is over the verify size cap"),
     (StorageTierUnavailable, "store_unavailable", "audit store unavailable"),
 )
 _VERIFY_STOP_ERRORS = tuple(kind for kind, _, _ in _VERIFY_STOPS)
@@ -262,7 +266,19 @@ _INFO, _WARNING = Severity.INFO, Severity.WARNING
 
 
 def _verify_stop(exc: Exception) -> tuple[str, str]:
-    return next((reason, detail) for kind, reason, detail in _VERIFY_STOPS if isinstance(exc, kind))
+    reason, detail = next((r, d) for kind, r, d in _VERIFY_STOPS if isinstance(exc, kind))
+    if isinstance(exc, AuditEntryTooLarge):
+        reason = f"{reason}@{exc.entry_id}"
+    return reason, detail
+
+
+def _verify_unavailable(exc: Exception) -> JSONResponse:
+    """The `503` for a verify that stopped early, with `Retry-After` but for an entry over the
+    per-entry cap: no retry can pass that one until the cap is raised, so it has none."""
+    detail = _verify_stop(exc)[1]
+    if isinstance(exc, AuditEntryTooLarge):
+        return _problem(503, "Service unavailable", detail, code="store_unavailable")
+    return _unavailable(detail)
 
 
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
@@ -331,6 +347,7 @@ def make_audit_router(
     verify_max_span: int = VERIFY_MAX_SPAN,
     verify_limiter: AuditVerifyLimiter | None = None,
     verify_deadline_s: float = VERIFY_DEADLINE_S,
+    verify_events: SystemEventWriter | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -608,7 +625,7 @@ def make_audit_router(
         except VerifyRangeBeyondHead:
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
         except _VERIFY_STOP_ERRORS as exc:
-            return _unavailable(_verify_stop(exc)[1])
+            return _verify_unavailable(exc)
         # Then the per-user limit (429) and single-flight (409). The head read (range
         # defaulting, above) comes first, as the contract orders the checks; a caller who is
         # not authorised never reaches it. A refusal writes no record: it is counted and
@@ -639,7 +656,11 @@ def make_audit_router(
         written makes the call 503 and serves nothing. A run that stops early is recorded
         as failure/warning with the reason it stopped (`internal_error` for anything
         unexpected, also 503), and a full-range stop turns a chain gauge of 1 into NaN (0
-        stays until a full-range run passes); a cancellation propagates."""
+        stays until a full-range run passes); a cancellation propagates. Each of these 503s
+        carries `Retry-After` but `entry_too_large`, which no retry can pass until the cap is
+        raised. A break's system event comes after the result record, in a `finally` so a
+        record that cannot be written still raises it; it is best effort and delays the
+        response by at most `EVENT_TIMEOUT_S` (2 s)."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(
@@ -651,11 +672,15 @@ def make_audit_router(
             result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except _VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
-            reason, detail = _verify_stop(exc)
+            if isinstance(exc, AuditEntryTooLarge):  # the entry's id and the class only
+                _log().warning(
+                    "audit.verify.entry_too_large", entry_id=exc.entry_id, error=type(exc).__name__
+                )
+            reason = _verify_stop(exc)[0]
             await write_verify_record(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
             )
-            return _unavailable(detail)
+            return _verify_unavailable(exc)
         except Exception as exc:  # anything else, e.g. MemoryError: never a 500, never a pass
             observe_stop(full_chain=plan.full_chain)
             _log().error("audit.verify.failed", error=type(exc).__name__)
@@ -670,10 +695,16 @@ def make_audit_router(
             return _unavailable("audit verify failed")
         observe_verify(result)  # the chain series follow the run, recorded or not
         outcome, severity, reason, after = result_record(result)
-        if not await write_verify_record(
-            emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
-        ):
-            return _unavailable()
+        request_id = principal.request_id
+        try:  # the record first: it alone decides the response
+            if not await write_verify_record(
+                emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
+            ):
+                return _unavailable()
+        finally:
+            await raise_break_event(
+                verify_events, result, None if request_id is None else str(request_id)
+            )
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")

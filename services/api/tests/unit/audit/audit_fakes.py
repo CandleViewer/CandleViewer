@@ -10,6 +10,8 @@ import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from candleviewer.storage.errors import AuditEntryTooLarge
+
 GENESIS = "0" * 64
 
 
@@ -34,6 +36,7 @@ class FakeAuditRepository:
         self.page_calls: list[dict[str, Any]] = []
         self.verify_calls: list[tuple[int, int, int]] = []  # (after_id, to_id, limit)
         self.max_bytes: int | None = None  # the batch byte budget, when a test sets one
+        self.max_entry: int | None = None  # the per-entry cap, when a test sets one
         self.over_cap: set[int] = set()
         self._up = asyncio.Event()
         self._up.set()
@@ -164,8 +167,13 @@ class FakeAuditRepository:
         for row in rows:  # as the repository: cut once the bytes before a row reach the budget
             if budget is not None and before >= budget:
                 break
+            n = len("".join(v for v in row[3:] if v is not None).encode())
+            if self.max_entry is not None and n > self.max_entry:  # only ever fetched first
+                if out:
+                    break
+                raise AuditEntryTooLarge(row[0])
             out.append(row)
-            before += len("".join(v for v in row[3:] if v is not None).encode())
+            before += n
         return out
 
     async def read_head(self) -> tuple[int, str] | None:

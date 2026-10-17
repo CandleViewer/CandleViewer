@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import candleviewer.app as app_mod
 from candleviewer.settings import Environment, Settings
@@ -46,6 +47,7 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (seen["query_timeout_ms"], seen["verify_max_span"]) == (1500, 31)
     assert (seen["verify_limiter"]._rate, seen["verify_limiter"]._cap) == (37, 71)
     assert seen["verify_deadline_s"] == 41.0
+    assert seen["verify_events"] is None  # the fake backend wires no `system_events` writer
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
@@ -60,7 +62,16 @@ def test_real_audit_backend_caps_reads_with_the_global_setting() -> None:
             storage_backend="real",
             audit_query_global_max_concurrent=3,
             audit_verify_statement_timeout_ms=4321,
+            audit_verify_max_entry_bytes=65_536,
         )
     )
     assert svc._repository._read_slots == 3  # constructed only; nothing connects
     assert svc._repository._verify_timeout_ms == 4321
+    assert svc._repository._entry_bytes == 65_536
+
+
+@pytest.mark.parametrize("value", [65_535, 8_388_609])
+def test_the_verify_entry_cap_is_a_bounded_setting(value: int) -> None:
+    assert Settings().audit_verify_max_entry_bytes == 4 * 1024 * 1024
+    with pytest.raises(ValidationError):
+        Settings(audit_verify_max_entry_bytes=value)  # below 64 KiB, or above the 8 MiB budget
