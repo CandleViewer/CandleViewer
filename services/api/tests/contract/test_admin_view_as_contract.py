@@ -261,11 +261,11 @@ def test_protective_writes_are_decided_by_their_handlers() -> None:
         "`Forbidden` response names, or engaging the kill switch on an account set "
         "(`setKillSwitch` with `engaged: true`, `scope: accounts`; releasing it and "
         "`scope: global` stay refused: the viewer leaves view-as first).",
-        "Both pass `setKillSwitch`, `amendOrder`, `amendTradeGroup`, `setPositionTpSl` (the "
-        "`trading-stop` write) and `setRuleMode` (the rule re-arm) to their handlers, which "
-        "decide after validation by the classification of 24-internal-schemas.md section 8.10: "
-        "a request with any non-protective component is refused `view_as_read_only` (or "
-        "`view_as_expired`) there, before any effect, binds no key and writes its refusal record.",
+        "Both pass `setKillSwitch`, `amendOrder`, `amendTradeGroup` and `setPositionTpSl` (the "
+        "`trading-stop` write) to their handlers, which decide after validation by the "
+        "classification of 24-internal-schemas.md section 8.10: a request with any non-protective "
+        "component is refused `view_as_read_only` (or `view_as_expired`) there, before any "
+        "effect, binds no key and writes its refusal record.",
         "A protective write runs as the viewer, is audited with the viewer as the actor, and is "
         "admitted only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the "
         "hold it runs in the viewer's own scope.",
