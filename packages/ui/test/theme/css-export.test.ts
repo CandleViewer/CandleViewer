@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -30,33 +31,41 @@ describe("theme.css package export", () => {
 });
 
 describe("copy-css script", () => {
-  it("fails and copies nothing while a token CSS file is missing, so dist cannot ship without them", () => {
-    // A copy of the package layout, with the token CSS a build racing a cleanup would leave: two of three.
-    const root = mkdtempSync(join(tmpdir(), "cv-copy-css-"));
-    try {
-      for (const dir of ["scripts", "src/theme", "build/css"])
-        mkdirSync(join(root, dir), { recursive: true });
-      copyFileSync(COPY_SCRIPT, join(root, "scripts/copy-css.mjs"));
-      copyFileSync(join(UI_ROOT, "src/theme/theme.css"), join(root, "src/theme/theme.css"));
-      for (const theme of ["dark", "light"])
-        writeFileSync(join(root, `build/css/tokens.${theme}.css`), "");
-      const run = (): Buffer =>
-        execFileSync(process.execPath, [join(root, "scripts/copy-css.mjs")], {
-          cwd: root,
-          stdio: "pipe",
-        });
-      expect(run).toThrow(/lacks tokens\.high-contrast\.css/);
-      expect(existsSync(join(root, "dist"))).toBe(false);
-      writeFileSync(join(root, "build/css/tokens.high-contrast.css"), "");
-      run();
-      expect(readdirSync(join(root, "dist")).sort()).toEqual([
-        "theme.css",
-        "tokens.dark.css",
-        "tokens.high-contrast.css",
-        "tokens.light.css",
-      ]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+  // A copy of the package layout with the token CSS a build racing a cleanup would leave (two of three),
+  // started by its real path and through a symlink to it (a junction on Windows) from another directory:
+  // it must act the same, never exit 0 having copied nothing.
+  it.each(["its real path", "a symlinked path"])(
+    "fails and copies nothing while a token CSS file is missing, then copies, run through %s",
+    (via) => {
+      const base = mkdtempSync(join(tmpdir(), "cv-copy-css-"));
+      try {
+        const root = join(base, "pkg");
+        for (const dir of ["scripts", "src/theme", "build/css"])
+          mkdirSync(join(root, dir), { recursive: true });
+        copyFileSync(COPY_SCRIPT, join(root, "scripts/copy-css.mjs"));
+        copyFileSync(join(UI_ROOT, "src/theme/theme.css"), join(root, "src/theme/theme.css"));
+        for (const theme of ["dark", "light"])
+          writeFileSync(join(root, `build/css/tokens.${theme}.css`), "");
+        const entry = via === "its real path" ? root : join(base, "link");
+        if (entry !== root) symlinkSync(root, entry, "junction");
+        const run = (): Buffer =>
+          execFileSync(process.execPath, [join(entry, "scripts/copy-css.mjs")], {
+            cwd: base,
+            stdio: "pipe",
+          });
+        expect(run).toThrow(/lacks tokens\.high-contrast\.css/);
+        expect(existsSync(join(root, "dist"))).toBe(false);
+        writeFileSync(join(root, "build/css/tokens.high-contrast.css"), "");
+        run();
+        expect(readdirSync(join(root, "dist")).sort()).toEqual([
+          "theme.css",
+          "tokens.dark.css",
+          "tokens.high-contrast.css",
+          "tokens.light.css",
+        ]);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+  );
 });

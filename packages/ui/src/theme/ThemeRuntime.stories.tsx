@@ -194,25 +194,33 @@ export const Default: Story = {
   },
 };
 
-/** Reflow: every text scale and a 200 % text zoom leave the fixed-width text inside its box (ticket: 125 % and 200 %). */
+/**
+ * Reflow: at every text scale and at a 200 % text zoom the fixed-width text really is bigger (its computed
+ * font size, not only `--cv-text-scale`) and still stays inside its box (ticket: 125 % and 200 %).
+ */
 export const TextScaleReflow: Story = {
   render: () => <Reflow />,
   play: async ({ canvasElement }) => {
     const ui = within(canvasElement);
     const text = ui.getByText(UNBREAKABLE);
+    const size = (): number => parseFloat(getComputedStyle(text).fontSize);
     const fits = async (): Promise<void> => {
       await expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
     };
     const pick = (scale: number): Promise<void> =>
       userEvent.click(ui.getByRole("radio", { name: `${scale} %` }));
+    let base = 0;
     for (const scale of TEXT_SCALES) {
       await pick(scale); // 100 first: the preview store outlives a story, so this is a known start
+      base ||= size();
       const factor = getComputedStyle(document.documentElement).getPropertyValue("--cv-text-scale");
       await expect(factor.trim()).toBe(String(scale / 100));
+      await expect(size()).toBeCloseTo((base * scale) / 100, 1); // the text grew; wrapping alone would pass `fits`
       await fits();
     }
     await pick(100);
     text.style.fontSize = "200%"; // text-only zoom on top of the page text size
+    await expect(size()).toBeCloseTo(base * 2, 1);
     await fits();
   },
 };

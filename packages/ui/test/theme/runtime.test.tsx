@@ -263,15 +263,34 @@ describe("TextScaleReflow story", () => {
   const themeCss = readFileSync(resolve(import.meta.dirname, "../../src/theme/theme.css"), "utf-8");
   afterEach(() => vi.restoreAllMocks());
 
-  // jsdom has no layout, so the two widths the play function compares are stubbed the way a browser
-  // reports them: the text overflows its box (480 > 320) in the one leg the test names. `pageCss` is the
-  // stylesheet the page loaded: without theme.css the text never grows, so an overflow check alone passes.
+  // jsdom has no layout, so what the play function reads is stubbed the way a browser reports it: the text
+  // overflows its box (480 > 320) in the one leg the test names, and an element's font size is its
+  // inherited size times its own percentage (jsdom computes neither), starting from the root's declared
+  // percentage of 16 px, which jsdom does take from the page's CSS. `pageCss` is that stylesheet: without
+  // theme.css, or without its font-size rules, the text never grows and an overflow check alone passes.
   async function playWithOverflowAt(leg?: string, pageCss = themeCss): Promise<void> {
     const legNow = (el: Element): string | undefined =>
       el instanceof HTMLElement && el.style.fontSize === "200%" ? "200" : rootData["textScale"];
     vi.spyOn(Element.prototype, "clientWidth", "get").mockReturnValue(320);
     vi.spyOn(Element.prototype, "scrollWidth", "get").mockImplementation(function (this: Element) {
       return legNow(this) === leg ? 480 : 320;
+    });
+    const computed = window.getComputedStyle.bind(window);
+    const fontPx = (el: Element): number => {
+      const parent = el.parentElement;
+      const declared = parent === null ? computed(el).fontSize : (el as HTMLElement).style.fontSize;
+      const inherited = parent === null ? 16 : fontPx(parent);
+      return declared.endsWith("%") ? (inherited * parseFloat(declared)) / 100 : inherited;
+    };
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = computed(el, pseudo);
+      return new Proxy(style, {
+        get: (target, name) => {
+          const value: unknown = Reflect.get(target, name);
+          if (name === "fontSize") return `${fontPx(el)}px`;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
     });
     const css = document.head.appendChild(document.createElement("style"));
     css.textContent = pageCss;
@@ -300,6 +319,12 @@ describe("TextScaleReflow story", () => {
 
   it("fails when theme.css is not loaded, instead of passing with text that never grows", async () => {
     await expect(playWithOverflowAt(undefined, "")).rejects.toThrow(/expected '' to be '1'/);
+  });
+
+  it("fails when --cv-text-scale moves but the text does not grow", async () => {
+    const pinned = themeCss.replace(/^\s*font-size: \d+%;\n/gm, "");
+    expect(pinned).not.toBe(themeCss);
+    await expect(playWithOverflowAt(undefined, pinned)).rejects.toThrow(/close to 17\.92/);
   });
 });
 
