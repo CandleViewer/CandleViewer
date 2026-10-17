@@ -18,6 +18,7 @@ import pytest
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
+from candleviewer.ws import permissions
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total
@@ -351,12 +352,16 @@ async def test_a_snapshot_that_raises_after_a_narrowing_closes_only_its_own_conn
     assert [sock.closed_with for sock in socks] == [1011, 1011]
 
 
-async def test_an_on_settle_that_raises_evicts_only_its_socket() -> None:
-    """C-2.18: an `on_settle` that raises evicts its socket; the users after it still get theirs."""
+async def test_an_on_settle_that_raises_evicts_only_its_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.18: an `on_settle` that raises evicts its socket, though the logger raises too (#3193
+    round 2); the users after it still get theirs."""
     world = _World(_Sink())
     world.principals = {uid: _principal(uid, _PERMS) for uid in (PEER, THIRD)}
     first, _ = (world.connect(uid, ["trades.BTCUSDT"]) for uid in (PEER, THIRD))
     first.on_settle = Mock(side_effect=RuntimeError(_MARK))
+    monkeypatch.setattr(permissions, "_log", Mock(side_effect=RuntimeError(_MARK)))
     world.principals = {uid: _principal(uid, NONE) for uid in (PEER, THIRD)}
     await world.registry.kill_switch_changed()
     assert [len(f) for f in world.revoked()] == [1, 1] and world.closed == [0]

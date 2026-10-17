@@ -1110,9 +1110,12 @@ def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it
 )  # fmt: skip
 def test_a_refused_lease_releases_the_series_hold(fail: Exception, ch: str, code: str) -> None:
     conn, store, _ = _holding(_LoggedBars([], fail))  # `check` passes: refused after the hold
+    dropped: list[list[Any]] = []
+    conn.on_drop = dropped.append  # #3193 round 2: the hook hears of the refused sub, once
     (r,) = _sub(conn, ch)
     assert (r["ok"], r["error"]["code"], conn.by_id) == (False, code, {})
     assert store.released == [("BTCUSDT", False)]  # its lease refused: it frees its slot at once
+    assert [[s.ch for s in subs] for subs in dropped] == [[ch]]
 
 
 def test_a_full_series_store_is_a_subscription_limit_and_takes_no_lease() -> None:

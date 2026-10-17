@@ -431,6 +431,55 @@ def test_backpressure_drain_sends_nothing_to_a_paused_topic_until_it_resumes() -
     assert ladder.drain(conn.authz.by_id) == [] and pacer.resnapshot_required == {}
 
 
+def test_backpressure_drain_passes_a_paused_head_to_the_next_topic() -> None:
+    """§5.4, §8.4 steps 1 and 2 (#3194 round 2): a paused topic first in `required` holds back no
+    other: one `drain` sends the next one's snapshot; the paused entry stays, unparked, unsent."""
+    conn, pacer, queue, _ = _setup()
+    book, eth = (_sub(conn, queue, f"book.{s}USDT.50") for s in ("BTC", "ETH"))
+    ladder = Backpressure(queue, pacer)
+    for sub in (book, eth):
+        pacer.drop(sub)
+    conn.authz.ctl(book.ch, {"paused": True})
+    assert ladder.drain(conn.authz.by_id) == [LadderEvent("resnapshot", (eth.ch,))]
+    assert [(f["ch"], f["meta"]["reason"]) for f in _drain(queue)] == [(eth.ch, "backpressure")]
+    assert list(pacer.resnapshot_required) == [book.sub_id] and not ladder._parked
+
+
+def test_backpressure_a_parked_topic_paused_over_a_retry_gets_one_snapshot_on_resume() -> None:
+    """§5.4, §8.4 steps 1 and 2 (#3194 round 2): parked (not ready), then paused: the timer's pass
+    sends nothing while it is paused, and its resume gets exactly one snapshot."""
+    conn, pacer, queue, source = _setup()
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    ladder = Backpressure(queue, pacer)
+    pacer.drop(book)
+    source.unavailable.add("BTCUSDT")
+    source.gen += 1  # the cached render is stale: the snapshot cannot be built
+    assert ladder.drain(conn.authz.by_id) == [] and book.sub_id in ladder._parked
+    conn.authz.ctl(book.ch, {"paused": True})
+    ladder.retry()
+    source.unavailable.clear()
+    assert ladder.drain(conn.authz.by_id) == [] and _drain(queue) == []  # paused: nothing early
+    conn.authz.ctl(book.ch, {"paused": False})
+    assert ladder.drain(conn.authz.by_id) == [LadderEvent("resnapshot", (book.ch,))]
+    assert [f["t"] for f in _drain(queue)] == ["snap"] and ladder.drain(conn.authz.by_id) == []
+
+
+def test_backpressure_drain_deletes_a_paused_entry_once_unsubscribed() -> None:
+    """§5.4, §8.4 steps 1 and 2 (#3194 round 2): marked, parked (its snapshot not ready), paused,
+    then unsubscribed: `drain` deletes the entry unsent, and its parked mark with it."""
+    conn, pacer, queue, source = _setup()
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    ladder = Backpressure(queue, pacer)
+    pacer.drop(book)
+    source.unavailable.add("BTCUSDT")
+    source.gen += 1  # the cached render is stale: the snapshot cannot be built
+    assert ladder.drain(conn.authz.by_id) == [] and book.sub_id in ladder._parked
+    conn.authz.ctl(book.ch, {"paused": True})
+    assert conn.authz.unsubscribe(book.ch)
+    assert ladder.drain(conn.authz.by_id) == []
+    assert pacer.resnapshot_required == {} and not ladder._parked
+
+
 def test_outbound_budget_allows_exactly_its_bytes_and_frames() -> None:
     queue = OutboundQueue(max_bytes=20, max_frames=2)
     queue.push(Queued("x" * 10))
