@@ -1458,15 +1458,16 @@ WS gateway set (E17-T06, `infra/prometheus/alerts/ws_gateway.yml`, `component: g
 Ticket (warning): `WsFanoutP95OverBudget` (p95 of `cv_ws_fanout_seconds` over 20 ms for 5 min, judged
 only with at least 40 sampled frames in the window), `WsUpstreamDesyncHigh` (more than 5
 `upstream_desync` re-snapshots in an hour: the 23 §16.3 hard-fail line, as a gateway-wide total because
-the counter has no topic label), `WsSlowConsumerClosed` (any `slow_consumer` close in 15 min) and
-`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min). The E17-T06 text calls the
-last one critical, but its counter moves on a client's `resync` frame, which the server does not verify,
-and a page would also hold back the other three (the page-over-ticket inhibit rule matches on component
-and env, and all four share component `gateway`); a server-side continuity count, which does not exist,
-is what could earn it a page. Alertmanager mutes tickets 22:00-07:00 UTC and never sends one that fires
-and resolves inside that time, so the two any-event tickets carry `keep_firing_for: 9h30m`: one raised
-at night is still firing, and is sent, at 07:00, and while held it is re-sent every 4 h. Each series is
-bound at import so `increase()` sees the first event.
+the counter has no topic label), `WsSlowConsumerClosed` (any `slow_consumer` close in 15 min),
+`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min) and `WsAuditWriteFailed`
+(any WS audit row not confirmed written in 15 min, `cv_ws_audit_failures_total`; SR-186, #2174). The
+E17-T06 text calls the gap alert critical, but its counter moves on a client's `resync` frame, which the
+server does not verify, and a page would also hold back the others (the page-over-ticket inhibit rule
+matches on component and env, and every one shares component `gateway`); a server-side continuity
+count, which does not exist, is what could earn it a page. Alertmanager mutes tickets 22:00-07:00 UTC
+and never sends one that fires and resolves inside that time, so the any-event tickets carry
+`keep_firing_for: 9h30m`: one raised at night is still firing, and is sent, at 07:00, and while held it
+is re-sent every 4 h. Each series is bound at import so `increase()` sees the first event.
 The Market data dashboard (12.4) has a WS gateway row: open connections, fan-out p95 against the 20 ms
 line, resyncs by reason against the 1 and 5 an hour lines (23 §16.3) and closes by reason. Connection
 class, queue depth and bandwidth per connection are added when their series land; overflow actions

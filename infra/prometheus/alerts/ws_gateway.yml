@@ -4,12 +4,12 @@
 # section 9. Tests: infra/prometheus/tests/ws_alerts.test.yml (promtool) and
 # services/api/tests/unit/observability/test_ws_alert_rules.py, which ties each expression to the
 # catalogue and the code.
-# Severities (20-architecture.md section 12.5): all four are `ticket`. The ticket calls the
+# Severities (20-architecture.md section 12.5): all are `ticket`. The ticket calls the
 # sequence-gap alert critical (`page`); the rule below says why it is not. `increase()` needs an
 # earlier sample, so every series read here is bound at import (ws/metrics.py, ws/sequencing.py):
 # a series created by its first event would hide that event.
 # Quiet hours: Alertmanager mutes tickets 22:00-07:00 UTC (default) and never sends one that fires
-# and resolves inside that time, so the two any-event tickets carry `keep_firing_for: 9h30m`: one
+# and resolves inside that time, so the any-event tickets carry `keep_firing_for: 9h30m`: one
 # that fires at 22:00 is still firing, and is sent, at 07:00. The 4 h repeat_interval re-sends it.
 # Two preconditions, neither checked: a CV_ALERT_QUIET_HOURS wider than about 9 h 35 m (window plus
 # hold, less one 5 m group_interval) needs a longer hold, and a Prometheus restart drops the ticket.
@@ -83,8 +83,8 @@ groups:
         # (ws/sequencing.py), and the server does not check the claim against what it sent: any
         # authenticated client can raise it with one frame. The ticket asks for a page; that would
         # page the Owner through quiet hours on a client's say-so and, because the page-over-ticket
-        # inhibit rule matches on component and env and all four alerts here share component
-        # `gateway`, hold back the other three (a page on a component of its own would not). So it
+        # inhibit rule matches on component and env and every alert here shares component
+        # `gateway`, hold back the others (a page on a component of its own would not). So it
         # is a ticket; a server-side continuity count (a send-path check that `s` follows
         # `previous_s + 1`, with its own series), which does not exist, is what could earn the page.
         # Any increase is a bug to chase, never a load condition: do not tune the threshold.
@@ -101,3 +101,23 @@ groups:
             frame of a subscription consecutively (23-ws-protocol.md section 7.1), so this is
             a bug in the send path or the client, not a load condition. The client already
             recovered by re-snapshot.
+
+      - alert: WsAuditWriteFailed
+        # SR-186 / SR-E17-04 (#2174): a WS audit row was not confirmed written. Those rows are best
+        # effort (E17 threat model WS-R04: the close, subscription, refusal or revocation happens
+        # anyway), so this counter is the one sign of a gap in the trail. Every reason fires it,
+        # `timeout` too: such a row may still land, but the audit writer is stalling. An event, so
+        # no `for`; held past the quiet hours like the other any-event tickets (header).
+        expr: sum by (env) (increase(cv_ws_audit_failures_total[15m])) > 0
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsauditwritefailed"
+          summary: "A WS audit row was not confirmed written: the audit trail may have a gap."
+          description: >-
+            A best-effort WS audit row (a close, a private subscription, a refusal, a revocation
+            or a failed auth) failed, timed out, was cancelled or was abandoned
+            (`cv_ws_audit_failures_total{reason}`). What it records still happened; the runbook
+            says what each reason means for the row.

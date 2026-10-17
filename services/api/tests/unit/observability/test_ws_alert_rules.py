@@ -33,34 +33,42 @@ _ARCH = _ROOT / "docs" / "plan" / "20-architecture.md"
 _MARKET = _ROOT / "infra" / "grafana" / "dashboards" / "market-data.json"
 _MATRIX = _ROOT / "qa" / "plans" / "e04-alert-drill-matrix.md"
 
-#: The ticket's four alerts and their E04 severity (`20-architecture.md` 12.5: warning = ticket,
-#: critical = page). The ticket calls the gap alert critical; it is a ticket because its counter
-#: is a client report the server does not verify, and a page would also inhibit the other three.
+#: The ticket's four alerts and #2174's audit-failure alert, with their E04 severity
+#: (`20-architecture.md` 12.5: warning = ticket, critical = page). The ticket calls the gap alert
+#: critical; it is a ticket because its counter is a client report the server does not verify, and
+#: a page would also inhibit the others.
 SEVERITY = {
     "WsFanoutP95OverBudget": "ticket",
     "WsUpstreamDesyncHigh": "ticket",
     "WsSlowConsumerClosed": "ticket",
     "WsSequenceGapDetected": "ticket",
+    "WsAuditWriteFailed": "ticket",
 }
 #: The `for` each alert holds before it fires: five minutes for the p95 (the ticket's "for 5
-#: minutes") and for the hour's desync count; a slow-consumer close and a reported gap are events,
-#: so none.
+#: minutes") and for the hour's desync count; a slow-consumer close, a reported gap and a failed
+#: audit row are events, so none.
 FOR = {
     "WsFanoutP95OverBudget": "5m",
     "WsUpstreamDesyncHigh": "5m",
     "WsSlowConsumerClosed": None,
     "WsSequenceGapDetected": None,
+    "WsAuditWriteFailed": None,
 }
-#: `keep_firing_for` of the two any-event tickets: Alertmanager mutes tickets 22:00-07:00 UTC, so a
+#: `keep_firing_for` of the any-event tickets: Alertmanager mutes tickets 22:00-07:00 UTC, so a
 #: ticket that clears inside it is never sent; each is held past the 9 h mute instead.
-HOLD = {"WsSlowConsumerClosed": "9h30m", "WsSequenceGapDetected": "9h30m"}
+HOLD = {
+    "WsSlowConsumerClosed": "9h30m",
+    "WsSequenceGapDetected": "9h30m",
+    "WsAuditWriteFailed": "9h30m",
+}
 #: The counter each event alert reads, its window and its line (`> line`): above 5 `upstream_desync`
 #: re-snapshots in an hour (23-ws-protocol.md 16.3), any `slow_consumer` close in 15 minutes, any
-#: client-reported gap in 10.
+#: client-reported gap in 10, any WS audit row not confirmed written in 15 (every reason, #2174).
 COUNTER_LINES = {
     "WsUpstreamDesyncHigh": ('cv_ws_resync_total{reason="upstream_desync"}', "1h", 5),
     "WsSlowConsumerClosed": ('cv_ws_closes_total{reason="slow_consumer"}', "15m", 0),
     "WsSequenceGapDetected": ("cv_ws_sequence_gaps_detected_total", "10m", 0),
+    "WsAuditWriteFailed": ("cv_ws_audit_failures_total", "15m", 0),
 }
 #: Policy: sampled frames the p95 alert needs in its 5 m window before it judges (rule comment).
 FANOUT_MIN_SAMPLES = 40
@@ -105,7 +113,7 @@ def _base(series: str) -> str:
     return stem if stem in _BY_NAME and _BY_NAME[stem].kind == "histogram" else series
 
 
-def test_the_file_holds_exactly_the_four_ticket_alerts() -> None:
+def test_the_file_holds_exactly_these_alerts() -> None:
     assert set(_alerts()) == set(SEVERITY)
 
 
@@ -229,6 +237,7 @@ def test_the_catalogue_names_the_alert_that_reads_each_series() -> None:
         "WsUpstreamDesyncHigh": "cv_ws_resync_total",
         "WsSlowConsumerClosed": "cv_ws_closes_total",
         "WsSequenceGapDetected": "cv_ws_sequence_gaps_detected_total",
+        "WsAuditWriteFailed": "cv_ws_audit_failures_total",
     }
     assert set(reader) == set(SEVERITY)
     for alert, metric in reader.items():
