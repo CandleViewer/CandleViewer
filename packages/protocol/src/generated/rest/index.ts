@@ -36,10 +36,10 @@ export interface paths {
      *     #2083).
      *
      *     **Filters** are combined with AND; repeating `action` matches any of the given codes.
-     *     `from` is inclusive and `to` exclusive. `q` matches the recorded, already-redacted
-     *     `detail` and the subject label; every term must match, case-insensitively. Matches on the
-     *     subject label are not integrity-checked. Redaction applied when an entry was written is
-     *     never reversed on read.
+     *     `from` is inclusive and `to` exclusive; `from` must be earlier than `to` (`422`). `q`
+     *     matches the recorded, already-redacted `detail` and the subject label; every term must
+     *     match, case-insensitively. Matches on the subject label are not integrity-checked.
+     *     Redaction applied when an entry was written is never reversed on read.
      *
      *     **Ordering and paging.** Newest first: by `ts` descending, then `id` descending. `limit` is
      *     1 to 500, default 100. Paging is keyset-based, never offset. Each page resumes strictly
@@ -51,7 +51,13 @@ export interface paths {
      *     recompute to its `entry_hash` and its `prev_hash` equals the `entry_hash` of the entry
      *     before it in the chain, whether or not that entry is on this page. It is computed on the
      *     full entries before any projection. It says nothing about the informational fields or the
-     *     rest of the chain (`verifyAuditChain` checks ranges).
+     *     rest of the chain (`verifyAuditChain` checks ranges). `false` means a row or link does not
+     *     check out, or the page was not fully checked because an entry's canonical rendering, or the
+     *     page, exceeded the server's size caps for page checks; by itself it is not evidence of
+     *     tampering, and a client should offer `verifyAuditChain` (Owner only). As the chain is
+     *     unkeyed, `true` shows only that the returned rows match their stored hashes and links.
+     *
+     *     `200` responses carry `Cache-Control: no-store`.
      *
      *     **Limits.** Per user, at most `audit_query_rate_per_minute` calls a minute (default 60) and
      *     `audit_query_max_concurrent` calls in flight (default 2); beyond either the call is
@@ -62,14 +68,16 @@ export interface paths {
      *     **Audit budget.** Reads are audited without letting them flood the audit log, which also
      *     carries order intents. Counters and budgets are kept per user, across all of the user's
      *     sessions, so a token refresh or a new session does not reset them. The first read of a
-     *     distinct filter set writes `admin.audit_read` (the filters, with `q` kept only as a
-     *     digest, and the returned count, never the entries). Continuation pages are counted and
-     *     flushed into an `admin.audit_read` at least every `audit_read_flush_pages` pages (default
-     *     50) or `audit_read_flush_seconds` (default 300), whichever comes first. Records written
-     *     for a user (`admin.audit_read`, and `admin.audit_denied` for a cross-actor filter or any
-     *     other refusal on the `/admin/audit*` operations) are capped per hour by
-     *     `audit_record_budget_per_hour` (default 120), or for the Owner, who must be able to keep
-     *     investigating during an incident, by `audit_record_budget_owner_per_hour` (default 600).
+     *     distinct filter set writes `admin.audit_read` (the filters, with `q` and `subject_id` kept
+     *     only as a digest and a length (`q_sha256`, `q_len`, `subject_id_sha256`,
+     *     `subject_id_len`), and the returned count, never the entries). Continuation pages are
+     *     counted and flushed into an `admin.audit_read` at least every `audit_read_flush_pages`
+     *     pages (default 50) or `audit_read_flush_seconds` (default 300), whichever comes first.
+     *     Records written for a user (`admin.audit_read`, and `admin.audit_denied` for a cross-actor
+     *     filter or any other refusal on the `/admin/audit*` operations, except a `501`, which
+     *     writes no record) are capped per hour by `audit_record_budget_per_hour` (default 120), or
+     *     for the Owner, who must be able to keep investigating during an incident, by
+     *     `audit_record_budget_owner_per_hour` (default 600).
      *     Over the cap a read is `429 rate_limited` with no data, and a refusal is returned
      *     unchanged with `Retry-After`, as for `auth.csrf_refused`. A `429`, and a refusal over the
      *     cap, write no record; they are counted, and the next record written for the user carries
@@ -111,6 +119,21 @@ export interface paths {
      * @description Schedules an asynchronous export, as NDJSON (gzip when `compress`), of the chain span that
      *     covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
      *     the job succeeds its `result` is an `AuditExportResult`.
+     *
+     *     **Not implemented yet.** Until the owner decides export signing-key custody (E42-T02
+     *     design decision D1, #889), every request that passes authentication, the `audit` step-up
+     *     and RBAC is answered `501 not_implemented`. No job is created and nothing is exported.
+     *     The `202` below is the target behaviour. While stubbed the checks run in this order. For
+     *     an authenticated session the step-up guard runs first, before the operation and before
+     *     RBAC: until the session holds an `audit` step-up the call is refused with
+     *     `403 step_up_required` (`action_class: audit`), whatever the caller's role. The operation
+     *     then answers `401` when the request is not authenticated, `403` (`code: forbidden`) for
+     *     anyone but the Owner, and `501` for the Owner; as on every audit operation,
+     *     `503 store_unavailable` comes first among these when the audit backend is unavailable. No
+     *     body is parsed before these checks, so a malformed body never changes the answer. A `501`
+     *     writes no audit record: nothing is exported. The limits, content, download and audit
+     *     rules below, and the `202`, are the target behaviour and apply in full once export is
+     *     implemented.
      *
      *     **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a
      *     step-up of the `audit` action class (SR-025, 5-minute grace; SR-067). Until the session
@@ -229,22 +252,38 @@ export interface paths {
      *     **Range.** Ids increase but are not contiguous, so a bound may name an id that does not
      *     exist. The span `to_id - from_id + 1` is capped by `audit_verify_max_span` (default
      *     1000000). With neither bound, the range is the newest span of that size, ending at the
-     *     newest entry when the run starts. With one bound, the other is filled in to make a
+     *     newest entry at range defaulting. With one bound, the other is filled in to make a
      *     maximum-sized span, clipped to the first and the newest entry. When both are given, a
      *     longer span is `422 validation_failed`; the problem `detail` and `errors[].rule`
-     *     (`max_verify_span`) name the limit. The response echoes the effective range.
+     *     (`max_verify_span`) name the limit. The response echoes the effective range. A `from_id`
+     *     beyond the chain head is `404 not_found`, unless a checkpoint's `head_id` is above the
+     *     head; then the tail-truncation break is reported. A `to_id` beyond the head is clamped to
+     *     the head. One head read, taken at range defaulting, serves the defaults, the `404` test
+     *     and the clamp.
      *
      *     **Who and how often.** Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager
      *     holding `audit:read` is refused with `403`. Synchronous. The checks run in this order:
      *     authentication (`401`), authorisation (`403`), body validation and range defaulting
-     *     (`422`), the per-user rate limit (`audit_verify_rate_per_hour`, default 30;
-     *     `429 rate_limited`), single-flight (`409 conflict`: one verification at a time, the
-     *     nightly job included), then a write-ahead `started` `admin.audit_verify` record
-     *     (`503 store_unavailable` if it cannot be written; nothing runs). A caller who is not
-     *     authorised therefore never learns whether a verification is running. The result is
-     *     recorded too (severity `critical` when `verified` is false), and a failed verification is
-     *     also raised as a critical security event. Refusals fall under the audit budget described
-     *     on `queryAuditLog`.
+     *     (`422`; a `from_id` beyond the head is `404`), the per-user rate limit
+     *     (`audit_verify_rate_per_hour`, default 30; `429 rate_limited` with `Retry-After`: more
+     *     than that many runs in a rolling hour; only runs that start count, and requests refused
+     *     with `409`, `429` or `503` do not), single-flight (`409 conflict`: a verification is
+     *     already running; at most one runs at a time, the nightly job included; a scheduled
+     *     (start-up or nightly) run waits for the slot and is never skipped), then a write-ahead
+     *     `started` `admin.audit_verify` record (`503 store_unavailable` if it cannot be written;
+     *     nothing runs). A caller who is not authorised therefore never learns whether a
+     *     verification is running or where the chain head is. The result is recorded too (severity
+     *     `critical` when `verified` is false), and a failed verification is also raised as a
+     *     critical security event. Refusals fall under the audit budget described on
+     *     `queryAuditLog`.
+     *
+     *     **Limits.** A run has a configured deadline (`audit_verify_deadline_s`, default 60 s),
+     *     each read is bounded by `audit_verify_statement_timeout_ms` (default 10000), and a run
+     *     checks entries up to the configured maximum (`audit_verify_max_entry_bytes`, default
+     *     4 MiB). Any stop (the run deadline, a read timeout or an entry over the
+     *     configured maximum) answers `503 store_unavailable`, is recorded, and reports nothing as
+     *     verified. A stop for an over-maximum entry names that entry's id in its record and is
+     *     the only stop that omits `Retry-After`.
      */
     post: operations["verifyAuditChain"];
     delete?: never;
@@ -4707,7 +4746,7 @@ export interface components {
       actor_user_id: string | null;
       /** @description Actor label recorded at write time; survives user deletion. */
       actor_username?: string | null;
-      /** @description The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection. */
+      /** @description The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection. A state the server withholds (over its size caps for a page, not a JSON object, or nested deeper than 128 levels) is `null` and its name is listed in `elided`. A stored `null` state is never listed. */
       detail: {
         after?: {
           [key: string]: unknown;
@@ -4715,6 +4754,8 @@ export interface components {
         before?: {
           [key: string]: unknown;
         } | null;
+        /** @description States the server withholds (over its size caps for a page, not a JSON object, or nested deeper than 128 levels); absent when none were withheld. A stored `null` state is never listed. */
+        elided?: ("before" | "after")[];
       } & {
         [key: string]: unknown;
       };
@@ -8591,11 +8632,13 @@ export interface operations {
       /** @description Audit page. */
       200: {
         headers: {
+          /** @description Always `no-store`. */
+          "Cache-Control"?: "no-store";
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Page"] & {
-            /** @description For every returned entry the hashed fields recompute to `entry_hash` and `prev_hash` links to its chain predecessor (see the operation description). */
+            /** @description `true`: the returned rows match their stored hashes and links. `false`: a row or link does not check out, or an entry's canonical rendering, or the page, exceeded the server's size caps for page checks; not by itself evidence of tampering, so offer `verifyAuditChain` (Owner only; see the operation description). */
             chain_verified: boolean;
             items?: components["schemas"]["AuditEntry"][];
           };
@@ -8668,6 +8711,23 @@ export interface operations {
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      /** @description Not implemented yet: export is stubbed until decision D1 (see the operation description). */
+      501: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          /**
+           * @example {
+           *       "type": "https://candleviewer.local/errors/not_implemented",
+           *       "title": "Not implemented",
+           *       "status": 501,
+           *       "code": "not_implemented"
+           *     }
+           */
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -8790,6 +8850,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
