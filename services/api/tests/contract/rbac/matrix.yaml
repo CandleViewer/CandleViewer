@@ -843,9 +843,13 @@ operations:
     permissions: ['marketdata:read']
     scope: none
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 422 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
+    request:
+      params:
+        symbol: BTCUSDT
+        interval: '1'
+        from: '2023-11-15T02:23:00Z'
+        to: '2023-11-15T02:26:00Z'
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /market/liquidations:
     permissions: ['marketdata:read']
