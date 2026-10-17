@@ -324,8 +324,8 @@ async def test_a_symbol_with_exactly_the_ceiling_of_gap_rows_reports_them_all() 
 
 
 async def test_a_dense_gap_table_is_built_in_slices_that_yield_to_the_event_loop() -> None:
-    """C-2.17: 8 192 rows take about 30 ms to turn into markers, so the loop is served every
-    1 024 rows (7 yields here); a build that never yields leaves the heartbeat at zero."""
+    """C-2.17: 8 192 rows take tens of milliseconds to turn into markers, so the loop is served
+    every 1 024 rows (7 yields here); a build that never yields leaves the heartbeat at zero."""
     turns = 0
 
     async def heartbeat() -> None:

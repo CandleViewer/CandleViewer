@@ -1,11 +1,12 @@
 """Merge invariants over generated recordings (E26-T02 test plan: Hypothesis properties).
 
 Each property sorts the recording by a key written out here, independently of `merge.py`'s
-constants, and compares whole sequences: 3 symbols x 4 streams on a few instants, so equal
-timestamps and equal `seq` across streams are the norm; gap markers on the same instants
-(identical rows, rows of unrequested streams, rows open at either window edge); re-exported
-duplicate rows in the cold tier; rows before and after the window; any storage order; read
-windows of 1-64 µs; row caps of 1-8.
+constants, and compares whole sequences. A recording has one to three hot instants at which each
+of 3 symbols x 4 streams holds up to two rows (so equal timestamps, and equal `seq`, across
+symbols and streams are the norm, not a lucky draw), scattered rows elsewhere, and gap markers
+that start on those instants as often as anywhere (identical rows, rows of unrequested streams,
+rows open at either window edge); re-exported duplicate rows in the cold tier; rows before and
+after the window; any storage order; read windows of 1-64 µs; row caps of 1-8.
 """
 
 from __future__ import annotations
@@ -81,33 +82,48 @@ def _event(index: int, symbol: str, stream: StreamKind, at_us: int, seq: int) ->
 @st.composite
 def recordings(draw: st.DrawFn) -> Recording:
     cap = draw(st.integers(1, 8))
-    cells = st.tuples(
-        st.sampled_from(SYMBOLS), st.sampled_from(STREAMS), st.integers(0, 13), st.integers(0, 3)
-    )
     held: Counter[tuple[str, StreamKind, int]] = Counter()
     rows: list[RecordedEvent] = []
-    for i, (symbol, stream, at_us, seq) in enumerate(draw(st.lists(cells, max_size=60))):
+
+    def add(symbol: str, stream: StreamKind, at_us: int, seq: int) -> None:
         cell = (symbol, stream, at_us)
         if held[cell] < (1 if stream is TICKERS else cap):  # one ticker per (symbol, instant)
             held[cell] += 1
-            rows.append(_event(i, symbol, stream, at_us, seq))
+            rows.append(_event(len(rows), symbol, stream, at_us, seq))
+
+    hot = draw(st.lists(st.integers(0, 13), min_size=1, max_size=3, unique=True))
+    for at_us in hot:
+        for symbol in SYMBOLS:
+            for stream in STREAMS:
+                for seq in draw(st.lists(st.integers(0, 3), max_size=2)):
+                    add(symbol, stream, at_us, seq)
+    scattered = st.tuples(
+        st.sampled_from(SYMBOLS), st.sampled_from(STREAMS), st.integers(0, 13), st.integers(0, 3)
+    )
+    for symbol, stream, at_us, seq in draw(st.lists(scattered, max_size=20)):
+        add(symbol, stream, at_us, seq)
     copies: list[RecordedEvent] = []
     for row in draw(st.lists(st.sampled_from(rows), max_size=8)) if rows else []:
         cell = (row.symbol, row.stream, row.ts_us - T0)
         if held[cell] < cap:  # a copy is read too, so it counts against the per-read row cap
             held[cell] += 1
             copies.append(row)
+    gaps: list[RecordedGap] = []
+    for at_us in hot:  # markers on the hot instants too: every symbol and stream may have a gap
+        for symbol in SYMBOLS:
+            for stream in STREAMS:
+                lasts = st.tuples(st.integers(1, 12), st.sampled_from(CAUSES))
+                for length, cause in draw(st.lists(lasts, max_size=1)):
+                    gaps.append(RecordedGap(symbol, stream, T0 + at_us, T0 + at_us + length, cause))
     spans = st.tuples(
         st.sampled_from(SYMBOLS),
         st.sampled_from((*STREAMS, StreamKind.LIQUIDATIONS)),
-        st.integers(-6, 16),
+        st.one_of(st.sampled_from(hot), st.integers(-6, 16)),
         st.integers(1, 12),
         st.sampled_from(CAUSES),
     )
-    gaps = [
-        RecordedGap(symbol, stream, T0 + start, T0 + start + length, cause)
-        for symbol, stream, start, length, cause in draw(st.lists(spans, max_size=25))
-    ]
+    for symbol, stream, start, length, cause in draw(st.lists(spans, max_size=20)):
+        gaps.append(RecordedGap(symbol, stream, T0 + start, T0 + start + length, cause))
     gaps += draw(st.lists(st.sampled_from(gaps), max_size=5)) if gaps else []
     return Recording(rows, copies, gaps, cap, draw(st.integers(0, 3)), draw(st.integers(8, 14)))
 

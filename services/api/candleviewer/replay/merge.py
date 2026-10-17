@@ -127,7 +127,8 @@ ANCHOR_LOOKBACK_US: Final = 3_600 * US_PER_SECOND
 #: `recording_gaps` read is held to it too.
 DEFAULT_MAX_ROWS_PER_READ: Final = 8_192
 #: Gap rows turned into markers between two yields to the event loop (C-2.17): a symbol at the
-#: ceiling takes about 30 ms to build, so it is cut into steps of about 4 ms (1 024 rows).
+#: ceiling takes tens of milliseconds to build in one go, and more under load, so it is cut into
+#: steps of 1 024 rows.
 _MARKER_YIELD_EVERY: Final = 1_024
 _RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
