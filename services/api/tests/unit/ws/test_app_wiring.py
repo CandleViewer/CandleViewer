@@ -364,7 +364,7 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith(("cv_ws_", "cv_machine_ws_"))}
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 26
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 27
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth

@@ -43,6 +43,8 @@ from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
+    DENIAL_AUDIT_WINDOW_S,
+    DENIAL_AUDITS_PER_WINDOW,
     FANOUT_AUDIT_MAX_FAILURES,
     FANOUT_AUDIT_TIMEOUT_S,
     FANOUT_SEND_TIMEOUT_S,
@@ -52,7 +54,7 @@ from candleviewer.ws.limits import (
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
 )
-from candleviewer.ws.metrics import count_audit_failure
+from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -351,6 +353,13 @@ class ConnectionAuthz:
         self.on_drop: Callable[[list[Subscription]], None] | None = None
         self.on_settle: Callable[[list[Subscription]], None] | None = None
         self.settling: list[Subscription] = []
+        #: #3185 (§4.3): when the connection's last `DENIAL_AUDITS_PER_WINDOW` `ws.subscribe.denied`
+        #: records were handed to the writer (monotonic s, oldest first), and when the warning for
+        #: a record kept back was last logged.
+        self._denial_audits: collections.deque[float] = collections.deque(
+            maxlen=DENIAL_AUDITS_PER_WINDOW
+        )
+        self._denial_skip_logged: float | None = None
 
     # -- views ------------------------------------------------------------------------------
 
@@ -382,6 +391,31 @@ class ConnectionAuthz:
 
     def may_submit_order(self) -> bool:
         return isinstance(decide(self.principal, Permission.ORDERS_WRITE), Allow)
+
+    # -- the denial records' budget (#3185) -------------------------------------------------
+
+    def take_denial_audit(self) -> bool:
+        """True, and stamped, while this connection may write one more `ws.subscribe.denied`
+        record: at most `DENIAL_AUDITS_PER_WINDOW` in any sliding `DENIAL_AUDIT_WINDOW_S` on
+        `services.clock`. A stamp leaves the window once it is a full window old (the edge of
+        `lifecycle.ConnectRateLimiter`). O(1): with the deque full, its oldest stamp decides. A
+        record refused here leaves no stamp, so a connection past its budget cannot lengthen
+        its own wait."""
+        now, stamps = self.services.clock(), self._denial_audits
+        if len(stamps) >= DENIAL_AUDITS_PER_WINDOW and now - stamps[0] < DENIAL_AUDIT_WINDOW_S:
+            return False
+        stamps.append(now)
+        return True
+
+    def first_denial_skip(self) -> bool:
+        """True for the first record kept back in a window since the last one logged: the caller
+        logs its warning for that one only and counts every record (the connect-rate refusal's
+        `first_refusal` cap, here per connection). One float of state."""
+        now, last = self.services.clock(), self._denial_skip_logged
+        if last is not None and now - last < DENIAL_AUDIT_WINDOW_S:
+            return False
+        self._denial_skip_logged = now
+        return True
 
     # -- sub --------------------------------------------------------------------------------
 
@@ -1268,6 +1302,21 @@ async def _emit_bounded(audit: AuditSink, action: str, **row: Any) -> None:
         await audit.emit(action, **row)
 
 
+def _kept_back(authz: ConnectionAuthz) -> None:
+    """A `ws.subscribe.denied` record past the connection's budget (#3185): counted every time,
+    deliberately not a `count_audit_failure`; the warning names the socket and the user, once a
+    window (`first_denial_skip`)."""
+    cv_ws_subscribe_denied_unaudited_total.inc()
+    if authz.first_denial_skip():
+        _log().warning(
+            "ws subscribe-denied audit over budget",
+            connection_id=authz.connection_id,
+            actor_user_id=authz.principal.user_id,
+            limit=DENIAL_AUDITS_PER_WINDOW,
+            window_s=DENIAL_AUDIT_WINDOW_S,
+        )
+
+
 async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, str]]) -> None:
     """`ws.subscribe.denied`: ONE record for the refusals `_audited` keeps in a `sub` frame,
     never one per entry (SR-192, #2292), written in `handle_sub`'s `finally`, so a frame that
@@ -1278,9 +1327,17 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
     (`refusals`). An internal reason goes only in `reason` and `after_state`, which the non-Owner
     projection drops (SR-067), so no other field varies with it (the non-Owner projection is
     being narrowed by E42-T02 F9). Best effort, bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record
-    not confirmed is logged and counted, and so is a cancellation, which still propagates."""
+    not confirmed is logged and counted, and so is a cancellation, which still propagates.
+
+    #3185 (§4.3): within the connection's budget only (`ConnectionAuthz.take_denial_audit`),
+    checked before the emit. A record past it reaches no writer and the frame waits for none:
+    it counts once in `cv_ws_subscribe_denied_unaudited_total`, and `_kept_back` logs it at
+    most once a window."""
     audit = authz.services.audit
     if audit is None or not denials:
+        return
+    if not authz.take_denial_audit():
+        _kept_back(authz)
         return
     object_id, _, reason = denials[0]
     detail: dict[str, Any] = {}
