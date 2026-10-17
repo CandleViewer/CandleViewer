@@ -134,6 +134,7 @@
 ["cv_ws_malformed_updates_total", "counter", ["topic"], "live", "E17"]
 ["cv_ws_overflow_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_permission_snapshots_refused_total", "counter", ["event"], "live", "E17"]
+["cv_ws_rebuild_refused_total", "counter", ["kind", "cause"], "live", "E17"]
 ["cv_ws_resync_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_revoked_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_sequence_gaps_detected_total", "counter", [], "live", "E17"]

@@ -31,6 +31,9 @@ Single home for every bound the gateway enforces. Overflow policy:
   frames, or when the change raises or is cancelled, each under
   `FANOUT_AUDIT_TIMEOUT_S`; after `FANOUT_AUDIT_MAX_FAILURES` failed rows in a
   row the rest are abandoned and logged with a count (#2824).
+- A `resync`, or a `ctl` that would re-snapshot, past the connection's rebuild
+  budget -> `resync_rate_limited`; the `resync` also revokes its subscription, the
+  `ctl` changes nothing (SR-193, `ws/rebuild_budget.py`).
 """
 
 from __future__ import annotations
@@ -71,6 +74,12 @@ MAX_SYMBOLS_PER_CONNECTION = 40
 #: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
 #: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
 MAX_BARS_SUBSCRIPTIONS = 16
+#: SR-193 (§7.5, §16.2): the rebuild budget of a connection, which every snapshot a client causes
+#: draws on: per subscription key, and in all, in any sliding `REBUILD_WINDOW_S`. The connection's
+#: limit is a full attach of `MAX_SUBSCRIPTIONS` plus one full replace.
+REBUILD_MAX_PER_TOPIC = 5
+REBUILD_MAX_PER_CONNECTION = 2 * MAX_SUBSCRIPTIONS
+REBUILD_WINDOW_S = 60.0
 #: §16.2: `machines.{entity}.state` registry entries, live and terminal. Past it a payload for a
 #: new entity is refused, counted and logged (rate-limited); no entry is evicted, so no live
 #: machine's state is lost.

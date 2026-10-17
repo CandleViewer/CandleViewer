@@ -179,7 +179,8 @@ def test_owner_is_refused_another_users_session_like_an_unknown_one() -> None:
     registry.publish(session, _payload("session", "active"))
     foreign, _ = conn.authz.admit(session.ch)
     unknown, _ = conn.authz.admit(f"machines.session:{OID}.state")
-    assert foreign["error"] == unknown["error"] == {"code": "forbidden", "message": _FORBIDDEN}
+    expected = {"code": "forbidden", "message": _FORBIDDEN, "retryable": False}
+    assert foreign["error"] == unknown["error"] == expected
 
 
 def test_unknown_and_foreign_entities_get_the_identical_sub_error() -> None:
@@ -187,7 +188,7 @@ def test_unknown_and_foreign_entities_get_the_identical_sub_error() -> None:
     registry.publish(MachineEntity("order", OTHER, ON_B), _payload())
     unknown, _ = conn.authz.admit(f"machines.order:{OID}.state")
     foreign, _ = conn.authz.admit(f"machines.order:{OTHER}.state")
-    expected = {"code": "account_scope_denied", "message": _SCOPE_MESSAGE}
+    expected = {"code": "account_scope_denied", "message": _SCOPE_MESSAGE, "retryable": False}
     assert unknown["error"] == foreign["error"] == expected
 
 

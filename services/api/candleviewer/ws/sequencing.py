@@ -20,7 +20,7 @@ Guarantees (§7.1):
   shared by subscribers; private families are rendered per subscription and never cached (SR-190).
 
 Bounds (C-2.18): the snapshot cache holds at most `SNAPSHOT_CACHE_MAX` entries (oldest evicted);
-resync history per subscription is a deque of `RESYNC_MAX_PER_WINDOW`; the upstream guard holds one
+client resyncs draw on the connection's rebuild budget (SR-193); the upstream guard holds one
 int per upstream symbol; heatmap snapshots are capped at `HEATMAP_SNAPSHOT_MAX_COLUMNS` columns.
 """
 
@@ -52,6 +52,7 @@ from candleviewer.ws.binary import (
 )
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
+from candleviewer.ws.rebuild_budget import topic_key
 from candleviewer.ws.topics import is_topic_name, machine_refusal
 
 if TYPE_CHECKING:
@@ -106,8 +107,6 @@ SP_ROOM: Final = "f" * (2 * SPAN_ID_BYTES)
 #: and the longest `meta.reason`: the width a snapshot envelope is sized at (`_widest`).
 _WIDEST: Final = 2**64
 _LONGEST_REASON: Final = max(SNAP_REASONS, key=len)
-RESYNC_MAX_PER_WINDOW: Final = 5  # §7.5: 5 per topic per minute
-RESYNC_WINDOW_S: Final = 60.0
 HEATMAP_SNAPSHOT_MAX_COLUMNS: Final = 2000  # §6.1.1
 SNAPSHOT_CACHE_MAX: Final = 4096
 #: §16.1 S5: causal order across private topics for one account event.
@@ -707,24 +706,19 @@ class TopicEmitter:
             _log().warning("ws client resync", **fields)
         else:
             _log().info("ws client resync", **fields)
-        now = self.clock()
-        window = sub.resyncs
-        while window and now - window[0] >= RESYNC_WINDOW_S:
-            window.popleft()
-        if len(window) >= RESYNC_MAX_PER_WINDOW:
-            _log().warning(
-                "ws resync rate limited",
-                connection_id=self.connection_id,
-                ch=sub.ch,
-                client_reason=reason,
-                limit=RESYNC_MAX_PER_WINDOW,
-                window_s=RESYNC_WINDOW_S,
+        budget, key = authz.rebuilds, topic_key(sub.topic, sub.replay_session_id)
+        if (scope := budget.take(key, "resync")) is not None:
+            spent = budget.refused(
+                "resync", scope, self.connection_id, sub.ch, client_reason=reason
             )
-            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))
+            if budget.drawn(key, "resync") < budget.limits["topic"]:  # spent by `ctl`/`sub` too
+                message = f"{spent}; no snapshot was taken."
+                self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch, message=message))
+                return None  # the subscription continues (§7.5)
+            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))  # its own loop: AC-17
             revoked = authz.revoke(sub, "resync_rate_limited", self.wall_ms())
             self.push(revoked)
             return revoked
-        window.append(now)
         if _held(sub):
             return None  # counted in the window above; the ladder's `drain` sends that `snap`
         sub.snapshot_pending, sub.pending_reason = True, "client_resync"

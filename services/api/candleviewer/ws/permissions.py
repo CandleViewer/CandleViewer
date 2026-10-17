@@ -41,6 +41,7 @@ from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
@@ -55,6 +56,7 @@ from candleviewer.ws.limits import (
     MAX_TOPICS_PER_SUB,
 )
 from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
+from candleviewer.ws.rebuild_budget import RebuildBudget, topic_key
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -63,7 +65,6 @@ from candleviewer.ws.revocation import (
     ws_revoked_total,
 )
 from candleviewer.ws.sequencing import (
-    RESYNC_MAX_PER_WINDOW,
     SequencingHub,
     SnapReason,
     SnapshotCache,
@@ -256,10 +257,6 @@ class Subscription:
     announced: bool = True
     #: E17-T03: set when it ends (`_drop`), after which `TopicEmitter` sends nothing of it.
     ended: bool = False
-    #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
-    resyncs: collections.deque[float] = field(
-        default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)
-    )
 
     @property
     def ch(self) -> str:
@@ -295,7 +292,8 @@ _REFUSED: Final = {
 
 
 def _fail(ch: Any, code: str, message: str, fld: str | None = None) -> dict[str, Any]:
-    err: dict[str, Any] = {"code": code, "message": message}
+    retryable = ERROR_META[ErrorCode(code)].retryable  # §10.2, as an `err` frame says it
+    err: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
     if fld is not None:
         err["field"] = fld
     return {"ch": ch if isinstance(ch, str) else str(ch)[:120], "ok": False, "error": err}
@@ -336,6 +334,7 @@ class ConnectionAuthz:
         *,
         connection_id: str | None = None,
         version: int = 0,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.principal = principal
         self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
@@ -344,6 +343,8 @@ class ConnectionAuthz:
         self.by_id: dict[str, Subscription] = {}
         self._by_topic: dict[str, set[str]] = {}
         self._ids = itertools.count(1)
+        #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it).
+        self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock)
         #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
@@ -688,7 +689,8 @@ class ConnectionAuthz:
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
         `TopicError` (`not_subscribed`, `invalid_options`; a non-null `ch` that is no topic name
-        is the latter, #2572)."""
+        is the latter, #2572), or `resync_rate_limited` for a re-snapshot past the rebuild
+        budget, which changes nothing (SR-193)."""
         if ch is not None and not is_topic_name(ch):
             raise TopicError("invalid_options", "ch must be a topic name.", "ch")
         ids = self._by_topic.get(ch) if isinstance(ch, str) else None
@@ -719,6 +721,11 @@ class ConnectionAuthz:
         resnapshot = (was_paused and not paused) or any(
             k in IDENTITY_OPTIONS and sub.effective.get(k) != effective.get(k) for k in changes
         )
+        if resnapshot:  # SR-193: drawn before any change, so a refused `ctl` changes nothing
+            key = topic_key(sub.topic, sub.replay_session_id)
+            if (scope := self.rebuilds.take(key, "ctl")) is not None:
+                spent = self.rebuilds.refused("ctl", scope, self.connection_id, sub.ch)
+                raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if paused or "paused" in changes:
             effective["paused"] = paused
         if sub.accounts:

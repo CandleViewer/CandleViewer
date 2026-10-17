@@ -17,12 +17,11 @@ import orjson
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC, REBUILD_WINDOW_S
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import (
     CLIENT_RESYNC_REASONS,
     COUNTED_SNAP_REASONS,
-    RESYNC_MAX_PER_WINDOW,
-    RESYNC_WINDOW_S,
     SnapReason,
 )
 from tests.unit.ws._seq_support import Conn
@@ -136,14 +135,14 @@ def test_the_sixth_resync_in_a_minute_logs_the_rate_limit_warning_and_no_snapsho
 ) -> None:
     conn, sub = _attached()
     with capture_logs() as logs:
-        for i in range(RESYNC_MAX_PER_WINDOW):
+        for i in range(REBUILD_MAX_PER_TOPIC):
             conn.clock.now = float(i)
             _resync(conn, _CH, reason=client_reason)
         assert _lines(logs, "ws resync rate limited") == []  # five are within the limit
         conn.clock.now = 59.0
         _resync(conn, _CH, reason=client_reason)
-    assert len(_lines(logs, "ws client resync")) == RESYNC_MAX_PER_WINDOW + 1  # the refused too
-    assert len(_lines(logs, "ws resync")) == RESYNC_MAX_PER_WINDOW  # no `snap` answered it
+    assert len(_lines(logs, "ws client resync")) == REBUILD_MAX_PER_TOPIC + 1  # the refused too
+    assert len(_lines(logs, "ws resync")) == REBUILD_MAX_PER_TOPIC  # no `snap` answered it
     assert _lines(logs, "ws resync rate limited") == [
         {
             "event": "ws resync rate limited",
@@ -151,8 +150,10 @@ def test_the_sixth_resync_in_a_minute_logs_the_rate_limit_warning_and_no_snapsho
             "connection_id": _CONN,
             "ch": _CH,
             "client_reason": client_reason,  # the stated one, whichever it is
-            "limit": RESYNC_MAX_PER_WINDOW,
-            "window_s": RESYNC_WINDOW_S,
+            "path": "resync",
+            "scope": "topic",
+            "limit": REBUILD_MAX_PER_TOPIC,
+            "window_s": REBUILD_WINDOW_S,
         }
     ]
     assert conn.authz.find(sub.ch) is None  # the subscription was revoked, as before

@@ -28,11 +28,11 @@ from candleviewer.ws.binary import (
     decode_b64,
     encode,
 )
+from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC
 from candleviewer.ws.permissions import Subscription, VersionedSnapshot, handle_sub
 from candleviewer.ws.sequencing import (
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
     MAX_OUTBOUND_FRAME_BYTES,
-    RESYNC_MAX_PER_WINDOW,
     SNAP_REASONS,
     SequencingHub,
     SnapReason,
@@ -378,7 +378,8 @@ def test_client_resync_of_a_backpressure_pended_topic_waits_for_drain() -> None:
     for i in range(5):
         conn.clock.now = float(i)
         _resync(conn, sub.ch)
-    assert (conn.take(), sub.pending_reason, len(sub.resyncs)) == ([], "backpressure", 5)
+    assert (conn.take(), sub.pending_reason) == ([], "backpressure")
+    assert conn.authz.rebuilds.drawn((sub.ch, None)) == 5  # each drew on the budget
     assert conn.emitter.snapshot(sub, "backpressure")  # the ladder's `drain`
     conn.clock.now = 60.0  # the first resync ages out of the window
     _resync(conn, sub.ch)  # settled again: answered at once
@@ -521,15 +522,15 @@ def test_client_resync_with_a_non_topic_ch_is_refused_without_echoing_it(ch: Any
     conn = Conn(_book_source())
     _, sub = conn.sub("book.BTCUSDT.50")
     conn.take()
-    for _ in range(RESYNC_MAX_PER_WINDOW + 1):
+    for _ in range(REBUILD_MAX_PER_TOPIC + 1):
         frame = {"t": "resync", "id": "c-1", "ch": ch, "p": {"reason": "manual"}}
         conn.emitter.client_resync(conn.authz, frame)
     errs = conn.take()
     assert [(e["t"], e["id"], e["p"]["code"], e["p"]["field"]) for e in errs] == (
-        [("err", "c-1", "invalid_options", "ch")] * (RESYNC_MAX_PER_WINDOW + 1)
+        [("err", "c-1", "invalid_options", "ch")] * (REBUILD_MAX_PER_TOPIC + 1)
     )
     assert all("ch" not in e and len(json.dumps(e)) < 400 for e in errs)  # nothing is reflected
-    assert not sub.resyncs and conn.authz.find(sub.ch) is sub
+    assert not conn.authz.rebuilds.drawn((sub.ch, None)) and conn.authz.find(sub.ch) is sub
     _resync(conn, sub.ch)
     assert [f["t"] for f in conn.take()] == ["snap"]
 
