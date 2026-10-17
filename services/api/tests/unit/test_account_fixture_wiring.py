@@ -3,7 +3,9 @@
 `candleviewer.account_fixture_wiring` is the one door to the dev-only `cvdev` package. It imports
 the package only when `CV_ACCOUNT_FIXTURE` is set, and a build without it (a release image) refuses
 boot instead of ignoring the variable. Until the guard and serving slices land, the REST transport
-and the private-socket connector refuse every request, so nothing is ever answered unguarded.
+and the private-socket connector refuse every request, so nothing is ever answered unguarded. S4:
+the composition root builds the exchange adapter's key-verification clients on the handle's REST
+transport, and a default build passes none.
 """
 
 from __future__ import annotations
@@ -14,9 +16,11 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
@@ -28,10 +32,13 @@ from candleviewer.account_fixture_wiring import (
     build_account_fixture,
 )
 from candleviewer.exchange.base.errors import TransportError
+from candleviewer.exchange.bybit import key_verify
+from candleviewer.exchange.bybit import service as bybit_service
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.observability.support_bundle import filter_config
 from candleviewer.settings import Environment, FeedMode, Settings
+from cvdev.account_fixture.wiring import RefusingTransport
 from cvdev.account_fixture.wiring import build as dev_build
 
 _SCENARIO = "compliant"
@@ -179,6 +186,57 @@ def test_set_in_checkout_create_app_keeps_the_handle_for_later_slices(tmp_path: 
     app = app_module.create_app(_dev(tmp_path))
 
     assert app.state.account_fixture is not None
+
+
+_ABSENT = object()
+
+
+def _client_transports(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """The `transport` each key-verification client is built with (`_ABSENT`: none passed)."""
+    seen: list[object] = []
+    real = key_verify.BybitRestClient
+
+    def spy(*args: Any, **kwargs: Any) -> BybitRestClient:
+        seen.append(kwargs.get("transport", _ABSENT))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(key_verify, "BybitRestClient", spy)
+    return seen
+
+
+async def _build_a_verification_client(app: FastAPI) -> None:
+    exchange = app.state.app_context.exchange_bybit
+    calls = exchange.key_verification_calls("demo", UUID(int=1), uid="1", recv_window_ms=5000)
+    await calls.aclose()
+
+
+async def test_unset_the_adapter_builds_its_verification_clients_with_transport_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4 (hcl-worker-1's ask 3): a default build passes `transport=None`, so httpx keeps its own
+    transport, and nothing from the dev package is imported."""
+    _forget_the_dev_package(monkeypatch)
+    seen = _client_transports(monkeypatch)
+
+    await _build_a_verification_client(app_module.create_app(Settings()))
+
+    assert (seen, _dev_modules()) == ([None], [])
+
+
+async def test_set_the_adapter_builds_its_verification_clients_on_the_fixture_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """S4: the transport comes only from the door's handle, through a view that never closes it;
+    until the serving slice it refuses every request."""
+    seen = _client_transports(monkeypatch)
+    app = app_module.create_app(_dev(tmp_path))
+
+    await _build_a_verification_client(app)
+
+    (view,) = seen
+    assert isinstance(view, bybit_service._NonClosingTransport)
+    assert view._transport is app.state.account_fixture.rest_transport
+    assert isinstance(view._transport, RefusingTransport)
 
 
 def test_set_logs_a_boot_warning(tmp_path: Path) -> None:

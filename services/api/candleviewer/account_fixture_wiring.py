@@ -9,7 +9,8 @@ already refused the variable outside dev/test (ruling 2); this module checks tha
 imports anything, so the shipped side never relies on the dev package to refuse, and the package
 re-checks it as well.
 
-S4 threads the handle into the exchange adapter's account REST clients and private socket. Until
+S4: `build_app_context` hands the handle's REST transport to the exchange adapter, which builds
+every key-verification client on it; the private socket's connector waits for its own slice. Until
 the guard and serving slices land, the package's transport and connector refuse every request.
 
 S8: the lifespan awaits `account_fixture_guard`, the dev package's boot guard, before any module
@@ -46,8 +47,9 @@ class AccountFixtureRefused(RuntimeError):
 
 class AccountFixture(Protocol):
     """What the dev-only package hands the composition root: the transport of the account REST
-    clients (`BybitRestClient(transport=...)`) and the private socket's zero-argument connector,
-    both threaded into the exchange adapter by S4."""
+    clients (`BybitRestClient(transport=...)`, threaded into the exchange adapter by S4, which
+    shares it and never closes it) and the private socket's zero-argument connector, which a later
+    slice threads."""
 
     @property
     def rest_transport(self) -> httpx.AsyncBaseTransport: ...

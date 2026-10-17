@@ -89,6 +89,11 @@ invariant (C-4.14).
    planned (C-4.15). Production passes no transport, so `_request` (`exchange/bybit/rest.py:325-503`) gains
    no branch. The private socket stays with #2877 and #848; S4 adds only an injectable connector seam, on the
    pattern of `public_socket_factory` (`exchange/bybit/service.py:91-96`).
+   _As built (2026-10-17):_ S4 is the narrower REST-transport seam agreed with #836's owner (hcl-worker-1,
+   RelayRoom 2026-10-17 13:40Z, option b): `ExchangeBybitService(rest_transport=...)` hands one transport to
+   every key-verification client, through a view that cannot close it. The general `account_rest_client`
+   factory, the private-socket connector and the injected `wall_clock` follow with S10 and S12, and need the
+   agreement of the #2877, #1006 and #848 owners first.
 4. **Key-id guard, with no new M2 capability.** An exact boot check would need M2 to decrypt and compare key
    ids, in every release image. Instead the boot guard (S8) reads `(env, key_id_last4)` of unrevoked rows only
    (`revoked_at IS NULL`; `migrations/versions/0017_exchange_accounts_api_keys.py:141`) and refuses any such
@@ -196,7 +201,7 @@ demo-only definition need not carry over.
 | S1  | This record and the STRIDE note                         | —                                                                                 |
 | S2  | `Settings` gate and a fail-closed loader                | S1                                                                                |
 | S3  | Release images carry no `cvdev`; its import is confined | S2                                                                                |
-| S4  | Account REST client and private-socket seams            | S2, #836's seam (2a3), agreement of the #836, #1006 and #2877 owners (decision 3) |
+| S4  | Account REST transport seam                             | S2, #836's seam (2a3), agreement of #836's owner, option b (decision 3, as built) |
 | S5  | The pack resolver moves into `cvdev`                    | S2                                                                                |
 | S6  | The plan §9.6 request log                               | S2                                                                                |
 | S7  | Host, key-id and signature guards                       | S5, S6                                                                            |

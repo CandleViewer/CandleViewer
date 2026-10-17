@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
+
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
     ArchiveConfig,
@@ -49,16 +51,43 @@ if TYPE_CHECKING:
     from candleviewer.secrets import CredentialBorrower
 
 
+class _NonClosingTransport(httpx.AsyncBaseTransport):
+    """#2893 S4: the adapter's one account REST transport as its clients see it. Requests go
+    through; `aclose()` does not, since each key's client is closed after its check while the
+    transport serves the next key. Only its owner, the composition root, may close it."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return await self._transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        """Leaves the shared transport open."""
+
+
 class ExchangeBybitService:
     """Empty scaffold for the M4 `exchange.bybit` module lifecycle."""
 
-    def __init__(self, credentials: CredentialBorrower | None = None) -> None:
+    def __init__(
+        self,
+        credentials: CredentialBorrower | None = None,
+        *,
+        rest_transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._started = False
         #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
         #: M2 computes the request MAC (`credentials.sign(...)`) and returns the key id,
         #: never the secret (C-2.7, #2339). Never minted here.
         self._credentials = credentials
         self._verify_governor = verification_governor()
+        #: #2893 S4: the transport of every account REST client built here, chosen once. None in
+        #: production, so httpx keeps its own; the composition root passes the dev-only account
+        #: fixture's only when `CV_ACCOUNT_FIXTURE` is set, and the clients get a view of it that
+        #: cannot close it. Never in a repr or a log line.
+        self._rest_transport = (
+            None if rest_transport is None else _NonClosingTransport(rest_transport)
+        )
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
@@ -142,12 +171,14 @@ class ExchangeBybitService:
     ) -> KeyVerificationCalls:
         """E27-T03: key info and the probe for one stored key, signed by M2 under `key_verify`
         on `env`'s own host only (US-ACCT-007, C-2.11), on the shared verification budget,
-        stamped on the exchange's clock when `clock_offset_ms` gives the measured offset."""
+        stamped on the exchange's clock when `clock_offset_ms` gives the measured offset, sent
+        through the adapter's account REST transport (#2893 S4)."""
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
         return key_verification_calls(
             self._credentials, env, credential_id, uid=uid, recv_window_ms=recv_window_ms,
             governor=self._verify_governor, clock_offset_ms=clock_offset_ms,
+            transport=self._rest_transport,
         )  # fmt: skip
 
     async def start(self, ctx: AppContext) -> None:

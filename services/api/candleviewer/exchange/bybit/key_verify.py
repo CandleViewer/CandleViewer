@@ -41,6 +41,8 @@ from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
 
 if TYPE_CHECKING:
+    import httpx
+
     from candleviewer.secrets import CredentialBorrower
 
 #: Ticket performance notes: at most 5 s per signed call.
@@ -112,9 +114,11 @@ def key_verification_calls(
     recv_window_ms: int,
     governor: TokenBucketGovernor,
     clock_offset_ms: Callable[[], int] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> KeyVerificationCalls:
     """Calls for `credential_id` on `env`'s host; an unknown `env` is refused, never defaulted.
-    `clock_offset_ms` (exchange minus host) stamps each request on the exchange's clock."""
+    `clock_offset_ms` (exchange minus host) stamps each request on the exchange's clock.
+    `transport` is the adapter's account REST transport (#2893 S4): None keeps httpx's own."""
     base = SIGNED_REST_BASES.get(env)
     if base is None:
         raise ValueError("unknown environment")
@@ -127,6 +131,7 @@ def key_verification_calls(
     )
     signer = BybitSigner(credentials, credential_id, purpose="key_verify")
     client = BybitRestClient(
-        config, uid=uid, signer=signer, governor=governor, clock_offset_ms_provider=clock_offset_ms
-    )
+        config, uid=uid, signer=signer, governor=governor, clock_offset_ms_provider=clock_offset_ms,
+        transport=transport,
+    )  # fmt: skip
     return KeyVerificationCalls(client, governor)
