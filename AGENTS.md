@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 1.2.0 · Last updated 2026-10-17 · Owner `@basiltt`
+> **Version:** 1.2.1 · Last updated 2026-10-17 · Owner `@basiltt`
 
 ---
 
@@ -322,6 +322,11 @@ the source of truth for ticket _content_.
 | Unit/component tests      | `pnpm --filter @candleviewer/web test`     |
 | Build                     | `pnpm --filter @candleviewer/web build`    |
 | Storybook (design review) | `pnpm --filter @candleviewer/ui storybook` |
+
+A web test that imports a built artefact of a workspace dependency (such as `packages/ui`'s CSS
+exports, added in #3189) needs that package built: `turbo run test` builds the dependencies first
+(`^build`). When running the web `test` or `test:cov` script with pnpm directly, run
+`pnpm --filter "@candleviewer/web^..." run build` first (#3244).
 
 ### `apps/desktop`
 

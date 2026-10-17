@@ -124,6 +124,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # apps/web's tests may import built artefacts of its workspace dependencies (packages/ui's
+      # CSS exports, #3189); turbo's `^build` builds them first, but this job runs pnpm directly
+      # (#3244).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
       - name: vitest-axe component suite (apps/web, packages/ui)
         run: pnpm --filter @candleviewer/web --filter @candleviewer/ui test
 
