@@ -27,6 +27,8 @@
   #2350), so this model reviews the built broker and KEK loader and gates the rest of the epic. E27-T03, E27-T04,
   E27-T05 and E27-S01 to E27-S05 must reflect it (§10). Its Critical/High list (§11.1) was re-triaged against `main` at `9d4f9fb0` when the status flipped to Approved.
 - Gate note: design-level weaknesses only. No credential, host, UID, IP address or exploit detail appears.
+- Addendum: §12 (2026-10-16, #2893) covers the dev/test account-fixture transport, proposed with ADR-0036 and
+  pending its own security review. The Approved status above covers §1 to §11.
 
 ## 1. Scope
 
@@ -864,3 +866,73 @@ amendment (#2352 added Amendment 2); #2285 owns the security-programme text:
 | 2026-10-16 | security-reviewer (Fable, independent; PR #2815)           | REQUEST CHANGES at de649e42 against main 5f512771: 69 rows, L×I and H* arithmetic clean, 57 cited tests present, disclosure scan clean, shipped controls verified in secrets/ broker, _kek, _source, _rotation, service, credentials_sqlalchemy, 0017-0026, audit/actions, step_up, read_only_gate; owed: RR-13 in 04 §5.11 "Not accepted", re-triage F-01/F-03/F-14 as shipped (#2270/#2338/#2336), rotation and re-wrap abuse cases, KV-R01 disposition, 0024 re-insert residual |
 | 2026-10-16 | amendment author (agent)                                   | Approved (Fable security pass REQUEST CHANGES at de649e42 resolved, APPROVE at 878d5c4e on re-check); RR-13 and RR-14 in 04 §16.1; requests posted on #848, #913, #916, #1274, #901, #902; Fable findings addressed in this revision                                                                                                                                                                                                                                               |
 | 2026-10-16 | security-reviewer (Fable, independent; PR #2815, re-check) | APPROVE at 878d5c4e against main 93391b52: REQUEST CHANGES items of de649e42 verified closed (04 §5.11 Not accepted row with RR-13, F-01/F-03/F-14 re-triaged as shipped, AC-34 to AC-38, KV-R01 disposition, 0024 re-insert residual, citations); 69 rows, L×I and H* arithmetic clean, 69 cited tests present, disclosure scan clean; AC-38 wording change is doc-only and covered                                                                                               |
+
+## 12. Addendum: the dev/test account-fixture transport (#2893)
+
+Status: **proposed** with [ADR-0036](../../plan/27-adrs/ADR-0036-dev-only-account-fixture-transport.md), which
+holds the decisions and their evidence (main-orchestrator rulings on #2893, 2026-10-16; owner ratification
+pending). This addendum awaits its own security review and changes no row of §3 to §11. Scope: the
+`CV_ACCOUNT_FIXTURE` stub transport that serves the E27 pack (`packages/fixtures/accounts/`) to a dev/test
+stack. It stands in for E3 on F6 and F7 (§2), below P6, and adds one store, FX-DS: `CV_ACCOUNT_FIXTURE_DIR`
+(the switch, anchor and clock files and the request log). Rows are `FX-xnn`; each control names the #2893
+slice that ships it, and every code slice carries `security-review`. Paths follow ADR-0036's header.
+
+### 12.1 The central threat: a mis-set variable on a stack holding real keys
+
+If the stub answered for a real key, its key-info reply would show an empty `Wallet` group and the C-2.8
+check would pass on fabricated data: a switch gating a safety invariant (C-4.14). Rated L x H\* (High) before
+controls. Three layers stop it. A release image as built carries layer 1 and the `Settings` half of layer 2
+(S2, in `candleviewer/`); the boot guard's key check (S8) and the per-request guard (S7) travel with `cvdev`,
+so whatever bypasses layer 1 also brings layers 2 and 3. A builder-stage dev stack
+(`infra/compose/docker-compose.dev.yml:10-11`) lacks layer 1 by design once S14's fixture override mounts
+`cvdev` (the plain override mounts `candleviewer/` alone, `:24`), which is why layers 2 and 3 each fail closed
+on their own:
+
+1. **The release image cannot import the stub (S2, S3).** `cvdev` is outside the wheel and the image, so a
+   set variable refuses boot instead of being ignored; S3's check, binding before every image push (ADR-0036,
+   Enforcement), boots it with the structural values and accepts only the package-absent refusal. This is
+   the `:dev`-tagged release image, which staging deploys (`.github/workflows/main.yml:172-174`,
+   `deploy-staging.yml:104-105`). It holds for the image as built: the venv's editable `.pth` names `/build`
+   (`_job-security.yml:500-501`), so a bind mount of `cvdev` there or a `PYTHONPATH` entry would restore the
+   import. S14's compose tests pin the fixture stack to the builder stage and no published image, and layers
+   2 and 3 come with `cvdev`.
+2. **The boot guard (S2, S8).** `Settings` (S2, in every image) refuses the variable unless the environment
+   is demo, the feed is synthetic and no `CV_BYBIT_API_*` is set. The key check (S8, in `cvdev`) then reads
+   unrevoked keys only (`revoked_at IS NULL`) and refuses any outside demo, and any demo key whose last 4
+   characters are not a pack tail.
+3. **The per-request guard (S7).** `X-BAPI-API-KEY` must equal a pack key id exactly. Otherwise the request is
+   never answered, and both the transport and the process read-only gate latch (`net/read_only_gate.py:87`)
+   with `reason_code=account_fixture_guard`, which the `system` topic publishes as a critical notice
+   (`net/system_topic.py:13-17`) beside the P0 log event.
+
+A real key therefore gets no answer, which is inconclusive and never green (SR-E27-18); the C-2.8 check runs
+unchanged, on stub data, for fixture keys only. Residual **Low**: a real demo key whose tail equals a pack
+tail (about 44 in 62^4, 3e-6 per key) passes boot and is refused exactly on its first call; signing with it
+also needs that environment's real KEK, or M2 degrades at the KCV check (`secrets/service.py:307-319`). Here
+the boot check is weaker than #2893's scope item 2 and acceptance 5 (ADR-0036 decision 4).
+
+**Live and testnet (C-2.11).** The transport serves only the demo REST and private-WS hosts
+(`24-internal-schemas.md:3427`, `:3429`). Every other host, the rest of `ALLOWED_REST_HOSTS` included
+(`exchange/bybit/config.py:20-33`), is refused by raising, never answered, and logged as `refused_host` with a
+P0 event (E27 test plan §0.1). Withdraw and transfer paths are a P0 tripwire too (C-1.2 item 5): any
+`/v5/asset/` path is refused, and the pack serves none. The live public market-data stream carries no key,
+stays outside the transport and remains expected (test plan §9.6).
+
+### 12.2 STRIDE
+
+Columns follow §3 and the §1.3 rating in a reduced form: nothing is on `main` yet, so Control and Slice replace
+the existing control, gap and owner, and every row's disposition is **M** (planned in a #2893 slice).
+
+<!-- prettier-ignore -->
+| ID | Element / flow | Threat | L | I | Risk | Control | Slice | Verify | Residual |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FX-S01 | F6, F7, DS2 | A non-fixture key, or a fixture-shaped id outside the pack, is answered as a fixture | L | H\* | High | Exact key-id match per request; at boot, the environment and tail of every unrevoked key; a trip is never answered and latches (§12.1) | S3, S7, S8 | unit, integration, ci-gate | Low (tail collision, §12.1) |
+| FX-S02 | F6 | A forged or mis-signed request counts as verified, hiding a signing defect | L | M | Low | HMAC-SHA256 recomputed with `fixture-<scenario>-secret-not-real` for the scenario the key was stored under (#2893 scope 6), over the message the signer builds (`exchange/bybit/signer.py:54-59`; payload `exchange/bybit/rest.py:301-316`); a mismatch answers `_base/error_10004.json` and logs `verified=false` | S7 | unit | Low |
+| FX-T01 | FX-DS | The switch, anchor or clock files under `CV_ACCOUNT_FIXTURE_DIR` are swapped, symlinked or malformed to steer answers | L | M | Low | The directory is absolute, without `..` or a symlink (the rules of `settings.py:511-519`); reads are bounded, `O_NOFOLLOW` (`auth/testnet_clock.py:39-40`) and schema-checked; writes are atomic (temp file, then rename); payloads stay contained (`services/api/tests/_account_fixtures.py:149-156`); scenario names are tokens | S2, S5, S10 | unit | Low |
+| FX-R01 | DS4, DS6, FX-DS | Fixture mode runs unnoticed, or an answer cannot be traced | L | M | Low | Boot writes the system audit record `system.config.account_fixture_enabled` and a warning, as `auth/testnet_clock.py:124-132` does, with only the scenario name and directory path in `after_state`, never key material; every answer, refusal and switch is in the request log; `CV_ACCOUNT_FIXTURE` joins the support-bundle allow-list (`observability/support_bundle.py:35-48`) | S2, S6, S8, S10 | unit | Low |
+| FX-I01 | FX-DS, DS6 | The request log, or a refusal's exception text, holds a signature, a secret or a real key id (C-12.6, C-12.2) | L | H | Medium | The writer takes allow-listed scalar fields, never a request, header map or body; a non-fixture key is logged as `key_class=non_fixture` with none of its characters; field names avoid the redaction deny-list (`observability/redaction.py:33-47`); tests recompute every HMAC and search the log for it; the file is `0600`, `O_NOFOLLOW` and size-capped, and never pasted into a public issue (test plan §0.1). A guard raises with a fixed reason code only, never a header value: the client copies the exception text into its `TransportError` (`exchange/bybit/rest.py:390-393`), and the value-shape filter (`observability/redaction.py:74`) misses a 64-hex signature, the concern `ingestion/clock.py:105-111` records. S7's tests assert that `str(exc)` and the emitted log event hold no header value; callers log the exception type, as `accounts/selfcheck.py:256`, `:293` do | S6, S7 | unit | Low |
+| FX-D01 | P6, F6 | A guard trip or a refusal storm leaves the stack unusable | M | L | Low | Fail closed by design: a trip latches the process read-only (`account_fixture_guard`) until the offending key row is revoked and the stack restarts, and both boot checks skip revoked rows, so that restart succeeds; reads are bounded; WS timers are bounded and supervised; a refusal raises a transport error that the client retries (`exchange/bybit/config.py:65`), so it can log several lines, but it is never answered | S7, S8, S10, S12 | unit | Low |
+| FX-E01 | P6, P4 | The fixture path changes who may call what, or reaches M2 | L | H | Medium | RBAC is unaffected (C-2.12): the transport sits below M4, after route authorisation, scope and step-up; it adds no route (the switch is a host CLI writing a file, as #2086 does); auth, sessions and the auth clock are untouched; `cvdev` never imports `secrets` (C-3.2), held by the import-linter root that S3 adds (ADR-0036, Enforcement) | S3, S4, S10 | ci-gate, unit | Low |
+
+Each slice's tests prove its controls. The gates that keep the stub out of release images (the Semgrep
+confinement rule, the image check, the import-linter root and the `COPY` assertion) are listed in ADR-0036.
