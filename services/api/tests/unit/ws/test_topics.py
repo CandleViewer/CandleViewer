@@ -145,6 +145,14 @@ def test_validate_options_typo_of_every_declared_option_is_rejected(family: str,
         ("footprint", {"imbalance_ratio": 1.5}, True),
         ("metrics", {"param": "a.b"}, False),
         ("metrics", {"metrics": ["cvd"], "param": "atr:14"}, True),
+        ("bars", {"history": 0, "include_delta": False}, True),
+        ("bars", {"history": 1000, "include_delta": True}, True),
+        ("bars", {"history": -1}, False),
+        ("bars", {"history": 1001}, False),
+        ("bars", {"history": True}, False),
+        ("bars", {"history": "5"}, False),
+        ("bars", {"include_delta": 1}, False),
+        ("bars", {"include_delta": "true"}, False),
     ],
 )
 def test_validate_options_boundaries(family: str, opts: dict[str, Any], ok: bool) -> None:
@@ -152,6 +160,20 @@ def test_validate_options_boundaries(family: str, opts: dict[str, Any], ok: bool
         assert validate_options(FAMILIES[family], opts) == opts
     else:
         assert _code(validate_options, FAMILIES[family], opts) == "invalid_options"
+
+
+@pytest.mark.parametrize(
+    ("opts", "field"),
+    [({"history": 1001}, "history"), ({"include_delta": "yes"}, "include_delta")],
+)
+def test_validate_options_a_bad_bars_option_is_refused_naming_its_field(
+    opts: dict[str, Any], field: str
+) -> None:
+    """§6.1: `history` outside 0-1 000 or a non-boolean `include_delta` is `invalid_options`
+    naming the field, so a client can tell which of the two it got wrong."""
+    with pytest.raises(TopicError) as exc:
+        validate_options(FAMILIES["bars"], {"history": 5, "include_delta": True, **opts})
+    assert (exc.value.code, exc.value.field) == ("invalid_options", field)
 
 
 def test_validate_options_non_object_is_invalid() -> None:

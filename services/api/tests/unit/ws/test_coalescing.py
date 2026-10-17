@@ -396,6 +396,35 @@ def test_coalescer_unconfirmed_after_confirmed_bar_keeps_confirmed() -> None:
     assert frame.coalesced_count == 1  # the discarded update merged nothing
 
 
+_BARS_HEAD = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5"}
+
+
+def test_coalescer_40_updates_of_one_forming_bar_leave_as_one_frame_with_the_latest_state() -> None:
+    """#399 scenario 3, first half: 40 trades update the forming bar inside one window."""
+    queue = CoalescingQueue("bars")
+    for n in range(1, 41):
+        forming = {"generation": 0, "index": 5, "t_ms": 36_300_000, "c": str(n), "confirm": False}
+        queue.offer({**_BARS_HEAD, "bars": [forming]})
+    [frame] = queue.take()
+    assert frame.body["bars"] == [forming]  # the 40th update's state
+    assert frame.coalesced_count == 40
+
+
+def test_coalescer_a_close_and_the_next_open_in_one_window_both_leave_the_close_confirmed() -> None:
+    """#399 scenario 3, second half: the close is not collapsed into the open that follows it."""
+    queue = CoalescingQueue("bars")
+    bar = {"generation": 0, "t_ms": 36_300_000}
+    for index, confirm, close in [(5, False, "1"), (5, True, "2"), (6, False, "2")]:
+        item = {**bar, "index": index, "c": close, "confirm": confirm}
+        queue.offer({**_BARS_HEAD, "bars": [item]})
+    [frame] = queue.take()
+    assert [(b["index"], b["confirm"], b["c"]) for b in frame.body["bars"]] == [
+        (5, True, "2"),
+        (6, False, "2"),
+    ]
+    assert frame.coalesced_count == 3
+
+
 def test_coalescer_200_prints_one_window_all_in_order_unmerged() -> None:
     queue = CoalescingQueue("trades")
     prints = [{"id": f"t{i}", "price": "1", "size": "1", "side": "buy"} for i in range(200)]
