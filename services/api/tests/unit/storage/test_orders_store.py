@@ -569,11 +569,11 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 )
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read
-    raise `StorageQueryFailed` when Postgres fails, as the writes do."""
-    rel = _Rel(_leaky(OperationalError, "57P01"))
+    raise `StorageQueryFailed` when a statement fails (57014: the cap), as the writes do."""
+    rel = _Rel(_leaky(OperationalError, "57014"))
     with pytest.raises(StorageQueryFailed) as err:
         await _CALLS[read][0](_store(rel))
-    assert err.value.sqlstate == "57P01"
+    assert err.value.sqlstate == "57014"
     assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
     assert _P1 not in "".join(traceback.format_exception(err.value))
 
@@ -646,6 +646,27 @@ async def test_a_connection_lost_mid_write_is_tier_unavailable_and_commits_nothi
     assert (str(err.value), rel.commits) == ("postgres unreachable (DBAPIError)", 0)
     assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
     assert _PEER not in "".join(traceback.format_exception(err.value))
+
+
+#: Where a database error meets the store: when it connects, or on its first statement.
+_SITES: dict[str, Callable[[BaseException], object]] = {"checkout": _Down, "statement": _Rel}
+
+
+@pytest.mark.parametrize("call", sorted(_CALLS))
+@pytest.mark.parametrize("sqlstate", ["57P01", "57P02", "57P03", "53300"])
+@pytest.mark.parametrize("site", sorted(_SITES))
+async def test_a_server_that_does_not_serve_is_tier_unavailable_unchained(
+    call: str, sqlstate: str, site: str
+) -> None:
+    """Shut down (57P01, 57P02), starting up (57P03) or out of connection slots (53300): a
+    connection the store cannot get or keep, so Postgres is unavailable (24 Sec.8.2 S7), not a
+    failed statement, for every call."""
+    rel = _SITES[site](_leaky(OperationalError, sqlstate))
+    with pytest.raises(StorageTierUnavailable) as err:
+        await _CALLS[call][0](_store(cast(Any, rel)))
+    assert str(err.value) == "postgres unreachable (OperationalError)"
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _P1 not in "".join(traceback.format_exception(err.value))
 
 
 @pytest.mark.parametrize("call", ["append", "get"])

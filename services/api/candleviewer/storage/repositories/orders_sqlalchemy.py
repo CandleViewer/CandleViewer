@@ -24,11 +24,11 @@ A failure of any call, read or write, never leaves with its statement, parameter
 which carry P1 money values (21 Sec.12), and is never chained (C-12.6). A database error is
 re-raised `from None` as `OrderConstraintError(name)` or `StorageQueryFailed(sqlstate)`; a
 connection the store cannot get or loses (an `OSError` from the driver, connect timeouts
-included, the pool's checkout `TimeoutError`, or a `DBAPIError` that is `connection_invalidated`
-or of SQLSTATE class 08, as asyncpg reports a connection lost mid-statement) as
-`StorageTierUnavailable` (24 Sec.8.2 S7: Postgres is unavailable). Cancellation passes through
-unchanged. So a caller meets
-`OrderStoreError` or `StorageError`, never a driver or pool exception.
+included, the pool's checkout `TimeoutError`, or a `DBAPIError` that is `connection_invalidated`,
+of SQLSTATE class 08, as asyncpg reports a connection lost mid-statement, or of a server that
+does not serve, `_NOT_SERVING`) as `StorageTierUnavailable` (24 Sec.8.2 S7: Postgres is
+unavailable). Cancellation passes through unchanged. So a caller meets `OrderStoreError` or
+`StorageError`, never a driver or pool exception.
 """
 
 from __future__ import annotations
@@ -77,6 +77,8 @@ OMS_STATEMENT_TIMEOUT_MS: Final = 2000
 _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 #: SQLSTATEs that carry a constraint name: unique, check and foreign-key violations.
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
+#: A server that does not serve: shut down (57P01, 57P02), starting (57P03), full (53300).
+_NOT_SERVING: Final = frozenset({"57P01", "57P02", "57P03", "53300"})
 
 
 def _event_values(event: NewOrderEvent) -> dict[str, Any]:
@@ -204,7 +206,8 @@ def _constraints() -> Iterator[None]:
     try:
         yield
     except DBAPIError as exc:
-        if exc.connection_invalidated or (_sqlstate(exc) or "").startswith("08"):
+        state = _sqlstate(exc) or ""
+        if exc.connection_invalidated or state.startswith("08") or state in _NOT_SERVING:
             raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
         name = _violated_constraint(exc)
         if name is None:

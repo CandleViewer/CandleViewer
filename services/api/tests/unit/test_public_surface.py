@@ -123,7 +123,17 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # degradation boundary (docs/plan/20-architecture.md Sec.3.x Validator) —
     # not `*Service`/`*Error` by name, but the module's documented public
     # interface alongside `OmsService`.
-    "M14": {"Validator", "ReadOnlyCheck", "OrderPlacementRefused"},
+    # E29-T01 (#845): the order persistence the OMS writes through, `OrderRepository` and
+    # `OrderEventRepository` over M10's driver-free stores, and `DuplicateOrderLinkId`, which
+    # `OrderRepository.create` raises when `ux_orders_link` already holds the id.
+    "M14": {
+        "Validator",
+        "ReadOnlyCheck",
+        "OrderPlacementRefused",
+        "OrderRepository",
+        "OrderEventRepository",
+        "DuplicateOrderLinkId",
+    },
     # E27-T01 (#2495): the accounts facade and the domain types it returns, consumed by the
     # E27-S01 routes. No store, row type or SQL adapter is exported (SR-051 scoping stays in
     # M10), and no model carries an envelope column (C-3.2).

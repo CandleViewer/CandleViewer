@@ -42,6 +42,8 @@ class OrderLinkLookup(Protocol):
     when the caller persists the id is therefore a collision, not a storage failure:
     the caller allocates again (`OrderLinkIdAllocator.allocate` states the bound) and
     persists the new id before any send.
+
+    It spans every account, so it is never exposed on an API route or WS topic.
     """
 
     async def exists(self, order_link_id: OrderLinkId) -> bool: ...
