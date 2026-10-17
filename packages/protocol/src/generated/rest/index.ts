@@ -1166,6 +1166,10 @@ export interface paths {
      *     an access token. With only the cookie, `all_sessions: true` is refused and revokes
      *     nothing: `401 session_idle_locked` if the session is locked, otherwise
      *     `401 unauthenticated`.
+     *
+     *     On `503` (the audit sink is not active or refused the record, or the session backend is
+     *     not wired) nothing was revoked and no cookie was cleared (C-2.9): the sign-out is
+     *     recorded before anything is revoked.
      */
     post: operations["authLogout"];
     delete?: never;
@@ -2902,7 +2906,7 @@ export interface paths {
     post?: never;
     /**
      * Revoke one of own sessions
-     * @description Revoking the current session is equivalent to logout. Revocation terminates any WebSocket connection bound to that session immediately (23-ws-protocol.md section 9.5).
+     * @description Revoking the current session is equivalent to logout. Revocation terminates any WebSocket connection bound to that session immediately (23-ws-protocol.md section 9.5). On `503` (the audit sink is not active or refused the record, or the session backend is not wired) nothing was revoked and no cookie was cleared (C-2.9).
      */
     delete: operations["revokeMySession"];
     options?: never;
@@ -10901,6 +10905,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authMfaEnroll: {
@@ -11146,6 +11151,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
+      422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -11172,6 +11178,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authExtendSession: {
@@ -11233,6 +11240,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authStepUp: {
@@ -13964,9 +13972,11 @@ export interface operations {
         };
         content?: never;
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listNotifications: {

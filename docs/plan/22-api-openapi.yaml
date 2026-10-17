@@ -1143,6 +1143,7 @@ paths:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -1164,6 +1165,10 @@ paths:
         an access token. With only the cookie, `all_sessions: true` is refused and revokes
         nothing: `401 session_idle_locked` if the session is locked, otherwise
         `401 unauthenticated`.
+
+        On `503` (the audit sink is not active or refused the record, or the session backend is
+        not wired) nothing was revoked and no cookie was cleared (C-2.9): the sign-out is
+        recorded before anything is revoked.
       security:
         - bearerAuth: []
         - refreshCookie: []
@@ -1197,6 +1202,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/session:
     get:
@@ -1296,6 +1302,7 @@ paths:
                       locked: true
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/session/extend:
     post:
@@ -1499,6 +1506,7 @@ paths:
                       items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/password:
     put:
@@ -9271,13 +9279,17 @@ paths:
       description: >
         Revoking the current session is equivalent to logout. Revocation terminates any
         WebSocket connection bound to that session immediately (23-ws-protocol.md section 9.5).
+        On `503` (the audit sink is not active or refused the record, or the session backend is
+        not wired) nothing was revoked and no cookie was cleared (C-2.9).
       x-rbac: { permissions: [], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /me/limits:
     get:
