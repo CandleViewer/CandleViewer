@@ -342,6 +342,22 @@ def test_guard_cross_user_a_full_session_is_never_restricted(
     assert world.auth.classified == [_USERS[who]]  # its own user, nobody else's
 
 
+def test_guard_serves_a_full_verdict_only(world: _World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deny by default (C-12.4), as the WS authenticator: a verdict the guard does not know (a
+    later class, or a fake's plain string) gets the allow-list only, never every route."""
+
+    async def unknown(_session: SessionRecord) -> Any:
+        return "full"  # equal to `SessionClass.FULL`, yet not that member
+
+    monkeypatch.setattr(world.auth, "classify", unknown)
+
+    refused = world.call("GET", "/auth/sessions", "full")
+    allowed = world.call("GET", "/auth/session", "full")
+
+    assert _refused(refused) and allowed.status_code == 200
+    assert world.hits == [("GET", "/auth/session")]
+
+
 @pytest.mark.parametrize("header", ["", "Basic dG9r", "Bearer ", "tok-enrolling"])
 def test_guard_without_a_bearer_token_leaves_the_answer_to_the_route(
     world: _World, header: str

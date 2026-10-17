@@ -392,6 +392,31 @@ def test_ws_serves_a_full_verdict_only(stack: Stack, monkeypatch: pytest.MonkeyP
     assert _refusals(stack, "ws", "expired") == before + 1
 
 
+def test_ws_auth_fails_closed_when_the_session_cannot_be_classified(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deny by default (C-12.4), the twin of the HTTP 503: a live token whose user cannot be
+    read gets a failed `auth`, counted and logged as `unclassified`, never `auth_ok`."""
+    uid, _ = stack.add_user("member")
+    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
+
+    async def unreachable(user_id: str) -> UserRecord | None:
+        raise OSError("user store unreachable")
+
+    monkeypatch.setattr(stack.users, "find_by_id", unreachable)
+    failures, before = _failures(), _refusals(stack, "ws", "unclassified")
+
+    with capture_logs() as logs, _socket(stack) as ws:
+        reply = _hello_auth(ws, minted.access_token)
+
+    assert (reply["t"], reply["p"]["code"]) == ("err", "auth_failed")
+    assert _failures() == failures + 1
+    assert _refusals(stack, "ws", "unclassified") == before + 1
+    (line,) = [e for e in logs if e["event"] == "auth.enrolment_only.unclassified"]
+    assert (line["log_level"], line["channel"], line["error"]) == ("error", "ws", "OSError")
+    assert "unreachable" not in f"{reply}{logs}"  # the failure text reaches no one
+
+
 def test_ws_refuses_an_overlong_session_like_an_expired_token(stack: Stack) -> None:
     """HTTP answers 401 ("sign in again"), so the socket does not say "enrol, then connect":
     a failed `auth` (§4.3), counted, the socket left open for another attempt."""
