@@ -2,10 +2,11 @@
 
 One increment per audited failed login, on the factor that failed: `password` for an
 `auth.login_failed` row, the requested MFA method for an `auth.mfa_failed` row, `recovery_code` for
-`auth.recovery_codes_exhausted`. The one `auth.login_failed` row the MFA step writes, for a user
-disabled since the password step (#2911), counts on the requested method too (#3054). An attempt
-refused while the account is locked (`auth.account_locked`) and a success never count. Deltas on the
-process-default registry, where the module-level counter lives; the scraped view is
+`auth.recovery_codes_exhausted` and every refusal row of the recovery route (#2344). The one
+`auth.login_failed` row the MFA step writes, for a user disabled since the password step (#2911),
+counts on the requested method too (#3054). An attempt refused while the account is locked
+(`auth.account_locked`) and a success never count. Deltas on the process-default registry, where
+the module-level counter lives; the scraped view is
 `test_security_metrics_export.py`.
 """
 
@@ -29,6 +30,7 @@ from candleviewer.auth.errors import (
     MfaCodeInvalid,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    UserDisabled,
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
@@ -102,17 +104,30 @@ def _client(login: LoginService | None, mfa: _Mfa, audit: AuditService | None) -
 
 
 class _RecoveryAuth(_Auth):
-    """Every backend a recovery sign-in needs (#2344): it mints an enrolment-only session."""
+    """Every backend a recovery sign-in needs (#2344): it mints an enrolment-only session.
+    *user* overrides fields of the user it reads."""
 
     sessions_is_active = True
 
-    def __init__(self, mfa: _Mfa) -> None:
+    def __init__(self, mfa: _Mfa, **user: Any) -> None:
         super().__init__(None, mfa)
         self.sessions = sessions()
+        self._user = user
 
     async def find_user(self, user_id: str) -> UserRecord:
         user = make_user(username="recovering", email="r@x.test", password_hash=_INERT_DIGEST)
-        return user.model_copy(update={"id": uuid.UUID(user_id)})  # `mfa_required` (C-12.2)
+        return user.model_copy(update={"id": uuid.UUID(user_id), **self._user})
+
+
+class _Spend(_Mfa):
+    """The check passes; the spend raises *error* (a lost race, a disable, the store)."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(None)
+        self._spend_error = error
+
+    async def complete_recovery(self, check: MfaRecoveryCheck) -> None:
+        raise self._spend_error
 
 
 def _second_factor_client(path: str, mfa: _Mfa, audit: AuditService) -> httpx.AsyncClient:
@@ -299,3 +314,31 @@ async def test_a_correct_second_factor_that_mints_a_session_does_not_count(
     async with _minting_client(user, repo, audit) as client:
         assert (await client.post(_V, json=_VERIFY)).status_code == 200
     assert _moved(before) == {} and audit.writer.of(_LOGIN_FAILED) == []
+
+
+@pytest.mark.parametrize(
+    ("mfa", "user", "row"),
+    [
+        (_Mfa(None), {"mfa_required": False}, _FAILED),
+        (_Mfa(None), {"status": UserStatus.DISABLED}, "auth.login_failed"),
+        (_Spend(RecoveryCodeInvalid("lost")), {}, _FAILED),
+        (_Spend(UserDisabled(None)), {}, "auth.login_failed"),
+        (_Spend(OSError("statement timeout")), {}, _FAILED),
+    ],
+    ids=["no_mfa_required", "disabled", "lost_race", "disabled_at_the_spend", "store_error"],
+)
+async def test_each_recovery_refused_after_the_check_counts_once_beside_its_row(
+    mfa: _Mfa, user: dict[str, Any], row: str
+) -> None:
+    """#2344: the catalogue's one increment per row also holds for the refusals that follow a
+    valid code, so racing a victim's code moves `AuthLoginFailureSpike` too."""
+    audit, before = AuditService(), _failures()
+    router = make_auth_router(
+        cast(Any, _RecoveryAuth(mfa, **user)), audit, identity=Identity(), csrf=_CSRF
+    )
+    app = FastAPI()
+    app.include_router(router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        assert (await client.post(_R, json=_RECOVER)).status_code == 401
+    assert _moved(before) == {"recovery_code": 1} and len(audit.writer.of(row)) == 1

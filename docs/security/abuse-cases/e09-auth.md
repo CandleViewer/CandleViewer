@@ -25,7 +25,7 @@ Each control was disabled on the scratch worktree and the named case failed, the
 
 | Control disabled                                                       | Failing case                                                                           |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `MfaService.complete_recovery` ignores a lost race (`False`), #2344    | the 3 unit cases below                                                                 |
+| `MfaService.complete_recovery` ignores a lost race (`False`), #2344    | `test_a_recovery_spend_that_does_not_commit_changes_nothing[lost_race]` + 3 unit cases |
 | refresh-reuse branch (`revoked_reason == "rotated"`)                   | AC-SES-03                                                                              |
 | TOTP `record_time_step` replay guard                                   | AC-MFA-01                                                                              |
 | `_origin_ok` allow-list check                                          | AC-CSRF-01                                                                             |
