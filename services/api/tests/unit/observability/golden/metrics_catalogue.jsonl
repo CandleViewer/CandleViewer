@@ -115,6 +115,7 @@
 ["cv_process_hardening_failures_total", "counter", [], "live", "E27"]
 ["cv_rule_prefilter_rejection_ratio", "gauge", [], "planned", "E35"]
 ["cv_statechart_library_info", "gauge", ["version", "sha256"], "planned", "E50"]
+["cv_wallet_sizing_old_snapshot_total", "counter", [], "live", "E27"]
 ["cv_workspace_conflicts_total", "counter", ["resource"], "planned", "E15"]
 ["cv_workspace_request_seconds", "histogram", ["operation"], "planned", "E15"]
 ["cv_workspace_users", "gauge", ["bucket"], "planned", "E15"]

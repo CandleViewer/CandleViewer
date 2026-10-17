@@ -209,6 +209,13 @@ def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
     assert rows.owner_epic == keys.owner_epic == "E27"
 
 
+def test_wallet_sizing_counter_is_live_and_carries_no_label() -> None:
+    """E27-T04 (#837, Option B): decisions taken on a snapshot older than the reconciliation
+    period. No account, balance or verdict in a label: the log line says which account."""
+    spec = next(s for s in registered_specs() if s.name == "cv_wallet_sizing_old_snapshot_total")
+    assert (spec.kind, spec.labels, spec.max_series, spec.owner_epic) == ("counter", (), 1, "E27")
+
+
 def test_labels_exercised_contain_no_personal_data() -> None:
     m = Metrics("live")
     register_r0(m)

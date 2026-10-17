@@ -115,7 +115,8 @@ class Standings(dict[UUID, KeyStanding]):
 
 
 class Sizing(dict[UUID, bool]):
-    """Wallet freshness per account; an account with no entry has no snapshot (`None`)."""
+    """Whether risk-based sizing may use each account's balance; an account with no entry has no
+    snapshot (`None`)."""
 
     def risk_sizing_available(self, account_id: UUID) -> bool | None:
         return self.get(account_id)

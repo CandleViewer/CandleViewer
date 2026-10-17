@@ -5,11 +5,12 @@ the composition root builds it into `OrderEntryGate(maintenance, ...)` after the
 Synchronous, O(1), no I/O (C-2.21): each answer reads in-memory state, never an interpreter or the
 network, and health is derived from its evidence on every read, so no background task has to run
 for a lapsed account to be refused. A down, policy-disabled or keyless account refuses new orders;
-key age never refuses (US-ACCT-005). A stale or unknown wallet is not an order-entry refusal: it
-makes risk-based sizing unavailable for the account (US-ACCT-008), the flag `risk_sizing_available`
-answers. Each reason has one fixed `detail` (24-internal-schemas.md §8.4.1): the 403 also reaches
-callers without `keys:read`, so it never carries exchange-supplied text or names the key-policy rule
-that failed.
+key age never refuses (US-ACCT-005). A wallet that is unknown, stale with its last reconciliation
+failed, or not refreshed for a reconciliation period, is not an order-entry refusal: it makes
+risk-based sizing unavailable for the account (US-ACCT-008), the flag `risk_sizing_available`
+answers; the 10 s stale flag alone does not (ruling on #837). Each reason has one fixed `detail`
+(24-internal-schemas.md §8.4.1): the 403 also reaches callers without `keys:read`, so it never
+carries exchange-supplied text or names the key-policy rule that failed.
 """
 
 from __future__ import annotations
@@ -66,8 +67,9 @@ class HealthStates(Protocol):
 
 
 class SizingSource(Protocol):
-    """Wallet freshness per account: `True` fresh, `False` stale, `None` unknown (no snapshot
-    yet)."""
+    """Whether risk-based sizing may use each account's balance: `True` it may, `False` it may not
+    (the snapshot is stale after a failed reconciliation, or older than one reconciliation period),
+    `None` unknown (no snapshot yet)."""
 
     def risk_sizing_available(self, account_id: UUID) -> bool | None: ...
 
@@ -95,8 +97,9 @@ class AccountHealthCheck:
         return None
 
     def risk_sizing_available(self, account_id: UUID) -> bool:
-        """Risk-based sizing reads this before any balance figure: only a fresh snapshot is
-        trusted, so a stale or missing one answers `False` (US-ACCT-008)."""
+        """Risk-based sizing reads this before any balance figure: only an answer of exactly `True`
+        lets it use one, so a snapshot that is stale after a failed reconciliation or older than one
+        period, and a missing one, answer `False` (US-ACCT-008)."""
         return self._wallets.risk_sizing_available(account_id) is True
 
 

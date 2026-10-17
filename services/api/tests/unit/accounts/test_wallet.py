@@ -2,7 +2,10 @@
 after silence and AC Stale balances disable risk-based sizing, at the exact 10 s and 60 s
 boundaries; snapshots ordered by the exchange's `updated_at`; a failed read or a credential
 rejection is never health evidence; the poll cadence while the private WS is down; Decimal only.
-Fake clock, fake ports, no network, no sleeps."""
+Risk-based sizing follows the last reconciliation, not the 10 s stale flag (the ruling on #837,
+Option B), with its two guards: a reconciliation that cannot run counts as failed, and so does a
+period that passes with no refresh; every decision on a snapshot older than the period is logged
+and counted. Fake clock, fake ports, no network, no sleeps."""
 
 from __future__ import annotations
 
@@ -14,6 +17,8 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pydantic import ValidationError
 from structlog.testing import capture_logs
 
@@ -21,6 +26,7 @@ from candleviewer.accounts.health import AccountHealthMonitor, HealthState, Heal
 from candleviewer.accounts.order_gate import AccountHealthCheck, KeyStanding
 from candleviewer.accounts.verification import KeyRefused, Refusal
 from candleviewer.accounts.wallet import (
+    SizingDecision,
     WalletCache,
     WalletPoll,
     WalletReconciler,
@@ -30,6 +36,8 @@ from candleviewer.accounts.wallet import (
     WalletView,
 )
 from candleviewer.observability.context import get_context
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.settings import Settings
 from tests.unit.accounts._fakes import ACC, ACC_B, T0, Dms, FakeClock, Standings
 
@@ -38,6 +46,8 @@ _RATES = ("account_im_rate", "account_mm_rate")
 #: Text a failed read's message may echo from the exchange; it must reach no log line (C-12.6).
 _ECHO = "echoed exchange text: key abc123"
 _T10 = T0 + timedelta(seconds=10)
+#: The counter of decisions taken on a snapshot older than the reconciliation period (catalogue).
+_OLD_SNAPSHOT = "cv_wallet_sizing_old_snapshot_total"
 
 
 def snapshot(updated_at: datetime = T0, equity: str = "1000.50") -> WalletSnapshot:
@@ -110,7 +120,8 @@ class Rejections(list[tuple[UUID, Refusal]]):
 
 class Rig:
     """`ACC` tracked with a snapshot as of `T0`, and a reconciler over fake ports. `monitored`: the
-    health port is a real monitor whose WS connected at the start and then dropped."""
+    health port is a real monitor whose WS connected at the start and then dropped. `counted`: the
+    cache counts its decisions on old snapshots on the catalogue's counter, of `self.metrics`."""
 
     def __init__(
         self,
@@ -119,9 +130,12 @@ class Rig:
         monitored: bool = False,
         thresholds: WalletThresholds | None = None,
         timeout_s: float = 5.0,
+        counted: bool = False,
     ) -> None:
         self.clock = FakeClock()
-        self.cache = WalletCache(self.clock, thresholds)
+        self.metrics = Metrics("demo")
+        counter = register_r0(self.metrics)[_OLD_SNAPSHOT] if counted else None
+        self.cache = WalletCache(self.clock, thresholds, old_snapshot_decisions=counter)
         self.cache.track(ACC)
         self.cache.apply(ACC, snapshot(T0))
         self.rest, self.rejections, self.dms = Rest(self.clock), Rejections(), Dms()
@@ -140,6 +154,10 @@ class Rig:
         view = self.cache.view(ACC)
         assert view is not None
         return view
+
+    def decisions(self) -> float:
+        """Decisions on an old snapshot counted so far (needs `counted`)."""
+        return self.metrics.registry.get_sample_value(_OLD_SNAPSHOT, {"env": "demo"}) or 0.0
 
     def read_times(self) -> list[float]:
         """Seconds after the start at which the REST port was called."""
@@ -171,8 +189,8 @@ async def run_noting_the_reads_left(reconciler: WalletReconciler, left: list[str
 
 def test_thresholds_default_to_the_us_acct_008_windows() -> None:
     assert WalletThresholds() == WalletThresholds(10.0, 60.0, 10.0)
-    settings = Settings(wallet_stale_s=5, wallet_reconcile_s=30, account_heartbeat_s=4)
-    assert WalletThresholds.from_settings(settings) == WalletThresholds(5.0, 30.0, 4.0)
+    settings_ = Settings(wallet_stale_s=5, wallet_reconcile_s=30, account_heartbeat_s=4)
+    assert WalletThresholds.from_settings(settings_) == WalletThresholds(5.0, 30.0, 4.0)
 
 
 @pytest.mark.parametrize(
@@ -235,20 +253,20 @@ def test_a_snapshot_never_prints_its_balances() -> None:
 
 
 @pytest.mark.parametrize(
-    ("age_s", "stale", "stale_since", "sizing"),
-    [(10, False, None, True), (10.001, True, _T10, False)],
+    ("age_s", "stale", "stale_since"),
+    [(10, False, None), (10.001, True, _T10)],
     ids=["exactly-the-window", "just-past-it"],
 )
 def test_a_snapshot_is_stale_only_once_older_than_the_stale_window(
-    age_s: float, stale: bool, stale_since: datetime | None, sizing: bool
+    age_s: float, stale: bool, stale_since: datetime | None
 ) -> None:
     """AC Stale: exactly 10 s old is not yet older than 10 s; just past it `stale_since` is the
-    last refresh plus the window, and risk-based sizing is off."""
+    last refresh plus the window. The flag is for display: sizing follows the last reconciliation
+    (the tests of the sizing rule below)."""
     rig = Rig()
     rig.clock.advance(age_s)
     shown = (rig.view.snapshot, rig.view.stale, rig.view.stale_since)
     assert shown == (snapshot(), stale, stale_since)
-    assert rig.cache.risk_sizing_available(ACC) is sizing
 
 
 def test_stale_since_stays_at_the_lapse_as_the_snapshot_ages_on() -> None:
@@ -281,6 +299,36 @@ def test_a_wall_clock_step_does_not_move_freshness(step: timedelta) -> None:
     assert rig.view.stale is False
     rig.clock.mono += 10.001
     assert (rig.view.stale, rig.view.stale_since) == (True, _T10)  # dated at the refresh
+
+
+@pytest.mark.parametrize(
+    "step", [timedelta(minutes=5), -timedelta(minutes=5)], ids=["forwards", "backwards"]
+)
+@pytest.mark.parametrize(
+    ("age_s", "attempts", "decision"),
+    [
+        (10.001, (False,), SizingDecision(False, 10.001)),
+        (60.001, (), SizingDecision(False, 60.001)),
+        (5.0, (), SizingDecision(True, 5.0)),
+        (5.0, (False,), SizingDecision(True, 5.0)),
+    ],
+    ids=["stale-after-a-failed-attempt", "lapsed", "fresh", "failed-attempt-inside-the-window"],
+)
+def test_a_wall_clock_step_does_not_move_a_sizing_decision(
+    step: timedelta, age_s: float, attempts: tuple[bool, ...], decision: SizingDecision
+) -> None:
+    """The sizing flag runs on the monotonic clock, as the stale flag does: its verdict and the age
+    it reports are the same after a 5 min step of the wall clock, either way. On the wall clock a
+    step back reads a negative age, which keeps sizing on for a dead feed, and a step forward
+    turns a fresh snapshot away. `attempts`: what the reconciler reported, `True` for a success."""
+    rig = Rig()
+    rig.clock.advance(age_s)
+    for ok in attempts:
+        rig.cache.record_attempt(ACC, ok=ok)
+    with capture_logs():  # a decision on a snapshot past the period logs a warning
+        assert rig.cache.sizing_decision(ACC) == decision
+        rig.clock.wall += step
+        assert rig.cache.sizing_decision(ACC) == decision
 
 
 @pytest.mark.parametrize(("offset", "taken"), [(-4, False), (0, True), (1, True)])
@@ -361,12 +409,15 @@ def test_the_gates_sizing_flag_follows_the_cache() -> None:
     cache.apply(ACC, snapshot())
     assert check.risk_sizing_available(ACC) is True
     clock.advance(10.001)
+    assert check.risk_sizing_available(ACC) is True  # stale, but no reconciliation has failed
+    cache.record_attempt(ACC, ok=False)
     assert check.risk_sizing_available(ACC) is False
 
 
-def test_a_stale_wallet_disables_sizing_and_refuses_no_order() -> None:
+def test_a_stale_wallet_after_a_failed_read_disables_sizing_and_refuses_no_order() -> None:
     rig = Rig()
     rig.clock.advance(10.001)
+    rig.cache.record_attempt(ACC, ok=False)
     check = gate_over(rig.cache)
     assert (check.risk_sizing_available(ACC), check.refusal(ACC)) == (False, None)
 
@@ -458,13 +509,13 @@ async def test_the_cadence_follows_the_health_state_at_the_time_of_the_check() -
     assert len(await rig.reconciler.run_due()) == 1
 
 
-async def test_a_quiet_but_healthy_account_is_stale_well_before_its_truth_check() -> None:
-    """Sizing follows the 10 s stale flag, not the 60 s read (module docstring): an idle account
-    whose stream pushes only on change is stale, sizing unavailable, from 10 s on, and nothing
-    reads its wallet before 60 s."""
+async def test_a_quiet_but_healthy_account_is_stale_but_still_sized_until_its_truth_check() -> None:
+    """Sizing follows the last reconciliation, not the 10 s stale flag (the ruling on #837, Option
+    B): an idle account whose stream pushes only on change shows `stale` from 10 s on, keeps
+    risk-based sizing, and nothing reads its wallet before 60 s."""
     rig = Rig()
     rig.clock.advance(30)
-    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, False)
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, True)
     assert await rig.reconciler.run_due() == []
 
 
@@ -473,19 +524,22 @@ async def test_a_quiet_but_healthy_account_is_stale_well_before_its_truth_check(
     [(10.0, True), (8.0, False)],
     ids=["as-long-as-the-stale-window", "shorter-than-it"],
 )
-async def test_a_rest_polled_account_flaps_stale_unless_polled_faster_than_the_stale_window(
+async def test_a_rest_polled_account_flaps_stale_for_display_but_never_loses_risk_sizing(
     poll_s: float, flaps: bool
 ) -> None:
-    """Module docstring: a read is due once the snapshot is as old as the stale window, and the
-    tick that finds it due comes a moment later, so a reader just before it sees `stale` (ticks of
-    0.7 s never land on the 10 s cycle, as real ones never do)."""
+    """A read is due once the snapshot is as old as the stale window, and the tick that finds it
+    due comes a moment later, so a reader just before it sees `stale` (ticks of 0.7 s never land
+    on the 10 s cycle, as real ones never do). The reads succeed, so sizing never turns off."""
     rig = Rig(Evidence(HealthState.DEGRADED), thresholds=WalletThresholds(10, 60, poll_s))
     seen_stale: list[bool] = []
+    seen_sizing: list[bool | None] = []
     for _ in range(300):
         rig.clock.advance(0.7)
         seen_stale.append(rig.view.stale)  # what a reader sees just before this tick's reads
+        seen_sizing.append(rig.cache.risk_sizing_available(ACC))
         await rig.reconciler.run_due()
     assert any(seen_stale) is flaps
+    assert set(seen_sizing) == {True}
 
 
 # --- the reconciler: what a read means
@@ -739,3 +793,363 @@ async def test_failed_reads_are_no_evidence_so_the_account_goes_down_in_30_s() -
     rig.rest.answer = WalletUnavailable()
     await rig.steps(30)
     assert rig.health.current(ACC) is HealthState.DOWN  # the WS success at the start was the last
+
+
+# --- risk-based sizing follows the last reconciliation (the ruling on #837, Option B)
+
+
+#: What a read that cannot run raises: the credentials are not loaded (the port has no key to sign
+#: with), the exchange connection is down, or the exchange rejected the credential.
+_CANNOT_RUN = pytest.mark.parametrize(
+    "failure",
+    [
+        WalletUnavailable("no credentials loaded"),
+        ConnectionResetError("exchange connection down"),
+        KeyRefused(Refusal.UNKNOWN_KEY),
+    ],
+    ids=["no-credentials", "connection-down", "credential-rejected"],
+)
+
+
+def test_an_attempt_for_an_untracked_account_is_ignored() -> None:
+    _, cache = tracked_without_a_snapshot()
+    cache.record_attempt(ACC_B, ok=False)
+    assert cache.view(ACC_B) is None and cache.risk_sizing_available(ACC_B) is None
+
+
+@pytest.mark.parametrize(
+    ("age_s", "sizing"),
+    [(10.0, True), (10.001, False)],
+    ids=["exactly-the-stale-window", "just-past-it"],
+)
+def test_a_failed_attempt_turns_sizing_off_only_once_the_snapshot_is_older_than_the_stale_window(
+    age_s: float, sizing: bool
+) -> None:
+    """AC Stale balances: the stream and the reconciliation both failed. Exactly 10 s old is not
+    yet stale, so a failed read alone takes nothing away."""
+    rig = Rig()
+    rig.cache.record_attempt(ACC, ok=False)
+    rig.clock.advance(age_s)
+    assert rig.cache.risk_sizing_available(ACC) is sizing
+
+
+@pytest.mark.parametrize(
+    ("silent_s", "sizing"),
+    [(60.0, True), (60.001, False)],
+    ids=["exactly-the-period", "just-past-it"],
+)
+def test_a_period_with_no_attempt_counts_as_a_failed_attempt(silent_s: float, sizing: bool) -> None:
+    """Guard 1: "no attempt" never reads as "the last attempt succeeded". Nothing reports an attempt
+    (the reconciler's task died, or never ran): once a period has passed with no refresh the
+    account is as unsized as after a failed read, and not a moment before."""
+    rig = Rig()
+    rig.clock.advance(silent_s)
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, sizing)
+
+
+def test_the_period_without_an_attempt_runs_from_the_last_refresh() -> None:
+    """A wallet push restarts the period, whatever it was before."""
+    rig = Rig()
+    rig.clock.advance(50)
+    rig.cache.apply(ACC, snapshot(rig.clock.now()))
+    rig.clock.advance(60)  # 110 s in, 60 s since the push
+    assert rig.cache.risk_sizing_available(ACC) is True
+    rig.clock.advance(0.001)
+    assert rig.cache.risk_sizing_available(ACC) is False
+
+
+@_CANNOT_RUN
+async def test_a_read_that_cannot_run_counts_as_a_failed_attempt(failure: Exception) -> None:
+    """Guard 1: no credentials loaded, the exchange connection down, a credential the exchange
+    rejects. The attempt itself is the failure, reported at once: a stale snapshot is unsized
+    right after it, not a period later."""
+    rig = Rig()
+    rig.rest.answer = failure
+    rig.clock.advance(60)
+    await rig.reconciler.run_due()
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, False)
+
+
+async def test_a_read_that_hangs_counts_as_a_failed_attempt() -> None:
+    rig = Rig(timeout_s=0.01)
+    rig.rest.hold = asyncio.Event()  # never set
+    rig.clock.advance(60)
+    with capture_logs() as logs:
+        async with asyncio.timeout(1):  # a reconciler with no timeout of its own waits forever
+            await rig.reconciler.run_due()
+    assert [(line["event"], line["error"]) for line in logs] == [
+        ("wallet.reconcile_failed", "TimeoutError")
+    ]
+    assert rig.cache.risk_sizing_available(ACC) is False
+
+
+async def test_a_read_still_in_flight_at_the_end_of_the_period_does_not_cover_it() -> None:
+    """Fail closed: only a snapshot the cache took is an outcome. A read that starts on the
+    period's last tick has not answered yet, so for as long as it runs the account reads as
+    unsized."""
+    rig = Rig()
+    rig.rest.hold = asyncio.Event()
+    rig.clock.advance(60)
+    run = asyncio.create_task(rig.reconciler.run_due())
+    async with asyncio.timeout(1):
+        await rig.rest.entered.acquire()
+    assert rig.cache.risk_sizing_available(ACC) is True  # exactly one period: not yet past it
+    rig.clock.advance(0.001)
+    assert rig.cache.risk_sizing_available(ACC) is False  # the read has not answered
+    rig.rest.hold.set()
+    await run
+    assert rig.cache.risk_sizing_available(ACC) is True  # answered: refreshed
+
+
+async def test_a_cancelled_read_reports_no_outcome_so_the_period_keeps_running() -> None:
+    rig = Rig()
+    rig.rest.hold = asyncio.Event()
+    rig.clock.advance(60)
+    run = asyncio.create_task(rig.reconciler.run_due())
+    async with asyncio.timeout(1):
+        await rig.rest.entered.acquire()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert rig.cache.risk_sizing_available(ACC) is True  # no failure, and the period has not lapsed
+    rig.clock.advance(0.001)
+    assert rig.cache.risk_sizing_available(ACC) is False  # but nothing refreshed it
+
+
+async def test_a_successful_read_that_refreshed_nothing_does_not_extend_the_period() -> None:
+    """A snapshot dated ahead of the exchange's own answers blocks every later refresh (ordering by
+    the exchange's `updated_at`). Reads that succeed but lose to it must not keep sizing on a
+    balance that old: sizing stops one period after the last refresh, however many reads succeed
+    after it (the display flag is stale all along)."""
+    rig = Rig()
+    rig.cache.apply(ACC, snapshot(T0 + timedelta(hours=5)))  # ahead of every answer to come
+    await rig.steps(60)  # the read at 60 s succeeds, and the cache keeps its own
+    assert rig.health.successes == [ACC] and rig.cache.risk_sizing_available(ACC) is True
+    await rig.steps(1)
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, False)
+    await rig.steps(60)  # the read at 120 s succeeds as well
+    assert rig.health.successes == [ACC, ACC] and rig.cache.risk_sizing_available(ACC) is False
+
+
+def test_a_successful_attempt_clears_a_failed_one_without_a_refresh() -> None:
+    rig = Rig()
+    rig.clock.advance(20)
+    rig.cache.record_attempt(ACC, ok=False)
+    assert rig.cache.risk_sizing_available(ACC) is False
+    rig.clock.advance(5)
+    rig.cache.record_attempt(ACC, ok=True)
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, True)
+
+
+async def test_a_successful_read_that_refreshed_nothing_still_clears_a_failed_attempt() -> None:
+    """The read answered, so the failed one before it is no longer the last. A newer snapshot is in
+    the cache and inside the period, so sizing returns (polls every 10 s while the WS is down)."""
+    rig = Rig(Evidence(HealthState.DEGRADED), thresholds=WalletThresholds(10, 60, 10))
+    rig.cache.apply(ACC, snapshot(T0 + timedelta(minutes=5)))  # newer than any read answers
+    rig.rest.answer = WalletUnavailable()
+    await rig.steps(11)  # the read at 10 s fails, and the snapshot is stale from 10 s
+    assert rig.cache.risk_sizing_available(ACC) is False
+    rig.rest.answer = None
+    await rig.steps(9)  # the read at 20 s succeeds, and loses to the cached snapshot
+    assert rig.health.successes == [ACC] and rig.view.snapshot is not None
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, True)
+
+
+async def test_a_successful_read_clears_a_failed_attempt() -> None:
+    """AC Wallet reconciliation: the read after the failed one answers, so the figures are live
+    again and sizing returns with them."""
+    rig = Rig()
+    rig.rest.answer = WalletUnavailable()
+    await rig.steps(60)  # the read at 60 s fails
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, False)
+    rig.rest.answer = None
+    await rig.steps(60)  # the retry at 120 s succeeds
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (False, True)
+
+
+async def test_a_wallet_push_clears_a_failed_attempt() -> None:
+    """Any refresh clears it: the stream is alive again, so a failed read of a minute ago no
+    longer says anything about the figures."""
+    rig = Rig()
+    rig.rest.answer = WalletUnavailable()
+    await rig.steps(60)
+    assert rig.cache.risk_sizing_available(ACC) is False
+    rig.cache.apply(ACC, snapshot(rig.clock.now()))
+    rig.clock.advance(30)  # quiet again: stale for display, and not failed
+    assert (rig.view.stale, rig.cache.risk_sizing_available(ACC)) == (True, True)
+
+
+def test_an_older_snapshot_that_refreshes_nothing_clears_nothing() -> None:
+    rig = Rig()
+    rig.cache.apply(ACC, snapshot(T0 + timedelta(minutes=5)))
+    rig.clock.advance(30)
+    rig.cache.record_attempt(ACC, ok=False)
+    assert rig.cache.apply(ACC, snapshot(T0)) is False  # a late frame: not a refresh
+    assert rig.cache.risk_sizing_available(ACC) is False
+
+
+_STEP = st.one_of(
+    st.tuples(st.just("advance"), st.integers(0, 90)),
+    st.tuples(st.just("push"), st.just(0)),
+    st.tuples(st.just("read_ok"), st.just(0)),
+    st.tuples(st.just("read_failed"), st.just(0)),
+)
+
+
+@settings(max_examples=100, deadline=None, derandomize=True)
+@given(st.lists(_STEP, max_size=30))
+def test_sizing_is_off_exactly_when_stale_after_a_failed_attempt_or_past_one_period(
+    steps: list[tuple[str, int]],
+) -> None:
+    """Whole seconds, so the 10 s and 60 s boundaries are met exactly. Whatever the order of
+    pushes, reads and silences: sizing is on while the snapshot is no older than 10 s, and
+    after that only while the last attempt has not failed and the snapshot is no older than 60 s.
+    So it never uses a balance more than one period old."""
+    rig = Rig()
+    now = refreshed = 0
+    failed = False
+    for step, seconds in steps:
+        if step == "advance":
+            rig.clock.advance(seconds)
+            now += seconds
+        elif step == "push":
+            assert rig.cache.apply(ACC, snapshot(rig.clock.now()))
+            refreshed, failed = now, False
+        else:
+            rig.cache.record_attempt(ACC, ok=step == "read_ok")
+            failed = step == "read_failed"
+        age = now - refreshed
+        expected = age <= 10 or (age <= 60 and not failed)
+        assert rig.cache.risk_sizing_available(ACC) is expected
+        if expected:
+            assert age <= 60
+
+
+# --- every decision on a snapshot older than the period is logged and counted (Guard 2)
+
+
+def test_a_decision_exposes_the_snapshot_age_at_decision_time() -> None:
+    rig = Rig()
+    rig.clock.advance(12.5)
+    assert rig.cache.sizing_decision(ACC) == SizingDecision(True, 12.5)
+
+
+@pytest.mark.parametrize("tracked", [True, False], ids=["tracked", "untracked"])
+def test_a_decision_without_a_snapshot_is_unknown_and_has_no_age(tracked: bool) -> None:
+    clock = FakeClock()
+    cache = WalletCache(clock)
+    if tracked:
+        cache.track(ACC)
+    clock.advance(100)
+    assert cache.sizing_decision(ACC) == SizingDecision(None, None)
+
+
+def test_a_decision_on_a_snapshot_older_than_the_period_is_logged_and_counted() -> None:
+    """The line carries the age and the verdict and nothing else: no figure of the snapshot, no
+    exchange text (C-12.6)."""
+    rig = Rig(counted=True)
+    rig.clock.advance(60.001)
+    with capture_logs() as logs:
+        decision = rig.cache.sizing_decision(ACC)
+    assert decision == SizingDecision(False, 60.001)
+    assert logs == [
+        {
+            "event": "wallet.sizing_on_old_snapshot",
+            "log_level": "warning",
+            "account_id": str(ACC),
+            "available": False,
+            "wallet_snapshot_age_seconds": 60.001,
+        }
+    ]
+    assert rig.decisions() == 1.0
+
+
+@pytest.mark.parametrize(
+    ("age_s", "decisions"),
+    [(60.0, 0.0), (60.001, 1.0)],
+    ids=["exactly-the-period", "just-past-it"],
+)
+def test_only_a_decision_on_a_snapshot_older_than_the_period_is_logged_and_counted(
+    age_s: float, decisions: float
+) -> None:
+    rig = Rig(counted=True)
+    rig.cache.record_attempt(ACC, ok=False)
+    rig.clock.advance(age_s)
+    with capture_logs() as logs:
+        rig.cache.risk_sizing_available(ACC)
+    assert (len(logs), rig.decisions()) == (int(decisions), decisions)
+
+
+def test_every_decision_on_an_old_snapshot_is_counted() -> None:
+    rig = Rig(counted=True)
+    rig.clock.advance(300)
+    for _ in range(3):
+        rig.cache.risk_sizing_available(ACC)
+    assert rig.decisions() == 3.0
+
+
+def test_a_decision_on_a_snapshot_within_the_period_is_neither_logged_nor_counted() -> None:
+    """Whatever it decides: a stale one after a failed read is refused, a fresh one is not."""
+    rig = Rig(counted=True)
+    rig.cache.record_attempt(ACC, ok=False)
+    rig.clock.advance(30)
+    with capture_logs() as logs:
+        assert rig.cache.risk_sizing_available(ACC) is False
+        rig.cache.apply(ACC, snapshot(rig.clock.now()))
+        assert rig.cache.risk_sizing_available(ACC) is True
+    assert logs == [] and rig.decisions() == 0.0
+
+
+def test_a_decision_with_no_snapshot_is_neither_logged_nor_counted() -> None:
+    rig = Rig(counted=True)
+    rig.cache.track(ACC_B)
+    rig.clock.advance(300)
+    with capture_logs() as logs:
+        assert rig.cache.risk_sizing_available(ACC_B) is None
+    assert logs == [] and rig.decisions() == 0.0
+
+
+def test_a_display_read_is_not_a_decision() -> None:
+    rig = Rig(counted=True)
+    rig.clock.advance(300)
+    with capture_logs() as logs:
+        rig.cache.view(ACC)
+        rig.cache.silence_s()
+    assert logs == [] and rig.decisions() == 0.0
+
+
+def test_the_gates_sizing_flag_is_the_counted_decision() -> None:
+    """The sizing path reads the flag through the account check, so that is what is counted."""
+    rig = Rig(counted=True)
+    rig.clock.advance(300)
+    assert gate_over(rig.cache).risk_sizing_available(ACC) is False
+    assert rig.decisions() == 1.0
+
+
+def test_a_cache_without_a_counter_still_logs_its_decisions_on_old_snapshots() -> None:
+    rig = Rig()
+    rig.clock.advance(300)
+    with capture_logs() as logs:
+        assert rig.cache.risk_sizing_available(ACC) is False
+    assert [line["event"] for line in logs] == ["wallet.sizing_on_old_snapshot"]
+
+
+def test_the_log_line_of_a_decision_shows_no_balance() -> None:
+    figures = {
+        "equity": "123456.78",
+        "wallet_balance": "98765.43",
+        "available_balance": "87654.32",
+        "unrealised_pnl": "76543.21",
+        "account_im_rate": "0.0987",
+        "account_mm_rate": "0.0765",
+    }
+    rig = Rig()
+    rig.cache.apply(
+        ACC,
+        WalletSnapshot(coin="USDT", updated_at=T0, **{k: Decimal(v) for k, v in figures.items()}),
+    )
+    rig.clock.advance(300)
+    with capture_logs() as logs:
+        rig.cache.risk_sizing_available(ACC)
+    shown = repr(logs)
+    assert logs and [v for v in figures.values() if v in shown] == []

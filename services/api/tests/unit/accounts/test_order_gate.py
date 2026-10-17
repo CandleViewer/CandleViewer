@@ -1,8 +1,9 @@
 """E27-T04 account side of the composed order-entry gate (decision Q5 on #837): the account check
 fills an account slot of the shared kernel's `OrderEntryGate`; a down, policy-disabled or keyless
 account refuses new orders, with one fixed detail per reason that never names the key-policy rule;
-a stale or unknown wallet makes risk-based sizing unavailable but refuses no order; health is
-derived on read, so no tick has to run first."""
+a wallet the sizing source reports unavailable (stale after a failed reconciliation) or unknown
+makes risk-based sizing unavailable but refuses no order; health is derived on read, so no tick has
+to run first."""
 
 from __future__ import annotations
 
@@ -165,8 +166,8 @@ def test_an_undeclared_disable_reason_never_reaches_the_detail() -> None:
     assert check.refusal(ACC) == OrderEntryRefusal("account_disabled_by_policy", POLICY_DETAIL)
 
 
-@pytest.mark.parametrize("wallets", [{ACC: False}, {}], ids=["stale", "no_snapshot"])
-def test_a_stale_or_unknown_wallet_makes_risk_sizing_unavailable_but_refuses_no_order(
+@pytest.mark.parametrize("wallets", [{ACC: False}, {}], ids=["unavailable", "no_snapshot"])
+def test_an_unavailable_or_unknown_wallet_makes_risk_sizing_unavailable_but_refuses_no_order(
     wallets: dict[UUID, bool],
 ) -> None:
     check, health, _ = _gate(wallets=wallets)

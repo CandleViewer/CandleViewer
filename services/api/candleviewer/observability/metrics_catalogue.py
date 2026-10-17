@@ -538,6 +538,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=6,
     ),
+    # --- Wallet snapshot cache (E27-T04, #837 Option B); the sizing decisions it takes -----
+    _s(
+        "cv_wallet_sizing_old_snapshot_total",
+        "counter",
+        "decisions",
+        (),
+        "Risk-based sizing decisions taken on a wallet snapshot older than the reconciliation "
+        "period (CV_WALLET_RECONCILE_S); all are refused, sizing never uses one that old.",
+        "dashboard; sustained growth = sizing asked for while the wallet feed is dead (KV-T13)",
+        _L,
+        "E27",
+        max_series=1,
+    ),
     # --- Bar builder set (E12-T03); served by bars.metrics.export_bars_metrics ------
     _s(
         "bar_builder_specs_in_use",
