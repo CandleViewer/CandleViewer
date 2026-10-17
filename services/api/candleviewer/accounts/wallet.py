@@ -1,4 +1,4 @@
-"""Wallet snapshot cache (E27-T04, US-ACCT-008).
+"""Wallet snapshot cache and its REST reconciliation (E27-T04, US-ACCT-008).
 
 One Decimal snapshot per tracked account. The private-WS `wallet` stream feeds it first, through
 `WalletCache.apply`; a REST read only truth-checks it. The order gate's sizing flag reads
@@ -10,6 +10,14 @@ One Decimal snapshot per tracked account. The private-WS `wallet` stream feeds i
   refresh. An account with no snapshot ages from when it is tracked and has unknown sizing.
 - Snapshots are ordered by the exchange's `updated_at`: an older one never replaces a newer one or
   refreshes; one with the same time does both (a re-delivery, or a read confirming it).
+- `WalletReconciler.run_due()` reads the wallet over REST once an account has gone
+  `CV_WALLET_RECONCILE_S` without a refresh and, while its health is not `healthy` (the private WS
+  is down), every `CV_ACCOUNT_HEARTBEAT_S` instead: a 60 s poll alone would let a `degraded`
+  account fall to `down` between polls. An attempt, not its answer, restarts the interval.
+- Evidence is positive only (health.py): a read the exchange accepted is `rest_ok`, even when its
+  snapshot lost to a newer push. A failed read is not evidence, nor is a credential rejection
+  (`KeyRefused`): that goes to `CredentialRejections` (24-internal-schemas.md section 8.6).
+  The private-WS consumer feeds `ws_heartbeat`, for every message; nothing here does.
 
 Sizing follows the stale flag, as the ticket words it (a flag "consumed by risk-based sizing so
 that it is disabled for a stale account"): unavailable from 10 s after the last refresh, not only
@@ -26,21 +34,31 @@ Sizing unavailable only after a failed reconciliation would need a "last attempt
 the flag: a contract decision, not one made here.
 
 The cache is synchronous O(1) with no I/O (C-2.21), for one event loop.
+
+The reconciler awaits one injected port per due account, concurrently and under a timeout, never
+with two reads of an account at once (a hung exchange must not multiply the calls against the
+UID's budget, C-12.7). It logs only the type of a failure (a message may echo exchange text,
+C-12.6), never a balance (Confidential).
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal, Protocol
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
-from candleviewer.accounts.health import Clock
+from candleviewer.accounts.errors import AccountsError
+from candleviewer.accounts.health import Clock, HealthState, HealthTransition
 from candleviewer.accounts.models import UtcDatetime
+from candleviewer.accounts.verification import KeyRefused, Refusal
+from candleviewer.observability import bind_context, spawn
 from candleviewer.settings import (
     ACCOUNT_HEARTBEAT_MAX_S,
     WALLET_RECONCILE_S,
@@ -48,8 +66,15 @@ from candleviewer.settings import (
     Settings,
 )
 
+#: The bound on one REST wallet read.
+WALLET_REST_TIMEOUT_S: Final = 5.0
 #: A balance or rate: finite, and hidden from `repr()` (balances are Confidential, C-12.6).
 Amount = Annotated[Decimal, Field(repr=False, allow_inf_nan=False)]
+
+
+class WalletUnavailable(AccountsError):
+    """A REST wallet read gave no figures (a 5xx, a timeout, a dropped connection, a rate limit, or
+    no adapter yet). Never health evidence."""
 
 
 class WalletSnapshot(BaseModel):
@@ -176,3 +201,112 @@ class WalletCache:
     def _stale(self, entry: _Entry) -> bool:
         """Older than the window: exactly 10 s old is not yet older than 10 s."""
         return self.clock.monotonic() - entry.refreshed > self.thresholds.stale_s
+
+
+class WalletRestPort(Protocol):
+    """One authenticated REST wallet read for an account (E29 implements `TradingPort.wallet`). It
+    raises `KeyRefused` when the exchange rejects the credential, as the adapter classifies it, and
+    `WalletUnavailable` (by convention) for a read that gave no figures."""
+
+    async def wallet(self, account_id: UUID) -> WalletSnapshot: ...
+
+
+class HealthEvidence(Protocol):
+    """What the reconciler needs of `AccountHealthMonitor`: the state and the evidence call."""
+
+    def current(self, account_id: UUID) -> HealthState | None: ...
+
+    def rest_ok(self, account_id: UUID) -> HealthTransition | None: ...
+
+
+class CredentialRejections(Protocol):
+    """Where a rejected credential goes: the key standing takes the 24-internal-schemas section 8.6
+    reaction synchronously and in memory, so the next order-entry check answers at once."""
+
+    def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class WalletPoll:
+    """One read of `run_due()`. `refreshed`: its snapshot replaced the cached one (a balance delta
+    is due). `transition`: what its `rest_ok` moved in health (a health delta is due)."""
+
+    account_id: UUID
+    result: Literal["ok", "failed", "rejected"]
+    refreshed: bool
+    transition: HealthTransition | None
+
+
+class WalletReconciler:
+    """The REST truth-check of a `WalletCache`: `run_due()` reads what is due, about once a
+    second."""
+
+    def __init__(
+        self,
+        cache: WalletCache,
+        rest: WalletRestPort,
+        health: HealthEvidence,
+        rejections: CredentialRejections,
+        *,
+        timeout_s: float = WALLET_REST_TIMEOUT_S,
+    ) -> None:
+        if not (math.isfinite(timeout_s) and timeout_s > 0):
+            raise ValueError("timeout_s must be finite and greater than 0")
+        self._cache, self._rest, self._health = cache, rest, health
+        self._rejections, self._timeout_s = rejections, timeout_s
+        self._attempted: dict[UUID, float] = {}  # monotonic time of each account's last attempt
+        self._inflight: set[UUID] = set()  # accounts with a read still running
+
+    async def run_due(self) -> list[WalletPoll]:
+        """Read the wallet of every tracked account that is due, each once and concurrently, and
+        return one `WalletPoll` per read in tracking order. An account is stamped before its read
+        starts, and one whose read is still running is skipped, so an overlapping run never repeats
+        it, even when the poll interval is shorter than the read timeout. Only cancellation, and
+        what a collaborator raises (a bug), escapes: the latter as itself, not wrapped in an
+        `ExceptionGroup`. Either way the reads still running are cancelled and awaited first, so
+        none outlives the run."""
+        now = self._cache.clock.monotonic()
+        due = [
+            a
+            for a, silence in self._cache.silence_s().items()
+            if a not in self._inflight and self._is_due(a, silence, now)
+        ]
+        polls = [self._start(a, now) for a in due]
+        try:
+            return list(await asyncio.gather(*polls))
+        finally:
+            for poll in polls:
+                poll.cancel()
+            await asyncio.gather(*polls, return_exceptions=True)
+
+    def _start(self, account_id: UUID, now: float) -> asyncio.Task[WalletPoll]:
+        """Stamp the attempt and start the read. The account stays in flight until the task is done,
+        however it ends: a callback, not a `finally` in the read, because a task cancelled before
+        its first step never runs its body."""
+        self._attempted[account_id] = now
+        self._inflight.add(account_id)
+        poll = spawn(self._poll(account_id), name=f"wallet-poll:{account_id}")
+        poll.add_done_callback(lambda _: self._inflight.discard(account_id))
+        return poll
+
+    def _is_due(self, account_id: UUID, silence: float, now: float) -> bool:
+        window = self._cache.thresholds
+        healthy = self._health.current(account_id) is HealthState.HEALTHY
+        interval = window.reconcile_s if healthy else min(window.ws_down_poll_s, window.reconcile_s)
+        return min(silence, now - self._attempted.get(account_id, -math.inf)) >= interval
+
+    async def _poll(self, account_id: UUID) -> WalletPoll:
+        log = structlog.get_logger(__name__)
+        with bind_context(account_id=account_id):
+            try:
+                async with asyncio.timeout(self._timeout_s):
+                    snapshot = await self._rest.wallet(account_id)
+            except KeyRefused as refused:
+                self._rejections.credential_rejected(account_id, refused.reason)
+                log.warning("wallet.reconcile_refused", reason=refused.reason.value)
+                return WalletPoll(account_id, "rejected", False, None)
+            except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
+                log.warning("wallet.reconcile_failed", error=type(exc).__name__)
+                return WalletPoll(account_id, "failed", False, None)
+            refreshed = self._cache.apply(account_id, snapshot)
+            return WalletPoll(account_id, "ok", refreshed, self._health.rest_ok(account_id))
