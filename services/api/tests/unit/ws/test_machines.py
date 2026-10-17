@@ -18,15 +18,16 @@ from hypothesis import strategies as st
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
-from candleviewer.ws.permissions import VersionedSnapshot
+from candleviewer.ws.permissions import ConnectionRegistry, VersionedSnapshot, handle_sub
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.topics import MACHINE_KINDS, EntityScope, TopicError, machine_refusal
 from candleviewer.ws.topics import parse_topic as parse
-from tests.unit.ws._seq_support import Clock, Conn, Source, principal
+from tests.unit.ws._seq_support import USER, Clock, Conn, Source, principal
 
 A, B = uuid.UUID(int=0xA), uuid.UUID(int=0xB)
 OID, OTHER = "0a000000-0000-4000-8000-000000000001", "0a000000-0000-4000-8000-000000000002"
@@ -437,3 +438,81 @@ def test_no_delta_reaches_a_principal_swapped_out_of_the_entity() -> None:
     conn.sub(order.ch)
     conn.authz.principal = principal()  # §9.5 swaps the principal in before it removes anything
     assert hub.publish(order.ch, _payload(state="filled")) == 0
+
+
+# -- §6.4 audit detail: the full `ch`, and the internal reason in `reason` only -------------------
+
+
+class _Audit:
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.rows.append({"action": action, **kw})
+
+
+async def _drop(frame: dict[str, Any]) -> None:
+    """A socket that discards what it is sent."""
+
+
+#: The fields a Manager can read about their own rows (SR-067): the same for every reason.
+_DENIED = {"action": "ws.subscribe.denied", "actor_label": "ws", "object_kind": "ws_topic",
+           "outcome": AuditOutcome.DENIED, "severity": Severity.WARNING}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("who", "scope", "why"),
+    [
+        (BARE, ON_A, "role"),
+        (None, None, "unknown"),
+        (None, ON_B, "foreign"),
+        (None, EntityScope(), "unscoped"),
+    ],
+)
+def test_a_refusal_audits_the_full_ch_and_its_internal_reason(
+    who: PrincipalSnapshot | None, scope: EntityScope | None, why: str
+) -> None:
+    conn, registry, _ = _world()
+    conn.authz.services.audit = audit = _Audit()
+    conn.authz.principal = who or conn.authz.principal
+    order = MachineEntity("order", OID, scope or EntityScope())
+    if scope is not None:
+        registry.publish(order, _payload())
+    asyncio.run(handle_sub(conn.authz, {"t": "sub", "p": {"topics": [order.ch]}}, _drop))
+    user = conn.authz.principal.user_id
+    assert audit.rows == [{**_DENIED, "actor_user_id": user, "object_id": order.ch, "reason": why}]
+
+
+def test_a_refusal_that_is_not_an_authorisation_one_audits_its_error_code() -> None:
+    conn, _, _ = _world()
+    conn.authz.services.audit = audit = _Audit()
+    ch = "machines.bogus.state"  # an unknown kind: invalid_topic_format, no §6.4 reason
+    asyncio.run(handle_sub(conn.authz, {"t": "sub", "p": {"topics": [ch]}}, _drop))
+    assert [(r["object_id"], r["reason"]) for r in audit.rows] == [(ch, "invalid_topic_format")]
+
+
+@pytest.mark.parametrize(
+    ("who", "why"),
+    [
+        (PrincipalSnapshot(USER, frozenset({"manager"}), frozenset()), "role"),
+        (principal(), "foreign"),  # account A withdrawn
+    ],
+)
+def test_a_revocation_audits_the_full_ch_and_its_internal_reason(
+    who: PrincipalSnapshot, why: str
+) -> None:
+    conn, registry, _ = _world()
+    conn.authz.services.audit = audit = _Audit()
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:
+        return who
+
+    connections = ConnectionRegistry(resolve, lambda: 7, conn.authz.services)
+    connections.register(conn.authz, _drop)
+    asyncio.run(connections.roles_changed(USER))
+    assert [(r["action"], r["object_id"], r["reason"]) for r in audit.rows] == [
+        ("ws.subscription.revoked", order.ch, why)
+    ]

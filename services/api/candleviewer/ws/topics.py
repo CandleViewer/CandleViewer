@@ -63,13 +63,17 @@ def is_topic_name(ch: Any) -> bool:
 
 
 class TopicError(Exception):
-    """A per-topic rejection carrying a §10.2 catalogue code (and the offending `field`)."""
+    """A per-topic rejection carrying a §10.2 catalogue code (and the offending `field`). `reason`
+    is a refused `machines` entity's internal §6.4 reason: for the audit row only, never sent."""
 
-    def __init__(self, code: str, message: str, field: str | None = None) -> None:
+    def __init__(
+        self, code: str, message: str, field: str | None = None, *, reason: str | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.field = field
+        self.reason = reason
 
 
 @dataclass(frozen=True)
