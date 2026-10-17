@@ -9,6 +9,7 @@ wall clock. Each refusal must leave a trail: the audit record and the scraped me
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -19,7 +20,11 @@ from structlog.testing import capture_logs
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord, UserStatus
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
-from candleviewer.ws.metrics import AUTH_FAILURE_REASONS, cv_ws_auth_failures_total
+from candleviewer.ws.metrics import (
+    AUTH_FAILURE_REASONS,
+    cv_ws_auth_failures_total,
+    cv_ws_closes_total,
+)
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import make_user
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -300,6 +305,11 @@ def _failures() -> float:
     return total
 
 
+def _closes() -> float:
+    """Sockets closed with `bye mfa_enrollment_required` (the gateway counts the close first)."""
+    return float(cv_ws_closes_total.labels(reason=_CODE)._value.get())
+
+
 def _hello_auth(ws: Any, token: str) -> dict[str, Any]:
     ws.send_json({"t": "hello", "id": "h", "p": {}})
     assert _recv(ws)["t"] == "welcome"
@@ -356,13 +366,24 @@ def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack)
 
 
 def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_must_enrol(
-    stack: Stack,
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Refused at once (§4.3): the socket is sealed before the refusal's audit write starts, so
+    nothing of the earlier identity waits on a slow writer, whose record still lands."""
     _enrolling(stack)  # another user needing enrolment changes nothing here
     uid, _ = stack.add_user("member")
     # A full session inside the 15-minute window: once its user must enrol, it is one.
     expires_at = stack.clock.now + ENROLMENT_ONLY_LIFETIME
     minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid), expires_at=expires_at)
+    release, emit, closes, sealed_first = asyncio.Event(), stack.audit.emit, _closes(), []
+
+    async def slow(action: str, **kw: Any) -> None:
+        if action == REFUSAL_ACTION:  # held until the client has its `bye`
+            sealed_first.append(_closes() == closes + 1)
+            await release.wait()
+        await emit(action, **kw)
+
+    monkeypatch.setattr(stack.audit, "emit", slow)
 
     with _socket(stack) as ws:
         assert _hello_auth(ws, minted.access_token)["t"] == "auth_ok"
@@ -370,8 +391,12 @@ def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_mu
         ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": minted.access_token}})
         bye = _recv_type(ws, "bye")
         code = _closed(ws)
+        stack.call(release.set)
 
     assert (bye["p"]["reason"], code) == (_CODE, 4403)
+    assert sealed_first == [True]
+    assert stack.call(stack.state.csrf_refusal_audits.drain) == 0
+    assert len(stack.audit.of(REFUSAL_ACTION)) == 1
 
 
 def test_ws_serves_a_full_verdict_only(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:

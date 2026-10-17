@@ -258,8 +258,8 @@ class AuthRefused(Exception):
     """Raised by the injected `authenticate` for a live token whose session may not use the
     socket: an enrolment-only session (#2295, §4.3). The socket closes at once with a `bye`
     carrying `reason` (a `CLOSE_REASONS` key); it is not a failed `auth`, and the socket is
-    never registered. *audit*, when given, is awaited first with the socket's source address,
-    so the refusal's audit record names it as the HTTP twin's does (C-2.9)."""
+    never registered. *audit*, when given, is awaited once that sealed close is queued, with
+    the socket's source address, so the record names it as the HTTP twin's does (C-2.9)."""
 
     def __init__(self, reason: str, *, audit: RefusalAudit | None = None) -> None:
         super().__init__(reason)
@@ -1300,9 +1300,10 @@ def make_ws_router(
                 reauth=reauth,
                 source_ip=source_ip,
             )
+            # Sealed first: no frame of the earlier identity waits on the audit write (§4.3).
+            conn.close_with(refused.reason, seal=True)
             if refused.audit is not None:
                 await refused.audit(source_ip)
-            conn.close_with(refused.reason, seal=True)
             return
         except Exception:
             if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
