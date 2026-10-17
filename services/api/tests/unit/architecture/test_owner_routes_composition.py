@@ -4,7 +4,7 @@ the self-scoped first-run checklist (`SqlAlchemyOnboardingStore`) through `Sessi
 every cell answers as `tests/contract/rbac/matrix.yaml` says and an authorised caller is never
 refused with the fail-closed 501/503. Only the SQL edges of those real classes, the host socket
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
-network)."""
+network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`) the same way."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ from pydantic import SecretStr
 import candleviewer.app as appmod
 from candleviewer.api.onboarding_checklist import STEP_ORDER
 from candleviewer.settings import Settings
+from candleviewer.storage.repositories.account_access import AccessGrant
+from candleviewer.storage.repositories.account_access_sqlalchemy import (
+    SqlAlchemyAccountAccessStore,
+)
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
@@ -30,11 +34,11 @@ from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
 
 _ROWS = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
-#: Derived, not listed: every served (`executed`) operation gated by `users:write` alone.
+#: Derived, not listed: every served (`executed`) operation gated by `users:write` or `users:read`.
 OWNER_ROUTES = tuple(
     key
     for key, row in _ROWS.items()
-    if row["state"] == "executed" and row["permissions"] == ["users:write"]
+    if row["state"] == "executed" and row["permissions"] in (["users:write"], ["users:read"])
 )
 #: Derived, not listed (#2506): the self-scoped first-run checklist rows. The CI app cannot
 #: execute them (no identity, no store on the fake backend), so the matrix parks them as
@@ -102,6 +106,7 @@ def _delegate(target: Any, name: str) -> Callable[..., Any]:
 @pytest.fixture(scope="module")
 def deployed() -> Iterator[SimpleNamespace]:
     identity, users = rbac._Identity(rbac.load_contract()), rbac.UserStore()
+    access = rbac.AccessStore()
     audit, onboarding = rbac._AuditSink(), _OnboardingRows()
     real = Settings(
         storage_backend="real",
@@ -115,6 +120,7 @@ def deployed() -> Iterator[SimpleNamespace]:
             mp.setattr(SqlAlchemyIdentityProvider, name, _delegate(identity, name))
         for name in ("get_roles", "count_active_owners", "apply_roles"):
             mp.setattr(SqlAlchemyUserRoleStore, name, _delegate(users, name))
+        mp.setattr(SqlAlchemyAccountAccessStore, "list_grants", _delegate(access, "list_grants"))
         for name in _ONBOARDING_EDGES:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
@@ -124,7 +130,9 @@ def deployed() -> Iterator[SimpleNamespace]:
         ctx.auth._sessions, ctx.auth._step_up = rbac._Sessions(), rbac._StepUp()
         ctx.auth._invites = rbac._Invites()
         client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
-        yield SimpleNamespace(client=client, users=users, audit=audit, onboarding=onboarding)
+        yield SimpleNamespace(
+            client=client, users=users, access=access, audit=audit, onboarding=onboarding
+        )
 
 
 def _headers(client: TestClient, actor: str) -> dict[str, str]:
@@ -227,6 +235,42 @@ def test_fake_backend_keeps_the_owner_routes_fail_closed() -> None:
     assert resp.status_code == 501
 
 
+def test_deployed_app_lists_the_target_users_grants_through_the_real_account_access_store(
+    deployed: SimpleNamespace,
+) -> None:
+    """#2648 S9b: the owner's read reaches the `SqlAlchemyAccountAccessStore` the composition root
+    built, for the user in the path; a manager's is refused and audited before the store."""
+    owner, viewer = rbac.user_id_of("owner"), rbac.user_id_of("viewer")
+    deployed.access.grants[viewer] = [AccessGrant(rbac.GRANTED, "read", "acct-a", "demo", owner)]
+    start, audited = len(deployed.access.calls), len(deployed.audit.records)
+    path = f"/users/{viewer}/account-access"
+    try:
+        ok = deployed.client.get(path, headers=_headers(deployed.client, "owner"))
+        item = {"exchange_account_id": str(rbac.GRANTED), "level": "read", "granted_by": str(owner)}
+        assert ok.status_code == 200 and ok.json()["items"] == [
+            {**item, "account_label": "acct-a", "environment": "demo"}
+        ]
+        assert deployed.access.calls[start:] == [viewer]
+        denied = deployed.client.get(path, headers=_headers(deployed.client, "manager_with_grant"))
+        assert denied.status_code == 403 and deployed.access.calls[start:] == [viewer]
+        (record,) = deployed.audit.records[audited:]
+        assert record["action"] == "rbac.denied" and record["object_id"] == str(viewer)
+        session = uuid.uuid5(rbac.user_id_of("manager_with_grant"), "session")  # the harness's
+        assert (record["actor_ip"], record["session_id"]) == ("127.0.0.1", session)
+        assert str(record["request_id"]) == denied.headers["x-correlation-id"]
+    finally:
+        deployed.access.grants[viewer] = []
+
+
+def test_fake_backend_keeps_the_account_access_read_fail_closed() -> None:
+    app = appmod.create_app(Settings())
+    assert appmod.build_account_access_store(Settings(), app.state.app_context.audit) is None
+    resp = TestClient(app, client=("127.0.0.1", 50000)).get(
+        f"/users/{uuid.uuid4()}/account-access", headers={"Authorization": "Bearer tok-owner"}
+    )
+    assert resp.status_code == 501
+
+
 def _states(resp: httpx.Response) -> dict[str, str]:
     assert resp.status_code == 200, resp.text
     return {item["key"]: item["state"] for item in resp.json()["items"]}
@@ -278,6 +322,7 @@ def test_owner_routes_derived_from_the_matrix_cover_the_issue_scope() -> None:
     """Guard for the derived parametrisation: it can never silently become empty."""
     named = {"PUT /users/{userId}/roles", "POST /users", "GET /users/invites"}  # by #2492
     assert named <= set(OWNER_ROUTES) and "POST /users/{userId}/mfa/reset" in OWNER_ROUTES
+    assert "GET /users/{userId}/account-access" in OWNER_ROUTES  # by #2648 S9b (a `users:read` row)
 
 
 def test_onboarding_routes_derived_from_the_matrix_cover_the_issue_scope() -> None:

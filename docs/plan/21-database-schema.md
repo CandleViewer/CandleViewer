@@ -497,7 +497,9 @@ E42-T04 user disable and E39's `risk.freeze_manager` and `risk.unfreeze_manager`
 user row first, then every row of that user. A bulk writer per account locks its rows
 `ORDER BY user_id, exchange_account_id`; an account soft delete takes only (2). Each writer bounds
 its waits with `lock_timeout` (5 s in the grant store); SQLSTATE `55P03` or `40P01` refuses the
-change with nothing written (HTTP 409 `conflict`).
+change with nothing written (HTTP 409 `conflict`). A reader takes no row lock: the listing behind
+`GET /users/{userId}/account-access` (`list_grants`) neither waits for these writers nor holds
+one up, and shows only committed grants of live accounts.
 
 **Grant writes never lower a freeze (#965 O4, #2648 Q1, C-12.5).** Removing a grant is a soft
 revoke (`can_view = can_trade = false`), never a `DELETE`, and no grant write lowers `frozen` or

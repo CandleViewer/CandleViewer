@@ -6,6 +6,11 @@ and notifies the WS layer so a downgrade takes effect on live sockets.
 `principal_resolver=None` / `store=None` fail closed with 501 (the fake backend;
 the real backend wires both, #2492); the audit emitter and notifier are
 required (TypeError at wiring time).
+
+`GET /users/{userId}/account-access` (E42-T08 S9b, #2648): the user's live grants, owner only
+(`users:read`, no step-up: a read). RBAC runs before any lookup, so a refused caller gets one 403
+for an existing and a missing id (threat U25), audited naming the target. Its problem codes are
+the contract's `x-error-codes`. `account_access=None` fails closed with 501; the `PUT` is S9c.
 """
 
 from __future__ import annotations
@@ -13,21 +18,30 @@ from __future__ import annotations
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.step_up import _AuthLike, _bearer, require_elevation_for
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.observability.context import current_request_id
+from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
+from candleviewer.storage.repositories.account_access import AccessGrant, AccessUserNotFoundError
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
+_RETRY_AFTER_S = 5
 
 
 class _Emitter(Protocol):
@@ -63,6 +77,13 @@ class UserRoleStore(Protocol):
         ...
 
 
+class AccountAccessStore(Protocol):
+    async def list_grants(self, user_id: uuid.UUID) -> list[AccessGrant]:
+        """The user's live grants of live accounts. Raises `AccessUserNotFoundError` (missing or
+        deleted user), `StorageQueryFailed` or the driver's `OSError` (database down)."""
+        ...
+
+
 class PermissionChangeNotifier(Protocol):
     async def roles_changed(self, user_id: uuid.UUID) -> None: ...
 
@@ -85,6 +106,24 @@ def _forbidden(reason: str) -> JSONResponse:
     )
 
 
+def _registered(code: ErrorCode, status: int, detail: str) -> JSONResponse:
+    """A problem for a code of `x-error-codes`: title and retryability come from the generated
+    registry, so no other code can be answered."""
+    meta = ERROR_META[code]
+    body: dict[str, Any] = {
+        "type": f"https://candleviewer.local/errors/{code.value}",
+        "title": meta.title,
+        "status": status,
+        "code": code.value,
+        "detail": detail,
+    }
+    headers: dict[str, str] = {}
+    if meta.retryable:
+        body["retry_after_seconds"] = _RETRY_AFTER_S
+        headers["Retry-After"] = str(_RETRY_AFTER_S)
+    return JSONResponse(body, status, headers, "application/problem+json")
+
+
 def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
@@ -97,6 +136,43 @@ def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
         },
         media_type="application/problem+json",
     )
+
+
+class _NamesTarget:
+    """`enforce` audits a denial without its target or the caller's session; this names the user
+    whose grants were asked for, so a probe of ids leaves a trail, and the session, which is read
+    only now, for a refusal."""
+
+    def __init__(
+        self,
+        emitter: _Emitter,
+        target: uuid.UUID,
+        session: Callable[[], Awaitable[uuid.UUID | None]],
+    ) -> None:
+        self._emitter, self._target, self._session = emitter, target, session
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        named = {"object_kind": "user", "object_id": str(self._target)}
+        await self._emitter.emit(action, **kwargs | named | {"session_id": await self._session()})
+
+
+def _log() -> Any:
+    """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+def _grant_json(grant: AccessGrant) -> dict[str, Any]:
+    """One `AccountAccessGrant` (`granted_by` left out once its user is gone; no `granted_at`)."""
+    shown = api.AccountAccessGrant.model_validate(
+        {
+            "exchange_account_id": grant.exchange_account_id,
+            "level": grant.level,
+            "account_label": grant.account_label,
+            "environment": grant.environment,
+            "granted_by": grant.granted_by,
+        }
+    )
+    return shown.model_dump(mode="json", exclude_none=True)
 
 
 async def _audit(
@@ -130,6 +206,7 @@ def make_users_router(
     notifier: PermissionChangeNotifier,
     *,
     auth: _AuthLike | None = None,
+    account_access: AccountAccessStore | None = None,
 ) -> APIRouter:
     """`emitter` and `notifier` are mandatory: a role change without an
     audit record (C-2.9) or without a live-socket re-evaluation is refused
@@ -137,6 +214,15 @@ def make_users_router(
     if emitter is None or notifier is None:
         raise TypeError("make_users_router: audit emitter and notifier are required")
     router = APIRouter()
+
+    async def session_of(request: Request) -> uuid.UUID | None:
+        """The session behind the bearer token, as the audit record of a refusal names it. A
+        read-only peek: it authorises nothing, and `None` when there is no session to name."""
+        token = _bearer(request)
+        if auth is None or token is None or not auth.sessions_is_active:
+            return None
+        found: SessionRecord | None = await auth.sessions.peek_access_token(token)
+        return None if found is None else found.id
 
     @router.put("/users/{userId}/roles")
     async def put_user_roles(
@@ -251,5 +337,54 @@ def make_users_router(
         return JSONResponse(
             status_code=200, content={"id": str(user_id), "roles": sorted(new_roles)}
         )
+
+    @router.get("/users/{userId}/account-access")
+    async def list_user_account_access(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> JSONResponse:
+        if principal_resolver is None or account_access is None:
+            return _problem(
+                501, "not_implemented", "Not implemented", "no principal resolver/store wired"
+            )
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
+        if principal is None:
+            return _registered(
+                ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request"
+            )
+        correlation = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
+        try:  # before any lookup: the same 403 for an id that exists and one that does not
+            await enforce(
+                principal,
+                Permission.USERS_READ,
+                scope=Scope.NONE,
+                emitter=_NamesTarget(emitter, user_id, partial(session_of, request)),
+                actor_ip=source_ip(request.scope),
+                request_id=uuid.UUID(correlation) if correlation else None,
+            )
+        except ForbiddenError as exc:
+            return _forbidden(exc.deny.reason.value)
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+            _log().warning(
+                "account access refusal not audited",
+                error=type(exc).__name__,
+                target_user_id=str(user_id),
+            )
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
+        try:
+            grants = await account_access.list_grants(user_id)
+        except AccessUserNotFoundError:  # a deleted user and a missing one answer alike
+            return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+        except (StorageQueryFailed, OSError) as exc:
+            _log().error(
+                "account access read failed",
+                error=type(exc).__name__,
+                sqlstate=exc.sqlstate if isinstance(exc, StorageQueryFailed) else None,
+                target_user_id=str(user_id),
+            )
+            return _registered(
+                ErrorCode.STORE_UNAVAILABLE, 503, "the account access store is unavailable"
+            )
+        return JSONResponse({"items": [_grant_json(grant) for grant in grants]})
 
     return router

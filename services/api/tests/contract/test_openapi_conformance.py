@@ -307,13 +307,18 @@ def test_audit_unavailable_is_registered_exactly_once(spec: dict[str, Any]) -> N
     assert codes.count("audit_unavailable") == 1
 
 
-def test_list_user_account_access_declares_its_auth_and_lookup_failures(
+def test_list_user_account_access_declares_its_auth_lookup_and_availability_failures(
     spec: dict[str, Any],
 ) -> None:
-    responses = spec["paths"]["/users/{userId}/account-access"]["get"]["responses"]
-    assert set(responses) == {"200", "401", "403", "404"}
-    assert responses["401"] == {"$ref": "#/components/responses/Unauthorized"}
-    assert responses["404"] == {"$ref": "#/components/responses/NotFound"}
+    op = spec["paths"]["/users/{userId}/account-access"]["get"]
+    assert set(op["responses"]) == {"200", "401", "403", "404", "503"}
+    assert op["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
+    assert op["responses"]["404"] == {"$ref": "#/components/responses/NotFound"}
+    assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+    assert "Retry-After" in spec["components"]["responses"]["ServiceUnavailable"]["headers"]
+    cited = _CITED_CODE.findall(op["description"])  # the two codes its `503` carries
+    assert sorted(cited) == [("503", "audit_unavailable"), ("503", "store_unavailable")]
+    assert all(_registered(spec).get(code) == int(status) for status, code in cited), cited
 
 
 def test_account_access_grant_input_declares_only_the_account_and_the_level(
