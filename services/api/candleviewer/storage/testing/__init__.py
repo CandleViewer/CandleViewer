@@ -20,6 +20,7 @@ from candleviewer.storage.testing.fakes import (
     FakeRetentionRepository,
     FakeUnitOfWork,
 )
+from candleviewer.storage.testing.flags import InMemoryFlagRepository
 from candleviewer.storage.testing.recorded import (
     InMemoryRecordedTier,
     StaticGapReader,
@@ -32,6 +33,7 @@ __all__ = [
     "FakeRelationalRepository",
     "FakeRetentionRepository",
     "FakeUnitOfWork",
+    "InMemoryFlagRepository",
     "InMemoryRecordedTier",
     "StaticGapReader",
     "StaticManifestCoverage",

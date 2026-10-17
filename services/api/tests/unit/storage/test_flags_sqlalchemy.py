@@ -19,10 +19,19 @@ from structlog.testing import capture_logs
 
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import flags_sqlalchemy as m
-from candleviewer.storage.repositories.flags_sqlalchemy import FlagRow, FlagSeed
+from candleviewer.storage.repositories.flags_sqlalchemy import (
+    FlagChange,
+    FlagRow,
+    FlagRowMissingError,
+    FlagSeed,
+    StaleFlagRowError,
+)
 
-_ACTOR, _USER = uuid.UUID(int=7), uuid.UUID(int=9)
-_T1 = datetime(2026, 10, 1, tzinfo=UTC)
+_ID, _ACTOR, _USER = uuid.UUID(int=1), uuid.UUID(int=7), uuid.UUID(int=9)
+_T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, 3, 4, 5, 6, tzinfo=UTC)
+_HEAD: dict[str, Any] = {"id": _ID, "kind": "boolean", "default_value": False, "rollout_pct": None}
+_HEAD |= {"updated_at": _T1, "updated_by": None}
+_LOCKED = FlagRow(False, {}, {"manager": True}, _T1, None)
 
 
 class _PgError(Exception):
@@ -72,9 +81,30 @@ def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> Base
     return cls("SELECT 1", None, _PgError(sqlstate))
 
 
+def _writable(head: dict[str, Any] | None = _HEAD) -> _Rel:
+    after = {**_HEAD, "default_value": True, "updated_at": _T2, "updated_by": _ACTOR}
+    role = {"user_id": None, "role": "manager", "override": True}
+    return _Rel({m._LOCK: [head] if head else [], m._OVERRIDES: [role], m._UPDATE: [after]})
+
+
+async def _write(rel: _Rel, value: object = True, at: datetime = _T1) -> FlagRow:
+    async def prepare(row: FlagRow) -> FlagChange:
+        rel.ran.append(("PREPARE", row))
+        return FlagChange(value, {_USER: False}, at, _ACTOR)
+
+    return await _repo(rel).write("trading.one_click", prepare)
+
+
 def test_every_statement_is_a_static_module_literal() -> None:
     names = {n for n, v in vars(m).items() if isinstance(v, sa.TextClause)}
-    assert names == {"_TIMEOUTS", "_ENSURE", "_LOAD"}
+    assert names == {"_TIMEOUTS", "_ENSURE", "_LOAD", "_LOCK", "_OVERRIDES", "_UPDATE"} | {
+        "_DROP_USERS", "_PUT_USERS"
+    }  # fmt: skip
+
+
+def test_a_write_locks_its_row_and_rewrites_only_a_changed_override() -> None:
+    assert str(m._LOCK).endswith("FOR UPDATE")
+    assert str(m._PUT_USERS).endswith("IS DISTINCT FROM EXCLUDED.value")
 
 
 def test_ensure_inserts_only_where_no_row_is() -> None:
@@ -179,3 +209,92 @@ async def test_any_other_error_is_a_bug_and_keeps_its_type(error: BaseException)
     rel.fail_at, rel.error = m._LOAD, error
     with pytest.raises(type(error)):
         await _repo(rel).load()
+
+
+async def test_a_write_locks_prepares_on_the_locked_row_then_writes_and_commits() -> None:
+    rel = _writable()
+    row = await _write(rel)
+    assert [stmt for stmt, _ in rel.ran] == [
+        m._TIMEOUTS, m._LOCK, m._OVERRIDES, "PREPARE", m._UPDATE, m._DROP_USERS, m._PUT_USERS
+    ]  # fmt: skip
+    assert rel.ran[0][1] == {"budget": "500ms"} and rel.ran[1][1] == {"key": "trading.one_click"}
+    assert rel.ran[3][1] == _LOCKED and rel.committed  # prepare saw the row as stored
+    flag = {"id": str(_ID), "by": str(_ACTOR)}
+    assert rel.ran[4][1] == flag | {"value": "true", "pct": None}
+    assert rel.ran[5][1] == {"id": str(_ID), "keep": [str(_USER)]}
+    assert json.loads(rel.ran[6][1].pop("overrides")) == [{"user_id": str(_USER), "value": False}]
+    assert rel.ran[6][1] == flag
+    assert row == FlagRow(True, {_USER: False}, {"manager": True}, _T2, _ACTOR)
+
+
+@pytest.mark.parametrize(("value", "pct"), [(40, 40), (True, None), ("x", None)])
+async def test_only_an_integer_is_bound_as_a_rollout(value: object, pct: int | None) -> None:
+    rel = _writable()
+    await _write(rel, value)
+    assert rel.ran[4][1]["pct"] == pct and rel.ran[4][1]["value"] == json.dumps(value)
+
+
+async def test_a_stale_change_raises_with_the_locked_row_and_writes_nothing() -> None:
+    rel = _writable()
+    with pytest.raises(StaleFlagRowError) as stale:
+        await _write(rel, at=_T1 + timedelta(microseconds=1))  # a microsecond apart is stale
+    assert stale.value.current == _LOCKED
+    assert rel.ran[-1][0] == "PREPARE" and not rel.committed
+
+
+async def test_a_flag_without_a_row_is_missing_and_prepare_never_runs() -> None:
+    rel = _writable(head=None)
+    with pytest.raises(FlagRowMissingError):
+        await _write(rel)
+    assert [s for s, _ in rel.ran] == [m._TIMEOUTS, m._LOCK] and not rel.committed
+
+
+async def test_an_override_user_deleted_meanwhile_is_a_missing_row() -> None:
+    rel = _writable()
+    rel.fail_at, rel.error = m._PUT_USERS, _db("23503", sa_exc.IntegrityError)
+    with pytest.raises(FlagRowMissingError) as missing:
+        await _write(rel)
+    assert missing.value.__cause__ is None and not rel.committed
+
+
+async def test_a_writer_deleted_meanwhile_stays_a_bug() -> None:
+    rel = _writable()  # `updated_by` names the writer: only the override insert maps 23503
+    rel.fail_at, rel.error = m._UPDATE, _db("23503", sa_exc.IntegrityError)
+    with pytest.raises(sa_exc.IntegrityError):
+        await _write(rel)
+
+
+async def test_what_prepare_raises_reaches_the_caller_as_is_never_as_an_outage() -> None:
+    refused = ConnectionRefusedError("the audit disk")  # an OSError: an outage if it were ours
+
+    async def prepare(_: FlagRow) -> FlagChange:
+        raise refused
+
+    rel = _writable()
+    with pytest.raises(ConnectionRefusedError) as raised:
+        await _repo(rel).write("trading.one_click", prepare)
+    assert raised.value is refused and not rel.committed
+
+
+@pytest.mark.parametrize("error", _OUTAGES, ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize(
+    "step", ["enter", m._LOCK, m._PUT_USERS, "commit"], ids=["enter", "lock", "put", "commit"]
+)
+async def test_a_database_that_cannot_serve_the_write_is_an_outage(
+    error: BaseException, step: Any
+) -> None:
+    rel = _writable()
+    rel.fail_at, rel.error = step, error
+    with capture_logs() as logs, pytest.raises(StorageTierUnavailable):
+        await _write(rel)
+    assert logs[-1]["event"] == "feature_flag_repository_unavailable" and not rel.committed
+    assert "pw@db" not in repr(logs)
+
+
+@pytest.mark.parametrize("error", _BUGS, ids=lambda e: type(e).__name__)
+async def test_any_other_error_in_a_write_is_a_bug(error: BaseException) -> None:
+    rel = _writable()
+    rel.fail_at, rel.error = m._PUT_USERS, error
+    with pytest.raises(type(error)):
+        await _write(rel)
+    assert not rel.committed

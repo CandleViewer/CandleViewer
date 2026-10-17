@@ -11,16 +11,25 @@ a flag whose kind changes in code keeps its old row until a data migration rewri
 one statement, so one snapshot, with every override kept; `feature_flag_overrides.expires_at` is
 not read, as nothing defines or writes it.
 
+`write` is one READ COMMITTED transaction: the read budget as `statement_timeout` and
+`lock_timeout`, the row `FOR UPDATE` and its overrides, `prepare` with the row as stored, the
+`updated_at` check, the value, the user overrides (role overrides are kept), the commit.
+`updated_at` compares exactly: `timestamptz` and `datetime.isoformat()` both carry microseconds,
+and each write moves it on by at least one, by the database clock. A `percentage` row takes only
+an integer: repairing it to another kind's value needs the data migration too (`ff_shape`).
+
 A database that cannot serve the call is `StorageTierUnavailable` with a fixed message (no driver
-text, no bound value: C-12.6); any other database error is a bug and keeps its type.
+text, no bound value: C-12.6), a failed COMMIT included, though that write may have landed; any
+other database error is a bug and keeps its type, and what `prepare` raises reaches the caller as
+is.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Final
 from uuid import UUID
@@ -58,12 +67,39 @@ class FlagRow:
     updated_by: UUID | None
 
 
+@dataclass(frozen=True, slots=True)
+class FlagChange:
+    """The value, the whole new set of user overrides, the `updated_at` read, and the writer."""
+
+    value: object
+    user_overrides: Mapping[UUID, object]
+    expected_updated_at: datetime
+    actor: UUID
+
+
+class StaleFlagRowError(Exception):
+    """`expected_updated_at` does not name the locked row; `current` is that row."""
+
+    def __init__(self, current: FlagRow) -> None:
+        super().__init__("stale flag row")
+        self.current = current
+
+
+class FlagRowMissingError(LookupError):
+    """A row the write needs is gone: the flag's own (its start-up `ensure` failed) or an override
+    user's (deleted after the writer checked it)."""
+
+
+#: Awaited under the row lock with the row as stored; returns the change, or raises to write none.
+RowPrepare = Callable[[FlagRow], Awaitable[FlagChange]]
+
 #: SQLSTATE classes of "the database cannot serve this now": connection (08), transaction rollback
 #: incl. deadlock (40), resources (53), operator intervention incl. statement timeout 57014 (57),
 #: system (58); plus lock_not_available 55P03. Data (22), integrity (23) and syntax or access (42)
 #: errors are bugs, and so is a missing SQLSTATE (as the settings repository, #2944).
 _OUTAGE_CLASSES: Final = frozenset({"08", "40", "53", "57", "58"})
 _LOCK_NOT_AVAILABLE: Final = "55P03"
+_FOREIGN_KEY: Final = "23503"
 
 _TIMEOUTS = sa.text(
     "SELECT set_config('statement_timeout', :budget, true), "
@@ -82,6 +118,41 @@ _LOAD = sa.text(
     "f.updated_by, o.user_id, r.name::text AS role, o.value AS override FROM feature_flags f "
     "LEFT JOIN feature_flag_overrides o ON o.feature_flag_id = f.id "
     "LEFT JOIN roles r ON r.id = o.role_id ORDER BY f.key, o.created_at, o.id"
+)
+_LOCK = sa.text(
+    "SELECT id, kind::text AS kind, default_value, rollout_pct, updated_at, updated_by "
+    "FROM feature_flags WHERE key = :key FOR UPDATE"
+)
+_OVERRIDES = sa.text(
+    "SELECT o.user_id, r.name::text AS role, o.value AS override FROM feature_flag_overrides o "
+    "LEFT JOIN roles r ON r.id = o.role_id WHERE o.feature_flag_id = CAST(:id AS uuid) "
+    "ORDER BY o.created_at, o.id"
+)
+# clock_timestamp(), not now(): a writer queued on the lock is stamped after its wait; greatest()
+# keeps the token moving even if the clock steps back.
+_UPDATE = sa.text(
+    "UPDATE feature_flags SET "
+    "default_value = CASE WHEN kind = 'percentage' THEN default_value "
+    "ELSE CAST(:value AS jsonb) END, "
+    "rollout_pct = CASE WHEN kind = 'percentage' THEN CAST(:pct AS smallint) "
+    "ELSE rollout_pct END, updated_by = CAST(:by AS uuid), "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
+    "WHERE id = CAST(:id AS uuid) "
+    "RETURNING kind::text AS kind, default_value, rollout_pct, updated_at, updated_by"
+)
+_DROP_USERS = sa.text(
+    "DELETE FROM feature_flag_overrides WHERE feature_flag_id = CAST(:id AS uuid) "
+    "AND user_id IS NOT NULL AND user_id <> ALL(CAST(:keep AS uuid[]))"
+)
+# An unchanged override keeps its row (`set_by`, `created_at`): only a new value is written.
+# `->` keeps a JSON null a jsonb null (`jsonb_to_recordset` would make it SQL NULL).
+_PUT_USERS = sa.text(
+    "INSERT INTO feature_flag_overrides (id, feature_flag_id, user_id, value, set_by) "
+    "SELECT gen_random_uuid(), CAST(:id AS uuid), CAST(o ->> 'user_id' AS uuid), o -> 'value', "
+    "CAST(:by AS uuid) FROM jsonb_array_elements(CAST(:overrides AS jsonb)) AS o "
+    "ON CONFLICT (feature_flag_id, user_id) WHERE user_id IS NOT NULL DO UPDATE "
+    "SET value = EXCLUDED.value, set_by = EXCLUDED.set_by "
+    "WHERE feature_flag_overrides.value IS DISTINCT FROM EXCLUDED.value"
 )
 
 
@@ -115,12 +186,13 @@ def _is_outage(exc: BaseException) -> bool:
 
 
 @contextmanager
-def _outage() -> Iterator[None]:
-    """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug stays one."""
+def _outage(own: Sequence[BaseException] = ()) -> Iterator[None]:
+    """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug, and what
+    `prepare` raised (`own`, by identity), stay as they are."""
     try:
         yield
     except (OSError, sa_exc.SQLAlchemyError) as exc:
-        if not _is_outage(exc):
+        if any(exc is mine for mine in own) or not _is_outage(exc):
             raise
         state = _sqlstate(exc)
         _log().error(
@@ -155,7 +227,7 @@ def _flag(head: Mapping[Any, Any], overrides: Iterable[Mapping[Any, Any]] = ()) 
 
 
 class SqlAlchemyFlagRepository:
-    """The flag rows over one relational repository; reads run under the read budget."""
+    """The flag rows over one relational repository; a read or a write runs under the budget."""
 
     def __init__(self, relational: SqlAlchemyRelationalRepository, *, read_budget_ms: int) -> None:
         if read_budget_ms < 1:  # `0` would switch the server-side bound off
@@ -181,5 +253,50 @@ class SqlAlchemyFlagRepository:
             flags.setdefault(r["key"], []).append(r)
         return {key: _flag(rs[0], rs) for key, rs in flags.items()}
 
+    async def write(self, key: str, prepare: RowPrepare) -> FlagRow:
+        """Lock the row, `prepare` it once, refuse a stale change, write it; the new row."""
+        own: list[BaseException] = []
+        with _outage(own):
+            async with self._relational.unit_of_work() as uow:
+                s = uow.session
+                await s.execute(_TIMEOUTS, {"budget": self._budget})
+                head = (await s.execute(_LOCK, {"key": key})).mappings().first()
+                if head is None:
+                    raise FlagRowMissingError(key)
+                flag_id = str(head["id"])
+                row = _flag(head, (await s.execute(_OVERRIDES, {"id": flag_id})).mappings().all())
+                try:
+                    change = await prepare(row)
+                except Exception as exc:
+                    own.append(exc)
+                    raise
+                if change.expected_updated_at != row.updated_at:
+                    raise StaleFlagRowError(row)
+                value, by = change.value, str(change.actor)
+                pct = value if type(value) is int else None  # never a bool: it is an int too
+                params = {"id": flag_id, "value": json.dumps(value), "pct": pct, "by": by}
+                written = (await s.execute(_UPDATE, params)).mappings().one()
+                users = [{"user_id": str(u), "value": v} for u, v in change.user_overrides.items()]
+                keep = [o["user_id"] for o in users]
+                await s.execute(_DROP_USERS, {"id": flag_id, "keep": keep})
+                put = {"id": flag_id, "overrides": json.dumps(users), "by": by}
+                try:
+                    await s.execute(_PUT_USERS, put)
+                except sa_exc.IntegrityError as exc:
+                    if _sqlstate(exc) != _FOREIGN_KEY:
+                        raise
+                    raise FlagRowMissingError("an override's user") from None
+                await uow.commit()
+        new = dict(change.user_overrides)
+        return replace(_flag(written), user_overrides=new, role_overrides=row.role_overrides)
 
-__all__ = ["FlagRow", "FlagSeed", "SqlAlchemyFlagRepository"]
+
+__all__ = [
+    "FlagChange",
+    "FlagRow",
+    "FlagRowMissingError",
+    "FlagSeed",
+    "RowPrepare",
+    "SqlAlchemyFlagRepository",
+    "StaleFlagRowError",
+]
