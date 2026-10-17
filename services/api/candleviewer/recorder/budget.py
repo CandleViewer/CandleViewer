@@ -57,6 +57,8 @@ _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressu
 #: Suggested actions named by every ladder event: codes only, never host paths.
 SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
 _RECORDED: Final[tuple[TierName, ...]] = ("questdb", "parquet")
+#: The tiers the cap is measured against, for readers of `report()` (never Postgres).
+RECORDED_TIERS: Final = frozenset(_RECORDED)
 _TIERS: Final[tuple[TierName, ...]] = ("questdb", "parquet", "postgres")
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")  # OpenAPI `Symbol`
 #: What the series store may raise when its volume or file is unavailable.
@@ -369,10 +371,24 @@ class DiskBudget:
         self._report: StorageUsage | None = None
         self._last_pins: frozenset[str] = frozenset()
         self._breakdown = Breakdown({}, {})
-        #: Last fresh breakdown (construction until the first): its age is exported.
+        #: When the sizes behind the published report were measured (construction until the first).
         self._fresh_at = now_us()
         self._rate_labels: set[str] = set()
         self._task: asyncio.Task[None] | None = None
+
+    @property
+    def config(self) -> BudgetConfig:
+        """The frozen config this budget runs with. Readers (the admin read model, E42-T01) take
+        the cap, the sample interval and the retention from it, not from the settings."""
+        return self._cfg
+
+    @property
+    def breakdown_fresh_at(self) -> datetime:
+        """When the sizes behind the published `report()` were measured (construction until the
+        first breakdown); it advances with the report, never ahead of it. `report()` keeps the last
+        sizes while the breakdown fails, so a reader that must never show stale bytes checks this
+        as well as the report's `generated_at`."""
+        return _utc(self._fresh_at)
 
     @property
     def level(self) -> DiskPressureLevel:
@@ -416,7 +432,7 @@ class DiskBudget:
         try:
             async with asyncio.timeout(cfg.breakdown_timeout_s):
                 self._breakdown = await self._meter.breakdown()
-            fresh, self._fresh_at = True, now
+            fresh = True
         except Exception as exc:  # best effort: the last sizes and the free-space path go on
             fresh = False  # stale sizes never reach the series or the fit
             logger().warning("disk_budget_breakdown_unavailable", error=type(exc).__name__)
@@ -436,6 +452,8 @@ class DiskBudget:
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, daily_growth=growth, now_us=now
         )
         self._report = self._build_report(m, now, full_at, growth, rates, top, pinned)
+        if fresh:  # published with the report it sized, never ahead of it across the awaits
+            self._fresh_at = now
         self._ladder.evaluate(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
         )

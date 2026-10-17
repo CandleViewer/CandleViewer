@@ -98,9 +98,9 @@ class RecorderPort(Protocol):
     async def recorder_status(self) -> RecorderStatus: ...
 
     async def storage_snapshot(self) -> StorageSnapshot | None:
-        """The last DiskBudget sample, or `None` before the first one. Design intent, in the
-        spirit of SR-096 (fail closed): an adapter returns `None` or raises `SourceUnavailable`
-        once the last sample is older than a few sample intervals, never a stale headroom."""
+        """The last DiskBudget sample, or `None` before the first one. Fail closed, in the spirit
+        of SR-096: an adapter raises `SourceUnavailable` once the sample, or the byte sizes behind
+        it, is older than a few sample intervals, never a stale headroom."""
 
 
 @dataclass(frozen=True, slots=True)

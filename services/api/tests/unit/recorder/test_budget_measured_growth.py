@@ -1,11 +1,13 @@
 """E42-T01: `DiskBudget.measured_growth()` tells "not measured yet" (`None`) apart from a measured
-growth, which `report()` folds together as `daily_growth_bytes = 0` before the first fit."""
+growth, which `report()` folds together as `daily_growth_bytes = 0` before the first fit; `config`
+is the `BudgetConfig` it runs with, so the admin read model takes the cap and the sample interval
+from the budget itself rather than from a second copy of the settings."""
 
 from __future__ import annotations
 
 import pytest
 
-from candleviewer.recorder.budget import US_PER_S, Point
+from candleviewer.recorder.budget import US_PER_S, BudgetConfig, Point
 from tests.unit.recorder._budget_fakes import GB, NOW, FakeMeter, FakeSeriesStore, make_budget
 
 STEP = 600 * US_PER_S
@@ -36,3 +38,9 @@ async def test_a_fitted_series_reports_its_growth_and_the_fitted_symbols() -> No
     assert set(per_symbol) == {"BTCUSDT"} and abs(per_symbol["BTCUSDT"] - 10 * GB) <= GB // 100
     with pytest.raises(TypeError):  # a read-only copy: callers cannot corrupt the fit
         per_symbol["BTCUSDT"] = 0  # type: ignore[index]  # deliberately mutating a Mapping
+
+
+def test_the_config_the_budget_runs_with_is_readable() -> None:
+    config = BudgetConfig(cap_bytes=123 * GB, sample_interval_s=30.0, retention_days=45)
+    budget, _, _ = make_budget(FakeMeter(), config=config)
+    assert budget.config is config  # the frozen object itself, not a rebuilt copy

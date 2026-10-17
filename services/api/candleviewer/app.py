@@ -1397,7 +1397,7 @@ def create_app(
     # E42-T01: admin overview + capacity read models behind the audited admin-area dependency.
     admin_settings = build_system_settings(resolved)
     admin_overview, admin_capacity = build_admin_read_models(
-        resolved, system_settings=admin_settings
+        resolved, system_settings=admin_settings, disk_budget=app.state.disk_budget
     )
     app.include_router(
         make_admin_overview_router(
