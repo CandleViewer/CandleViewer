@@ -181,6 +181,22 @@ async def test_b16_grace_guard_per_class_and_no_grace_list() -> None:
         await interp.stop()
 
 
+async def test_b16_flags_is_a_grace_class() -> None:
+    """#3083: a feature-flag write's `flags` step-up opens the 5-minute window the contract
+    names (`setFeatureFlag`: "every other write needs `flags` (5-minute grace)")."""
+    from candleviewer.statechart.bindings.b16_session import grace_window_valid
+
+    interp = await _active()
+    try:
+        await _step_up(interp, "flags")
+        ctx = interp.context
+        assert ctx["elevated_classes"] == {"flags": 300 * _US}
+        assert grace_window_valid(ctx, {"action_class": "flags", "now_us": 299 * _US})
+        assert not grace_window_valid(ctx, {"action_class": "flags", "now_us": 300 * _US})
+    finally:
+        await interp.stop()
+
+
 async def test_b16_three_step_up_failures_downgrade_to_readonly() -> None:
     interp = await _active()
     try:

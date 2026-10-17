@@ -1,14 +1,20 @@
 """Deny-by-default for step-up gating (E09-S04 review finding): every mounted
 write route whose path looks dangerous (users, keys, live enablement,
-kill-switch, risk override, audit, backups, recorded-data retention and purge)
-must be registered in `DANGEROUS_ROUTES` or `HANDLER_GATED_ROUTES`, so a later
-ticket cannot mount one ungated."""
+kill-switch, risk override, audit, backups, recorded-data retention and purge,
+feature flags) must be registered in `DANGEROUS_ROUTES` or `HANDLER_GATED_ROUTES`,
+so a later ticket cannot mount one ungated.
+
+#3083 (AD-F01): the path pattern alone missed the flag write and, being a write
+sweep, every GET. The contract sweep below derives its candidates from the contract
+for every method: an operation needing a permission `auth/rbac_seed.json` seeds
+`dangerous`, or one whose contract text names a step-up."""
 
 from __future__ import annotations
 
 import functools
+import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -19,6 +25,7 @@ from starlette.types import Receive, Scope, Send
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.rbac_conformance import RBAC_SEED_PATH
 from candleviewer.api.step_up import (
     DANGEROUS_PATH_PATTERN,
     DANGEROUS_ROUTES,
@@ -29,17 +36,34 @@ from candleviewer.app import create_app
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
 
 _WRITE = {"POST", "PUT", "PATCH", "DELETE"}
-#: Dangerous-looking writes that are deliberately not step-up gated.
-_NOT_DANGEROUS = {
-    ("POST", "/exchange-accounts/{accountId}/keys/{keyId}/test"),  # read-only probe
-    ("POST", "/admin/audit/verify"),  # verifyAuditChain: `audit:read`, no step-up (04 row 49a)
-    # Contract summaries name step-up for `restoreBackup` only (04 row 52 also lists these).
-    ("POST", "/admin/backups"),  # createBackup: "Trigger a backup run"
-    ("POST", "/admin/backups/{backupId}/verify"),  # verifyBackup: restores into a scratch namespace
+#: Operations a sweep below flags that are deliberately not step-up gated -> why (#3083: the
+#: reason is data, so no entry is without one). A contract operation listed here must not name
+#: a step-up class in its text (`test_allow_listed_operations_name_no_step_up_class`).
+_NOT_DANGEROUS: dict[tuple[str, str], str] = {
+    ("POST", "/exchange-accounts/{accountId}/keys/{keyId}/test"): "testApiKey: read-only probe",
+    ("POST", "/admin/audit/verify"): "verifyAuditChain: `audit:read`, no step-up (04 row 49a)",
+    # 04 row 52 gates restore and delete only (`restoreBackup`, `deleteBackup`).
+    ("POST", "/admin/backups"): "createBackup: triggers a backup run",
+    ("POST", "/admin/backups/{backupId}/verify"): "verifyBackup: restores into a scratch namespace",
     # #2738: `recording:write` without step-up for Owner and Manager (04 §7.2.2 row 51); neither
     # changes retention or deletes recorded data (addRecordedSymbol can: it is handler-gated).
-    ("POST", "/admin/recorder/compact"),  # compactRecorder: merges cold-tier files
-    ("POST", "/admin/recorder/import"),  # importTradeArchive: adds archive trades
+    ("POST", "/admin/recorder/compact"): "compactRecorder: merges cold-tier files (04 row 51)",
+    ("POST", "/admin/recorder/import"): "importTradeArchive: adds archive trades (04 row 51)",
+    # #3083: mounted operations the contract sweep flags that nothing step-up gates.
+    ("GET", "/auth/session"): "authGetSession: reads the session's own `step_up_expires_at`",
+    ("GET", "/me"): "getMe: reads the session's own `elevated_until`",
+    ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
+    ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
+    ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
+    # 04 row 22 (own rules, no step-up). Rows 26 (raising an action budget, loosening a stop) and
+    # 27 (import) mark step-up, but the contract documents none for `updateRule` or `createRule`:
+    # `Problem.action_summary` says `rules:write` changes a rule without one and hands the rule
+    # questions that raises to the route slice of #2304. That slice settles rows 26 and 27; its PR
+    # deletes each rule row below that it gates and makes this note cite 04 for any it keeps.
+    ("POST", "/rules"): "createRule: stored `disabled`; arming is `setRuleMode`, gated",
+    ("PUT", "/rules/{ruleId}"): "updateRule: the contract (`Problem`) says no step-up",
+    ("DELETE", "/rules/{ruleId}"): "deleteRule: refused while the rule is `armed`",
+    ("PUT", "/rules/{ruleId}/active-version"): "setActiveRuleVersion: `Problem` says no step-up",
 }
 
 
@@ -77,6 +101,215 @@ def test_gate_sees_a_route_mounted_through_an_included_router() -> None:
 
     app.include_router(router)
     assert _ungated_dangerous_writes(app) == [("DELETE", "/admin/audit/exports/{exportId}")]
+
+
+# -- #3083 (AD-F01): the contract sweep, every method -------------------------------------------
+
+_STEP_UP_TEXT = re.compile(r"step[-_ ]up", re.IGNORECASE)
+#: `authStepUp` answers the challenges; it names every no-grace class and can never need a
+#: step-up itself (`_WRITE_EXEMPT_PATHS` in `api/step_up.py`).
+_ELEVATION = ("POST", "/auth/step-up")
+#: The OpenAPI path-item fields that are operations. The others (`parameters`, `servers`,
+#: `summary`, `description`, `$ref` and `x-` extensions) are not, whatever their type.
+_HTTP_METHODS = frozenset({"get", "put", "post", "patch", "delete", "head", "options", "trace"})
+
+
+def _operations(spec: Mapping[str, object]) -> dict[tuple[str, str], dict[str, Any]]:
+    """(METHOD, path) -> operation, for every operation in `spec`."""
+    paths = cast(dict[str, dict[str, Any]], spec["paths"])
+    return {
+        (method.upper(), path): op
+        for path, item in paths.items()
+        for method, op in item.items()
+        if method in _HTTP_METHODS
+    }
+
+
+@functools.cache
+def _contract_operations() -> dict[tuple[str, str], dict[str, Any]]:
+    """(METHOD, path) -> operation, for every operation in the contract."""
+    return _operations(load_openapi_spec())
+
+
+def _operation(operation_id: str) -> tuple[tuple[str, str], dict[str, Any]]:
+    (found,) = [
+        (k, op) for k, op in _contract_operations().items() if op["operationId"] == operation_id
+    ]
+    return found
+
+
+@functools.cache
+def _contract_classes() -> frozenset[str]:
+    """The `action_class` enum of `POST /auth/step-up`."""
+    _, op = _operation("authStepUp")
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    return frozenset(schema["properties"]["action_class"]["enum"])
+
+
+@functools.cache
+def _dangerous_permissions() -> frozenset[str]:
+    seed = json.loads(RBAC_SEED_PATH.read_text(encoding="utf-8"))
+    return frozenset(p["code"] for p in seed["permissions"] if p["dangerous"])
+
+
+def _text(op: dict[str, Any]) -> str:
+    return f"{op.get('summary', '')}\n{op.get('description', '')}"
+
+
+def _documented_classes(op: dict[str, Any]) -> frozenset[str]:
+    """The step-up classes an operation's contract text names, when that text names a step-up."""
+    text = _text(op)
+    if not _STEP_UP_TEXT.search(text):
+        return frozenset()
+    return frozenset(c for c in _contract_classes() if f"`{c}`" in text)
+
+
+@functools.cache
+def _step_up_candidates() -> frozenset[tuple[str, str]]:
+    """Every contract operation, whatever its method, that needs a permission the seed marks
+    `dangerous` or whose text names a step-up."""
+    dangerous = _dangerous_permissions()
+    return frozenset(
+        key
+        for key, op in _contract_operations().items()
+        if key != _ELEVATION
+        and (set(op["x-rbac"]["permissions"]) & dangerous or _STEP_UP_TEXT.search(_text(op)))
+    )
+
+
+def _registered_classes(method: str, path: str) -> frozenset[str]:
+    """The classes the registry gates an operation with: its path row and its handler rows."""
+    path_class = dangerous_action_class(method, _concrete(path))
+    handler = {c for m, p, c in HANDLER_GATED_ROUTES if (m, p) == (method, path)}
+    return frozenset(handler if path_class is None else handler | {path_class})
+
+
+def _step_up_findings(app: FastAPI) -> list[tuple[str, str, str]]:
+    """Mounted candidates the registry does not prove gated, whatever their method: `ungated`
+    (no registry row, not allow-listed) or `pending` (a handler gate declared for a handler
+    that is not written yet, so nothing enforces it)."""
+    found: list[tuple[str, str, str]] = []
+    for method, path in sorted(served_operations(app) & _step_up_candidates()):
+        if not _registered_classes(method, path):
+            if (method, path) not in _NOT_DANGEROUS:
+                found.append((method, path, "ungated"))
+        elif (method, path) in _PENDING_HANDLER_GATES:
+            found.append((method, path, "pending"))
+    return found
+
+
+def test_every_mounted_step_up_operation_is_gated_or_allow_listed() -> None:
+    assert _step_up_findings(create_app()) == []
+
+
+async def _stand_in() -> None:
+    """A handler with no step-up gate."""
+
+
+@pytest.mark.parametrize(
+    ("method", "prefix", "route"),
+    [
+        ("PUT", "/admin/feature-flags", "/{flagKey}"),  # setFeatureFlag
+        ("GET", "/admin/audit", "/exports/{jobId}"),  # downloadAuditExport: a GET
+    ],
+)
+def test_mounting_a_step_up_operation_without_its_gate_is_caught(
+    method: str, prefix: str, route: str
+) -> None:
+    """On `main` neither was registered and the write-only path sweep saw neither (#3083)."""
+    app = create_app()
+    router = APIRouter(prefix=prefix)
+    router.add_api_route(route, _stand_in, methods=[method])
+    app.include_router(router)
+    assert _step_up_findings(app) == [(method, prefix + route, "pending")]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/me"),  # a read: the write-only path sweep #3083 replaced never saw one
+        ("PUT", "/admin/capacity/subaccount-tier"),
+    ],
+)
+def test_a_mounted_candidate_in_no_registry_and_no_allow_list_is_reported_ungated(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str
+) -> None:
+    """The `ungated` branch's self-test (#3083 review): without its allow-list row, a mounted
+    candidate that no registry row gates is reported, whatever its method."""
+    monkeypatch.delitem(_NOT_DANGEROUS, (method, path))
+    assert _step_up_findings(create_app()) == [(method, path, "ungated")]
+
+
+def test_the_contract_sweep_covers_reads() -> None:
+    """A GET needing a dangerous permission is a candidate like any write."""
+    candidates = _step_up_candidates()
+    assert ("GET", "/admin/audit/exports/{jobId}") in candidates  # `audit:export`
+    assert ("GET", "/users/{userId}/mfa/reset-preview") in candidates  # `users:write`
+    assert _ELEVATION not in candidates
+
+
+def test_a_path_level_extension_object_is_not_read_as_an_operation() -> None:
+    """Only the method fields of a path item are operations (#3083 review): read as one, an
+    `x-` extension object would fail the sweep with a KeyError on `x-rbac` or `operationId`."""
+    get = {"operationId": "getThing", "x-rbac": {"permissions": ["flags:read"]}}
+    item = {"summary": "s", "parameters": [], "x-cv-owner": {"lane": "auth-rbac"}, "get": get}
+    assert _operations({"paths": {"/thing": item}}) == {("GET", "/thing"): get}
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "classes"),
+    [
+        # Under the row lock, by key and stored value: releasing a kill-switch-class flag needs
+        # `killswitch`, `trading.live_enabled: true` needs `live_enablement`, any other write
+        # `flags` (22-api-openapi.yaml, `setFeatureFlag` write rules).
+        ("setFeatureFlag", {"flags", "killswitch", "live_enablement"}),
+        # Checked by the operation itself, after the requester check (`exportAuditLog`, Download).
+        ("downloadAuditExport", {"audit"}),
+    ],
+)
+def test_ad_f01_operations_are_handler_gated_with_their_documented_classes(
+    operation_id: str, classes: set[str]
+) -> None:
+    (method, path), op = _operation(operation_id)
+    assert _documented_classes(op) == classes
+    assert dangerous_action_class(method, _concrete(path)) is None  # the guard must not pre-empt
+    assert _registered_classes(method, path) == classes
+    assert (method, path) in _PENDING_HANDLER_GATES
+
+
+def test_every_contract_flag_write_is_registered() -> None:
+    """Any operation needing `flags:write` - today `setFeatureFlag` only - is step-up gated."""
+    flag_writes = [
+        key
+        for key, op in _contract_operations().items()
+        if "flags:write" in op["x-rbac"]["permissions"]
+    ]
+    assert flag_writes
+    assert all(_registered_classes(*key) for key in flag_writes)
+
+
+def test_registered_classes_are_the_documented_classes() -> None:
+    """A registered operation whose contract text names step-up classes is gated with exactly
+    those classes."""
+    drift = {
+        op["operationId"]: (sorted(registered), sorted(documented))
+        for key, op in _contract_operations().items()
+        if (registered := _registered_classes(*key))
+        and (documented := _documented_classes(op))
+        and registered != documented
+    }
+    assert drift == {}
+
+
+def test_allow_listed_operations_name_no_step_up_class() -> None:
+    """Every allow-list entry has a reason, is a contract operation in no registry, and is not
+    one the contract says needs a step-up class."""
+    operations = _contract_operations()
+    for (method, path), reason in _NOT_DANGEROUS.items():
+        assert reason.strip(), (method, path)
+        assert (method, path) in operations, (method, path)
+        assert not _registered_classes(method, path), (method, path)
+        assert not _documented_classes(operations[method, path]), (method, path)
 
 
 def _dangerous_tail(path: str) -> bool:
@@ -171,6 +404,9 @@ def test_sub_application_tripwire_catches_a_mounted_dangerous_route() -> None:
         ("POST", "/admin/recorder/purge-all"),
         ("DELETE", "/admin/recorder/jobs/{jobId}"),
         ("POST", "/admin/recording/wipe"),
+        # #3083: the flag prefix is swept too, not only the one write the contract has.
+        ("DELETE", "/admin/feature-flags/{flagKey}"),
+        ("POST", "/admin/feature-flags/{flagKey}/overrides"),
     ],
 )
 def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) -> None:
@@ -286,11 +522,16 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 #: The E16-T08 (#492) PR that mounts one removes it here and adds the handler test proving its
 #: body- or query-aware `recorder` branch, and that the rest of the route passes; the restore
 #: ticket (`restoreBackup`) adds the test that its handler gates the request it validated.
+#: #3083: likewise the E42-T03 (#964) PR for the flag write (the class each branch demands,
+#: decided under the row lock) and the E42-T02 (#889) PR for the export download (`audit`,
+#: after the requester check).
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
     ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
+    ("PUT", "/admin/feature-flags/{flagKey}"),
+    ("GET", "/admin/audit/exports/{jobId}"),
 }
 
 

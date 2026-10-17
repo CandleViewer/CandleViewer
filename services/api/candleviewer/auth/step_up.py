@@ -77,8 +77,20 @@ READONLY_WINDOW = timedelta(minutes=5)
 #: `recorder` (04 §7.2.2 rows 9 and 9a): retention and pin changes (#2738) and the
 #: irreversible recorded-data purge (E16-T06); a grace class.
 #: #2751 (SR-025): `audit` gates the audit-log export, `backups` a backup restore.
+#: #3083 (AD-F01, 04 §7.2.2 row 46): `flags` gates a feature-flag write that is neither a
+#: kill-switch-class release nor `trading.live_enabled: true`; a grace class (`setFeatureFlag`).
 ACTION_CLASSES = frozenset(
-    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder", "audit", "backups"}
+    {
+        "keys",
+        "users",
+        "live_enablement",
+        "killswitch",
+        "risk_caps",
+        "recorder",
+        "flags",
+        "audit",
+        "backups",
+    }
 )
 #: Ticket "No-grace list": always a fresh code. `backups`: a restore is irreversible.
 NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"})

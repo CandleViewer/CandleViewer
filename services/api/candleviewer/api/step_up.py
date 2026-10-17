@@ -384,7 +384,9 @@ async def require_session_elevation(
 #: implement (E27 keys, E44/E39 risk, E16-T08 retention) are pre-registered so
 #: they are gated the moment they are mounted.
 #: `tests/unit/api/test_dangerous_route_registry.py` fails if any mounted route
-#: matching `DANGEROUS_PATH_PATTERN` is missing here or in `HANDLER_GATED_ROUTES`.
+#: matching `DANGEROUS_PATH_PATTERN` is missing here or in `HANDLER_GATED_ROUTES`,
+#: and (#3083) if any mounted operation of any method that the contract or the RBAC
+#: seed marks for step-up is in neither registry nor its reasoned allow-list.
 DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/users$"), "users"),  # invite
     ("POST", re.compile(r"^/users/[^/]+/invite$"), "users"),  # reissue mints a new token
@@ -412,7 +414,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 #: never wait for a code (emergency stop) and switching *to demo* is not
 #: dangerous, so only the handler (body- or query-aware) knows. Each entry is a
 #: declaration that the handler demands elevation of that class for its
-#: dangerous branch; the owning epic must add a test proving it.
+#: dangerous branch (a route with several such branches has a row per class);
+#: the owning epic must add a test proving it.
 HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/trading/kill-switch", "killswitch"),  # E39: release only
     ("POST", "/session/environment", "live_enablement"),  # E44: to live only
@@ -443,16 +446,31 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/recording/symbols", "recorder"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}", "recorder"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}", "recorder"),
+    # #3083 (AD-F01). Not mounted yet either: the PR that mounts one drops it from
+    # `_PENDING_HANDLER_GATES` and adds the handler test.
+    # - setFeatureFlag (E42-T03, #964): the class is chosen after request validation, under the
+    #   row lock, from the key and the stored value (an unreadable row counts as its fail-closed
+    #   value): releasing a kill-switch-class flag needs `killswitch`, writing `true` to
+    #   `trading.live_enabled` needs `live_enablement` (both no-grace), any other write `flags`.
+    ("PUT", "/admin/feature-flags/{flagKey}", "flags"),
+    ("PUT", "/admin/feature-flags/{flagKey}", "killswitch"),
+    ("PUT", "/admin/feature-flags/{flagKey}", "live_enablement"),
+    # - downloadAuditExport (E42-T02, #889): `audit` within its grace window, checked by the
+    #   operation after the requester check, so anyone but the requester gets `404`, never a
+    #   challenge. A GET with no path row: the guard passes it straight to the handler.
+    ("GET", "/admin/audit/exports/{jobId}", "audit"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
 #: registries above (deny-by-default for future tickets). The recording and
 #: recorder prefixes are swept whole (SR-025: recorded data can be deleted from
 #: under any of them, #2738); their writes without step-up are allow-listed,
-#: each with its 04 §7.2.2 row, in the registry test.
+#: each with its 04 §7.2.2 row, in the registry test. `feature-flags` (#3083):
+#: a flag write is owner-equivalent configuration (live gate, kill switches).
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
-    r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups)(/|$)"
+    r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
+    r"|feature-flags)(/|$)"
 )
 
 
