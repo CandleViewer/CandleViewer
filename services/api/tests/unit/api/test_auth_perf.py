@@ -3,9 +3,8 @@
 `Settings` refuses `CV_AUTH_PERF_ENABLED` outside a keyless testnet; `auth_perf_enabled()`
 checks the same rule again when the app is built (the startup assertion), so even a `Settings`
 that skipped validation never builds with the switch on in live, demo or next to a key. The
-route's RBAC cells (owner 200, managers and viewer 403, no session 401) run against the real
-app in `tests/contract/rbac/test_auth_perf_matrix.py`; the login `Server-Timing` header in
-`test_login_server_timing.py`. No network, no database (C-13.5).
+route's RBAC cells are in `tests/contract/rbac/test_auth_perf_matrix.py`, the login
+`Server-Timing` header in `test_login_server_timing.py`. No network, no database (C-13.5).
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
+from candleviewer.api._generated.openapi_models import Problem
 from candleviewer.api.auth_perf import auth_perf_enabled
 from candleviewer.app import create_app
 from candleviewer.settings import Environment, Settings
@@ -79,3 +79,11 @@ def test_create_app_mounts_the_params_route_only_with_the_switch_on(
     it answers 501, never 200."""
     client = TestClient(create_app(settings()), client=_LOOPBACK, raise_server_exceptions=False)
     assert client.get(_PATH).status_code == status
+
+
+def test_params_route_without_a_session_resolver_answers_a_501_not_implemented_problem() -> None:
+    app = create_app(_keyless_testnet())
+    response = TestClient(app, client=_LOOPBACK, raise_server_exceptions=False).get(_PATH)
+    problem = Problem.model_validate(response.json(), strict=True)
+    assert response.headers["content-type"] == "application/problem+json"
+    assert (response.status_code, problem.status, problem.code) == (501, 501, "not_implemented")
