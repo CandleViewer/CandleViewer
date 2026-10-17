@@ -62,11 +62,14 @@ class ChainHasher:
                 cancel = cancel or exc  # raised once the thread has returned
         if cancel is not None:
             raise cancel
+        if job.cancelled():  # a queued job `shutdown` dropped; its caller was not cancelled
+            raise ChainHasherBusy
         return job.result()
 
     def _finished(self, _job: asyncio.Future[Any]) -> None:
         self._pending -= 1
 
     def shutdown(self) -> None:
-        """Refuse new jobs and drop queued ones; a running job finishes."""
+        """Refuse new jobs and drop queued ones, whose callers get `ChainHasherBusy`; a
+        running job finishes."""
         self._pool.shutdown(wait=False, cancel_futures=True)

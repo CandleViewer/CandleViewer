@@ -24,16 +24,21 @@ from candleviewer.storage.repositories.audit_sqlalchemy import (
     SqlAlchemyAuditRepository,
 )
 
+_WAIT_S = 5.0  # a hang guard: a regression must fail its test, not hang the run
+
 
 class _ChainSession:
     """Answers the chain statement for the ids it is given: `after_state` of `sizes[id]`
     characters, cut at `:n` as Postgres `left()` would."""
 
     def __init__(self, sizes: dict[int, int]) -> None:
-        self.sizes, self.calls = sizes, []
+        self.sizes = sizes
+        self.calls: list[list[int]] = []
+        self.cuts: list[int] = []  # `:n` of each call
 
     async def execute(self, stmt: Any, params: dict[str, Any]) -> list[Any]:
         self.calls.append(params["ids"])
+        self.cuts.append(params["n"])
         out = []
         for i in params["ids"]:
             text = "x" * min(self.sizes.get(i, 10), params["n"])
@@ -71,6 +76,16 @@ async def test_fetching_stops_past_the_page_cap() -> None:
     assert len(session.calls) == CHAIN_PAGE_MAX_CHARS // per_chunk + 1  # then stops
 
 
+async def test_the_chunk_that_reaches_the_page_cap_is_cut_to_what_is_left() -> None:
+    """F8-1: a rendering is cut one past what the page can still take, so the chunk that
+    crosses the cap is not fetched at the field cap's width. Which rows are complete is the
+    same as when every chunk is cut at the field cap."""
+    size = (CHAIN_PAGE_MAX_CHARS - 4) // 300  # six chunks of 50 rows leave four characters
+    rows, session = await _attach(dict.fromkeys(range(1, 351), size), range(1, 351))
+    assert session.cuts == [CHAIN_FIELD_MAX_CHARS + 1] * 6 + [4 + 1]
+    assert sum(r["chain"] is not None for r in rows) == 300
+
+
 class _Rel:
     """`unit_of_work()` whose first `hold` entries block until they are cancelled."""
 
@@ -106,7 +121,7 @@ async def test_reads_past_the_process_cap_fail_closed_at_once() -> None:
     rel = _Rel(hold=2)
     repo = SqlAlchemyAuditRepository(rel, read_slots=2)  # type: ignore[arg-type]  # fake
     held = [asyncio.ensure_future(_read(repo)), asyncio.ensure_future(_read(repo, owner=True))]
-    await rel.all_held.wait()
+    await asyncio.wait_for(rel.all_held.wait(), _WAIT_S)
     for owner in (False, True):
         with pytest.raises(AuditReadBusy) as err:
             await _read(repo, owner=owner)
@@ -121,7 +136,7 @@ async def test_one_read_slot_is_kept_for_the_owner() -> None:
     rel = _Rel(hold=3)
     repo = SqlAlchemyAuditRepository(rel, read_slots=4)  # type: ignore[arg-type]  # fake
     held = [asyncio.ensure_future(_read(repo)) for _ in range(3)]
-    await rel.all_held.wait()
+    await asyncio.wait_for(rel.all_held.wait(), _WAIT_S)
     with pytest.raises(AuditReadBusy):
         await _read(repo)  # a fourth read that is not the Owner's
     assert await _read(repo, owner=True) == []  # the kept slot

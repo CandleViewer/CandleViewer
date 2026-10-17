@@ -488,6 +488,17 @@ def test_owner_query_sees_all_events_raw() -> None:
     assert service.query_service.query_calls[0]["restrict_to_actor"] is None
 
 
+@pytest.mark.parametrize("principal", [_owner, _manager_with_read], ids=["owner", "manager"])
+def test_query_audit_log_200_is_never_cached(principal: Any) -> None:
+    """The contract's `200` carries `Cache-Control: no-store` for every view of the page
+    (F6-2): a page holds IPs and payloads."""
+    caller = principal()
+    service = _service_with([_entry(1, caller.user_id)])
+    response = TestClient(_app(service, _FakeResolver(caller))).get("/admin/audit")
+    assert response.status_code == 200 and len(response.json()["items"]) == 1
+    assert response.headers["Cache-Control"] == "no-store"
+
+
 # ---- #2392 "Limits": per-user limiter, time budget, store errors ---------------------------
 
 

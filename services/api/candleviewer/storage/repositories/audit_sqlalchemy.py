@@ -243,7 +243,9 @@ async def _attach_chain(session: Any, rows: list[dict[str, Any]]) -> None:
     for chunk in itertools.batched(sorted((r["id"] for r in rows), reverse=True), _CHAIN_CHUNK):
         if left < 0:
             break
-        params = {"ids": list(chunk), "n": CHAIN_FIELD_MAX_CHARS + 1}
+        # One character past what is allowed: a longer rendering leaves its row incomplete
+        # whatever its length, so near the page cap the chunk is not fetched at full width.
+        params = {"ids": list(chunk), "n": min(CHAIN_FIELD_MAX_CHARS, left) + 1}
         for found in await session.execute(_CHAIN_ROWS_SQL, params):
             chain = dict(found._mapping)
             texts = [v for k, v in chain.items() if k not in _CHAIN_KEYS and v is not None]

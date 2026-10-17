@@ -32,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import time
 from datetime import datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Query, Request
@@ -159,6 +159,8 @@ class PrincipalResolver(Protocol):
 _MAX_ERRORS = 10
 #: Contract parameter names where they differ from the `AuditQueryRequest` field names.
 _PARAM_NAMES = {"actions": "action", "from_ts": "from", "to_ts": "to"}
+#: Contract (`queryAuditLog`): a `200` page is never cached; it carries IPs and payloads.
+_NO_STORE: Final = {"Cache-Control": "no-store"}
 
 
 def _problem(
@@ -512,7 +514,7 @@ def make_audit_router(
             except BudgetWriteFailed:
                 return _unavailable()
         plan.commit()
-        return JSONResponse(status_code=200, content=_jsonable(page))
+        return JSONResponse(status_code=200, content=_jsonable(page), headers=_NO_STORE)
 
     @router.post("/verify")
     async def verify_audit_chain(
