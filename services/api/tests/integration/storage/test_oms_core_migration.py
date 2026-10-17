@@ -272,10 +272,11 @@ def test_downgrade_refuses_while_any_oms_table_holds_rows(pg_dsn: str, table: st
     dsn = _fresh(pg_dsn)
     with _conn(dsn) as c:
         _ROW[table](c, _account(c))
+        head = c.execute("SELECT version_num FROM alembic_version").fetchone()  # not always 0029
         refused = _alembic(dsn, "downgrade", _PREV)
         assert refused.returncode != 0
         assert "0029_oms_core downgrade refused: the OMS tables hold rows" in refused.stderr
-        assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (_REV,)
+        assert c.execute("SELECT version_num FROM alembic_version").fetchone() == head
         assert c.execute("SELECT to_regclass(%s)", (table,)).fetchone() == (table,)
 
 

@@ -6,6 +6,7 @@
 #
 # One table name per line; '#' starts a comment; blank lines ignored.
 api_keys
+auth_keys
 exchange_accounts
 account_profiles
 backups

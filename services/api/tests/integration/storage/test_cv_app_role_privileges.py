@@ -188,3 +188,16 @@ def test_cv_app_retains_dml_on_existing_tables(cv_app_dsn: str) -> None:
         row = cur.fetchone()
         assert row is not None
         conn.rollback()
+
+
+def test_auth_keys_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """`auth_keys` holds class S wraps (21 Sec.3.1.5a): `cv_app` gets no DELETE or TRUNCATE and
+    `cv_ro` only SELECT, at head, so a later widening (a blanket GRANT) fails here."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, 'auth_keys', p)"
+    )
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = [conn.execute(probe, (role,)).fetchone() for role in ("cv_app", "cv_ro")]
+    assert held == [("INSERT SELECT UPDATE",), ("SELECT",)]

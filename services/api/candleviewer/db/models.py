@@ -1446,6 +1446,34 @@ kek_versions = Table(
     UniqueConstraint("kcv", name="kv_kcv_unique"),
 )
 
+#: `auth_keys` (#2152 S2, 0030_auth_keys): the per-environment auth keyring, each key wrapped under
+#: the KEK of (env, kek_version). The 0030 tests pin the triggers and the cv_app DELETE revoke.
+auth_keys = Table(
+    "auth_keys",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("env", exchange_env, nullable=False),
+    Column("purpose", Text, nullable=False),
+    Column("key_version", Integer, nullable=False, server_default=text("1")),
+    Column("origin", Text, nullable=False),
+    Column(
+        "dek_ref",
+        Text,
+        nullable=False,
+        comment="SECRET: auth key wrapped under the KEK of (env, kek_version)",
+    ),
+    Column("kek_version", Integer, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("purpose IN ('totp_seal','recovery_hmac')", name="ak_purpose"),
+    CheckConstraint("origin IN ('generated','imported_env')", name="ak_origin"),
+    CheckConstraint("key_version >= 1", name="ak_key_version"),
+    CheckConstraint("kek_version >= 1", name="ak_kek_version"),
+    CheckConstraint("dek_ref ~ '^ak1:[0-9a-f]{120}$'", name="ak_dek_ref"),
+    UniqueConstraint("env", "purpose", "key_version", name="ak_env_purpose_key_version"),
+    Index("ix_auth_keys_env_kek", "env", "kek_version"),
+)
+
 
 #: `drawings` (E14-T01, revision 0021_drawings; the layouts FK is in 0022_workspaces).
 DRAWING_TOOLS: tuple[str, ...] = (
