@@ -1,0 +1,56 @@
+/*
+ * Theme runtime styles (E05-T02). They key off the root attributes written by the theme store, so a
+ * switch is a pure style recalculation: no component re-renders, remounts or GL context loss.
+ */
+
+/* Density re-points the density-aware aliases at their compact/comfortable scale step (ADR-0024 #4). */
+:root[data-density="compact"] {
+  --size-control-height: var(--size-control-compact);
+  --size-row-height: var(--size-row-compact);
+}
+
+:root[data-density="comfortable"] {
+  --size-control-height: var(--size-control-comfortable);
+  --size-row-height: var(--size-row-comfortable);
+}
+
+/*
+ * Motion switch for the recipes: 1 = motion-safe, 0 = reduced.
+ * TODO(#162): the named motion recipes (durations/easings per component) are specified by E05-D03 and
+ * land with that ticket, multiplying their durations by this switch. No recipe values live here.
+ */
+:root {
+  --cv-motion-scale: 1;
+}
+
+:root[data-motion="reduce"] {
+  --cv-motion-scale: 0;
+}
+
+/* Reduced motion (in-app override or OS): neutralises every transition and animation. */
+:root[data-motion="reduce"],
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+
+/* The same for the OS preference until the runtime has written `data-motion`. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]),
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
