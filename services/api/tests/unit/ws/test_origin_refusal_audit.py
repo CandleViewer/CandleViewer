@@ -220,6 +220,47 @@ async def test_record_cancelled_while_waiting_propagates_and_never_cuts_the_writ
     assert len(stalled.records) == 1
 
 
+class _FailsOnSignal:
+    """A write that fails once `fail` is set: no thread hop, so every loop turn is exact. It also
+    cancels `waiting` from a done-callback of the write task when that is set, registered after the
+    tracker's and the shield's own (the cancel then lands once both ran)."""
+
+    def __init__(self) -> None:
+        self.started, self.fail = asyncio.Event(), asyncio.Event()
+        self.waiting: asyncio.Future[Any] | None = None
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        write = asyncio.current_task()
+        assert write is not None
+        write.add_done_callback(lambda _done: self.waiting and self.waiting.cancel())
+        self.started.set()
+        await self.fail.wait()
+        raise OSError("audit WAL unavailable")
+
+
+@pytest.mark.parametrize("window", ["done_callback_queued", "done_callback_ran"])
+async def test_record_cancelled_as_its_write_fails_still_reports_the_failure(window: str) -> None:
+    """#3054 (2): the upgrade is cancelled in the loop iteration its write fails in (the tracker's
+    done-callback still queued), or just after that callback ran. Nobody awaits the write then, and
+    the shared tracker still reports its failure, once."""
+    sink, tracker = _FailsOnSignal(), RefusalAuditTracker()
+    auditor = OriginRefusalAudit(sink, tracker=tracker, timeout_s=30.0)
+    waiting = asyncio.create_task(auditor.record(OriginRefusal.CROSS_SITE, "100.64.0.7"))
+    await sink.started.wait()  # the write is tracked and being awaited
+    with capture_logs() as logs:
+        if window == "done_callback_ran":
+            sink.waiting = waiting
+            sink.fail.set()
+        else:
+            sink.fail.set()  # the write fails in the next loop iteration ...
+            waiting.cancel()  # ... and the upgrade is cancelled in that same one
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        assert await tracker.drain(5) == 0
+    late = [e for e in logs if str(e["event"]).endswith(".audit_failed_late")]
+    assert [(e["log_level"], e["error"]) for e in late] == [("error", "OSError")]
+
+
 async def test_defaults_match_the_rest_refusal_bounds() -> None:
     """Same per-source budget and write bound as the REST CSRF refusals (`api/csrf.py`)."""
     from candleviewer.api.csrf import (

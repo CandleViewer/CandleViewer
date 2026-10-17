@@ -2,14 +2,17 @@
 
 One increment per audited failed login, on the factor that failed: `password` for an
 `auth.login_failed` row, the requested MFA method for an `auth.mfa_failed` row, `recovery_code` for
-`auth.recovery_codes_exhausted`. An attempt refused while the account is locked
-(`auth.account_locked`) and a success never count. Deltas on the process-default registry, where
-the module-level counter lives; the scraped view is `test_security_metrics_export.py`.
+`auth.recovery_codes_exhausted`. The one `auth.login_failed` row the MFA step writes, for a user
+disabled since the password step (#2911), counts on the requested method too (#3054). An attempt
+refused while the account is locked (`auth.account_locked`) and a success never count. Deltas on the
+process-default registry, where the module-level counter lives; the scraped view is
+`test_security_metrics_export.py`.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -19,6 +22,7 @@ from fastapi import FastAPI
 from prometheus_client import REGISTRY
 
 from candleviewer.api.auth import make_auth_router
+from candleviewer.audit.errors import AuditError
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     MfaChallengeLocked,
@@ -31,8 +35,16 @@ from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.metrics import LOGIN_FAILURE_METHODS
 from candleviewer.auth.models import MfaVerifiedResult, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.api._fakes import AuditService
+from tests.unit.api._fakes import (
+    CSRF_CODEC,
+    AuditService,
+    Identity,
+    MfaAuth,
+    RecordingWriter,
+    sessions,
+)
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _RIGHT_PW = "correct-horse-battery-staple"
@@ -170,3 +182,90 @@ async def test_a_second_factor_that_succeeds_does_not_count(
     async with _client(None, _Mfa(None), AuditService()) as client:
         assert (await client.post(path, json=body)).status_code == 200
     assert _moved(before) == {}
+
+
+_LOGIN_FAILED = "auth.login_failed"
+
+
+class _RefusingWriter(RecordingWriter):
+    """The started writer refusing every `auth.login_failed` record (WAL full or unwritable)."""
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        if action == _LOGIN_FAILED:
+            raise AuditError("wal unavailable")
+        await super().emit(action, **kw)
+
+
+def _minting_client(
+    user: uuid.UUID, repo: FakeSessionRepository, audit: AuditService | None
+) -> httpx.AsyncClient:
+    """The real router over a real `SessionService`: every code verifies as *user*, then the mint
+    reads the status *repo* holds for it, as `users.status` is read in the insert's transaction."""
+    app = FastAPI()
+    auth = MfaAuth(user, sessions(repo))
+    app.include_router(make_auth_router(auth, audit, identity=Identity(), csrf=CSRF_CODEC))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+
+
+@pytest.mark.parametrize("method", ["totp", "webauthn"])
+async def test_a_correct_second_factor_for_a_user_disabled_since_the_password_step_counts_once(
+    method: str,
+) -> None:
+    # #3054 (1): the refusal writes an `auth.login_failed` row (reason `user_disabled`), so it
+    # counts like the password step's own refusal of a disabled account, on the requested factor.
+    # The shipped `MfaService.verify` accepts `totp` only; this fake verifies any method, so the
+    # `webauthn` case pins that the label follows the request, not a constant.
+    user, repo, audit = uuid.uuid4(), FakeSessionRepository(), AuditService()
+    repo.user_statuses[str(user)] = UserStatus.DISABLED  # disabled after the password step
+    before = _failures()
+    async with _minting_client(user, repo, audit) as client:
+        reply = await client.post(_V, json={**_VERIFY, "method": method})
+    assert (reply.status_code, reply.json()["detail"]) == (401, "account is disabled")
+    assert repo.sessions == {}  # nothing was minted
+    assert _moved(before) == {method: 1}
+    (row,) = audit.writer.of(_LOGIN_FAILED)  # the one row the count matches
+    assert (row["reason"], row["actor_user_id"]) == ("user_disabled", user)
+
+
+def _no_audit_service() -> AuditService | None:
+    return None
+
+
+def _inactive_audit_service() -> AuditService | None:
+    return AuditService(active=False)
+
+
+def _refusing_audit_service() -> AuditService | None:
+    audit = AuditService()
+    audit.writer = _RefusingWriter()
+    return audit
+
+
+@pytest.mark.parametrize(
+    "make_sink",
+    [_no_audit_service, _inactive_audit_service, _refusing_audit_service],
+    ids=["no_service", "inactive", "refused"],
+)
+async def test_the_refusal_of_a_disabled_user_counts_without_a_usable_audit_sink(
+    make_sink: Callable[[], AuditService | None],
+) -> None:
+    # As the password step counts before it writes (`test_a_failed_login_counts_without_an_audit_
+    # writer`): a sink that is missing, inactive or refuses the record never hides the failure.
+    user, repo, before = uuid.uuid4(), FakeSessionRepository(), _failures()
+    repo.user_statuses[str(user)] = UserStatus.DISABLED
+    async with _minting_client(user, repo, make_sink()) as client:
+        assert (await client.post(_V, json=_VERIFY)).status_code == 401
+    assert _moved(before) == {"totp": 1}
+
+
+@pytest.mark.parametrize("status", [UserStatus.ACTIVE, UserStatus.LOCKED, UserStatus.INVITED])
+async def test_a_correct_second_factor_that_mints_a_session_does_not_count(
+    status: UserStatus,
+) -> None:
+    # The count belongs to the refusal, not to the mint: `locked` and `invited` users are not
+    # refused by the mint (login refuses `disabled` only).
+    user, repo, audit, before = uuid.uuid4(), FakeSessionRepository(), AuditService(), _failures()
+    repo.user_statuses[str(user)] = status
+    async with _minting_client(user, repo, audit) as client:
+        assert (await client.post(_V, json=_VERIFY)).status_code == 200
+    assert _moved(before) == {} and audit.writer.of(_LOGIN_FAILED) == []

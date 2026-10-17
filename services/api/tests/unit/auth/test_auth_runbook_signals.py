@@ -1,6 +1,7 @@
 """`docs/ops/runbooks/auth-rbac.md`, "Session and invite signals (#2319)": the table is what an
 on-call reads while investigating, so each cell is a finished statement and the probe row says what
-the code does (#2319 review: its Audit-row cell stopped at "the counter is not")."""
+the code does (#2319 review: its Audit-row cell stopped at "the counter is not"). The paragraphs
+under it triage a probe hit by what its `object_id` finds in `sessions` (#3054)."""
 
 from __future__ import annotations
 
@@ -55,3 +56,31 @@ def test_the_runbook_names_every_log_line_a_counted_probe_with_no_row_leaves() -
     assert len(lines) == 4  # unaudited, audit_unavailable, audit_slow, audit_failed_late
     runbook = _RUNBOOK.read_text(encoding="utf-8")
     assert [line for line in sorted(lines) if f"`{line}`" not in runbook] == []
+
+
+def _paragraph(start: str) -> str:
+    """The runbook paragraph that begins with *start*, on one line."""
+    text = _RUNBOOK.read_text(encoding="utf-8")
+    assert start in text, f"the runbook has no paragraph that begins {start!r}"
+    at = text.index(start)
+    return " ".join(text[at : text.index("\n\n", at)].split())
+
+
+def test_the_probe_triage_classifies_a_hit_whose_id_has_no_sessions_row() -> None:
+    # #3054 (3): a hit is triaged by what its `object_id` finds in `sessions`. Another user's row
+    # and the caller's own ended one were covered; an id with no row at all (never issued, or
+    # reaped) is the third case, and the runbook says how to tell the two readings apart.
+    triage = _paragraph("A lone `auth_session_revoke_denied_total` hit")
+    assert "another user's row means a probe" in triage  # the part that was there
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "never issued" in no_row and "reaped" in no_row
+    assert "`audit_log`" in no_row and "`session_id`" in no_row  # the lookup that tells them apart
+    assert "probe" in no_row  # and what to do with the answer
+
+
+def test_the_failed_login_telemetry_names_the_mfa_refusal_of_a_disabled_user() -> None:
+    # #3054 (1): the counter's runbook text lists the rows it counts, so it says that
+    # `POST /auth/mfa/verify` also counts the `auth.login_failed` row of a user disabled since the
+    # password step, on the method the request named.
+    telemetry = _paragraph("Telemetry for failed logins:")
+    assert "`user_disabled`" in telemetry and "disabled since the password step" in telemetry

@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import weakref
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -279,13 +280,19 @@ class RefusalAuditTracker:
     still runs; writer fix #2250). At most `cap` may be in flight: over it the caller
     skips the write. A caller that stops waiting (timeout, or its request was cancelled)
     hands the task over with `mark_timed_out()`: when the write fails the tracker logs it
-    and calls `on_lost`. `drain()` waits a bounded time at shutdown, before the audit
+    and calls `on_lost`, once, whether the write is still running or has ended already (#3054:
+    a write that fails in the loop iteration its request is cancelled is done by the time the
+    caller's cancel handler runs). `drain()` waits a bounded time at shutdown, before the audit
     module stops, and calls `on_lost` for each write still running (it may be lost)."""
 
     def __init__(self, cap: int = MAX_INFLIGHT_AUDITS) -> None:
         self._cap = cap
-        # task -> (its owner's `on_lost`, the event its late failure is logged as)
-        self._tasks: dict[asyncio.Task[None], tuple[LostWrite | None, str]] = {}
+        self._tasks: set[asyncio.Task[None]] = set()  # in flight
+        # task -> (its owner's `on_lost`, the event its late failure is logged as). Weak: an ended
+        # write's owner is needed only while its caller still holds the task and may hand it over.
+        self._owners: weakref.WeakKeyDictionary[
+            asyncio.Task[None], tuple[LostWrite | None, str]
+        ] = weakref.WeakKeyDictionary()
         self._timed_out: set[asyncio.Task[None]] = set()
 
     def __len__(self) -> int:
@@ -304,28 +311,39 @@ class RefusalAuditTracker:
     ) -> asyncio.Task[None]:
         """Run *coro* as a tracked task (not a lifecycle `start`; nothing to stop)."""
         task = spawn(coro, name="csrf-refusal-audit")
-        self._tasks[task] = (on_lost, late_failure_event)
+        self._tasks.add(task)
+        self._owners[task] = (on_lost, late_failure_event)
         task.add_done_callback(self._done)
         return task
 
     def mark_timed_out(self, task: asyncio.Task[None]) -> None:
-        """The caller stopped waiting for *task* (timeout, or its request was cancelled):
-        the tracker reports its failure when it ends."""
-        if not task.done():
+        """The caller stopped waiting for *task* (timeout, or its request was cancelled): the
+        tracker reports its failure, when it ends or, if it has ended already, now."""
+        if task.done():
+            self._report_failure(task)
+        else:
             self._timed_out.add(task)
 
     def _done(self, task: asyncio.Task[None]) -> None:
-        on_lost, late_event = self._tasks.pop(task, (None, CSRF_LATE_FAILURE_EVENT))
+        self._tasks.discard(task)
         if task not in self._timed_out:
             return  # the awaiting caller handles its outcome
         self._timed_out.discard(task)
-        if task.cancelled():
+        self._report_failure(task)
+
+    def _report_failure(self, task: asyncio.Task[None]) -> None:
+        """Log *task*'s failure under its owner's event and call the owner's `on_lost`, at most
+        once for the write (the owner entry goes with the report)."""
+        owner = self._owners.pop(task, None)
+        if owner is None or task.cancelled():
             return
         exc = task.exception()
-        if exc is not None:
-            _log().error(late_event, error=type(exc).__name__)
-            if on_lost is not None:
-                on_lost()
+        if exc is None:
+            return
+        on_lost, late_event = owner
+        _log().error(late_event, error=type(exc).__name__)
+        if on_lost is not None:
+            on_lost()
 
     async def drain(self, timeout_s: float = AUDIT_TIMEOUT_S) -> int:
         """Wait up to *timeout_s* for in-flight audits; returns how many remain. Each one
@@ -334,9 +352,10 @@ class RefusalAuditTracker:
         pending = set(self._tasks)
         if pending:
             await asyncio.wait(pending, timeout=timeout_s)
-        left = dict(self._tasks)
-        for task, (on_lost, _) in left.items():
+        left = set(self._tasks)
+        for task in left:
             self._timed_out.discard(task)
+            on_lost, _ = self._owners.pop(task, (None, CSRF_LATE_FAILURE_EVENT))
             if on_lost is not None:
                 on_lost()
         return len(left)
