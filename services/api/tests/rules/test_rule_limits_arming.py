@@ -470,6 +470,21 @@ async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running()
     assert rec.audits == []
 
 
+async def test_a_protected_system_rule_above_the_cap_is_disarmed_then_reported_tampered() -> None:
+    """Built-ins get no exemption from the caps (RE-E10): E35-T05 seeds them within the caps.
+    One found armed above a cap, which only an out-of-band write can cause, is disarmed like any
+    rule, and the start-up check reports it as tampered."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    row = await m._s.get(rid)
+    assert row is not None
+    row.name = row.versions[0].ir["name"] = "sys.native_sl_watchdog"
+    assert await m.evaluable_rules() == []
+    await _settle(m)
+    assert await m.verify_system_rules() == ["sys.native_sl_watchdog"]
+    assert [a for a, _ in rec.audits] == ["rule.disarmed", "rule.system_rule_tampered"]
+
+
 async def _down(_action: str, _payload: dict[str, Any]) -> None:
     raise RuntimeError("audit down")
 
