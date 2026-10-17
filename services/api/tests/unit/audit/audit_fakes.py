@@ -125,3 +125,60 @@ class FakeClock:
     def __call__(self) -> datetime:
         self.now += timedelta(microseconds=1)
         return self.now
+
+
+class PgTextRefusedError(Exception):
+    """What asyncpg raises for text Postgres 16 cannot store: U+0000 is SQLSTATE 22021 in a
+    `text` column and 22P05 in `jsonb`; a lone surrogate is 22000 in `text` (refused before
+    it is sent) and 22P02 in `jsonb`. `model_dump_json` refuses a lone surrogate before a
+    record reaches the WAL, so only a stored frame can carry one this far."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(f"SQLSTATE {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+def _texts(value: Any) -> list[str]:
+    """Every string in a record value: itself, or dict keys, values and items at any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for pair in value.items() for part in pair for text in _texts(part)]
+    if isinstance(value, list):
+        return [text for item in value for text in _texts(item)]
+    return []
+
+
+def _refusal(text: str, *, jsonb: bool) -> str | None:
+    if "\x00" in text:
+        return "22P05" if jsonb else "22021"
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return "22P02" if jsonb else "22000"
+    return None
+
+
+class PgTextAuditRepository(FakeAuditRepository):
+    """`FakeAuditRepository` that refuses, as Postgres does, a record holding text it cannot
+    store; `refused` lists the SQLSTATE of each refusal."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refused: list[str] = []
+
+    async def retry_sleep(self, _delay: float) -> None:
+        """A short real pause before each retry, so a record that stays refused is retried at
+        a bounded rate instead of in a busy loop."""
+        await asyncio.sleep(0.01)
+        await super().retry_sleep(_delay)
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        for column, value in record.items():
+            jsonb = column in ("before_state", "after_state")
+            for text in _texts(value):
+                sqlstate = _refusal(text, jsonb=jsonb)
+                if sqlstate is not None:
+                    self.refused.append(sqlstate)
+                    raise PgTextRefusedError(sqlstate)
+        await super().insert(record)

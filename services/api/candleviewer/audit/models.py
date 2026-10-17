@@ -38,6 +38,53 @@ class ExchangeEnv(StrEnum):
     TESTNET = "testnet"
 
 
+#: What U+0000 becomes in an audit record.
+_NUL_REPLACEMENT = "\N{REPLACEMENT CHARACTER}"
+
+
+def _unstorable(text: str) -> bool:
+    """True if `text` holds U+0000 or a lone surrogate, which Postgres `text`/`jsonb` refuse."""
+    if "\x00" in text:
+        return True
+    if text.isascii():
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
+def _needs_scrub(value: object) -> bool:
+    if isinstance(value, str):
+        return _unstorable(value)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _needs_scrub(key) or _needs_scrub(item):
+                return True
+    elif isinstance(value, list | tuple):
+        for item in value:
+            if _needs_scrub(item):
+                return True
+    return False
+
+
+def _scrub(value: object) -> object:
+    """A copy of `value` with U+0000 replaced by U+FFFD and each lone surrogate by `?`
+    in every string, dict keys included, at any depth. Two keys that differ only in a
+    replaced character collide and the last one wins, as a duplicate key does in `jsonb`."""
+    if isinstance(value, str):
+        if not _unstorable(value):
+            return value
+        text = value.replace("\x00", _NUL_REPLACEMENT)
+        return text.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {_scrub(key): _scrub(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_scrub(item) for item in value]
+    return value
+
+
 class AuditEmission(BaseModel):
     """The fully-validated, not-yet-persisted shape `audit.emit()` builds
     before it ever reaches the WAL or a connection. `before_state`/
@@ -63,6 +110,17 @@ class AuditEmission(BaseModel):
     request_id: uuid.UUID | None = None
     env: ExchangeEnv | None = None
     event_ts: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _storable_text(cls, data: Any) -> Any:
+        """Before validation, replace what Postgres cannot store in any string (`_scrub`).
+        `emit()`, `ingest()` and the break-glass journal all build this model. Replaced, never
+        refused, so the audited action still gets its record. Input with nothing to replace
+        is passed through uncopied."""
+        if isinstance(data, dict) and _needs_scrub(data):
+            return _scrub(data)
+        return data
 
 
 class AuditEntry(BaseModel):
