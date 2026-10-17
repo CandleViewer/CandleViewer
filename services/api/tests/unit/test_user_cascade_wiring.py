@@ -57,9 +57,10 @@ class _Engine:
         self.manager = RulesManager(self.store, default_registry(), audit=audit)
         self.adapter = RuleDisarmAdapter(self.store, lambda: self.manager)
 
-    async def rule(self, user: uuid.UUID, name: str, mode: str = "armed") -> str:
-        """A rule of `user` taken as far as `mode`: a draft (`disabled`), `simulate` or `armed`."""
-        rid = str((await self.manager.create(_ir(name=name), _actor(user)))["id"])
+    async def rule(self, user: uuid.UUID, name: str, mode: str = "armed", **ir: Any) -> str:
+        """A rule of `user` taken as far as `mode`: a draft (`disabled`), `simulate` or `armed`.
+        `ir` overrides fields of the notification rule's IR (a scope)."""
+        rid = str((await self.manager.create(_ir(name=name, **ir), _actor(user)))["id"])
         if mode != "disabled":
             await self.manager.set_mode(rid, "simulate", _actor(user), f"sim-{name}")
         if mode == "armed":
@@ -84,9 +85,13 @@ async def test_disarms_owner_user_id_rules() -> None:
     """SR-029, AC1: exactly the live armed rules whose owner is the user are disarmed, each by B9
     DISARM on a chart rebuilt from its row (a new process) and audited once with the acting
     Owner; another owner's armed rule, the user's simulating rule and draft, and a deleted row
-    that is still `armed` stay as they were and are not listed."""
+    that is still `armed` stay as they were and are not listed. One of the user's rules is
+    account-scoped: the manager hides a rule that references an account from an actor without
+    grants (404, `rule.scope_refused`, left armed) and shows the Owner every rule, so a disarm
+    that does not act as the Owner fails here."""
     e = _Engine()
-    mine = [await e.rule(_A, "a-one"), await e.rule(_A, "a-two")]
+    account = {"level": "account", "account_ids": [str(_ACCOUNT)], "environments": ["demo"]}
+    mine = [await e.rule(_A, "a-one"), await e.rule(_A, "a-acct", scope=account)]
     theirs, sim = await e.rule(_B, "b-one"), await e.rule(_A, "a-sim", "simulate")
     draft, gone = await e.rule(_A, "a-draft", "disabled"), await e.rule(_A, "a-gone")
     row = await e.store.get(gone)
@@ -103,6 +108,7 @@ async def test_disarms_owner_user_id_rules() -> None:
         *(("armed", None), ("simulate", None), ("disabled", None)),
     ]
     assert e.disarmed() == sorted((rid, str(_OWNER), "DISARM") for rid in mine)
+    assert "rule.scope_refused" not in [action for action, _ in e.audits]
     assert await e.adapter.armed_rule_ids(_A) == ()
     assert await e.adapter.armed_rule_ids(_B) == (theirs,)
 
