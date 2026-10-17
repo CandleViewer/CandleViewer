@@ -99,5 +99,5 @@ Negative / risks:
 ## Amendment 2 (2026-10-17, #3104)
 
 - **Pipeline shape (refined).** Inside the `[security]` lane, jobs that hold the same permissions share one: the `contents: read` scans (pip-audit, npm-audit, the licence scan, the auth rule pack) run as steps of `read-only-scans`, and Bandit runs in Semgrep's job, `semgrep-bandit` (both upload SARIF). CodeQL, gitleaks and Trivy stay separate jobs.
-- **Rule 2 unchanged.** `ci-required` judges the whole `security` workflow as one lane. Each folded scan is a `continue-on-error` step with its old job's timeout, and a verdict step fails the job unless every scan succeeded or was skipped, so one scan neither stops nor hides another. The cost: a re-run of a red folded job re-runs every scan in it.
+- **Rule 2 unchanged.** `ci-required` judges the whole `security` workflow as one lane. Each folded scan is a `continue-on-error` step with its old job's time budget, and a verdict step fails the job unless every scan succeeded or was skipped, so one scan neither stops nor hides another. The cost: a re-run of a red folded job re-runs every scan in it.
 - **Validation.** By the workflow graph a `py` PR now executes 18 jobs (22 before) and a PR matching every filter 37 (41). Re-measure with the method of Amendment 1.

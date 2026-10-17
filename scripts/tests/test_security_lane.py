@@ -118,6 +118,13 @@ def test_verdict_runs_last_and_no_folded_step_uses_failure(job: str) -> None:
     assert "failure()" not in json.dumps(JOBS[job])
 
 
+def test_the_shared_pnpm_install_never_runs_lifecycle_scripts() -> None:
+    # read-only-scans installs once for four scans, so no package script may run there (C-12.3).
+    runs = [s.get("run", "") for job in JOBS for s in _steps(job)]
+    installs = [run for run in runs if "pnpm install" in run]
+    assert installs == ["pnpm install --frozen-lockfile --ignore-scripts"]
+
+
 def test_freeze_proposal_upload_keys_on_the_freeze_step_outcome() -> None:
     (upload,) = [s for s in _steps("read-only-scans") if "upload-artifact@" in s.get("uses", "")]
     assert upload["if"].startswith("${{ !cancelled() && steps.freeze.outcome == 'failure' && (")

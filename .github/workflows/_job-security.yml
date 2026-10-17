@@ -12,7 +12,7 @@ name: _job-security
 #   license-scan;
 # - `semgrep-bandit` (security-events: write, for their SARIF uploads).
 # Each scan is a step with an `id`, `continue-on-error` and its old job's
-# timeout, so a red scan neither stops nor hides another. The last step, the
+# time budget, so a red scan neither stops nor hides another. The last step, the
 # verdict, writes every scan's outcome to the job summary and fails the job
 # unless each one succeeded or was skipped. Uploads have no `id`, so an upload
 # outage never gates. codeql, gitleaks and trivy stay separate jobs: folding
@@ -27,9 +27,9 @@ name: _job-security
 #
 # Out of scope here (ticket "Out of scope"): image signing/SBOM (E03-T08),
 # ZAP DAST (E03-X04, deferred), the STRIDE model itself (E03-X01), authoring
-# the cv-* Semgrep rules (E03-X02, deferred — this lane runs Semgrep's
-# registry packs only until `.semgrep/` lands; picked up automatically with
-# no workflow change once it does), pen-test (R4/E43).
+# the cv-* Semgrep rules (E03-X02; the rules already in `.semgrep/`,
+# such as cv-unpinned-action, run in `semgrep-bandit` with no workflow
+# change), pen-test (R4/E43).
 
 on:
   workflow_call:
@@ -77,9 +77,9 @@ jobs:
           languages: javascript-typescript,python
           config-file: ./.github/codeql/codeql-config.yml
 
-      # analyze writes SARIF then errors on a workflow-run API call the
-      # reusable-workflow token cannot make (no actions: read from pr.yml).
-      # Not a pass-by-default: the gate step fails CI-SEC-005 if no SARIF.
+      # analyze's own outcome does not gate: the gate step below judges its
+      # SARIF and fails CI-SEC-005 when there is none, so a crash is never a
+      # pass.
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         continue-on-error: true
         with:
