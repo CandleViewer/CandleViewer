@@ -253,9 +253,10 @@ class SessionClass(StrEnum):
     #: `mfa_required` and no confirmed method, or a session minted on the password alone:
     #: only the five enrolment operations.
     ENROLMENT_ONLY = "enrolment_only"
-    #: As `ENROLMENT_ONLY`, but its absolute expiry lies more than `ENROLMENT_ONLY_LIFETIME`
-    #: ahead, so it was not minted as one (say, a full session whose user then lost every
-    #: method). Refused like an expired session: the user signs in again (Q7).
+    #: As `ENROLMENT_ONLY`, but its absolute expiry has passed (a refreshed access handle
+    #: outlives it), or lies more than `ENROLMENT_ONLY_LIFETIME` ahead, so it was not minted
+    #: as one (say, a full session whose user then lost every method). Refused like an
+    #: expired session: the user signs in again (Q7).
     ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
 
 
@@ -278,7 +279,8 @@ def classify_session(
         not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None)
     ):
         return SessionClass.FULL
-    if session.expires_at - now > ENROLMENT_ONLY_LIFETIME:
+    remaining = session.expires_at - now
+    if remaining <= timedelta(0) or remaining > ENROLMENT_ONLY_LIFETIME:
         return SessionClass.ENROLMENT_ONLY_EXPIRED
     return SessionClass.ENROLMENT_ONLY
 

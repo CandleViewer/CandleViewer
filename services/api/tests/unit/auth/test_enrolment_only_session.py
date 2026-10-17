@@ -1,10 +1,10 @@
-"""Enrolment-only session: classification, wiring and lifetime (#2295 slice 2/3, enforcement).
+"""Enrolment-only session: classification, wiring and lifetime (#2295, enforcement).
 
 Decisions on #2295 and the contract of #2661: the class is derived from the user's state on
 every call, never from a session flag. `mfa_required` with no confirmed MFA method makes every
 session of the user enrolment-only; such a session lives at most 15 minutes from sign-in and
-refresh never extends it (Q7), so one whose expiry lies further ahead is refused. A session that
-never proved a second factor stays restricted even once its user has one.
+refresh never extends it (Q7), so one whose expiry lies further ahead, or has passed, is refused.
+A session that never proved a second factor stays restricted even once its user has one.
 """
 
 from __future__ import annotations
@@ -69,8 +69,10 @@ def _session(user_id: uuid.UUID, *, expires_in: timedelta, proved: bool = True) 
     ("user", "expires_in", "expected"),
     [
         (_user(methods=_TOTP), timedelta(hours=12), _FULL),
-        (_user(), timedelta(0), _ONLY),
+        (_user(), timedelta(microseconds=1), _ONLY),  # its last instant
         (_user(), timedelta(minutes=15), _ONLY),  # Q7: exactly the window
+        (_user(), timedelta(0), _EXPIRED),  # dead at its expiry, as `is_absolute_expired` says
+        (_user(), -timedelta(minutes=1), _EXPIRED),  # a refreshed access handle outlives it
         (_user(), timedelta(minutes=15, microseconds=1), _EXPIRED),
         (_user(), timedelta(hours=12), _EXPIRED),  # never minted as one
         (_user(mfa_required=False), timedelta(hours=12), _FULL),  # the decided rule; C-12.2
@@ -121,7 +123,8 @@ def test_classify_session_is_full_exactly_when_a_second_factor_is_proven_or_not_
     full = user is not None and (not user.mfa_required or (bool(user.mfa_methods) and proved))
     assert (verdict is _FULL) is full
     if not full:
-        assert (verdict is _EXPIRED) is (timedelta(seconds=seconds_left) > ENROLMENT_ONLY_LIFETIME)
+        left = timedelta(seconds=seconds_left)
+        assert (verdict is _EXPIRED) is (left <= timedelta(0) or left > ENROLMENT_ONLY_LIFETIME)
 
 
 # -- AuthService: the one place both HTTP and WS ask -------------------------------------------
@@ -135,34 +138,19 @@ async def _auth(users: FakeUserRepository | None, *, clock: _Clock | None = None
     return auth
 
 
-@pytest.mark.parametrize(
-    ("users", "sessions", "active"), [(1, 1, True), (0, 1, False), (1, 0, False)]
-)
-async def test_enrolment_gate_needs_the_session_and_the_user_store(
-    users: int, sessions: int, active: bool
-) -> None:
-    auth = AuthService(
-        FakeUserRepository() if users else None,
-        session_repository=FakeSessionRepository() if sessions else None,
-    )
-    await auth.start(cast(Any, None))
-
-    assert auth.enrolment_gate_is_active is active
-
-
 @pytest.mark.parametrize(("users", "sessions"), [(1, 1), (0, 1), (1, 0), (0, 0)])
-async def test_enrolment_gate_is_off_only_where_no_session_can_come_from_a_sign_in(
+async def test_enrolment_gate_is_on_whenever_the_session_store_is_wired(
     users: int, sessions: int
 ) -> None:
-    """The gate is inert only when nothing authenticates or nobody can sign in (no user store,
-    so no login): no enrolment-only session can exist there (#2295 review)."""
+    """Off only where nothing authenticates. A session store without the user store keeps it
+    on, and `classify` then refuses every session (deny by default, C-12.4; #2295 review)."""
     auth = AuthService(
         FakeUserRepository() if users else None,
         session_repository=FakeSessionRepository() if sessions else None,
     )
     await auth.start(cast(Any, None))
 
-    assert auth.enrolment_gate_is_active is (auth.is_active and auth.sessions_is_active)
+    assert auth.enrolment_gate_is_active is bool(sessions)
 
 
 async def test_classify_reads_the_sessions_own_user_on_every_call() -> None:
@@ -219,6 +207,7 @@ async def test_classify_fails_closed_without_a_readable_user_store(
 ) -> None:
     auth = await _auth(users)
 
+    assert auth.enrolment_gate_is_active  # never inert while sessions authenticate
     with pytest.raises(error):
         await auth.classify(_session(uuid.uuid4(), expires_in=timedelta(minutes=5)))
 
