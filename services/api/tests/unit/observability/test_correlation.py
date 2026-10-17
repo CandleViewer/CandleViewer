@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import threading
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -17,6 +19,7 @@ from fastapi.testclient import TestClient
 from candleviewer.observability.context import (
     bind_context,
     current_request_id,
+    executor_future,
     get_context,
     run_in_thread,
     spawn,
@@ -127,6 +130,27 @@ async def test_thread_future_inherits_context_and_is_a_plain_future() -> None:
     assert isinstance(fut, asyncio.Future)
     assert not isinstance(fut, asyncio.Task)
     assert await fut == {"request_id": "r8", "user_id": "u8"}
+
+
+async def test_executor_future_runs_on_given_executor() -> None:
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cv-test-exec")
+    try:
+        name = await executor_future(pool, lambda: threading.current_thread().name)
+    finally:
+        pool.shutdown()
+    assert name.startswith("cv-test-exec")
+
+
+async def test_executor_future_inherits_context_and_is_a_plain_future() -> None:
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        with bind_context(request_id="r7", user_id="u7"):
+            fut = executor_future(pool, get_context)
+        assert isinstance(fut, asyncio.Future)
+        assert not isinstance(fut, asyncio.Task)
+        assert await fut == {"request_id": "r7", "user_id": "u7"}
+    finally:
+        pool.shutdown()
 
 
 def test_ws_hooks_bind_conn_and_frame() -> None:

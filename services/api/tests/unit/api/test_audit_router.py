@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -28,6 +29,7 @@ from candleviewer.api.audit_budget import (
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
+from candleviewer.audit.hashing import ChainHasher, ChainHasherBusy
 from candleviewer.audit.models import (
     AuditEntry,
     AuditOutcome,
@@ -38,8 +40,9 @@ from candleviewer.audit.models import (
     Severity,
     VerifyResult,
 )
+from candleviewer.audit.query import AuditQueryService
 from candleviewer.settings import Settings
-from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadFailed
+from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
 _TS = datetime(2026, 10, 1, 12, 0, 0, 123456, tzinfo=UTC)
 
@@ -54,7 +57,7 @@ class _FakeQuery:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
         # #1596 review): a naive datetime or `from_ts > to_ts` must raise
         # `ValidationError`, not be accepted silently by the fake.
-        paging = ("timeout_ms", "restrict_to_actor", "after")
+        paging = ("timeout_ms", "restrict_to_actor", "after", "owner")
         AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k not in paging})
         self.query_calls.append(kwargs)
         return AuditPage(items=[], chain_verified=True)
@@ -483,7 +486,9 @@ def test_lease_released_when_query_raises() -> None:
     assert all(s.inflight == 0 for s in lim._users.values())
 
 
-@pytest.mark.parametrize("error", [TimeoutError(), AuditReadFailed("08006")])
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), AuditReadFailed("08006"), AuditReadBusy(), ChainHasherBusy()]
+)
 def test_timeout_or_store_error_is_503_and_releases_the_lease(error: Exception) -> None:
     lim = AuditQueryLimiter(max_concurrent=1)
     svc = _FakeAuditService()
@@ -527,6 +532,25 @@ def test_query_timeout_setting_is_capped_at_30_seconds() -> None:
     assert Settings(audit_query_timeout_ms=30_000).audit_query_timeout_ms == 30_000
     with pytest.raises(ValidationError):
         Settings(audit_query_timeout_ms=30_001)
+
+
+def test_global_read_cap_stays_below_the_audit_pool() -> None:
+    assert Settings().audit_query_global_max_concurrent == 4
+    for out_of_range in (1, 11):  # 1 leaves no slot beside the Owner's
+        with pytest.raises(ValidationError):
+            Settings(audit_query_global_max_concurrent=out_of_range)
+
+
+def test_the_owner_read_slot_follows_is_owner_only() -> None:
+    """SR-017: the slot kept for the Owner goes by the resolved `is_owner`, never by a role
+    name or the `*` grant."""
+    owner = AuditPrincipal(
+        user_id=uuid.uuid4(), username="owner", permissions=frozenset({"audit:read"}), is_owner=True
+    )
+    for principal, expected in ((owner, True), (_owner(), False), (_manager_with_read(), False)):
+        client, svc = _budgeted(principal)
+        assert client.get("/admin/audit").status_code == 200
+        assert svc.query_service.query_calls[-1]["owner"] is expected
 
 
 # ---- #2392 parameter rules: canonical values, 422 without echoing the input ----------------
@@ -967,3 +991,41 @@ def test_a_row_outside_the_callers_scope_is_never_served() -> None:
     r = _budgeted(me, svc)[0].get("/admin/audit")
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "items" not in r.json()
+
+
+async def test_the_users_slot_is_held_until_the_page_is_hashed() -> None:
+    """Security condition 4 on #2392: the per-user concurrency slot covers the chain check,
+    not only the SQL, so the concurrency cap also bounds the CPU work."""
+    started, release = threading.Event(), threading.Event()
+    hasher = ChainHasher(workers=1, max_pending=1)  # a second job would be 503, never a hang
+    real_run = hasher.run
+
+    async def blocked(fn: Any) -> Any:
+        def job() -> Any:
+            started.set()
+            release.wait()
+            return fn()
+
+        return await real_run(job)
+
+    class _Repo:
+        async def query_page(self, **_: Any) -> list[dict[str, Any]]:
+            return []
+
+    hasher.run = blocked  # type: ignore[method-assign]  # test double
+    svc = _FakeAuditService()
+    svc.query_service = AuditQueryService(_Repo(), hasher=hasher)  # type: ignore[assignment,arg-type]
+    lim = AuditQueryLimiter(max_concurrent=1, clock=_Clock())
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), limiter=lim))
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+            first = asyncio.ensure_future(ac.get("/admin/audit"))
+            await asyncio.to_thread(started.wait)
+            assert (await ac.get("/admin/audit")).status_code == 429  # still hashing
+            release.set()
+            assert (await first).status_code == 200
+    finally:
+        release.set()
+        hasher.shutdown()

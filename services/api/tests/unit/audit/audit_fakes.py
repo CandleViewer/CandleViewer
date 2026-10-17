@@ -32,6 +32,7 @@ class FakeAuditRepository:
         self.rows: list[dict[str, Any]] = []
         self.checkpoints: dict[int, dict[str, Any]] = {}
         self.page_calls: list[dict[str, Any]] = []
+        self.over_cap: set[int] = set()
         self._up = asyncio.Event()
         self._up.set()
         self.insert_attempts = 0
@@ -118,7 +119,16 @@ class FakeAuditRepository:
             out = [r for r in out if all(t.lower() in _doc(r) for t in kw["q"].split())]
         if kw["after"] is not None:
             out = [r for r in out if (_ts(r), r["id"]) < kw["after"]]
-        return [{**r, "event_ts": _ts(r)} for r in out[: kw["limit"]]]
+        return [{**r, "event_ts": _ts(r), "chain": self._chain(r)} for r in out[: kw["limit"]]]
+
+    def _chain(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        """The stored renderings and the chain predecessor's hash; `None` for an id in
+        `over_cap` (a rendering over the repository's caps)."""
+        if row["id"] in self.over_cap:
+            return None
+        earlier = [r for r in self.rows if r["id"] < row["id"]]
+        prev = max(earlier, key=lambda r: r["id"])["entry_hash"] if earlier else None
+        return {**row, "chain_prev_hash": prev}
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:
         for r in self.rows:
