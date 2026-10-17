@@ -19,9 +19,11 @@ import json
 import os
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
+from collections import deque
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 import structlog
@@ -576,6 +578,8 @@ SEGMENT_MAX_BYTES = 1 << 20  # §15.6 Limits; the constructor overrides them in 
 LANE_MAX_SEGMENTS = 1024
 _READ_MAX = SEGMENT_MAX_BYTES + MAX_FRAME_BYTES  # longer than any file the lane writes
 _STRAY = re.compile(r"confirmed\.tmp|seg-[0-9]{20}\.lane\.new")
+LANE_MAX_BYTES, SHARED_MAX_BYTES = 32 << 20, 16 << 20  # S1c: the byte quotas
+LANE_WAITERS: Mapping[LaneClass, int] = MappingProxyType({"reserved": 192, "shared": 64})
 
 
 class LaneNotAdmitted(LaneError):
@@ -700,6 +704,72 @@ class LaneFiles:
         os.rename(self.dir / "confirmed.tmp", self.dir / "confirmed")
         self.sync_dir()
 
+    def compact(self, pos: Pos, active: int) -> list[int]:
+        """fsync point 3: unlink each segment wholly before `pos`, never the newest or `active`
+        (reading 1: the next scan would read the marker as ahead, row 2)."""
+        first, offset = pos
+        doomed = [
+            seg
+            for seg in _segments(os.listdir(self.dir))[:-1]
+            if seg != active and (seg < first or (seg == first and offset >= self._size(seg)))
+        ]
+        for seg in doomed:
+            self.unlink(self.dir / segment_name(seg))
+        if doomed:
+            self.sync_dir()
+        return doomed
+
+    def _size(self, seg: int) -> int:
+        return os.lstat(self.dir / segment_name(seg)).st_size
+
+    def quarantine(self, name: str, data: bytes) -> None:
+        """fsync point 4; a crash's partial copy is replaced."""
+        made = _mkdir(self.dir / "quarantine")
+        self._put(self.dir / "quarantine" / name, data)
+        self.sync_dir(self.dir / "quarantine")
+        if made:
+            self.sync_dir()
+
+
+class _LaneLock:
+    """The lane lock (§15.6 Limits): `reserved` waiters are served first, and past its class's
+    cap an acquire is refused at once (`busy`), never queued (C-2.18)."""
+
+    def __init__(self, caps: Mapping[LaneClass, int]) -> None:
+        self._caps, self._held = caps, False
+        self._queues: dict[LaneClass, deque[asyncio.Future[None]]] = {
+            "reserved": deque(),
+            "shared": deque(),
+        }
+
+    async def acquire(self, cls: LaneClass, capped: bool) -> None:
+        if not self._held:
+            self._held = True
+            return
+        queue = self._queues[cls]
+        if capped and len(queue) >= self._caps[cls]:
+            raise LaneRefused("busy")
+        waiter = asyncio.get_running_loop().create_future()
+        queue.append(waiter)
+        try:
+            await waiter
+        except asyncio.CancelledError:
+            if waiter.cancelled():
+                with contextlib.suppress(ValueError):  # `release()` may have dropped it
+                    queue.remove(waiter)
+            else:  # granted just as it was cancelled: pass the lock on
+                self.release()
+            raise
+
+    def release(self) -> None:
+        for queue in self._queues.values():  # `reserved` first
+            while queue:
+                waiter = queue.popleft()
+                if not waiter.done():
+                    waiter.set_result(None)
+                    return
+        self._held = False
+
 
 @dataclass(slots=True)
 class _Op:
@@ -738,7 +808,7 @@ def _admit(rec: dict[str, object], *, first: bool) -> LaneClass:
 
 
 class LaneJournal:
-    """The appender, its boot and the lane's creation (§15.6). Each file operation runs in a
+    """The appender, and the drain's fsync points 2 to 4 (§15.6). Each file operation runs in a
     worker thread under the lane lock, which a cancelled caller never releases while a thread
     runs (#2250). `open()` boots it; a lane that holds, or segments that no authentic frame gives
     a lane (row 3), refuse every append with `held`. Every boot opens a new segment (row 16)."""
@@ -750,14 +820,20 @@ class LaneJournal:
         *,
         segment_max_bytes: int = SEGMENT_MAX_BYTES,
         max_segments: int = LANE_MAX_SEGMENTS,
+        lane_max_bytes: int = LANE_MAX_BYTES,
+        shared_max_bytes: int = SHARED_MAX_BYTES,
+        waiters: Mapping[LaneClass, int] = LANE_WAITERS,
     ) -> None:
         self._files, self._keys = files, keys
         self._segment_max, self._max_segments = segment_max_bytes, max_segments
+        self._lane_max, self._shared_max = lane_max_bytes, shared_max_bytes
+        self._bytes = self._shared = 0  # after the marker, a run's bytes too (reading 2)
+        self._units: deque[tuple[Pos, int, bool]] = deque()  # (end, bytes, shared) of each
         self.lane, self._next_seq, self._prev = uuid.UUID(int=0), 1, ZERO_MAC
         self.refusal: LaneReason | None = "stopped"  # until `open()`
         self._pos: Pos | None = None  # the verified marker's; a new lane writes its own first
         self._fd, self._active, self._size = -1, 0, 0  # the segment the appends go to
-        self._lock = asyncio.Lock()
+        self._lock = _LaneLock(waiters)
         self._ops: set[asyncio.Task[Any]] = set()
 
     async def open(self, new_lane: Callable[[], uuid.UUID] = uuid.uuid4) -> LaneScan:
@@ -773,6 +849,11 @@ class LaneJournal:
             self._prev, self._pos = state.prev, found.pos if isinstance(found, LaneMarker) else None
             held = result.held or (result.lane is None and bool(segments))
             self.refusal = "held" if held else None
+            for unit in result.units:
+                shared = isinstance(unit, Handover) and unit.frame.cls == "shared"
+                self._count(
+                    unit.end, len(unit.raw if isinstance(unit, Handover) else unit.data), shared
+                )
         return result
 
     @property
@@ -791,10 +872,16 @@ class LaneJournal:
         if self.refusal is not None:
             raise LaneRefused(self.refusal)
         seq, prev = self._next_seq, self._prev
-        return encode_frame(self._keys, lane=self.lane, seq=seq, prev=prev, cls=cls, rec=rec)
+        frame = encode_frame(self._keys, lane=self.lane, seq=seq, prev=prev, cls=cls, rec=rec)
+        size = len(frame)
+        if self._bytes + size > self._lane_max or (
+            cls == "shared" and self._shared + size > self._shared_max
+        ):
+            raise LaneRefused("full")
+        return frame
 
     async def _append(self, op: _Op, cls: LaneClass, rec: dict[str, object]) -> int:
-        async with self._held(op):
+        async with self._held(op, cls, capped=True):
             frame, seq = self._frame(cls, rec), self._next_seq
             try:
                 if self._pos is None and seq == 1:  # a new lane: its marker, then frame 1
@@ -812,10 +899,33 @@ class LaneJournal:
                 raise LaneRefused("stopped") from None
             self._size += len(frame)
             self._next_seq, self._prev = seq + 1, frame[-65:-1].decode("ascii")
+            self._count((self._active, self._size), len(frame), cls == "shared")
             _log().info(
                 "audit.lane.appended", seq=seq, cls=cls, action=rec["action"], mac=self._prev[:16]
             )
         return seq
+
+    async def confirm(self, marker: LaneMarker) -> None:
+        """fsync point 2: the drain moves the marker once a unit's records are committed."""
+        body = encode_marker(self._keys, marker)
+        await self._run(lambda op: self._io(op, self._files.mark, body))
+        self._pos = marker.pos
+        while self._units and self._units[0][0] <= marker.pos:
+            _, size, shared = self._units.popleft()
+            self._bytes -= size
+            self._shared -= size if shared else 0
+
+    async def compact(self) -> int:
+        """fsync point 3 (decision 7); how many segments it unlinked."""
+        if self._pos is None:
+            return 0
+        pos, active = self._pos, self._active
+        return len(await self._run(lambda op: self._io(op, self._files.compact, pos, active)))
+
+    async def quarantine(self, run: Run) -> None:
+        """fsync point 4: a run's bytes; a run without bytes has no copy."""
+        if (name := run.quarantined) is not None:
+            await self._run(lambda op: self._io(op, self._files.quarantine, name, run.data))
 
     async def close(self) -> None:
         """Refuse every later append (`stopped`), wait for the ops in flight, close the segment."""
@@ -829,19 +939,40 @@ class LaneJournal:
             os.close(self._fd)
             self._fd = -1
 
+    def _count(self, end: Pos, size: int, shared: bool) -> None:
+        self._units.append((end, size, shared))
+        self._bytes += size
+        self._shared += size if shared else 0
+
     def _stop(self, exc: BaseException) -> None:
         """Failures while running: no append until a restart; a hold stays a hold."""
         self.refusal = self.refusal or "stopped"
         _log().critical("audit lane stopped until a restart", error=type(exc).__name__)
 
     @contextlib.asynccontextmanager
-    async def _held(self, op: _Op) -> AsyncIterator[None]:
-        """The lane lock for one op; a cancel deferred during a thread call is raised at its end."""
-        async with self._lock:
+    async def _held(
+        self, op: _Op, cls: LaneClass = "reserved", capped: bool = False
+    ) -> AsyncIterator[None]:
+        """The lane lock for one op: an append's class and cap, while the drain's operations
+        queue with `reserved` outside the caps (reading 6). A cancel deferred during a thread
+        call is raised at the op's end."""
+        await self._lock.acquire(cls, capped)
+        try:
             op.holding = True
             yield
+        finally:
+            self._lock.release()
         if op.cancel_pending:
             raise asyncio.CancelledError
+
+    async def _io[T](self, op: _Op, fn: Callable[..., T], *args: object) -> T:
+        """A drain's fsync point; a failure stops the lane, as a dead drain would, and raises."""
+        async with self._held(op):
+            try:
+                return await _in_thread(op, fn, *args)
+            except OSError as exc:
+                self._stop(exc)
+                raise
 
     async def _run[T](self, body: Callable[[_Op], Coroutine[Any, Any, T]]) -> T:
         """One op as a tracked task awaited through `asyncio.shield` (#2250): once it holds the

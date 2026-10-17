@@ -3913,7 +3913,7 @@ Authentic frames that are not in sequence (a chain break, a repeated `seq`) are 
 
 1. Append: write the frame, `fsync` the segment, then return. For a new segment: write its first frame to `seg-<first_seq:020d>.lane.new` (`O_CREAT | O_EXCL`), `fsync` it, link it to `seg-<first_seq:020d>.lane`, which fails if that name exists, unlink `.new`, `fsync` the directory, then return.
 2. Marker: write `confirmed.tmp`, `fsync` it, rename it over `confirmed`, `fsync` the directory. `released` is written the same way.
-3. Compaction: unlink each segment that lies wholly before the marker's `pos`, then `fsync` the directory.
+3. Compaction: unlink each segment that lies wholly before the marker's `pos`, never the newest segment or the one appends go to (without it the next scan would read the marker as ahead, row 2), then `fsync` the directory.
 4. Quarantine: copy the run's bytes to `quarantine/<segment>.<offset>`, then `fsync` that file and the directory. The segment is left as it is.
 
 **Crash consistency.**
@@ -3945,6 +3945,8 @@ Authentic frames that are not in sequence (a chain break, a repeated `seq`) are 
 The waiter caps are starting values. At about 2 ms per fsync, the last of 192 queued `reserved` appends waits about 0.4 s, about 0.6 s of margin before `APPEND_WAIT_S`, and a `shared` append can wait about 0.5 s behind them and 63 others; ADR-0037 Q3 covers resizing. A refusal never drops an accepted frame and never queues without bound (C-2.18). The façade then falls back to `AuditWriter.ingest()` with the same `record_id`, within the caller's remaining deadline, which is at least 1 s of M2's 2 s bound because the lane wait takes at most `APPEND_WAIT_S`, and only a double refusal reaches the caller.
 
 Every boot that does not hold opens a segment (row 16), so `LANE_MAX_SEGMENTS` bounds a boot loop while the sink refuses: it leaves room for many boots beyond the segments that `LANE_MAX_BYTES` fills, and compaction frees segments once the marker passes them.
+
+`LANE_MAX_BYTES` counts every byte from the marker's `pos` to the end of the newest segment, a run's bytes too, and `SHARED_MAX_BYTES` counts the authentic `shared` frames among them: a run has no class it can be trusted with. The drain's own file operations (the marker, compaction, quarantine) queue for the lane lock with `reserved`, outside the waiter caps.
 
 ---
 
