@@ -94,3 +94,6 @@ docs/plan/backlog/_tools/_frontier.json
 services/api/bench/reports/*
 !services/api/bench/reports/README.md
 !services/api/bench/reports/e08-sample.md
+
+# The xstate-contract gate's JUnit report (tools/statechart/run_xstate_contract.sh, #3104).
+services/api/xstate-contract-junit.xml

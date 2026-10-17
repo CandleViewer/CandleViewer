@@ -24,12 +24,17 @@ job's workflow and its meta-tests), so a PR that changed only those skipped the 
 #3230: the `js` filter, which gates `lint`, `typecheck`, `unit-frontend`, `unit-engine` and, through
 `js`, the `security` and `coverage-thresholds` jobs, did not name `packages/chart-engine` or
 `packages/protocol`, so a PR that changed only one of them merged without any of those checks.
+
+#3104: the `py` filter named only `tools/statechart/nightly_gate.py`, so a PR that changed only a
+script a `py`-filtered `gates` step runs from `tools/statechart/` (event coverage, the suite budget,
+the machine-hash lock, the xstate-contract script) skipped the gate built to check it.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +52,8 @@ SEMGREP_PATHS = (
 )
 RESOLVER_STEP = "Resolve ci-required conclusion"
 XSTATE_NIGHTLY = ".github/workflows/xstate-nightly.yml"
+STATECHART_TOOLS = "tools/statechart/**"
+XSTATE_CONTRACT_SCRIPT = "tools/statechart/run_xstate_contract.sh"
 WORKSPACE = ROOT / "pnpm-workspace.yaml"
 #: The package.json scripts the js lane runs for a workspace package (_job-js.yml).
 JS_LANE_SCRIPTS = frozenset({"lint", "typecheck", "test", "test:cov", "build"})
@@ -178,6 +185,20 @@ def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
     # and runs in the `py` lane, so a PR that edits only the workflow must start the lane.
     assert (ROOT / XSTATE_NIGHTLY).is_file()
     assert XSTATE_NIGHTLY in _filters()["py"]
+
+
+def test_pr_yml_py_filter_covers_every_statechart_tool_a_py_gate_runs() -> None:
+    # What the `gates` steps the py filter starts run from tools/statechart/, scripts followed.
+    steps = [s for s in _jobs()["gates"]["steps"] if "outputs.py ==" in str(s.get("if", ""))]
+    text = "\n".join(str(s.get("run", "")) for s in steps)
+    for script in re.findall(r"tools/statechart/[\w.]+\.sh", text):
+        text += (ROOT / script).read_text(encoding="utf-8")
+    used = set(re.findall(r"tools/statechart/[\w.]+", text))
+    assert XSTATE_CONTRACT_SCRIPT in used and len(used) >= 4, sorted(used)
+    py = _filters()["py"]
+    assert STATECHART_TOOLS in py and any(ROOT.glob(STATECHART_TOOLS))
+    for path in sorted(used):
+        assert (ROOT / path).is_file() and any(fnmatch(path, rule) for rule in py), path
 
 
 def test_pr_yml_e2e_filter_covers_every_a11y_input() -> None:
