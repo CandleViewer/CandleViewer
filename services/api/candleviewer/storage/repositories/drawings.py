@@ -35,6 +35,19 @@ class DrawingIdUnavailableError(Exception):
     """A create reused an id held by ANY row, any owner, any state (HTTP 409)."""
 
 
+class DrawingLayoutNotFoundError(Exception):
+    """A non-null `layout_id` names no live layout of the caller: unknown, another owner's and
+    soft-deleted are identical (HTTP 422 `layout_not_found`); nothing was written.
+
+    `fields` are the request paths that named a missing layout, in request order: `layout_id`
+    (POST/PUT) or `operations.<i>.drawing.layout_id` (batch).
+    """
+
+    def __init__(self, fields: tuple[str, ...]) -> None:
+        super().__init__(f"layout_not_found on {len(fields)} field(s)")
+        self.fields = fields
+
+
 #: Rules a failing batch op can report (the API maps them to `errors[0].rule`).
 #: `immutable_field`: an update tried to change `symbol` or `tool` (immutable, as on PUT).
 #: `target_not_owned` is internal and never on the wire: the update/delete target is not among
@@ -179,6 +192,7 @@ class DrawingRepository(Protocol):
 
 __all__ = [
     "BATCH_RULES", "BatchOp", "BatchOpFailed", "BatchResult", "CreateOp", "DeleteOp",
-    "DrawingFields", "DrawingIdUnavailableError", "DrawingNotFoundError", "DrawingRepository",
-    "DrawingRow", "DrawingVersionConflictError", "UpdateOp", "format_token",
+    "DrawingFields", "DrawingIdUnavailableError", "DrawingLayoutNotFoundError",
+    "DrawingNotFoundError", "DrawingRepository", "DrawingRow", "DrawingVersionConflictError",
+    "UpdateOp", "format_token",
 ]  # fmt: skip
