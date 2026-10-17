@@ -14,7 +14,7 @@ import pytest
 
 from candleviewer.auth.hashing import Hasher, last_verify_ms
 
-_PASSWORD = "correct horse battery staple"
+_PHRASE = "correct horse battery staple"
 
 
 class _FakePerfCounter:
@@ -39,9 +39,9 @@ def test_last_verify_ms_is_none_in_a_context_without_a_verify() -> None:
 
 
 async def test_verify_records_the_argon2_time_in_milliseconds() -> None:
-    digest = await Hasher().hash(_PASSWORD)
+    digest = await Hasher().hash(_PHRASE)
     hasher, _ = _hasher(10.0, 10.2125)
-    assert await hasher.verify(digest, _PASSWORD) is True
+    assert await hasher.verify(digest, _PHRASE) is True
     assert last_verify_ms() == pytest.approx(212.5)
 
 

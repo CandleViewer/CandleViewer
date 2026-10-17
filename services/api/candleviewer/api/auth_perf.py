@@ -10,12 +10,14 @@ validation still never turns it on in live or demo. It logs a boot line whenever
 
 The route is owner-only (`admin:read`, resolved server-side from the session, C-12.4) and
 read-only, so like `/admin/health` it writes no audit record. The parameters are not secret:
-every stored hash embeds them.
+every stored hash embeds them. Its refusals are `Problem` bodies carrying the registry's `code`
+(`x-error-codes`): 401 `unauthenticated` and 403 `forbidden`, the contract's shared responses,
+and 501 `not_implemented` when no principal resolver is wired.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Request
@@ -26,6 +28,13 @@ from candleviewer.settings import Settings
 
 ADMIN_READ = "admin:read"
 ARGON2_PARAMS_PATH = "/auth/_perf/argon2-params"
+_ERRORS: Final = "https://candleviewer.local/errors/"
+#: status -> (`code`, title) of every refusal this route renders.
+_REFUSALS: Final = {
+    401: ("unauthenticated", "Unauthorized"),
+    403: ("forbidden", "Forbidden"),
+    501: ("not_implemented", "Not implemented"),
+}
 
 
 class _Principal(Protocol):
@@ -55,10 +64,17 @@ def auth_perf_enabled(settings: Settings) -> bool:
     return True
 
 
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
+def _problem(status: int, detail: str) -> JSONResponse:
+    code, title = _REFUSALS[status]
     return JSONResponse(
         status_code=status,
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
+        content={
+            "type": f"{_ERRORS}{code}",
+            "title": title,
+            "status": status,
+            "code": code,
+            "detail": detail,
+        },
         media_type="application/problem+json",
     )
 
@@ -71,12 +87,12 @@ def make_auth_perf_router(principal_resolver: _PrincipalResolver | None) -> APIR
     @router.get(ARGON2_PARAMS_PATH)
     async def argon2_params(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return _problem(501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return _problem(401, "no verified session for this request")
         if not principal.has(ADMIN_READ):
-            return _problem(403, "Forbidden", f"missing permission: {ADMIN_READ}")
+            return _problem(403, f"missing permission: {ADMIN_READ}")
         return JSONResponse({name: DEFAULT_ARGON2_PARAMS[name] for name in ("m", "t", "p")})
 
     return router

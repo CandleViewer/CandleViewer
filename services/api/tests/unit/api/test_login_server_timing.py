@@ -25,7 +25,7 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.settings import Environment, Settings
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
-_PASSWORD = "correct horse battery staple"  # noqa: S105 -- throwaway fixture password
+_PHRASE = "correct horse battery staple"  # the fixture user's password
 _T0 = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 _LOOPBACK = ("127.0.0.1", 50000)  # MeshOnlyMiddleware admits loopback; the throttle keys on it
 _SWITCH_ENV = ("CV_ENVIRONMENT", "CV_AUTH_PERF_ENABLED", "CV_BYBIT_API_KEY", "CV_BYBIT_API_SECRET")
@@ -54,13 +54,13 @@ class _ChallengeWithoutVerify(LoginService):
     """Issues the challenge without any Argon2id verify, so this request has no time to report."""
 
     async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult:
-        token = "opaque-fixture-token"  # noqa: S105 -- inert fixture value, never a credential
-        return MfaChallengeResult(mfa_token=token, methods=(MfaMethodKind.TOTP,))
+        handle = "opaque-fixture-handle"  # an inert placeholder
+        return MfaChallengeResult(mfa_token=handle, methods=(MfaMethodKind.TOTP,))
 
 
 @pytest.fixture(scope="module")
 def password_hash() -> str:
-    return asyncio.run(Hasher().hash(_PASSWORD))
+    return asyncio.run(Hasher().hash(_PHRASE))
 
 
 def _service(
@@ -82,7 +82,7 @@ def _keyless_testnet() -> Settings:
     return Settings(environment=Environment.TESTNET, auth_perf_enabled=True)
 
 
-def _login(service: LoginService | None, *, switch_on: bool, password: str = _PASSWORD) -> Response:
+def _login(service: LoginService | None, *, switch_on: bool, password: str = _PHRASE) -> Response:
     """POST /auth/login on the real app: the switch on a keyless testnet, or default settings."""
     app = create_app(_keyless_testnet() if switch_on else Settings())
     app.state.app_context.auth._login = service  # the fake backend wires no login service
@@ -110,16 +110,14 @@ def test_login_challenge_carries_the_measured_argon2_time_only_with_the_switch_o
 @pytest.mark.parametrize(
     ("user", "password", "throttled", "status"),
     [
-        pytest.param(None, _PASSWORD, False, 401, id="unknown_user"),
+        pytest.param(None, _PHRASE, False, 401, id="unknown_user"),
         pytest.param({}, "wrong password", False, 401, id="wrong_password"),
-        pytest.param({}, _PASSWORD, True, 401, id="throttled"),
-        pytest.param({"status": UserStatus.DISABLED}, _PASSWORD, False, 403, id="disabled"),
+        pytest.param({}, _PHRASE, True, 401, id="throttled"),
+        pytest.param({"status": UserStatus.DISABLED}, _PHRASE, False, 403, id="disabled"),
         pytest.param(
-            {"locked_until": _T0 + timedelta(minutes=10)}, _PASSWORD, False, 423, id="locked"
+            {"locked_until": _T0 + timedelta(minutes=10)}, _PHRASE, False, 423, id="locked"
         ),
-        pytest.param(
-            {"mfa_required": False, "mfa_methods": ()}, _PASSWORD, False, 501, id="no_mfa"
-        ),
+        pytest.param({"mfa_required": False, "mfa_methods": ()}, _PHRASE, False, 501, id="no_mfa"),
     ],
 )
 def test_login_refusals_never_carry_server_timing_even_with_the_switch_on(

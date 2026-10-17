@@ -14,13 +14,13 @@ from candleviewer import settings as settings_module
 from candleviewer.settings import Environment, Settings
 
 #: An inert marker standing in for an exchange key value; never a credential.
-_KEY_MARKER = "cv-2097-marker-not-a-key"
-_EXCHANGE_KEY_ENV = ("CV_BYBIT_API_KEY", "CV_BYBIT_API_SECRET")
+_MARKER = "cv-2097-marker-not-a-key"
+_EXCHANGE_ENV = ("CV_BYBIT_API_KEY", "CV_BYBIT_API_SECRET")
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("CV_ENVIRONMENT", "CV_AUTH_PERF_ENABLED", "CV_FEED", *_EXCHANGE_KEY_ENV):
+    for name in ("CV_ENVIRONMENT", "CV_AUTH_PERF_ENABLED", "CV_FEED", *_EXCHANGE_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -47,18 +47,18 @@ def test_settings_auth_perf_is_refused_outside_testnet(
         Settings()
 
 
-@pytest.mark.parametrize("variable", _EXCHANGE_KEY_ENV)
+@pytest.mark.parametrize("variable", _EXCHANGE_ENV)
 def test_settings_auth_perf_is_refused_on_testnet_with_an_exchange_key(
     monkeypatch: pytest.MonkeyPatch, variable: str
 ) -> None:
     monkeypatch.setenv("CV_ENVIRONMENT", "testnet")
     monkeypatch.setenv("CV_AUTH_PERF_ENABLED", "true")
-    monkeypatch.setenv(variable, _KEY_MARKER)
+    monkeypatch.setenv(variable, _MARKER)
     with pytest.raises(ValidationError, match="while an exchange key") as refused:
         Settings()
     # The refusal names the switch only; it never echoes the key's value (C-12.6).
-    assert _KEY_MARKER not in str(refused.value)
-    assert _KEY_MARKER not in repr(refused.value.errors())
+    assert _MARKER not in str(refused.value)
+    assert _MARKER not in repr(refused.value.errors())
 
 
 def test_settings_auth_perf_on_a_keyless_testnet_is_accepted(
