@@ -255,6 +255,8 @@ class RulesManager:
         #: rule_id -> the disarm in flight of that armed rule above a hard cap (#3232): at most
         #: one per rule, each a tracked task that `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
+        #: Forced disarms run one at a time, so their re-check of the chart holds (#3232).
+        self._disarming = asyncio.Lock()
 
     def set_hooks(self, *, audit: Audit | None = None, broadcast: Broadcast | None = None) -> None:
         if audit is not None:
@@ -441,12 +443,25 @@ class RulesManager:
 
     async def _force_disarm(self, row: RuleRow, reason: str, detail: dict[str, Any]) -> None:
         """B9 `DISARM` of an armed rule, audited as `rule.disarmed` with `reason` and `detail`
-        (no actor: the server does it); the `rules` broadcast carries the reason only."""
-        leaf = await self._leaf(row)
-        payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
-        payload |= {"b9_from": leaf, "b9_event": "DISARM", "reason": reason}
-        if await self._record_b9(row, "DISARM", "rule.disarmed", payload | detail, reason=reason):
-            await self._bc({"topic": "rules", **payload})
+        (no actor: the server does it); the `rules` broadcast carries the reason only.
+
+        Presenters race (reads, lists, the evaluator tick) and `row` may be a stale read, so
+        forced disarms run one at a time and each first asks the live chart whether it still
+        handles DISARM. A DISARM it does not handle is never sent: the chart would park it
+        (`onUnhandled: "defer"`) and replay it into the rule's next transition."""
+        async with self._disarming:
+            handled = await self.lifecycle.handled_event(
+                row.id, row.mode, row.disabled_reason, "disabled"
+            )
+            if handled is None:
+                return
+            leaf = await self._leaf(row)
+            payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
+            payload |= {"b9_from": leaf, "b9_event": "DISARM", "reason": reason}
+            if await self._record_b9(
+                row, "DISARM", "rule.disarmed", payload | detail, reason=reason
+            ):
+                await self._bc({"topic": "rules", **payload})
 
     @staticmethod
     def _version_view(v: VersionRow, full: bool = False) -> dict[str, Any]:

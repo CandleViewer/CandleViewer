@@ -13,6 +13,8 @@ them now.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -22,7 +24,13 @@ from candleviewer.rules import manager as rules_manager
 from candleviewer.rules.arming import ArmingFacts, Refusal, check_arming
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.limits import BUDGET_FIELDS, LIMIT_CAPS, LIMIT_DEFAULTS
-from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
+from candleviewer.rules.manager import (
+    Actor,
+    InMemoryRuleStore,
+    RuleError,
+    RuleRow,
+    RulesManager,
+)
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rules_routes import _Env, _ir
@@ -330,6 +338,138 @@ async def test_reading_a_corrupt_armed_rule_still_disarms_it_as_quarantined() ->
     (disarmed,) = rec.audits
     assert disarmed[0] == "rule.disarmed" and disarmed[1]["reason"] == "quarantined"
     assert "limits_above_cap" not in disarmed[1]
+
+
+def _presenters(m: RulesManager, rid: str, pair: str) -> list[Coroutine[Any, Any, Any]]:
+    """Two of the paths that present a rule, so disarm one above a cap, started together."""
+    start: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {
+        "get": lambda: m.get(rid, OWNER),
+        "list_rules": lambda: m.list_rules(OWNER),
+        "evaluable_rules": m.evaluable_rules,
+    }
+    return [start[name]() for name in pair.split("+")]
+
+
+async def _save_within_budget(m: RulesManager, rid: str) -> str:
+    """The Owner saves the rule again within its budget, simulated on its `ir_hash`; returns the
+    version id. A disabled rule activates it at once."""
+    row = await m._s.get(rid)
+    assert row is not None
+    saved = await m.update(rid, _ir(name=row.name, scope=dict(ON_A)), row.latest_version, OWNER)
+    await m.record_simulation(rid, saved["version"]["ir_hash"], 5, 0.0)
+    return str(saved["version"]["id"])
+
+
+def _answering(row: RuleRow) -> Callable[[str], Coroutine[Any, Any, RuleRow]]:
+    """A store read that answers `row`: a copy read before a change, as a Postgres read can be."""
+
+    async def get(_rule_id: str) -> RuleRow:
+        return row
+
+    return get
+
+
+_PAIRS = pytest.mark.parametrize("pair", ["get+get", "get+evaluable_rules", "list_rules+get"])
+
+
+@_PAIRS
+async def test_two_presenters_at_once_record_one_disarm(pair: str) -> None:
+    """Forced disarms run one at a time, and each sends DISARM only to a chart that still takes
+    it: one `rule.disarmed` record for one disarm (C-2.9)."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    await asyncio.gather(*_presenters(m, rid, pair))
+    await _settle(m)
+    assert [a for a, _ in rec.audits] == ["rule.disarmed"]
+
+
+@_PAIRS
+async def test_arming_after_two_presenters_disarmed_it_succeeds_first_time(pair: str) -> None:
+    """No DISARM is left parked on the chart (`onUnhandled: defer`) to replay into the next arm."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    await asyncio.gather(*_presenters(m, rid, pair))
+    await _settle(m)
+    await _save_within_budget(m, rid)
+    assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
+    assert m.lifecycle.leaf(rid) == "armed"
+
+
+async def test_a_stale_armed_row_sends_nothing_to_a_chart_demoted_to_simulating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read while armed above the cap, presented after the Owner activated a version within the
+    budget: nothing is sent, so no parked DISARM turns the next arm into a disarm."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    row = await m._s.get(rid)
+    assert row is not None
+    stale = replace(row)
+    await m.set_active_version(rid, await _save_within_budget(m, rid), "within budget", OWNER)
+    rec.audits.clear()
+    rec.broadcasts.clear()
+    monkeypatch.setattr(m._s, "get", _answering(stale))
+    await m.get(rid, OWNER)
+    monkeypatch.undo()
+    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], "simulating")
+    assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
+    assert [p["b9_to"] for a, p in rec.audits if a == "rule.armed"] == ["armed"]
+
+
+async def test_a_stale_armed_row_sends_nothing_to_a_disarmed_chart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read while armed, presented after another read disarmed it: nothing is sent, so the first
+    arm of a version within the budget succeeds."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    row = await m._s.get(rid)
+    assert row is not None
+    stale = replace(row)
+    await m.get(rid, OWNER)
+    rec.audits.clear()
+    rec.broadcasts.clear()
+    monkeypatch.setattr(m._s, "get", _answering(stale))
+    await m.get(rid, OWNER)
+    monkeypatch.undo()
+    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], "disarmed")
+    await _save_within_budget(m, rid)
+    assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
+
+
+@pytest.mark.parametrize(("mode", "reason"), [("simulate", None), ("disabled", "disarmed")])
+async def test_reading_a_rule_above_the_cap_that_is_not_armed_changes_nothing(
+    mode: str, reason: str | None
+) -> None:
+    """Only an armed rule is disarmed when read: nothing is recorded, broadcast or sent, and its
+    chart is not even built (DISARM is not handled in `simulating` or `disarmed`)."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode=mode, reason=reason)
+    assert (await m.get(rid, OWNER))["mode"] == mode
+    assert [r["mode"] for r in (await m.list_rules(OWNER))["items"]] == [mode]
+    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], None)
+
+
+async def test_evaluable_rules_keeps_a_simulating_rule_above_the_cap() -> None:
+    """A simulation sends nothing, so a rule above a cap still simulates; arming it is refused."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="simulate")
+    assert [str(r.rule_id) for r in await m.evaluable_rules()] == [rid]
+    assert (rec.audits, _tick_disarms(), m.lifecycle.leaf(rid)) == ([], [], None)
+
+
+async def test_a_forced_disarm_the_chart_does_not_take_is_neither_recorded_nor_broadcast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+
+    async def refused(_rule_id: str, _event: str, **_payload: Any) -> tuple[str, str]:
+        return "armed", "armed"  # leaf before == leaf after: the chart did not move
+
+    monkeypatch.setattr(m.lifecycle, "send", refused)
+    assert (await m.get(rid, OWNER))["mode"] == "armed"
+    assert (rec.audits, rec.broadcasts) == ([], [])
 
 
 async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running() -> None:
