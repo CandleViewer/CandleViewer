@@ -79,6 +79,7 @@ async def test_events_alive_stay_within_the_readahead_and_a_cursor_window() -> N
         async with asyncio.timeout(60):
             async for _ in source:
                 pulled += 1
+                assert pulled <= 20_000
                 if pulled % 500 == 0:
                     for _ in range(3):  # a slow consumer: the producer gets a few turns in between
                         await asyncio.sleep(0)

@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import tracemalloc
+from collections.abc import Coroutine
+from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
+from candleviewer.observability import spawn as real_spawn
 from candleviewer.replay import (
     ReadAheadConfig,
+    ReplayInternalError,
     ReplayItem,
     ReplayMemoryCeilingExceeded,
     ReplayRequestInvalid,
@@ -18,7 +23,7 @@ from candleviewer.replay import (
     ReplaySourceUnavailable,
     ReplayTierStraddle,
 )
-from candleviewer.replay.merge import DEFAULT_MAX_ROWS_PER_READ
+from candleviewer.replay import source as source_module
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
@@ -147,19 +152,49 @@ class _BreaksOnSecondRead(InMemoryRecordedTier):
         return await super().read(symbol, stream, rng, depth=depth, limit=limit)
 
 
-async def test_an_unexpected_failure_reaches_the_consumer_after_the_batches_before_it() -> None:
-    """Nothing the producer raises is lost: a bug in a reader ends the replay as itself, not as a
-    hang on an empty queue. The 500 rows of the first 1 s window make seven batches of 64 and a
-    batch of 52 still in progress, which only a typed failure delivers before it is raised."""
+async def test_an_unexpected_failure_reaches_the_consumer_only_as_a_fixed_internal_error() -> None:
+    """A reader bug ends the replay as a typed error, not as a hang on an empty queue and not with
+    its own text (RP-I02): the original is logged by type. The 500 rows of the first 1 s window
+    make seven batches of 64 and a batch of 52 still in progress, which only a typed failure
+    delivers before it is raised."""
     stored = many(500)
     harness = Harness().replace_ports(hot=_BreaksOnSecondRead(stored))
     got: list[ReplayItem] = []
 
-    with pytest.raises(ZeroDivisionError):
+    with capture_logs() as logs, pytest.raises(ReplayInternalError) as raised:
         async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
             await drain_into(source, got)
 
     assert got == stored[: 7 * 64]
+    assert str(raised.value) == "the replay read failed unexpectedly"
+    assert (raised.value.__cause__, raised.value.__context__) == (None, None)
+    failed = [e for e in logs if e["log_level"] == "error"]
+    assert [(e["event"], e["error_type"]) for e in failed] == [
+        ("replay_source_failed", "ZeroDivisionError")
+    ]
+
+
+async def test_a_source_starts_one_producer_however_often_it_is_asked_for_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[str] = []
+
+    def counting_spawn(coro: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
+        started.append(name)
+        return real_spawn(coro, name=name)
+
+    monkeypatch.setattr(source_module, "spawn", counting_spawn)
+    harness = Harness(hot=many(300))
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL)
+
+    assert await count_items(source) == 300
+    with pytest.raises(StopAsyncIteration):
+        await pull(source)
+    await source.aclose()
+    async with source:
+        pass
+
+    assert started == ["replay-source"]
 
 
 async def test_a_source_that_failed_or_ended_stays_stopped() -> None:
@@ -195,7 +230,7 @@ async def test_a_dense_instant_fails_the_replay_naming_the_row_ceiling_after_ear
     """The memory ceiling reaches the consumer in order: the events before the instant, then
     the typed error, which names the row ceiling because the byte share was ample."""
     early = [trade(t * SECOND, trade_id=f"e{t}") for t in (1, 2, 3)]
-    dense = [trade(40 * SECOND, trade_id=f"d{i:05}") for i in range(DEFAULT_MAX_ROWS_PER_READ + 1)]
+    dense = [trade(40 * SECOND, trade_id=f"d{i:05}") for i in range(8_193)]
     harness = Harness(hot=early + dense)
     got: list[ReplayItem] = []
 
@@ -204,7 +239,7 @@ async def test_a_dense_instant_fails_the_replay_naming_the_row_ceiling_after_ear
             await drain_into(source, got)
 
     assert got == early
-    assert raised.value.max_rows == DEFAULT_MAX_ROWS_PER_READ
+    assert raised.value.max_rows == 8_192  # the row ceiling the threat model names
     assert (raised.value.symbol, raised.value.stream) == ("BTCUSDT", StreamKind.TRADES)
 
 

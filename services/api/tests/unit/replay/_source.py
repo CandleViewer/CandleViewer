@@ -30,6 +30,9 @@ SMALL = ReadAheadConfig(
 )
 #: A source that never ends or never answers fails the test after this, it does not hang it.
 BOUND_S = 10.0
+#: More items than any test stores: a source that yields more is repeating itself, and an `async
+#: for` that never suspends cannot be stopped by a timeout, so the helpers count.
+MAX_ITEMS = 200_000
 
 
 def many(count: int, *, symbol: str = "BTCUSDT") -> list[RecordedEvent]:
@@ -57,13 +60,15 @@ async def count_items(source: ReplaySource) -> int:
     async with asyncio.timeout(BOUND_S):
         async for _ in source:
             count += 1
+            assert count <= MAX_ITEMS, "the source yields more items than any test stores"
     return count
 
 
 async def drain(source: ReplaySource) -> list[ReplayItem]:
     """Every item the source yields from here to its end."""
-    async with asyncio.timeout(BOUND_S):
-        return [item async for item in source]
+    got: list[ReplayItem] = []
+    await drain_into(source, got)
+    return got
 
 
 async def drain_into(source: ReplaySource, got: list[ReplayItem]) -> None:
@@ -71,6 +76,7 @@ async def drain_into(source: ReplaySource, got: list[ReplayItem]) -> None:
     async with asyncio.timeout(BOUND_S):
         async for item in source:
             got.append(item)
+            assert len(got) <= MAX_ITEMS, "the source yields more items than any test stores"
 
 
 async def pull(source: ReplaySource) -> ReplayItem:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable
 
@@ -89,6 +90,24 @@ def test_the_least_consistent_bounds_are_accepted() -> None:
     )
 
     assert (least.readahead_events, least.memory_ceiling_bytes) == (3, 2)
+
+
+def test_the_defaults_are_the_documented_bounds() -> None:
+    """24 section 13.7, 20 section 4.2 and the threat model's bounds table state these numbers."""
+    config = ReadAheadConfig()
+
+    assert (config.window_us, config.max_window_us) == (30 * SECOND, 3_600 * SECOND)
+    assert (config.readahead_events, config.batch_events) == (131_072, 1_024)
+    assert (config.readahead_bytes, config.memory_ceiling_bytes) == (64 << 20, 256 << 20)
+    assert config.io_timeout_s == 30.0
+
+
+def test_the_config_is_immutable() -> None:
+    config = ReadAheadConfig()
+    name = "batch_events"  # the attribute name as data: the assignment is the test
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(config, name, 1)
 
 
 def test_a_config_error_is_a_value_error_too() -> None:

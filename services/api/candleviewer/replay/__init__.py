@@ -15,6 +15,7 @@ from __future__ import annotations
 from candleviewer.replay.errors import (
     ReplayConfigInvalid,
     ReplayError,
+    ReplayInternalError,
     ReplayMemoryCeilingExceeded,
     ReplayRequestInvalid,
     ReplaySourceUnavailable,
@@ -28,6 +29,7 @@ __all__ = [
     "ReplayConfigInvalid",
     "ReplayError",
     "ReplayGap",
+    "ReplayInternalError",
     "ReplayItem",
     "ReplayMemoryCeilingExceeded",
     "ReplayRequest",

@@ -61,6 +61,7 @@ def replay(
             async for item in source:
                 assert source.buffered_events <= slots * config.batch_events
                 got.append(item)
+                assert len(got) <= 10_000, "the source yields more items than a recording holds"
                 for _ in range(pauses[len(got) % len(pauses)]):
                     await asyncio.sleep(0)
         return got

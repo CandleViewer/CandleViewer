@@ -17,7 +17,7 @@ from candleviewer.replay import ReplayConfigInvalid, ReplayItem, ReplaySourceUna
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
-from tests.unit.replay._events import ROOMY, T0, BoundedTier, Harness, drain, request, trade
+from tests.unit.replay._events import ROOMY, SYM, T0, BoundedTier, Harness, drain, request, trade
 from tests.unit.replay._source import MintingGaps, MintingTier, many
 
 AAA, BBB = "AAAUSDT", "BBBUSDT"
@@ -31,6 +31,21 @@ class _StallsOnRefill(BoundedTier):
     ) -> list[RecordedEvent]:
         if self.reads:
             await asyncio.Event().wait()
+        return await super().read(symbol, stream, rng, depth=depth, limit=limit)
+
+
+class _GatedRefill(MintingTier):
+    """Serves its first read, then every later read only once `gate` is set."""
+
+    def __init__(self, events: list[RecordedEvent]) -> None:
+        super().__init__(events)
+        self.gate = asyncio.Event()
+
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        if self.reads:
+            await self.gate.wait()
         return await super().read(symbol, stream, rng, depth=depth, limit=limit)
 
 
@@ -128,6 +143,26 @@ async def test_a_drained_symbols_markers_are_released_while_other_symbols_play_o
     assert seen == {0: 30, 100: 0}
 
 
+async def test_a_cursor_does_not_hold_its_consumed_window_across_the_refill() -> None:
+    """The window of 20 rows is read out when the refill starts; only the item in the batch
+    under construction is alive while storage answers."""
+    tier = _GatedRefill([trade(i, trade_id=f"t{i:02}") for i in range(40)])
+    merge = Harness().replace_ports(hot=tier).merge(window_us=20)
+    batches = merge.batches(max_events=1, max_bytes=ROOMY)
+    for _ in range(19):
+        await _pull(batches)
+
+    blocked = asyncio.create_task(_pull(batches))  # the 20th item empties the window
+    for _ in range(20):
+        await asyncio.sleep(0)
+    held = tier.alive()
+    tier.gate.set()
+    await blocked
+    await batches.aclose()
+
+    assert held == 1
+
+
 async def test_closing_a_pass_early_releases_every_entry() -> None:
     tier = MintingTier(many(200))
     merge = Harness().replace_ports(hot=tier).merge(window_us=60_000_000)
@@ -139,6 +174,20 @@ async def test_closing_a_pass_early_releases_every_entry() -> None:
     del first
 
     assert tier.alive() == 0
+
+
+async def test_a_failed_pass_lets_go_of_the_markers_it_never_played() -> None:
+    """30 gap rows lie past the failure: while the error is alive, its traceback keeps the
+    generator frame, and the markers must not be in it (the heap's head key holds one cause)."""
+    tier = _FailsOnRefill(many(200))
+    gaps = MintingGaps([(SYM, 150_000 + i, 150_001 + i) for i in range(30)])
+    merge = Harness().replace_ports(hot=tier, gaps=gaps).merge(window_us=100_000)
+
+    delivered, error = await drain(merge, batch=8)
+    del delivered
+
+    assert isinstance(error, ReplaySourceUnavailable)
+    assert gaps.alive(SYM) <= 1
 
 
 async def test_a_failed_pass_releases_every_entry() -> None:

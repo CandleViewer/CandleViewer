@@ -361,6 +361,7 @@ class RecordedMerge:
                 if isinstance(source, _Markers):
                     replay_gap_warnings_total.inc()
                 elif source.pos >= len(source.buf) and source.more:
+                    source.release()  # its window is consumed: do not hold it across the read
                     try:
                         await self._fill(source)
                     except ReplayError:

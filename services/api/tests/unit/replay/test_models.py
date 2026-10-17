@@ -7,7 +7,6 @@ import dataclasses
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
-from annotated_types import Le
 from hypothesis import example, given
 from hypothesis import strategies as st
 from pydantic import ValidationError
@@ -15,6 +14,7 @@ from pydantic import ValidationError
 from candleviewer.replay import (
     ReplayError,
     ReplayGap,
+    ReplayInternalError,
     ReplayMemoryCeilingExceeded,
     ReplayRequest,
     ReplayRequestInvalid,
@@ -192,10 +192,16 @@ def test_the_callers_cap_refuses_a_window_one_microsecond_over_it() -> None:
 def test_the_cap_ceiling_is_the_ceiling_of_the_window_setting() -> None:
     """One source of truth: `CV_REPLAY_MAX_WINDOW_HOURS` cannot be set above this many hours."""
     field = Settings.model_fields["replay_max_window_hours"]
-    ceiling_hours = next(rule.le for rule in field.metadata if isinstance(rule, Le))
+    ceiling_hours = next(rule.le for rule in field.metadata if hasattr(rule, "le"))
 
     assert isinstance(ceiling_hours, int)
     assert MAX_SPAN_CEILING_US == ceiling_hours * HOUR_US == 24 * 31 * HOUR_US
+
+
+def test_the_smallest_cap_is_one_microsecond() -> None:
+    req = ReplayRequest.model_validate(GOOD | {"end": START + US, "max_span_us": 1})
+
+    assert (req.max_span_us, req.end_us - req.start_us) == (1, 1)
 
 
 def test_a_cap_no_deployment_can_configure_is_refused_and_the_ceiling_itself_accepted() -> None:
@@ -257,6 +263,7 @@ def _straddle() -> ReplayTierStraddle:
     ("error", "code"),
     [
         (ReplayRequestInvalid("x"), "REPLAY_REQUEST_INVALID"),
+        (ReplayInternalError(), "REPLAY_INTERNAL_ERROR"),
         (_ceiling(), "REPLAY_MEMORY_CEILING_EXCEEDED"),
         (_unavailable(), "REPLAY_SOURCE_UNAVAILABLE"),
         (_straddle(), "REPLAY_TIER_STRADDLE"),
@@ -318,6 +325,7 @@ def test_the_straddle_error_carries_the_archived_spans() -> None:
     "error_type",
     [
         ReplayRequestInvalid,
+        ReplayInternalError,
         ReplayMemoryCeilingExceeded,
         ReplaySourceUnavailable,
         ReplayTierStraddle,

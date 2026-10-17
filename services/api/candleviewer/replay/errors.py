@@ -82,6 +82,19 @@ class ReplaySourceUnavailable(ReplayError):
         self.reason = reason
 
 
+class ReplayInternalError(ReplayError):
+    """The read failed for a reason that is no typed replay failure: a bug, a reader that broke
+    the port's contract by raising something that is neither a storage error nor a timeout, or a
+    producer cancelled by anyone but the source's own close. `ReplaySource` raises this in its
+    place with a fixed text and nothing of the original (which can carry a path or a value,
+    RP-I02); the original is logged by type."""
+
+    code = "REPLAY_INTERNAL_ERROR"
+
+    def __init__(self) -> None:
+        super().__init__("the replay read failed unexpectedly")
+
+
 class ReplayTierStraddle(ReplayError):
     """`source_tier="auto"` found the range only partly archived to Parquet. A session never
     mixes tiers (ADR-0035 decision 4) and neither tier alone is known to hold the whole range,
