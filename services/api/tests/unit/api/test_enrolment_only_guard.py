@@ -182,9 +182,9 @@ def _refused(resp: Any, status: int = 403, code: str = _CODE) -> bool:
     return bool(resp.status_code == status and resp.json()["code"] == code)
 
 
-def _count(channel: str, reason: str) -> float:
-    """`auth_enrolment_refused_total{channel, reason}` on the process-default registry."""
-    labels = {"channel": channel, "reason": reason}
+def _count(transport: str, reason: str) -> float:
+    """`auth_enrolment_refused_total{transport, reason}` on the process-default registry."""
+    labels = {"transport": transport, "reason": reason}
     return float(REGISTRY.get_sample_value("auth_enrolment_refused_total", labels) or 0.0)
 
 
