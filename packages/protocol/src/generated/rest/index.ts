@@ -3780,7 +3780,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List rules */
+    /**
+     * List rules
+     * @description Each rule is presented as `getRule` presents it, so listing disarms an armed rule the
+     *     engine must not run, audited and broadcast the same way.
+     */
     get: operations["listRules"];
     put?: never;
     /**
@@ -3822,7 +3826,14 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** Get a rule with its active IR */
+    /**
+     * Get a rule with its active IR
+     * @description Reading an armed rule the engine must not run disarms it first: one whose stored IR is
+     *     unreadable (quarantined), or whose action budget is above a hard cap (`x-cv-limit-caps`
+     *     on `RuleIr`). The disarm is audited with the reason `quarantined` or
+     *     `limits_above_cap`, is broadcast on the `rules` WS topic, and the rule is returned
+     *     disabled.
+     */
     get: operations["getRule"];
     /**
      * Update a rule, creating a new version
