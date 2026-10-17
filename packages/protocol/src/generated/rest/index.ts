@@ -2974,7 +2974,7 @@ export interface paths {
     /**
      * Current identity, role, effective permissions and account grants
      * @description Single bootstrap call for the app shell. Returns the authenticated user, their role, the flattened effective permission set (the same closed vocabulary used by `x-rbac.permissions`), and the accounts they may read/trade. The UI uses this to decide which affordances to render; it is never the authorisation control itself (04-security-program.md section 7.3).
-     *     Self only: the caller is the session's user and nothing else selects whom it describes, so any query parameter is refused with `422` (SR-026). `role` is the highest role the user holds (`owner`, then `manager`, then `viewer`); `permissions` is the union over every live role. `accounts` lists every live account for an owner (mode `trade`) and, for anyone else, the live, unfrozen accounts they hold a view grant on (`trade` only with the trade grant). `session.environment` is the deployment's environment, `session.elevated_until` the latest live step-up grace expiry on the session (`null` when none) and `session.one_click_armed_until` is `null` until one-click arming is served. `onboarding_complete` is not served yet and is omitted. A user with no live role is `403 forbidden`. The response is `Cache-Control: no-store`.
+     *     Self only: the caller is the session's user and nothing else selects whom it describes, so any query parameter is refused with `422` (SR-026). `role` is the highest role the user holds (`owner`, then `manager`, then `viewer`); `permissions` is the union over every live role. `accounts` lists every live account for an owner (mode `trade`) and, for anyone else, the live, unfrozen accounts they hold a view grant on (`trade` only with the trade grant). `session.environment` is the deployment's environment, `session.elevated_until` the latest live step-up grace expiry on the session (`null` when none) and `session.one_click_armed_until` is `null` until one-click arming is served. `onboarding_complete` is not served yet and is omitted. A user with no live role is `403 forbidden`. `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError` while the access token was checked; nothing was read. `501 not_implemented`: the session backend is active but no identity provider is wired. The API wires both or neither, so the fake storage backend (no session backend) answers `503` first. A `501` is answered once the access token is accepted; nothing is read or served. The response is `Cache-Control: no-store`.
      */
     get: operations["getMe"];
     put?: never;
@@ -2995,7 +2995,7 @@ export interface paths {
     /**
      * Resolved hotkey bindings for the active profile
      * @description Flattened view of the active `HotkeyProfile`, used by the hotkey cheatsheet (SCR-013) and the command palette (SCR-012).
-     *     Self only: any query parameter is refused with `422` (SR-026). While the caller has no stored profile, `hotkey_profile_id` is absent and `bindings` is empty, and the client applies its built-in keymap. The response is `Cache-Control: no-store`.
+     *     Self only: any query parameter is refused with `422` (SR-026). While the caller has no stored profile, `hotkey_profile_id` is absent and `bindings` is empty, and the client applies its built-in keymap. `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError` while the access token was checked; nothing was read. `501 not_implemented`: the session backend is active but no identity provider is wired. The API wires both or neither, so the fake storage backend (no session backend) answers `503` first. A `501` is answered once the access token is accepted; nothing is read or served. The response is `Cache-Control: no-store`.
      */
     get: operations["getMyKeymap"];
     put?: never;
@@ -3036,7 +3036,7 @@ export interface paths {
     /**
      * Read own effective settings
      * @description Alias of `GET /settings` scoped to the calling user; kept as a distinct operation because the app shell fetches it alongside `/me` on boot.
-     *     Self only: any query parameter is refused with `422` (SR-026). Until a store for per-user overrides and a deployment default set exist, the effective settings are empty (`_meta.overridden` is `[]`) and the client applies its built-in defaults. The response is `Cache-Control: no-store`.
+     *     Self only: any query parameter is refused with `422` (SR-026). Until a store for per-user overrides and a deployment default set exist, the effective settings are empty (`_meta.overridden` is `[]`) and the client applies its built-in defaults. `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError` while the access token was checked; nothing was read. `501 not_implemented`: the session backend is active but no identity provider is wired. The API wires both or neither, so the fake storage backend (no session backend) answers `503` first. A `501` is answered once the access token is accepted; nothing is read or served. The response is `Cache-Control: no-store`.
      */
     get: operations["getMyPreferences"];
     put?: never;
@@ -9057,7 +9057,7 @@ export interface components {
       /** Format: date-time */
       created_at?: string;
       display_name?: string | null;
-      /** Format: email */
+      /** @description The address as stored, not a verified mailbox. The pattern is the database check `users_email_fmt` (`position('@' in email) > 1`): an `@` that is not the first character, and nothing about the rest. A special-use domain such as `.local` is accepted (an operator-set address like `owner@candleviewer.local` is valid data), so this is a pattern and not `format: email`. */
       email: string;
       /** Format: uuid */
       id: string;
@@ -14599,6 +14599,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getMyKeymap: {
@@ -14626,6 +14628,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getMyLimits: {
@@ -14669,6 +14673,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateMyPreferences: {

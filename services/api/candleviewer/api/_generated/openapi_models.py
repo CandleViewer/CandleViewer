@@ -390,7 +390,13 @@ class UserSession(BaseModel):
 class User(BaseModel):
     id: UUID
     username: str
-    email: EmailStr
+    email: Annotated[
+        str,
+        Field(
+            description="The address as stored, not a verified mailbox. The pattern is the database check `users_email_fmt` (`position('@' in email) > 1`): an `@` that is not the first character, and nothing about the rest. A special-use domain such as `.local` is accepted (an operator-set address like `owner@candleviewer.local` is valid data), so this is a pattern and not `format: email`.\n",
+            pattern="^[^@]+@",
+        ),
+    ]
     display_name: str | None = None
     roles: list[Literal["owner", "manager", "viewer"]]
     status: Literal["invited", "active", "disabled", "locked"]

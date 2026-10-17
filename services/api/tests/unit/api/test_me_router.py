@@ -9,20 +9,22 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import jsonschema
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+import candleviewer.app as appmod
 from candleviewer.api import me
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpChallenge
-from candleviewer.settings import Environment
+from candleviewer.settings import Environment, Settings
 from tests.openapi_helpers import deref
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -36,11 +38,17 @@ _ACCOUNT = "00000000-0000-4000-8000-00000000000a"
 
 
 def _assert_problem(resp: Any, status: int, code: str) -> dict[str, Any]:
-    """A contract `Problem` (RFC 9457) with the stable `code`, nothing else of the caller."""
+    """A `Problem` (RFC 9457) with the stable `code`, nothing else of the caller, and the answer
+    the contract declares for `status` on the operation `resp` came from (C-6.2): an undeclared
+    status fails here, and so does a body its declared response does not describe."""
     assert resp.status_code == status, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
+    path = resp.request.url.path.removeprefix("/api/v1")
+    declared = _SPEC["paths"][path]["get"]["responses"]
+    assert str(status) in declared, f"{path} answers {status}, which the contract does not declare"
     body: dict[str, Any] = resp.json()
-    jsonschema.validate(body, deref(_SPEC, {"$ref": "#/components/schemas/Problem"}))
+    schema = deref(_SPEC, declared[str(status)])["content"]["application/problem+json"]["schema"]
+    jsonschema.validate(body, schema)
     assert body["code"] == code
     return body
 
@@ -476,3 +484,41 @@ async def test_routes_answer_501_without_an_identity_provider_after_authenticati
     _, headers, _ = await bare.sign_in()
     _assert_problem(bare.client.get(path, headers=headers), 501, "not_implemented")
     _assert_problem(bare.client.get(path), 401, "unauthenticated")
+
+
+# -- the app composes the 501 away: the session backend and the identity provider come together --
+
+
+@pytest.mark.parametrize(
+    "headers", [{}, {"Authorization": "Bearer not-a-handle-we-issued"}], ids=["no_token", "a_token"]
+)
+@pytest.mark.parametrize("path", [route.removeprefix("/api/v1") for route in _ROUTES])
+def test_the_default_app_answers_503_on_every_route_with_or_without_a_token(
+    path: str, headers: dict[str, str]
+) -> None:
+    """The default (fake) storage backend gives `create_app` no session backend and no identity
+    provider, so the gate answers `503 store_unavailable` before it looks at a token. The `501` the
+    contract also declares is not what that app answers: the contract text says so."""
+    app = appmod.create_app()
+    assert not app.state.app_context.auth.sessions_is_active
+    assert app.state.identity_provider is None
+    client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
+    _assert_problem(client.get(path, headers=headers), 503, "store_unavailable")
+
+
+@pytest.mark.parametrize(("backend", "wired"), [("fake", False), ("real", True)])
+def test_the_session_backend_and_the_identity_provider_are_wired_together(
+    backend: Literal["fake", "real"], wired: bool
+) -> None:
+    """The `501` needs an active session backend and no identity provider. The composition builds
+    both on the real storage backend and neither on the fake one (nothing connects at
+    construction), so only a router built by hand reaches it. A change that wires one without the
+    other makes the `501` text of the contract, and this test, the place to look."""
+    settings = Settings(
+        storage_backend=backend,
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_pepper=SecretStr("pepper"),
+    )
+    assert (appmod.build_auth_service(settings)._session_repository is not None) is wired
+    assert (appmod.build_identity_provider(settings) is not None) is wired
