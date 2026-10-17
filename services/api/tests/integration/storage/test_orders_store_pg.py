@@ -7,9 +7,9 @@ numeric(38,18) through asyncpg with no float, the named constraints the store re
 scoping, a dense `seq` under concurrent appends, `list_open` planned over `ix_orders_open`, the
 store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest;
 for fills and positions, one row per fill whatever reports it, the account-scoped order link of a
-fill, the position upsert with a cleared stop, a stale position write that leaves the newer row,
-and `list_unprotected` planned over `ix_pos_no_sl`. The DDL itself is
-`test_oms_core_migration.py`'s.
+fill, the position upsert with a cleared stop, a stale position write that leaves the newer row, a
+future-dated position time refused and a future-dated row healed, and `list_unprotected` planned
+over `ix_pos_no_sl`. The DDL itself is `test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations
@@ -59,7 +59,11 @@ from candleviewer.storage.repositories.orders_sqlalchemy import (
     SqlAlchemyOrderStore,
     list_open_statement,
 )
-from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
+from candleviewer.storage.repositories.positions import (
+    FutureDatedPositionError,
+    NewPositionSnapshot,
+    PositionState,
+)
 from candleviewer.storage.repositories.positions_sqlalchemy import (
     SqlAlchemyPositionStore,
     list_unprotected_statement,
@@ -534,6 +538,37 @@ async def test_a_stale_position_write_leaves_the_newer_row(ledger: Ledger, pg_ds
     assert [(p.size, p.exchange_updated_ts) for p in applied] == list(times)
     size = "SELECT size FROM positions WHERE exchange_account_id = %s"
     assert _sql(pg_dsn, size, account) == [(Decimal(5),)]
+
+
+async def test_a_future_dated_position_time_is_refused_and_a_stored_one_heals(
+    app_dsn: str, pg_dsn: str
+) -> None:
+    """C-2.6: a time more than 5 s ahead of the store's clock is refused and writes nothing. A row
+    stamped an hour ahead (by a store whose clock ran an hour fast) loses the guard, so the next
+    write applies although its own time is older, and the cleared stop is listed; a stored time
+    within the 5 s still keeps an older write out."""
+    rel = SqlAlchemyRelationalRepository(app_dsn, "positions-skew-it")
+    hour, account = timedelta(hours=1), _account(pg_dsn)
+    on_time = PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0))
+    fast = PositionRepository(SqlAlchemyPositionStore(rel, clock=lambda: _T0 + hour))
+    try:
+        with pytest.raises(FutureDatedPositionError):
+            await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0 + hour))
+        count = "SELECT count(*) FROM positions WHERE exchange_account_id = %s"
+        assert _sql(pg_dsn, count, account) == [(0,)]
+        stop = Decimal("62000")
+        await fast.upsert(
+            _state(account, "BTCUSDT", stop_loss=stop, exchange_updated_ts=_T0 + hour)
+        )
+        healed = await on_time.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0))
+        assert (healed.stop_loss, healed.exchange_updated_ts) == (None, _T0)
+        assert [p.symbol for p in await on_time.list_unprotected(account)] == ["BTCUSDT"]
+        near = _T0 + timedelta(seconds=4)
+        await on_time.upsert(_state(account, "ETHUSDT", stop_loss=stop, exchange_updated_ts=near))
+        kept = await on_time.upsert(_state(account, "ETHUSDT", exchange_updated_ts=_T0))
+        assert (kept.stop_loss, kept.exchange_updated_ts) == (stop, near)
+    finally:
+        await rel.dispose()
 
 
 async def test_list_unprotected_is_planned_over_ix_pos_no_sl(ledger: Ledger, pg_dsn: str) -> None:
