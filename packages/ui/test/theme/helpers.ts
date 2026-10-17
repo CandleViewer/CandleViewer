@@ -19,24 +19,33 @@ export function memoryStorage(initial: Record<string, string> = {}) {
   };
 }
 
-/** `matchMedia` stub whose OS state can be flipped; `set` notifies `change` listeners like a browser. */
+/**
+ * `matchMedia` stub whose OS state can be flipped. Each query keeps its own listener set, so a disposer
+ * that removes only one of them is detectable, and `set` notifies only the queries that changed.
+ */
 export function mediaStub(initial: { dark?: boolean; reduce?: boolean } = {}) {
   const state = { dark: initial.dark ?? true, reduce: initial.reduce ?? false };
-  const listeners = new Set<() => void>();
-  const matchMedia = (query: string): MediaQueryList =>
-    ({
+  const listeners = { dark: new Set<() => void>(), reduce: new Set<() => void>() };
+  const matchMedia = (query: string): MediaQueryList => {
+    const key = query.includes("color-scheme") ? "dark" : "reduce";
+    return {
       get matches() {
-        return query.includes("color-scheme") ? state.dark : state.reduce;
+        return state[key];
       },
-      addEventListener: (_type: string, listener: () => void) => void listeners.add(listener),
-      removeEventListener: (_type: string, listener: () => void) => void listeners.delete(listener),
-    }) as unknown as MediaQueryList;
+      addEventListener: (_type: string, listener: () => void) => void listeners[key].add(listener),
+      removeEventListener: (_type: string, listener: () => void) =>
+        void listeners[key].delete(listener),
+    } as unknown as MediaQueryList;
+  };
   return {
     matchMedia,
     listeners,
     set(next: { dark?: boolean; reduce?: boolean }) {
+      const changed = (["dark", "reduce"] as const).filter(
+        (k) => (next[k] ?? state[k]) !== state[k],
+      );
       Object.assign(state, next);
-      listeners.forEach((listener) => listener());
+      changed.forEach((key) => listeners[key].forEach((listener) => listener()));
     },
   };
 }

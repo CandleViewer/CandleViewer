@@ -10,7 +10,7 @@ import {
 } from "react";
 import { mountLiveRegion } from "./a11y.js";
 import {
-  createThemeStore,
+  sharedThemeStore,
   type DensityName,
   type TextScale,
   type ThemeName,
@@ -24,18 +24,19 @@ const useBrowserLayoutEffect = typeof document === "undefined" ? useEffect : use
 
 export interface ThemeProviderProps {
   readonly children: ReactNode;
-  /** A store shared with non-React code. Otherwise the provider creates one from `options`. */
+  /** A store shared with non-React code. Otherwise the provider uses `sharedThemeStore(options)`. */
   readonly store?: ThemeStore;
   readonly options?: ThemeStoreOptions;
 }
 
 /**
  * Connects a theme store to `document.documentElement`. It renders no DOM of its own and its context
- * value (the store) never changes, so a switch re-renders only components that read a value.
+ * value (the store) never changes, so a switch re-renders only components that read a value. Without
+ * a `store` prop all providers on one root share one store, so they agree (the first `options` win).
  * The store is fixed for the provider's lifetime (remount to change it).
  */
 export function ThemeProvider({ children, store, options }: ThemeProviderProps): JSX.Element {
-  const [active] = useState(() => store ?? createThemeStore(options));
+  const [active] = useState(() => store ?? sharedThemeStore(options));
   useBrowserLayoutEffect(() => {
     mountLiveRegion(); // pre-rendered, so the first Ctrl+Shift+H announcement is heard
     return active.connect();
