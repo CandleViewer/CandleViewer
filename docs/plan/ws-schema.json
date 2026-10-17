@@ -115,6 +115,12 @@
           "maxLength": 120,
           "pattern": "^[a-z_]+(\\.[A-Za-z0-9:_-]+)*$"
         },
+        "subId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection."
+        },
         "environment": {
           "$comment": "Mirrors OpenAPI `Environment` / Postgres `exchange_env` exactly. `paper` is NOT a member: paper trading is the orthogonal boolean `is_paper`, because a paper fill still belongs to a real environment (demo, or live during a replay) and collapsing the two would lose that.",
           "enum": ["live", "demo", "testnet"]
@@ -295,7 +301,7 @@
         },
         "rs": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
-          "description": "Replay session id; present only on replay frames."
+          "description": "Replay session id (§11): on a replay subscription's data frames, `ctl_ok` and `revoked`, on a client `resync`, `ctl` or `unsub` naming one (§5.3, §5.4, §7.5), and on an `err` with a `ch` that answers a `resync` or `ctl` (§7.5); never on a live stream's."
         },
         "sp": {
           "type": "string",
@@ -856,6 +862,10 @@
               "sub_id": {
                 "type": "string"
               },
+              "rs": {
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
+                "description": "On each result of a replay `sub` but the `system` one, accepted or refused (§5.2)."
+              },
               "snapshot_pending": {
                 "type": "boolean"
               },
@@ -916,6 +926,24 @@
               },
               "noop": {
                 "type": "boolean"
+              },
+              "ended": {
+                "type": "array",
+                "minItems": 1,
+                "description": "What this entry ended (§5.3).",
+                "items": {
+                  "type": "object",
+                  "required": ["sub_id"],
+                  "properties": {
+                    "sub_id": {
+                      "$ref": "cv://ws/v1/common.schema.json#/$defs/subId"
+                    },
+                    "rs": {
+                      "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+                    }
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "additionalProperties": false
@@ -980,6 +1008,10 @@
           "type": "boolean",
           "default": false,
           "description": "When true, a fresh `snap` follows and prior state must be discarded."
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "The subscription the `ctl` retuned (§5.4); a replay one's `rs` is on the envelope."
         }
       },
       "additionalProperties": false
@@ -995,6 +1027,10 @@
         },
         "reason": {
           "enum": ["sequence_gap", "decode_error", "state_corrupt", "client_restart", "manual"]
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "Optional pin: the `sub_id` of the subscription the envelope `ch` and `rs` name (§7.5)."
         }
       },
       "additionalProperties": false
@@ -1030,6 +1066,10 @@
         "resubscribe_allowed": {
           "type": "boolean",
           "default": false
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "The subscription revoked or narrowed (§9.5); a replay one's `rs` is on the envelope."
         }
       },
       "additionalProperties": false
