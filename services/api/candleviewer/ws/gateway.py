@@ -30,6 +30,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   any failed `auth`. Revocation is pushed through the `RevocationHub`; the
   idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
+  An `AuthRefused` from `authenticate` (an enrolment-only session, #2295) closes
+  at once with its own `bye` (`4403`): not a failure, and nothing is registered.
 - **Connect rate** (§4.3, #2558): a new socket's first successful `auth` is counted per user
   (`GatewayHub.admit_connect`, `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` per sliding minute). Past the
   limit the socket gets `bye client_rate_limited` + `4429` instead of `auth_ok`: it never
@@ -245,6 +247,17 @@ class AuthenticatorContractError(RuntimeError):
     """The injected `authenticate` returned no timezone-aware token expiry. That
     is a server fault, not a client auth failure: the socket closes `1011` and
     nothing is served (fail closed, #2259)."""
+
+
+class AuthRefused(Exception):
+    """Raised by the injected `authenticate` for a live token whose session may not use the
+    socket: an enrolment-only session (#2295, §4.3). The socket closes at once with a `bye`
+    carrying `reason` (a `CLOSE_REASONS` key); it is not a failed `auth`, and the socket is
+    never registered."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _token_expiry_ms(result: AuthResult) -> int:
@@ -1268,6 +1281,11 @@ def make_ws_router(
             raise  # a server fault, not a failed auth: the handler closes 1011
         except AuthCallTimeout as late:
             auth_call_late(conn, str(late), reauth=reauth)
+            return
+        except AuthRefused as refused:
+            # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
+            # registered; a re-auth ends the earlier identity too (#2295).
+            conn.close_with(refused.reason, seal=True)
             return
         except Exception:
             if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
