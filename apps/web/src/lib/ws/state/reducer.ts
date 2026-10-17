@@ -10,9 +10,18 @@ import type {
   WsState,
 } from "./types";
 
-const UNKNOWN_KILL_SWITCH: KillSwitchView = { state: "unknown" };
+/** Deep freeze. States share sub-objects, so one write through any of them must not reach the rest. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
 
-export const INITIAL_WS_STATE: WsState = {
+const UNKNOWN_KILL_SWITCH = deepFreeze<KillSwitchView>({ state: "unknown" });
+
+export const INITIAL_WS_STATE = deepFreeze<WsState>({
   transport: "connecting",
   transitionSeq: 0,
   link: { kind: "connecting" },
@@ -22,7 +31,7 @@ export const INITIAL_WS_STATE: WsState = {
   killSwitch: UNKNOWN_KILL_SWITCH,
   orderEntry: { enabled: false, reason: "kill_switch_unknown" },
   diagnostics: { connectionId: null, requestId: null },
-};
+});
 
 type Patch = { -readonly [K in keyof WsState]?: WsState[K] };
 
@@ -52,17 +61,21 @@ const isStringArray = (v: unknown): v is string[] =>
  * anything else must never read as "not killed". Server prose (`reason`, `engaged_by`) is dropped.
  */
 function viewOf(k: KillSwitchPayload | undefined): KillSwitchView {
-  if (typeof k !== "object" || k === null) return UNKNOWN_KILL_SWITCH;
-  const ids: unknown = k.exchange_account_ids;
-  if (typeof k.engaged !== "boolean" || !isScope(k.scope)) return UNKNOWN_KILL_SWITCH;
+  const ids: unknown = k?.exchange_account_ids;
+  if (typeof k?.engaged !== "boolean" || !isScope(k.scope)) return UNKNOWN_KILL_SWITCH;
   if (ids !== undefined && !isStringArray(ids)) return UNKNOWN_KILL_SWITCH;
   const exchangeAccountIds = ids === undefined ? [] : [...ids]; // a copy: no aliasing of the event
   return { state: k.engaged ? "engaged" : "disengaged", scope: k.scope, exchangeAccountIds };
 }
 
+/** A finite number or nothing: no payload value reaches the state unless it was vetted. */
+const finite = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
 /** A kill-switch fact counts whatever `system` kind carries it (a snapshot carries it on `health`). */
 function systemPatch(u: SystemUpdate): Patch {
   const patch: Patch = {};
+  if (typeof u !== "object" || u === null || Array.isArray(u)) return patch; // not a payload at all
   if (u.kill_switch !== undefined || u.kind === "kill_switch") {
     patch.killSwitch = viewOf(u.kill_switch);
   }
@@ -71,7 +84,10 @@ function systemPatch(u: SystemUpdate): Patch {
     if (quality !== undefined) patch.quality = quality;
   }
   if (u.kind === "shutdown_notice") {
-    patch.shutdown = { closingInMs: u.closing_in_ms, expectedDowntimeMs: u.expected_downtime_ms };
+    patch.shutdown = {
+      closingInMs: finite(u.closing_in_ms),
+      expectedDowntimeMs: finite(u.expected_downtime_ms),
+    };
   }
   return patch;
 }
@@ -81,20 +97,24 @@ function patchFor(prev: WsState, e: EngineEvent): Patch {
     case "connecting":
       return { link: { kind: "connecting" }, quality: "healthy", systemStream: "pending" };
     case "welcome":
+      if (typeof e.connectionId !== "string") return {};
       return { diagnostics: { ...prev.diagnostics, connectionId: e.connectionId } };
-    case "auth_ok": {
-      const killSwitch = viewOf(e.killSwitch); // the server's own fact at (re-)authentication
-      // A re-auth on a live socket (23 4.1) is the same connection: a pending shutdown, the quality
-      // class and the `system` stream carry over. Only a new connection's `auth_ok` starts afresh.
-      if (prev.link.kind === "up") return { killSwitch };
+    case "auth_ok":
+      // On a live socket `auth_ok` is an in-place re-auth (23 4.1): the same connection, so a pending
+      // shutdown, the quality class and the `system` stream carry over, and no kill switch keeps the
+      // last fact. Only a socket announced by `connecting` starts afresh; after `reconnecting` or
+      // `offline` the engine broke its promise and the event is ignored.
+      if (prev.link.kind === "up") {
+        return e.killSwitch === undefined ? {} : { killSwitch: viewOf(e.killSwitch) };
+      }
+      if (prev.link.kind !== "connecting") return {};
       return {
         link: { kind: "up" },
         quality: "healthy",
         shutdown: null,
         systemStream: "pending",
-        killSwitch,
+        killSwitch: viewOf(e.killSwitch),
       };
-    }
     case "reconnecting":
       return {
         link: { kind: "reconnecting", attempt: e.attempt, nextAttemptAtMs: e.nextAttemptAtMs },
@@ -110,6 +130,7 @@ function patchFor(prev: WsState, e: EngineEvent): Patch {
     case "system_stream":
       return { systemStream: e.status };
     case "request_id":
+      if (typeof e.requestId !== "string") return {};
       return { diagnostics: { ...prev.diagnostics, requestId: e.requestId } };
   }
 }
@@ -141,10 +162,10 @@ function isSame(a: unknown, b: unknown): boolean {
 
 /**
  * WS-E06 (Q6): the kill switch is `unknown`, never "not killed", while the transport is not
- * `connected`/`degraded:*` or the `system` stream is not trustworthy (resyncing, stale, revoked).
- * The value is discarded, not kept: after a gap the next fact has to come from the server.
- * `transitionSeq` moves once per change of `transport` and never otherwise. An event that changes
- * nothing returns `prev` itself, so a store that compares by reference does not notify.
+ * `connected`/`degraded:*` or the `system` stream is not trustworthy (resyncing, stale, revoked);
+ * the value is discarded, not kept. `transitionSeq` moves once per change of `transport`. An event
+ * that changes nothing returns `prev` itself, so a store that compares by reference does not
+ * notify. Total over the wire: only vetted values enter the (frozen) state.
  */
 export function reduce(prev: WsState, event: EngineEvent): WsState {
   const s: WsState = { ...prev, ...patchFor(prev, event) };
@@ -159,5 +180,5 @@ export function reduce(prev: WsState, event: EngineEvent): WsState {
     orderEntry: orderEntryOf(killSwitch, s.shutdown !== null),
     transitionSeq: prev.transitionSeq + (transport === prev.transport ? 0 : 1),
   };
-  return isSame(prev, next) ? prev : next;
+  return isSame(prev, next) ? prev : deepFreeze(next);
 }

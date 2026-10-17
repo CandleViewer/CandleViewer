@@ -9,7 +9,7 @@ not dependencies. Layers depend downwards: `protocol` -> `state` -> `core` -> `p
 | --------------------------------------- | ------------------------------------------------------------------------ | ------ |
 | `errorHandler.ts`, `errorMapping.ts`    | one `err` frame -> UI treatment table (E17-T05)                          | landed |
 | `protocol/`, `api.ts`, `state/types.ts` | frames, codec, heatmap bucket; public surface; state types               | S1     |
-| `state/reducer.ts`                      | pure connection-state reducer, its initial state and the engine's events | S1b    |
+| `state/reducer.ts`                      | pure connection-state reducer and initial state; EngineEvent in types.ts | S1b    |
 | `core/`                                 | sequencer, snapshot assembler, subscriptions, engine                     | S2, S4 |
 | `policy/`                               | pacer, close policy, throttle, ctl debounce, frame scheduler             | S3     |
 | `port/`, `worker/`, `client/`           | shared worker, fault channel, `useWsState`, shell wiring                 | S5     |
