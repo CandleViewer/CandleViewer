@@ -98,8 +98,8 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
 
 def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
     """Run the resolver step under the env GitHub builds; an unresolved expression is ''."""
-    if not (shutil.which("bash") and shutil.which("node")):
-        pytest.skip("bash and node run the resolver step")
+    if not (shutil.which("bash") and shutil.which("node")):  # CI must run these fail-closed proofs
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash and node run the resolver step")
     values = {f"needs.{job}.result": "success" for job in JOBS}
     values |= {f"needs.gates.outputs.{lane}": "success" for lane in GATES}
     for name in JOBS["changed-paths"]["outputs"]:

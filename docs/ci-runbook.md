@@ -75,7 +75,8 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   try to work around it; open an `infra-devops` issue.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
-  means a setup step or the verdict step failed; read the `gates` log.
+  means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
+  or an empty result means the 45-minute job cap or a run cancellation stopped `gates` first.
 - `CI-GATE-003` on `pin-check` means an action reference in `.github/workflows/**`
   is not pinned to a full commit SHA, or a workflow uses `pull_request_target`
   unsafely. Fix the reference; do not add an exception.

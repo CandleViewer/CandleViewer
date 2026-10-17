@@ -274,7 +274,8 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          corepack enable && corepack prepare pnpm@12.5.1 --activate
+          corepack enable
+          corepack prepare pnpm@12.5.1 --activate
           pnpm install --frozen-lockfile --filter . --prod=false
           pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
       # `ci-required` reads each gate's own outcome; this keeps the gates job's own result honest.
