@@ -7,6 +7,8 @@ jittered backoff until one returns."""
 from __future__ import annotations
 
 import asyncio
+import inspect
+import math
 import sys
 from collections.abc import Callable
 from datetime import timedelta
@@ -19,6 +21,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
+    DMS_HOOK_TIMEOUT_S,
     DMS_RETRY_MIN_S,
     AccountHealthMonitor,
     HealthState,
@@ -447,6 +450,50 @@ async def test_a_hook_call_that_outlives_its_timeout_is_logged_and_made_again() 
     assert dms.transitions == [down, down]
 
 
+@pytest.mark.parametrize("timeout", [0, -1.0, math.inf, math.nan])
+def test_the_hook_timeout_must_be_finite_and_positive(timeout: float) -> None:
+    with pytest.raises(ValueError, match="dms_timeout_s"):
+        AccountHealthMonitor(FakeClock(), Dms(), dms_timeout_s=timeout)
+
+
+def test_the_default_hook_timeout_is_five_seconds_inside_the_down_window() -> None:
+    default = inspect.signature(AccountHealthMonitor).parameters["dms_timeout_s"].default
+    assert DMS_HOOK_TIMEOUT_S == default == 5.0
+    assert DMS_HOOK_TIMEOUT_S < HealthThresholds().down_s
+
+
+async def test_a_hook_that_swallows_its_cancellation_is_abandoned_and_holds_nothing_up() -> None:
+    clock, dms = FakeClock(), Dms()
+    dms.stubborn, dms.hold = True, asyncio.Event()  # held, and it swallows every cancellation
+    monitor = AccountHealthMonitor(clock, dms, dms_timeout_s=0.001, rng=Jitter())
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    try:
+        with capture_logs() as logs:
+            (first,) = monitor.tick()
+            async with asyncio.timeout(5):  # fails fast, not hangs, if the post-cancel wait is lost
+                await monitor.drain()
+        errors = [(e["event"], e["account_id"]) for e in logs if e["log_level"] == "error"]
+        stuck, failed = ("account.dms_hook_stuck", str(ACC)), ("account.dms_hook_failed", str(ACC))
+        assert errors == [stuck, failed]
+        assert monitor.owed() == [first]  # no call returned: still owed, and listed for the wiring
+        monitor.rest_ok(ACC)  # recovered, then down again: the stuck call does not hold the account
+        clock.advance(30)
+        (second,) = monitor.tick()
+        async with asyncio.timeout(5):
+            await monitor.drain()
+        assert dms.transitions == [first, second] and dms.active == 2  # both hooks still running
+        dms.failing.add(ACC)  # released, each abandoned hook raises: counted once already
+        with capture_logs() as late:
+            dms.hold.set()
+            async with asyncio.timeout(5):
+                await dms.idle.wait()
+        assert late == []
+    finally:
+        dms.hold.set()  # a failed assertion must not leave a hook that never ends
+
+
 @pytest.mark.parametrize("fails", [False, True], ids=["returns", "raises"])
 async def test_a_down_episode_during_a_call_in_flight_is_delivered_after_it(fails: bool) -> None:
     monitor, clock, dms = _hooked(*([ACC] if fails else []))
@@ -535,6 +582,45 @@ async def test_untracking_an_account_that_is_owed_a_call_logs_the_drop() -> None
     assert len(dms.calls) == 1
 
 
+@pytest.mark.parametrize("fails", [False, True], ids=["returns", "raises"])
+async def test_untracking_with_a_call_in_flight_logs_the_drop_only_if_that_call_fails(
+    fails: bool,
+) -> None:
+    monitor, clock, dms = _hooked(*([ACC] if fails else []))
+    dms.hold = asyncio.Event()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    monitor.tick()
+    await dms.entered.wait()
+    with capture_logs() as logs:
+        monitor.untrack(ACC)
+        assert [e for e in logs if e["event"] == "account.dms_hook_dropped"] == []  # not yet
+        dms.hold.set()
+        await monitor.drain()
+    dropped = [e for e in logs if e["event"] == "account.dms_hook_dropped"]
+    assert len(dropped) == int(fails) and len(dms.calls) == 1
+
+
+async def test_a_re_tracked_account_starts_no_second_call_while_the_old_one_is_in_flight() -> None:
+    monitor, clock, dms = _hooked()
+    dms.hold = asyncio.Event()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (first,) = monitor.tick()
+    await dms.entered.wait()  # the first tracking's call is in flight, and stays there
+    monitor.untrack(ACC)
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (second,) = monitor.tick()  # down again under the second tracking: owed, not yet called
+    assert monitor.owed() == [second]
+    dms.hold.set()
+    await dms.exited.wait()
+    monitor.tick()  # the first call has returned: the second tracking's call starts now
+    await monitor.drain()
+    assert dms.transitions == [first, second] and dms.peak == 1 and monitor.owed() == []
+
+
 async def test_draining_with_a_call_still_owed_logs_the_drop() -> None:
     monitor, clock, _ = _hooked(ACC)
     monitor.track(ACC_B)
@@ -553,6 +639,30 @@ async def test_draining_with_a_call_still_owed_logs_the_drop() -> None:
         }
     ]
     assert monitor.owed() == [owed]
+
+
+async def test_drain_also_waits_for_a_call_that_starts_while_it_waits() -> None:
+    monitor, clock, dms = _hooked()
+    monitor.track(ACC_B)
+    first_hold = dms.hold = asyncio.Event()
+    monitor.rest_ok(ACC)
+    clock.advance(5)
+    monitor.rest_ok(ACC_B)
+    clock.advance(25)
+    (first,) = monitor.tick()  # ACC is down, its call held; ACC_B follows 5 s later
+    await dms.entered.wait()
+    draining = asyncio.ensure_future(monitor.drain())
+    await asyncio.sleep(0)  # drain is waiting on the first call alone
+    second_hold = dms.hold = asyncio.Event()
+    clock.advance(5)
+    (second,) = monitor.tick()  # another account goes down while drain waits
+    first_hold.set()
+    for _ in range(5):  # loop turns: the first call ends; a drain that ignored the second returns
+        await asyncio.sleep(0)
+    assert not draining.done() and monitor.owed() == [second]
+    second_hold.set()
+    await draining
+    assert dms.transitions == [first, second] and monitor.owed() == []
 
 
 #: Steps in whole milliseconds, so the fake's wall clock (timedelta, microseconds) and monotonic

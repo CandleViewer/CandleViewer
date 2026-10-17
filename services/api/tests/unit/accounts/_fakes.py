@@ -37,8 +37,11 @@ ACC_B = UUID("a1000000-0000-4000-8000-000000000002")
 class Dms:
     """Dead-man's-switch hook: records every call with the correlation context and task name it
     ran under (and its monotonic time, given a clock), raises for the `failing` accounts, and
-    while `hold` is set keeps each call waiting until the test sets it (a slow hook). `entered`
-    is set once a call starts and `exited` once one has returned or raised."""
+    while `hold` is set keeps each call waiting until the test sets the event that was `hold`
+    when the call started (a slow hook); with `stubborn` it swallows every cancellation
+    meanwhile (a hook that breaks the contract). `entered` is set once a call starts and
+    `exited` once one has returned or raised; `active` counts the calls inside the hook now,
+    `peak` the most there ever were, and `idle` is set while none is."""
 
     def __init__(self, *failing: UUID, clock: FakeClock | None = None) -> None:
         self.transitions: list[HealthTransition] = []
@@ -47,6 +50,10 @@ class Dms:
         self.called_at: list[float] = []
         self.failing = set(failing)
         self.hold: asyncio.Event | None = None
+        self.stubborn = False
+        self.active = self.peak = 0
+        self.idle = asyncio.Event()
+        self.idle.set()
         self.entered = asyncio.Event()
         self.exited = asyncio.Event()
         self._clock = clock
@@ -63,13 +70,24 @@ class Dms:
         self.task_names.append(task.get_name())
         if self._clock is not None:
             self.called_at.append(self._clock.monotonic())
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        self.idle.clear()
         self.entered.set()
+        hold = self.hold
         try:
-            if self.hold is not None:
-                await self.hold.wait()
+            while hold is not None and not hold.is_set():
+                try:
+                    await hold.wait()
+                except asyncio.CancelledError:
+                    if not self.stubborn:
+                        raise
             if transition.account_id in self.failing:
                 raise RuntimeError("echoed exchange text: invalid key")
         finally:
+            self.active -= 1
+            if not self.active:
+                self.idle.set()
             self.exited.set()
 
 

@@ -144,11 +144,18 @@ class DeadMansSwitch(Protocol):
     that raises or times out is logged and made again by the account's first evaluation after a
     jittered retry delay, its backoff `DMS_RETRY_MIN_S` doubling per failure up to the down
     window, until one returns. So the hook must be idempotent, and a retry may land after the
-    account recovered (`transition.at` dates the episode). An account has at most one call in
-    flight and one owed: a newer transition into `down` replaces an older one whose call never
-    succeeded, and does not wait out the older one's retry delay. The replaced episode is logged
-    as `account.dms_hook_dropped` once this process will not deliver it: at once, or when its
-    call in flight fails. A call still owed at shutdown is logged and listed by `owed()`.
+    account recovered (`transition.at` dates the episode). An account id has at most one call in
+    flight, a re-tracked id included, and one owed: a newer transition into `down` replaces an
+    older one whose call never succeeded, and does not wait out the older one's retry delay. The
+    replaced episode is logged as `account.dms_hook_dropped` once this process will not deliver
+    it: at once, or when its call in flight fails; an untracked account's owed episode likewise.
+    A call still owed at shutdown is logged and listed by `owed()`.
+
+    The hook must not suppress `CancelledError`. A call that has not returned after the timeout
+    is cancelled and gets the same time again to unwind; one that still has not returned is
+    abandoned: logged as `account.dms_hook_stuck` and counted as failed, so it holds neither its
+    account's next call nor `drain()`. The monitor keeps the abandoned task referenced until it
+    ends and never awaits it.
 
     A restarted monitor starts every account `down` owing nothing, so an outage that spans a
     restart, or an account that never reconnects after boot, owes this monitor no call. Closing
@@ -168,8 +175,7 @@ class _Account:
     ws_live: bool = False
     rest_at: float | None = None
     dms_owed: HealthTransition | None = None  # no hook call for it has returned yet
-    dms_call: asyncio.Task[None] | None = None
-    dms_calling: HealthTransition | None = None  # the episode `dms_call` delivers
+    dms_calling: HealthTransition | None = None  # the episode this tracking's last call delivers
     dms_delay: float = 0.0  # the last backoff for `dms_owed`; 0 until a call for it fails
     dms_retry_at: float = -math.inf  # monotonic; no call for `dms_owed` starts before it
 
@@ -206,13 +212,17 @@ class AccountHealthMonitor:
         dms_timeout_s: float = DMS_HOOK_TIMEOUT_S,
         rng: random.Random | None = None,
     ) -> None:
+        if not (math.isfinite(dms_timeout_s) and dms_timeout_s > 0):
+            raise ValueError("dms_timeout_s must be finite and greater than 0")
         self._clock = clock
         self._dms = dms
         self._th = thresholds or HealthThresholds()
         self._dms_timeout_s = dms_timeout_s
         self._rng = rng if rng is not None else random.SystemRandom()  # retry jitter only
         self._accounts: dict[UUID, _Account] = {}
-        self._dms_calls: set[asyncio.Task[None]] = set()
+        self._calls: dict[UUID, asyncio.Task[None]] = {}  # the latest call per account id
+        self._watchers: set[asyncio.Task[None]] = set()  # one per call: ends with it or abandons it
+        self._stuck: set[asyncio.Task[None]] = set()  # abandoned calls: running, never awaited
 
     def track(self, account_id: UUID) -> None:
         """Start monitoring an account; it is `down` until the first success."""
@@ -220,10 +230,15 @@ class AccountHealthMonitor:
             self._accounts[account_id] = _Account(self._clock.now(), self._clock.monotonic())
 
     def untrack(self, account_id: UUID) -> None:
-        """Stop monitoring an account. A call in flight finishes; an owed one is not retried."""
+        """Stop monitoring an account. A call in flight finishes, and a later `track()` of the
+        same id starts none until it has. An owed call is not retried: its drop is logged at once,
+        or, if that call is in flight, when it fails."""
         acc = self._accounts.pop(account_id, None)
-        if acc is not None and acc.dms_owed is not None:
-            _log_dropped(acc.dms_owed)
+        if acc is None or acc.dms_owed is None:
+            return
+        owed, acc.dms_owed = acc.dms_owed, None
+        if not (self._in_flight(account_id) and owed is acc.dms_calling):
+            _log_dropped(owed)
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
         """Evidence that the account's private WS is connected and authenticated: its successful
@@ -267,12 +282,12 @@ class AccountHealthMonitor:
         return [t for t in moved if t is not None]
 
     async def drain(self) -> None:
-        """Shutdown: wait until no dead-man's-switch call is in flight; each ends within the hook
-        timeout. This process makes no call still owed afterwards, so each is logged as
-        `account.dms_hook_dropped`; `owed()` lists them for the #837 wiring to persist and replay
-        after a restart."""
-        while self._dms_calls:
-            await asyncio.wait(set(self._dms_calls))
+        """Shutdown: wait until no dead-man's-switch call is in flight; each ends within twice the
+        hook timeout, whatever its hook does with the cancellation. This process makes no call
+        still owed afterwards, so each is logged as `account.dms_hook_dropped`; `owed()` lists
+        them for the #837 wiring to persist and replay after a restart."""
+        while self._watchers:
+            await asyncio.wait(set(self._watchers))
         for owed in self.owed():
             _log_dropped(owed)
 
@@ -332,13 +347,13 @@ class AccountHealthMonitor:
 
     def _evaluate(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         """Commit the account's transition, if any, then start the owed hook call unless one is
-        in flight or its retry delay is still running. A new transition into `down` replaces the
-        owed episode, logged as dropped unless its call is in flight (that call's outcome
-        decides), and starts with no delay. The call is a task bound to the account's
-        correlation context, on top of the caller's: nothing here waits for the hook or sees it
-        raise."""
+        in flight for the account id (an earlier tracking's included) or its retry delay is still
+        running. A new transition into `down` replaces the owed episode, logged as dropped unless
+        its call is in flight (that call's outcome decides), and starts with no delay. The call
+        is a task bound to the account's correlation context, on top of the caller's: nothing
+        here waits for the hook or sees it raise."""
         moved = self._commit(account_id, acc)
-        busy = acc.dms_call is not None and not acc.dms_call.done()
+        busy = self._in_flight(account_id)
         if moved is not None and moved.to_state is HealthState.DOWN:
             replaced = acc.dms_owed
             if replaced is not None and not (busy and replaced is acc.dms_calling):
@@ -346,12 +361,22 @@ class AccountHealthMonitor:
             acc.dms_owed, acc.dms_delay, acc.dms_retry_at = moved, 0.0, -math.inf
         if acc.dms_owed is None or busy or self._clock.monotonic() < acc.dms_retry_at:
             return moved
+        owed = acc.dms_owed
         with bind_context(account_id=account_id):
-            call = spawn(self._call_dms(acc, acc.dms_owed), name=f"account-dms:{account_id}")
-        acc.dms_call, acc.dms_calling = call, acc.dms_owed
-        self._dms_calls.add(call)
-        call.add_done_callback(self._dms_calls.discard)
+            call = spawn(self._call_dms(acc, owed), name=f"account-dms:{account_id}")
+            watcher = spawn(
+                self._watch(account_id, acc, owed, call), name=f"account-dms-watch:{account_id}"
+            )
+        acc.dms_calling = owed
+        self._calls[account_id] = call
+        self._watchers.add(watcher)
+        watcher.add_done_callback(self._watchers.discard)
         return moved
+
+    def _in_flight(self, account_id: UUID) -> bool:
+        """The id's latest call is still running and not abandoned."""
+        call = self._calls.get(account_id)
+        return call is not None and not call.done() and call not in self._stuck
 
     def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         state, reason, began, at = self._project(acc, self._clock.monotonic())
@@ -368,22 +393,43 @@ class AccountHealthMonitor:
             async with asyncio.timeout(self._dms_timeout_s):
                 await self._dms.account_down(owed)
         except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
-            # Still owed: the first evaluation after the jittered delay makes it again. A newer
-            # episode that replaced it meanwhile is not delayed, and this one is dropped. Log the
-            # type only: a message may echo an exchange response (C-12.6).
-            if acc.dms_owed is owed:
-                acc.dms_delay = min(self._th.down_s, max(DMS_RETRY_MIN_S, 2 * acc.dms_delay))
-                wait = self._rng.uniform(acc.dms_delay / 2, acc.dms_delay)
-                acc.dms_retry_at = self._clock.monotonic() + wait
-            log = structlog.get_logger(__name__)
-            log.error(
-                "account.dms_hook_failed",
-                account_id=str(owed.account_id),
-                reason=owed.reason,
-                error=type(exc).__name__,
-            )
-            if acc.dms_owed is not owed:
-                _log_dropped(owed)
+            if asyncio.current_task() not in self._stuck:  # else its watcher counted it failed
+                self._failed(acc, owed, type(exc).__name__)
         else:
             if acc.dms_owed is owed:
                 acc.dms_owed = None
+
+    def _failed(self, acc: _Account, owed: HealthTransition, error: str) -> None:
+        # Still owed: the first evaluation after the jittered delay makes it again. A newer
+        # episode that replaced it meanwhile is not delayed, and this one is dropped. Log the
+        # type only: a message may echo an exchange response (C-12.6).
+        if acc.dms_owed is owed:
+            acc.dms_delay = min(self._th.down_s, max(DMS_RETRY_MIN_S, 2 * acc.dms_delay))
+            wait = self._rng.uniform(acc.dms_delay / 2, acc.dms_delay)
+            acc.dms_retry_at = self._clock.monotonic() + wait
+        log = structlog.get_logger(__name__)
+        log.error(
+            "account.dms_hook_failed",
+            account_id=str(owed.account_id),
+            reason=owed.reason,
+            error=error,
+        )
+        if acc.dms_owed is not owed:
+            _log_dropped(owed)
+
+    async def _watch(
+        self, account_id: UUID, acc: _Account, owed: HealthTransition, call: asyncio.Task[None]
+    ) -> None:
+        """Ends with its call, or abandons it: a call still running after the hook timeout and as
+        long again for the cancellation to unwind has a hook that swallowed it. It is logged and
+        counted as failed, so it holds neither the account's next call nor `drain()`; the task
+        stays referenced in `_stuck` until it ends, and is never awaited."""
+        done, _ = await asyncio.wait({call}, timeout=2 * self._dms_timeout_s)
+        if done:
+            return
+        self._stuck.add(call)
+        call.add_done_callback(self._stuck.discard)
+        structlog.get_logger(__name__).error(
+            "account.dms_hook_stuck", account_id=str(account_id), reason=owed.reason
+        )
+        self._failed(acc, owed, TimeoutError.__name__)
