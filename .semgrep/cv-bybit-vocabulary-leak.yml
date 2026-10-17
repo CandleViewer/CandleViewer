@@ -34,6 +34,10 @@ rules:
         # (E08-T05, #1847); it must speak the wire vocabulary by design,
         # exactly like packages/fixtures/** which holds its output.
         - "tools/fixtures/**"
+        # services/api/cvdev/ is the dev-only fixture transport that stands in for the exchange
+        # (#2893, ADR-0036 Enforcement): it speaks the venue's vocabulary by design, never ships
+        # in the wheel or an image, and only account_fixture_wiring.py may import it.
+        - "services/api/cvdev/**"
         - "tests/fixtures/**"
         - "services/api/tests/fixtures/**"
         - "docs/**"

@@ -23,7 +23,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationPolicy, verify
-from candleviewer.exchange.base.errors import ExchangeError, UnknownStateError
+from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -64,6 +64,8 @@ TS, RECV = str(NOW_MS), "5000"
 #: Key-shaped and derived here, never a credential: a key outside the pack.
 NON_FIXTURE_KEY: Final = "".join(chr(65 + b % 26) for b in hashlib.sha256(b"cv-2893-s7").digest())
 DEMO: Final = f"https://{DEMO_REST_HOST}"
+#: The stack default, `CV_ACCOUNT_FIXTURE`.
+STACK: Final = "compliant"
 ORDER: Final = f"{DEMO}/v5/order/create"
 #: Every other origin, with the host and environment the log names: the adapter's other hosts,
 #: then the demo host on plain http and on another port, then a host outside the table.
@@ -136,7 +138,8 @@ def rig(tmp_path: Path) -> Iterator[Rig]:
         tmp_path, process_env=Environment.DEMO, clock=lambda: NOW, pack_key_ids=KEY_IDS
     ) as log:
         gate = ReadOnlyGate()
-        yield Rig(FixtureTransport(PACK, log=log, gate=gate), gate, log, tmp_path)
+        transport = FixtureTransport(PACK, log=log, gate=gate, clock=lambda: NOW, default=STACK)
+        yield Rig(transport, gate, log, tmp_path)
 
 
 class _Seam(FixtureTransport):
@@ -226,7 +229,7 @@ async def test_a_trip_keeps_the_gates_existing_latch(rig: Rig) -> None:
 
 
 async def test_a_trip_refuses_through_every_transport_on_the_gate(rig: Rig) -> None:
-    seam = _Seam(PACK, log=rig.log, gate=rig.gate)
+    seam = _Seam(PACK, log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK)
     other = replace(rig, transport=seam)
 
     async def body() -> AsyncIterator[bytes]:
@@ -243,7 +246,7 @@ async def test_a_trip_refuses_through_every_transport_on_the_gate(rig: Rig) -> N
 
 async def test_another_latch_on_the_gate_leaves_the_transport_answering(rig: Rig) -> None:
     rig.gate.latch(reason_code="secrets.kek_unavailable", reason_text="kek")
-    assert (await rig.transport.handle_async_request(_get())).status_code == 404
+    assert (await rig.transport.handle_async_request(_get())).status_code == 200
     assert not rig.transport.latched
 
 
@@ -318,20 +321,20 @@ async def test_signature_uses_the_stored_under_scenario_after_a_switch(rig: Rig)
     )
     own = await rig.transport.handle_async_request(_get("stored_key_rejected"))
     assert json.loads(await mismatch.aread())["retCode"] == 10004
-    assert own.status_code == 404 and "retCode" not in json.loads(await own.aread())
+    assert json.loads(await own.aread())["retCode"] == 0
     lines = rig.lines()
     assert [_of(line, "outcome", "verified", "stored_under") for line in lines] == [
         ("signature_mismatch", False, "stored_key_rejected"),
-        ("unstubbed", True, "stored_key_rejected"),
+        ("served", True, "stored_key_rejected"),
     ]
     assert KEY_IDS and all(_key(stored_under(key)) == key for key in KEY_IDS)
 
 
-async def test_an_unsigned_call_meets_no_key_guard_and_is_unstubbed(rig: Rig) -> None:
+async def test_an_unsigned_call_meets_no_key_guard(rig: Rig) -> None:
     request = httpx.Request("GET", DEMO + "/v5/market/time")
-    assert (await rig.transport.handle_async_request(request)).status_code == 404
+    assert (await rig.transport.handle_async_request(request)).status_code == 200
     [line] = rig.lines()
-    assert _of(line, "outcome", "key_class", "verified") == ("unstubbed", "unsigned", None)
+    assert _of(line, "outcome", "key_class", "verified") == ("served", "unsigned", None)
     assert not rig.transport.latched
 
 
@@ -341,16 +344,18 @@ async def test_serve_is_handed_the_verified_body_of_a_one_shot_stream(rig: Rig) 
     async def once() -> AsyncIterator[bytes]:  # httpx raises StreamConsumed on a second read
         yield order
 
-    seam = _Seam(PACK, log=rig.log, gate=rig.gate)
+    seam = _Seam(PACK, log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK)
     request = httpx.Request("POST", ORDER, headers=_get(payload=order).headers, content=once())
-    assert (await seam.handle_async_request(request)).status_code == 404
+    assert (await seam.handle_async_request(request)).status_code == 200
     assert seam.body == order
-    assert _of(rig.lines()[0], "outcome", "verified") == ("unstubbed", True)
+    assert _of(rig.lines()[0], "outcome", "verified") == ("served", True)
 
 
 def test_a_pack_without_fixture_keys_is_refused(rig: Rig, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no fixture key id"):
-        FixtureTransport(Pack(tmp_path / "empty"), log=rig.log, gate=rig.gate)
+        FixtureTransport(
+            Pack(tmp_path / "empty"), log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK
+        )
 
 
 @pytest.mark.parametrize(
@@ -411,10 +416,9 @@ def _client(transport: FixtureTransport, origin: str, key: str, secret: str) -> 
 async def test_the_rest_clients_signature_verifies(rig: Rig, call: dict[str, Any]) -> None:
     endpoint = EndpointClass.ORDER if call["method"] == "POST" else EndpointClass.ACCOUNT
     async with _client(rig.transport, DEMO, _key("compliant"), _secret("compliant")) as client:
-        with pytest.raises(UnknownStateError):
-            await client.signed_request(**call, endpoint_class=endpoint)
+        assert (await client.signed_request(**call, endpoint_class=endpoint))["retCode"] == 0
     [line] = rig.lines()
-    assert _of(line, "outcome", "verified", "status") == ("unstubbed", True, 404)
+    assert _of(line, "outcome", "verified", "status") == ("served", True, 200)
 
 
 @pytest.mark.parametrize(
