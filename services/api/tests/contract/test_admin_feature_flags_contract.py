@@ -239,6 +239,13 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "| `system` | `feature_flags`: per flag key, last-write-wins, a key is never dropped. "
         "`notice`, `kill_switch`, `shutdown_notice`: **never coalesced**. | A flag delta carries "
         "only changed keys; notices are events. |",
+        # 15.9 per role (SR-188): the snapshot's `health` frame and a flag frame are cut alike.
+        "`degraded_topics`, `kill_switch` and `feature_flags` (each as below) |",
+        "| `feature_flags` | `feature_flags` with only the keys whose registry `visibility` admits "
+        "the role, never one that no flag definition names; left out when none remains, and then a "
+        "frame of this kind is not sent |",
+        "the `owner_only` flag keys and any key that no flag definition names reach the Owner "
+        "only.",
     ),
     "gate": (
         "One composed synchronous gate is consulted at the single OMS submission choke point, "

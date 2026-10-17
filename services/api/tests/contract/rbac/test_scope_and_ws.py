@@ -628,14 +628,22 @@ _MARK = {"kind": "notice", "severity": "info", "message": "marker", "reason": "t
 _HALT = {"engaged": True, "scope": "accounts", "exchange_account_ids": [str(GRANTED), str(FOREIGN)]}
 _WHO = {"engaged_by": str(user_id_of("owner")), "reason": "halt"}  # the Owner's, as `actions`
 _OMS = {"name": "oms", "state": "degraded"}  # a health component; `detail` is the Owner's
+#: An `all_roles` flag, an `owner_only` one and a key no flag definition names (E42-T03).
+_FLAGS = {"trading.one_click": True, "storage.cold_tier": True, "test.undefined": True}
+_SEEN = {"trading.one_click": True}  # what a Manager or Viewer may learn of them
 #: One frame per `system_kinds` row, carrying the kind's Owner-only fields where it has any.
 _SYSTEM_SAMPLES: dict[str, dict[str, Any]] = {
     "clock_drift": {"kind": "clock_drift", "severity": "warning", "clock_offset_ms": 900},
     "connection_quality": {"kind": "connection_quality", "class": "lagging", "queue_pct": 30},
     "degraded_data": {"kind": "degraded_data", "degraded_topics": ["heatmap.BTCUSDT"]},
     "exchange_state": {"kind": "exchange_state", "public_ws": "resyncing"},
-    "feature_flags": {"kind": "feature_flags", "feature_flags": {"storage.cold_tier": True}},
-    "health": {"kind": "health", "health": "degraded", "components": [_OMS | {"detail": "x"}]},
+    "feature_flags": {"kind": "feature_flags", "feature_flags": _FLAGS},
+    "health": {
+        "kind": "health",
+        "health": "degraded",
+        "components": [_OMS | {"detail": "x"}],
+        "feature_flags": _FLAGS,
+    },
     "kill_switch": {
         "kind": "kill_switch",
         "kill_switch": _HALT | _WHO,
@@ -655,9 +663,17 @@ def _system_rows() -> dict[str, dict[str, str]]:
 
 
 def _neutral(kind: str, actor: str) -> dict[str, Any]:
-    """The role-neutral view, written out: no Owner-only field, accounts cut to the actor's."""
+    """The role-neutral view, written out: no Owner-only field, accounts cut to the actor's,
+    flag keys to the ones the actor's role may learn."""
     if kind == "health":
-        return {"kind": "health", "health": "degraded", "components": [_OMS]}
+        return {
+            "kind": "health",
+            "health": "degraded",
+            "components": [_OMS],
+            "feature_flags": _SEEN,
+        }
+    if kind == "feature_flags":
+        return {"kind": "feature_flags", "feature_flags": _SEEN}
     mine = [str(GRANTED)] if actor == "manager_with_grant" else []
     return {"kind": "kill_switch", "kill_switch": _HALT | {"exchange_account_ids": mine}}
 

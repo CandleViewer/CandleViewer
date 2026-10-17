@@ -168,7 +168,7 @@ from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
-from candleviewer.ws.system_filter import kill_switch_view, system_view
+from candleviewer.ws.system_filter import FlagVisible, kill_switch_view, system_view
 
 WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
@@ -428,6 +428,7 @@ class _Connection:
         wall_ms: WallClockMs,
         auth_timeout_s: float,
         backpressure: BackpressureConfig | None = None,
+        flag_visible: FlagVisible | None = None,
     ) -> None:
         self.ws = ws
         self.encoding = encoding
@@ -452,6 +453,8 @@ class _Connection:
         self.authz: ConnectionAuthz | None = None
         self.emitter: TopicEmitter | None = None
         self.system_seq = 0
+        #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
+        self.flag_visible = flag_visible
         self.auth_failures = 0
         self.unauth_frames = 0
         self.violations = 0
@@ -518,7 +521,8 @@ class _Connection:
     def push_system(self, body: dict[str, Any]) -> None:
         """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
         whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3)."""
-        view = system_view(body, None if self.authz is None else self.authz.principal)
+        principal = None if self.authz is None else self.authz.principal
+        view = system_view(body, principal, flag_visible=self.flag_visible)
         if view is None:
             return
         self.system_seq += 1
@@ -793,6 +797,9 @@ def make_ws_router(
     git_sha: str = "unknown",
     kill_switch: Callable[[], dict[str, Any]] | None = None,
     system_notices: Callable[[], list[dict[str, Any]]] | None = None,
+    # §15.9 (E42-T03): which flag keys a Manager or Viewer may learn, built by the composition
+    # root from the flag registry. Without it a flag reaches the Owner alone (fail closed).
+    flag_visible: FlagVisible | None = None,
     backpressure: BackpressureConfig | None = None,
 ) -> APIRouter:
     """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
@@ -1395,6 +1402,7 @@ def make_ws_router(
             wall_ms=wall_ms,
             auth_timeout_s=auth_timeout_s,
             backpressure=backpressure,
+            flag_visible=flag_visible,
         )
         if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
             await shed(conn)

@@ -6,16 +6,18 @@ at that moment, so a role or grant change or an in-place re-`auth` applies to ev
 Deny by default: a `kind` outside §15.9's nine reaches nobody, and a principal with none of the
 three roles (the deny-all snapshot) gets nothing. The Owner gets the frame whole; a Manager or
 Viewer only the fields `NEUTRAL_FIELDS` lists for its `kind`, health components without `detail`
-(`04-security-program.md` §7.2.2 row 48) and a kill switch without who engaged it or why, its
-accounts cut to the socket's `account_scope`. A body with nothing to leave out is passed on as
-is (no copy); nothing here is audited or counted, as a left-out field is the contract.
+(`04-security-program.md` §7.2.2 row 48), a kill switch without who engaged it or why, its
+accounts cut to the socket's `account_scope`, and only the flag keys that the injected
+`FlagVisible` admits for its roles (E42-T03): none without one, and a `feature_flags` frame left
+with no key is not sent. A body with nothing to leave out is passed on as is (no copy); nothing
+here is audited or counted, as a left-out field is the contract.
 `kill_switch_view` is that kill-switch cut on its own, for `auth_ok.kill_switch` (§4.3).
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Final
 
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -24,13 +26,20 @@ _BASE: Final = frozenset({"kind", "severity", "message"})
 _KILL_SWITCH: Final = "kill_switch"
 _COMPONENTS: Final = "components"
 _ACCOUNTS: Final = "exchange_account_ids"
+_FLAGS: Final = "feature_flags"
 
-#: §15.9 `kind` -> the fields a Manager or Viewer receives. Empty: the Owner's alone.
+#: (flag key, a principal's roles) -> whether that principal may learn the flag: its registry
+#: `visibility`, and never for a key no flag definition names. The composition root builds it from
+#: the flag registry (`ws` imports no `admin` code); without one no Manager or Viewer learns a flag.
+FlagVisible = Callable[[str, frozenset[str]], bool]
+
+#: §15.9 `kind` -> the fields a Manager or Viewer receives.
 NEUTRAL_FIELDS: Final[Mapping[str, frozenset[str]]] = {
     "health": _BASE
-    | {"health", _COMPONENTS, "exchange", "clock_offset_ms", "degraded_topics", _KILL_SWITCH},
+    | {"health", _COMPONENTS, "exchange", "clock_offset_ms", "degraded_topics", _KILL_SWITCH}
+    | {_FLAGS},
     _KILL_SWITCH: _BASE | {_KILL_SWITCH},
-    "feature_flags": frozenset(),  # key `visibility` is not resolvable here (E42-T03)
+    _FLAGS: _BASE | {_FLAGS},
     "exchange_state": _BASE | {"exchange", "public_ws", "private_ws", "affected_symbols"},
     "connection_quality": _BASE | {"class", "queue_pct", "rtt_ms", "applied"},
     "shutdown_notice": _BASE | {"reason", "closing_in_ms", "expected_downtime_ms"},
@@ -46,9 +55,12 @@ NEUTRAL_KILL_SWITCH: Final = frozenset({"engaged", "scope", "engaged_at_ms"})
 SCOPED_ROLES: Final = frozenset({"manager", "viewer"})
 
 
-def system_view(body: object, principal: PrincipalSnapshot | None) -> Mapping[str, Any] | None:
+def system_view(
+    body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
+) -> Mapping[str, Any] | None:
     """What `principal` receives of the `system` frame `body`: `body` itself, a copy holding only
-    its role-neutral fields, or `None` for nothing. Never changes `body`."""
+    its role-neutral fields, or `None` for nothing. `flag_visible` decides the flag keys a Manager
+    or Viewer may learn; without it they learn none. Never changes `body`."""
     if principal is None or not isinstance(body, Mapping):
         return None
     kind = body.get("kind")
@@ -59,14 +71,18 @@ def system_view(body: object, principal: PrincipalSnapshot | None) -> Mapping[st
         return None
     if principal.is_owner:
         return body
-    if not fields or principal.roles.isdisjoint(SCOPED_ROLES):
+    if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
     if kind == _KILL_SWITCH and not isinstance(body.get(_KILL_SWITCH), Mapping):
         return None  # a kill-switch frame is its state: never sent without it
+    view = body
     for key in body:
-        if key not in fields or not _is_neutral(key, body[key]):
-            return _project(body, fields, principal)
-    return body
+        if key not in fields or not _is_neutral(key, body[key], principal.roles, flag_visible):
+            view = _project(body, fields, principal, flag_visible)
+            break
+    if kind == _FLAGS and _FLAGS not in view:
+        return None  # a flag frame is its keys: never sent with none the role may learn
+    return view
 
 
 def kill_switch_view(
@@ -82,9 +98,13 @@ def kill_switch_view(
     return _kill_switch_view(state, principal)
 
 
-def _is_neutral(key: str, value: object) -> bool:
+def _is_neutral(
+    key: str, value: object, roles: frozenset[str], visible: FlagVisible | None
+) -> bool:
     """Whether a Manager or Viewer may receive this field of the kind's list as is: a nested
-    object only with neutral fields and no account."""
+    object only with neutral fields and no account, a flag map only with keys it may learn."""
+    if key == _FLAGS:  # with a key, and every key one the role may learn
+        return isinstance(value, Mapping) and 0 < len(_flags(value, roles, visible)) == len(value)
     if key == _KILL_SWITCH:
         return isinstance(value, Mapping) and all(
             k in NEUTRAL_KILL_SWITCH or (k == _ACCOUNTS and not value[k]) for k in value
@@ -98,13 +118,19 @@ def _is_neutral(key: str, value: object) -> bool:
 
 
 def _project(
-    body: Mapping[str, Any], fields: frozenset[str], principal: PrincipalSnapshot
+    body: Mapping[str, Any],
+    fields: frozenset[str],
+    principal: PrincipalSnapshot,
+    visible: FlagVisible | None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in body.items():
         if key not in fields:
             continue
-        if key == _KILL_SWITCH:
+        if key == _FLAGS:
+            if shown := _flags(value, principal.roles, visible):
+                out[key] = shown
+        elif key == _KILL_SWITCH:
             if isinstance(value, Mapping):
                 out[key] = _kill_switch_view(value, principal)
         elif key == _COMPONENTS:
@@ -113,6 +139,16 @@ def _project(
         else:
             out[key] = value
     return out
+
+
+def _flags(value: object, roles: frozenset[str], visible: FlagVisible | None) -> dict[str, Any]:
+    """The flags of `value` a principal with `roles` may learn: the string keys `visible` admits,
+    none without it, none of anything but a flag map."""
+    if visible is None or not isinstance(value, Mapping):
+        return {}
+    return {
+        key: flag for key, flag in value.items() if isinstance(key, str) and visible(key, roles)
+    }
 
 
 def _only(item: Mapping[str, Any], keys: frozenset[str]) -> dict[str, Any]:

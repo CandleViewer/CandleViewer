@@ -195,7 +195,131 @@ def test_the_kind_table_is_the_contract_enum_and_names_only_schema_fields() -> N
     assert NEUTRAL_COMPONENT < set(_SCHEMA["properties"]["components"]["items"]["properties"])
 
 
-_OWNER_ONLY = frozenset({"feature_flags", "actions"})
+# -- feature flags: each key by its registry `visibility` (E42-T03, §15.9) ---------------------
+
+#: Stands in for the registry's predicate: flag key -> the roles that may learn it. A real flag is
+#: `all_roles` or `owner_only`; `ui.mgr`, for Managers alone, shows that the principal's own roles
+#: are what is asked. A key not listed is one the registry does not define.
+_FLAG_ROLES: dict[str, frozenset[str]] = {
+    "ui.both": frozenset({"manager", "viewer"}),
+    "ui.mgr": frozenset({"manager"}),
+    "ops.owner": frozenset(),
+}
+
+
+def _visible(key: str, roles: frozenset[str]) -> bool:
+    assert isinstance(key, str), key  # never asked about a key that is not a string
+    return not roles.isdisjoint(_FLAG_ROLES.get(key, frozenset()))
+
+
+_MIXED: dict[object, Any] = {"ui.both": True, "ui.mgr": 50, "ops.owner": False, "x.y": "on", 7: 1}
+_FLAG_FRAME = {"kind": "feature_flags", "severity": "info", "message": "m", "feature_flags": _MIXED}
+
+
+@pytest.mark.parametrize(
+    ("who", "keys"),
+    [
+        (MANAGER, {"ui.both": True, "ui.mgr": 50}),
+        (VIEWER, {"ui.both": True}),
+        (principal("viewer", "manager"), {"ui.both": True, "ui.mgr": 50}),
+    ],
+    ids=["manager", "viewer", "both"],
+)
+def test_a_flag_frame_carries_only_the_keys_the_role_may_learn(
+    who: PrincipalSnapshot, keys: dict[str, Any]
+) -> None:
+    """An `owner_only` key, a key the registry does not define and a key that is not a string
+    are left out; `kind`, `severity` and `message` stay."""
+    before = copy.deepcopy(_FLAG_FRAME)
+    view = system_view(_FLAG_FRAME, who, flag_visible=_visible)
+    assert view == {
+        "kind": "feature_flags",
+        "severity": "info",
+        "message": "m",
+        "feature_flags": keys,
+    }
+    assert _FLAG_FRAME == before
+    assert view is not None
+    validate(_frame(view))
+
+
+def test_a_flag_frame_the_role_may_learn_whole_is_passed_on_as_is() -> None:
+    body = {"kind": "feature_flags", "message": "m", "feature_flags": {"ui.both": 1, "ui.mgr": 0}}
+    assert system_view(body, MANAGER, flag_visible=_visible) is body
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"ops.owner": True}, {"x.y": True}, {7: True}, {}, ["ui.both"], "ui.both", None, "absent"],
+    ids=["owner-only", "undefined", "not-a-string", "empty", "list", "str", "null", "absent"],
+)
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+def test_a_flag_frame_left_with_no_key_reaches_only_the_owner(
+    flags: Any, who: PrincipalSnapshot
+) -> None:
+    body = {"kind": "feature_flags", "message": "m"} | (
+        {} if flags == "absent" else {"feature_flags": flags}
+    )
+    assert system_view(body, who, flag_visible=_visible) is None
+    assert system_view(body, OWNER, flag_visible=_visible) is body
+
+
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+def test_without_a_predicate_no_manager_or_viewer_learns_a_flag(who: PrincipalSnapshot) -> None:
+    """Nothing wired (the fake backend, a test rig): the Owner's alone, as before E42-T03."""
+    health = {"kind": "health", "health": "healthy", "feature_flags": {"ui.both": True}}
+    assert system_view(_FLAG_FRAME, who) is None
+    assert system_view(health, who) == {"kind": "health", "health": "healthy"}
+    assert system_view(_FLAG_FRAME, OWNER) is _FLAG_FRAME and system_view(health, OWNER) is health
+
+
+@pytest.mark.parametrize("who", [OWNER, principal("owner", "manager")], ids=["owner", "both"])
+def test_the_owner_receives_every_flag_frame_whole(who: PrincipalSnapshot) -> None:
+    def nothing(key: str, roles: frozenset[str]) -> bool:
+        return False
+
+    for flag_visible in (None, _visible, nothing):
+        assert system_view(_FLAG_FRAME, who, flag_visible=flag_visible) is _FLAG_FRAME
+
+
+def test_a_principal_with_no_role_learns_no_flag_even_one_every_role_may() -> None:
+    def every(key: str, roles: frozenset[str]) -> bool:
+        return True
+
+    health = {"kind": "health", "health": "healthy", "feature_flags": {"ui.both": True}}
+    for body in (_FLAG_FRAME, health):
+        assert system_view(body, DENY_ALL, flag_visible=every) is None
+        assert system_view(body, None, flag_visible=every) is None
+
+
+@pytest.mark.parametrize(
+    ("flags", "kept"),
+    [
+        ({"ui.both": True, "ops.owner": True, "x.y": 1}, {"feature_flags": {"ui.both": True}}),
+        ({"ops.owner": True, "x.y": 1}, {}),  # none left: the field is left out, the frame is not
+        ({}, {}),
+        ("ui.both", {}),
+    ],
+    ids=["mixed", "none-visible", "empty", "not-a-map"],
+)
+def test_a_health_frame_carries_the_flag_keys_the_role_may_learn(
+    flags: Any, kept: dict[str, Any]
+) -> None:
+    """The `system` snapshot is a `health` frame (§6.2, §12.1): it carries the set the role may
+    learn, cut as a `feature_flags` frame is."""
+    body = {"kind": "health", "health": "healthy", "feature_flags": flags}
+    view = system_view(body, VIEWER, flag_visible=_visible)
+    assert view == {"kind": "health", "health": "healthy"} | kept
+    assert view is not None
+    validate(_frame(view))
+
+
+def test_a_health_frame_whose_flags_the_role_may_all_learn_is_passed_on_as_is() -> None:
+    body = {"kind": "health", "health": "healthy", "feature_flags": {"ui.both": True}}
+    assert system_view(body, VIEWER, flag_visible=_visible) is body
+
+
+_OWNER_ONLY = frozenset({"actions"})
 _OWNER_ONLY_STATE = frozenset({"engaged_by", "engaged_by_username", "reason"})
 _VALUES = st.recursive(
     st.none() | st.booleans() | st.integers() | st.text(max_size=4),
@@ -205,6 +329,7 @@ _VALUES = st.recursive(
 _IDS = st.lists(st.sampled_from([str(ACC_A), str(ACC_B), str(ACC_B).upper(), "x"]), max_size=3)
 _PART_KEYS = st.sampled_from(["name", "state", "detail", "last_good_at", "x"])
 _STATE_KEYS = st.sampled_from([*sorted(_SCHEMA["$defs"]["killSwitch"]["properties"]), "x"])
+_FLAG_KEYS = st.sampled_from([*sorted(_FLAG_ROLES), "x.y"]) | st.integers() | st.text(max_size=4)
 
 
 @settings(max_examples=200, deadline=None)
@@ -215,15 +340,29 @@ _STATE_KEYS = st.sampled_from([*sorted(_SCHEMA["$defs"]["killSwitch"]["propertie
     ),
     state=st.dictionaries(_STATE_KEYS, _VALUES | _IDS) | _VALUES,
     parts=st.lists(st.dictionaries(_PART_KEYS, _VALUES), max_size=3) | _VALUES,
+    flags=st.dictionaries(_FLAG_KEYS, _VALUES) | _VALUES,
+    flag_visible=st.sampled_from([None, _visible]),
     who=st.sampled_from([MANAGER, VIEWER, principal("manager"), principal("viewer", "manager")]),
 )
 def test_no_manager_or_viewer_view_carries_an_owner_only_field_or_a_foreign_account(
-    kind: str, extra: dict[str, Any], state: Any, parts: Any, who: PrincipalSnapshot
+    kind: str,
+    extra: dict[str, Any],
+    state: Any,
+    parts: Any,
+    flags: Any,
+    flag_visible: Any,
+    who: PrincipalSnapshot,
 ) -> None:
-    view = system_view(extra | {"kind": kind, "kill_switch": state, "components": parts}, who)
+    body = extra | {"kind": kind, "kill_switch": state, "components": parts, "feature_flags": flags}
+    view = system_view(body, who, flag_visible=flag_visible)
     if view is None:
         return
     assert set(view) <= NEUTRAL_FIELDS[kind] and not set(view) & _OWNER_ONLY
+    shown = view.get("feature_flags")
+    assert shown or kind != "feature_flags"  # a flag frame is never sent without a key
+    if shown is not None:  # a flag key only if the role may learn it, and never an empty map
+        assert flag_visible is not None and shown
+        assert all(isinstance(k, str) and _visible(k, who.roles) for k in shown)
     for item in view.get("components") or ():
         assert set(item) <= {"name", "state", "last_good_at"}  # never `detail`
     held = view.get("kill_switch")
