@@ -260,6 +260,8 @@ def match_operation(method: str, path: str, operations: tuple[_Operation, ...]) 
 #: Called once for a tracked write that may be lost: it failed after its caller stopped
 #: waiting, or it was still running when `drain()` gave up. The owner counts it.
 LostWrite = Callable[[], None]
+#: Log line of a write that failed after its caller stopped waiting, unless its owner names one.
+CSRF_LATE_FAILURE_EVENT = "auth.csrf_refused.audit_failed_late"
 
 
 def _count_audit_unavailable() -> None:
@@ -268,8 +270,9 @@ def _count_audit_unavailable() -> None:
 
 class RefusalAuditTracker:
     """Bounded set of in-flight refusal audits (C-2.18), and the accounting for the ones
-    nobody waits for any more. Shared by the CSRF guard and the session-fixation audit, so
-    it knows no metric: a consumer passes `on_lost` to `track()` to count its own writes.
+    nobody waits for any more. Shared by the CSRF guard and the session audits, so it knows
+    no metric: a consumer passes `on_lost` to `track()` to count its own writes, and
+    `late_failure_event` to name the log line of its own late failure.
 
     Each audit runs as a tracked task under `asyncio.shield` so a timeout never cancels
     `AuditWriter.emit` mid-append (that would release the WAL lock while the append thread
@@ -281,7 +284,8 @@ class RefusalAuditTracker:
 
     def __init__(self, cap: int = MAX_INFLIGHT_AUDITS) -> None:
         self._cap = cap
-        self._tasks: dict[asyncio.Task[None], LostWrite | None] = {}
+        # task -> (its owner's `on_lost`, the event its late failure is logged as)
+        self._tasks: dict[asyncio.Task[None], tuple[LostWrite | None, str]] = {}
         self._timed_out: set[asyncio.Task[None]] = set()
 
     def __len__(self) -> int:
@@ -292,11 +296,15 @@ class RefusalAuditTracker:
         return len(self._tasks) >= self._cap
 
     def track(
-        self, coro: Coroutine[Any, Any, None], *, on_lost: LostWrite | None = None
+        self,
+        coro: Coroutine[Any, Any, None],
+        *,
+        on_lost: LostWrite | None = None,
+        late_failure_event: str = CSRF_LATE_FAILURE_EVENT,
     ) -> asyncio.Task[None]:
         """Run *coro* as a tracked task (not a lifecycle `start`; nothing to stop)."""
         task = spawn(coro, name="csrf-refusal-audit")
-        self._tasks[task] = on_lost
+        self._tasks[task] = (on_lost, late_failure_event)
         task.add_done_callback(self._done)
         return task
 
@@ -307,7 +315,7 @@ class RefusalAuditTracker:
             self._timed_out.add(task)
 
     def _done(self, task: asyncio.Task[None]) -> None:
-        on_lost = self._tasks.pop(task, None)
+        on_lost, late_event = self._tasks.pop(task, (None, CSRF_LATE_FAILURE_EVENT))
         if task not in self._timed_out:
             return  # the awaiting caller handles its outcome
         self._timed_out.discard(task)
@@ -315,7 +323,7 @@ class RefusalAuditTracker:
             return
         exc = task.exception()
         if exc is not None:
-            _log().error("auth.csrf_refused.audit_failed_late", error=type(exc).__name__)
+            _log().error(late_event, error=type(exc).__name__)
             if on_lost is not None:
                 on_lost()
 
@@ -327,7 +335,7 @@ class RefusalAuditTracker:
         if pending:
             await asyncio.wait(pending, timeout=timeout_s)
         left = dict(self._tasks)
-        for task, on_lost in left.items():
+        for task, (on_lost, _) in left.items():
             self._timed_out.discard(task)
             if on_lost is not None:
                 on_lost()

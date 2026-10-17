@@ -116,6 +116,11 @@ auth_session_fixation_attempts_total = Counter(
     #             | audit_throttled | audit_slow | audit_unavailable | audit_failed (bookkeeping)
     ["reason"],
 )
+auth_session_revoke_denied_total = Counter(
+    "auth_session_revoke_denied_total",
+    "DELETE /me/sessions/{id} for an id that is not one of the caller's live sessions "
+    "(IDOR probe, or a stale row for the caller's own ended session).",
+)
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
     "Seconds from session revocation to its WebSocket connection being closed.",
@@ -206,6 +211,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_readonly_downgrades_total",
         "users_invites_rejected_total",
         "auth_disabled_user_sessions_revoked_total",
+        "auth_session_revoke_denied_total",
     }
 )
 

@@ -1856,6 +1856,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_session_revoke_denied_total",
+        "counter",
+        "denials",
+        (),
+        "DELETE /me/sessions/{id} for an id that is not one of the caller's live sessions: an IDOR "
+        "probe, or a stale row for their own ended session "
+        "(audited as auth.session_revoke_denied).",
+        "none yet (IDOR probe; #2746)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_csrf_refused_total",
         "counter",
         "refusals",

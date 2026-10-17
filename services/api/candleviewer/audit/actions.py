@@ -43,6 +43,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_fixation_attempt",
         # #2269 (SR-042/SR-183): a WS upgrade refused by the Origin check (`ws/origin_audit.py`).
         "auth.ws_origin_refused",
+        # E09-X02 (#2319, AC-CSRF-05): `DELETE /me/sessions/{id}` for an id that is not one of the
+        # caller's live sessions (the response is the same 404 for a foreign id, an unknown id and
+        # the caller's own ended session).
+        "auth.session_revoke_denied",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

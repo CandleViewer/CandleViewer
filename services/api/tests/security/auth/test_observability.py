@@ -36,6 +36,7 @@ ALERTING: dict[str, set[str]] = {
         "CsrfRefusalAuditDegraded",  # audit_slow / audit_saturated (#2838)
     },
     "auth_session_fixation_attempts_total": set(),
+    "auth_session_revoke_denied_total": set(),
     "auth_refresh_reuse_total": set(),
     "auth_stepup_failures_total": set(),  # scraped since #2612, but SR-125's alert is not written
     "users_invites_rejected_total": set(),
@@ -137,7 +138,7 @@ def test_obs_refresh_token_reuse_is_a_critical_row_and_a_scraped_count(
     assert stack.scraped("auth_refresh_reuse_total") - reuse == 1  # #2319: no alert yet (#2746)
 
 
-def test_obs_csrf_refusals_are_audited_scraped_and_alertable_but_an_idor_probe_is_silent(
+def test_obs_csrf_refusals_are_alertable_and_an_idor_probe_is_audited_and_scraped(
     stack: Stack,
 ) -> None:  # AC-CSRF-01/02/04/05 through the real middleware
     _, seed = stack.add_user("victim")
@@ -159,10 +160,13 @@ def test_obs_csrf_refusals_are_audited_scraped_and_alertable_but_an_idor_probe_i
     session_id = stack.call(
         stack.auth.sessions.authenticate_access_token, victim.json()["tokens"]["access_token"]
     ).id
-    recorded = len(stack.audit.records)
+    probes = stack.scraped("auth_session_revoke_denied_total")
     probe = stack.client.delete(f"/me/sessions/{session_id}", headers=attacker)
     assert probe.status_code == 404  # defended (victim session intact) ...
-    assert len(stack.audit.records) == recorded  # ... but invisible: no row, no metric
+    assert _rows(stack, "auth.session_revoke_denied") == [
+        ("not_live_own_session", "denied", "warning")
+    ]
+    assert stack.scraped("auth_session_revoke_denied_total") - probes == 1  # ... and visible
 
 
 def test_obs_rbac_denial_is_audited_and_counted_on_the_scraped_registry(

@@ -8,6 +8,7 @@
 ["auth_refresh_reuse_total", "counter", [], "live", "E09"]
 ["auth_session_fixation_attempts_total", "counter", ["reason"], "live", "E09"]
 ["auth_session_revocations_total", "counter", ["reason"], "live", "E09"]
+["auth_session_revoke_denied_total", "counter", [], "live", "E09"]
 ["auth_stepup_failures_total", "counter", [], "live", "E09"]
 ["auth_totp_clock_skew_total", "counter", ["kind"], "live", "E09"]
 ["authz_denied_total", "counter", ["permission"], "live", "E09"]
