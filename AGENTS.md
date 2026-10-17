@@ -125,6 +125,8 @@ CandleViewer/
 │     ├─ recorder/ replay/
 │     ├─ accounts/ oms/ rules/ paper/ risk/ journal/ alerts/ admin/
 │     ├─ http/ ws/            # contract-first routers
+│     ├─ cvdev/               # dev-only fixture code (#2893): in no wheel, sdist or image; only
+│     │                       # candleviewer/account_fixture_wiring.py imports it, lazily
 │     ├─ pyproject.toml       # ruff, black, mypy strict, pytest config
 │     └─ tests/               # unit + integration (fixtures under tests/fixtures/bybit/)
 ├─ infra/                     # docker compose, Dockerfiles, Prometheus/Grafana, Tailscale notes
