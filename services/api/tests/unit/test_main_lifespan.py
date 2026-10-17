@@ -306,3 +306,23 @@ async def test_a_failed_boot_record_stops_every_module_and_raises(
         await _lifespan(app).__aenter__()
 
     assert not [m for m in _modules(ctx) if not m.stopped]
+
+
+async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_stops() -> None:
+    app = FastAPI()
+    ctx = _fake_ctx()
+    app.state.app_context = ctx
+    seen: list[str] = []
+
+    class _Flush:
+        def start(self) -> None:
+            seen.append("start")
+
+        async def stop(self) -> int:
+            seen.append(f"stop, audit stopped={ctx.audit.stopped}")
+            return 0
+
+    app.state.audit_budget_flush = _Flush()
+    async with _lifespan(app):
+        assert seen == ["start"]
+    assert seen == ["start", "stop, audit stopped=False"] and ctx.audit.stopped
