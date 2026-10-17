@@ -8,13 +8,14 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from candleviewer.api.sessions import UnlockBody
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
-from candleviewer.auth.models import MintedSession, UserStatus
+from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from tests.conftest import RecordingAuditSink
 
 from ._world import (
@@ -123,15 +124,24 @@ async def test_wrong_password_is_unlock_invalid_counted_toward_the_account_locko
     assert "auth.idle_locked" in w.chart_state(minted)
 
 
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
 async def test_fifth_wrong_password_revokes_and_publishes_then_unlock_is_session_revoked(
     w: World,
 ) -> None:
-    """AC "Five wrong unlock passwords revoke the session" (#2272 revocation frame)."""
+    """AC "Five wrong unlock passwords revoke the session" (#2272 revocation frame), counted
+    as every revocation is: `auth_session_revocations_total` up, `auth_sessions_active` down."""
     minted = await w.mint(await w.add_user())
     w.lock()
+    revocations = _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded")
+    active = _sample("auth_sessions_active")
     for _ in range(4):
         assert (await _unlock(w, _bearer(minted), _WRONG)).json()["code"] == "unlock_invalid"
     fifth = await _unlock(w, _bearer(minted), _WRONG)
+    counted = _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded")
+    assert (counted, _sample("auth_sessions_active")) == (revocations + 1, active - 1)
     assert fifth.status_code == 401
     assert (fifth.json()["code"], fifth.json()["revoked_reason"]) == (
         "session_revoked",
@@ -206,6 +216,26 @@ async def test_a_locked_session_of_a_disabled_user_is_revoked_never_unlocked(
     assert (await w.row(minted)).revoked_reason == "user_disabled"
     assert w.published == [(str(minted.session_id), "user_disabled")]
     assert w.failed_logins(uid) == 0 and w.audit.writer.records == [] and w.b16.calls == []
+
+
+async def test_a_session_gone_before_the_backstop_re_reads_it_is_unauthenticated(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row went after the route read it: the uniform 401, as from `GET /auth/session`,
+    and nothing is checked, recorded or audited."""
+    minted = await w.mint(await w.add_user())
+    w.lock()
+    peek = w.sessions.peek_access_token
+
+    async def then_gone(token: str) -> SessionRecord | None:
+        found = await peek(token)
+        del w.repo.sessions[str(minted.session_id)]
+        return found
+
+    monkeypatch.setattr(w.sessions, "peek_access_token", then_gone)
+    r = await _unlock(w, _bearer(minted))
+    assert r.status_code == 401 and r.json().get("code") is None
+    assert w.audit.writer.records == [] and w.b16.calls == []
 
 
 async def test_rotated_away_credentials_are_unauthenticated_never_session_revoked(
@@ -289,6 +319,25 @@ async def test_unlock_without_a_step_up_authority_fails_closed_with_503(
         minted = await w.mint(await w.add_user())
         w.lock()
         assert (await _unlock(w, _bearer(minted))).status_code == 503
+    finally:
+        await w.client.aclose()
+        await w.step_up.stop()
+
+
+async def test_unlock_without_an_identity_provider_is_501_and_checks_nothing(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """No identity provider (E09-T03) to answer `SessionInfo` with: unlock is disabled before
+    any throttle, credential, password check, B16 step or audit record."""
+    w = await _open(b16_audit, identity=False)
+    try:
+        uid = await w.add_user()
+        minted = await w.mint(uid)
+        w.lock()
+        r = await _unlock(w, _bearer(minted))
+        assert r.status_code == 501
+        assert w.failed_logins(uid) == 0 and w.audit.writer.records == [] and w.b16.calls == []
+        assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
     finally:
         await w.client.aclose()
         await w.step_up.stop()

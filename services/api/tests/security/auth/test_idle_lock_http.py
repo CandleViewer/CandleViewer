@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import route_path
+from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE
@@ -339,3 +341,16 @@ def test_a_live_access_token_binds_logout_to_its_own_session_whatever_the_cookie
     r = stack.client.post("/auth/logout", headers=headers)
     assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
     assert _live(stack, mine) and _live(stack, theirs)
+
+
+def test_no_one_click_arm_route_is_served_while_unlock_cannot_invalidate_an_arm_record(
+    stack: Stack,
+) -> None:
+    """Catalogue B16.7 ordering (#2305): an `arm_token` must never outlive an unlock. This app
+    serves `POST /auth/unlock` and has no arm record, so `POST /settings/arm` is not served.
+    #2305 adds the record, its invalidation in the write that lifts a lock
+    (`lift_idle_lock`) and its regression test, and only then replaces this guard."""
+    app = cast(FastAPI, stack.client.app)
+    served = {(method, route_path(path)) for method, path in served_operations(app)}
+    assert ("POST", "/auth/unlock") in served
+    assert not [op for op in served if op[1] == "/settings/arm"]

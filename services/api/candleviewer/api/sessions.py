@@ -121,6 +121,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.statechart.gateway import GatewayError
 
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
@@ -826,16 +827,35 @@ def make_session_router(
             return None
         return body.password.get_secret_value()
 
-    async def _chart_step(event: str, step: Awaitable[None]) -> JSONResponse | None:
+    async def _recorded(event: str, step: Awaitable[None]) -> bool:
         """Await an unlock step on B16 (*event* names it), against the row as read while
-        locked (B16.7). A failed record answers 503: the edge never reports a step it
-        could not record."""
+        locked (B16.7); False, logged, when it was not recorded: the chart failed
+        (`SessionChartError`), or the statechart gateway refused the send (an unknown key,
+        the wrong loop, a full inbox)."""
         try:
             await step
-        except SessionChartError as exc:
+        except (SessionChartError, GatewayError) as exc:
             _log().error("auth.unlock.chart_failed", b16_event=event, error=type(exc).__name__)
-            return _problem(503, "Service unavailable", "session record unavailable")
-        return None
+            return False
+        return True
+
+    async def _record_committed(
+        chart: SessionChart, record: SessionRecord, at: datetime, event: str, **payload: Any
+    ) -> None:
+        """The B16 step of an outcome `unlock()` has committed, its audit rows written ahead
+        (B16.7: the chart writes none of them). B16 only records (C-2.21), so a failed step
+        (`SessionChartError`, or a gateway refusal such as a full inbox) never changes the
+        answer, which states what was committed. The session's chart is dropped instead: its
+        next use rebuilds it from the row, so a missed step cannot hide the next lock. A step
+        cut short by a cancelled request (the client went away after the commit) drops it the
+        same way before the cancellation goes on."""
+        try:
+            recorded = await _recorded(event, chart.record(record, at, event, **payload))
+        except asyncio.CancelledError:
+            await chart.forget(str(record.id))
+            raise
+        if not recorded:
+            await chart.forget(str(record.id))
 
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
@@ -1035,8 +1055,8 @@ def make_session_router(
         # B16.7: the lock is recorded (`auth.idle_locked`) before `unlock()` runs, so a
         # failed record answers 503 with the row still locked. `observe` sends no event
         # but the lock the row shows: the route never sends `REQUEST`.
-        if (down := await _chart_step("IDLE_DEADLINE", chart.observe(record, at))) is not None:
-            return down
+        if not await _recorded("IDLE_DEADLINE", chart.observe(record, at)):
+            return _problem(503, "Service unavailable", "session record unavailable")
         decided: list[UnlockOutcome] = []
         locked_account: list[datetime] = []
         verify, user_id = authority.verify_password, str(record.user_id)
@@ -1091,30 +1111,35 @@ def make_session_router(
             _log().error("auth.unlock.audit_unavailable", error=type(exc).__name__)
             return _audit_down()  # the lock stays and nothing was revoked
         except UnlockPasswordInvalid:
-            failed = await _chart_step("UNLOCK_FAILED", chart.record(record, at, "UNLOCK_FAILED"))
-            return failed or idle_lock.unlock_invalid_problem()
+            await _record_committed(chart, record, at, "UNLOCK_FAILED")
+            return idle_lock.unlock_invalid_problem()
         except SessionNotLocked:  # lifted by another request since the check above
+            # `observe` used the row read before that unlock, so it may have recorded the
+            # lifted lock again: the chart would stay locked over an unlocked row and miss
+            # the next lock. It is dropped (rebuilt from the row on next use), as for a
+            # session revoked or gone meanwhile.
+            await chart.forget(str(record.id))
             return idle_lock.not_locked_problem()
         except SessionRevoked as exc:
             if UnlockOutcome.REVOKED not in decided:  # revoked by something else meanwhile
+                await chart.forget(str(record.id))
                 return idle_lock.session_revoked_problem(exc.reason)
             # The service already published the revocation: sockets close with 4401 (#2272).
             # B16.7: `revoked` carries this decision to the chart's guard; `replay` keeps the
             # chart from writing a second `auth.session_revoked`.
-            failed = await _chart_step(
-                "UNLOCK_FAILED",
-                chart.record(record, at, "UNLOCK_FAILED", revoked=True, replay=True),
-            )
-            return failed or idle_lock.session_revoked_problem("unlock_attempts_exceeded")
+            await _record_committed(chart, record, at, "UNLOCK_FAILED", revoked=True, replay=True)
+            return idle_lock.session_revoked_problem("unlock_attempts_exceeded")
         except SessionNotFound:
+            await chart.forget(str(record.id))
             return _unauthorized()
-        lifted = await _chart_step(
-            "UNLOCK_OK",
-            chart.record(
-                record, at, "UNLOCK_OK", idle_expires_at_us=to_us(unlocked.idle_deadline())
-            ),
+        await _record_committed(
+            chart, record, at, "UNLOCK_OK", idle_expires_at_us=to_us(unlocked.idle_deadline())
         )
-        return lifted or JSONResponse(await _session_info(identity, unlocked, now()))
+        try:
+            info = await _session_info(identity, unlocked, now())
+        except LookupError:  # the user went after the commit: as `/me` answers, never a 500
+            return _unauthorized()
+        return JSONResponse(info)
 
     @router.get("/auth/sessions")
     async def list_sessions(

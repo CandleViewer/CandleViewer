@@ -121,6 +121,10 @@ is a case that pins what `cv_app` holds or what owns the guard.
 | AC-STEP-02    | U18               | Grace window                                        | Replay same code to extend window                                                                     | Refused, window not extended                                                                                                                                                 | Refused                                                                                                        | DEFENDED                                                                  |
 | AC-STEP-03    | U18               | Other user's TOTP code                              | step_up                                                                                               | StepUpCodeInvalid                                                                                                                                                            | Refused                                                                                                        | DEFENDED                                                                  |
 | AC-STEP-04    | U18               | Unknown session                                     | step_up                                                                                               | StepUpRequired                                                                                                                                                               | Refused                                                                                                        | DEFENDED                                                                  |
+| AC-LOCK-01    | U2 U18 SR-025     | Unattended locked terminal; knows the password      | `POST /auth/unlock` with the password and no TOTP code; then a step-up-gated action                   | Unlocks: password only (#2290 ruling, contract `authUnlock`); the lifting write clears every step-up grant and pending challenge, so a gated action still needs TOTP         | 200, `step_up_expires_at` null, every grant gone, `require_elevation` refuses; a body with a code is 422       | DESIGN-DECISION (router level; see the evidence note)                     |
+| AC-LOCK-02    | TB-4 SR-041       | Cookie only, no live access token (after a reload)  | `POST /auth/unlock` with no or a foreign `Origin`, or with an SR-041 token bound to another session   | 403 before any password check, count or record: the route checks the SR-042 `Origin` and binds the SR-041 token to the session it unlocks, as `/auth/refresh` does           | 403, no password checked or counted; another session's token: 403 `csrf_token_invalid`, audited                | DEFENDED (router level; see the evidence note)                            |
+| AC-LOCK-03    | U1 SR-016         | Locked terminal; guesses the password               | Five wrong unlock passwords, then the right one                                                       | The fifth wrong password revokes the session (`unlock_attempts_exceeded`, published: its sockets close with 4401); the right password then answers `session_revoked`         | 401 `unlock_invalid` x4, then 401 `session_revoked`; revoked, published and counted; right password refused    | DEFENDED (router level; see the evidence note)                            |
+| AC-LOCK-04    | U27 SR-016        | Locked terminal of a legitimate user                | Wrong unlock passwords to lock the account out: U27 from the lock screen, not the login form          | A wrong unlock password counts toward the SR-016 lockout as a wrong login does; the one that locks the account writes `auth.account_locked`; time-bounded (AC-CRED-05)       | Counted on the account; `auth.account_locked` written; while locked, the right password fails like a wrong one | DESIGN-DECISION (lockout shared with login; see the evidence note)        |
 | AC-INV-01..04 | U12 SR-027        | Guessing, expired, reused, owner role               | invite service                                                                                        | Uniform reject; owner not invitable                                                                                                                                          | As expected                                                                                                    | DEFENDED (fake repo)                                                      |
 | AC-INV-05     | U12 SR-027        | Owner session, stepped up                           | `POST /users` with role `manager`, then `owner`                                                       | 422, audited, nothing created                                                                                                                                                | 422 x2; 2 `users.invite_refused` rows; no invite. Before #2316: 500, no row (F-3)                              | DEFENDED                                                                  |
 | AC-INV-06     | SR-027 (#2109)    | Legacy invite row stored as `manager`               | Redeem over HTTP                                                                                      | Viewer only; downgrade audited                                                                                                                                               | Viewer; `users.invite_role_downgraded`, `users.invite_redeemed`. Before #2316: 500 (F-3)                       | DEFENDED                                                                  |
@@ -143,6 +147,30 @@ Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integra
   refuses a non-owner of the table before it looks an `ALTER TABLE ... TRIGGER` name up.
 - The owner's own `TRUNCATE` refusal is asserted by that module after every AC-AUD-02 attack, and on its own by
   `test_truncate_refused_even_for_owner` in `services/api/tests/integration/audit/test_audit_repository.py`.
+
+Evidence for AC-LOCK-01..04 (#2300, `POST /auth/unlock`): router-level tests in
+`services/api/tests/unit/api/idle_lock/`, in `test_unlock.py` unless another file is named. The
+deployed app keeps the route dark until #2300's last slice wires it: `create_app()` passes no unlock
+authority yet, so it answers 503 to everyone.
+
+- AC-LOCK-01: `test_unlock_with_the_password_lifts_the_lock_and_restamps_the_deadline`,
+  `test_unlock_clears_every_step_up_grant_in_the_one_write_that_lifts_the_lock` (no unlock carries
+  elevation), `test_unlock_body_is_the_password_only`,
+  `test_another_users_password_does_not_unlock_the_session` and
+  `test_unlock_is_throttled_per_source_ip_and_a_throttled_attempt_checks_no_password`.
+- AC-LOCK-02: the route's own checks (`_origin_ok`, then `_csrf_refusal`, in `unlock` in
+  `api/sessions.py`): `test_cookie_unlock_without_an_allowed_origin_is_refused_before_any_check`,
+  `test_unlock_with_a_csrf_token_of_another_session_is_refused_and_audited` (the cookie and the
+  bearer alike) and `test_unlock_with_only_the_refresh_cookie_after_the_access_token_expired`.
+- AC-LOCK-03: `test_fifth_wrong_password_revokes_and_publishes_then_unlock_is_session_revoked`,
+  `test_fifth_wrong_password_with_the_records_failing_is_503_never_a_plain_401` and
+  `test_every_wrong_password_is_recorded_as_unlock_failed_the_revoking_one_replayed`
+  (`test_unlock_b16.py`).
+- AC-LOCK-04: `test_wrong_password_is_unlock_invalid_counted_toward_the_account_lockout`,
+  `test_the_wrong_unlock_password_that_locks_the_account_writes_account_locked` and
+  `test_a_locked_account_fails_like_a_wrong_password`. The password check is step-up's, on login's
+  path (`StepUpService.verify_password`), so a lockout it applies also counts on
+  `auth_lockouts_total`, which the `AuthLockouts` alert reads (U27's owner alert).
 
 ## NOT RUN (no observed result; env-only, tracked in #2105)
 

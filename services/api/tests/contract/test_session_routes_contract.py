@@ -1,12 +1,18 @@
 """The session routes answer only statuses their contract declares (#2914 item 1).
 
-Follow-up of #2251 and #2872. `22-api-openapi.yaml` is the contract (C-6.1): for the five session
+Follow-up of #2251 and #2872. `22-api-openapi.yaml` is the contract (C-6.1): for the session
 operations it declares exactly the statuses the routes answer, each failure as the shared response
 of its status, and never narrows one (C-6.3). New here: `503` on `authLogout` and `revokeMySession`
 (the audit sink is not active or refused the record, or the session backend is not wired: nothing
 is revoked, no cookie cleared, C-2.9), `401` on `revokeMySession`, `503` on `authGetSession` and
 `authListSessions` (session backend not wired) and `422` on `authRefresh` (a body that is not the
 documented JSON).
+
+`authUnlock` (#2300) is pinned the same way, except that its `401` (`unlock_invalid`,
+`session_revoked`, `unauthenticated`) and `409` (`conflict`) carry codes of their own, so they reuse
+no shared response. Its session is locked by an idle timeout that has passed while its access token
+still lives, its password check stands in for login's (the B16 chart is real), and its `503` for an
+unwired backend is driven bare too.
 
 Provider side: each operation is driven to every status it declares, through the real session
 router behind the app's SR-041 guard and error handler, over the shared in-memory fakes
@@ -15,14 +21,15 @@ the contract omits fails, and so does a declared status no request reaches. The 
 caller's session through the session backend and refuses `authLogout` and `revokeMySession` with
 `403` first when it is not wired, so the router's own `503` for that cause is driven with the
 router mounted bare. Out of the pin: the `501 not_implemented` of an unwired identity provider,
-which `authRefresh` and `authGetSession` answer and neither declares. Bodies are not compared
-(#2828).
+which `authRefresh`, `authGetSession` and `authUnlock` answer and none declares. Bodies are not
+compared (#2828).
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import timedelta
 from functools import partial
 from typing import Any, Literal
 
@@ -39,16 +46,20 @@ from candleviewer.audit.actions import validate_action
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CSRF_HEADER
 from candleviewer.auth.models import MintedSession
+from candleviewer.auth.session_chart import SessionChart
+from candleviewer.auth.session_service import MIN_IDLE_TIMEOUT_S, SessionService
+from candleviewer.auth.step_up import PasswordVerdict
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
 from tests.unit.api._fakes import (
     BASE,
     CSRF_CODEC,
+    HASHER,
+    NOW,
     AuditService,
     Identity,
     RecordingWriter,
     SessionsAuth,
-    sessions,
 )
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -57,6 +68,7 @@ _USER = uuid.UUID("00000000-0000-4000-8000-0000000000d1")
 _STRANGER = uuid.UUID("00000000-0000-4000-8000-0000000000d2")
 _BAD = {CSRF_HEADER: "tampered"}  # a CSRF header that is not the cookie
 _JSON = {"Content-Type": "application/json"}
+_PW = "contract-unlock-pw"  # test-only literal, never a credential
 
 #: The statuses each session operation declares, exactly. A status added or dropped here is a
 #: contract change (C-6.1; C-6.3: declaring one is additive) and needs a request in `_ANSWERS`.
@@ -66,7 +78,10 @@ _DECLARED: dict[str, frozenset[int]] = {
     "authListSessions": frozenset({200, 401, 422, 503}),
     "authLogout": frozenset({204, 401, 403, 422, 503}),
     "revokeMySession": frozenset({204, 401, 403, 404, 422, 503}),
+    "authUnlock": frozenset({200, 401, 403, 409, 422, 429, 503}),
 }
+#: Failure statuses an operation documents itself, with codes of its own (#2300).
+_OWN_RESPONSE: dict[str, frozenset[int]] = {"authUnlock": frozenset({401, 409})}
 #: The shared response (`components.responses`) each failure status reuses.
 _SHARED_RESPONSE = {
     401: "Unauthorized",
@@ -112,9 +127,12 @@ def test_session_operation_failures_reuse_the_shared_response_of_their_status(
     responses = _declared(spec, operation_id)["responses"]
     failures = {int(code): response for code, response in responses.items() if int(code) >= 400}
     shared = {**_SHARED_RESPONSE, **_GUARD_ONLY.get(operation_id, {})}
+    own = [failures.pop(status) for status in sorted(_OWN_RESPONSE.get(operation_id, ()))]
     assert failures == {
         status: {"$ref": f"#/components/responses/{shared[status]}"} for status in failures
     }
+    schemas = [response["content"]["application/problem+json"]["schema"] for response in own]
+    assert schemas == [{"$ref": "#/components/schemas/Problem"}] * len(own)  # still problems
 
 
 @pytest.mark.parametrize("operation_id", ["authLogout", "revokeMySession"])
@@ -138,23 +156,37 @@ class _RefusingWriter(RecordingWriter):
         raise AuditUnavailable("audit WAL unavailable: OSError")
 
 
+class _Authority:
+    """`POST /auth/unlock`'s authority: the real B16 chart, and a stand-in for login's password
+    check that verifies `_PW` only (Argon2id and the lockout are the unlock route tests')."""
+
+    def __init__(self) -> None:
+        self.chart = SessionChart()
+
+    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict:
+        return PasswordVerdict(ok=password == _PW)
+
+
 class _World:
     """The session router behind the app's SR-041 guard and error handler, wired as `create_app`
     wires them. *sink*: `active`, `inactive`, or `refusing` (active, but its writer refuses).
-    *signed_out*: the caller's session was revoked after it was minted. *guarded*: False mounts the
-    router bare, to reach what the guard answers first."""
+    *signed_out*: the caller's session was revoked after it was minted. *locked*: it is idle-locked.
+    *budget*: refreshes and unlocks per window. *guarded*: False mounts the router bare, to reach
+    what the guard answers first."""
 
     def __init__(
         self,
         *,
         sink: Literal["active", "inactive", "refusing"] = "active",
         backend_wired: bool = True,
-        refresh_budget: int = 10,
+        budget: int = 10,
         signed_out: bool = False,
+        locked: bool = False,
         guarded: bool = True,
     ) -> None:
-        self.signed_out = signed_out
-        self.svc = sessions(FakeSessionRepository())
+        self.signed_out, self.locked, self.now = signed_out, locked, NOW
+        self.svc = SessionService(FakeSessionRepository(), HASHER, clock=lambda: self.now)
+        self.authority = _Authority()
         self.audit = AuditService(active=sink != "inactive")
         if sink == "refusing":
             self.audit.writer = _RefusingWriter()
@@ -162,7 +194,7 @@ class _World:
         auth.sessions_is_active = backend_wired
 
         def throttle() -> PerIpLoginThrottle:
-            return PerIpLoginThrottle(max_attempts=refresh_budget, window_s=60.0, clock=lambda: 0.0)
+            return PerIpLoginThrottle(max_attempts=budget, window_s=60.0, clock=lambda: 0.0)
 
         app = FastAPI()
         install_error_redaction(app)  # FastAPI's own 422 becomes a problem body
@@ -182,16 +214,20 @@ class _World:
                 ip_throttle=throttle(),
                 session_throttle=throttle(),
                 csrf=CSRF_CODEC,
+                unlock_authority=lambda: self.authority,
+                unlock_throttle=throttle(),
             ),
             prefix="/api/v1",
         )
         self.client = TestClient(app, base_url=BASE, raise_server_exceptions=False)
 
     async def mint(self) -> MintedSession:
-        minted = await self.svc.mint(str(_USER))
+        minted = await self.svc.mint(str(_USER), idle_timeout_s=MIN_IDLE_TIMEOUT_S)
         arm_csrf(self.client, CSRF_CODEC, minted.session_id)  # the SR-041 pair a browser holds
         if self.signed_out:
             await self.svc.revoke(str(minted.session_id), reason="logout")
+        if self.locked:  # past the idle deadline, inside the access token's 12 min
+            self.now += timedelta(seconds=MIN_IDLE_TIMEOUT_S + 1)
         return minted
 
     def send(
@@ -229,7 +265,10 @@ _NO_SINK = partial(_World, sink="inactive")
 _SINK_REFUSES = partial(_World, sink="refusing")
 _NO_BACKEND = partial(_World, backend_wired=False)
 _BARE_NO_BACKEND = partial(_World, backend_wired=False, guarded=False)
-_ONE_REFRESH = partial(_World, refresh_budget=1)
+_ONE_REQUEST = partial(_World, budget=1)
+_LOCKED = partial(_World, locked=True)
+_LOCKED_NO_SINK = partial(_World, sink="inactive", locked=True)
+_LOCKED_SINK_REFUSES = partial(_World, sink="refusing", locked=True)
 
 _Send = Callable[[_World, MintedSession], httpx.Response]
 
@@ -265,6 +304,16 @@ def _revoke(world: _World, caller: MintedSession) -> httpx.Response:
     return world.delete(f"/me/sessions/{caller.session_id}", caller)
 
 
+def _unlock(world: _World, caller: MintedSession, **kw: Any) -> httpx.Response:
+    kw.setdefault("json", {"password": _PW})
+    return world.post("/auth/unlock", caller, **kw)
+
+
+def _unlock_twice(world: _World, caller: MintedSession) -> httpx.Response:
+    _unlock(world, caller)
+    return _unlock(world, caller)
+
+
 #: Per operation, one request for each status it declares: (status, why, the world it runs in, the
 #: request). The 503 has a row for each cause the router has (audit sink not active, audit sink
 #: refusing, session backend not wired) and the 422 of `authRefresh` for each kind of body it
@@ -276,7 +325,7 @@ _ANSWERS: dict[str, list[tuple[int, str, Callable[[], _World], _Send]]] = {
         (403, "csrf", _OK, lambda w, c: w.post("/auth/refresh", json=_token(c), headers=_BAD)),
         (422, "malformed", _OK, lambda w, c: w.post("/auth/refresh", content=b"{", headers=_JSON)),
         (422, "unexpected", _OK, lambda w, c: w.post("/auth/refresh", json=_token(c, extra=1))),
-        (429, "budget spent", _ONE_REFRESH, _refresh_twice),
+        (429, "budget spent", _ONE_REQUEST, _refresh_twice),
         (503, "audit inactive", _NO_SINK, _refresh),
         (503, "audit refused", _SINK_REFUSES, _refresh),
         (503, "backend unwired", _NO_BACKEND, _refresh),
@@ -311,6 +360,17 @@ _ANSWERS: dict[str, list[tuple[int, str, Callable[[], _World], _Send]]] = {
         (503, "audit inactive", _NO_SINK, _revoke),
         (503, "audit refused", _SINK_REFUSES, _revoke),
         (503, "backend unwired", _BARE_NO_BACKEND, _revoke),
+    ],
+    "authUnlock": [
+        (200, "unlocked", _LOCKED, _unlock),
+        (401, "session gone", _GONE, _unlock),
+        (403, "csrf", _LOCKED, lambda w, c: _unlock(w, c, headers=_BAD)),
+        (409, "not locked", _OK, _unlock),
+        (422, "no password", _LOCKED, lambda w, c: _unlock(w, c, json={})),
+        (429, "budget spent", _ONE_REQUEST, _unlock_twice),
+        (503, "audit inactive", _LOCKED_NO_SINK, _unlock),
+        (503, "audit refused", _LOCKED_SINK_REFUSES, _unlock),
+        (503, "backend unwired", _BARE_NO_BACKEND, _unlock),
     ],
 }
 _CASES = [
