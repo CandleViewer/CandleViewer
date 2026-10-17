@@ -232,7 +232,10 @@ class TokenBundle(BaseModel):
     token_type: Literal["Bearer"]
     expires_in: Annotated[int, Field(description="Access-token lifetime in seconds (600).")]
     refresh_expires_in: Annotated[
-        int | None, Field(description="Refresh-token lifetime in seconds (2592000).")
+        int | None,
+        Field(
+            description='Refresh-token lifetime in seconds (2592000). For an enrolment-only session it counts down to that session\'s absolute expiry, at most 900 (see "Enrolment-only session").\n'
+        ),
     ] = None
     refresh_token: Annotated[
         str | None,
@@ -383,12 +386,15 @@ class User(BaseModel):
     roles: list[Literal["owner", "manager", "viewer"]]
     status: Literal["invited", "active", "disabled", "locked"]
     mfa_enabled: Annotated[
-        bool | None, Field(description="The user has at least one confirmed, unrevoked MFA method.")
+        bool | None,
+        Field(
+            description="The user has at least one confirmed, unrevoked MFA method. Always present in `AuthenticatedResponse` and `SessionInfo`.\n"
+        ),
     ] = None
     mfa_required: Annotated[
         bool | None,
         Field(
-            description='MFA is mandatory for this user (C-12.2: every user in production). With `mfa_enabled` false, every session of the user is enrolment-only (see "Enrolment-only session").\n'
+            description='MFA is mandatory for this user; C-12.2 requires it for every user. Always present in `AuthenticatedResponse` and `SessionInfo`. While `mfa_enabled` is false, every session of the user is enrolment-only (see "Enrolment-only session"): clients test exactly `mfa_required === true && mfa_enabled === false`.\n'
         ),
     ] = None
     last_login_at: AwareDatetime | None = None

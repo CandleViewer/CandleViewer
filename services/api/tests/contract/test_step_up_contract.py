@@ -52,14 +52,18 @@ def _validator(spec: dict[str, Any]) -> Draft202012Validator:
 
 
 def _granted(spec: dict[str, Any]) -> dict[str, Any]:
-    """A rotated step-up body; `tokens` reuses the contract's documented login bundle."""
+    """A rotated step-up body; `tokens` reuses the `TokenBundle` of the login example that has one.
+
+    Login no longer mints a full session, so `enrolmentOnly` is its only example with tokens;
+    the bundle has the same shape for any session.
+    """
     login = _ok(spec, "/auth/login")["content"]["application/json"]["examples"]
     return {
         "elevated_until": "2026-10-15T12:05:00Z",
         "action_class": "users",
         "single_use": False,
         "step_up_expires_at": "2026-10-15T12:05:00Z",
-        "tokens": login["authenticated"]["value"]["tokens"],
+        "tokens": login["enrolmentOnly"]["value"]["tokens"],
     }
 
 
