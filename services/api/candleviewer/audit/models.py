@@ -8,6 +8,7 @@ schemas and `services/api/candleviewer/db/models.py`'s `audit_log` columns.
 
 from __future__ import annotations
 
+import ipaddress
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -86,7 +87,10 @@ class AuditEntry(BaseModel):
 
 
 #: Upper bound on one `GET /admin/audit` page (PR #1561 finding 5).
-AUDIT_QUERY_MAX_LIMIT = 1000
+AUDIT_QUERY_MAX_LIMIT = 500
+
+#: Default page size (contract #2392: 1..500, default 100).
+AUDIT_QUERY_DEFAULT_LIMIT = 100
 
 
 class AuditQueryRequest(BaseModel):
@@ -100,12 +104,22 @@ class AuditQueryRequest(BaseModel):
     actor_user_id: str | None = None
     actions: list[str] | None = None
     subject_type: str | None = None
+    ip: str | None = None
     severity: Severity | None = None
     outcome: AuditOutcome | None = None
     from_ts: datetime | None = None
     to_ts: datetime | None = None
     cursor: int | None = Field(default=None, ge=1)
-    limit: int = Field(default=50, ge=1, le=AUDIT_QUERY_MAX_LIMIT)
+    limit: int = Field(default=AUDIT_QUERY_DEFAULT_LIMIT, ge=1, le=AUDIT_QUERY_MAX_LIMIT)
+
+    @field_validator("ip")
+    @classmethod
+    def _single_ip(cls, value: str | None) -> str | None:
+        if value is not None:
+            if "%" in value:  # a scope id (fe80::1%eth0) is not a single plain address
+                raise ValueError("ip must not carry a scope id")
+            ipaddress.ip_address(value)  # one address only; CIDR raises ValueError
+        return value
 
     @field_validator("from_ts", "to_ts")
     @classmethod
