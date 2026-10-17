@@ -1899,6 +1899,8 @@ paths:
         changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no
         new audit record. A call refused for a forbidden role or a self-target is audited too.
         Passing `?purge=true` additionally anonymises PII after the 90-day retention window.
+        A query parameter this operation does not declare is refused with
+        `422 validation_failed`, never ignored, and nothing is read or changed.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -1914,6 +1916,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/roles:
