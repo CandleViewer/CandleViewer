@@ -14,7 +14,12 @@ run that failed would therefore stay green in `ci-required` unless the resolver 
 filters as the job, so these tests pin the filter, the job condition and the resolver together.
 
 #2963: the tests that pin `.github/workflows/xstate-nightly.yml` (#2807) run in the `py` lane, but
-its filter did not name the workflow, so a PR that edited only the workflow skipped them."""
+its filter did not name the workflow, so a PR that edited only the workflow skipped them.
+
+#3175: the required `a11y` job runs on the `e2e` filter, which did not name the design system
+(`packages/ui/**`, its Storybook included) or the job's other inputs (`tools/contrast/**` for the
+contrast gate, `tools/a11y/**` for the axe baseline and gates, the job's workflow and its
+meta-tests), so a PR that changed only those skipped the axe sweep built to check them."""
 
 from __future__ import annotations
 
@@ -35,6 +40,13 @@ SEMGREP_PATHS = (
 )
 RESOLVER_STEP = "Resolve ci-required conclusion"
 XSTATE_NIGHTLY = ".github/workflows/xstate-nightly.yml"
+A11Y_PATHS = (
+    "packages/ui/**",
+    "tools/contrast/**",
+    "tools/a11y/**",
+    ".github/workflows/_job-a11y.yml",
+    "scripts/tests/test_a11y_gates.py",
+)
 
 
 def _jobs() -> dict[str, Any]:
@@ -87,17 +99,22 @@ _RESOLVER_TERM = re.compile(r"isTrue\(process\.env\.FILTER_(\w+)\)")
 
 
 def _resolver_security_filters() -> set[str]:
-    """The filters the resolver script ORs together when it decides whether `security` applied.
+    """The filters the resolver script ORs together when it decides whether `security` applied."""
+    return _resolver_lane_filters("security")
+
+
+def _resolver_lane_filters(name: str) -> set[str]:
+    """The filters the resolver script ORs together when it decides whether lane `name` applied.
 
     `//` comments are stripped first, so a name that only a comment mentions does not count. Then
     each `||` term must be exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
     """
     lane = re.search(
-        r"\bsecurity:\s*\{\s*applicable:(.*?)\bresult:\s*process\.env\.RESULT_SECURITY",
+        rf"\b{re.escape(name)}:\s*\{{\s*applicable:(.*?)\bresult:\s*process\.env\.RESULT_{name.upper()}\b",
         _resolver_step()["run"],
         re.DOTALL,
     )
-    assert lane, "the ci-required resolver script has no `security` lane"
+    assert lane, f"the ci-required resolver script has no `{name}` lane"
     expression = re.sub(r"//[^\n]*", "", lane.group(1)).strip().removesuffix(",")
     names: set[str] = set()
     for term in expression.split("||"):
@@ -146,3 +163,21 @@ def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
     # and runs in the `py` lane, so a PR that edits only the workflow must start the lane.
     assert (ROOT / XSTATE_NIGHTLY).is_file()
     assert XSTATE_NIGHTLY in _filters()["py"]
+
+
+def test_pr_yml_e2e_filter_covers_every_a11y_input() -> None:
+    covered = set(_filters()["e2e"])
+    assert set(A11Y_PATHS) <= covered, sorted(set(A11Y_PATHS) - covered)
+
+
+def test_pr_yml_a11y_inputs_exist_in_the_repo() -> None:
+    for pattern in A11Y_PATHS:
+        assert any(ROOT.glob(pattern)), pattern
+
+
+def test_pr_yml_a11y_job_and_resolver_lane_read_the_same_filters() -> None:
+    # The a11y job runs on the e2e filter; the resolver must judge it on the same filter, or a
+    # failing run the job condition let through is "not applicable" and ci-required stays green.
+    job = _outputs_in(_jobs()["a11y"]["if"])
+    assert "e2e" in job
+    assert _resolver_lane_filters("a11y") == job
