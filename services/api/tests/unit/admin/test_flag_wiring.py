@@ -28,7 +28,7 @@ from candleviewer.admin.flags import (
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController
 from candleviewer.admin.flags.policy import StepUpClass
-from candleviewer.admin.flags.store import FlagWrite
+from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
 from candleviewer.api.step_up import StepUpRefused, step_up_port
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import StepUpMismatch, StepUpRequired
@@ -299,6 +299,26 @@ async def test_a_grant_bound_to_another_request_is_audited_through_the_ports_emi
         "bound_request_sha256": "a" * 64,
         "refused_request_sha256": _FP,
     }
+
+
+async def test_an_outage_of_the_users_or_the_step_up_store_is_the_writers_store_outage() -> None:
+    down = AsyncMock(side_effect=StorageTierUnavailable("down"))
+    auth = SimpleNamespace(step_up_is_active=True, step_up=SimpleNamespace(require_elevation=down))
+    roles = SimpleNamespace(get_roles=down)
+    with pytest.raises(StoreUnavailableError):
+        await step_up_port(auth, wiring.restate_flag_write, None)(_OWNER, "flags", _CHANGE, _FP)
+    with pytest.raises(StoreUnavailableError):
+        await wiring.RoleStoreUsers(roles).unknown(frozenset({_OWNER.user_id}))
+
+
+async def test_an_error_that_is_no_outage_passes_the_users_and_the_step_up_as_it_was() -> None:
+    bug = AsyncMock(side_effect=RuntimeError("bug"))
+    auth = SimpleNamespace(step_up_is_active=True, step_up=SimpleNamespace(require_elevation=bug))
+    roles = SimpleNamespace(get_roles=bug)
+    with pytest.raises(RuntimeError, match="bug"):
+        await step_up_port(auth, wiring.restate_flag_write, None)(_OWNER, "flags", _CHANGE, _FP)
+    with pytest.raises(RuntimeError, match="bug"):
+        await wiring.RoleStoreUsers(roles).unknown(frozenset({_OWNER.user_id}))
 
 
 def test_a_write_is_restated_from_its_validated_change_alone() -> None:

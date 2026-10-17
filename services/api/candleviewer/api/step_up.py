@@ -37,13 +37,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
-from candleviewer.admin.flags.store import FlagWrite
+from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
 from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
 )
 from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
@@ -408,9 +409,14 @@ def step_up_port(
         who: AuditPrincipal, action_class: str, change: FlagWrite, fingerprint: str | None
     ) -> None:
         text = restate(change)
-        refused = await require_session_elevation(
-            auth, who.session_id, action_class, text, fingerprint=fingerprint, emitter=emitter
-        )
+        try:
+            refused = await require_session_elevation(
+                auth, who.session_id, action_class, text, fingerprint=fingerprint, emitter=emitter
+            )
+        except Exception as exc:  # an outage is the writer's: counted, logged and recorded
+            if not is_storage_outage(exc):
+                raise
+            raise StoreUnavailableError(type(exc).__name__) from None
         if refused is not None:
             raise StepUpRefused(refused)
 

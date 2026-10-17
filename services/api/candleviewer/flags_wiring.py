@@ -50,6 +50,7 @@ from candleviewer.admin.flags.store import (
 )
 from candleviewer.admin.flags.writes import WRITE_AWAIT_TIMEOUT_S, FlagWriter
 from candleviewer.api.step_up_challenge import ChallengeText, quote_label
+from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import UserRoleStore
 from candleviewer.domain.order_entry import OrderEntryGate
 from candleviewer.observability import spawn
@@ -190,7 +191,12 @@ class RoleStoreUsers:
     async def unknown(self, user_ids: frozenset[UUID]) -> frozenset[UUID]:
         if self._store is None:
             return user_ids
-        return frozenset([u for u in user_ids if await self._store.get_roles(u) is None])
+        try:
+            return frozenset([u for u in user_ids if await self._store.get_roles(u) is None])
+        except Exception as exc:  # an outage is the writer's: counted, logged and recorded
+            if not is_storage_outage(exc):
+                raise
+            raise StoreUnavailableError(type(exc).__name__) from None
 
 
 class HubSessions:
