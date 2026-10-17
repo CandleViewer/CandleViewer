@@ -283,6 +283,7 @@ class RecordedMerge:
         self._budget_bytes = budget_bytes
         self._tier: Tier | None = None
         self._symbols = tuple(sorted(request.symbols))
+        self._symbol_markers: list[_Markers] | None = None
         streams = [s for s in REPLAYABLE_STREAMS if s in request.streams]
         share = budget_bytes // (len(self._symbols) * len(streams))
         self._cursors: list[_Cursor] = []
@@ -310,12 +311,16 @@ class RecordedMerge:
         cursor first yields the items already merged, then is raised."""
         await self.tier()  # refuse a straddling `auto` session before reading any event
         cursors = self._cursors
-        sources: list[_Source] = [*cursors]
-        for symbol_ord, symbol in enumerate(self._symbols):
-            sources.append(await self._markers(symbol_ord, symbol))
+        # Read once: a second pass finds the markers drained, like the cursors, and reads nothing.
+        if self._symbol_markers is None:
+            self._symbol_markers = [
+                await self._markers(symbol_ord, symbol)
+                for symbol_ord, symbol in enumerate(self._symbols)
+            ]
+        sources: list[_Source] = [*cursors, *self._symbol_markers]
         for cursor in cursors:
             await self._fill(cursor)
-        heap = [(source.buf[0][0], index) for index, source in enumerate(sources) if source.buf]
+        heap = [(s.buf[s.pos][0], index) for index, s in enumerate(sources) if s.pos < len(s.buf)]
         heapq.heapify(heap)
         batch: list[ReplayItem] = []
         size = 0

@@ -18,6 +18,7 @@ from candleviewer.replay import (
     ReplayItem,
     ReplayMemoryCeilingExceeded,
     ReplaySourceUnavailable,
+    ReplayTierStraddle,
 )
 from candleviewer.replay.merge import approx_bytes
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -25,6 +26,7 @@ from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent, RecordedGap
 from candleviewer.storage.testing import StaticGapReader
 from tests.unit.replay._events import (
+    ROOMY,
     SECOND,
     SYM,
     T0,
@@ -253,8 +255,16 @@ async def test_the_merge_re_checks_symbol_stream_and_window_of_every_gap_row() -
 
 
 class _BrokenGaps(StaticGapReader):
+    """Fails for `bad` only, with a message that carries a path (RP-I02)."""
+
+    def __init__(self, bad: str) -> None:
+        super().__init__()
+        self._bad = bad
+
     async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
-        raise StorageTierUnavailable("postgres unreachable at /var/lib/cv/pg")
+        if symbol == self._bad:
+            raise StorageTierUnavailable("postgres unreachable at /var/lib/cv/pg")
+        return await super().recording_gaps(symbol, rng, limit=limit)
 
 
 class _StuckGaps(StaticGapReader):
@@ -264,14 +274,16 @@ class _StuckGaps(StaticGapReader):
 
 
 async def test_an_unreadable_gap_table_fails_the_replay_rather_than_hiding_gaps() -> None:
-    harness = Harness(hot=[trade(SECOND)]).replace_ports(gaps=_BrokenGaps())
+    req = request(symbols=(SYM, ETH))
+    harness = Harness(hot=[trade(SECOND)], req=req).replace_ports(gaps=_BrokenGaps(ETH))
 
     delivered, error = await drain(harness.merge(), batch=8)
 
     assert delivered == [] and harness.hot.reads == 0  # refused before any event is read
     assert isinstance(error, ReplaySourceUnavailable)
-    assert (error.tier, error.stream, error.reason) == (
+    assert (error.tier, error.symbol, error.stream, error.reason) == (
         "recording_gaps",
+        ETH,
         None,
         "STORAGE_TIER_UNAVAILABLE",
     )
@@ -289,12 +301,15 @@ async def test_a_gap_read_that_never_answers_times_out_as_a_typed_error() -> Non
     assert (error.tier, error.stream, error.reason) == ("recording_gaps", None, "timeout")
 
 
-async def test_each_symbols_gap_read_asks_for_one_row_past_the_ceiling() -> None:
-    harness = Harness(req=request(symbols=(SYM, ETH)))
+async def test_each_symbols_gap_read_asks_for_the_window_and_one_row_past_the_ceiling() -> None:
+    req = request(start_us=START, end_us=END, symbols=(SYM, ETH))
+    harness = Harness(req=req)
 
     await harness.read_all()
 
+    window = TimeRange(start_us=req.start_us, end_us=req.end_us)
     assert harness.gaps.limits == [CEILING + 1, CEILING + 1]
+    assert harness.gaps.windows == [window, window]
 
 
 def dense_gaps(count: int, *, symbol: str = SYM) -> list[RecordedGap]:
@@ -369,12 +384,40 @@ async def test_a_reader_that_ignores_the_limit_is_still_refused_past_the_ceiling
     assert isinstance(error, ReplayMemoryCeilingExceeded) and error.max_rows == CEILING
 
 
-async def test_a_marker_counts_as_one_event_toward_the_batch_byte_cut() -> None:
-    """Slice 6's read-ahead sizes its buffer from these estimates."""
+@pytest.mark.parametrize(("extra_bytes", "want"), [(0, [2, 2, 1]), (1, [3, 2])])
+async def test_a_marker_counts_as_one_event_toward_the_batch_byte_cut(
+    extra_bytes: int, want: list[int]
+) -> None:
+    """Slice 6's read-ahead sizes its buffer from these estimates: two markers fill exactly the
+    bytes of two events, and one byte more lets a third in."""
     rows = [gap(START + i, START + i + 1) for i in range(5)]
     merge = Harness(gaps=rows, req=request(start_us=START, end_us=END)).merge()
-    two_events = 2 * approx_bytes(trade(0))
+    limit = 2 * approx_bytes(trade(0)) + extra_bytes
 
-    sizes = [len(batch) async for batch in merge.batches(max_events=100, max_bytes=two_events)]
+    sizes = [len(batch) async for batch in merge.batches(max_events=100, max_bytes=limit)]
 
-    assert sizes == [2, 2, 1]
+    assert sizes == want
+
+
+async def test_a_straddling_session_is_refused_before_any_gap_is_read() -> None:
+    harness = Harness(req=request(start_us=START, end_us=END)).archive(START, START + 5 * SECOND)
+
+    with pytest.raises(ReplayTierStraddle):
+        await harness.read_all()
+
+    assert harness.gaps.limits == []
+
+
+async def test_a_second_pass_finds_the_merge_drained_and_reads_no_gap_again() -> None:
+    """`batches()` is single-pass (a seek builds a new merge); a repeat yields nothing."""
+    req = request(start_us=START, end_us=END)
+    harness = Harness(hot=[trade(START)], gaps=[gap(START, START + 5)], req=req)
+    merge = harness.merge()
+
+    first = [item async for batch in merge.batches(max_events=8, max_bytes=ROOMY) for item in batch]
+    second = [
+        item async for batch in merge.batches(max_events=8, max_bytes=ROOMY) for item in batch
+    ]
+
+    assert len(first) == 2 and second == []
+    assert harness.gaps.limits == [CEILING + 1]

@@ -3,9 +3,9 @@
 They satisfy the `storage.repositories.recorded` Protocols structurally and mirror the real
 tiers' contract: half-open ranges, the book-depth filter, the row `limit` (earliest first; a
 `limit` below 1 is refused like the real reader refuses it, gap reads included), an inclusive
-`not_before_us`, and
-storage order (insertion order here) rather than a sorted one: equal timestamps are never
-sorted by key, so callers cannot rely on an order the real tiers do not give.
+`not_before_us`, and storage order (insertion order here) rather than a sorted one: equal
+timestamps are never sorted by key, so callers cannot rely on an order the real tiers do not
+give.
 """
 
 from __future__ import annotations
@@ -98,16 +98,19 @@ class StaticManifestCoverage:
 class StaticGapReader:
     """`RecordingGapReader` over a fixed `recording_gaps` list: the half-open intersections of
     one symbol, the earliest `limit` by start (storage order on equal starts). A `limit` below 1
-    is refused like `read`'s; `limits` records the `limit` of every accepted read."""
+    is refused like `read`'s; `limits` and `windows` record the `limit` and the range of every
+    accepted read."""
 
     def __init__(self, gaps: Iterable[RecordedGap] = ()) -> None:
         self._gaps = list(gaps)
         self.limits: list[int] = []
+        self.windows: list[TimeRange] = []
 
     async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
         if isinstance(limit, bool) or limit < 1:
             raise RecordedQueryRejected("limit must be an int >= 1")
         self.limits.append(limit)
+        self.windows.append(rng)
         hits = [
             g
             for g in self._gaps

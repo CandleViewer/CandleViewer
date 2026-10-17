@@ -28,6 +28,7 @@ from tests.unit.replay._events import (
     trade,
 )
 
+ETH = "ETHUSDT"
 BOOK = (StreamKind.ORDERBOOK_SNAPSHOT,)
 END = 7_200 * SECOND
 WINDOW = request(start_us=0, end_us=END, streams=BOOK)
@@ -81,16 +82,28 @@ async def test_auto_finds_a_snapshot_not_yet_archived() -> None:
     assert update_of(anchor) == 2
 
 
-async def test_auto_breaks_a_cross_tier_tie_by_the_order_key() -> None:
+@pytest.mark.parametrize(
+    ("cold", "hot"),
+    [
+        pytest.param((9, None), (3, None), id="seq-decides-cold-wins"),
+        pytest.param((3, None), (9, None), id="seq-decides-hot-wins"),
+        pytest.param((9, 5), (3, 5), id="tiebreak-decides-cold-wins"),
+        pytest.param((3, 5), (9, 5), id="tiebreak-decides-hot-wins"),
+    ],
+)
+async def test_auto_breaks_a_cross_tier_tie_by_the_order_key(
+    cold: tuple[int, int | None], hot: tuple[int, int | None]
+) -> None:
+    """`(ts, seq, tiebreak)`: an equal `cross_seq` leaves the update id to decide."""
     harness = Harness(
-        cold=[snapshot(100 * SECOND, update_id=9)],
-        hot=[snapshot(100 * SECOND, update_id=3)],
+        cold=[snapshot(100 * SECOND, update_id=cold[0], cross_seq=cold[1])],
+        hot=[snapshot(100 * SECOND, update_id=hot[0], cross_seq=hot[1])],
         req=WINDOW,
     )
 
     anchor = await harness.merge().anchor_at(SYM, T0 + 250 * SECOND)
 
-    assert anchor is not None and anchor.seq == 9
+    assert update_of(anchor) == 9
 
 
 @pytest.mark.parametrize(
@@ -250,14 +263,21 @@ class _LaxLookups(BoundedTier):
         return self._row
 
 
-AT = 250 * SECOND  # the anchor instant of the next test; its lookback edge is `AT - 3 600 s`
+AT = 250 * SECOND  # the anchor instant of the next tests; its lookback edge is `AT - 3 600 s`
 _HOUR = 3_600 * SECOND
+
+
+def with_lax_tier(harness: Harness, port: str, row: RecordedEvent) -> Harness:
+    """`harness` with its `hot` or `cold` port replaced by a tier that always answers `row`."""
+    if port == "hot":
+        return harness.replace_ports(hot=_LaxLookups(row))
+    return harness.replace_ports(cold=_LaxLookups(row))
 
 
 @pytest.mark.parametrize(
     "row",
     [
-        pytest.param(snapshot(100 * SECOND, symbol="ETHUSDT"), id="another-symbol"),
+        pytest.param(snapshot(100 * SECOND, symbol=ETH), id="another-symbol"),
         pytest.param(snapshot(100 * SECOND, depth=50), id="another-depth"),
         pytest.param(trade(100 * SECOND), id="not-a-snapshot"),
         pytest.param(
@@ -272,28 +292,42 @@ _HOUR = 3_600 * SECOND
         pytest.param(snapshot(AT - _HOUR - 1), id="one-microsecond-before-the-lookback"),
     ],
 )
+@pytest.mark.parametrize(("port", "tier"), [("hot", "questdb"), ("cold", "parquet")])
 async def test_a_row_outside_what_was_asked_fails_the_lookup_instead_of_seeding_the_book(
-    row: RecordedEvent,
+    row: RecordedEvent, port: str, tier: str
 ) -> None:
-    """The merge does not trust a reader to have honoured the bound (as for gap rows): the
-    wrong row would seed the book the seek rebuilds."""
-    harness = Harness(req=WINDOW).replace_ports(hot=_LaxLookups(row))
+    """The merge does not trust either tier to have honoured the bound (as for gap rows): the
+    wrong row would seed the book the seek rebuilds. The error names the tier that answered."""
+    harness = with_lax_tier(Harness(req=WINDOW), port, row)
 
     with pytest.raises(ReplaySourceUnavailable) as raised:
         await harness.merge().anchor_at(SYM, T0 + AT)
 
     error = raised.value
-    assert (error.tier, error.stream, error.reason) == (
-        "questdb",
+    assert (error.tier, error.symbol, error.stream, error.reason) == (
+        tier,
+        SYM,
         StreamKind.ORDERBOOK_SNAPSHOT,
         "anchor_out_of_bounds",
     )
     assert error.__cause__ is None and error.__context__ is None
 
 
+@pytest.mark.parametrize("port", ["hot", "cold"])
 @pytest.mark.parametrize("at", [AT - _HOUR, AT])
-async def test_a_row_on_either_edge_of_the_bound_is_a_valid_anchor(at: int) -> None:
+async def test_a_row_on_either_edge_of_the_bound_is_a_valid_anchor(at: int, port: str) -> None:
     row = snapshot(at)
-    harness = Harness(req=WINDOW).replace_ports(hot=_LaxLookups(row))
+    harness = with_lax_tier(Harness(req=WINDOW), port, row)
 
     assert await harness.merge().anchor_at(SYM, T0 + AT) == row
+
+
+async def test_the_refusal_names_the_symbol_asked_for_not_the_first_of_the_session() -> None:
+    req = request(start_us=0, end_us=END, streams=BOOK, symbols=(SYM, ETH))
+    other = snapshot(100 * SECOND, symbol=SYM)
+    harness = Harness(req=req).replace_ports(hot=_LaxLookups(other))
+
+    with pytest.raises(ReplaySourceUnavailable) as raised:
+        await harness.merge().anchor_at(ETH, T0 + AT)
+
+    assert raised.value.symbol == ETH
