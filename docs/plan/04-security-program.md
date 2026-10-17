@@ -1138,6 +1138,8 @@ Each row names the permission(s) and the operation(s) in `22-api-openapi.yaml` t
 4. `before`/`after` diffs are structured, field-level, and omit unchanged fields.
 5. Every denial (`authz.denied`, `ratelimit.rejected`) is logged with the attempted capability and object reference.
 
+Rule 2's durable retry will be the journal-first audit lane (ADR-0037, proposed; slices S1a to S4b): a record whose action has a row in the lane registry will be written to the lane first, and one the lane accepted will count as written for rules 1 and 2.
+
 ---
 
 ## 9. Kill switch
@@ -1705,7 +1707,7 @@ These come from the Bybit research (digest 06 "Open questions") and remain unres
 
 ### 16.2 Exception process
 
-An exception is a time-boxed, owner-approved deviation from a MUST requirement or an unresolved High/Critical scan finding. Each entry records: id, requirement/finding, reason, compensating control, requested-by, approved-by (Owner + Security), expiry date (max one release cycle), and the ticket tracking the fix. Expired exceptions automatically block the next release. The register lives in this section and is reviewed at every PRR; see the table below; full SCA triage in `35-dependency-freeze-policy.md` §8.
+An exception is a time-boxed, owner-approved deviation from a MUST requirement or an unresolved High/Critical scan finding. Each entry records: id, requirement/finding, reason, compensating control, requested-by, approved-by (Owner + Security), expiry date (max one release cycle), and the ticket tracking the fix. Expired exceptions automatically block the next release. The register lives in this section and is reviewed at every PRR; see the table below; full SCA triage in `35-dependency-freeze-policy.md` §8. EX-07's planned exit (its row arrives with #2914) is the journal-first audit lane (ADR-0037, proposed), whose last slice removes that row and this sentence.
 
 | Exception id | Requirement/finding                                                                                                          | Reason                                                             | Compensating control                                                                                                                                                        | Approved by                                                                                        | Expires    | Tracking ticket                         |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------- |

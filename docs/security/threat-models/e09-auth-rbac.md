@@ -41,6 +41,7 @@ flowchart TB
     end
     subgraph M19B["M19 Audit boundary"]
       TRIG["Postgres trigger<br/>audit hash-chain compute"]
+      LANE[("Journal-first audit lane<br/>lane/ on the audit volume, MAC'd frames")]
     end
     PG[("Postgres<br/>users, sessions, sessions_rotation,<br/>mfa_methods, mfa_challenges, recovery_codes,<br/>audit_log, audit_checkpoints")]
   end
@@ -60,18 +61,20 @@ flowchart TB
   PG -- "INSERT-only, UPDATE/DELETE revoked" --> TRIG
   TRIG -- "sha256_hex entry_hash / prev_hash" --> PG
   BREAKGLASS -. "host-local, out of app auth path" .-> PG
+  M18 -- "registered records first (ADR-0037)" --> LANE
+  LANE -- "drain, only via AuditWriter.ingest()" --> PG
   OOB -. "invite token, single use" .-> BROWSER
 
   classDef trusted fill:#10261a,stroke:#3a7,color:#fff
   classDef secret fill:#2a2410,stroke:#c9a227,color:#fff
-  class API,GW,M18,OTHER,M19B,TRIG,PG trusted
+  class API,GW,M18,OTHER,M19B,TRIG,LANE,PG trusted
   class HOSTFS,BREAKGLASS secret
 ```
 
 Elements analysed below (§3): Browser/client, Gateway (HTTP + WS), M18/`authorize()`/`ScopeResolver`,
-Postgres identity/session/MFA tables, the audit trigger + `audit_log`/`audit_checkpoints`, the
-break-glass CLI + host filesystem + KEK, and the invite out-of-band channel. Every element and every
-labelled flow above has at least one row in §3, or an explicit "not applicable" note.
+Postgres identity/session/MFA tables, the audit trigger + `audit_log`/`audit_checkpoints`, the journal-first
+audit lane (§3.6.2), the break-glass CLI + host filesystem + KEK, and the invite out-of-band channel. Every
+element and every labelled flow above has at least one row in §3, or an explicit "not applicable" note.
 
 ## 3. STRIDE analysis
 
@@ -84,6 +87,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.1 Spoofing
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U1 | Credential stuffing / brute force against a Manager account | M | H | **High** | SR-011 Argon2id (≥100 ms cost, excluded from budget #13); SR-015 per-account + per-IP throttling; SR-016 lockout after 5/15min + audit + owner notify | `test_login_lockout_after_five_failures`, `cv_auth_lockouts_total` alert on burst | Low |
@@ -96,6 +100,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.2 Tampering
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U14 | Direct `UPDATE`/`DELETE` on `audit_log` | L | H | Medium | `REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro` (schema §3.1, already applied at the SQL grant level); only an `INSERT`-only role is usable by the app | `test_audit_log_grants_deny_update_delete` (integration, asserts `SQLSTATE 42501`), nightly chain verifier (`cv_audit_chain_verified`) | Low |
@@ -106,6 +111,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.3 Repudiation
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U7 | Shared accounts make actions unattributable | M | M | Medium | SR-019 one identity per human, no shared logins; concurrent-session listing + forced logout in admin screens | `test_no_shared_login_enforced` (unique active credential per human by policy + review), `test_concurrent_sessions_listed_and_revocable` | Low |
@@ -115,6 +121,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.4 Information disclosure
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U8 | User enumeration via differing login errors, status codes or timing | M | L | Low | SR-014 uniform error message + constant-time comparison + a dummy Argon2id hash run for unknown usernames (equalises latency) | `test_login_error_identical_for_unknown_and_wrong_password`, `test_login_timing_within_tolerance_property` | Low |
@@ -126,6 +133,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.5 Denial of service
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U10 | Owner locks themselves out (lost TOTP device and all recovery codes) | M | M | Medium | SR-023 sealed offline recovery-code envelope; documented host-local break-glass CLI requiring filesystem + KEK access (own trust boundary, §3.6) | `docs/security/runbooks` break-glass drill record (manual, per DoD "review session"), `test_break_glass_requires_host_filesystem_and_kek_present` (cannot be invoked over the network) | Low, but see §3.6 for the break-glass path's own residual risk |
@@ -135,6 +143,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 
 ### 3.6 Elevation of privilege
 
+<!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
 | U3 | Role check missing on a new endpoint | M | H | **Critical** | SR-017 deny-by-default router: every route must declare a capability via a decorator/registration step or the app **fails to start** (import-time failure, not a runtime 403) | `test_app_fails_to_start_with_undeclared_route` (asserts `SystemExit`/import error, not merely a lint warning — this is the ticket's own acceptance-criteria "Failure case"); SR-018 automated route-coverage test enumerating every registered route against the capability table | Low |
@@ -158,7 +167,7 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
 - **What it can do:** mint a recovery path for the Owner without going through password+TOTP. This is
   necessarily powerful — it is the escape hatch for total lockout (U10) — so it is scoped to run only
   with the process detached from any network listener, and every invocation writes an audit row on the
-  *next* successful application start (the audit chain cannot be written while the app is down, so the
+  _next_ successful application start (the audit chain cannot be written while the app is down, so the
   break-glass tool logs to a host-local, append-only file that is folded into `audit_log` on next boot
   and chain-verified against it).
 - **Residual risk stated explicitly (not assumed away):** an attacker who has already achieved
@@ -170,12 +179,81 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   it is not silently assumed safe: **the break-glass path's blast radius equals a full host compromise's
   blast radius, not merely an auth bypass.**
 
+#### 3.6.2 Journal-first audit lane — a new audit write path (#3009, ADR-0037, proposed)
+
+The lane (`docs/plan/27-adrs/ADR-0037-journal-first-audit-lane.md`; format, scan and drain rules in
+`docs/plan/24-internal-schemas.md` §15.6) will be a host-local, append-only journal. cv-api writes the registered
+auth outcome records and risk-reducing intent records to it first, and drains them into `audit_log` only
+through `AuditWriter.ingest()`. It is a boundary of its own inside the backend (node LANE in §2):
+
+- **What crosses it:** an `AuditEmission` that `AuditWriter.build()` has validated and redacted, admitted only
+  if its action and outcome have a row in `LANE_ACTIONS`.
+- **Who writes and reads it:** the running cv-api alone (it holds `lane.lock` exclusively), through
+  `AuditService.lane`; its drain task is the only reader. No route or WS topic reaches it, and the only CLI that
+  does is the offline release command (S2c, in `admin/`), which runs only while cv-api is stopped.
+- **Where it rests:** `<dir of CV_AUDIT_WAL_PATH>/lane/` on the audit volume (#2615), uid 10001, `0700`/`0600`.
+  The MAC key is a secret file named by `CV_AUDIT_LANE_KEY_FILE`, never on that volume or in the process
+  environment (S2b refuses boot otherwise), and never passes through M2 (C-3.2).
+- **Spoofing,** considered: an in-process caller can already write any registered action, `audit.lane_*`
+  included, through `AuditWriter.emit()`, so the lane adds no identity to forge.
+
+| T   | Threat                                                                                                                                                                                                                                         | L   | I   | Risk     | Mitigations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Verify                                                                                                                                                                                                             | Residual                                   |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| U36 | Tampering: a waiting frame or the confirmation marker is altered, reordered, duplicated or spliced in from another lane, so a false record enters the chain or a true one is skipped                                                           | L   | H   | Medium   | HMAC-SHA256 over each frame's `seq`, `prev` (the previous frame's MAC), lane id, class and record, under a key that is not on the volume (S2b refuses boot when a key file is under the directory of `CV_AUDIT_WAL_PATH`); a MAC'd marker holding the scan state; nothing that is not authentic and in sequence is ingested; each run of such material is one critical `audit.lane_anomaly` row, its id keyed under the lane key, in its chain position; the next authentic frame re-anchors the chain, and the run's bytes go to `quarantine/`                                               | S1a tamper suite (one `test_lane_rejects_*` per case in ADR-0037 S1a) and transition-table tests, S2b `test_tampered_frame_becomes_one_anomaly_row`                                                                | Low; with the key, RR-01                   |
+| U37 | Destruction or rollback: waiting frames are deleted (a middle or oldest segment, the newest frames, the whole lane), or `lane/` is replaced by an older authentic copy                                                                         | L   | H   | Medium   | `seq` and `prev`, checked from the marker's state, expose a missing middle or head (`seq_gap`); a rolled-back marker over deleted segments is a `seq_gap` run marked `marker_behind`; for the rest, evidence off the volume: one `audit.lane.appended` log line per accepted frame (with a `mac` prefix), `cv_audit_lane_last_seq` with `AuditLaneSeqRegressed`, each boot's `audit.lane_resumed` row with the head `seq` and `mac`, and `AuditLaneCreated` (page)                                                                                                                            | S1a `test_lane_detects_a_deleted_segment`, S2a2 `test_resumed_row_records_the_head`, S4a promtool tests                                                                                                            | Low, needs host access (RR-01); residual 2 |
+| U38 | Repudiation: a sign-out, a revocation or a reuse attempt leaves no row because the sink refused                                                                                                                                                | M   | H   | **High** | Journal-first for the registry's actions (ADR-0037 decision 1); a drained record keeps its actor, session, address, `request_id` and `event_ts`; only a double refusal loses an outcome row (counted by `auth_audit_outcome_lost_total`, on #2914's branch, not yet on `main`) or refuses an intent (`503`)                                                                                                                                                                                                                                                                                   | S3 per-row tests with `_RefusingWriter`, S2a2 integration restart test                                                                                                                                             | Low                                        |
+| U39 | Denial of service: an unauthenticated flood (failed logins) or a reuse storm fills the lane, so a sign-out, or later a stop, is refused                                                                                                        | M   | M   | Medium   | The class comes from the registry, never the caller; `shared` is held to its share of the bytes and `reserved` keeps the rest; per-class waiter caps with `reserved` first, and a frame cap (values: §15.6, Limits); a refusal is immediate and falls back to the sink (C-2.18); login throttles act before the row (SR-015); the refresh route's per-address and per-session throttles (`api/sessions.py:266-272`, `:378-382`) bound replays of rotated tokens, the one `reserved` row reachable without a session (ADR-0037 Q9)                                                             | S1b quota and waiter tests, S3 `test_login_flood_leaves_room_for_logout`                                                                                                                                           | Low                                        |
+| U40 | Denial of service: the audit volume is full or read-only, so the lane and the WAL refuse together; or the lane grows without bound                                                                                                             | L   | M   | Low      | Lane bytes are capped; quarantine grows only by copies of bytes already written, and `AuditLaneQuarantineGrowing` tickets; a double refusal behaves as today (`503`, or a counted loss) and `AuditLaneRefusing` and `AuditSinkRefusing` page                                                                                                                                                                                                                                                                                                                                                  | S1b cap test, S2b chaos run with the audit volume full (C-13.6 scenario 13's disk-full fault)                                                                                                                      | Low; no worse than today (ADR-0037 Q5)     |
+| U41 | Information disclosure: frames and quarantine hold user and session ids and `actor_ip` (PII) at rest; a log line, metric, error, `docker inspect` or `/proc/<pid>/environ` leaks a record or the key                                           | L   | M   | Low      | Records are redacted before the lane (SR-069, C-12.6); directory `0700`, files `0600`, `O_NOFOLLOW`; logs carry `seq`, class, action, a `mac` prefix and error classes only; metric labels are closed sets; the key is a secret file (`0400`, uid 10001) named by `CV_AUDIT_LANE_KEY_FILE`, opened with `O_NOFOLLOW` and read once; boot is refused when `CV_AUDIT_LANE_KEY_HEX` is set, so no environment form exists, and when a key file is under the directory of `CV_AUDIT_WAL_PATH`, so the key is never on the volume; the key is never logged, and the key id is a one-way derivation | S1a `test_lane_logs_and_errors_carry_no_record_or_key`, S2b permission test, a boot-refusal test for a key file under the audit directory, and a compose test that the key is a secret, absent from `environment:` | Low; quarantine retention is ADR-0037 Q8   |
+| U42 | Elevation of privilege: a module, route, CLI or other process writes frames or drops held ones, or a mint's intent row goes through the lane so that a session is minted during an outage                                                      | L   | H   | Medium   | Only `AuditService.lane` appends (other modules reach audit only through `AuditService`, `audit/__init__.py`); admission by action and outcome, which excludes mints (ADR-0037 decision 3); a frame made without the key fails its MAC; `lane.lock` is exclusive; no route or topic reaches the lane; the release command needs host access, the key and a stopped cv-api, and leaves a `released` row; the Owner-only flag (ADR-0037 decision 12) only switches between two audited paths, and its changes are audited (`flags.change`); the break-glass CLI keeps its own journal           | S1b `test_lane_refuses_an_unregistered_action_or_outcome`, S2b `test_second_process_cannot_take_the_lane`, S2c `test_release_refuses_while_cv_api_runs`, route enumeration                                         | Low                                        |
+| U43 | Replay: a record is ingested twice or out of order, or deleted before the chain holds it                                                                                                                                                       | L   | H   | Medium   | The drain runs in `seq` order; the marker moves only past records whose commit tokens the writer reports committed; boot re-ingests from the marker; `ON CONFLICT (record_id) DO NOTHING`; a segment is deleted only when it lies wholly before the marker                                                                                                                                                                                                                                                                                                                                    | S2a2 integration, S2b chaos runs (C-13.6 scenarios 10 and 12)                                                                                                                                                      | Low                                        |
+| U44 | Denial of service on the drain: an authentic frame that `ingest()` refuses for good (a retired action, an incompatible `AuditEmission`) or a planted unknown-`kid` frame stops the drain, and the lane quietly falls back to today's loss mode | L   | M   | Low      | A permanent refusal becomes a one-frame `record_invalid` run and the drain moves on; an unknown `kid` or `v` holds, which stops the lane: appends are refused with `held`, the façade falls back, and `AuditLaneDrainHeld` pages; a restored key or S2c's audited release ends the hold; while the writer's flusher is dead the drain waits for a restart instead of spinning; retiring an action needs an empty lane (S4b)                                                                                                                                                                   | S2a2 `test_poison_frame_is_quarantined_and_passed`, S2c release test                                                                                                                                               | Low                                        |
+
+**Abuse cases** (each executed by the named slice's tests; AC-LANE-01, -04 and -09 also in S4b's drill):
+
+- **AC-LANE-01.** Flip one byte of a waiting frame's record and restart. Expected: one `audit.lane_anomaly`
+  (`frame_rejected`), the bytes in `quarantine/`, the altered record never in `audit_log`, the later frames still
+  drained, a page (S1a, S2b).
+- **AC-LANE-02.** Delete the oldest unconfirmed segment while the sink refuses. Expected: a `seq_gap` row naming
+  the range, and the later frames still drain (S1a, S2a2).
+- **AC-LANE-03.** Roll the marker forward by copying a later frame's MAC into an unkeyed marker. Expected: the
+  marker fails its MAC, a `marker_lost` row, everything re-ingested, nothing skipped (S1a).
+- **AC-LANE-04.** Flood failed logins from many addresses while the sink refuses, then sign out. Expected: the
+  `shared` share fills and further login rows are counted lost; the sign-out is journaled and answers `204` (S3).
+- **AC-LANE-05.** Send a refresh mint's `auth.session_refreshed` (`success`) through the lane. Expected: the
+  registry refuses it (S1b, S3).
+- **AC-LANE-06.** Start a second cv-api on the same audit volume. Expected: it refuses to boot (S2b).
+- **AC-LANE-07.** Drop the previous key while frames under it wait, or plant a frame under an unknown `kid`.
+  Expected: the lane holds, refusing appends with `held` so the façade falls back, and `AuditLaneDrainHeld` pages;
+  the frames drain once the key is back, or the release command quarantines the planted frame and leaves one
+  `released` row (S2a2, S2c).
+- **AC-LANE-08.** Leave a frame whose action is no longer registered. Expected: one `record_invalid` row, the
+  frame in `quarantine/`, the frames after it drained (S2a2).
+- **AC-LANE-09.** Replace `lane/` with an older copy, or edit the newest frame's `len` so it reads as torn.
+  Expected: a lower head in the next `audit.lane_resumed` row and an `AuditLaneSeqRegressed` page; the `len`
+  edit also leaves a `torn_tail` row (S2a2, S4a).
+
+**Residual risks** (to be accepted under RR-01, `04-security-program.md` §16.1, whose text S4b extends to the
+lane, and reviewed with it):
+
+1. Anyone with cv-api's uid or root can read the key and forge, destroy, garble or roll back frames, just as
+   they can forge WAL frames or insert rows as `cv_app` today; garbling yields at most one row per run.
+2. Deleting the newest frames or the whole lane, or restoring an older copy, leaves no trace on the volume, only
+   off it (U37).
+3. A full or read-only audit volume refuses the lane and the WAL together (ADR-0037 Q5).
+4. Once ingested, a record waits in the CRC-only WAL like any `emit()` record (ADR-0037 Q6).
+5. A double refusal still loses an outcome row (counted and alerted) or answers `503` for an intent, as today.
+6. An intent made durable in the lane whose action then fails, or whose caller was cancelled, leaves an intent
+   without an outcome, as the `emit()` docstring says of a cancelled append (`audit/writer.py:317-324`).
+7. `quarantine/` grows with every incident and keeps PII for good (ADR-0037 Q8).
+
 ## 4. Control mapping
 
 Every threat above maps to an existing SR id (`04-security-program.md` §6) or a newly proposed
 requirement. No threat is left with only an accepted risk with no control — the two U10/break-glass
 edge cases (§3.6.1) are the sole accepted-residual-risk items, and they are dated below.
 
+<!-- prettier-ignore -->
 | Threat ids | SR id(s) | New requirement proposed? |
 |---|---|---|
 | U1, U27, U28 | SR-011, SR-015, SR-016 | no |
@@ -201,6 +279,7 @@ edge cases (§3.6.1) are the sole accepted-residual-risk items, and they are dat
 | U30 | (none existing) | **new: SR-057** `authorize()`/`ScopeResolver` API has no permissive default; enforced by type system + lint + test |
 | U33 | E16-FR-11 (E16 R-E3), E49 T-E1/T-E2, C-2.11 | no — the test-clock gate and its boot audit record (#2086, #2728) |
 | U35 | SR-025 (which actions need a step-up); the binding itself comes from the PR #2290 ruling (rule 4) and #189's security notes and is recorded in the REST contract (#2304) | no |
+| U36–U44 | SR-063 (the chain pattern, keyed here), SR-066, SR-069, C-2.9, C-2.18, C-12.6; `04-security-program.md` §8.3 rules 1 and 2 | no — ADR-0037 records the design; S4b extends RR-01 to its residuals (§3.6.2) |
 | §3.6.1 break-glass residual | SR-023 (envelope) + host hardening (out of scope) | **Accepted risk, dated 2026-09-29**, Owner sign-off pending at the review session (§7) — host-level compromise defeats break-glass isolation; bounded by the fact it already implies A-01/A-02 compromise |
 
 `04-security-program.md` §6 should be amended in a follow-up PR to add SR-021 (amend), SR-013 (clarify),
@@ -257,9 +336,9 @@ epic's own verification tickets:
 
 ## 7. Review session record
 
-*(To be completed at the scheduled review with the Architect and epic owner — this section is left as
+_(To be completed at the scheduled review with the Architect and epic owner — this section is left as
 the template the session fills in, per the ticket's Definition of Done. This PR delivers the model for
-that review; it does not itself constitute the review.)*
+that review; it does not itself constitute the review.)_
 
 - Date:
 - Attendees: Architect, Epic owner (E09), Security engineer (author)
@@ -270,6 +349,7 @@ that review; it does not itself constitute the review.)*
 
 ## 8. Findings summary (routing)
 
+<!-- prettier-ignore -->
 | Finding | Routes to |
 |---|---|
 | U3/D1-shared fail-closed route registration must be a startup failure, not a review-dependent control | `E09-T04` (PDP) implementation + its own regression test |
@@ -277,4 +357,4 @@ that review; it does not itself constitute the review.)*
 | Break-glass abuse detection (beyond audit-on-next-boot) | `E09-X03` (detection rules) routed it; delivered by #2496 as `AuthBreakGlassUsed`, a page while a reset's `break_glass_used` system event is unresolved. Not the folded-in trail: the CLI flushes its records to `audit_log`, so the boot fold-in carries only what Postgres refused, and a refused run reaches `audit_log` only |
 | Abuse-case exercises for U11–U13, U18, U30–U32 | `E09-X02` |
 | Accessibility note on recovery-code/step-up modal screen-reader behaviour (U23) | `E09-Q04` |
-
+| Audit WAL frames carry a CRC, not a MAC, so a lane record loses the lane's MAC once ingested (§3.6.2 residual 4) | a follow-up ticket if Security agrees (ADR-0037 Q6) |
