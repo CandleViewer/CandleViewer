@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -20,6 +20,7 @@ Quick facts the procedures rely on:
 | Step-up grace    | 5 min per action class; `live_enablement` and `killswitch` always need a fresh code | `auth/step_up.py` (`GRACE_WINDOW`, `NO_GRACE_ACTION_CLASSES`)                    |
 | Step-up failures | 3 invalid codes abandon the action and make the session read-only for 5 min         | `auth/step_up.py` (`FAILURE_CAP`, `READONLY_WINDOW`)                             |
 | Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min)             | `auth/session_service.py`                                                        |
+| Audit volume     | `cv-audit-data` at `/var/lib/candleviewer/audit`; back it up with Postgres          | `infra/compose/docker-compose.yml`, §3                                           |
 
 ## 1. Unlock a locked account (SR-016)
 
@@ -241,6 +242,41 @@ What an operator can and cannot do today if the sole Owner is locked out of TOTP
 codes: nothing supported. Do not hand-edit `users`, `mfa_methods` or `recovery_codes` rows; do not
 touch audit rows. Escalate to the repository owner, who decides on direct database repair under the
 security process. Record the incident.
+
+**The audit volume (#2615).** In compose, cv-api and the CLI share one audit directory: the named
+volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`, with `CV_AUDIT_WAL_PATH` fixed at
+`/var/lib/candleviewer/audit/audit.wal` in `infra/compose/docker-compose.yml`. It holds the audit WAL
+and its commit cursor (`audit.wal`, `audit.wal.committed`) and the break-glass journal and run lock
+(`breakglass/journal.wal`, `breakglass/instance.lock`), so a container restart keeps them and the CLI
+takes its lock where cv-api looks. The image creates the directory owned by uid 10001, mode `0700`,
+and Docker copies that owner into an empty volume: run everything that touches it as the image's user.
+
+- **Backup.** Back it up with Postgres: in the same run, encrypted with the backup key (SR-091),
+  with the same retention and off-host copy, and restore the two together with owners and modes
+  intact. It holds audit records that cv-api has accepted and Postgres may not have yet, and the
+  journal until the next cv-api boot folds it in.
+- **Do not delete it.** `docker compose down -v` and `make reset` remove it; a plain `down` keeps it.
+- **Check it** (read-only). Expected: `drwx------`, owner and group `10001`. `api` has a fixed
+  address, so a second container of it, such as `run`, starts only while cv-api is stopped:
+
+  ```bash
+  # cv-api running
+  docker compose -f infra/compose/docker-compose.yml --profile core exec api ls -ldn /var/lib/candleviewer/audit
+  # cv-api stopped
+  docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint ls api -ldn /var/lib/candleviewer/audit
+  ```
+
+The CLI will run as a one-off container of the `api` service, so only with cv-api stopped: that is
+also the CLI's own rule, since it takes `instance.lock` exclusively and cv-api holds it shared.
+`docker compose run` gives that container the service's own volume, `CV_AUDIT_WAL_PATH`, user and
+read-only root, so the line has no `-v` of its own and must not set `--user`: a file the CLI creates
+as root is one cv-api (uid 10001) cannot open. The image entrypoint is `candleviewer.server`, so the
+line replaces it. Postgres must be up. This is the shape only and **does not run until #2119 ships
+`candleviewer.breakglass`**; that ticket's runbook slice owns the arguments and the KEK access:
+
+```bash
+docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint python api -m candleviewer.breakglass
+```
 
 ## 4. Disable a user and what follows (SR-029)
 

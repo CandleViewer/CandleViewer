@@ -27,6 +27,10 @@ volumes:
   cv-alertmanager-data:
   cv-alertmanager-config:
   cv-minio-data:
+  # #2615: the audit WAL and its commit cursor, and the break-glass journal and run lock, in one
+  # directory that `api` and a `compose run` of it share (mounted at /var/lib/candleviewer/audit
+  # below). Back it up with Postgres; `down -v` deletes it. See docs/ops/runbooks/auth-rbac.md §3.
+  cv-audit-data:
 
 # Base stack: no host port bindings live here except the loopback-explicit
 # ones required by acceptance criteria 3 (B2, docs/plan/20-architecture.md
@@ -112,11 +116,21 @@ services:
       # cannot fit this value, and services/api/tests/unit/test_settings_stop_budget.py checks
       # that they match.
       CV_API_STOP_BUDGET_S: "30"
+      # #2615: an absolute path inside the audit volume mounted below. The default is relative
+      # (var/audit/audit.wal), which would sit on the read-only root filesystem. The directory of
+      # this path also holds breakglass/ (journal and run lock), so keep it the volume's mount path.
+      CV_AUDIT_WAL_PATH: /var/lib/candleviewer/audit/audit.wal
     ports:
       - "127.0.0.1:${CV_BIND_PORT:-8000}:8000"
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      # #2615: with /tmp, the only writable path. A named volume, not a host bind mount, so the audit
+      # files keep their owner and mode. infra/images/Dockerfile.api creates this directory owned by
+      # uid 10001 (mode 0700); Docker copies that owner and mode into an empty volume on mount, so
+      # the non-root `api` can write it under `read_only`.
+      - cv-audit-data:/var/lib/candleviewer/audit
     # #2565: SIGTERM -> SIGKILL budget; equals CV_API_STOP_BUDGET_S in the environment above
     # (Docker's 10 s default cannot cover the planned shutdown).
     stop_grace_period: 30s

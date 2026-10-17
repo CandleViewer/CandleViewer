@@ -50,6 +50,16 @@ RUN python -m pip uninstall -y pip setuptools wheel \
 RUN groupadd --gid 10001 cvapi \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin cvapi
 
+# #2615: the mount point of compose's audit volume (the directory of CV_AUDIT_WAL_PATH). Docker
+# copies the owner and mode of a mount point that exists in the image into an empty named volume,
+# so the volume starts owned by the runtime user and stays writable under the read-only root
+# filesystem; without this line it would be root-owned and the non-root api could not write it.
+# 0700 because audit records carry user and session ids and addresses. Only the leaf belongs to
+# cvapi; /var/lib/candleviewer stays root-owned.
+RUN mkdir -p /var/lib/candleviewer/audit \
+    && chown 10001:10001 /var/lib/candleviewer/audit \
+    && chmod 0700 /var/lib/candleviewer/audit
+
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /build/.venv /app/.venv
 COPY --from=builder --chown=10001:10001 /build/candleviewer /app/candleviewer
