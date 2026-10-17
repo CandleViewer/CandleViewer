@@ -215,29 +215,28 @@ def test_query_audit_log_passes_subject_type_through_to_query_service() -> None:
     assert call["subject_type"] == "order"
 
 
-def test_query_audit_log_rejects_naive_from_ts_with_400_not_500() -> None:
-    """QA defect #1596 review: `AuditQueryService.query` raises
-    `pydantic.ValidationError` (via `AuditQueryRequest`) for a naive
-    `from_`/`to` datetime; the route used to let that propagate as an
-    unhandled 500 instead of a 400."""
+def test_query_audit_log_rejects_naive_from_ts_with_422_not_500() -> None:
+    """QA defect #1596 review: `AuditQueryRequest` refuses a naive `from_`/`to`
+    datetime; the route used to let that propagate as an unhandled 500. Contract:
+    a bad filter value is `422 validation_failed`."""
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
     response = client.get(
         "/admin/audit",
         params={"from": "2026-01-01T00:00:00", "to": "2026-01-02T00:00:00"},
     )
-    assert response.status_code == 400
-    assert response.json()["status"] == 400
+    assert response.status_code == 422
+    assert response.json()["status"] == 422
 
 
-def test_query_audit_log_rejects_from_after_to_with_400_not_500() -> None:
+def test_query_audit_log_rejects_from_after_to_with_422_not_500() -> None:
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
     response = client.get(
         "/admin/audit",
         params={"from": "2026-01-02T00:00:00Z", "to": "2026-01-01T00:00:00Z"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_verify_audit_chain_rejects_unknown_body_field() -> None:
@@ -507,3 +506,69 @@ def test_query_timeout_setting_is_capped_at_30_seconds() -> None:
     assert Settings(audit_query_timeout_ms=30_000).audit_query_timeout_ms == 30_000
     with pytest.raises(ValidationError):
         Settings(audit_query_timeout_ms=30_001)
+
+
+# ---- #2392 parameter rules: canonical values, 422 without echoing the input ----------------
+
+
+def test_repeated_action_parameters_reach_the_service_as_a_sorted_set() -> None:
+    client, svc = _limited(_owner())
+    params = [
+        ("action", "orders.submit"),
+        ("action", "api_key.rotate"),
+        ("action", "orders.submit"),
+    ]
+    assert client.get("/admin/audit", params=params).status_code == 200
+    assert svc.query_service.query_calls[-1]["actions"] == ["api_key.rotate", "orders.submit"]
+
+
+def test_actor_user_id_is_compared_in_canonical_form() -> None:
+    client, svc = _limited(_owner())
+    uid = uuid.uuid4()
+    assert client.get("/admin/audit", params={"actor_user_id": str(uid).upper()}).is_success
+    assert svc.query_service.query_calls[-1]["actor_user_id"] == str(uid)
+
+
+@pytest.mark.parametrize(
+    ("params", "field"),
+    [
+        ({"actor_user_id": "x" * 3900}, "actor_user_id"),
+        ({"actor_user_id": "{" + str(uuid.UUID(int=1)) + "}"}, "actor_user_id"),
+        ({"subject_type": "Order<script>"}, "subject_type"),
+        ({"action": "orders.submit\n"}, "action"),
+        ({"action": "a." + "b" * 64}, "action"),
+        ({"action": [f"x.a{i}" for i in range(51)]}, "action"),
+        ({"ip": "nope-<script>"}, "ip"),
+    ],
+)
+def test_invalid_filters_are_422_without_echoing_the_input(
+    params: dict[str, Any], field: str
+) -> None:
+    client, svc = _limited(_owner())
+    r = client.get("/admin/audit", params=params)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert [e["field"] for e in r.json()["errors"]] == [field]
+    assert "<script>" not in r.text and "xxxx" not in r.text and "bbbb" not in r.text
+    assert svc.query_service.query_calls == []
+
+
+def test_validation_error_from_the_query_service_is_422_without_the_input() -> None:
+    svc = _FakeAuditService()
+
+    async def invalid(**_: Any) -> AuditPage:
+        AuditQueryRequest.model_validate({"ip": "secret-value"})
+        raise AssertionError("unreachable")
+
+    svc.query_service.query = invalid  # type: ignore[method-assign,assignment]  # test double
+    r = _limited(_owner(), svc)[0].get("/admin/audit")
+    assert (r.status_code, r.json()["errors"]) == (422, [{"field": "ip", "rule": "value_error"}])
+    assert "secret-value" not in r.text
+
+
+def test_unknown_body_key_is_not_echoed() -> None:
+    client, _ = _limited(_owner())
+    r = client.post("/admin/audit/verify", json={"<img src=x>": 1})
+    assert r.status_code == 400 and r.json()["errors"] == [
+        {"field": "(unknown)", "rule": "extra_forbidden"}
+    ]
+    assert "img" not in r.text

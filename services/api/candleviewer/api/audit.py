@@ -29,13 +29,12 @@ for a given request, that is a normal 401 per the resolver's own contract
 
 from __future__ import annotations
 
-import ipaddress
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
 from candleviewer.audit.access import (
@@ -47,9 +46,9 @@ from candleviewer.audit.access import (
 )
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
-    AUDIT_QUERY_MAX_LIMIT,
     AuditExportRequest,
     AuditOutcome,
+    AuditQueryRequest,
     AuditVerifyRequest,
     Severity,
 )
@@ -134,6 +133,13 @@ class PrincipalResolver(Protocol):
     async def resolve(self, request: Request) -> AuditPrincipal | None: ...
 
 
+#: `errors[]` is bounded and names only the field and the rule: a validation message can
+#: quote the rejected value (`ipaddress` does), so none is returned.
+_MAX_ERRORS = 10
+#: Contract parameter names where they differ from the `AuditQueryRequest` field names.
+_PARAM_NAMES = {"actions": "action", "from_ts": "from", "to_ts": "to"}
+
+
 def _problem(
     status_code: int,
     title: str,
@@ -141,6 +147,7 @@ def _problem(
     *,
     code: str | None = None,
     retry_after_s: int | None = None,
+    errors: list[dict[str, str]] | None = None,
 ) -> JSONResponse:
     content: dict[str, Any] = {
         "type": f"https://candleviewer.local/errors/{code}" if code else "about:blank",
@@ -150,12 +157,32 @@ def _problem(
     }
     if code is not None:
         content["code"] = code
+    if errors is not None:
+        content["errors"] = errors
     response = JSONResponse(
         status_code=status_code, content=content, media_type="application/problem+json"
     )
     if retry_after_s is not None:
         response.headers["Retry-After"] = str(retry_after_s)
     return response
+
+
+def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 422) -> JSONResponse:
+    """`validation_failed` without echoing the input. A field the model does not declare
+    (an unknown body key) is reported as `(unknown)`, never by its client-chosen name."""
+    known = set(model.model_fields) | {f.alias for f in model.model_fields.values() if f.alias}
+    errors = []
+    for err in exc.errors(include_url=False, include_context=False, include_input=False):
+        name = str(err["loc"][0]) if err["loc"] else ""
+        field = _PARAM_NAMES.get(name, name) if name in known or not name else "(unknown)"
+        errors.append({"field": field, "rule": err["type"]})
+    return _problem(
+        status_code,
+        "Request validation failed",
+        f"{exc.error_count()} field(s) failed validation",
+        code="validation_failed",
+        errors=errors[:_MAX_ERRORS],
+    )
 
 
 def _unavailable(detail: str) -> JSONResponse:
@@ -213,7 +240,8 @@ def make_audit_router(
     async def query_audit_log(
         request: Request,
         actor_user_id: str | None = None,
-        action: list[str] | None = None,
+        # Without `Query()` a list parameter is read from a JSON body, even on a GET.
+        action: Annotated[list[str] | None, Query()] = None,
         subject_type: str | None = None,
         outcome: str | None = None,
         severity: str | None = None,
@@ -234,30 +262,29 @@ def make_audit_router(
             # Contract: `ip` is Owner only. The redacted projection hides it, so filtering
             # on it would reveal it one query at a time.
             return await _refuse(service.writer, principal, "filter_not_permitted:ip")
-        if limit < 1 or limit > AUDIT_QUERY_MAX_LIMIT:
-            return _problem(
-                422,
-                "Unprocessable entity",
-                f"limit must be between 1 and {AUDIT_QUERY_MAX_LIMIT}",
-                code="validation_failed",
+        try:
+            req = AuditQueryRequest.model_validate(
+                {
+                    "actor_user_id": actor_user_id,
+                    "actions": action,
+                    "subject_type": subject_type,
+                    "ip": ip,
+                    "severity": severity,
+                    "outcome": outcome,
+                    "from_ts": from_,
+                    "to_ts": to,
+                    "cursor": cursor,
+                    "limit": limit,
+                }
             )
-        if ip is not None:
-            try:
-                if "%" in ip:
-                    raise ValueError("scope id")
-                ipaddress.ip_address(ip)
-            except ValueError:
-                return _problem(
-                    422,
-                    "Unprocessable entity",
-                    "ip must be a single IP address",
-                    code="validation_failed",
-                )
+        except ValidationError as exc:
+            return _invalid(exc, AuditQueryRequest)
         key = str(principal.user_id)
+        filters = req.model_dump(exclude={"cursor"})
         if view is AuditView.OWN_REDACTED:
             # SR-067: a non-owner reads only its own events; the filter is
             # forced server-side, whatever `actor_user_id` the caller sent.
-            actor_user_id = key
+            filters["actor_user_id"] = key
         try:
             lease = query_limiter.acquire(key)
         except AuditQueryRefused as exc:
@@ -269,23 +296,7 @@ def make_audit_router(
                 retry_after_s=exc.retry_after_s,
             )
         try:
-            return await _run_query(
-                service,
-                key,
-                view,
-                {
-                    "actor_user_id": actor_user_id,
-                    "actions": action,
-                    "subject_type": subject_type,
-                    "severity": severity,
-                    "outcome": outcome,
-                    "from_ts": from_,
-                    "to_ts": to,
-                    "ip": ip,
-                    "limit": limit,
-                },
-                cursor,
-            )
+            return await _run_query(service, key, view, filters, req.cursor)
         finally:
             lease.release()
 
@@ -316,7 +327,7 @@ def make_audit_router(
         try:
             page = await service.query.query(**filters, cursor=cursor, timeout_ms=query_timeout_ms)
         except ValidationError as exc:
-            return _problem(400, "Bad request", str(exc))
+            return _invalid(exc, AuditQueryRequest)
         except TimeoutError:
             return _unavailable("audit query exceeded its time budget")
         except StorageTierUnavailable:
@@ -341,7 +352,7 @@ def make_audit_router(
         try:
             req = AuditVerifyRequest.model_validate(body or {})
         except ValidationError as exc:
-            return _problem(400, "Bad request", str(exc))
+            return _invalid(exc, AuditVerifyRequest, 400)
         result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
         return JSONResponse(status_code=200, content=_jsonable(result))
 
@@ -354,7 +365,7 @@ def make_audit_router(
         try:
             req = AuditExportRequest.model_validate(body)
         except ValidationError as exc:
-            return _problem(400, "Bad request", str(exc))
+            return _invalid(exc, AuditExportRequest, 400)
         result = await service.query.schedule_export(from_ts=req.from_ts, to_ts=req.to_ts)
         return JSONResponse(status_code=202, content=_jsonable(result))
 
