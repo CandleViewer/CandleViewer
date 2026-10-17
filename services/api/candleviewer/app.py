@@ -1099,6 +1099,7 @@ def create_app(
             write_behind=lambda: _write_behind_buffers(ctx),
             ingestion_health=ctx.ingestion.health,
             secrets_health=ctx.secrets.health,
+            accounts_health=ctx.accounts.health,
         )
     )
     # E04-T04: cached component health. Unbuilt modules register `not_deployed`
