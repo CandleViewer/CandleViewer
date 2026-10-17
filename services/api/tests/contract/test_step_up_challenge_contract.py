@@ -37,6 +37,8 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.step_up import HANDLER_GATED_ROUTES
+from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES
 from tests.unit.api.test_step_up_router import _H, _build
 
 _BASE = "urn:cv:openapi"
@@ -353,8 +355,9 @@ def test_step_up_request_takes_an_optional_challenge_id(spec: dict[str, Any]) ->
             "password": "pw",
             "challenge_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
         },
+        {"code": "123456", "password": "p" * 512},
     ],
-    ids=["without-challenge-id", "with-challenge-id"],
+    ids=["without-challenge-id", "with-challenge-id", "password-at-the-login-cap"],
 )
 def test_step_up_request_body_conforms(spec: dict[str, Any], body: dict[str, str]) -> None:
     _validator(spec, _ref(_STEP_UP_REQUEST)).validate(body)
@@ -364,6 +367,104 @@ def test_step_up_request_refuses_a_malformed_challenge_id(spec: dict[str, Any]) 
     body = {"code": "123456", "password": "pw", "challenge_id": "challenge-1"}
     with pytest.raises(ValidationError, match="is not a 'uuid'"):
         _validator(spec, _ref(_STEP_UP_REQUEST)).validate(body)
+
+
+@pytest.mark.parametrize(
+    ("password", "keyword"),
+    [("p" * 513, "maxLength"), ("", "minLength")],
+    ids=["over-the-cap", "empty"],
+)
+def test_step_up_request_refuses_a_password_outside_the_login_bounds(
+    spec: dict[str, Any], password: str, keyword: str
+) -> None:
+    """One cap, not a second number: the login's."""
+    login = spec["components"]["schemas"]["LoginRequest"]["properties"]["password"]
+    assert login["maxLength"] == 512
+    with pytest.raises(ValidationError) as refused:
+        _validator(spec, _ref(_STEP_UP_REQUEST)).validate({"code": "123456", "password": password})
+    assert refused.value.validator == keyword
+
+
+def _no_grace_gates(spec: dict[str, Any]) -> set[tuple[str, str]]:
+    """The operations that gate a no-grace class: the handler-gated registry rows of such a
+    class, and every operation whose own text calls its step-up class no-grace (those not
+    mounted yet have no row). `authStepUp` states its own `503`."""
+    rows = {(m.lower(), p) for m, p, cls in HANDLER_GATED_ROUTES if cls in NO_GRACE_ACTION_CLASSES}
+    described = {
+        (method, path)
+        for path, item in spec["paths"].items()
+        for method, operation in item.items()
+        if isinstance(operation, dict) and "no-grace" in operation.get("description", "")
+    }
+    return (rows | described) - {("post", "/auth/step-up")}
+
+
+#: Each of them waits on the `auth.step_up_mismatch` record of its refusal; the owner reset, which
+#: gates a grace class, waits on its own `auth.mfa_reset_by_owner`.
+_WRITE_AHEAD = sorted(_no_grace_gates(_SPEC) | {("post", "/users/{userId}/mfa/reset")})
+
+
+def test_no_grace_gates_come_from_the_registry_and_from_the_contract_text() -> None:
+    assert {("put", "/rules/{ruleId}/mode"), ("delete", "/admin/backups/{backupId}")} <= set(
+        _WRITE_AHEAD
+    )
+
+
+@pytest.mark.parametrize(("method", "path"), _WRITE_AHEAD)
+def test_operation_that_writes_ahead_lists_the_audit_unavailable_503(
+    spec: dict[str, Any], method: str, path: str
+) -> None:
+    """Each operation gating a no-grace class, and the owner reset, wait on a write-ahead audit
+    record (C-2.9); the catalogued `audit_unavailable` is a `503`."""
+    response = spec["paths"][path][method]["responses"]["503"]
+    assert response == {"$ref": "#/components/responses/ServiceUnavailable"}
+    assert {e["code"]: e["status"] for e in spec["x-error-codes"]}["audit_unavailable"] == 503
+
+
+def test_step_up_503_documents_audit_unavailable_with_a_conforming_example(
+    spec: dict[str, Any],
+) -> None:
+    response = _step_up(spec)["responses"]["503"]
+    assert "`code: audit_unavailable` when the audit record an answer is written ahead of" in (
+        _flat(response["description"])
+    )
+    example = response["content"]["application/problem+json"]["examples"]["auditUnavailable"]
+    entry = {e["code"]: e for e in spec["x-error-codes"]}["audit_unavailable"]
+    _validator(spec, _ref(_PROBLEM)).validate(example["value"])
+    assert (example["value"]["code"], example["value"]["status"]) == ("audit_unavailable", 503)
+    assert example["value"]["title"] == entry["title"]
+
+
+def test_set_rule_mode_lists_the_400_of_a_live_arm_body_that_is_not_i_json(
+    spec: dict[str, Any],
+) -> None:
+    operation = spec["paths"]["/rules/{ruleId}/mode"]["put"]
+    assert operation["responses"]["400"] == {"$ref": "#/components/responses/BadRequest"}
+    assert (
+        "a live arm whose body is not I-JSON (RFC 7493: a lone surrogate, an integer beyond 2^53, "
+        "`NaN` or `Infinity`) has no canonical form and is `400 validation_failed`, never a "
+        "challenge"
+    ) in _flat(operation["description"])
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "A missing or empty `password`, or one longer than 512 characters (the cap of "
+        "`LoginRequest.password`, so no longer password exists), is `422`, decided before any "
+        "factor is checked and counting no failure",
+        "When the audit writer cannot take that record within 2 seconds (it is down, not started "
+        "or too slow) the answer is `503 audit_unavailable` instead, whatever the refusal would "
+        "have been: no challenge is issued, no failure is counted, nothing is elevated or revoked",
+        "An operation that gates a no-grace class lists the same `503` among its responses and "
+        "answers it when the `auth.step_up_mismatch` record of its refusal cannot be written; "
+        "`resetUserMfa` answers it when its own record cannot",
+    ],
+)
+def test_step_up_description_states_the_password_and_write_ahead_rules(
+    spec: dict[str, Any], rule: str
+) -> None:
+    assert rule in _flat(_step_up(spec)["description"])
 
 
 @pytest.mark.parametrize(

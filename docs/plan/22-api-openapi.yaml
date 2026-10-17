@@ -4819,6 +4819,7 @@ paths:
                           },
                         ]
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # POSITIONS
@@ -5663,7 +5664,10 @@ paths:
         audited and broadcast on the `rules` WS topic. Arming a rule whose scope includes the
         `live` environment additionally needs `rules:arm_live` (dangerous, owner-seeded) and a
         fresh one-shot step-up (`live_enablement`); refusals use `permission_required` /
-        `step_up_required`.
+        `step_up_required`. That step-up is bound to this request (`authStepUp`, "Binding"), so
+        a live arm whose body is not I-JSON (RFC 7493: a lone surrogate, an integer beyond 2^53,
+        `NaN` or `Infinity`) has no canonical form and is `400 validation_failed`, never a
+        challenge.
       x-rbac: { permissions: [rules:write, rules:arm_live], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5688,9 +5692,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Rule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/runs:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -8800,6 +8806,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/backups/{backupId}/verify:
     parameters: [{ $ref: "#/components/parameters/BackupId" }]
@@ -8877,6 +8884,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/backups/{backupId}/download/{token}:
     parameters:
@@ -9178,7 +9186,9 @@ paths:
       description: >
         Requires the caller's **password and a TOTP code** (owner decision #1778 AE). The
         password is verified first (same Argon2id path and lockout counters as login), then the
-        code. A missing `password` is `422`; any wrong factor is the same `401 mfa_invalid`
+        code. A missing or empty `password`, or one longer than 512 characters (the cap of
+        `LoginRequest.password`, so no longer password exists), is `422`, decided before any
+        factor is checked and counting no failure; any wrong factor is the same `401 mfa_invalid`
         and never reveals which one failed.
 
         **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it
@@ -9230,6 +9240,19 @@ paths:
         session holds at most one grant per no-grace class. Grace classes keep the unbound
         5-minute window described below.
 
+        **Write-ahead audit and `503` (C-2.9).** The record an answer depends on is written
+        before the answer is sent: `auth.step_up_mismatch` before the `403` that refuses a
+        swapped request, `auth.step_up_failed` before the `400` of a challenge that cannot be
+        answered (while the per-session refusal budget lasts) and `auth.mfa_reset_by_owner` before
+        an owner TOTP reset revokes anything. When the audit writer cannot take that record within
+        2 seconds (it is down, not started or too slow) the answer is `503 audit_unavailable`
+        instead, whatever the refusal would have been: no challenge is issued, no failure is
+        counted, nothing is elevated or revoked, and a grant bound to a held request is neither
+        used nor ended, so the client sends the same request again once the audit writer
+        recovers. An operation that gates a no-grace class lists the same `503` among its
+        responses and answers it when the `auth.step_up_mismatch` record of its refusal cannot
+        be written; `resetUserMfa` answers it when its own record cannot.
+
         **Holding the refused request.** The client keeps the refused request unchanged (method,
         path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The
         refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a
@@ -9277,7 +9300,8 @@ paths:
               required: [code, password]
               properties:
                 code: { type: string, pattern: "^[0-9]{6}$" }
-                password: { type: string, minLength: 1, format: password, writeOnly: true }
+                password:
+                  { type: string, minLength: 1, maxLength: 512, format: password, writeOnly: true }
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
@@ -9347,7 +9371,41 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/AuthUnavailable" }
+        "503":
+          description: >
+            A dependency is unavailable or data is degraded. This keeps every meaning of
+            `ServiceUnavailable` (such as `store_unavailable`), whose examples apply unchanged. It
+            is `code: audit_unavailable` when the audit record an answer is written ahead of cannot
+            be written (see "Write-ahead audit and `503`" above), and `code: auth_unavailable` when
+            the second factor cannot be checked (see `AuthUnavailable`, whose rules apply to this
+            operation unchanged).
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                auditUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/audit_unavailable",
+                      title: "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)",
+                      status: 503,
+                      detail: "audit unavailable",
+                      instance: "urn:cv:req:0193f2bb-5041",
+                      code: audit_unavailable,
+                    }
+                mfaUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/auth_unavailable",
+                      title: "Second factor temporarily unavailable",
+                      status: 503,
+                      detail: "Two-factor authentication is temporarily unavailable; try again later.",
+                      instance: "urn:cv:req:0193f2bb-5031",
+                      code: auth_unavailable,
+                      retry_after_seconds: 30,
+                    }
 
   /users/{userId}/mfa/reset-preview:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -9424,6 +9482,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/mfa/recovery:
     post:
@@ -9693,6 +9752,7 @@ paths:
                 properties:
                   environment: { $ref: "#/components/schemas/Environment" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /notifications:
     get:
@@ -11100,6 +11160,7 @@ paths:
                     status: 409
                     code: positions_unknown
                     detail: "The open-position state could not be read; acknowledge it to restore."
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
 # =============================================================================
 # COMPONENTS
