@@ -87,9 +87,9 @@ bar_build_latency_seconds = Histogram(
 )
 bar_emit_sink_errors_total = Counter(
     "bar_emit_sink_errors_total",
-    "Bar emissions a sink (questdb, ws) failed to accept, by sink or <sink>_timeout; ws also counts"
-    " generation swaps (ws_generation_swap) and binary groups sent structured (ws_no_scales,"
-    " ws_binary_refused).",
+    "Bar emissions a sink (questdb, series_store, ws) failed to accept, by sink or <sink>_timeout;"
+    " ws also counts generation swaps (ws_generation_swap) and binary groups sent structured"
+    " (ws_no_scales, ws_binary_refused).",
     labelnames=("reason",),
 )
 #: The WS series store (E12-T06 D3): failed reads, by the tape tier's degrade reasons

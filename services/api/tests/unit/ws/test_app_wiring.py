@@ -22,11 +22,12 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.bars.builder_set import BarBuilderSet
 from candleviewer.bars.emit import WriterSink
+from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
-from candleviewer.ws.bars_publish import BarsPublisher
+from candleviewer.ws.bars_publish import _CAUSES, BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.metrics import CV_WS_NAMES
@@ -140,6 +141,20 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert isinstance(source, BarsSnapshotSource) and source._store is svc.series
     assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
     assert source._stale == svc.bars.quarantined  # D3: a quarantined builder is `stale`
+    assert isinstance(svc.snapshots._sources["book"], BookSnapshotSource)  # #2196's, kept
+
+
+def test_bar_emit_sink_errors_bound_and_help_cover_every_reason_the_wired_sinks_mint() -> None:
+    """The emit router mints each wired sink's name and `<sink>_timeout`, the WS publisher its own
+    reasons: the catalogue bound counts them all, and its help text names every wired sink."""
+    app = create_app(_settings().model_copy(update={"bars_enabled": True}))
+    sinks = {sink.name for sink in app.state.ws_registry.services.bars._router._sinks}
+    swap = "ws_generation_swap"  # the publisher's swap reason: a literal at its mint site
+    reasons = {*sinks, *(f"{n}_timeout" for n in sinks), swap, *(r for r, _ in _CAUSES.values())}
+    spec = next(s for s in CATALOGUE if s.name == "bar_emit_sink_errors_total")
+    assert spec.max_series == len(reasons)
+    assert [m.documentation for m in bar_emit_sink_errors_total.collect()] == [spec.help]
+    assert [n for n in sorted(sinks) if n not in spec.help] == []
 
 
 def test_bars_scales_are_the_places_of_the_catalogue_tick_size_and_qty_step() -> None:
