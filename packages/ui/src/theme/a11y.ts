@@ -20,8 +20,8 @@ export const THEME_ANNOUNCEMENTS = {
 
 const LIVE_REGION_ID = "cv-theme-live-region";
 
-/** Announces `message` through one visually hidden polite live region, created outside React on first use. */
-export function announcePolite(message: string, doc: Document = document): void {
+/** The hidden polite live region, created empty when missing: it must exist before the first announcement (05 §6.2). */
+export function mountLiveRegion(doc: Document = document): HTMLElement {
   let region = doc.getElementById(LIVE_REGION_ID);
   if (region === null) {
     region = doc.createElement("div");
@@ -40,7 +40,12 @@ export function announcePolite(message: string, doc: Document = document): void 
     });
     doc.body.appendChild(region);
   }
-  region.textContent = message;
+  return region;
+}
+
+/** Announces `message` through the live region (mount it at startup, see `mountLiveRegion`). */
+export function announcePolite(message: string, doc: Document = document): void {
+  mountLiveRegion(doc).textContent = message;
 }
 
 /** `Ctrl+Shift+H` handler: toggles high contrast and announces the new state politely. */

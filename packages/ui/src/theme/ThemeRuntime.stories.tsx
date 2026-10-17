@@ -4,10 +4,8 @@ import { expect, userEvent, within } from "@storybook/test";
 import {
   DENSITIES,
   MOTION_OVERRIDES,
-  TEXT_SCALES,
   THEMES,
   toggleHighContrastAnnounced,
-  useReducedMotion,
   useThemeSnapshot,
   useThemeStore,
 } from "./index.js";
@@ -66,7 +64,6 @@ function Choice<T extends string | number>(props: ChoiceProps<T>): JSX.Element {
 function Playground(): JSX.Element {
   const store = useThemeStore();
   const s = useThemeSnapshot();
-  const [reduced] = useReducedMotion();
   return (
     <main style={PAGE}>
       <h1>Theme runtime</h1>
@@ -77,12 +74,6 @@ function Playground(): JSX.Element {
         options={MOTION_OVERRIDES}
         value={s.motionOverride}
         onChange={store.setMotionOverride}
-      />
-      <Choice
-        legend="Text scale"
-        options={TEXT_SCALES}
-        value={s.textScale}
-        onChange={store.setTextScale}
       />
       <label>
         <input
@@ -95,7 +86,6 @@ function Playground(): JSX.Element {
       <button type="button" onClick={() => toggleHighContrastAnnounced(store)}>
         Toggle high contrast (Ctrl+Shift+H)
       </button>
-      <p>{reduced ? "Motion is reduced" : "Motion is allowed"}</p>
       <MountProbe />
     </main>
   );
@@ -183,6 +173,8 @@ export const StyleRecalcBenchmark: Story = {
   render: () => <Benchmark />,
   play: async ({ canvasElement }) => {
     const ui = within(canvasElement);
+    const token = getComputedStyle(document.documentElement).getPropertyValue("--size-row-compact");
+    await expect(token, "token CSS missing: run `build:tokens` first").not.toBe("");
     await userEvent.click(ui.getByRole("button", { name: "Run benchmark" }));
     const ms = JSON.parse(ui.getByLabelText("Benchmark result").textContent ?? "{}") as Record<
       string,

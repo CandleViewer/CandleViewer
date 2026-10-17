@@ -8,6 +8,7 @@ import {
   type JSX,
   type ReactNode,
 } from "react";
+import { mountLiveRegion } from "./a11y.js";
 import {
   createThemeStore,
   type DensityName,
@@ -30,12 +31,14 @@ export interface ThemeProviderProps {
 
 /**
  * Connects a theme store to `document.documentElement`. It renders no DOM of its own and its context
- * value (the store) never changes, so a switch re-renders only components that read a value through
- * the hooks below. The store is fixed for the provider's lifetime (remount to change it).
+ * value (the store) never changes, so a switch re-renders only components that read a value.
  */
 export function ThemeProvider({ children, store, options }: ThemeProviderProps): JSX.Element {
   const [active] = useState(() => store ?? createThemeStore(options));
-  useBrowserLayoutEffect(() => active.connect(), [active]);
+  useBrowserLayoutEffect(() => {
+    mountLiveRegion(); // pre-rendered, so the first Ctrl+Shift+H announcement is heard
+    return active.connect();
+  }, [active]);
   return <ThemeContext.Provider value={active}>{children}</ThemeContext.Provider>;
 }
 

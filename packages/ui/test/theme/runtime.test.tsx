@@ -128,6 +128,11 @@ describe("theme provider and hooks", () => {
     expect(within(document.body).getAllByRole("status")).toHaveLength(1);
     expect(region.textContent).toBe("High-contrast theme off");
   });
+
+  it("pre-renders the empty polite live region at mount, so the first announcement is heard", async () => {
+    await mount(<ThemeProvider store={newStore()}>x</ThemeProvider>);
+    expect(within(document.body).getByRole("status").textContent).toBe("");
+  });
 });
 
 describe("theme runtime stories", () => {

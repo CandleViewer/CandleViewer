@@ -74,7 +74,7 @@ source files themselves are exempt).
 ## Theme runtime (E05-T02)
 
 `src/theme/` owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root attributes
-that the token CSS and `src/theme/theme.css` key off. They are written on `document.documentElement` only
+(the token CSS and `theme.css` key off the first three). They are written on `document.documentElement` only
 (never a React-owned wrapper), so a switch is a CSS custom-property swap with no remount. Contract and
 event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-system-brief.md).
 
@@ -87,8 +87,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   `script-src`), never `'unsafe-inline'`.
 - `HIGH_CONTRAST_SHORTCUT` (`Ctrl+Shift+H`) and `toggleHighContrastAnnounced` — the shortcut contract the
   E10 hotkey registry calls; each toggle is announced through one polite live region.
-- `theme.css` — density pointers, the `--cv-motion-scale` hook (the motion recipes are `TODO(#162)`) and the
-  `[data-motion="reduce"]` / `prefers-reduced-motion` blocks. Import it next to the token CSS.
+- `theme.css` — density pointers, the `--cv-motion-scale` hook (the motion recipes are `TODO(#3174)`) and
+  the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks. Import it next to the token CSS.
 - Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
 - Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
   `a11y-preferences` feature should call it rather than write the attributes themselves.

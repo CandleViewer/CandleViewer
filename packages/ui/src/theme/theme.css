@@ -3,21 +3,22 @@
  * switch is a pure style recalculation: no component re-renders, remounts or GL context loss.
  */
 
-/* Density re-points the density-aware aliases at their compact/comfortable scale step (ADR-0024 #4). */
-:root[data-density="compact"] {
+/* Density re-points the aliases at their scale step (ADR-0024 #4) on any `data-density` element (brief §3). */
+/* The doubled attribute outranks the token CSS's `[data-theme]` blocks, which pin the aliases to compact. */
+[data-density="compact"][data-density] {
   --size-control-height: var(--size-control-compact);
   --size-row-height: var(--size-row-compact);
 }
 
-:root[data-density="comfortable"] {
+[data-density="comfortable"][data-density] {
   --size-control-height: var(--size-control-comfortable);
   --size-row-height: var(--size-row-comfortable);
 }
 
 /*
  * Motion switch for the recipes: 1 = motion-safe, 0 = reduced.
- * TODO(#162): the named motion recipes (durations/easings per component) are specified by E05-D03 and
- * land with that ticket, multiplying their durations by this switch. No recipe values live here.
+ * TODO(#3174, blocked by #162): the named motion recipes (E05-D03) land with #3174 and multiply their
+ * durations by this switch. No recipe values live here.
  */
 :root {
   --cv-motion-scale: 1;
