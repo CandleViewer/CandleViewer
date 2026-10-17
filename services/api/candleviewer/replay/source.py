@@ -14,7 +14,8 @@ bytes, whichever binds first, counting every batch the source keeps for its cons
 ones, the one the producer holds (being built, or waiting for a queue slot) and the one the
 consumer is iterating. A batch ends at its event count or at its share of the bytes less the
 largest row the request can produce, so it never exceeds the share; the queue has two slots
-fewer than there are batches in all. `buffered_events` is what is queued.
+fewer than there are batches in all. `buffered_events` is what is queued. The producer yields to
+the event loop after every batch (C-2.17: a batch is about a millisecond of merge work).
 
 **Memory ceiling.** `memory_ceiling_bytes` is the session's estimated budget: the read-ahead
 takes `readahead_bytes` of it and the merge's cursors share the rest, each read capped at its
@@ -23,9 +24,10 @@ dense for it fails with `ReplayMemoryCeilingExceeded`; gap markers sit outside i
 `replay.merge`). Every byte figure is an estimate, not a measured resident size: an event counts
 512 B (E26-K01 measured ~0.4 KB) plus 128 B per snapshot level (`merge.approx_bytes`).
 
-**Failures** reach the consumer in order: every event merged before a failure is delivered, then
-the typed error is raised. Every storage await is bounded by `io_timeout_s` (in the merge), and
-so is closing: `aclose` waits that long for the producer, then logs and returns.
+**Failures** reach the consumer in order. A `ReplayError` is raised after every event merged
+before it (the merge yields its batch in progress first); any other exception, a bug in a reader,
+after every batch the merge had yielded. Every storage await is bounded by `io_timeout_s` (in the
+merge), and so is closing: `aclose` waits that long for the producer, then logs and returns.
 
 **Window cap.** The request's `max_span_us` (E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS`) is the one
 cap; the source has none of its own. It re-validates the request it is given, because
@@ -237,10 +239,11 @@ class ReplaySource:
         return self._task
 
     def _producer_ended(self, task: asyncio.Task[None]) -> None:
-        """Wake a consumer parked on the empty queue when anything but `aclose` cancelled the
-        producer. A full queue means the consumer is not parked: `_advance` finds the cancelled
-        producer once it has drained the queue."""
-        if task.cancelled() and not self._done and not self._queue.full():
+        """Wake a consumer parked on the empty queue when the producer was cancelled: by `aclose`
+        (which clears the queue and leaves its own end marker afterwards) or by anyone else. A
+        full queue means the consumer is not parked: `_advance` finds the cancelled producer once
+        it has drained the queue."""
+        if task.cancelled() and not self._queue.full():
             self._queue.put_nowait(_Mark.STOPPED)
 
     async def _advance(self) -> ReplayItem:
@@ -289,6 +292,7 @@ class ReplaySource:
                     await self._queue.put(batch)  # blocks while full: storage reads stop
                     self._queued += len(batch)
                     replay_readahead_depth.inc(len(batch))
+                    await asyncio.sleep(0)  # C-2.17: a batch is ~1 ms of merge work, not a fill
         except Exception as exc:  # reaches the consumer after every batch queued before it
             outcome = _Failed(exc)
         await self._queue.put(outcome)

@@ -11,6 +11,7 @@ from prometheus_client import REGISTRY
 
 from candleviewer.replay import (
     ReadAheadConfig,
+    ReplayItem,
     ReplayMemoryCeilingExceeded,
     ReplayRequestInvalid,
     ReplaySource,
@@ -23,7 +24,15 @@ from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
 from candleviewer.storage.testing import InMemoryRecordedTier
 from tests.unit.replay._events import SECOND, Harness, at, digest, request, snapshot, trade
-from tests.unit.replay._source import SMALL, count_items, many, until_parked
+from tests.unit.replay._source import (
+    SMALL,
+    count_items,
+    drain,
+    drain_into,
+    many,
+    pull,
+    until_parked,
+)
 
 HOUR = 3_600 * SECOND
 
@@ -34,25 +43,26 @@ def _gauge() -> float:
 
 async def test_a_slow_consumer_stops_storage_reads_and_loses_nothing() -> None:
     """Ticket AC 4: the buffer fills, storage reads stop, memory stays flat, nothing is dropped."""
-    stored = many(20_000)
+    stored = many(10_000)
     harness = Harness(hot=stored)
-    tracemalloc.start()
-    try:
-        async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
-            await until_parked(source, at_least=128)
-            reads, buffered = harness.hot.reads, source.buffered_events
+
+    async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+        await until_parked(source, at_least=128)
+        reads, buffered = harness.hot.reads, source.buffered_events
+        tracemalloc.start()
+        try:
             before, _ = tracemalloc.get_traced_memory()
             for _ in range(500):  # a consumer that has stopped reading
                 await asyncio.sleep(0)
             after, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
 
-            assert harness.hot.reads == reads
-            assert source.buffered_events == buffered == 2 * 64  # the queue's two slots
-            assert after - before < 64 * 1024
+        assert harness.hot.reads == reads
+        assert source.buffered_events == buffered == 2 * 64  # the queue's two slots
+        assert after - before < 64 * 1024
 
-            got = [item async for item in source]
-    finally:
-        tracemalloc.stop()
+        got = await drain(source)
 
     assert got == stored
 
@@ -66,13 +76,25 @@ async def test_the_readahead_gauge_tracks_buffered_events_and_returns_to_zero() 
     async with source:
         await until_parked(source, at_least=128)
         assert _gauge() == baseline + source.buffered_events == baseline + 128
-        first = await anext(source)
+        first = await pull(source)
         assert _gauge() == baseline + source.buffered_events == baseline + 64
         await until_parked(source, at_least=128)
         assert _gauge() == baseline + 128
 
     assert first == stored[0]
     assert _gauge() == baseline
+
+
+async def test_the_producer_yields_to_the_event_loop_after_every_batch() -> None:
+    """C-2.17: filling the read-ahead never holds the loop. The in-memory tiers never suspend, so
+    only the producer's own yield lets the test run between two batches."""
+    harness = Harness(hot=many(2_000))
+
+    async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+        await asyncio.sleep(0)
+        assert source.buffered_events == 64
+        await asyncio.sleep(0)
+        assert source.buffered_events == 128
 
 
 async def test_the_gauge_returns_to_zero_when_the_replay_is_read_to_its_end() -> None:
@@ -88,11 +110,11 @@ async def test_iterating_without_a_context_manager_runs_to_completion() -> None:
     harness = Harness(hot=many(300))
     source = ReplaySource(harness.req, harness.tiers, config=SMALL)
 
-    got = [item async for item in source]
+    got = await drain(source)
 
     assert digest(got) == digest(many(300))
     await source.aclose()
-    assert [item async for item in source] == []
+    assert await drain(source) == []
 
 
 class _FailsOnSecondRead(InMemoryRecordedTier):
@@ -107,31 +129,54 @@ class _FailsOnSecondRead(InMemoryRecordedTier):
 async def test_events_merged_before_a_failure_are_delivered_before_the_typed_error() -> None:
     stored = [trade(t * SECOND // 2, trade_id=f"t{t}") for t in range(10)]
     harness = Harness().replace_ports(hot=_FailsOnSecondRead(stored))
-    got: list[object] = []
+    got: list[ReplayItem] = []
 
     with pytest.raises(ReplaySourceUnavailable):
         async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
-            async for item in source:
-                got.append(item)
+            await drain_into(source, got)
 
     assert got == stored[:2]  # the first 1 s window, then the failure
+
+
+class _BreaksOnSecondRead(InMemoryRecordedTier):
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        if self.reads >= 1:
+            raise ZeroDivisionError("a reader bug, not a storage error")
+        return await super().read(symbol, stream, rng, depth=depth, limit=limit)
+
+
+async def test_an_unexpected_failure_reaches_the_consumer_after_the_batches_before_it() -> None:
+    """Nothing the producer raises is lost: a bug in a reader ends the replay as itself, not as a
+    hang on an empty queue. The 500 rows of the first 1 s window make seven batches of 64 and a
+    batch of 52 still in progress, which only a typed failure delivers before it is raised."""
+    stored = many(500)
+    harness = Harness().replace_ports(hot=_BreaksOnSecondRead(stored))
+    got: list[ReplayItem] = []
+
+    with pytest.raises(ZeroDivisionError):
+        async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+            await drain_into(source, got)
+
+    assert got == stored[: 7 * 64]
 
 
 async def test_a_source_that_failed_or_ended_stays_stopped() -> None:
     failing = Harness().replace_ports(hot=_FailsOnSecondRead([trade(0), trade(SECOND, seq=1)]))
     source = ReplaySource(failing.req, failing.tiers, config=SMALL)
-    assert await anext(source) == trade(0)
+    assert await pull(source) == trade(0)
     with pytest.raises(ReplaySourceUnavailable):
-        await anext(source)
+        await pull(source)
     for _ in range(2):
         with pytest.raises(StopAsyncIteration):
-            await anext(source)
+            await pull(source)
     await source.aclose()
 
     done = ReplaySource(Harness().req, Harness().tiers, config=SMALL)
-    assert [item async for item in done] == []
+    assert await drain(done) == []
     with pytest.raises(StopAsyncIteration):
-        await anext(done)
+        await pull(done)
 
 
 async def test_a_straddling_session_fails_the_first_read_before_any_event() -> None:
@@ -139,7 +184,7 @@ async def test_a_straddling_session_fails_the_first_read_before_any_event() -> N
 
     with pytest.raises(ReplayTierStraddle):
         async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
-            await anext(source)
+            await pull(source)
 
     assert harness.hot.reads == harness.cold.reads == 0
 
@@ -152,12 +197,11 @@ async def test_a_dense_instant_fails_the_replay_naming_the_row_ceiling_after_ear
     early = [trade(t * SECOND, trade_id=f"e{t}") for t in (1, 2, 3)]
     dense = [trade(40 * SECOND, trade_id=f"d{i:05}") for i in range(DEFAULT_MAX_ROWS_PER_READ + 1)]
     harness = Harness(hot=early + dense)
-    got: list[object] = []
+    got: list[ReplayItem] = []
 
     with pytest.raises(ReplayMemoryCeilingExceeded) as raised:
         async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
-            async for item in source:
-                got.append(item)
+            await drain_into(source, got)
 
     assert got == early
     assert raised.value.max_rows == DEFAULT_MAX_ROWS_PER_READ
@@ -217,7 +261,7 @@ async def test_the_anchor_lookup_works_while_reading_and_after_close() -> None:
     at_us = harness.req.start_us + 10 * SECOND + 1
 
     async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
-        await anext(source)
+        await pull(source)
         assert await source.anchor_at("BTCUSDT", at_us) == snapshot(10 * SECOND, update_id=10)
     assert await source.anchor_at("BTCUSDT", at_us) == snapshot(10 * SECOND, update_id=10)
 
@@ -238,7 +282,7 @@ async def test_a_failing_anchor_lookup_is_typed_and_never_read_as_no_anchor() ->
         await source.anchor_at("BTCUSDT", harness.req.start_us + SECOND)
 
     assert (raised.value.tier, raised.value.reason) == ("questdb", "STORAGE_TIER_UNAVAILABLE")
-    assert [item async for item in source] == []  # the read-ahead is unaffected
+    assert await drain(source) == []  # the read-ahead is unaffected
 
 
 @pytest.mark.parametrize(

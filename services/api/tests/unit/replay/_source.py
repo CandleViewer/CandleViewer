@@ -12,17 +12,24 @@ import asyncio
 import weakref
 from collections.abc import Iterable
 
-from candleviewer.replay import ReadAheadConfig, ReplaySource
+from candleviewer.replay import ReadAheadConfig, ReplayItem, ReplaySource
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent, RecordedGap
 from candleviewer.storage.testing import StaticGapReader
 from tests.unit.replay._events import SECOND, T0, BoundedTier, trade
 
-#: Three batches of 64 events fit 256 events (a queue of two slots), and 1 MiB is roomy: events
-#: bind before bytes. Reads are 1 s windows.
+#: Four batches of 64 events fit 256 events (a queue of two slots), and 1 MiB is roomy: events
+#: bind before bytes. Reads are 1 s windows, and every storage await and close is bounded by 2 s,
+#: so a mutant that never ends or never stops fails a test within seconds.
 SMALL = ReadAheadConfig(
-    window_us=SECOND, readahead_events=256, batch_events=64, readahead_bytes=1 << 20
+    window_us=SECOND,
+    readahead_events=256,
+    batch_events=64,
+    readahead_bytes=1 << 20,
+    io_timeout_s=2.0,
 )
+#: A source that never ends or never answers fails the test after this, it does not hang it.
+BOUND_S = 10.0
 
 
 def many(count: int, *, symbol: str = "BTCUSDT") -> list[RecordedEvent]:
@@ -47,9 +54,29 @@ async def until_parked(source: ReplaySource, *, at_least: int) -> None:
 async def count_items(source: ReplaySource) -> int:
     """Iterate to the end keeping nothing: the consumer holds no row once this returns."""
     count = 0
-    async for _ in source:
-        count += 1
+    async with asyncio.timeout(BOUND_S):
+        async for _ in source:
+            count += 1
     return count
+
+
+async def drain(source: ReplaySource) -> list[ReplayItem]:
+    """Every item the source yields from here to its end."""
+    async with asyncio.timeout(BOUND_S):
+        return [item async for item in source]
+
+
+async def drain_into(source: ReplaySource, got: list[ReplayItem]) -> None:
+    """Like `drain`, but into `got`, which keeps what was yielded when the source raises."""
+    async with asyncio.timeout(BOUND_S):
+        async for item in source:
+            got.append(item)
+
+
+async def pull(source: ReplaySource) -> ReplayItem:
+    """The next item (or the error that ends the replay)."""
+    async with asyncio.timeout(BOUND_S):
+        return await anext(source)
 
 
 class Minted(RecordedEvent):

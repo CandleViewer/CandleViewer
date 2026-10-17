@@ -15,14 +15,15 @@ from candleviewer.replay import (
 )
 from candleviewer.storage.models import StreamKind
 from tests.unit.replay._events import SECOND, SYM, Harness, request
-from tests.unit.replay._source import many, until_parked
+from tests.unit.replay._source import many, pull, until_parked
 
 TRADES, SNAPSHOTS = StreamKind.TRADES, StreamKind.ORDERBOOK_SNAPSHOT
 ROW = 512  # `merge.approx_bytes` of one trade
 
 
 def _config(**bounds: int) -> ReadAheadConfig:
-    return ReadAheadConfig(window_us=SECOND, **bounds)
+    """1 s read windows and a 2 s deadline, so a source that fails to stop fails a test quickly."""
+    return ReadAheadConfig(window_us=SECOND, io_timeout_s=2.0, **bounds)
 
 
 @pytest.mark.parametrize(
@@ -118,6 +119,14 @@ async def test_bytes_cut_batches_before_events_when_they_bind_first() -> None:
     assert await parked_events(config, at_least=24) == 8 * 3
 
 
+async def test_a_batch_fills_its_byte_share_up_to_its_last_row() -> None:
+    """A 2 049 B share less the 512 B row is 1 537 B: three trades (1 536 B) are a byte short, so
+    a fourth joins, and the four (2 048 B) still fit the share."""
+    config = _config(readahead_events=1_000, batch_events=100, readahead_bytes=ROW * 40 + 10)
+
+    assert await parked_events(config, at_least=32) == 8 * 4
+
+
 async def test_a_small_byte_bound_shrinks_the_queue_to_the_rows_it_can_hold() -> None:
     """Twelve rows fit 12 batches of one trade, however many events are allowed."""
     config = _config(readahead_events=1_000_000, readahead_bytes=ROW * 12)
@@ -136,9 +145,16 @@ async def test_the_queue_keeps_two_batches_of_room_for_the_producer_and_the_cons
     assert await parked_events(_config(readahead_events=7, batch_events=2), at_least=2) == 2
 
 
-def test_three_rows_of_the_requested_depth_are_the_least_the_readahead_bytes_can_hold() -> None:
+@pytest.mark.parametrize(
+    "streams",
+    [(SNAPSHOTS,), (TRADES, SNAPSHOTS), (SNAPSHOTS, TRADES)],
+    ids=["snapshots", "trades-then-snapshots", "snapshots-then-trades"],
+)
+def test_three_rows_of_the_deepest_requested_stream_are_the_least_the_bytes_can_hold(
+    streams: tuple[StreamKind, ...],
+) -> None:
     deepest = ROW + 128 * 2 * 500  # a 500-level snapshot: `merge.row_bytes`
-    req = request(streams=(SNAPSHOTS,), depth=500)
+    req = request(streams=streams, depth=500)
     harness = Harness(req=req)
 
     ReplaySource(req, harness.tiers, config=_config(readahead_bytes=3 * deepest))
@@ -146,6 +162,14 @@ def test_three_rows_of_the_requested_depth_are_the_least_the_readahead_bytes_can
         ReplaySource(req, harness.tiers, config=_config(readahead_bytes=3 * deepest - 1))
 
     assert harness.hot.reads == 0
+
+
+async def test_a_batch_gets_the_readahead_bytes_over_the_batches_held() -> None:
+    """Thirty events in batches of ten are three batches, so each has a third of 12 rows' bytes:
+    2 048 B, less the 512 B of the largest row, is three trades to a batch."""
+    config = _config(readahead_events=30, batch_events=10, readahead_bytes=ROW * 12)
+
+    assert await parked_events(config, at_least=3) == 1 * 3
 
 
 def test_only_the_requested_streams_size_the_largest_row() -> None:
@@ -175,6 +199,6 @@ async def test_the_readahead_counts_toward_the_ceiling() -> None:
     harness = Harness(hot=many(50))
 
     async with ReplaySource(harness.req, harness.tiers, config=config) as source:
-        await anext(source)
+        await pull(source)
 
     assert harness.hot.limits[0] == 101

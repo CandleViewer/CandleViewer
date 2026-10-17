@@ -20,6 +20,7 @@ from hypothesis import strategies as st
 from candleviewer.replay import ReadAheadConfig, ReplayItem, ReplaySource
 from candleviewer.replay.merge import row_bytes
 from tests.unit.replay._events import Harness, digest
+from tests.unit.replay._source import BOUND_S
 from tests.unit.replay.test_merge_properties import (
     SNAPSHOTS,
     STREAMS,
@@ -53,7 +54,10 @@ def replay(
 ) -> list[ReplayItem]:
     async def run() -> list[ReplayItem]:
         got: list[ReplayItem] = []
-        async with ReplaySource(harness.req, harness.tiers, config=config) as source:
+        async with (
+            asyncio.timeout(BOUND_S),
+            ReplaySource(harness.req, harness.tiers, config=config) as source,
+        ):
             async for item in source:
                 assert source.buffered_events <= slots * config.batch_events
                 got.append(item)

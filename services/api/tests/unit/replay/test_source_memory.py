@@ -76,12 +76,13 @@ async def test_events_alive_stay_within_the_readahead_and_a_cursor_window() -> N
         await until_parked(source, at_least=128)
         peaks.append(tier.alive())
         pulled = 0
-        async for _ in source:
-            pulled += 1
-            if pulled % 500 == 0:
-                for _ in range(3):  # a slow consumer: the producer gets a few turns in between
-                    await asyncio.sleep(0)
-                peaks.append(tier.alive())
+        async with asyncio.timeout(60):
+            async for _ in source:
+                pulled += 1
+                if pulled % 500 == 0:
+                    for _ in range(3):  # a slow consumer: the producer gets a few turns in between
+                        await asyncio.sleep(0)
+                    peaks.append(tier.alive())
 
     assert pulled == 20_000
     assert 500 <= max(peaks) <= 256 + 500  # one window held whole, plus the read-ahead at most

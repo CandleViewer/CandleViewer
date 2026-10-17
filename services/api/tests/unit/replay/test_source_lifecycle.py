@@ -8,12 +8,12 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
-from candleviewer.replay import ReadAheadConfig, ReplaySource, ReplaySourceUnavailable
+from candleviewer.replay import ReadAheadConfig, ReplayItem, ReplaySource, ReplaySourceUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
 from candleviewer.storage.testing import InMemoryRecordedTier
 from tests.unit.replay._events import Harness
-from tests.unit.replay._source import SMALL, many, until_parked
+from tests.unit.replay._source import SMALL, drain, drain_into, many, pull, until_parked
 
 
 def _gauge() -> float:
@@ -76,15 +76,15 @@ async def test_closing_a_parked_source_cancels_the_producer_and_stops_iteration(
     await source.aclose()  # idempotent
 
     assert (source.buffered_events, _gauge(), _producers()) == (0, baseline, [])
-    assert [item async for item in source] == []
+    assert await drain(source) == []
 
 
 async def test_closing_from_another_task_wakes_a_consumer_parked_on_the_queue() -> None:
     harness = Harness().replace_ports(hot=_NeverAnswers())
     source = ReplaySource(harness.req, harness.tiers, config=SMALL)
 
-    async def consume() -> list[object]:
-        return [item async for item in source]
+    async def consume() -> list[ReplayItem]:
+        return await drain(source)
 
     async with asyncio.timeout(5), asyncio.TaskGroup() as group:
         consumer = group.create_task(consume())
@@ -109,7 +109,7 @@ async def test_a_consumer_cancelled_while_parked_loses_no_event() -> None:
             await first
         reader.gate.set()
 
-        got = [item async for item in source]
+        got = await drain(source)
 
     assert got == stored
 
@@ -129,13 +129,13 @@ async def test_a_producer_cancelled_by_someone_else_ends_a_parked_consumer_with_
             with pytest.raises(RuntimeError, match="stopped before the replay ended"):
                 await waiting
         with pytest.raises(StopAsyncIteration):
-            await anext(source)
+            await pull(source)
 
 
 async def test_the_producer_cancelled_by_someone_else_still_delivers_what_was_queued() -> None:
     stored = many(2_000)
     harness = Harness(hot=stored)
-    got: list[object] = []
+    got: list[ReplayItem] = []
 
     async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
         await until_parked(source, at_least=128)
@@ -144,10 +144,8 @@ async def test_the_producer_cancelled_by_someone_else_still_delivers_what_was_qu
         for _ in range(20):
             await asyncio.sleep(0)
 
-        async with asyncio.timeout(5):
-            with pytest.raises(RuntimeError, match="stopped before the replay ended"):
-                async for item in source:
-                    got.append(item)
+        with pytest.raises(RuntimeError, match="stopped before the replay ended"):
+            await drain_into(source, got)
 
     assert got == stored[:128]  # the two queued batches, then the error: nothing skipped silently
 
@@ -159,7 +157,7 @@ async def test_a_storage_read_that_never_answers_ends_the_replay_with_a_typed_ti
     async with asyncio.timeout(5):  # a source without its own deadline fails here, not hangs
         async with ReplaySource(harness.req, harness.tiers, config=config) as source:
             with pytest.raises(ReplaySourceUnavailable) as raised:
-                await anext(source)
+                await pull(source)
 
     assert raised.value.reason == "timeout"
 
@@ -173,16 +171,48 @@ async def test_closing_gives_up_on_a_producer_that_ignores_cancellation_after_th
     await reader.entered.wait()
     (producer,) = _producers()
 
-    with capture_logs() as logs:
-        async with asyncio.timeout(5):
-            await source.aclose()
+    try:
+        with capture_logs() as logs:
+            async with asyncio.timeout(5):  # without its own bound, closing fails here
+                await source.aclose()
 
-    assert [e["event"] for e in logs if e["log_level"] == "error"] == [
-        "replay_source_producer_did_not_stop"
-    ]
-    assert [item async for item in source] == []
-    reader.release.set()  # the reader gives the producer back, which then ends by itself
-    await asyncio.wait({producer})
+        assert [e["event"] for e in logs if e["log_level"] == "error"] == [
+            "replay_source_producer_did_not_stop"
+        ]
+        assert await drain(source) == []
+    finally:
+        reader.release.set()  # the reader gives the producer back, which then ends by itself
+        await asyncio.wait({producer})
+
+
+async def test_a_closed_source_hands_out_nothing_more_even_from_the_batch_in_hand() -> None:
+    harness = Harness(hot=many(2_000))
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL)
+    async with source:
+        assert await pull(source) == many(2_000)[0]  # 63 more of its batch are in hand
+        await source.aclose()
+
+        with pytest.raises(StopAsyncIteration):
+            await pull(source)
+
+
+async def test_closing_wakes_a_parked_consumer_even_when_the_producer_ignores_cancellation() -> (
+    None
+):
+    reader = _IgnoresCancellation()
+    harness = Harness().replace_ports(hot=reader)
+    config = ReadAheadConfig(window_us=1_000_000, io_timeout_s=0.01)
+    source = ReplaySource(harness.req, harness.tiers, config=config)
+    consumer = asyncio.create_task(drain(source))
+    await reader.entered.wait()
+    (producer,) = _producers()
+
+    try:
+        await source.aclose()
+        assert await asyncio.wait_for(consumer, 5) == []
+    finally:
+        reader.release.set()
+        await asyncio.wait({producer})
 
 
 async def test_closing_cancelled_while_it_waits_still_releases_everything() -> None:
@@ -201,7 +231,7 @@ async def test_closing_cancelled_while_it_waits_still_releases_everything() -> N
     await asyncio.wait({producer})
 
     assert (source.buffered_events, _gauge()) == (0, baseline)
-    assert [item async for item in source] == []
+    assert await drain(source) == []
 
 
 async def test_a_closed_source_never_starts_its_producer() -> None:
@@ -211,7 +241,7 @@ async def test_a_closed_source_never_starts_its_producer() -> None:
 
     async with source:
         assert _producers() == []
-        assert [item async for item in source] == []
+        assert await drain(source) == []
 
     assert harness.hot.reads == 0
 
