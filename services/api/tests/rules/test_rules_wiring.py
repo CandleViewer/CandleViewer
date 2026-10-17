@@ -6,12 +6,14 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.rules_crud import _from_error
 from candleviewer.api.step_up import (
+    AUDIT_UNAVAILABLE_TITLE,
     HANDLER_GATED_ROUTES,
     SESSION_READ_ONLY_TITLE,
     STEP_UP_REQUIRED_DETAIL,
@@ -20,14 +22,37 @@ from candleviewer.api.step_up import (
 )
 from candleviewer.api.step_up_challenge import request_fingerprint
 from candleviewer.app import create_app
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import (
     SessionReadOnly,
     SessionRevoked,
     StepUpMismatch,
     StepUpRequired,
+    UnknownActionClass,
 )
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.rules.manager import RuleError
+
+
+def test_app_gives_the_rules_resolver_the_emitter_of_its_mismatch_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live arm presented with another request's grant is audited before it is answered
+    (C-2.9, `auth.step_up_mismatch`): the composition root wires the emitter that writes it."""
+    from candleviewer.api.rules_actor import SessionRulesActorResolver
+    from candleviewer.app import _LazyAuditEmitter
+
+    emitters: list[object] = []
+
+    class _Spy(SessionRulesActorResolver):
+        def __init__(self, *args: Any) -> None:
+            super().__init__(*args)
+            emitters.append(self._emitter)
+
+    monkeypatch.setattr("candleviewer.app.build_identity_provider", lambda _settings: object())
+    monkeypatch.setattr("candleviewer.app.SessionRulesActorResolver", _Spy)
+    create_app()
+    assert [type(emitter) for emitter in emitters] == [_LazyAuditEmitter]
 
 
 def test_rules_routes_mounted_and_declared_in_openapi() -> None:
@@ -213,9 +238,41 @@ async def test_actor_consume_on_a_read_only_session_states_the_write_guards_word
     consume = await _arm_consume(_StepUp())
     with pytest.raises(RuleError) as refused:
         await consume()
-    assert json.loads(_from_error(refused.value).body) == json.loads(
-        readonly_problem(SessionReadOnly(_UNTIL)).body
+    assert json.loads(bytes(_from_error(refused.value).body)) == json.loads(
+        bytes(readonly_problem(SessionReadOnly(_UNTIL)).body)
     )
+
+
+async def test_actor_consume_without_its_mismatch_record_is_503_never_a_challenge() -> None:
+    """A grant bound to another request is refused only after `auth.step_up_mismatch` is written
+    ahead (C-2.9): without it there is no challenge and no arming."""
+
+    class _Down:
+        async def emit(self, action: str, **kwargs: object) -> None:
+            raise AuditUnavailable("WAL unwritable")
+
+    step_up = _BoundStepUp("0" * 64)
+    consume = await _arm_consume(step_up, _Down())
+    with pytest.raises(RuleError) as refused:
+        await consume()
+    assert (refused.value.status, refused.value.code) == (503, "audit_unavailable")
+    assert refused.value.extra == {"title": AUDIT_UNAVAILABLE_TITLE}
+    assert step_up.pending == []
+
+
+async def test_actor_consume_of_an_unregistered_class_is_a_defect_never_swallowed() -> None:
+    """`UnknownActionClass` is a server defect (the route demands an unregistered class): it
+    reaches the 500 handler as itself, never read as a refusal of the caller or a pass."""
+
+    class _Unregistered(_BoundStepUp):
+        async def record_pending(
+            self, sid: str, cls: str, *, fingerprint: str | None = None
+        ) -> StepUpChallenge:
+            raise UnknownActionClass(cls)
+
+    consume = await _arm_consume(_Unregistered(None), _Audit())
+    with pytest.raises(UnknownActionClass):
+        await consume()
 
 
 async def test_service_sink_records_simulation_for_simulating_rule() -> None:

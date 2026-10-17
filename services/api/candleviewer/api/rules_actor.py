@@ -19,10 +19,12 @@ from typing import Any
 from fastapi import Request
 
 from candleviewer.api.step_up import (
+    AUDIT_UNAVAILABLE_TITLE,
     SESSION_READ_ONLY_DETAIL,
     SESSION_READ_ONLY_TITLE,
     STEP_UP_REQUIRED_DETAIL,
     STEP_UP_REQUIRED_TITLE,
+    AuditRefused,
     consume_bound_grant,
 )
 from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
@@ -30,7 +32,7 @@ from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpChallenge
-from candleviewer.rules.manager import Actor, RuleError
+from candleviewer.rules.manager import Actor, RuleAuditUnavailable, RuleError
 
 STEP_UP_CLASS = "live_enablement"
 #: A body that is not I-JSON (RFC 7493) has no RFC 8785 form, so no grant can be bound to it.
@@ -168,6 +170,8 @@ class SessionRulesActorResolver:
                 issued = await challenge()
             except (SessionReadOnly, SessionRevoked) as exc:
                 raise _unanswerable(exc) from exc
+            except AuditRefused as exc:  # the mismatch record could not be written ahead (C-2.9)
+                raise RuleAuditUnavailable(title=AUDIT_UNAVAILABLE_TITLE) from exc
             if issued is not None:
                 raise _challenged(issued)
             return True

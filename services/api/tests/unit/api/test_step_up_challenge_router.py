@@ -65,6 +65,7 @@ from tests.unit.api.test_step_up_router import (
     _Clock,
     _code,
     _Emitter,
+    _Positions,
     _record,
     _Sessions,
 )
@@ -308,12 +309,15 @@ async def test_refused_challenge_and_wrong_factor_rows_are_told_apart() -> None:
 
 
 @pytest.mark.parametrize(
-    ("member", "rule"),
-    [({"remember": True}, "extra_forbidden"), ({"code": "12345"}, "string_pattern_mismatch")],
+    ("member", "field", "rule"),
+    [
+        ({"remember": True}, "body", "extra_forbidden"),
+        ({"code": "12345"}, "code", "string_pattern_mismatch"),
+    ],
     ids=["unknown-member", "code-not-six-digits"],
 )
 async def test_step_up_body_outside_its_schema_is_400_before_any_factor(
-    member: dict[str, Any], rule: str
+    member: dict[str, Any], field: str, rule: str
 ) -> None:
     """`extra="forbid"` and the contract's `code` pattern hold server-side: nothing is checked,
     counted or elevated."""
@@ -322,7 +326,7 @@ async def test_step_up_body_outside_its_schema_is_400_before_any_factor(
     r = w.step_up(**member)
     assert r.status_code == 400
     _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
-    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [(next(iter(member)), rule)]
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [(field, rule)]
     assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
     assert not w.of("auth.step_up_failed") and not w.of("auth.step_up_granted")
 
@@ -356,7 +360,11 @@ async def test_malformed_challenge_id_is_400(value: object) -> None:
     w = await _world()
     w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())
     r = w.step_up(challenge_id=value)
-    assert r.status_code == 400 and r.json()["errors"][0]["field"] == "challenge_id"
+    assert r.status_code == 400
+    # The fixed message, not the UUID parser's, which quotes a character of the input.
+    assert r.json()["errors"] == [
+        {"field": "challenge_id", "rule": "format", "message": "challenge_id must be a UUID."}
+    ]
     assert not w.of("auth.step_up_failed")
 
 
@@ -431,6 +439,28 @@ async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge(
     assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
 
 
+async def _reset_client(w: _World, positions: Any = None) -> TestClient:
+    """The owner TOTP reset route over `w`'s service, the owner holding a live `users` window."""
+    assert w.step_up(action_class="users").status_code == 200
+    owner = PrincipalSnapshot(
+        user_id=w.sessions["tok"].user_id,
+        roles=frozenset({"owner"}),
+        permissions=frozenset({Permission.USERS_WRITE}),
+    )
+    app = FastAPI()
+    app.include_router(
+        make_step_up_router(
+            w.auth,
+            w.audit,
+            principal_resolver=_Resolver(owner),
+            positions=positions or _Positions(),
+            users=_Store({"viewer"}, 1),
+            audit_ready=lambda: True,
+        )
+    )
+    return TestClient(app)
+
+
 class _SlowPositions:
     """The OMS read model the reset previews: reading it outlasts the owner's `users` window, and
     their session ends meanwhile."""
@@ -451,24 +481,8 @@ async def test_reset_whose_window_lapsed_as_its_session_ended_is_401_never_a_500
     """The gate passed on a live `users` window, then the window lapsed and the session ended
     before the reset ran: there is nothing to challenge, so 401, as at every other refusal."""
     w = await _world()
-    assert w.step_up(action_class="users").status_code == 200
-    owner = PrincipalSnapshot(
-        user_id=w.sessions["tok"].user_id,
-        roles=frozenset({"owner"}),
-        permissions=frozenset({Permission.USERS_WRITE}),
-    )
-    app = FastAPI()
-    app.include_router(
-        make_step_up_router(
-            w.auth,
-            w.audit,
-            principal_resolver=_Resolver(owner),
-            positions=_SlowPositions(w),
-            users=_Store({"viewer"}, 1),
-            audit_ready=lambda: True,
-        )
-    )
-    r = TestClient(app).post(f"/users/{uuid.uuid4()}/mfa/reset", headers=w.h())
+    client = await _reset_client(w, _SlowPositions(w))
+    r = client.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=w.h())
     assert r.status_code == 401
     _assert_unauthenticated(r.json())
     assert not w.of("auth.mfa_reset_by_owner")

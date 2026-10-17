@@ -71,7 +71,8 @@ async def test_no_grace_step_up_without_challenge_id_is_refused_before_any_facto
     assert (refused.value.field, refused.value.rule) == ("challenge_id", "challenge_required")
     assert sessions.sessions["s1"].step_up_failures == 0 and _grants(sessions) == []
     assert _sample("auth_stepup_failures_total") == failures
-    assert svc._users.users[str(user)].failed_login_count == 0  # type: ignore[attr-defined]
+    rows = svc._users.users  # type: ignore[attr-defined]  # the fake's rows; not on the port
+    assert rows[str(user)].failed_login_count == 0
 
 
 async def test_bound_grant_is_used_once_by_the_identical_request() -> None:

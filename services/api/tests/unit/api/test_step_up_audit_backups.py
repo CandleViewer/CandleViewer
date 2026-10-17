@@ -12,17 +12,18 @@ import uuid
 from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from fastapi import FastAPI, Request
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.step_up import require_elevation_for
+from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
 from candleviewer.auth import step_up as step_up_service
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.statechart.bindings import b16_session
 from tests.unit.api.test_invites_create_app_e2e import _h, _login
+from tests.unit.api.test_step_up_challenge_router import _World
 from tests.unit.api.test_step_up_challenge_router import _world as _challenge_world
 from tests.unit.api.test_step_up_guard_create_app import _world
-from tests.unit.api.test_step_up_router import _H, _build
 
 _EXPORT = {"from": "2026-09-01T00:00:00Z", "to": "2026-09-30T00:00:00Z"}
 
@@ -44,26 +45,59 @@ async def test_audit_export_on_create_app_needs_step_up_then_reaches_the_handler
         assert r.status_code != 403 and r.json().get("code") != "step_up_required"
 
 
-def _restore_route(c: TestClient) -> list[str]:
-    """Mount a stand-in `restoreBackup` (no handler exists yet) behind the real guard."""
+def _restore_route(w: _World) -> list[str]:
+    """Mount a stand-in `restoreBackup` (no handler exists yet) that, like its ticket's handler,
+    gates the request it validated (#2304): a no-grace grant binds that request."""
     ran: list[str] = []
 
-    @cast(FastAPI, c.app).post("/admin/backups/{backup_id}/restore")
-    async def restore(backup_id: str) -> dict[str, bool]:
+    @cast(FastAPI, w.client.app).post("/admin/backups/{backup_id}/restore")
+    async def restore(backup_id: str, request: Request) -> Any:
+        body = await request.json()
+        denied = await require_elevation_for(
+            w.auth,
+            str(w.sessions["tok"].id),
+            "backups",
+            fingerprint=request_fingerprint(request.method, raw_request_target(request), body),
+            emitter=w.audit,
+        )
+        if denied is not None:
+            return denied
         ran.append(backup_id)
         return {"ok": True}
 
     return ran
 
 
-async def test_path_gated_backup_restore_fails_closed_until_its_handler_binds_the_request() -> None:
-    """A no-grace grant binds one request (#2304), which a path cannot name: the guard refuses
-    the restore rather than let it run on an unbound grant."""
-    c, *_ = await _build()
-    ran = _restore_route(c)
-    with pytest.raises(TypeError, match="fingerprint"):
-        c.post(f"/admin/backups/{uuid.uuid4()}/restore", headers=_H)
-    assert not ran
+#: The restore the client holds, and where it sends it.
+_HELD = {"confirm_backup_id": str(uuid.UUID(int=7)), "reason": "restore drill"}
+_RESTORE = f"/admin/backups/{uuid.UUID(int=7)}/restore"
+
+
+async def test_backup_restore_spends_one_fresh_code_per_restore() -> None:
+    w = await _challenge_world()
+    ran = _restore_route(w)
+    denied = w.client.post(_RESTORE, headers=w.h(), json=_HELD)
+    assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
+    assert denied.json()["action_class"] == "backups" and not ran
+    ok = w.step_up(challenge_id=denied.json()["challenge_id"])
+    assert ok.status_code == 200 and ok.json()["action_class"] == "backups"
+    assert ok.json()["single_use"] is True and ok.json()["step_up_expires_at"] is None
+    assert w.client.post(_RESTORE, headers=w.h(), json=_HELD).status_code == 200 and len(ran) == 1
+    again = w.client.post(_RESTORE, headers=w.h(), json=_HELD)  # no grace: the code was spent
+    assert again.status_code == 403 and again.json()["action_class"] == "backups"
+    assert len(ran) == 1 and len(w.of("auth.step_up_required")) == 2
+
+
+async def test_backup_restore_grant_is_bound_to_the_restore_it_was_given_for() -> None:
+    w = await _challenge_world()
+    ran = _restore_route(w)
+    challenge_id = w.client.post(_RESTORE, headers=w.h(), json=_HELD).json()["challenge_id"]
+    assert w.step_up(challenge_id=challenge_id).status_code == 200
+    other = {**_HELD, "reason": "another restore"}
+    refused = w.client.post(_RESTORE, headers=w.h(), json=other)
+    assert refused.status_code == 403 and refused.json()["challenge_id"] != challenge_id
+    assert len(w.of("auth.step_up_mismatch")) == 1 and not ran
+    assert w.client.post(_RESTORE, headers=w.h(), json=_HELD).status_code == 200  # still bound
 
 
 @pytest.mark.parametrize(("action_class", "single_use"), [("audit", False), ("backups", True)])

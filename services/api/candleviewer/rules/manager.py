@@ -7,13 +7,14 @@ the optimistic-concurrency token is the version number, never a timestamp.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import unicodedata
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 from uuid import UUID
 
 import structlog
@@ -30,6 +31,9 @@ from candleviewer.rules.vocabulary import MetricRegistry
 COMPILER_VERSION = "1.0.0"
 #: Bounded replay cache for `Idempotency-Key` (C-2.18); see `set_mode`.
 IDEM_CACHE_MAX = 4096
+#: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
+#: which `rules` may not import (a test pins them equal).
+REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
 _ORDER_ACTIONS = frozenset(
     {
         "place_order",
@@ -68,6 +72,15 @@ class RuleError(Exception):
     def __init__(self, status: int, code: str, message: str, **extra: Any) -> None:
         super().__init__(message)
         self.status, self.code, self.message, self.extra = status, code, message, extra
+
+
+class RuleAuditUnavailable(RuleError):
+    """The audit record a request waits on cannot be written (C-2.9): refused `503`, the
+    catalogued `audit_unavailable` (a test pins the code; `rules` may not import it), nothing
+    changed. An `Actor` raises it when its own write-ahead failed."""
+
+    def __init__(self, message: str = "audit unavailable", **extra: Any) -> None:
+        super().__init__(503, "audit_unavailable", message, **extra)
 
 
 @dataclass
@@ -687,16 +700,31 @@ class RulesManager:
             self._metric(
                 "rule_mode_transitions_total", {"from": prev, "to": target, "result": exc.code}
             )
-            await self._audit(
-                "rule.mode_refused",
-                {"rule_id": rule_id, "from": prev, "to": target, "code": exc.code}
-                | {"actor": actor.user_id},
-            )
+            await self._record_refusal(rule_id, prev, target, exc, actor)
             raise
         self._idem[cache_key] = out
         while len(self._idem) > IDEM_CACHE_MAX:
             self._idem.popitem(last=False)
         return out
+
+    async def _record_refusal(
+        self, rule_id: str, prev: str, target: str, refusal: RuleError, actor: Actor
+    ) -> None:
+        """C-2.9: the refusal's own record, written ahead of its answer but for at most
+        `REFUSAL_AUDIT_TIMEOUT_S`, so a stalled writer cannot hold the request. A refusal that is
+        itself `503 audit_unavailable` stands when its record cannot be written either (the
+        writer is what is down): the loss is logged, not answered. Any other refusal's lost record
+        propagates."""
+        record = {"rule_id": rule_id, "from": prev, "to": target, "code": refusal.code}
+        try:
+            async with asyncio.timeout(REFUSAL_AUDIT_TIMEOUT_S):
+                await self._audit("rule.mode_refused", record | {"actor": actor.user_id})
+        except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
+            if not isinstance(refusal, RuleAuditUnavailable):
+                raise
+            _log().error(
+                "rules.mode_refusal_unrecorded", rule_id=rule_id, error=type(lost).__name__
+            )
 
     async def _leaf(self, row: RuleRow) -> str:
         return await self.lifecycle.current(row.id, row.mode, row.disabled_reason)
