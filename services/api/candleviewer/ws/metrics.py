@@ -415,6 +415,22 @@ JSON_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(JSON_KIND)
 JSON_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(JSON_KIND)
 MSGPACK_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(MSGPACK_KIND)
 MSGPACK_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(MSGPACK_KIND)
+#: What a stamped frame's span id `sp` adds to it (23 section 3.1): 24 bytes of JSON text, 20 of
+#: MessagePack (a 3-byte key, a 17-byte value), which its `json` / `msgpack` bytes leave out.
+SP_JSON_BYTES: Final = 24
+SP_MSGPACK_BYTES: Final = 20
+
+
+def frame_bytes(payload: str | bytes, sp: str | None, *, msgpack: bool) -> int:
+    """A stamped frame's `cv_ws_frame_bytes{json|msgpack}` value: its length as encoded for the
+    send (MessagePack bytes or ASCII JSON text), less its `sp` if it carries one, so it weighs
+    what an unsampled frame does (20 section 12.1). `msgpack` is the codec the caller encoded it
+    with, the connection's: it says what `sp` added, never the payload's Python type."""
+    if sp is None:
+        return len(payload)
+    return len(payload) - (SP_MSGPACK_BYTES if msgpack else SP_JSON_BYTES)
+
+
 #: The one fan-out series; the writer observes it for each stamped data frame it sends, and the
 #: hub stamps one data frame of a subscription in `SAMPLE_EVERY`.
 FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()

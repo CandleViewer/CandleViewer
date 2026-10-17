@@ -1416,6 +1416,8 @@ A stamped frame may also carry a synthetic span id, `sp` (23 §3.1, E17-T06), so
 
 Structured JSON (`structlog`) to stdout, collected by the compose logging driver. Mandatory fields: `ts`, `level`, `logger`, `event`, `env`, `request_id`/`conn_id`, `user_id`, `account_id`, `symbol`, `order_link_id`, `trade_group_id`, `latency_ms`. On the WebSocket gateway `conn_id` is spelled `connection_id` (`ws_` and 12 hex digits: the id in `welcome` and the `object_id` of the `ws.connection.closed` audit row). Redaction filter strips API keys, signatures, cookies and TOTP codes at the formatter level (defence in depth: a unit test asserts a known secret never appears in output).
 
+Once the gateway has sent a frame that carries a span id `sp` (23 §3.1, E17-T06), it logs one `debug` record, `ws frame span`, with `connection_id`, `span_id`, `ch`, `s` and `fanout_ms` (the frame's `cv_ws_fanout_seconds` span), never the payload: the backend half of the frame's trace. It shows only under `CV_LOG_LEVEL=debug`: structlog drops `debug` records at the level set at start, and the E04-T02 run-time override changes only stdlib levels, so it can hide the record but not show it; #3231 lets the run-time override show it.
+
 ### 12.3 Tracing
 
 OpenTelemetry spans for the two paths that matter: **order path** (`http.request → oms.validate → oms.fanout → exchange.place_order → private_ws.fill`) and **replay session start**. Market-data hot loops are _not_ traced per event (sampling would distort the loop); they are covered by metrics instead.

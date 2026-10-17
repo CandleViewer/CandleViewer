@@ -27,6 +27,7 @@ int per upstream symbol; heatmap snapshots are capped at `HEATMAP_SNAPSHOT_MAX_C
 from __future__ import annotations
 
 import json
+import secrets
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -95,6 +96,16 @@ CLIENT_RESYNC_REASONS: Final = frozenset(
 )
 
 MAX_OUTBOUND_FRAME_BYTES: Final = 4 * 1024 * 1024  # §3.6
+#: §3.1 `sp`: 8 bytes from the OS CSPRNG as 16 lowercase hex characters, never all zeros.
+SPAN_ID_BYTES: Final = 8
+_ZERO_SPAN: Final = "0" * (2 * SPAN_ID_BYTES)
+#: §3.1 Room: what a frame sized against the cap is sized with in place of an `sp`, sampled or not
+#: (24 bytes of JSON text, more than its 20 of MessagePack).
+SP_ROOM: Final = "f" * (2 * SPAN_ID_BYTES)
+#: Wider than any `s`, `previous_seq`, `ts` or snapshot counter a frame carries (`bars_publish`),
+#: and the longest `meta.reason`: the width a snapshot envelope is sized at (`_widest`).
+_WIDEST: Final = 2**64
+_LONGEST_REASON: Final = max(SNAP_REASONS, key=len)
 RESYNC_MAX_PER_WINDOW: Final = 5  # §7.5: 5 per topic per minute
 RESYNC_WINDOW_S: Final = 60.0
 HEATMAP_SNAPSHOT_MAX_COLUMNS: Final = 2000  # §6.1.1
@@ -157,6 +168,15 @@ def _logged_seq(value: object) -> int | None:
 def _dumps(frame: Mapping[str, Any]) -> str:
     """Same serialization as the gateway writer, so size checks match the wire."""
     return json.dumps(frame, separators=(",", ":"))
+
+
+def new_span_id() -> str:
+    """A §3.1 `sp`, drawn fresh for one frame: never a counter, a seeded PRNG or a value derived
+    from an identifier. All zeros (1 in 2**64) is not a valid span id, so it is drawn again."""
+    while True:
+        span_id = secrets.token_hex(SPAN_ID_BYTES)
+        if span_id != _ZERO_SPAN:
+            return span_id
 
 
 # -- snapshot bodies ----------------------------------------------------------------------------
@@ -303,6 +323,23 @@ def split_frame(frame: Frame, max_bytes: int) -> list[Frame]:
 def b64_budget(frame_limit: int, envelope_overhead: int) -> int:
     """Largest raw CVWB size whose base64 form fits `frame_limit` with the envelope around it."""
     return max(0, (frame_limit - envelope_overhead) // 4 * 3)
+
+
+def _overhead(env: Mapping[str, Any]) -> int:
+    """What a chunk's envelope adds to its `p`, as JSON, with room for `sp` (§3.1), plus slack."""
+    return len(_dumps({**env, "e": "b64", "p": "", "sp": SP_ROOM})) + 8
+
+
+def _widest(sub: Subscription) -> int:
+    """`_overhead` of the widest `snap` envelope on `sub`'s `ch` and replay session: every other
+    field at its widest, so a cut sized with it fits every subscriber's envelope."""
+    env: dict[str, Any] = {"t": "snap", "id": f"snap-{_WIDEST}", "ch": sub.ch}
+    env |= {"s": _WIDEST, "ts": _WIDEST}
+    if sub.replay_session_id is not None:
+        env |= {"rs": sub.replay_session_id, "wt": _WIDEST}
+    source = "live" if sub.replay_session_id is None else "replay"
+    env["meta"] = {"reason": _LONGEST_REASON, "source": source, "previous_seq": _WIDEST}
+    return _overhead(env)
 
 
 def split_structured(payload: Mapping[str, Any], budget: int) -> list[dict[str, Any]]:
@@ -452,7 +489,11 @@ class TopicEmitter:
     (`cv_ws_frame_*{kind}`, weighted; a snapshot chunk is observed exactly) and the writer the
     stamped frame it encodes (`kind` `json` / `msgpack`). The others leave with none, and the hub
     reads no clock for them. `clock` must be the clock the writer reads; the gateway passes the
-    connection's own."""
+    connection's own.
+
+    A stamped frame also carries `sp` (§3.1), drawn from `span_id` for it alone (None while
+    latency telemetry is off): in a chunked snapshot, the final chunk, the one with `s`. Every
+    chunk is cut with room for one (`SP_ROOM`), whether or not it is sampled."""
 
     def __init__(
         self,
@@ -465,11 +506,14 @@ class TopicEmitter:
         cache: SnapshotCache | None = None,
         max_frame_bytes: int = MAX_OUTBOUND_FRAME_BYTES,
         push_data: Callable[[dict[str, Any], float | None], None] | None = None,
+        span_id: Callable[[], str] | None = None,
     ) -> None:
         self.push = push
         #: Where a sampled data frame goes, with its receipt time. None: through `push`, without
         #: it, like every other frame.
         self.push_data = push_data
+        #: Draws the `sp` of each frame that goes to `push_data` (§3.1); None: no frame has one.
+        self.span_id = span_id
         self.connection_id = connection_id
         self.wall_ms = wall_ms
         self.clock = clock
@@ -506,15 +550,15 @@ class TopicEmitter:
         if sub.replay_session_id is not None:
             base |= {"rs": sub.replay_session_id, "wt": now}
         base["meta"] = meta
-        overhead = len(_dumps({**base, "e": "b64", "p": ""})) + 8
-        rendered = self.cache.get(sub, self.source, b64_budget(self.max_frame_bytes, overhead))
+        # Sized so that no frame, `sp` included, exceeds the cap (§3.1 Room, §3.6).
+        budget = b64_budget(self.max_frame_bytes, _widest(sub))
+        rendered = self.cache.get(sub, self.source, budget)
         if rendered is None:
             return False
         if rendered.meta:  # the owner's keys join the server's, which win (`SERVER_META_KEYS`)
             owner = {k: v for k, v in rendered.meta.items() if k not in SERVER_META_KEYS}
             base["meta"] = {**owner, **meta}
-            overhead = len(_dumps({**base, "e": "b64", "p": ""})) + 8
-        frames = self._frames(base, rendered, overhead)
+        frames = self._frames(base, rendered)
         sub.seq, sub.snapshot_pending = seq, False
         total = 0
         for frame in frames:
@@ -522,6 +566,8 @@ class TopicEmitter:
             if received is None or self.push_data is None or frame["s"] is None:
                 self.push(frame)
             else:
+                if self.span_id is not None:  # the chunk with `s` names its fan-out span
+                    frame["sp"] = self.span_id()
                 self.push_data(frame, received)
         fam = sub.topic.family.family
         cv_ws_snapshot_bytes.labels(topic=fam).observe(total)
@@ -540,11 +586,9 @@ class TopicEmitter:
                 _log().info("ws resync", **fields)
         return True
 
-    def _frames(
-        self, base: dict[str, Any], rendered: Rendered, overhead: int
-    ) -> list[dict[str, Any]]:
-        if rendered.payload is not None:
-            budget = self.max_frame_bytes - overhead
+    def _frames(self, base: dict[str, Any], rendered: Rendered) -> list[dict[str, Any]]:
+        if rendered.payload is not None:  # split per subscriber, for its own envelope
+            budget = self.max_frame_bytes - _overhead(base)
             payloads: list[Any] = split_structured(rendered.payload, budget)
             enc = "j"
         else:
@@ -610,6 +654,8 @@ class TopicEmitter:
         if received is None or self.push_data is None:
             self.push(frame)
         else:
+            if self.span_id is not None:  # the stamped frame names its fan-out span (§3.1)
+                frame["sp"] = self.span_id()
             self.push_data(frame, received)
         return True
 

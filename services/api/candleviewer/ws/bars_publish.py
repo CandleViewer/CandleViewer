@@ -52,6 +52,7 @@ from candleviewer.ws.binary import BARS, Frame, FrameEncodeError
 from candleviewer.ws.sequencing import (
     MAX_OUTBOUND_FRAME_BYTES,
     SNAP_REASONS,
+    SP_ROOM,
     SequencingHub,
     SnapReason,
     b64_budget,
@@ -203,6 +204,7 @@ class BarsPublisher:
         ch = ".".join(("bars", symbol, bar_type, param))
         head = {"symbol": symbol, "bar_type": bar_type, "param": param}
         env = {"t": "d", "ch": ch, "s": _WIDEST, "ts": _WIDEST, "meta": _META[False], "e": "b64"}
+        env["sp"] = SP_ROOM  # a stamped `d` carries one (23 §3.1 Room)
         body = {**head, "bars": [], "coalesced": False, "coalesced_count": _WIDEST}
         room = self._frame_bytes - _size({**env, "p": body})
         raw = b64_budget(self._frame_bytes, _size({**env, "p": ""})) - HEADER.size

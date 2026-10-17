@@ -320,7 +320,7 @@ from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
-from candleviewer.ws.sequencing import SequencingHub, SnapshotSource
+from candleviewer.ws.sequencing import SequencingHub, SnapshotSource, new_span_id
 from candleviewer.ws.service import WsService
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
@@ -1256,6 +1256,8 @@ def create_app(
         sequencing=ws_sequencing,
         bars_off=not resolved.bars_enabled,
         machines=machine_states,
+        # E17-T06: a span id (`sp`, 23 §3.1) on each sampled frame while latency telemetry is on.
+        span_ids=new_span_id if resolved.telemetry_enabled else None,
     )
     ws_registry = ConnectionRegistry(
         snapshot_loader or build_ws_principal_loader(resolved, identity),

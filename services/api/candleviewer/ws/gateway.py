@@ -56,6 +56,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   same stamped frame's encode time and size are observed too, in the codec its connection
   negotiated (`kind="json"` for `json.dumps` text, `kind="msgpack"` for MessagePack bytes; timed
   with `perf_counter`, not the injected clock), and its CVWB body was timed by the encoder.
+  While latency telemetry is on, that frame also carries a span id `sp` (23 §3.1): its bytes
+  are observed without it, and once it is sent the writer logs a debug `ws frame span` record.
 
 - **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, off by default):
   `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
@@ -79,6 +81,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
@@ -156,8 +159,10 @@ from candleviewer.ws.metrics import (
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
     cv_ws_system_frames_withheld_total,
+    frame_bytes,
 )
 from candleviewer.ws.origin_audit import OriginRefusalAudit
+from candleviewer.ws.outbound import Spanned
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -246,6 +251,24 @@ class AuditEmitter(Protocol):
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+def _log_span(connection_id: str, sp: str, ch: str | None, s: int | None, fanout_s: float) -> None:
+    """The backend half of a sampled frame's trace (23 §3.1): after the send, one debug record
+    keyed by the frame's `sp`, with its `ch`, `s` and fan-out span (`cv_ws_fanout_seconds`), never
+    its payload. It exists only while the process logs at debug (`CV_LOG_LEVEL=debug`, from which
+    `configure_logging` sets both the root level and structlog's filter), so the root level is
+    checked first: below debug a stamped frame builds no logger. A run-time override of `ws`
+    (E04-T02, stdlib levels only) can hide the record, not show it."""
+    if logging.root.isEnabledFor(logging.DEBUG):
+        _log().debug(
+            "ws frame span",
+            connection_id=connection_id,
+            span_id=sp,
+            ch=ch,
+            s=s,
+            fanout_ms=round(fanout_s * 1000, 3),
+        )
 
 
 def _wall_ms() -> int:
@@ -1121,6 +1144,7 @@ def make_ws_router(
                 source=svc.snapshots,
                 cache=svc.snapshot_cache,
                 push_data=conn.push,
+                span_id=svc.span_ids,
             )
             if svc.sequencing is not None:
                 svc.sequencing.register(conn.authz, conn.emitter)
@@ -1321,17 +1345,21 @@ def make_ws_router(
                     payload = conn.encode_frame(item)
                     seconds = perf_counter() - began
                     # The pair of the connection's codec. A JSON text is ASCII: chars are bytes.
+                    sp = item.get("sp")  # left out of the size (23 §3.1)
+                    size = frame_bytes(payload, sp, msgpack=conn.msgpack)
                     if conn.msgpack:
                         MSGPACK_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
-                        MSGPACK_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
+                        MSGPACK_FRAME_BYTES.observe(size, SAMPLE_EVERY)
                     else:
                         JSON_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
-                        JSON_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
+                        JSON_FRAME_BYTES.observe(size, SAMPLE_EVERY)
                     await conn.send_payload(payload)
                     del payload  # the encoded copy (up to 4 MiB, a snapshot chunk) is not kept idle
                     now = conn.clock()  # the watchdog's send time, which this frame also observes
                     conn.watchdog.last_outbound = now
                     FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
+                    if sp is not None:
+                        _log_span(conn.connection_id, sp, item["ch"], item["s"], now - received)
                 else:  # every other frame: no stamp, no observation
                     await conn.send_frame(item)
                     conn.watchdog.last_outbound = conn.clock()
@@ -1380,6 +1408,9 @@ def make_ws_router(
                     conn.watchdog.last_outbound = now
                     if item.received is not None:
                         FANOUT_SECONDS.observe(now - item.received, SAMPLE_EVERY)
+                        if isinstance(item, Spanned) and item.key is not None:
+                            fanout = now - item.received
+                            _log_span(conn.connection_id, item.sp, item.key[0], item.s, fanout)
         except TimeoutError:
             if not deadline.expired():
                 raise

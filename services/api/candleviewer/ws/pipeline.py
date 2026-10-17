@@ -26,7 +26,7 @@ length, once, under the connection's own kind (`json` or `msgpack`) with weight 
 the flag-off writer does before its send. Any other frame reads no timer, and an encode that fails
 is not observed. The encode happens at push, so a stamped frame that a close or a ladder drop
 removes before the send is in these series but not in `cv_ws_fanout_seconds`, which the writer
-observes once the socket has the frame.
+observes once the socket has the frame. The observed size leaves out a frame's `sp` (23 §3.1).
 
 A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
 marker are the only items admitted past the budget, one small frame, so the bound holds to within
@@ -84,6 +84,7 @@ from candleviewer.ws.metrics import (
     SAMPLE_EVERY,
     cv_ws_malformed_updates_total,
     cv_ws_overflow_total,
+    frame_bytes,
 )
 from candleviewer.ws.outbound import (
     Backpressure,
@@ -197,9 +198,9 @@ class ConnectionPipeline:
         self.ladder: Backpressure | None = None
         #: The step 3 trigger of this connection's close (`budget` | `redrop`), for its audit.
         self.trigger: str | None = None
-        self._dumps: FrameEncoder = (
-            msgpack_payload if encoding == SUBPROTOCOL_MSGPACK else json_payload
-        )
+        #: The connection's codec, for everything below that depends on it.
+        self._msgpack = encoding == SUBPROTOCOL_MSGPACK
+        self._dumps: FrameEncoder = msgpack_payload if self._msgpack else json_payload
         #: E17-T06: `_dumps` timed, bound once, so a stamped frame's encode seconds are its
         #: serialiser's alone (`_encode_s`) and no frame allocates a wrapper.
         self._timed_dumps: FrameEncoder = self._timed
@@ -207,7 +208,7 @@ class ConnectionPipeline:
         #: E17-T06: the frame cost pair (encode seconds, frame bytes) of this connection's codec.
         self._cost = (
             (MSGPACK_ENCODE_SECONDS, MSGPACK_FRAME_BYTES)
-            if encoding == SUBPROTOCOL_MSGPACK
+            if self._msgpack
             else (JSON_ENCODE_SECONDS, JSON_FRAME_BYTES)
         )
         self._close = close
@@ -243,7 +244,8 @@ class ConnectionPipeline:
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
-        stamped (`received`) has its encode timed and sized here, once (module docstring)."""
+        stamped (`received`) has its encode timed and sized here, once, its size without its `sp`
+        (23 §3.1; module docstring)."""
         if self.terminal is not None or self.released or (self._skips and self._skipped(frame)):
             return
         try:
@@ -259,7 +261,8 @@ class ConnectionPipeline:
         if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
             seconds, size = self._cost
             seconds.observe(self._encode_s, SAMPLE_EVERY)
-            size.observe(item.size, SAMPLE_EVERY)
+            sp = frame.get("sp")  # left out of the size (23 §3.1)
+            size.observe(frame_bytes(item.payload, sp, msgpack=self._msgpack), SAMPLE_EVERY)
         if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused
             _log().warning(
                 "ws outbound frame over the frame limit", **self._fields(frame), size=item.size

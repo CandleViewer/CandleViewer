@@ -522,8 +522,8 @@ Scope: the repository itself, `main` branch integrity, branch-protection configu
 unauthenticated window (since #2155 at most 64 sockets await auth per process and each `auth` call is bounded at
 6 s, so WG1 is Low while exposure stays tailnet-only, N3 in §5.10), continuous topic
 authorisation (synchronous drop/narrow before any send; snapshot ordering requirement SR-189), and resource
-exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 51 rows
-(WS-S01..E06, incl. WS-D15..D17 and WS-I09), two inherent Highs (slow consumer WG2; audit-store flooding WG9 =
+exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 52 rows
+(WS-S01..E06, incl. WS-D15..D17, WS-I09 and WS-I10), two inherent Highs (slow consumer WG2; audit-store flooding WG9 =
 WS-D15); no residual High (WG9 re-scored Medium after SR-192 was built, #3123; RR-08 in §16.1, closure proposed);
 residual Medium on WG3, WG8 and WG9. Controls SR-183..
 SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
