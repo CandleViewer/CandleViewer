@@ -77,7 +77,7 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.admin_capacity import make_admin_capacity_router
-from candleviewer.api.admin_ops import make_admin_ops_router
+from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alerts import make_alerts_router
@@ -1639,12 +1639,18 @@ def create_app(
         git_sha=resolved.git_sha,
         environment=resolved.environment.value,
     )
+    admin_incidents = build_admin_incidents(resolved, system_settings=admin_settings)
     app.include_router(
         make_admin_ops_router(
             admin_health,
-            build_admin_incidents(resolved, system_settings=admin_settings),
+            admin_incidents,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )
+    app.include_router(
+        make_admin_incident_ack_router(
+            admin_incidents, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
         )
     )
     app.state.admin_overview_metrics = export_overview_metrics(

@@ -2,10 +2,13 @@
 bound keyset page; an error is classed by the SQLSTATE the driver reports, not by its SQLAlchemy
 type: a database that cannot serve the read leaves as `StorageTierUnavailable` without its text,
 and a statement the database refuses keeps its type. The real driver's SQLSTATEs are checked by
-`tests/integration/storage/test_incidents_pg.py`."""
+`tests/integration/storage/test_incidents_pg.py`. The acknowledge transition is at the end; its
+row lock is checked on a real database in `tests/integration/storage/test_incident_ack_pg.py`.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -15,14 +18,18 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
 from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import _TIMEOUT, READ_TIMEOUT
-from candleviewer.storage.repositories.incidents import IncidentRow
+from candleviewer.storage.repositories.incidents import AckOutcome, AckResult, IncidentRow
 from candleviewer.storage.repositories.incidents_sqlalchemy import (
+    WRITE_TIMEOUT,
     SqlAlchemyIncidents,
+    acknowledge_statement,
+    lock_statement,
     page_statement,
 )
 from tests.unit.admin._ops_fakes import row
@@ -143,3 +150,108 @@ async def test_a_refused_statement_is_a_bug_that_keeps_its_type(error: Exception
     with pytest.raises(type(error)) as raised:
         await _page(_Rel(error=error))
     assert raised.value is error  # as it came, not wrapped and not a 503
+
+
+# -- acknowledge (E42-T05): the transaction in order, the statements, the errors ------------------
+
+_USER, _OPEN = UUID(int=5), row(7)
+_DONE = row(7, status="acknowledged", acknowledged_by=_USER, acknowledged_at=NOW)
+
+
+class _AckRel:
+    """`found` answers the locking select (the update answers `_DONE`); `events` is the
+    transaction in order."""
+
+    def __init__(self, found: IncidentRow | None, error: Exception | None = None) -> None:
+        self.found, self.error = found, error
+        self.events: list[Any] = []
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncIterator[Any]:
+        async def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
+            if stmt is _TIMEOUT:
+                self.events.append(("timeout", (params or {})["timeout"]))
+                return None
+            self.events.append(kind := "update" if isinstance(stmt, sa.Update) else "lock")
+            if self.error is not None:
+                raise self.error
+            hit = asdict(_DONE if kind == "update" else self.found) if self.found else None
+            one = SimpleNamespace(first=lambda: hit, one=lambda: hit)
+            return SimpleNamespace(mappings=lambda: one)
+
+        async def commit() -> None:
+            self.events.append("commit")
+
+        yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
+
+
+async def _ack(rel: _AckRel, hook: Any = None, **kw: Any) -> AckResult:
+    async def record(before: IncidentRow, after: IncidentRow) -> None:
+        rel.events.append(("hook", before.status, after.status))
+
+    store = SqlAlchemyIncidents(rel, **kw)  # type: ignore[arg-type]  # structural fake
+    return await store.acknowledge(_OPEN.id, by=_USER, write_ahead=hook or record)
+
+
+def test_the_statements_lock_one_row_and_set_three_columns_of_an_open_one() -> None:
+    lock, move = str(lock_statement(_OPEN.id)), str(acknowledge_statement(_OPEN.id, _USER))
+    assert lock.rstrip().endswith("FOR UPDATE") and "*" not in lock + move
+    assert move.split("WHERE")[0].count("=") == 3 and "clock_timestamp()" in move
+    assert "incidents.status =" in move  # an `open` row only, after any lock wait
+
+
+async def test_an_open_incident_is_locked_updated_audited_and_only_then_committed() -> None:
+    rel = _AckRel(_OPEN)
+    assert await _ack(rel) == AckResult(AckOutcome.ACKNOWLEDGED, _DONE)
+    assert rel.events == [
+        ("timeout", WRITE_TIMEOUT), "lock", "update", ("hook", "open", "acknowledged"), "commit",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("found", "outcome"),
+    [
+        (_DONE, AckOutcome.ALREADY),
+        (row(7, status="resolved", resolved_at=NOW), AckOutcome.RESOLVED),
+        (None, AckOutcome.MISSING),
+    ],
+    ids=["acknowledged", "resolved", "unknown"],
+)
+async def test_an_incident_that_is_not_open_is_returned_as_it_is_with_no_write_and_no_record(
+    found: IncidentRow | None, outcome: AckOutcome
+) -> None:
+    rel = _AckRel(found)
+    assert await _ack(rel) == AckResult(outcome, found)
+    assert rel.events == [("timeout", WRITE_TIMEOUT), "lock"]  # no update, no hook, no commit
+
+
+class _Refused(Exception):
+    """What the route's hook raises when its record cannot be written: a type of its own."""
+
+
+@pytest.mark.parametrize("raises", [_Refused, WriteAheadTimeout], ids=["refused", "outlasted"])
+async def test_a_hook_that_fails_stops_before_the_commit_and_reaches_the_caller_as_it_is(
+    raises: type[Exception],
+) -> None:
+    async def hook(before: IncidentRow, after: IncidentRow) -> None:
+        if raises is _Refused:
+            raise _Refused
+        await asyncio.Event().wait()  # outlasts its bound: a `TimeoutError`, hence an `OSError`
+
+    rel = _AckRel(_OPEN)
+    with pytest.raises(raises):
+        await _ack(rel, hook, audit_timeout_s=0.01)
+    assert rel.events == [("timeout", WRITE_TIMEOUT), "lock", "update"]  # never committed
+
+
+async def test_a_database_that_cannot_serve_the_write_leaves_without_its_text() -> None:
+    rel = _AckRel(_OPEN, _dbapi(sa_exc.DBAPIError, "55P03"))  # lock not available
+    with capture_logs() as logs, pytest.raises(StorageTierUnavailable) as refused:
+        await _ack(rel)
+    assert "hunter2" not in str(refused.value) + repr(logs) and refused.value.__cause__ is None
+    assert [log["event"] for log in logs] == ["incidents_write_failed"]
+
+
+async def test_a_statement_the_database_refuses_is_a_bug_and_keeps_its_type() -> None:
+    with pytest.raises(sa_exc.DBAPIError):
+        await _ack(_AckRel(_OPEN, _dbapi(sa_exc.DBAPIError, "23503")))  # an unknown user
