@@ -138,9 +138,11 @@ groups:
         # restart already holds the new count and an increase() window has nothing before it.
         # The page ends 15 minutes after the first scrape that shows the rise (that scrape is
         # then in the right-hand window), so one run is one page, and runs less than 15 minutes
-        # apart share it. It needs a sample from before the run: a Prometheus with no history of
-        # the series (a new one) sees no rise, which is also why it never pages on old runs at
-        # rollout. No user label (the audit rows say who and when); a component of its own.
+        # apart share it. It needs a sample from before the run: with no sample in the 7 days
+        # before the last 15 minutes (a Prometheus with no history of the series, or a refused
+        # run after cv-api was stopped for more than a week) it sees no rise, which is also why
+        # it never pages on old runs at rollout. No user label (the audit rows say who and when);
+        # a component of its own.
         # #2931: an event page, so no [RESOLVED] message follows the window.
         expr: max by (env) (max_over_time(auth_break_glass_attempts[15m])) > max by (env) (max_over_time(auth_break_glass_attempts[7d] offset 15m))
         for: 0m
