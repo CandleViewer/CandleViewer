@@ -8,9 +8,10 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter (bars #2195, book #2196, order-flow #2197). Until one lands, its family maps
-  to `PendingSnapshotSource`, which raises `NotImplementedError`; the router turns that into
-  `None`, so the subscription reports `snapshot_pending` and no `d` is ever emitted.
+  module's adapter: `book` is the book module's (#2196, `book_snapshot_source`). Until bars
+  (#2195) and order-flow (#2197) land, their families map to `PendingSnapshotSource`, which
+  raises `NotImplementedError`; the router turns that into `None`, so the subscription reports
+  `snapshot_pending` and no `d` is ever emitted.
 * **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and
   account grants from the store at every `auth` and every re-evaluation. It fails closed to the
   deny-all snapshot and never raises.
@@ -31,14 +32,19 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.book.resync import BookEngine
+from candleviewer.book.snapshot_source import BookSnapshotSource, Record
 from candleviewer.observability.context import spawn
+from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
+from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.permissions import ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import SnapshotBody, SnapshotSource
@@ -61,7 +67,6 @@ PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
     "bars": "#2195",
-    "book": "#2196",
     "footprint": "#2197",
     "heatmap": "#2197",
     "profile": "#2197",
@@ -181,6 +186,38 @@ def default_snapshot_router(
     }
     sources.update(adapters or {})
     return SnapshotRouter(sources)
+
+
+def book_snapshot_body(
+    structured: Mapping[str, Any],
+    records: tuple[Record, ...],
+    trailer: tuple[int, int],
+    *,
+    price_scale: int,
+    qty_scale: int,
+) -> SnapshotBody:
+    """A book snapshot's gateway body: the §14.1 payload and its CVWB kind-1 twin (§3.4)."""
+    part = Frame(
+        BOOK_SNAPSHOT, records, price_scale=price_scale, qty_scale=qty_scale, trailer=trailer
+    )
+    return SnapshotBody(structured, (part,), price_scale=price_scale, qty_scale=qty_scale)
+
+
+def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
+    """#2196: the `book` family's adapter over the E08 live book and instrument catalogue, both
+    resolved per call (attached only with the public WS); without them `build` gives `None`."""
+
+    def engine(symbol: str) -> BookEngine | None:
+        books = ctx.ingestion.books
+        return books.engine(symbol) if isinstance(books, BookStream) else None
+
+    def steps(symbol: str) -> tuple[Decimal, Decimal] | None:
+        scheduler = ctx.ingestion.instruments
+        snap = scheduler.snapshot() if scheduler is not None else None
+        inst = snap.get(symbol) if snap is not None else None
+        return None if inst is None else (inst.tick_size, inst.qty_step)
+
+    return BookSnapshotSource(engine, steps, book_snapshot_body)
 
 
 class _Identity(Protocol):

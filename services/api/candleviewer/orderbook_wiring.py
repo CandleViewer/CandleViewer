@@ -274,6 +274,11 @@ class BookStream:
         tb = self._books.get(symbol)
         return None if tb is None else tb.active.phase
 
+    def engine(self, symbol: str) -> BookEngine | None:
+        """The symbol's active engine, which the WS book snapshot reads (#2196)."""
+        tb = self._books.get(symbol)
+        return None if tb is None else tb.active
+
     # ---- tier change -------------------------------------------------------
     async def change_depth(self, symbol: str, depth: int) -> None:
         tb = self._books.get(symbol)

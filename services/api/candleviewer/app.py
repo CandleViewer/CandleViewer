@@ -302,6 +302,7 @@ from candleviewer.ws_wiring import (
     StorePrincipalLoader,
     WsEvents,
     WsRuntime,
+    book_snapshot_source,
     default_snapshot_router,
     ingestion_streams,
 )
@@ -1174,7 +1175,7 @@ def create_app(
     # now-forbidden subscriptions. The principal is read from the store on
     # the real backend and is deny-all on the fake one (#2505).
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
-    # (pending stubs until #2195-#2197), sequencing; lifecycle + shutdown in `WsRuntime`.
+    # (book #2196; stubs until #2195, #2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
     # publish fans out through the sequencing hub, waking a pending subscription.
@@ -1185,7 +1186,9 @@ def create_app(
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
         audit=_LazyAuditEmitter(ctx.audit),
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
-        snapshots=default_snapshot_router({"machines": machine_states}),
+        snapshots=default_snapshot_router(
+            {"machines": machine_states, "book": book_snapshot_source(ctx)}
+        ),
         sequencing=ws_sequencing,
         bars_off=not resolved.bars_enabled,
         machines=machine_states,
