@@ -26,6 +26,7 @@ from candleviewer.storage.cold.recorded_reader import (
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     RecordedEvent,
+    RecordedQueryRejected,
     RecordedStreamReader,
     RecordedTrade,
     event_from_row,
@@ -83,6 +84,22 @@ async def test_reads_honour_the_limit_the_depth_and_the_half_open_window(tmp_pat
     assert [e.ts_us for e in capped] == [H0, H0 + 20_000_000, H0 + 40_000_000]
     assert [e.ts_us for e in in_edge] == [H0 + 20_000_000, H0 + 40_000_000]
     assert other_depth == []
+
+
+@pytest.mark.parametrize("limit", [0, -1, True])
+async def test_a_limit_below_one_is_refused_before_any_manifest_is_read(
+    tmp_path: Path, limit: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The port's contract (`RecordedStreamReader.read`): refused, never an empty read."""
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+
+    def listing_forbidden(*_: object) -> list[object]:
+        raise AssertionError("storage was read")
+
+    monkeypatch.setattr(reader, "_partitions", listing_forbidden)
+
+    with pytest.raises(RecordedQueryRejected):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=limit)
 
 
 async def test_a_window_without_manifested_partitions_reads_nothing(tmp_path: Path) -> None:

@@ -46,6 +46,7 @@ from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
     RecordedEvent,
+    RecordedQueryRejected,
     event_from_row,
 )
 
@@ -187,6 +188,8 @@ class ParquetRecordedReader:
     async def read(
         self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
     ) -> list[RecordedEvent]:
+        if isinstance(limit, bool) or limit < 1:  # the port's refusal, before any manifest read
+            raise RecordedQueryRejected("limit must be an int >= 1")
         files = await self._files(symbol, stream, rng.start_us, rng.end_us)
         if not files:
             return []
