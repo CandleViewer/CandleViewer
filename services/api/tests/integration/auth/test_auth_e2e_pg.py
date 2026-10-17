@@ -314,6 +314,8 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     logout = next(x for x in by_user if x["action"] == "auth.logout")
     assert logout["actor_user_id"] == user_id and logout["reason"] == "logout"
     assert logout["outcome"] == "success" and logout["actor_ip"] == "127.0.0.1"
+    assert logout["after_state"] == {"session_ids": [created["session_id"]], "session_count": 1}
+    assert actions.index("auth.logout") < actions.index("auth.session_revoked")
 
     engine = create_async_engine(pg_dsn)
     try:

@@ -541,6 +541,51 @@ of an accepted code stay silent.
    setting widens the window and none may be added (SR-021).
 4. Verify: a fresh sign-in succeeds and the counter stops rising.
 
+## 10. An audit outcome record was lost (`AuthAuditOutcomeLost`, `AuthAuditOutcomesLostBurst`)
+
+The alert runbook is `docs/plan/07-release-and-prr.md#alert-authauditoutcomelost`. Two session
+routes write a record after the service has acted or refused, so a refusal of the sink cannot undo
+the decision and the answer stands. `POST /auth/logout` writes one `auth.logout` row first (naming
+its targets in `after_state.session_ids`: the first 50, with the total in
+`after_state.session_count`), revokes, then writes one `auth.session_revoked` row per session it
+revoked: a refusal at the first row is a `503` that changes nothing, at a later row still a `204`.
+`POST /auth/refresh` writes `auth.refresh_reuse_detected` for a concurrent-refresh race after the
+service has refused it, and `auth.session_refreshed` (`denied`, reason `user_disabled`, #2911)
+after it refuses a disabled user's refresh; the answer stays the uniform `401`.
+
+Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
+`auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal
+class, `inactive`, `cancelled` for a request cancelled part-way, or `timeout` for a write that did
+not return within the audit timeout, 2 s: the row in flight may have landed, so check the trail, and
+the rows after it were not tried); it carries no token, address or user. Restore the audit sink
+first, then list the gap from those lines. For a lost `auth.session_revoked`, the `auth.logout` row
+already names the session (above 50 targets it names only the first 50: the rest are that user's
+`sessions` rows with `revoked_reason` `logout_all` and a `revoked_at` at the time of that row) and
+the `sessions` row (`revoked_at`, `revoked_reason`) records the revocation; a lost
+`auth.refresh_reuse_detected` follows an `auth.session_refreshed` row, and its family is revoked
+with reason `rotation_reuse` when the service found the token already rotated (a refresh that lost
+the claim race to a concurrent one revoked nothing, so the log line and this row are the only
+trace); a lost `auth.session_refreshed` denial leaves the attempt's own `auth.session_refreshed`
+row (`success`) uncorrected: nothing was minted, and the user is `disabled` or gone. Never write
+the missing rows by hand: only the audit writer writes the table. There is no
+automatic retry: that half of rule 2 (`04-security-program.md` section 8.3) is the time-boxed
+exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) exists.
+
+While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
+nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
+and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
+reset (section 3, E09-S11 #2119, not runnable yet) will be the Owner's emergency path: it runs only
+with cv-api stopped and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
+`ticket`, muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and active 15 minutes after the
+last loss, so a lone loss at night is not delivered and the page (more than 5 in 15 minutes) does
+not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
+
+No page does not mean the sink is healthy: the page reads only outcome rows lost after an action,
+while a refusing sink makes every sign-out, revoke and refresh fail closed at its write-ahead record
+with a `503` that no counter or alert sees. Those refusals show only as
+`auth.session_audit.writer_refused` log lines (the alert runbook's third command greps them); a
+counter for them is requested under #3009 and E27 KV-D04 (#2267).
+
 ## Known gaps referenced above
 
 | Gap                                                                       | Reference            |
@@ -553,6 +598,8 @@ of an accepted code stay silent.
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
+| No durable retry of a lost audit outcome record                           | EX-07, #3009         |
+| No counter or alert for a write-ahead audit refusal (the `503`)           | #3009, #2267         |
 
 ## Execution record
 

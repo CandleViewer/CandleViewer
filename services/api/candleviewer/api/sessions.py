@@ -43,9 +43,13 @@ it is, and a budget or cap trip is logged (`auth.session_revoke_denied.unaudited
 Write-ahead audit (C-2.9, #2251): the record is written before anything is
 rotated, revoked, set or cleared. An inactive sink, or a writer that refuses the
 record (`AuditError`: WAL full or unwritable, writer stopped), answers 503 with
-nothing changed. The one record written after the service has acted (the
-concurrent-refresh race in `/auth/refresh`) cannot undo that: a failed write
-there is logged and the 401 stands.
+nothing changed. A record written after the service has acted is an outcome record
+(04-security-program.md §8.3 rules 1 and 2) and cannot undo that: a lost one is counted
+(`auth_audit_outcome_lost_total`), logged and alerted, and the answer stands
+(`_audit_outcomes`). They are, in `/auth/refresh`, the concurrent-refresh race and a disabled
+user's refusal (#2911) and, on `/auth/logout`, one `auth.session_revoked` per session revoked,
+after the one `auth.logout` intent record that names the targets (#2914). The retry half of rule 2
+is the time-boxed exception EX-07 (§16.2).
 """
 
 from __future__ import annotations
@@ -82,9 +86,11 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.metrics import (
+    auth_audit_outcome_lost_total,
     auth_csrf_refused_total,
     auth_session_fixation_attempts_total,
     auth_session_revoke_denied_total,
+    normalise_outcome_action,
 )
 from candleviewer.auth.models import (
     MintedSession,
@@ -100,6 +106,11 @@ REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
 REFRESH_EXPIRES_IN_S = 12 * 3600
 MAX_PAGE = 100
+#: `auth.logout` names at most this many target sessions in `after_state.session_ids` and counts
+#: every target in `session_count`: the record written before the revocation must not grow with the
+#: user's session count, and one the writer refuses is a 503 that keeps the user signed in. The
+#: rest are the user's `sessions` rows revoked by that call (auth-rbac.md section 10).
+LOGOUT_INTENT_SESSION_IDS_MAX = 50
 
 
 class SessionServiceLike(Protocol):
@@ -411,6 +422,7 @@ def make_session_router(
         severity: Severity = Severity.INFO,
         reason: str | None = None,
         session_id: str | uuid.UUID | None = None,
+        after_state: dict[str, Any] | None = None,
     ) -> None:
         if audit_service is None or not audit_service.is_active:
             raise AuditUnavailableError
@@ -426,6 +438,7 @@ def make_session_router(
                 outcome=outcome,
                 severity=severity,
                 reason=reason,
+                after_state=after_state,
             )
         except AuditError as exc:
             # The writer refused the record (WAL full or unwritable, writer stopped, #2251):
@@ -435,6 +448,56 @@ def make_session_router(
                 "auth.session_audit.writer_refused", action=action, error=type(exc).__name__
             )
             raise AuditUnavailableError from exc
+
+    def _outcome_lost(action: str, sid: str | uuid.UUID, error: str) -> None:
+        auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
+        _log().error(
+            "auth.session_audit.outcome_lost", action=action, session_id=str(sid), error=error
+        )
+
+    async def _audit_outcomes(
+        action: str,
+        *,
+        record: SessionRecord,
+        ip: str | None,
+        session_ids: tuple[str | uuid.UUID, ...],
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        severity: Severity = Severity.INFO,
+        reason: str | None = None,
+    ) -> None:
+        """Write one outcome record per session id (04-security-program.md §8.3 rule 1: after the
+        side effect). The service has already acted, so a lost record is counted, logged (action,
+        session and error class only) and alerted, and the answer stands. No retry: exception
+        EX-07, §16.2. Each write is bounded by `audit_timeout_s`: the writer never cuts an append
+        short, so the record in flight may still land, and a sink that does not answer is not asked
+        again (one bound, not one per session). The WS fan-out abandons its audit rows after
+        `FANOUT_AUDIT_MAX_FAILURES` in a row (`ws/limits.py`, #2824); one timeout is enough here:
+        it is one bound per request, the rows not tried are counted, and a refusal returns at once
+        and never ends the loop. A request cancelled part-way is the same: the record
+        in flight and every one after it are counted and logged, never dropped silently."""
+        for i, sid in enumerate(session_ids):
+            try:
+                async with asyncio.timeout(audit_timeout_s):
+                    await _audit(
+                        action,
+                        record=record,
+                        ip=ip,
+                        outcome=outcome,
+                        severity=severity,
+                        reason=reason,
+                        session_id=sid,
+                    )
+            except AuditUnavailableError as exc:
+                cause = exc.__cause__
+                _outcome_lost(action, sid, "inactive" if cause is None else type(cause).__name__)
+            except TimeoutError:
+                for lost in session_ids[i:]:
+                    _outcome_lost(action, lost, "timeout")
+                return
+            except asyncio.CancelledError:
+                for lost in session_ids[i:]:
+                    _outcome_lost(action, lost, "cancelled")
+                raise
 
     async def _revoke_denied(request: Request, record: SessionRecord, target: uuid.UUID) -> None:
         """AC-CSRF-05 / SR-019 (#2319): the caller named an id that is not one of their live
@@ -662,46 +725,35 @@ def make_session_router(
             )
         except RefreshReuseDetected:
             if not reuse:
-                # Concurrent-refresh race detected inside the service; the
-                # intent record above is followed by the critical outcome.
-                try:
-                    await _audit(
-                        "auth.refresh_reuse_detected",
-                        record=presented_record,
-                        ip=ip,
-                        outcome=AuditOutcome.DENIED,
-                        severity=Severity.CRITICAL,
-                        reason="rotation_reuse",
-                    )
-                except AuditUnavailableError:
-                    # Not write-ahead: the service has already decided, and for a rotated token
-                    # revoked the family and published every revocation (#2272), so a 503
-                    # "nothing changed" would be false. The 401 stands; the lost record is the
-                    # alert (04-security-program.md §8.3 rule 2). Never a 500 (#2251).
-                    _log().error(
-                        "auth.refresh_reuse_detected.audit_unavailable",
-                        session_id=str(presented_record.id),
-                    )
+                # Concurrent-refresh race detected inside the service: the intent record above is
+                # followed by the critical outcome. Not write-ahead: the service has already
+                # decided, and for a rotated token revoked the family and published every
+                # revocation (#2272), so a 503 "nothing changed" would be false. The 401 stands; a
+                # lost record is counted, never a 500 (#2251).
+                await _audit_outcomes(
+                    "auth.refresh_reuse_detected",
+                    record=presented_record,
+                    ip=ip,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.CRITICAL,
+                    reason="rotation_reuse",
+                    session_ids=(presented_record.id,),
+                )
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except UserDisabled:
             # #2911: the user is disabled (or deleted); nothing was minted. The intent record
-            # above is followed by the refusal; as for the reuse outcome, a lost record is
-            # logged and the 401 stands.
-            try:
-                await _audit(
-                    "auth.session_refreshed",
-                    record=presented_record,
-                    ip=ip,
-                    outcome=AuditOutcome.DENIED,
-                    severity=Severity.WARNING,
-                    reason="user_disabled",
-                )
-            except AuditUnavailableError:
-                _log().error(
-                    "auth.session_refresh_refused.audit_unavailable",
-                    session_id=str(presented_record.id),
-                )
+            # above is followed by the refusal, an outcome record like the reuse one: a lost
+            # record is counted and logged and the 401 stands.
+            await _audit_outcomes(
+                "auth.session_refreshed",
+                record=presented_record,
+                ip=ip,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="user_disabled",
+                session_ids=(presented_record.id,),
+            )
             return _unauthorized("refresh_token_invalid")
         except (SessionNotFound, SessionRevoked, SessionIdleLocked):
             return _unauthorized("refresh_token_invalid")
@@ -818,27 +870,43 @@ def make_session_router(
                 return _problem(422, "Unprocessable", "all_sessions must be boolean")
             all_sessions = flag
         ip = _source_ip(request)
-        # C-2.9 write-ahead: record the logout (and every targeted session)
-        # before revoking; audit down => 503, nothing revoked.
+        # C-2.9 / 04-security-program.md §8.3 rule 1: one intent record, naming the targets, before
+        # anything is revoked (audit down => 503, nothing revoked and nothing left to repeat on a
+        # retry), then one outcome record per session the service did revoke (#2914).
         reason = "logout_all" if all_sessions else "logout"
         try:
             if all_sessions:
                 targets = [
-                    v.id for v in await auth_service.sessions.list_sessions(str(record.user_id))
+                    str(v.id)
+                    for v in await auth_service.sessions.list_sessions(str(record.user_id))
                 ]
             else:
-                targets = [record.id]
-            await _audit("auth.logout", record=record, ip=ip, reason=reason)
-            for sid in targets:
-                await _audit(
-                    "auth.session_revoked", record=record, ip=ip, reason=reason, session_id=sid
-                )
+                targets = [str(record.id)]
+            await _audit(
+                "auth.logout",
+                record=record,
+                ip=ip,
+                reason=reason,
+                after_state={
+                    "session_ids": targets[:LOGOUT_INTENT_SESSION_IDS_MAX],
+                    "session_count": len(targets),
+                },
+            )
         except AuditUnavailableError:
             return _audit_down()
         if all_sessions:
-            await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
+            revoked = await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
         else:
-            await auth_service.sessions.revoke(str(record.id), reason=reason)
+            ended = await auth_service.sessions.revoke(str(record.id), reason=reason)
+            revoked = () if ended is None else (ended,)
+        # What the service revoked, not what was read before: a session may have signed in since.
+        await _audit_outcomes(
+            "auth.session_revoked",
+            record=record,
+            ip=ip,
+            reason=reason,
+            session_ids=tuple(s.id for s in revoked),
+        )
         response = Response(status_code=204)
         _clear_refresh_cookie(response)
         clear_csrf_cookie(response)
