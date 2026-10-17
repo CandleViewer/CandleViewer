@@ -57,8 +57,8 @@ class FakeAudit:
         self.events.append(("persist_refused", key, reason))
 
 
-async def _seal(blob: dict[str, Any], machine_hash: str, version: int) -> str:
-    return f"stub-seal:{machine_hash}:{version}"
+async def _seal(blob: dict[str, Any], machine_hash: str, version: int, key: MachineKey) -> str:
+    return f"stub-seal:{key.machine_kind}/{key.entity_id}/{key.env}:{machine_hash}:{version}"
 
 
 @pytest.fixture()
@@ -137,6 +137,16 @@ async def test_persist_pending_both_lanes_replayed_once_priority_first(registry:
         assert restored.context["seen"] == ["prio-1", "inbox-1", "inbox-2", "after"]
     finally:
         await restored.stop()
+
+
+async def test_persist_hands_the_sealer_the_persisted_key(registry: Registry) -> None:
+    interp = await _started(registry)
+    repo, journal, audit = FakeRepo(), InMemoryDrainJournal(), FakeAudit()
+    await _persister(registry, repo, journal, audit).persist(interp, key=KEY)
+    env = repo.rows[KEY]
+    assert env.key == KEY
+    want = f"stub-seal:{_KIND}/{KEY.entity_id}/{KEY.env}:{env.machine_hash}:{env.version}"
+    assert env.seal == want
 
 
 async def test_persist_faulted_context_refused_and_audited(registry: Registry) -> None:

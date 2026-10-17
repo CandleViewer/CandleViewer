@@ -22,7 +22,7 @@ from candleviewer.admin.overview.fanout import Degraded, SliceFanOut, SliceResul
 from candleviewer.admin.overview.slices import AdminSlice
 from candleviewer.settings import Environment
 from candleviewer.statechart.errors import StatechartRegistryError
-from candleviewer.statechart.persistence import HmacKeys, SealedSnapshot, open_sealed
+from candleviewer.statechart.persistence import HmacKeys, MachineKey, SealedSnapshot, open_sealed
 from candleviewer.statechart.registry import Registry, export_stately, machine_hash
 
 #: `snapshots.detail` when a snapshot is left out (`listStatecharts`).
@@ -198,11 +198,14 @@ class StatechartInspector:
             return None  # fail closed: neither shown nor counted
 
     def _project(self, row: SnapshotRow, keys: HmacKeys) -> Machine:
+        # The seal ties `environment` to the envelope, not the contract; `updated_at` is unsealed.
         if row.environment not in Environment or row.updated_at.utcoffset() is None:
-            raise ValueError("row metadata is off the contract")  # the HMAC does not cover it
+            raise ValueError("row metadata is off the contract")
         chart = self.registry.get(row.machine_kind)
         expected = machine_hash(chart)  # MUST-12: the envelope must carry the registered hash
-        snap = open_sealed(keys, chart, row.envelope, expected_machine_hash=expected)
+        # The key is the row's own columns, never the envelope's claim: the seal must bind the two.
+        key = MachineKey(row.machine_kind, row.entity_id or row.machine_kind, row.environment)
+        snap = open_sealed(keys, chart, row.envelope, key=key, expected_machine_hash=expected)
         configuration, trips = snap.get("configuration"), snap.get("chain_trips", 0)
         if not isinstance(configuration, list) or not all(
             isinstance(s, str) for s in configuration

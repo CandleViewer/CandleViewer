@@ -86,7 +86,8 @@ async def persist(interp, *, key: MachineKey) -> None:
         if r.error is not None: audit.drain_error(key, r)         # R14-02
     journal.append(key, drained, dedupe_key=stable_send_id)       # replayed exactly once after restore
     blob = interp.get_persisted_snapshot()                        # root only (CV-C41); v3 carries chain_trips
-    envelope = seal(blob, machine_hash=registry.hash(key),        # CV-C53: HMAC-SHA256 over chart bytes + blob
+    envelope = seal(blob, key=key,                                # CV-C53: HMAC-SHA256 over chart bytes + blob + machine key
+                    machine_hash=registry.hash(key),
                     version=SNAPSHOT_V, key_id=KMS.current())     #   version >= 3
     await repo.write_snapshot(key, envelope)                      # never when context carries _fault (MUST-01)
     await interp.stop()
@@ -96,7 +97,7 @@ async def persist(interp, *, key: MachineKey) -> None:
 
 ```python
 async def restore(key, envelope) -> Interpreter:
-    blob = open_sealed(envelope)                                  # HMAC fail -> refuse, quarantine row, P1 alert
+    blob = open_sealed(envelope, key=key)                         # HMAC fail -> refuse, quarantine row, P1 alert
     interp = Interpreter.from_snapshot(machine, blob, minimum_version=3,          # CV-C52
                                        expected_machine_hash=registry.hash(key),  # MUST-12; never a no-op upcaster
                                        plugins=plugins())                         # R13-W1: kwarg, not .use()
@@ -116,7 +117,7 @@ async def restore(key, envelope) -> Interpreter:
 
 _Implemented (E50-T10):_ `persistence.Persister.persist` realises the snapshot block above with injected `SnapshotRepo` / `DrainJournal` / `PersistAudit` / seal callbacks (tables: `machine_snapshots`, `machine_drain_journal`, `24-internal-schemas.md` §17.6; migration E29-T12). A `_fault` context is refused and audited before anything is drained. `InMemoryDrainJournal` is the reference journal for the contract suite; restore + HMAC stay in E50-T49.
 
-_Implemented (E50-T49):_ `persistence.Restorer.restore` realises the restore block above. `seal`/`open_sealed` compute HMAC-SHA256 over length-prefixed `canonical_json(chart) || canonical_json(blob) || machine_hash || version`, keyed by `HmacKeys.current()` and verified by the envelope's `key_id` (rotation-safe). Any refusal (bad HMAC, unknown key id, registry `machine_hash` mismatch, version < 3, library `Snapshot*Error`, a C45''/C60/C27'/C54 pre-start check) writes a quarantine row via `RestoreAudit` and pages P1; the blob is never loaded. `chain_trips > 0` sets `ChainTripLatch` (reads served, `admit_command` refuses) and pages. `factory.make_machine`/`apply_lane_config` are shared so a restored interpreter carries the same mandatory config as `build()`. The KMS-backed `HmacKeys`, Postgres quarantine sink and gateway consultation of the latch are wired by their owning tickets (E29-T12, E50-T15, E42).
+_Implemented (E50-T49):_ `persistence.Restorer.restore` realises the restore block above. `seal`/`open_sealed` take the `MachineKey` and compute HMAC-SHA256 over length-prefixed `cv-snapshot-seal-v{SEAL_LAYOUT_V} || canonical_json(chart) || canonical_json(blob) || machine_hash || version || machine_kind || entity_id || env`, keyed by `HmacKeys.current()` and verified by the envelope's `key_id` (rotation-safe). An envelope therefore opens only for the key it was sealed for (C-2.11), and `open_sealed` refuses one whose own `key` differs from the requested key before any MAC work. `SEAL_LAYOUT_V = 2` is the seal's own layout version, independent of `SNAPSHOT_V` (the library floor, CV-C52, unchanged): layout 1 had no marker and no machine key, so its tags no longer verify and are refused as a bad HMAC; no snapshot store existed when this changed (#3082), so nothing needs migrating, and a later layout change bumps `SEAL_LAYOUT_V`. Any refusal (bad HMAC, an envelope sealed for another machine key, unknown key id, registry `machine_hash` mismatch, version < 3, library `Snapshot*Error`, a C45''/C60/C27'/C54 pre-start check) writes a quarantine row via `RestoreAudit` and pages P1; the blob is never loaded. `chain_trips > 0` sets `ChainTripLatch` (reads served, `admit_command` refuses) and pages. `factory.make_machine`/`apply_lane_config` are shared so a restored interpreter carries the same mandatory config as `build()`. The KMS-backed `HmacKeys`, Postgres quarantine sink and gateway consultation of the latch are wired by their owning tickets (E29-T12, E50-T15, E42).
 
 
 ### 1.4 `gateway.py`: the only send path
@@ -259,7 +260,7 @@ The source of truth is 79-r14 §7, read together with the per-round retire/stand
 | CV-C50 | STANDS | `on_invocation_stranded` + `on_event_dropped("chain_budget")` sampled; health sweep asserts no dormant invocations | PL errors |
 | CV-C51 | STANDS | No entry/exit action awaits a receipt on its own interpreter (the library also refuses) | L |
 | CV-C52 | STANDS (hygiene) | `minimum_version=3` at every restore site | L, P |
-| CV-C53 | STANDS | The snapshot journal is HMAC'd at rest over chart bytes + blob. **The load-bearing security control** | P, CT |
+| CV-C53 | STANDS | The snapshot journal is HMAC'd at rest over chart bytes + blob + machine key (§1.3). **The load-bearing security control** | P, CT |
 | CV-C54 | STANDS | Restore reconciles persisted vs admitted record counts | P |
 | CV-C55 | STANDS | No delay below 10 ms | L |
 | CV-C56 | STANDS | `start()` is wrapped in `wait_for(CV_START_TIMEOUT)`, and a timeout is a hard failure | F |

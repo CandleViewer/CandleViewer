@@ -4179,7 +4179,7 @@ CREATE TABLE machine_snapshots (
   machine_hash      text        NOT NULL,   -- sha256(canonical_json(chart)); must equal machine_hashes.lock
   snapshot          jsonb       NOT NULL,   -- interpreter.get_persisted_snapshot() (root only; carries chain_trips)
   hmac_key_id       text        NOT NULL,
-  hmac_tag          bytea       NOT NULL,   -- HMAC-SHA256 over chart bytes + snapshot (CV-C53)
+  hmac_tag          bytea       NOT NULL,   -- HMAC-SHA256 tag; input layout owned by 29 §1.3 (CV-C53)
   state_ids         text[]      NOT NULL,   -- denormalised for query/index
   chain_trips       int         NOT NULL DEFAULT 0,  -- >0 = latched degraded until operator ack (CV-C63)
   updated_at        timestamptz NOT NULL,
