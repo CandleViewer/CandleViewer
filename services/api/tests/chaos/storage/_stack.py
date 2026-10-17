@@ -45,6 +45,9 @@ COMPOSE_TIMEOUT_S = 180.0
 POLL_S = 0.5
 #: `start_and_wait` re-issues `compose start` this often until the service answers.
 START_RETRY_S = 10.0
+#: A whole `pg_up` probe (connect, query and close) is over within this long, whatever the
+#: server does.
+PG_PROBE_TIMEOUT_S = 5.0
 
 Ready = Callable[[], Awaitable[bool]]
 
@@ -71,9 +74,12 @@ class ComposeResult:
 
 
 def _run(argv: list[str], timeout_s: float) -> subprocess.CompletedProcess[str]:
-    """The one subprocess call (the seam the unit tests replace with a fake `docker`)."""
+    """The one subprocess call (the seam the unit tests replace with a fake `docker`).
+
+    `errors="replace"`: a stray non-UTF-8 byte in compose's output must not raise a
+    `UnicodeDecodeError` (a `ValueError`): it would escape `_diagnostics` and hide the failure."""
     return subprocess.run(  # noqa: S603 - fixed argv, no shell
-        argv, capture_output=True, text=True, timeout=timeout_s, check=False
+        argv, capture_output=True, text=True, errors="replace", timeout=timeout_s, check=False
     )
 
 
@@ -161,8 +167,15 @@ async def start_and_wait(
 
     A non-zero exit raises `ComposeError` at once. Running out of time raises `AssertionError`
     carrying `compose ps -a` and the service's log tail. Needing more than one start recovers but
-    warns (`RuntimeWarning`), so how often the quirk fires shows in the CI warnings summary.
-    `now` and `sleep` are injectable so the unit tests drive this on a fake clock.
+    warns (`RuntimeWarning`): a second call means no answer within `retry_every_s` of the first,
+    which a slow start looks like too, so the CI warnings summary is an upper bound on how often
+    the quirk fires, not a count of it. A start gets the time left but never less than
+    `retry_every_s`, so the one issued at the deadline can finish: with a 1 s floor a slow `start`
+    there died as "timed out after 1s" and the failure lost its diagnostics (GH-3167). The deadline
+    is only checked once per poll, so the last start can be issued up to `POLL_S` after it and then
+    runs for up to `retry_every_s`: it can end at most `retry_every_s + POLL_S` after `timeout_s`
+    (10.5 s at the defaults). `now` and `sleep` are injectable so the unit tests drive this on a
+    fake clock.
     """
     clock = now or asyncio.get_running_loop().time
     deadline = clock() + timeout_s
@@ -171,14 +184,15 @@ async def start_and_wait(
     last: ComposeResult | None = None
     while True:
         if clock() >= next_start:
-            last = await compose("start", service, timeout_s=max(1.0, deadline - clock()))
+            budget = max(retry_every_s, deadline - clock())  # the time left, but enough to finish
+            last = await compose("start", service, timeout_s=budget)
             starts += 1
             next_start = clock() + retry_every_s
         if await ready():
-            if starts > 1:  # recovered, but not for free: keep the quirk visible in the CI summary
+            if starts > 1:  # recovered, but not for free: show it in the CI warnings summary
                 warnings.warn(
-                    f"{service} needed {starts} `compose start` calls; the earlier ones exited 0 "
-                    f"without starting it (GH-3087)",
+                    f"{service} needed {starts} `compose start` calls; no answer within "
+                    f"{retry_every_s:.0f}s of an earlier one (GH-3087)",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -236,13 +250,26 @@ async def qdb_up() -> bool:
 
 
 async def pg_up() -> bool:
-    """True once Postgres answers a query (an open port alone is only docker-proxy)."""
+    """True once Postgres answers a query (an open port alone is only docker-proxy).
+
+    The whole probe, connect to close, is over within `PG_PROBE_TIMEOUT_S` whatever the server does
+    (the connect and the query also have 3 s each): one that takes the connection and then stalls
+    would otherwise hold this, and so `start_and_wait`'s deadline check, for as long as it likes. A
+    probe that does not finish in time is not ready. The close needs the bound too: after a query
+    that timed out, asyncpg's `close()` first waits for the server to answer the cancel, which a
+    stalled server never does (`close(timeout=)` only bounds what comes after that). The
+    `asyncio.timeout` cancels the task once, so nothing is awaited after a failure: the connection
+    is dropped with `terminate()`. A `finally: await conn.close()` would run unbounded when the
+    deadline lands inside the query, after a slow connect."""
     with contextlib.suppress(OSError, asyncpg.PostgresError, TimeoutError):
-        conn = await asyncpg.connect(pg_dsn().replace("+asyncpg", "", 1), timeout=3)
-        try:
-            await conn.execute("SELECT 1")
-        finally:
-            await conn.close()
+        async with asyncio.timeout(PG_PROBE_TIMEOUT_S):
+            conn = await asyncpg.connect(pg_dsn().replace("+asyncpg", "", 1), timeout=3)
+            try:
+                await conn.execute("SELECT 1", timeout=3)
+                await conn.close()  # a clean Terminate while the server is behaving
+            except BaseException:
+                conn.terminate()  # failed, timed out or cancelled: drop it, never await it
+                raise
         return True
     return False
 
