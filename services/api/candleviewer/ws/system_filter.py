@@ -9,8 +9,10 @@ Viewer only the fields `NEUTRAL_FIELDS` lists for its `kind`, health components 
 (`04-security-program.md` §7.2.2 row 48), a kill switch without who engaged it or why, its
 accounts cut to the socket's `account_scope`, and only the flag keys that the injected
 `FlagVisible` admits for its roles (E42-T03): none without one, and a `feature_flags` frame left
-with no key is not sent. A body with nothing to leave out is passed on as is (no copy); nothing
-here is audited or counted, as a left-out field is the contract.
+with no key is not sent. A body with nothing to leave out is passed on as is (no copy). A left-out
+field, and a flag frame left with no key, are the contract, so nothing is audited or counted for
+them; a whole frame that is faulty (an unknown `kind`, a kill switch without its state) or that
+this socket cannot receive is named by `withheld_reason` for the gateway's counter.
 `kill_switch_view` is that kill-switch cut on its own, for `auth_ok.kill_switch` (§4.3).
 """
 
@@ -19,9 +21,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from candleviewer.auth.scopes import PrincipalSnapshot
+
+if TYPE_CHECKING:  # the annotation only: the filter stays free of the metrics facade at run time
+    from candleviewer.ws.metrics import WithheldReason
 
 _BASE: Final = frozenset({"kind", "severity", "message"})
 _KILL_SWITCH: Final = "kill_switch"
@@ -87,7 +92,7 @@ def system_view(
         return body
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
-    if kind == _KILL_SWITCH and not isinstance(body.get(_KILL_SWITCH), Mapping):
+    if _is_stateless(kind, body):
         return None  # a kill-switch frame is its state: never sent without it
     view = body
     for key in body:
@@ -97,6 +102,26 @@ def system_view(
     if kind == _FLAGS and _FLAGS not in view:
         return None  # a flag frame is its keys: never sent with none the role may learn
     return view
+
+
+def withheld_reason(body: object, principal: PrincipalSnapshot | None) -> WithheldReason | None:
+    """Why `system_view` gives `principal` nothing of `body` for a reason that is not its role's
+    cut. The frame is judged before the socket: a `kind` outside §15.9 (nobody receives it, the
+    Owner included) and a kill-switch frame without its state (only the Owner receives that) are
+    faults of the producer; then come no principal, and none of the three roles. `None` when it
+    receives the frame, or is not meant to (a `feature_flags` frame with no key its role may learn,
+    E42-T03): that is the contract. A Manager's or Viewer's flag frame has none, shown or not, so
+    no flag predicate is needed."""
+    kind = body.get("kind") if isinstance(body, Mapping) else None
+    if not isinstance(body, Mapping) or not isinstance(kind, str) or kind not in NEUTRAL_FIELDS:
+        return "unknown_kind"
+    if principal is not None and principal.is_owner:
+        return None
+    if _is_stateless(kind, body):
+        return "invalid_body"
+    if principal is None:
+        return "no_principal"
+    return "no_role" if principal.roles.isdisjoint(SCOPED_ROLES) else None
 
 
 def kill_switch_view(
@@ -110,6 +135,11 @@ def kill_switch_view(
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
     return _kill_switch_view(state, principal)
+
+
+def _is_stateless(kind: str, body: Mapping[str, Any]) -> bool:
+    """A kill-switch frame without its state, which only the Owner (any frame whole) receives."""
+    return kind == _KILL_SWITCH and not isinstance(body.get(_KILL_SWITCH), Mapping)
 
 
 def _is_neutral(

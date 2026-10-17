@@ -19,7 +19,7 @@ from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import accumulate, pairwise
 from math import isfinite
-from typing import Any, Final
+from typing import Any, Final, Literal, get_args
 
 from candleviewer.observability.metrics import (
     CollectorRegistry,
@@ -246,6 +246,24 @@ cv_ws_clock_skew_ms = Histogram(
     buckets=(10, 50, 100, 250, 500, 1000, 2000, 5000, 30000),
 )
 
+# -- SR-188 `system` topic (gateway.py `push_system`, system_filter.py `withheld_reason`) --------
+#: Why a `system` frame was left out of a socket's queue for a reason that is not its role's cut:
+#: a `kind` outside 23 section 15.9 (nobody receives it, the Owner included), a kill switch without
+#: its state (only the Owner does), a socket with no principal, a principal with none of the three
+#: roles. The closed `reason` set: no frame content.
+WithheldReason = Literal["unknown_kind", "invalid_body", "no_principal", "no_role"]
+WITHHELD_REASONS: Final[tuple[WithheldReason, ...]] = get_args(WithheldReason)
+cv_ws_system_frames_withheld_total = Counter(
+    "cv_ws_system_frames_withheld_total",
+    "System frames not queued for a socket: an unknown kind, no kill switch state, no principal or "
+    "no role.",
+    labelnames=("reason",),
+)
+# Bound now, as `cv_ws_closes_total` is, so each series exists at 0 from process start and the
+# first frame after a restart is not a lone sample that `increase()` cannot see.
+for _withheld in WITHHELD_REASONS:
+    cv_ws_system_frames_withheld_total.labels(reason=_withheld)
+
 # -- E17-T03 backpressure (pacing.py, outbound.py) -----------------------------------------------
 cv_ws_overflow_total = Counter(
     "cv_ws_overflow_total",
@@ -311,6 +329,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_closes_total",
         "cv_ws_connect_rate_limited_total",
         "cv_ws_clock_skew_ms",
+        "cv_ws_system_frames_withheld_total",
         "cv_ws_subscribe_total",
         "cv_ws_client_topics_depth",
         "cv_ws_revoked_total",

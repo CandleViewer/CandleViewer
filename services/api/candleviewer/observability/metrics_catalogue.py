@@ -1361,6 +1361,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_system_frames_withheld_total",
+        "counter",
+        "frames",
+        ("reason",),
+        "System WS frames not queued for a socket: a kind outside 23 section 15.9, a kill switch "
+        "without its state, no principal or no role (SR-188, #3125). A deny-all socket counts "
+        "every other frame as no_role.",
+        "unknown_kind or invalid_body > 0 (ticket: producer bug)",
+        _L,
+        "E17",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
         "cv_ws_clock_skew_ms",
         "histogram",
         "ms",
