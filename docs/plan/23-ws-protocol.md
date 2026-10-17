@@ -530,7 +530,7 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 | Option        | Type                       | Default                | Notes                                                                                                                                              |
 | ------------- | -------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `throttle_ms` | int                        | per-topic (§6)         | Minimum interval between frames; floored at `limits.min_throttle_ms` (50).                                                                         |
-| `encoding`    | `"binary"`\|`"structured"` | binary where supported | Rejected with `encoding_unsupported` if the topic has no binary form or the subprotocol is JSON without `b64` capability.                          |
+| `encoding`    | `"binary"`\|`"structured"` | binary where supported | Rejected with `encoding_unsupported` if the topic has no binary form. Under `cv.v1.json`, binary frames are `e: "b64"` (§3.2).                     |
 | `coalesce`    | bool                       | `true`                 | Disabling is honoured only while the client keeps up; the server re-enables it under pressure and says so in a `connection_quality` notice (§8.3). |
 
 ### 5.2 `sub_ok`
@@ -1846,6 +1846,8 @@ Shared definitions used throughout:
   ]
 }
 ```
+
+A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the last, which takes the set's one sequence number; the chunks share one `id`. The envelope has no `partial` field: `partial` is a CVWB header bit (§3.4), so on either encoding the shared `id` marks a `snap` as a chunk of a set (a single-frame `snap` has none) and `s: null` marks a chunk that is not the last; the set is assembled and applied as §7.2 says. That `id` is an opaque server-minted set id, never a request's: clients compare it for equality only. No other frame carries `s: null`: a single-frame `snap`, the final chunk and every `d` carry an integer `s` (§7.1).
 
 ### 13.2 `hello`
 
