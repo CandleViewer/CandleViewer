@@ -47,7 +47,7 @@ class KeyRotationPolicy:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> KeyRotationPolicy:
-        return cls(settings.key_rotation_policy_days, settings.key_rotation_warn_days)
+        return cls(settings.rotation_policy_days, settings.rotation_warn_days)
 
     def evaluate(self, created_at: datetime, status: KeyStatus, *, now: datetime) -> KeyRotation:
         """`warn` from `warn_days` before `rotation_due_at` through it, `overdue` once the key is

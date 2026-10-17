@@ -76,7 +76,7 @@ def test_a_key_that_is_not_active_has_no_rotation(status: KeyStatus) -> None:
 
 def test_the_policy_comes_from_settings() -> None:
     assert KeyRotationPolicy.from_settings(Settings()) == KeyRotationPolicy(90, 14)
-    custom = Settings(key_rotation_policy_days=180, key_rotation_warn_days=7)
+    custom = Settings(CV_KEY_ROTATION_POLICY_DAYS=180, CV_KEY_ROTATION_WARN_DAYS=7)
     assert KeyRotationPolicy.from_settings(custom) == KeyRotationPolicy(180, 7)
 
 
