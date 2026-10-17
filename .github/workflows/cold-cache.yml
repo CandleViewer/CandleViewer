@@ -56,7 +56,7 @@ jobs:
       # Still pnpm direct, no turbo: build what apps/web's tests import first (#3244).
       - name: Build the workspace packages apps/web depends on
         run: pnpm --filter "@candleviewer/web^..." run build
-      - name: Guard - packages/ui's exports are built (fails fast, #3244)
-        run: node tools/ci/check_built_exports.mjs packages/ui
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
       - name: web test:cov (cold, pnpm direct, no turbo)
         run: pnpm --filter @candleviewer/web run test:cov

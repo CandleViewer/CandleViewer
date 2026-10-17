@@ -323,9 +323,10 @@ the source of truth for ticket _content_.
 | Build                     | `pnpm --filter @candleviewer/web build`    |
 | Storybook (design review) | `pnpm --filter @candleviewer/ui storybook` |
 
-The web tests import built artefacts of `packages/ui` and the other workspace packages `apps/web` depends on.
-`turbo run test` builds them first (`^build`); when running pnpm directly, run
-`pnpm --filter "@candleviewer/web^..." run build` first (#3244).
+A web test that imports a built artefact of a workspace dependency (such as `packages/ui`'s CSS
+exports) needs it built: `turbo run test` builds them first (`^build`). When running the web `test`
+or `test:cov` script with pnpm directly, run `pnpm --filter "@candleviewer/web^..." run build` first
+(#3244).
 
 ### `apps/desktop`
 

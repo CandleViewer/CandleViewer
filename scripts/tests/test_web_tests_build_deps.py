@@ -19,7 +19,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = 'pnpm --filter "@candleviewer/web^..." run build'
-GUARD = "node tools/ci/check_built_exports.mjs packages/ui"
+GUARD = "node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol"
 LANES = [
     (".github/workflows/_job-e2e.yml", "a11y-axe", "pnpm --filter @candleviewer/web --filter"),
     (
@@ -48,7 +48,10 @@ def test_lane_builds_web_deps_and_guards_before_web_tests(
 ) -> None:
     steps = _steps(workflow, job)
     install = _index(steps, "pnpm install --frozen-lockfile")
-    assert install < _index(steps, BUILD) < _index(steps, GUARD) < _index(steps, tests)
+    build, guard = _index(steps, BUILD), _index(steps, GUARD)
+    assert install < build < guard < _index(steps, tests)
+    for step in (steps[build], steps[guard]):  # both always run and always gate
+        assert "if" not in step and not step.get("continue-on-error", False), step
 
 
 def test_agents_md_states_the_build_prerequisite_of_the_web_tests() -> None:
@@ -66,15 +69,42 @@ def _guard(package: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
 
 
+def _package(root: Path, exports: object, files: list[str]) -> Path:
+    (root / "package.json").write_text(json.dumps({"exports": exports}), encoding="utf-8")
+    for name in files:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("", encoding="utf-8")
+    return root
+
+
+CONDITIONAL = {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}}
+
+
 def test_guard_fails_fast_when_a_built_export_is_missing(tmp_path: Path) -> None:
-    exports = {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}}
-    (tmp_path / "package.json").write_text(json.dumps({"exports": exports}), encoding="utf-8")
-    (tmp_path / "dist").mkdir()
-    (tmp_path / "dist" / "index.js").write_text("", encoding="utf-8")
+    result = _guard(_package(tmp_path, CONDITIONAL, ["dist/index.js"]))
+    assert result.returncode == 1
+    assert "CI-BUILD-001" in result.stderr and "index.d.ts" in result.stderr
 
-    missing = _guard(tmp_path)
-    assert missing.returncode == 1
-    assert "CI-BUILD-001" in missing.stderr and "index.d.ts" in missing.stderr
 
-    (tmp_path / "dist" / "index.d.ts").write_text("", encoding="utf-8")
+def test_guard_passes_when_every_export_is_built(tmp_path: Path) -> None:
+    built = _package(tmp_path, CONDITIONAL, ["dist/index.js", "dist/index.d.ts"])
+    assert _guard(built).returncode == 0
+
+
+def test_guard_requires_a_pattern_export_to_match_a_file(tmp_path: Path) -> None:
+    exports = {"./theme.css": "./dist/theme.css", "./tokens.*.css": "./dist/tokens.*.css"}
+    assert _guard(_package(tmp_path, exports, ["dist/theme.css"])).returncode == 1
+    (tmp_path / "dist" / "tokens.dark.css").write_text("", encoding="utf-8")
     assert _guard(tmp_path).returncode == 0
+
+
+def test_guard_does_not_accept_a_directory_for_an_export(tmp_path: Path) -> None:
+    (tmp_path / "dist" / "index.js").mkdir(parents=True)
+    result = _guard(_package(tmp_path, {".": "./dist/index.js"}, []))
+    assert result.returncode == 1 and "CI-BUILD-001" in result.stderr
+
+
+def test_guard_reports_an_unreadable_manifest_with_its_code(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text("{", encoding="utf-8")
+    result = _guard(tmp_path)
+    assert result.returncode == 1 and "CI-BUILD-001" in result.stderr

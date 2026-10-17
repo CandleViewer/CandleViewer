@@ -129,8 +129,8 @@ jobs:
       - name: Build the workspace packages apps/web depends on
         run: pnpm --filter "@candleviewer/web^..." run build
 
-      - name: Guard - packages/ui's exports are built (fails fast, #3244)
-        run: node tools/ci/check_built_exports.mjs packages/ui
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
 
       - name: vitest-axe component suite (apps/web, packages/ui)
         run: pnpm --filter @candleviewer/web --filter @candleviewer/ui test
