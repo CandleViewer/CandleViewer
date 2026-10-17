@@ -22,10 +22,9 @@ writer.
 The runner writes the run's records, the chain gauge and failure counter and the
 `audit_chain_break` event (`verify_runner`). The job sets `LAST_OK_GAUGE` (its start, then the
 end of each pass) and `RUNS_COUNTER` (each run end by result; a runner exception is `stopped`).
-The page rule on no pass for 26 h is added by the next slice: it reads the gauge within one
-process and the counter across restarts (`increase()` spans a reset). No runner wired: no job,
-no run, and the lifespan logs `audit.verify_job_not_wired`. A loop that dies logs
-`audit.verify_job_died`.
+`AuditVerifyNotPassing` pages on no pass for 26 h: from the gauge within one process, from the
+counter across restarts (`increase()` spans a reset). No runner wired: no job, nothing pages,
+and the lifespan logs `audit.verify_job_not_wired`. A loop that dies logs `audit.verify_job_died`.
 
 Detection only: what a break does to trading is the Owner's decision (#2904).
 """

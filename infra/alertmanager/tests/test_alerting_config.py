@@ -86,6 +86,7 @@ def test_required_rules_present() -> None:
         "AlertmanagerNotificationsFailed",
         "SyntheticAlert",
         "AuditChainVerificationFailed",
+        "AuditVerifyNotPassing",  # #2111 R-5
         "EgressIpChanged",
         "CsrfRefusalsHigh",  # #2090 SR-041
         "CsrfRefusalAuditUnavailable",
@@ -328,6 +329,70 @@ def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
     assert [r["alert"] for r in rules if r["labels"]["component"] == "net"] == [
         "NetBindingUnsafe"
     ]
+
+
+def test_audit_verify_alert_pages_when_no_run_has_passed_for_26_hours() -> None:
+    """#2111: a start-up or nightly verify run that keeps stopping finds no break, so
+    `AuditChainVerificationFailed` stays silent; this page covers it. No run passed for 26 h (the
+    daily run plus 2 h): by the gauge within one process, by the counter across restarts. A gauge
+    at 0 (no runner wired) is dropped by `> 0` and the counter has no series then: no page. Its
+    own component, so the page-over-ticket rule inhibits none of the `audit` tickets (next)."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuditVerifyNotPassing"]
+    assert rule["expr"] == (
+        "time() - max by (env) (cv_audit_verify_last_ok_timestamp_seconds > 0) > 26 * 3600 "
+        'or (sum by (env) (increase(cv_audit_verify_runs_total{result!="ok"}[26h])) > 0 '
+        'unless sum by (env) (increase(cv_audit_verify_runs_total{result="ok"}[26h])) > 0)'
+    )
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "page", "component": "audit_verify"}
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-auditverifynotpassing"
+    route = _route_for({**rule["labels"], "alertname": rule["alert"], "env": "live"})
+    assert route["receiver"] == "page"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "audit_verify"] == [
+        "AuditVerifyNotPassing"
+    ]
+
+
+def _matches(matchers: list[str], labels: dict[str, str]) -> bool:
+    """Whether every Alertmanager matcher holds for `labels` (regexes are fully anchored)."""
+    for matcher in matchers:
+        hit = re.fullmatch(r'(\w+)\s*(=~|!~|!=|=)\s*"([^"]*)"', matcher)
+        assert hit is not None, matcher
+        key, op, want = hit.groups()
+        got = labels.get(key, "")
+        holds = {
+            "=": got == want,
+            "!=": got != want,
+            "=~": re.fullmatch(want, got) is not None,
+            "!~": re.fullmatch(want, got) is None,
+        }[op]
+        if not holds:
+            return False
+    return True
+
+
+def _inhibits(source: dict[str, str], target: dict[str, str]) -> bool:
+    """Whether an inhibit rule of the committed config lets alert `source` inhibit `target`."""
+    return any(
+        _matches(rule["source_matchers"], source)
+        and _matches(rule["target_matchers"], target)
+        and all(source.get(k, "") == target.get(k, "") for k in rule["equal"])
+        for rule in AM["inhibit_rules"]
+    )
+
+
+def test_audit_verify_page_inhibits_no_audit_ticket() -> None:
+    """#2111: the page-over-ticket rule matches on component and env, and this page can stand
+    for days (a run that keeps stopping keeps it up until one passes). Its own component keeps it
+    from inhibiting an `audit` ticket, a component the Postgres rule already lists for tickets.
+    The control: the same page labelled `audit` does inhibit it, so a revert of the label fails."""
+    rule = {r["alert"]: r for r in _rules()}["AuditVerifyNotPassing"]
+    page = {**rule["labels"], "alertname": rule["alert"], "env": "live"}
+    audit_ticket = {"severity": "ticket", "component": "audit", "env": "live"}
+    assert _inhibits({**page, "component": "audit"}, audit_ticket)
+    assert not _inhibits(page, audit_ticket)
 
 
 def test_every_system_page_rule_has_an_absent_guard_on_its_series() -> None:

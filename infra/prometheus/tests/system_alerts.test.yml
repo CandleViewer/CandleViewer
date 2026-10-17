@@ -448,3 +448,80 @@ tests:
   - eval_time: 15m
     alertname: AlertmanagerNotificationsFailed
     exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 300+0x1700
+  alert_rule_test:
+  - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_verify
+        env: live
+      exp_annotations:
+        summary: No audit chain verify run has passed for 26 hours
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 60+0x1439 86400+0x245
+  - series: cv_audit_verify_runs_total{env="live",result="stopped"}
+    values: 0+0x4 1+0x1434 0+0x4 1+0x240
+  - series: cv_audit_verify_runs_total{env="live",result="ok"}
+    values: 0+0x1685
+  alert_rule_test:
+  - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_verify
+        env: live
+      exp_annotations:
+        summary: No audit chain verify run has passed for 26 hours
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 0+0x1700
+  alert_rule_test:
+  - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 60+0x1439 86400+0x119 93600+0x125
+  - series: cv_audit_verify_runs_total{env="live",result="stopped"}
+    values: 0+0x4 1+0x1434 0+0x4 1+0x240
+  - series: cv_audit_verify_runs_total{env="live",result="ok"}
+    values: 0+0x1559 1+0x125
+  alert_rule_test:
+  - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 3600+0x1590
+  alert_rule_test:
+  - eval_time: 1590m
+    alertname: AuditVerifyNotPassing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 3600+0x1621
+  alert_rule_test:
+  - eval_time: 1621m
+    alertname: AuditVerifyNotPassing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_verify
+        env: live
+      exp_annotations:
+        summary: No audit chain verify run has passed for 26 hours
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
