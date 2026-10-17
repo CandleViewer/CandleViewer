@@ -10,6 +10,8 @@ around it:
   `rbac_conformance` module) read the checkout's YAML, so no runtime module may import them.
 - `contract_conformance` must load with the stdlib alone: the generator loads it by file path,
   and the boot path must need neither PyYAML nor openapi-spec-validator (#2616).
+- No `COPY` or `ADD` source carries a dev-only tree: the `cvdev` package or the account pack
+  (#2893, ADR-0036). `tools/ci/check_image_no_dev_modules.py` checks the built image itself.
 
 Limits: these are AST heuristics, so the following are NOT caught.
 - Climbs spelled another way: `os.path.dirname` chains, `/ "../.."` joins, `joinpath("..")`.
@@ -26,6 +28,8 @@ Limits: these are AST heuristics, so the following are NOT caught.
 from __future__ import annotations
 
 import ast
+import fnmatch
+import json
 import subprocess
 import sys
 import warnings
@@ -77,6 +81,69 @@ def test_image_package_is_where_the_dockerfile_installs_the_package() -> None:
     assert workdirs[-1] == "/app"
     assert IMAGE_PACKAGE == PurePosixPath(workdirs[-1], "candleviewer")
     assert str(IMAGE_PACKAGE) in destinations
+
+
+#: Trees no image may carry (#2893): the dev-only fixture transport and the account pack it serves.
+DEV_ONLY_TREES = (PurePosixPath("services/api/cvdev"), PurePosixPath("packages/fixtures/accounts"))
+
+
+def _copy_sources(dockerfile: str) -> list[str]:
+    """The sources of every `COPY` and `ADD` in every stage, in either form, flags dropped."""
+    sources: list[str] = []
+    for line in dockerfile.replace("\\\n", " ").splitlines():
+        instruction, _, rest = line.strip().partition(" ")
+        if instruction.upper() not in ("COPY", "ADD"):
+            continue
+        words = rest.split()
+        while words and words[0].startswith("--"):
+            words.pop(0)
+        arguments = json.loads(" ".join(words)) if words[:1] and words[0][0] == "[" else words
+        sources += arguments[:-1]
+    return sources
+
+
+def _carries_a_dev_only_tree(source: str) -> bool:
+    """Whether the source names a dev-only tree (`cvdev` anywhere, such as `/build/cvdev` from
+    another stage) or is a directory or glob covering one (`services/api`, `.`, `services/*`)."""
+    path = source.removeprefix("./").rstrip("/") or "."
+    if "cvdev" in PurePosixPath(path).parts or "fixtures/accounts" in path:
+        return True
+    return any(
+        fnmatch.fnmatchcase(str(covered), path)
+        for tree in DEV_ONLY_TREES
+        for covered in (tree, *tree.parents)
+    )
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "COPY services/api/cvdev ./cvdev",
+        "COPY services/api/cvdev/account_fixture /build/x",
+        "COPY services/api ./",
+        "COPY . /build",
+        "COPY services/api/* ./",
+        "COPY packages/fixtures/accounts /app/packages/fixtures/accounts",
+        "COPY packages/fixtures /app/packages/fixtures",
+        "COPY --from=builder --chown=10001:10001 /build/cvdev /app/cvdev",
+        'COPY --chown=10001:10001 ["services/api/cvdev", "/app/cvdev"]',
+        "add services/api/cvdev /app/cvdev",
+        "COPY services/api/README.md \\\n    services/api/cvdev ./",
+    ],
+)
+def test_a_copy_of_a_dev_only_tree_is_found(instruction: str) -> None:
+    assert [s for s in _copy_sources(instruction) if _carries_a_dev_only_tree(s)] != []
+
+
+def test_the_image_copies_no_dev_only_package() -> None:
+    """ADR-0036 decision 1: the image carries `candleviewer` and the synthetic sample only."""
+    sources = _copy_sources(DOCKERFILE.read_text(encoding="utf-8"))
+    assert "services/api/candleviewer" in sources
+    offenders = [source for source in sources if _carries_a_dev_only_tree(source)]
+    assert offenders == [], (
+        f"infra/images/Dockerfile.api copies a dev-only tree: {offenders}. Copy only "
+        "services/api/candleviewer (and named files), never a directory above it (#2893)."
+    )
 
 
 class _Module:

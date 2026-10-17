@@ -508,6 +508,13 @@ jobs:
           -c 'import candleviewer.server, candleviewer.main as m;
           print("boot smoke OK:", len(m.app.routes), "routes")'
 
+      # #2893 (ADR-0036): the same image, run the same way: `cvdev` cannot be imported, and a boot
+      # with CV_ACCOUNT_FIXTURE set stops with the package-absent refusal. A PR-time early
+      # warning; main.yml runs the binding copy before every image push.
+      - name: Boot smoke - no dev-only package in the image (CI-IMG-006)
+        timeout-minutes: 5
+        run: python tools/ci/check_image_no_dev_modules.py --image candleviewer-api:ci
+
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: candleviewer-api:ci
