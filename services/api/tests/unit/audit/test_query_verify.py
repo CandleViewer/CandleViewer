@@ -393,6 +393,37 @@ async def test_verify_an_empty_log_echoes_no_range(
     assert (result.verified, result.first_bad_id) == (checkpoint is None, checkpoint)
 
 
+async def test_verify_marks_only_a_run_from_genesis_to_the_head_as_the_full_chain(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """The gauge rule's input: a partial range is never the full chain, nor is an empty log."""
+    assert not (await AuditQueryService(repo).verify()).full_chain  # an empty log
+    await _seed(repo, 5, clock)
+    svc = AuditQueryService(repo)
+    assert (await svc.verify()).full_chain
+    assert not (await svc.verify(from_id=2)).full_chain
+    assert not (await svc.verify(to_id=4)).full_chain
+    assert "full_chain" not in (await svc.verify()).model_dump(mode="json")
+
+
+async def test_verify_a_head_entry_gone_during_the_run_is_a_truncation(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2462: a range ending at the head must pass the head entry; when it vanished
+    during the run the run breaks there, so the chain gauge can never read 1 over it."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def delete_then_fetch(**kw: Any) -> list[tuple[Any, ...]]:
+        repo.rows[:] = [r for r in repo.rows if r["id"] != 5]
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = delete_then_fetch  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.verified, result.first_bad_id) == (False, 5)
+    assert (result.kind, result.entries_checked) == (ChainBreakKind.TAIL_TRUNCATED, 4)
+
+
 def _checkpoint(repo: FakeAuditRepository, head_id: int, head_hash: str | None = None) -> None:
     """A checkpoint naming `head_id`, by default with that entry's stored hash."""
     stored = next((r["entry_hash"] for r in repo.rows if r["id"] == head_id), "f" * 64)
@@ -592,6 +623,32 @@ async def test_plan_fills_in_down_to_the_first_entry_not_to_id_one(
     await _seed(repo, 3, clock)
     plan = await AuditQueryService(repo).plan_verify(from_id=None, to_id=4, max_span=10)
     assert (plan.from_id, plan.to_id) == (3, 4)
+
+
+@pytest.mark.parametrize(
+    ("from_id", "to_id", "max_span", "full"),
+    [
+        (None, None, 10, True),  # the whole log fits the span
+        (1, None, 10, True),  # below the first entry
+        (None, None, 2, False),  # the newest span only
+        (4, None, 10, False),
+        (None, 4, 10, False),  # short of the head
+    ],
+)
+async def test_plan_marks_a_range_from_the_first_entry_to_the_head_as_the_full_chain(
+    repo: FakeAuditRepository,
+    clock: FakeClock,
+    from_id: int | None,
+    to_id: int | None,
+    max_span: int,
+    full: bool,
+) -> None:
+    repo.burn_ids(2)  # the first entry is id 3
+    await _seed(repo, 3, clock)  # ids 3-5
+    plan = await AuditQueryService(repo).plan_verify(
+        from_id=from_id, to_id=to_id, max_span=max_span
+    )
+    assert plan.full_chain is full
 
 
 async def test_verify_echoes_the_anchor_and_the_last_entry_that_passed(

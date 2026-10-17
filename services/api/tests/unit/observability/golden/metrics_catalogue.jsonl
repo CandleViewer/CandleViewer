@@ -1,4 +1,4 @@
-["audit_chain_verification_failures_total", "counter", [], "planned", "E43"]
+["audit_chain_verification_failures_total", "counter", [], "live", "E42"]
 ["auth_audit_outcome_lost_total", "counter", ["action"], "live", "E09"]
 ["auth_break_glass_attempts", "gauge", [], "live", "E09"]
 ["auth_break_glass_state_read_failures_total", "counter", [], "live", "E09"]
@@ -63,6 +63,7 @@
 ["cv_alert_suppressed_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alerts_armed", "gauge", [], "planned", "E40"]
 ["cv_api_keys_rows", "gauge", ["state"], "live", "E27"]
+["cv_audit_chain_verified_state", "gauge", [], "live", "E42"]
 ["cv_audit_query_duration_seconds", "histogram", ["filter_class"], "live", "E42"]
 ["cv_audit_query_timeouts_total", "counter", ["cause"], "live", "E42"]
 ["cv_audit_verify_last_ok_timestamp_seconds", "gauge", [], "live", "E09"]

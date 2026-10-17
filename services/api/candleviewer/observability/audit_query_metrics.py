@@ -5,15 +5,20 @@ with `env`.
 
 Labels are closed sets and never carry a filter value: `filter_class` is one of
 `FILTER_CLASSES`, `cause` one of `budget | pool | statement_timeout`.
+
+The verify series (`POST /admin/audit/verify`) carry no labels. The chain state is NaN
+(unknown) until a run sets it, so an alert on `== 0` never fires on a restart alone.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Final
 
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
+    Gauge,
     Histogram,
     ReexportCollector,
 )
@@ -44,8 +49,25 @@ cv_audit_query_timeouts_total = Counter(
     labelnames=("cause",),
 )
 
+cv_audit_chain_verified_state = Gauge(
+    "cv_audit_chain_verified_state",
+    "Audit chain: 1 verified from genesis to the head, 0 broken, NaN unknown "
+    "(not checked yet); a full-range stop turns 1 into NaN; 0 stays until a "
+    "full-range run passes.",
+)
+cv_audit_chain_verified_state.set(math.nan)
+audit_chain_verification_failures_total = Counter(
+    "audit_chain_verification_failures_total",
+    "Audit hash-chain verifications that found a break.",
+)
+
 EXPORTED_NAMES: Final = frozenset(
-    {"cv_audit_query_duration_seconds", "cv_audit_query_timeouts_total"}
+    {
+        "cv_audit_query_duration_seconds",
+        "cv_audit_query_timeouts_total",
+        "cv_audit_chain_verified_state",
+        "audit_chain_verification_failures_total",
+    }
 )
 
 

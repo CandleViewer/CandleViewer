@@ -2142,17 +2142,33 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E35",
     ),
+    # --- Audit read path (E42-T02) -------------------------------------------
     _s(
         "audit_chain_verification_failures_total",
         "counter",
         "failures",
         (),
-        "Audit hash-chain verification failures.",
-        "page on any",
-        _P,
-        "E43",
+        "Audit hash-chain verifications that found a break (POST /admin/audit/verify).",
+        "page on any (AuditChainVerificationFailed)",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
     ),
-    # --- Audit read path (E42-T02) -------------------------------------------
+    _s(
+        "cv_audit_chain_verified_state",
+        "gauge",
+        "state",
+        (),
+        "Audit chain: 1 verified from genesis to the head, 0 broken, NaN unknown "
+        "(not checked yet); a full-range stop turns 1 into NaN; 0 stays until a "
+        "full-range run passes.",
+        "== 0 pages once its alert rule lands (#2465); a partial range only ever sets 0",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
     _s(
         "cv_audit_query_duration_seconds",
         "histogram",

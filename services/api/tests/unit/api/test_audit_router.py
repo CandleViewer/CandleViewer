@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from candleviewer.api.audit import _read_capped, make_audit_router
 from candleviewer.api.audit_budget import (
@@ -37,11 +39,15 @@ from candleviewer.audit.models import (
     AuditPage,
     AuditPageMeta,
     AuditQueryRequest,
+    ChainBreakKind,
     Severity,
     VerifyResult,
 )
 from candleviewer.audit.query import AuditQueryService, VerifyPlan, VerifyRangeBeyondHead
-from candleviewer.observability.audit_query_metrics import FILTER_CLASSES
+from candleviewer.observability.audit_query_metrics import (
+    FILTER_CLASSES,
+    cv_audit_chain_verified_state,
+)
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
@@ -52,6 +58,8 @@ class _FakeQuery:
     def __init__(self) -> None:
         self.query_calls: list[dict[str, Any]] = []
         self.verify_calls: list[dict[str, Any]] = []
+        self.verify_result: VerifyResult | None = None  # a run's result, when a test sets one
+        self.runs = 0
 
     async def query(self, **kwargs: Any) -> AuditPage:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
@@ -67,6 +75,9 @@ class _FakeQuery:
         return VerifyPlan(kwargs["from_id"] or 1, kwargs["to_id"] or 1, 1)
 
     async def run_verify(self, plan: VerifyPlan, **_kw: Any) -> VerifyResult:
+        self.runs += 1
+        if self.verify_result is not None:
+            return self.verify_result
         return VerifyResult(
             verified=True,
             entries_checked=1,
@@ -417,6 +428,12 @@ def test_verify_audit_chain_store_failure_is_503_without_a_result(
     r = TestClient(_app(service, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and "08006" not in r.text
+    # A run that stopped is recorded with why; nothing started when the plan failed.
+    why = {TimeoutError: "timeout", ChainHasherBusy: "hasher_busy"}.get(type(error))
+    span = {"from_id": 1, "to_id": 1}
+    stopped = [("success", "info", "started", span)]
+    stopped.append(("failure", "warning", why or "store_unavailable", span))
+    assert _verify_records(service) == (stopped if stage == "run_verify" else [])
 
 
 def _verify_app(service: _FakeAuditService, max_span: int) -> TestClient:
@@ -1258,3 +1275,149 @@ async def test_capped_body_read_is_exact_and_refuses_a_long_declared_length_unre
     assert await _capped(_Body([b"x" * 1024, b"y"])) is None
     declared = _Body([b"{}"], declared="5000")
     assert await _capped(declared) is None and declared.pulled == 0
+
+
+# ---- verify outcome: records and chain series (#2392, design §9) --------------------------
+
+
+def _broken() -> VerifyResult:
+    return VerifyResult(
+        verified=False,
+        entries_checked=3,
+        first_bad_id=3,
+        checked_at=_TS,
+        from_id=1,
+        to_id=5,
+        anchor_hash="0" * 64,
+        last_hash="a" * 64,
+        kind=ChainBreakKind.ENTRY_HASH_MISMATCH,
+    )
+
+
+def _verify_records(svc: _FakeAuditService) -> list[tuple[str, str, str, dict[str, Any]]]:
+    return [
+        (k["outcome"].value, k["severity"].value, k["reason"], k["after_state"])
+        for a, k in svc.writer_service.emitted
+        if a == "admin.audit_verify"
+    ]
+
+
+class _WriterFailingAfter(_FakeWriter):
+    """Writes the first `ok` records, then refuses."""
+
+    def __init__(self, ok: int) -> None:
+        super().__init__()
+        self.ok = ok
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if len(self.emitted) >= self.ok:
+            raise RuntimeError("audit down")
+        await super().emit(action, **kwargs)
+
+
+def test_verify_writes_a_started_record_then_its_result() -> None:
+    svc = _FakeAuditService()
+    r = TestClient(_app(svc, _FakeResolver(_owner()))).post(
+        "/admin/audit/verify", json={"from_id": 2, "to_id": 3}
+    )
+    assert r.status_code == 200
+    span = {"from_id": 2, "to_id": 3}
+    result = {**span, "entries_checked": 1, "verified": True, "first_bad_id": None, "kind": None}
+    assert _verify_records(svc) == [
+        ("success", "info", "started", span),
+        ("success", "info", "verified", result),
+    ]
+    assert svc.writer_service.emitted[0][1]["object_kind"] == "audit_log"
+
+
+def _failures() -> float:
+    return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
+
+
+@pytest.mark.parametrize("before", [1.0, 0.0])
+@pytest.mark.parametrize("full", [True, False])
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), ChainHasherBusy(), AuditReadFailed("08006"), RuntimeError("x")]
+)
+def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
+    error: Exception, full: bool, before: float
+) -> None:
+    """Reviews of #2462: a full-range run that stops takes a 1 to NaN, so an old 1 cannot
+    stand while such runs keep stopping, and keeps a known break (0); a partial range leaves
+    the gauge as it is."""
+    svc = _FakeAuditService()
+
+    async def plan(**_kw: Any) -> VerifyPlan:
+        return VerifyPlan(1, 5, 5, full_chain=full)
+
+    async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise error
+
+    svc.query_service.plan_verify = plan  # type: ignore[method-assign]  # fault injection
+    svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
+    cv_audit_chain_verified_state.set(before)
+    r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    state = REGISTRY.get_sample_value("cv_audit_chain_verified_state")
+    assert r.status_code == 503 and state is not None
+    assert math.isnan(state) if full and before == 1 else state == before
+
+
+def test_verify_break_is_a_critical_record_counted_and_the_chain_state_is_zero() -> None:
+    svc = _FakeAuditService()
+    svc.query_service.verify_result = _broken()
+    before = _failures()
+    r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert (r.status_code, r.json()["verified"], r.json()["first_bad_id"]) == (200, False, 3)
+    assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")
+    assert _failures() == before + 1
+    assert REGISTRY.get_sample_value("cv_audit_chain_verified_state") == 0
+
+
+@pytest.mark.parametrize("ok", [0, 1])
+def test_verify_record_that_cannot_be_written_is_503_with_nothing_served(ok: int) -> None:
+    """0: the write-ahead record fails, so nothing runs. 1: the result record fails after
+    the run, and the result is not served; the break still counts."""
+    svc = _FakeAuditService()
+    svc.writer_service = _WriterFailingAfter(ok)
+    svc.query_service.verify_result = _broken()
+    before = _failures()
+    r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
+    assert "verified" not in r.json() and svc.query_service.runs == ok
+    assert _failures() == before + ok
+
+
+def test_verify_that_fails_unexpectedly_is_503_and_recorded_as_an_internal_error() -> None:
+    """Review of #2461: an unexpected error (here a `MemoryError`) is never a 500 with only
+    the `started` record: it is recorded `internal_error`, logged by class only, and 503."""
+    svc = _FakeAuditService()
+
+    async def failing(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise MemoryError("entry 41 at 0x7f")
+
+    svc.query_service.run_verify = failing  # type: ignore[method-assign]  # fault injection
+    with capture_logs() as logs:
+        r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
+    span = {"from_id": 1, "to_id": 1}
+    assert _verify_records(svc) == [
+        ("success", "info", "started", span),
+        ("failure", "warning", "internal_error", span),
+    ]
+    failed = [e for e in logs if e["event"] == "audit.verify.failed"]
+    assert failed == [{"event": failed[0]["event"], "error": "MemoryError", "log_level": "error"}]
+
+
+def test_verify_records_a_break_when_the_owners_record_budget_is_spent() -> None:
+    """The verify records go straight to the writer: the read budget never suppresses them."""
+    owner = _owner()
+    budget = AuditRecordBudget(per_hour=1, owner_per_hour=1, clock=_Clock())
+    client, svc = _budgeted(owner, budget=budget)
+    assert client.get("/admin/audit").status_code == 200  # the one record the cap allows
+    assert client.get("/admin/audit", params={"severity": "error"}).status_code == 429
+    svc.query_service.verify_result = _broken()
+    assert client.post("/admin/audit/verify", json={}).status_code == 200
+    assert [r[:3] for r in _verify_records(svc)] == [
+        ("success", "info", "started"),
+        ("failure", "critical", "entry_hash_mismatch@3"),
+    ]
