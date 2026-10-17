@@ -1258,6 +1258,12 @@ def _denial(ch: str, code: str, why: str | None) -> tuple[str, str, str]:
     return (ch if family == "machines" else family[:40]), code, why or code
 
 
+async def _emit_bounded(audit: AuditSink, action: str, **row: Any) -> None:
+    """One record of a `sub` frame, waited for at most `FANOUT_AUDIT_TIMEOUT_S` (SR-E17-04)."""
+    async with asyncio.timeout(FANOUT_AUDIT_TIMEOUT_S):
+        await audit.emit(action, **row)
+
+
 async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, str]]) -> None:
     """`ws.subscribe.denied`: ONE record for the refusals `_audited` keeps in a `sub` frame,
     never one per entry (SR-192, #2292), written in `handle_sub`'s `finally`, so a frame that
@@ -1267,8 +1273,8 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
     sorted) and the `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order
     (`refusals`). An internal reason goes only in `reason` and `after_state`, which the non-Owner
     projection drops (SR-067), so no other field varies with it (the non-Owner projection is
-    being narrowed by E42-T02 F9). Best effort: the reply is never held hostage to the audit
-    sink, and only `Exception` is caught, so a cancellation is never swallowed."""
+    being narrowed by E42-T02 F9). Best effort, bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record
+    not confirmed is logged and counted, and so is a cancellation, which still propagates."""
     audit = authz.services.audit
     if audit is None or not denials:
         return
@@ -1281,7 +1287,8 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             "refusals": [[o, r] for o, _, r in denials[:MAX_DENIALS_LISTED]],
         }
     try:
-        await audit.emit(
+        await _emit_bounded(
+            audit,
             "ws.subscribe.denied",
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
@@ -1293,8 +1300,13 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             **detail,
         )
     except Exception:
-        count_audit_failure()  # SR-E17-04: the row is lost
-        _log().warning("ws subscribe-denied audit not written", exc_info=True)
+        count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`
+        _log().warning(
+            "ws subscribe-denied audit not confirmed",
+            connection_id=authz.connection_id,
+            actor_user_id=authz.principal.user_id,
+            exc_info=True,
+        )
     except asyncio.CancelledError:
         count_audit_failure()  # lost unless its append had begun; the cancel still propagates
         raise
@@ -1349,18 +1361,18 @@ async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> Non
         return
     listed = [[s.ch, sorted(str(a) for a in s.accounts)] for s in private[:MAX_GRANTS_LISTED]]
     try:
-        async with asyncio.timeout(FANOUT_AUDIT_TIMEOUT_S):
-            await audit.emit(
-                "ws.subscribe.granted",
-                actor_label="ws",
-                actor_user_id=authz.principal.user_id,
-                object_kind="ws_connection",
-                object_id=authz.connection_id,
-                outcome=AuditOutcome.SUCCESS,
-                severity=Severity.INFO,
-                after_state={"count": len(private), "subscriptions": listed},
-                request_id=current_request_id(),
-            )
+        await _emit_bounded(
+            audit,
+            "ws.subscribe.granted",
+            actor_label="ws",
+            actor_user_id=authz.principal.user_id,
+            object_kind="ws_connection",
+            object_id=authz.connection_id,
+            outcome=AuditOutcome.SUCCESS,
+            severity=Severity.INFO,
+            after_state={"count": len(private), "subscriptions": listed},
+            request_id=current_request_id(),
+        )
     except asyncio.CancelledError:
         count_audit_failure()
         raise

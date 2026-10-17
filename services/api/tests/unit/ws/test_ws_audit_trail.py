@@ -180,19 +180,28 @@ def test_the_contract_and_the_threat_model_state_how_many_grants_are_listed() ->
 
 
 @pytest.mark.parametrize(("mode", "reason"), [("fail", "error"), ("hang", "timeout")])
-async def test_a_granted_row_not_confirmed_is_logged_and_counted_and_the_reply_still_goes(
-    mode: str, reason: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("action", [GRANTED, DENIED])
+async def test_a_sub_audit_record_not_confirmed_is_logged_and_counted_and_the_reply_still_goes(
+    action: str, mode: str, reason: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Either record of a `sub` frame: the refusal one is written before the reply, so a stalled
+    sink holds the reply until the bound and no longer (SR-E17-04); the grant one after it. The
+    log line of each names the socket, and the refusal's the user too, as the runbook says."""
     monkeypatch.setattr(permissions, "FANOUT_AUDIT_TIMEOUT_S", 0.01)
-    authz, sent, _ = _connection(**{mode: GRANTED})
-    before = _failures()
+    authz, sent, _ = _connection(**{mode: action})
+    before, granted = _failures(), action == GRANTED
     with capture_logs() as logs:
-        async with asyncio.timeout(5):  # fail fast, not hang, if the bound regresses
-            await _sub(authz, sent, _acc("positions", A))
-    assert [f["t"] for f in sent] == ["sub_ok"] and len(authz.by_id) == 1
+        async with asyncio.timeout(5):  # fail fast, not hang, if a bound regresses
+            await _sub(authz, sent, _acc("positions", A if granted else C))
+    assert [f["t"] for f in sent] == ["sub_ok"] and len(authz.by_id) == int(granted)
     assert _delta(before) == {reason: 1}
-    (line,) = [e for e in logs if e["event"] == "ws subscribe-granted audit not confirmed"]
-    assert (line["log_level"], line["connection_id"]) == ("warning", authz.connection_id)
+    event = f"ws subscribe-{action.removeprefix('ws.subscribe.')} audit not confirmed"
+    lines = [e for e in logs if e["event"] == event]
+    assert [(e["log_level"], e["connection_id"]) for e in lines] == [
+        ("warning", authz.connection_id)
+    ]
+    if not granted:
+        assert [e["actor_user_id"] for e in lines] == [MGR]
 
 
 @pytest.mark.parametrize("action", [GRANTED, DENIED])
@@ -208,13 +217,6 @@ async def test_a_cancelled_sub_audit_row_is_counted_and_the_cancellation_propaga
     with pytest.raises(asyncio.CancelledError):
         await task
     assert _delta(before) == {"cancelled": 1}
-
-
-async def test_a_refusal_row_that_fails_is_counted() -> None:
-    authz, sent, _ = _connection(fail=DENIED)
-    before = _failures()
-    await _sub(authz, sent, _acc("orders", C))
-    assert _delta(before) == {"error": 1} and sent[-1]["t"] == "sub_ok"
 
 
 # -- the gateway: the resync revocation, the failed auth and the close rows -----------------------
@@ -368,6 +370,16 @@ async def test_a_refused_upgrade_row_not_confirmed_is_counted_once() -> None:
     stalled.release.set()
     assert await tracker.drain(5) == 0  # the slow one lands late: counted once, as `timeout`
     assert _delta(before) == {"error": 1, "timeout": 1}
+
+
+async def test_a_refused_upgrade_row_that_times_out_then_fails_counts_one_timeout() -> None:
+    refused, tracker = "auth.ws_origin_refused", RefusalAuditTracker()
+    sink, before = _Sink([], fail=refused, hang=refused), _failures()
+    audit = OriginRefusalAudit(sink, tracker=tracker, timeout_s=SLOW_S)
+    assert await audit.record(OriginRefusal.CROSS_SITE, "100.64.0.10") is True
+    sink.release.set()  # the shielded write runs on past its bound, then fails
+    assert await tracker.drain(5) == 0
+    assert _delta(before) == {"timeout": 1}  # one row, one reason: never `error` as well
 
 
 @pytest.mark.parametrize("fails", [True, False])

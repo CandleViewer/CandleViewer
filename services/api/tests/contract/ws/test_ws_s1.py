@@ -173,6 +173,27 @@ def test_s1_a_sub_over_the_cap_is_refused_whole_and_is_no_strike(offer: list[str
         assert c.sub(names[0])["p"]["results"][0]["ok"] is True
 
 
+@pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
+def test_s1_denial_audit_of_a_sub_over_and_at_the_cap(offer: list[str]) -> None:
+    """SR-192 on both subprotocols: a `sub` over the cap writes no audit row, and a frame of
+    `CAP` audited refusals writes ONE `ws.subscribe.denied` record that counts them all."""
+    w = World()
+    w.perms = frozenset({Permission.MARKETDATA_READ})
+    audit = _Audit()
+    w.registry.services.audit = audit
+    private = ["orders", "positions", "executions", "wallet"]
+    over = [{"ch": n} for n in (private * CAP)[: CAP + 1]]
+    with connect(w, offer) as c:
+        c.send({"t": "sub", "id": "o", "p": {"topics": over}}, conform=False)
+        f = c.recv()
+        assert (f["t"], f["id"], f["p"]["field"]) == ("err", "o", "topics")
+        assert f["p"]["code"] == "too_many_topics" and audit.records == []
+        results = c.sub(*(private * CAP)[:CAP])["p"]["results"]
+        assert [r["error"]["code"] for r in results] == ["forbidden"] * CAP
+    ((action, count),) = [(r["action"], r["after_state"]["count"]) for r in audit.records]
+    assert (action, count) == ("ws.subscribe.denied", CAP)
+
+
 def _sub_text(topics: list[str]) -> str:
     return json.dumps({"t": "sub", "id": "s", "p": {"topics": topics}}, separators=(",", ":"))
 
