@@ -103,10 +103,11 @@ auth_stepup_failures_total = Counter(
     "auth_stepup_failures_total",
     "Failed step-up re-authentications (wrong password or code, or a locked account).",
 )
-# One per audited failed login (`api/auth.py`): `password` per `auth.login_failed` row, the
-# requested MFA method per `auth.mfa_failed` row, `recovery_code` per
-# `auth.recovery_codes_exhausted`. An attempt refused while the account is locked
-# (`auth.account_locked`) and a success never count.
+# One per audited failed login (`api/auth.py`): `password` per `auth.login_failed` row of
+# `POST /auth/login`, the requested MFA method per `auth.mfa_failed` row and per the
+# `auth.login_failed` row of a user disabled since the password step (`POST /auth/mfa/verify`,
+# #3054), `recovery_code` per `auth.recovery_codes_exhausted`. An attempt refused while the
+# account is locked (`auth.account_locked`) and a success never count.
 auth_login_failures_total = Counter(
     "auth_login_failures_total",
     "Failed logins by the factor that failed (password, totp, webauthn, recovery_code).",

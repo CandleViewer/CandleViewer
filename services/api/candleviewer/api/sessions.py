@@ -71,7 +71,6 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api import idle_lock
 from candleviewer.api.csrf import (
     AUDIT_TIMEOUT_S,
-    LostWrite,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -260,25 +259,6 @@ def _fixation_audit_failed(error: str, action: str) -> None:
     stands, so the count and the log are the trace."""
     _count_fixation_audit_lost()
     _log().error(f"{action}.audit_unavailable", error=error)
-
-
-def _cancelled_while_writing(
-    tracker: RefusalAuditTracker,
-    task: asyncio.Task[None],
-    late_failure_event: str,
-    on_lost: LostWrite | None = None,
-) -> None:
-    """The request was cancelled awaiting its audit write *task* (the caller re-raises). A write
-    still running goes to the tracker, which reports a failure when it ends. One that ended in the
-    cancel's own loop iteration is done: `mark_timed_out` skips it and the tracker's callback stays
-    silent for a write it was not told about, so a failure is reported here as the tracker would."""
-    failure = task.exception() if task.done() and not task.cancelled() else None
-    if failure is None:
-        tracker.mark_timed_out(task)
-        return
-    _log().error(late_failure_event, error=type(failure).__name__)
-    if on_lost is not None:
-        on_lost()
 
 
 def _source_ip(request: Request) -> str | None:
@@ -569,7 +549,7 @@ def make_session_router(
             tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             _log().warning("auth.session_revoke_denied.audit_slow")
         except asyncio.CancelledError:
-            _cancelled_while_writing(tracker, task, _PROBE_LATE_FAILURE)  # the request is gone
+            tracker.mark_timed_out(task)  # the request is gone; the tracker reports a failure
             raise
         except Exception as exc:
             _probe_audit_failed(type(exc).__name__)
@@ -639,7 +619,7 @@ def make_session_router(
             fixation.labels(reason="audit_slow").inc()
             _log().warning(f"{action}.audit_slow")
         except asyncio.CancelledError:
-            _cancelled_while_writing(tracker, task, late, _count_fixation_audit_lost)
+            tracker.mark_timed_out(task)  # the request is gone; the tracker reports a failure
             raise
         except Exception as exc:
             _fixation_audit_failed(type(exc).__name__, action)

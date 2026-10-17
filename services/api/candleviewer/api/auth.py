@@ -449,8 +449,11 @@ def make_auth_router(
             )
         except UserDisabled:
             # #2911: disabled (or deleted) since the password step; nothing was minted.
-            # Audited like login's refusal of a disabled account, then this operation's 401
-            # whether or not the record could be written.
+            # Counted and audited like login's refusal of a disabled account, then this
+            # operation's 401 whether or not the record could be written. The count is one per
+            # `auth.login_failed` row, on the factor the request named: the code was right, so
+            # neither `totp` nor `webauthn` is the wrong one (#3054).
+            auth_login_failures_total.labels(method=body.method.value).inc()
             await _audit_refusal(request, result.user_id)
             return _problem(401, "MFA verification failed", "account is disabled")
         if audit_service is not None and audit_service.is_active:

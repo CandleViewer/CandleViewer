@@ -1,11 +1,15 @@
 """`docs/ops/runbooks/auth-rbac.md`, "Session and invite signals (#2319)": the table is what an
 on-call reads while investigating, so each cell is a finished statement and the probe row says what
-the code does (#2319 review: its Audit-row cell stopped at "the counter is not")."""
+the code does (#2319 review: its Audit-row cell stopped at "the counter is not"). The paragraphs
+under it triage a probe hit by what its `object_id` finds in `sessions` (#3054)."""
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
+
+import pytest
 
 from candleviewer.api import sessions
 from candleviewer.api.sessions import (
@@ -15,6 +19,11 @@ from candleviewer.api.sessions import (
 )
 
 _RUNBOOK = Path(__file__).resolve().parents[5] / "docs" / "ops" / "runbooks" / "auth-rbac.md"
+_SCHEMA = _RUNBOOK.parents[2] / "plan" / "21-database-schema.md"
+_PACKAGE = Path(sessions.__file__).resolve().parents[1]  # `candleviewer/`
+#: Raw SQL that drops `sessions` rows (`DELETE FROM sessions ...`): any case and spacing, the table
+#: quoted or schema-qualified. A Core repository has no such text (`sa.delete(_TABLE)`).
+_SESSIONS_ROW_DELETE = re.compile(r'\bDELETE\s+FROM\s+(?:"?\w+"?\.)?"?sessions\b', re.IGNORECASE)
 #: Words a finished clause does not end on: a cell that does is cut off, or lost its last words.
 _DANGLING = frozenset(
     "a an and are as at but by for if in is not of on or than the to was with".split()
@@ -55,3 +64,125 @@ def test_the_runbook_names_every_log_line_a_counted_probe_with_no_row_leaves() -
     assert len(lines) == 4  # unaudited, audit_unavailable, audit_slow, audit_failed_late
     runbook = _RUNBOOK.read_text(encoding="utf-8")
     assert [line for line in sorted(lines) if f"`{line}`" not in runbook] == []
+
+
+def _paragraph(start: str) -> str:
+    """The runbook paragraph that begins with *start*, on one line."""
+    text = _RUNBOOK.read_text(encoding="utf-8")
+    assert start in text, f"the runbook has no paragraph that begins {start!r}"
+    at = text.index(start)
+    return " ".join(text[at : text.index("\n\n", at)].split())
+
+
+def test_the_probe_triage_classifies_a_hit_whose_id_has_no_sessions_row() -> None:
+    # #3054 (3) and its review: a hit is triaged by what its `object_id` finds in `sessions`.
+    # Another user's row and the caller's own ended one were covered; an id with no row at all is
+    # the third case. It is an unknown id, never called harmless (it may be another user's, leaked);
+    # the runbook says how to tell a stale client from a probe, and what an empty lookup is worth.
+    triage = _paragraph("A lone `auth_session_revoke_denied_total` hit")
+    assert "another user's row means a probe" in triage  # the part that was there
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "treat it as a probe unless the actor's own history explains it" in no_row
+    assert "a missing row never makes a hit harmless" in no_row
+    lookup = ("`audit_log`", "`session_id`", "`actor_user_id`")  # whose id it was, and the caller's
+    assert [name for name in lookup if name not in no_row] == []
+    assert "read several different ids with no row from one user as a probe" in no_row
+
+
+def test_the_probe_triage_does_not_present_the_sessions_retention_as_shipped() -> None:
+    # #3054 review: no code deletes a `sessions` row today. Section 7 of the schema doc is the
+    # policy, and the paragraph says the job that applies it has not shipped.
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "the job that applies it has not shipped" in no_row
+    assert "`docs/plan/21-database-schema.md`" in no_row and "section 7" in no_row
+
+
+def test_the_probe_triage_sends_the_session_id_search_through_the_indexes_the_schema_has() -> None:
+    # #3054 review: `audit_log` has no `session_id` index, so a search on it alone scans the table.
+    # The runbook says so, and points at the indexes that exist; if the schema ever indexes
+    # `session_id`, this fails and the paragraph has to change.
+    schema = _SCHEMA.read_text(encoding="utf-8")
+    indexed = set(re.findall(r"^CREATE INDEX \w+\s+ON audit_log \(([^)]*)\)", schema, re.MULTILINE))
+    assert {"actor_user_id, event_ts DESC", "action, event_ts DESC"} <= indexed
+    assert [columns for columns in indexed if "session_id" in columns] == []
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "`session_id` is not indexed" in no_row
+    assert "start from the indexed `action` or `actor_user_id`" in no_row
+
+
+def _drops_sessions_rows(source: str) -> bool:
+    """A raw `DELETE FROM sessions`, or a SQLAlchemy Core `delete(t)`, `sa.delete(t)` or
+    `t.delete()` of the `sessions` Table: `models.sessions`, or `sessions` imported under any alias
+    (as `replay_sessions_sqlalchemy.py` imports its own Table), so `sa.delete(_TABLE)` over another
+    table does not match. It stops an honest regression, not a deliberate bypass."""
+    if _SESSIONS_ROW_DELETE.search(source):
+        return True
+    if "delete(" not in source:
+        return False
+    tree = ast.parse(source)
+    table = {"models.sessions"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "candleviewer.db.models":
+            table |= {a.asname or a.name for a in node.names if a.name == "sessions"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            match node.func:
+                case ast.Name(id="delete"):
+                    targets = node.args[:1]  # delete(t)
+                case ast.Attribute(attr="delete", value=owner):
+                    targets = [owner, *node.args[:1]]  # t.delete(), sa.delete(t)
+                case _:
+                    continue
+            if any(ast.unparse(t) in table for t in targets):
+                return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("source", "drops_sessions_rows"),
+    [
+        ("DELETE FROM sessions WHERE expires_at < :cutoff", True),
+        ("delete\n    from public.sessions where true", True),
+        ('DELETE FROM "public"."sessions" WHERE true', True),
+        ("DELETE FROM sessions_rotation WHERE true", False),
+        ("DELETE FROM replay_sessions WHERE id = :id", False),
+        ("UPDATE sessions SET revoked_at = :now", False),
+        ("from candleviewer.db.models import sessions\nq = sa.delete(sessions)", True),
+        ("from candleviewer.db.models import sessions\nq = sessions.delete()", True),
+        ("from candleviewer.db import models\nq = sa.delete(models.sessions)", True),
+        ("from candleviewer.db.models import sessions as t\nq = delete(t)", True),
+        # the neighbour's idiom over another table, an update, and a local that is not the Table
+        ("from candleviewer.db.models import replay_sessions as t\nq = sa.delete(t)", False),
+        ("from candleviewer.db.models import sessions\nq = sa.update(sessions)", False),
+        ("def purge(sessions):\n    sessions.delete()", False),
+    ],
+)
+def test_the_sessions_row_delete_check_matches_the_table_and_no_other(
+    source: str, drops_sessions_rows: bool
+) -> None:
+    assert _drops_sessions_rows(source) is drops_sessions_rows
+
+
+def test_no_code_drops_a_sessions_row_while_the_runbook_says_the_job_has_not_shipped() -> None:
+    # #3054 review: the wording pin above holds the sentence, not the fact. A job that drops
+    # `sessions` rows (section 7 of the schema doc, 30 days after expiry) makes "today a missing row
+    # means the id was never issued" false: an old id has no row either. This fails then, so the
+    # job's author edits the no-row paragraph of the runbook and the pins above with it.
+    droppers = [
+        str(path.relative_to(_PACKAGE))
+        for path in sorted(_PACKAGE.rglob("*.py"))
+        if _drops_sessions_rows(path.read_text(encoding="utf-8"))
+    ]
+    assert droppers == [], (
+        f"{droppers} drop `sessions` rows, but the no-row paragraph of "
+        "docs/ops/runbooks/auth-rbac.md says the retention job has not shipped: update it "
+        "and the probe-triage tests above"
+    )
+
+
+def test_the_failed_login_telemetry_names_the_mfa_refusal_of_a_disabled_user() -> None:
+    # #3054 (1): the counter's runbook text lists the rows it counts, so it says that
+    # `POST /auth/mfa/verify` also counts the `auth.login_failed` row of a user disabled since the
+    # password step, on the method the request named.
+    telemetry = _paragraph("Telemetry for failed logins:")
+    assert "`user_disabled`" in telemetry and "disabled since the password step" in telemetry

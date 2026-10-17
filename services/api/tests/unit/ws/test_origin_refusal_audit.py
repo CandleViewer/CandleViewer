@@ -37,7 +37,7 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import ORIGIN_FORBIDDEN, OriginRefusal
-from candleviewer.ws.metrics import cv_ws_closes_total
+from candleviewer.ws.metrics import cv_ws_audit_failures_total, cv_ws_closes_total
 from candleviewer.ws.origin_audit import (
     OBJECT_KIND,
     REFUSAL_AUDIT_TIMEOUT_S,
@@ -205,6 +205,60 @@ async def test_record_logs_a_failed_write_by_type_and_never_raises() -> None:
     assert "WAL" not in str(entries)  # the type only, never the message
 
 
+class _TimesOutItself:
+    """A writer that raises `TimeoutError` itself (an fsync that timed out), not the clock's."""
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        raise TimeoutError("audit WAL fsync timed out")
+
+
+async def test_record_reads_a_writer_raising_timeout_itself_as_unavailable_not_slow() -> None:
+    """#3054 (3), as the REST guard reads it: `wait_for` reports a `TimeoutError` that the writer
+    raised itself as it reports its own clock's, so the task's outcome decides. The failed write is
+    logged as one (the type only) and counted `error` in `cv_ws_audit_failures_total` (#2174), not
+    `timeout`; it is nothing for the tracker to report: no `audit_slow` line, and no CSRF-named
+    late-failure line for a WS write."""
+    tracker = RefusalAuditTracker()
+    auditor = OriginRefusalAudit(_TimesOutItself(), tracker=tracker)
+    errors = cv_ws_audit_failures_total.labels(reason="error")
+    before = errors._value.get()
+    with capture_logs() as logs:
+        assert await auditor.record(OriginRefusal.ORIGIN_MISSING, "100.64.0.7") is True
+    assert errors._value.get() == before + 1
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("auth.ws_origin_refused.audit_unavailable", "error")
+    ]
+    assert (logs[0]["check"], logs[0]["error"]) == ("origin_missing", "TimeoutError")
+    assert "WAL" not in str(logs) and len(tracker) == 0  # the type only; nothing left in flight
+
+
+class _LandsOnSignal:
+    """A write that lands once `land` is set: no thread hop, so nothing races the wait."""
+
+    def __init__(self) -> None:
+        self.land = asyncio.Event()
+        self.records: list[dict[str, Any]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        await self.land.wait()
+        self.records.append({"action": action, **kw})
+
+
+async def test_record_logs_slow_only_for_a_write_that_outlasts_the_wait_and_lands() -> None:
+    """#3054 (3): the clock's timeout leaves the write running and logs one `audit_slow` line; the
+    landing adds none, and no line of the CSRF guard's is written for a WS refusal."""
+    sink, tracker = _LandsOnSignal(), RefusalAuditTracker()
+    auditor = OriginRefusalAudit(sink, tracker=tracker, timeout_s=SLOW_S)
+    with capture_logs() as logs:
+        assert await auditor.record(OriginRefusal.CROSS_SITE, "100.64.0.7") is True
+        sink.land.set()
+        assert await tracker.drain(5) == 0
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("auth.ws_origin_refused.audit_slow", "warning")
+    ]
+    assert len(sink.records) == 1
+
+
 async def test_record_cancelled_while_waiting_propagates_and_never_cuts_the_write() -> None:
     stalled, tracker = _StalledAudit(), RefusalAuditTracker()
     auditor = OriginRefusalAudit(stalled, tracker=tracker, timeout_s=5.0)
@@ -218,6 +272,62 @@ async def test_record_cancelled_while_waiting_propagates_and_never_cuts_the_writ
     stalled.release.set()
     assert await tracker.drain(5) == 0
     assert len(stalled.records) == 1
+
+
+class _FailsOnSignal:
+    """A write that fails once `fail` is set: no thread hop, so every loop turn is exact. It also
+    cancels `waiting` from a done-callback of the write task when that is set, registered after the
+    tracker's and the shield's own (the cancel then lands once both ran)."""
+
+    def __init__(self) -> None:
+        self.started, self.fail = asyncio.Event(), asyncio.Event()
+        self.waiting: asyncio.Future[Any] | None = None
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        write = asyncio.current_task()
+        assert write is not None
+        write.add_done_callback(lambda _done: self.waiting and self.waiting.cancel())
+        self.started.set()
+        await self.fail.wait()
+        raise OSError("audit WAL unavailable")
+
+
+@pytest.mark.parametrize("window", ["done_callback_queued", "done_callback_ran"])
+async def test_record_cancelled_as_its_write_fails_still_reports_the_failure(window: str) -> None:
+    """#3054 (2): the upgrade is cancelled in the loop iteration its write fails in (the tracker's
+    done-callback still queued), or just after that callback ran. Nobody awaits the write then, and
+    the shared tracker still reports its failure, once."""
+    sink, tracker = _FailsOnSignal(), RefusalAuditTracker()
+    auditor = OriginRefusalAudit(sink, tracker=tracker, timeout_s=30.0)
+    waiting = asyncio.create_task(auditor.record(OriginRefusal.CROSS_SITE, "100.64.0.7"))
+    await sink.started.wait()  # the write is tracked and being awaited
+    with capture_logs() as logs:
+        if window == "done_callback_ran":
+            sink.waiting = waiting
+            sink.fail.set()
+        else:
+            sink.fail.set()  # the write fails in the next loop iteration ...
+            waiting.cancel()  # ... and the upgrade is cancelled in that same one
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        assert await tracker.drain(5) == 0
+    late = [e for e in logs if str(e["event"]).endswith(".audit_failed_late")]
+    assert [(e["log_level"], e["error"]) for e in late] == [("error", "OSError")]
+
+
+async def test_record_leaves_a_late_failure_past_the_wait_to_the_tracker_to_report() -> None:
+    """#3054 (3): after the clock's timeout the tracker owns the write's later failure and reports
+    it once, by type only. The line's name is #3042's to give (the CSRF guard's today): only its
+    suffix is pinned here."""
+    sink, tracker = _FailsOnSignal(), RefusalAuditTracker()
+    auditor = OriginRefusalAudit(sink, tracker=tracker, timeout_s=SLOW_S)
+    with capture_logs() as logs:
+        assert await auditor.record(OriginRefusal.CROSS_SITE, "100.64.0.7") is True
+        sink.fail.set()
+        assert await tracker.drain(5) == 0
+    assert len(logs) == 2 and logs[0]["event"] == "auth.ws_origin_refused.audit_slow"
+    assert (logs[1]["log_level"], logs[1]["error"]) == ("error", "OSError")
+    assert str(logs[1]["event"]).endswith(".audit_failed_late")
 
 
 async def test_defaults_match_the_rest_refusal_bounds() -> None:

@@ -102,12 +102,14 @@ Telemetry for failed logins: counter `auth_login_failures_total{method}` rises b
 authentication on the `/auth` routes, `method` being the factor that failed: `password` per
 `auth.login_failed` row written by `POST /auth/login` (wrong password, unknown identifier,
 per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
-`recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`;
-`recovery_code` also per `auth.mfa_failed` row of `POST /auth/mfa/recovery` and per
-`auth.recovery_codes_exhausted`. It does not move for an attempt refused while the account is locked
-(the `auth.account_locked` rows above), for a success, or for the WebSocket gateway's
-`auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`, written on the third failed `auth`
-frame of a connection): `cv_ws_auth_failures_total{reason}` counts those, one per failed frame.
+`recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`, and
+per `auth.login_failed` row (reason `user_disabled`) of the same route when the code was right but
+the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`
+row of `POST /auth/mfa/recovery` and per `auth.recovery_codes_exhausted`. It does not move for an
+attempt refused while the account is locked (the `auth.account_locked` rows above), for a success,
+or for the WebSocket gateway's `auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`,
+written on the third failed `auth` frame of a connection): `cv_ws_auth_failures_total{reason}`
+counts those, one per failed frame.
 Every method is listed at 0 from process start. The `AuthLoginFailureSpike` rule reads it
 (`sum(increase(...[10m])) > 10`); `sum by (method) (increase(auth_login_failures_total[10m]))`
 shows which factor is attacked.
@@ -305,7 +307,8 @@ the backstop for a session that no disable revoked. A `locked` or `invited` stat
 it (login refuses `disabled` only):
 
 - `POST /auth/mfa/verify` for a user disabled since the password step answers `401` and mints no
-  session. The refusal is audited as `auth.login_failed` (`denied`, reason `user_disabled`).
+  session. The refusal is audited as `auth.login_failed` (`denied`, reason `user_disabled`) and
+  counted in `auth_login_failures_total` on the method the request named (#3054).
 - `POST /auth/refresh` with a disabled (or deleted) user's refresh token answers `401`
   `refresh_token_invalid`, before the session is claimed: it is neither rotated nor revoked. The
   refusal is audited as `auth.session_refreshed` (`denied`, reason `user_disabled`), after the
@@ -490,6 +493,20 @@ audit row's `object_id` up in `sessions`; another user's row means a probe. A pr
 budget, or while the audit writer is saturated, is still counted and gets no row: the log then says
 `auth.session_revoke_denied.unaudited` with `cause` `audit_throttled` or `audit_saturated`, so a rate
 of that line is the number of probes left out on purpose.
+
+A hit whose `object_id` has no `sessions` row is an unknown id: treat it as a probe unless the
+actor's own history explains it. The caller's own ended session keeps its row, so it is not this
+case. Nothing drops a `sessions` row yet: section 7 of `docs/plan/21-database-schema.md` sets the
+policy (30 days after expiry) and the job that applies it has not shipped, so today a missing row
+means the id was never issued in this database. Once the job ships, an old id has no row either,
+and it may be another user's leaked one, so a missing row never makes a hit harmless. To see whose
+id it was, search `audit_log` for rows that name it as `session_id` and compare their
+`actor_user_id` with the caller's (the `actor_user_id` of the hit's `auth.session_revoke_denied`
+row): the caller's own means a stale client, another user's means a probe, as for a live row.
+`session_id` is not indexed, so a search on it alone scans the whole table: start from the indexed
+`action` or `actor_user_id` with an `event_ts` window, then filter on `session_id`. A search that
+finds no row settles nothing (a session minted by a rotation can end unused without one), so read
+several different ids with no row from one user as a probe.
 
 A probe whose row was lost by accident is counted too, and the log says why. A write that fails, or
 an audit sink that is down (`error` is `inactive`), logs
