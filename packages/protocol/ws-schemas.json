@@ -602,6 +602,12 @@
           },
           "type": "object"
         },
+        "subId": {
+          "description": "A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
         "symbol": {
           "pattern": "^[A-Z0-9]{2,20}USDT$",
           "type": "string"
@@ -682,6 +688,10 @@
           "default": false,
           "description": "When true, a fresh `snap` follows and prior state must be discarded.",
           "type": "boolean"
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "The subscription the `ctl` retuned (§5.4); a replay one's `rs` is on the envelope."
         }
       },
       "required": [
@@ -805,7 +815,7 @@
         "p": {},
         "rs": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
-          "description": "Replay session id; present only on replay frames."
+          "description": "Replay session id (§11): on a replay subscription's data frames, `ctl_ok` and `revoked`, on a client `resync`, `ctl` or `unsub` naming one (§5.3, §5.4, §7.5), and on an `err` with a `ch` that answers a `resync` or `ctl` (§7.5); never on a live stream's."
         },
         "s": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/seq"
@@ -2501,6 +2511,10 @@
             "client_restart",
             "manual"
           ]
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "Optional pin: the `sub_id` of the subscription the envelope `ch` and `rs` name (§7.5)."
         }
       },
       "required": [
@@ -2538,6 +2552,10 @@
         "resubscribe_allowed": {
           "default": false,
           "type": "boolean"
+        },
+        "sub_id": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+          "description": "The subscription revoked or narrowed (§9.5); a replay one's `rs` is on the envelope."
         }
       },
       "required": [
@@ -2892,6 +2910,10 @@
               },
               "ok": {
                 "type": "boolean"
+              },
+              "rs": {
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
+                "description": "On each result of a replay `sub` but the `system` one, accepted or refused (§5.2)."
               },
               "snapshot_forced": {
                 "type": "boolean"
@@ -3622,6 +3644,26 @@
             "properties": {
               "ch": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/topic"
+              },
+              "ended": {
+                "description": "What this entry ended (§5.3).",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "rs": {
+                      "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+                    },
+                    "sub_id": {
+                      "$ref": "cv://ws/v1/common.schema.json#/$defs/subId"
+                    }
+                  },
+                  "required": [
+                    "sub_id"
+                  ],
+                  "type": "object"
+                },
+                "minItems": 1,
+                "type": "array"
               },
               "noop": {
                 "type": "boolean"

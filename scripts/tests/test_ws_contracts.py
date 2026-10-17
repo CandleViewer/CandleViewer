@@ -265,3 +265,74 @@ def test_snap_meta_names_the_bar_generation_swap_reason(schemas: dict[str, objec
     listed = re.search(r"^`reason` ∈ (.+)\.$", MD_TEXT, re.MULTILINE)
     assert listed is not None, "§7.4 no longer lists the reasons on one `reason` ∈ line"
     assert re.findall(r"`(\w+)`", listed.group(1)) == enum
+
+
+_RS = "bb000000-0000-4000-8000-000000000001"
+_ENDED = {"ch": "trades.BTCUSDT", "ok": True, "ended": [{"sub_id": "s_01", "rs": _RS}]}
+
+
+def test_section_12_examples_name_every_subscription_field() -> None:
+    """#3218: the section-12 examples carry each new name, so the gate validates every one."""
+    frames = [frame for _, frame in val.parse_examples(MD_TEXT)]
+    names = ("resync", "ctl", "unsub", "sub_ok", "ctl_ok", "revoked", "unsub_ok", "err")
+    shown = {t: [f for f in frames if f["t"] == t] for t in names}
+    ended = [e for f in shown["unsub_ok"] for r in f["p"]["results"] for e in r.get("ended", [])]
+    assert any("rs" in f and "sub_id" in f["p"] for f in shown["resync"]), "resync: rs, sub_id"
+    assert any("rs" in f for f in shown["ctl"]), "ctl naming a replay stream by rs"
+    assert any("rs" in f for f in shown["unsub"]), "unsub naming a replay stream by rs"
+    assert any("rs" in r for f in shown["sub_ok"] for r in f["p"]["results"]), "sub_ok rs"
+    assert any("rs" in f and "sub_id" in f["p"] for f in shown["ctl_ok"]), "ctl_ok: rs, sub_id"
+    assert any("rs" in f and "sub_id" in f["p"] for f in shown["revoked"]), "revoked: rs, sub_id"
+    assert any("rs" in e for e in ended), "an unsub_ok ended entry with rs"
+    assert any("rs" in f for f in shown["err"]), "an err answering a replay request: rs"
+
+
+@pytest.mark.parametrize(
+    ("name", "valid", "broken"),
+    [
+        (
+            "resync",
+            {"reason": "manual", "sub_id": "s" * 64},
+            {"reason": "manual", "sub_id": "s" * 65},
+        ),
+        ("resync", {"reason": "manual", "sub_id": "s"}, {"reason": "manual", "sub_id": ""}),
+        ("ctl_ok", {"effective": {}, "sub_id": "s_01"}, {"effective": {}, "sub_id": 7}),
+        (
+            "revoked",
+            {"reason": "topic_removed", "message": "m", "sub_id": "s_01"},
+            {"reason": "topic_removed", "message": "m", "sub_id": "s" * 65},
+        ),
+        (
+            "sub_ok",
+            {"results": [{"ch": "trades.BTCUSDT", "ok": False, "rs": _RS}]},
+            {"results": [{"ch": "trades.BTCUSDT", "ok": False, "rs": 5}]},
+        ),
+        ("unsub_ok", {"results": [_ENDED]}, {"results": [{**_ENDED, "ended": []}]}),
+        ("unsub_ok", {"results": [_ENDED]}, {"results": [{**_ENDED, "ended": [{"rs": _RS}]}]}),
+        (
+            "unsub_ok",
+            {"results": [_ENDED]},
+            {"results": [{**_ENDED, "ended": [{"sub_id": "s_01", "x": 1}]}]},
+        ),
+    ],
+    ids=[
+        "resync-sub-id-over-64",
+        "resync-sub-id-empty",
+        "ctl-ok-sub-id-not-a-string",
+        "revoked-sub-id-over-64",
+        "sub-ok-rs-not-a-string",
+        "unsub-ok-ended-empty",
+        "unsub-ok-ended-without-sub-id",
+        "unsub-ok-ended-unknown-key",
+    ],
+)
+def test_subscription_names_reject_values_outside_the_contract(
+    schemas: dict[str, object], name: str, valid: object, broken: object
+) -> None:
+    """#3218: `sub_id` and `rs` are checked, not only allowed: one change to a valid payload
+    breaks it (`$defs/subId` is 1 to 64 characters; an `ended` entry needs its `sub_id`)."""
+    payload = val.Draft202012Validator(
+        {"$ref": f"cv://ws/v1/{name}.schema.json"}, registry=val.build_registry(schemas)
+    )
+    assert payload.is_valid(valid), f"{name}: the valid payload is refused"
+    assert not payload.is_valid(broken), f"{name}: the broken payload is accepted"

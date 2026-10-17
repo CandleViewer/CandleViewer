@@ -234,6 +234,13 @@ export type Seq = number | null;
  */
 export type Topic = string;
 /**
+ * A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection.
+ *
+ * This interface was referenced by `CandleViewerWSSharedDefinitions`'s JSON-Schema
+ * via the `definition` "subId".
+ */
+export type SubId = string;
+/**
  * This interface was referenced by `CandleViewerWSSharedDefinitions`'s JSON-Schema
  * via the `definition` "environment".
  */
@@ -377,6 +384,10 @@ export interface CvWsV1CtlOkSchemaJson {
    * When true, a fresh `snap` follows and prior state must be discarded.
    */
   resnapshot?: boolean;
+  /**
+   * The subscription the `ctl` retuned (§5.4); a replay one's `rs` is on the envelope.
+   */
+  sub_id?: string;
 }
 
 // Source: cv://ws/v1/envelope.schema.json
@@ -416,7 +427,7 @@ export type CandleViewerWSEnvelope = {
    */
   wt?: number;
   /**
-   * Replay session id; present only on replay frames.
+   * Replay session id (§11): on a replay subscription's data frames, `ctl_ok` and `revoked`, on a client `resync`, `ctl` or `unsub` naming one (§5.3, §5.4, §7.5), and on an `err` with a `ch` that answers a `resync` or `ctl` (§7.5); never on a live stream's.
    */
   rs?: string;
   /**
@@ -1095,6 +1106,10 @@ export interface Recorder {
 export interface CvWsV1ResyncSchemaJson {
   last_seq?: number | null;
   reason: "sequence_gap" | "decode_error" | "state_corrupt" | "client_restart" | "manual";
+  /**
+   * Optional pin: the `sub_id` of the subscription the envelope `ch` and `rs` name (§7.5).
+   */
+  sub_id?: string;
 }
 
 // Source: cv://ws/v1/revoked.schema.json
@@ -1112,6 +1127,10 @@ export interface CvWsV1RevokedSchemaJson {
   message: string;
   removed_accounts?: string[];
   resubscribe_allowed?: boolean;
+  /**
+   * The subscription revoked or narrowed (§9.5); a replay one's `rs` is on the envelope.
+   */
+  sub_id?: string;
 }
 
 // Source: cv://ws/v1/rules.schema.json
@@ -1275,6 +1294,10 @@ export interface CvWsV1SubOkSchemaJson {
     ch: string;
     ok: boolean;
     sub_id?: string;
+    /**
+     * On each result of a replay `sub` but the `system` one, accepted or refused (§5.2).
+     */
+    rs?: string;
     snapshot_pending?: boolean;
     snapshot_forced?: boolean;
     effective?: {
@@ -1594,6 +1617,27 @@ export interface CvWsV1UnsubOkSchemaJson {
     ch: string;
     ok: boolean;
     noop?: boolean;
+    /**
+     * What this entry ended (§5.3).
+     *
+     * @minItems 1
+     */
+    ended?: [
+      {
+        /**
+         * A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection.
+         */
+        sub_id: string;
+        rs?: string;
+      },
+      ...{
+        /**
+         * A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection.
+         */
+        sub_id: string;
+        rs?: string;
+      }[],
+    ];
   }[];
 }
 
