@@ -291,8 +291,19 @@ NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"}
 #: `recorder` (04 §7.2.2 rows 9 and 9a): retention and pin changes (#2738) and the
 #: irreversible recorded-data purge (E16-T06); a grace class.
 #: `audit` and `backups` (#2751, SR-025): the audit-log export and a backup restore.
+#: `flags` (#3083): a feature-flag write; a grace class, as the contract's `setFeatureFlag` says.
 ACTION_CLASSES = frozenset(
-    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder", "audit", "backups"}
+    {
+        "keys",
+        "users",
+        "live_enablement",
+        "killswitch",
+        "risk_caps",
+        "recorder",
+        "flags",
+        "audit",
+        "backups",
+    }
 )
 
 

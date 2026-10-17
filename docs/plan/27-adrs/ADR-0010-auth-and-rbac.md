@@ -87,7 +87,8 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   decision text above says 60 min idle; the code is stricter.
 - **Lockout** (`auth/login_service.py`): 5 failures, 15 min.
 - **Step-up** (`auth/step_up.py`): action classes `keys`, `users`, `live_enablement`, `killswitch`,
-  `risk_caps`, `recorder` (retention and pin changes, recorded-data purge: E16-T06, #2738), `audit`
+  `risk_caps`, `recorder` (retention and pin changes, recorded-data purge: E16-T06, #2738), `flags`
+  (a feature-flag write that releases no kill switch and enables no live trading, #3083), `audit`
   (audit-log export) and `backups` (backup restore, #2751); a request needs
   password **and** TOTP code (D-2); a wrong password also counts toward login lockout; 5 min grace,
   none for `live_enablement`, `killswitch` and `backups` (each action spends a fresh code; the spend
