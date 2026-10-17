@@ -118,6 +118,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     health_registry = getattr(app.state, "health_registry", None)
     if health_registry is not None:
         health_registry.start()
+    account_health = getattr(app.state, "account_health", None)
+    if account_health is not None:  # E27-T04 (#837): once `start_all` has brought the modules up
+        account_health.start()
     metrics_runtime: MetricsRuntime | None = None
     if ctx.settings.metrics_enabled:
         # E04-T06: create_app() owns the single facade (telemetry series hang
@@ -183,6 +186,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if audit_flush is not None:
             # Budgeted audit counts are written (bounded) before the audit module stops.
             await audit_flush.stop()
+        if account_health is not None:  # its hook calls drain before `stop_all` stops the modules
+            await account_health.stop()
         await supervisor.stop_all()
 
 

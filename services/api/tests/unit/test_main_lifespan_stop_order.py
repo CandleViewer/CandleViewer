@@ -123,6 +123,7 @@ def _app(stops: _Stops) -> FastAPI:
         "health_registry",
         "scrub_task",
         "audit_verify_job",
+        "account_health",
         "rule_prune_task",
         "funding_refresh_task",
         "alert_purge_task",
@@ -166,6 +167,18 @@ async def test_lifespan_stops_the_audit_verify_job_before_the_audit_module() -> 
             pass
     assert stops.order.index("audit_verify_job") < stops.order.index("module:audit")
     assert "audit.verify_job_not_wired" not in [e["event"] for e in logs]  # a job is wired
+
+
+async def test_lifespan_runs_account_health_between_the_modules_start_and_stop() -> None:
+    """E27-T04 (#837): started after `start_all`, stopped (its calls drained) before `stop_all`."""
+    stops = _Stops()
+    async with _lifespan(_app(stops)):
+        pass
+    started = [stops.started.index(f"module:{name}") for name in _MODULES]
+    stopped = [stops.order.index(f"module:{name}") for name in _MODULES]
+    assert max(started) < stops.started.index("account_health")
+    assert stops.order.index("account_health") < min(stopped)
+    assert stops.started.count("account_health") == stops.order.count("account_health") == 1
 
 
 async def test_lifespan_logs_at_boot_that_no_audit_verify_job_is_wired() -> None:

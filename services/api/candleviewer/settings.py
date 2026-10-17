@@ -814,7 +814,8 @@ class Settings(BaseSettings):
         path add `SHUTDOWN_TICKS_S`. Several modules that each hang to their own bound would still
         outrun any budget, and the lifespan's own stops before `Supervisor.stop_all` are outside
         it: most are short, but `BarsRuntime.stop` (up to 30 s with bars on) and the metrics
-        listener's unbounded drain can use the whole budget alone (#2878). A sum exactly at the
+        listener's unbounded drain can use the whole budget alone (#2878); the account health
+        runtime's stop is bounded, at `STOP_TIMEOUT_S` (11 s) a step. A sum exactly at the
         budget passes and leaves the other modules' normal stop time nothing, so the largest
         grace is a limit, not a recommendation. Integer milliseconds, so a boundary is not a
         float error."""
