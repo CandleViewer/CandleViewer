@@ -60,8 +60,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, off by default):
   `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
   stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
-  budget; the `bye` takes a terminal slot, and every close flushes under one deadline, past
-  which the socket goes with no `bye` (§4.4, §8.4).
+  budget, which the §8.4 ladder holds from the first `auth_ok` (drop, `backpressure`
+  re-snapshot, `slow_consumer` close); the writer drains it. The `bye` takes a terminal slot,
+  and every close flushes under one deadline, past which the socket goes with no `bye` (§4.4,
+  §8.4); the close audit records the ladder's trigger and an expired flush (§4.3).
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
@@ -807,6 +809,8 @@ def make_ws_router(
             return
         try:
             reason = closed_reason(conn, fault, server_shutting_down=gateway_hub.shutting_down)
+            # Flag on: the step 3 trigger and an expired flush (§4.3), when there is either.
+            state = conn.pipeline.audit_state() if conn.pipeline is not None else None
             async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
                 await audit.emit(
                     "ws.connection.closed",
@@ -820,6 +824,7 @@ def make_ws_router(
                     severity=Severity.WARNING if reason in WARNING_CLOSES else Severity.INFO,
                     reason=reason,
                     request_id=current_request_id(),
+                    **({} if state is None else {"after_state": state}),
                 )
         except Exception:
             # Not "not written": a write that timed out may still land (the writer shields it).
@@ -981,6 +986,8 @@ def make_ws_router(
             )
             if svc.sequencing is not None:
                 svc.sequencing.register(conn.authz, conn.emitter)
+            if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
+                conn.pipeline.attach(conn.authz, conn.emitter)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         payload = auth_ok_payload(
             conn.authz.principal,  # the applied snapshot: the newest, never the stale read
@@ -1180,7 +1187,7 @@ def make_ws_router(
         the `bye` and the close frame. The close's flush deadline bounds all of it: past it the
         flush is abandoned with no `bye` (§4.4), counted (`ConnectionPipeline.abandon`), and the
         handler tears the socket down. A stamped frame's encode was observed at push: the writer
-        observes only its fan-out span."""
+        observes only its fan-out span. Before each pop it runs the ladder's `service` (`drain`)."""
         queue = pipe.queue
         pings = 0
         try:
@@ -1192,6 +1199,7 @@ def make_ws_router(
                         now_ms = conn.wall_ms()
                         ping = {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms}
                         conn.push(ping | {"p": {"server_ms": now_ms}})
+                    pipe.service(conn.clock())  # the ladder's drain, before each pop
                     item = queue.pop()
                     if item is None:
                         if pipe.terminal is not None:

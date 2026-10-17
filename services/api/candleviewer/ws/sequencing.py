@@ -477,6 +477,9 @@ class TopicEmitter:
         self.cache = cache if cache is not None else SnapshotCache()
         self.max_frame_bytes = max_frame_bytes
         self._snap_ids = 0
+        #: E17-T03: the overflow ladder's hook. A hub `flush_pending` (a source rebuild) hands it
+        #: the subscriptions it named, so a `backpressure` snapshot parked as not ready is retried.
+        self.on_rebuild: Callable[[list[Subscription]], None] | None = None
 
     # -- snapshots --
 
@@ -829,11 +832,15 @@ class SequencingHub:
     def flush_pending(self, match: Callable[[Subscription], bool] | None = None) -> int:
         """Retry every pending snapshot (e.g. once the book engine finished its rebuild), or
         only those of the subscriptions `match` accepts. `match` is asked for every subscription
-        of every connection, so it must be pure and total."""
-        return sum(
-            e.flush_pending([s for s in a.by_id.values() if match is None or match(s)])
-            for a, e in list(self._conns.values())
-        )
+        of every connection, so it must be pure and total. One held for its `backpressure`
+        snapshot is left to the overflow ladder, which the emitter's `on_rebuild` tells."""
+        sent = 0
+        for authz, emitter in list(self._conns.values()):
+            subs = [s for s in authz.by_id.values() if match is None or match(s)]
+            sent += emitter.flush_pending(subs)
+            if emitter.on_rebuild is not None:
+                emitter.on_rebuild(subs)
+        return sent
 
     # -- the §7.4 triggers --
     # `reconfigure` comes from `ctl`, and `backpressure` snapshots belong to the overflow

@@ -16,6 +16,7 @@ import pytest
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import FLAG_ESTIMATED, FLAG_REPLAY, decode_b64
 from candleviewer.ws.sequencing import TopicEmitter, causal_sort
 from candleviewer.ws.topics import FAMILIES
@@ -33,6 +34,7 @@ from tests.contract.ws._harness import (
     entry,
     publish,
     structured_of,
+    validate_frame,
 )
 from tests.unit.ws._seq_support import ACC_A, ACC_B, USER
 
@@ -299,7 +301,7 @@ def test_s5_events_for_another_account_never_reach_this_subscription() -> None:
 # -- S6 ----------------------------------------------------------------------------------------
 
 
-#: §16.2 / §8.4: the SPEC's outbound budget (not the gateway's own constant, 1 024: #2410).
+#: §16.2 / §8.4: the SPEC's outbound budget (not the flag-off gateway's constant, 1 024: #2410).
 SPEC_QUEUE_FRAMES = 2_000
 
 
@@ -324,15 +326,11 @@ def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_442
         assert c.closed() == 4429
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#2409: the §8.4 ladder (ws/outbound.py, #2503) is not wired into the gateway: "
-    "_Connection.push still closes slow_consumer at OUTBOUND_QUEUE_MAX, with no drop and no snap",
-)
-def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
-    """§8.4 steps 1-2: a coalescable topic over budget is dropped and re-snapshotted with
-    `reason: "backpressure"`; the socket is NOT closed (only orders/executions close it)."""
-    w = World()
+def test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
+    """§8.4 steps 1-2 (#2409, with `CV_WS_BACKPRESSURE_ENABLED` on): a coalescable topic over
+    budget is dropped and re-snapshotted with `reason: "backpressure"`; the socket is NOT closed
+    (only orders/executions close it), so a `ping` still gets its `pong`."""
+    w = World(backpressure=BackpressureConfig())
     with connect(w) as c:
         c.sub({"ch": "trades.BTCUSDT"})
         c.drain(1)
@@ -343,18 +341,17 @@ def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> 
         while (f := c.recv(validate=False))["t"] != "bye" and len(seen) < n + 5:
             seen.append(f)
             if f["t"] == "snap" and f["meta"]["reason"] == "backpressure":
+                validate_frame(f)
+                c.send({"t": "ping", "id": "p"})
+                assert c.next_of("pong")["id"] == "p"
                 return
         raise AssertionError("no `snap reason:backpressure`; got a close or no snapshot")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#2410: gateway OUTBOUND_QUEUE_MAX (1 024) is below the spec's 2 000; the budget in "
-    "ws/outbound.py (#2503, 2 000 frames / 8 MiB) is not wired into the gateway",
-)
-def test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
-    """§16.2: up to 2 000 queued frames are legitimate; a burst of exactly that must all arrive."""
-    w = World()
+def test_s6_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
+    """§16.2 (#2410, with `CV_WS_BACKPRESSURE_ENABLED` on): up to 2 000 queued frames are
+    legitimate; a burst of exactly that must all arrive."""
+    w = World(backpressure=BackpressureConfig())
     with connect(w) as c:
         c.sub({"ch": "trades.BTCUSDT"})
         c.drain(1)

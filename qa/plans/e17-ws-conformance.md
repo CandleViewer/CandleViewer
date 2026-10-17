@@ -202,8 +202,7 @@ Sections 1-5 and 9 describe the suite once all parts have landed.
 
 ## 13. Known gaps in S6 and S8 coverage (reported, not hidden)
 
-- **S6 ladder (§8.4 steps 1-2), #2409.** The ladder exists as `ws/outbound.py` (#2503) but the gateway does not use it yet, so the coalescable-topic branch never runs: flooding `trades` past the budget closes the socket with `bye slow_consumer` after 1 024 frames, with no `snap reason:backpressure`. Pinned by `test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close`. The `orders` branch (step 3) is asserted.
-- **S6 bound, #2410.** The gateway bound is 1 024 frames, not the spec's 2 000 (§16.2); pinned by `test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget`.
+- **S6 ladder (§8.4 steps 1-2), #2409, and bound, #2410.** With `CV_WS_BACKPRESSURE_ENABLED` on, the gateway runs the ladder (#412): `test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close` and `test_s6_coalescable_topic_is_not_cut_below_the_spec_budget` assert both on a flag-on `World`. With the flag off (the default until #412 completes; #2900 removes it), the gateway still closes `slow_consumer` after 1 024 frames, with no `snap reason:backpressure`. The `orders` branch (step 3) is asserted with the flag off.
 - **S8** is asserted for `heatmap` (structured and binary) and `metrics` (structured `estimated` per series). Other families have no
   heuristic fields in §14.
 - **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 is closed by #2897 (`test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack`).

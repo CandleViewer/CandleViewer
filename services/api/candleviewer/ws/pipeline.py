@@ -4,17 +4,24 @@
 From `accept` on, `_Connection.push` hands every frame to `ConnectionPipeline.push`, the `welcome`
 included. It is encoded once in the negotiated subprotocol (`outbound.encode`), queued on the
 `OutboundQueue` lanes and counted against the connection's budget, which binds both lanes
-(C-2.18). A push that leaves the queue over budget closes the connection `slow_consumer` (§8.4
-step 3); the ladder's drop and re-snapshot steps before it arrive in a later slice. The writer
-(`gateway.py`) sends each payload as it was encoded.
+(C-2.18). The writer (`gateway.py`) sends each payload as it was encoded.
+
+From the first `auth_ok` (`attach`) the §8.4 ladder (`outbound.Backpressure`) holds that budget:
+`check` after every push but a non-final `snap` chunk (no check splits a chunk set, §3.6). A drop
+wakes the writer, whose `service` drains before each pop, never from inside a push. A snapshot
+that does not queue, or raises (D9: logged, contained to its topic), is parked until a source
+rebuild names it or the coarse timer (`classify_interval_ms`), never retried once per send. Step
+3's `bye` carries `hint.most_expensive_topics`; the close audit's `after_state` its trigger and an
+expired flush (§4.3). Before `auth_ok` there is no topic: over budget is step 3 alone.
 
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the encode is timed with `perf_counter` and sized at its wire length, once, under
 the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`, as the flag-off writer
 does before its send. Any other frame reads no timer, and an encode that fails is not observed.
-The encode happens at push, so a stamped frame that a close drops before the send is in these
-series but not in `cv_ws_fanout_seconds`, which the writer observes once the socket has the frame.
+The encode happens at push, so a stamped frame that a close or a ladder drop removes before the
+send is in these series but not in `cv_ws_fanout_seconds`, which the writer observes once the
+socket has the frame.
 
 A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
 marker are the only items admitted past the budget, one small frame, so the bound holds to within
@@ -25,8 +32,7 @@ discards the normal lane. Nothing is queued after a close. The flush runs under 
 `BackpressureConfig.close_flush_s` from the first close on (a later seal never extends it): the
 writer `arm`s it, and past it gives up with no `bye` (§4.4). That expiry is counted once per
 connection as `cv_ws_overflow_total{reason="close_flush_deadline"}`, whatever the close's reason,
-on top of the `close_budget` a step 3 close has already counted (§8.4 step 4); the close audit's
-fields for it arrive with the ladder's audit trigger.
+on top of the `close_budget` a step 3 close has already counted (§8.4 step 4).
 
 The deadline is on the event loop's clock (`loop.time()`), not on the gateway's injected `clock`:
 only an `asyncio.Timeout` can cancel a send that a peer which stopped reading has parked, and it
@@ -35,7 +41,7 @@ a send that never completes, which leaves the deadline as the only way out.
 
 A frame its encoder refuses is a server fault and fails closed: `internal_error` (§10.1). The
 droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
-instead) arrives with the ladder; until then it fails closed too. A NaN or an infinity is refused
+instead) arrives in a later slice; until then it fails closed too. A NaN or an infinity is refused
 on both subprotocols, a producer bug either way (§10.1): JSON refuses it as it encodes, and
 `msgpack_payload` after packing, as a `ValueError` too. The log line names the frame's type,
 family and error class, never its payload or the error's text (C-12.6). Whatever the encoder
@@ -49,10 +55,11 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from time import perf_counter
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
@@ -67,15 +74,28 @@ from candleviewer.ws.metrics import (
     SAMPLE_EVERY,
     cv_ws_overflow_total,
 )
-from candleviewer.ws.outbound import FrameEncoder, OutboundQueue, encode, json_payload
-from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES
+from candleviewer.ws.outbound import (
+    Backpressure,
+    FrameEncoder,
+    LadderEvent,
+    OutboundQueue,
+    encode,
+    json_payload,
+)
+from candleviewer.ws.pacing import Pacer
+from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, TopicEmitter
 from candleviewer.ws.topics import FAMILIES
+
+if TYPE_CHECKING:
+    from candleviewer.ws.permissions import ConnectionAuthz, Subscription
 
 #: §8.4 step 3's `bye`: one fixed message for both triggers (a `redrop` close happens under budget).
 SLOW_CONSUMER_RETRY_AFTER_MS: Final = 3000
 SLOW_CONSUMER_MESSAGE: Final = "Client is not draining its outbound queue."
 #: §8.4 step 4: a close whose flush deadline expired, whatever its reason.
 CLOSE_FLUSH_DEADLINE: Final = "close_flush_deadline"
+#: §4.3: the close audit's `trigger` for an expired flush when step 3 gave none.
+FLUSH_DEADLINE_TRIGGER: Final = "flush_deadline"
 #: The frame types the server sends (§13.1): a log line names one of these, else `other`.
 _SERVER_TYPES: Final = frozenset(
     (
@@ -95,11 +115,13 @@ class Close(Protocol):
     def __call__(self, reason: str, *, bye: dict[str, Any] | None = None) -> None: ...
 
 
-def slow_consumer_bye(now_ms: int) -> dict[str, Any]:
-    """The step-3 `bye`: `retry_after_ms` 3 000 and the generic message, never a size. The
-    `hint` naming the most expensive topics arrives with the ladder."""
+def slow_consumer_bye(now_ms: int, topics: Iterable[str] | None = None) -> dict[str, Any]:
+    """The step-3 `bye`: `retry_after_ms` 3 000 and the generic message, never a size. Given
+    `topics` (step 3's most expensive, empty when none held any), its `hint` names them."""
     frame = bye_frame("slow_consumer", now_ms=now_ms, retry_after_ms=SLOW_CONSUMER_RETRY_AFTER_MS)
     frame["p"]["message"] = SLOW_CONSUMER_MESSAGE
+    if topics is not None:
+        frame["p"]["hint"] = {"most_expensive_topics": list(topics)}
     return frame
 
 
@@ -159,6 +181,10 @@ class ConnectionPipeline:
         self.released = False
         #: A flush deadline expired and was counted: one count per connection (`abandon`).
         self.abandoned = False
+        #: The §8.4 ladder, from the first `auth_ok` (`attach`); before it, step 3 alone.
+        self.ladder: Backpressure | None = None
+        #: The step 3 trigger of this connection's close (`budget` | `redrop`), for its audit.
+        self.trigger: str | None = None
         self._dumps: FrameEncoder = (
             msgpack_payload if encoding == SUBPROTOCOL_MSGPACK else json_payload
         )
@@ -174,11 +200,23 @@ class ConnectionPipeline:
         #: The flush deadline on the loop's clock, from the first close; the writer's scope.
         self._deadline: float | None = None
         self._timeout: asyncio.Timeout | None = None
+        #: From `attach`: the connection's subscriptions by id (the ladder's `subs` and `live`).
+        self._live: Mapping[str, Subscription] = {}
+        #: The coarse retry of parked snapshots, on the gateway's clock (`service`).
+        self._retry_s = config.classify_interval_ms / 1000
+        self._retry_at: float | None = None
 
     @property
     def deadline(self) -> float | None:
         """The close's flush deadline on the loop's clock, from the first close; None before."""
         return self._deadline
+
+    def attach(self, authz: ConnectionAuthz, emitter: TopicEmitter) -> None:
+        """The first `auth_ok`: the ladder over this queue. Its `Pacer` holds the topics marked
+        for a `backpressure` snapshot; no update is routed through it yet (a later slice)."""
+        self._live = authz.by_id
+        self.ladder = Backpressure(self.queue, Pacer(emitter), partial(self._snapshot, emitter))
+        emitter.on_rebuild = self._rebuilt
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
@@ -201,9 +239,70 @@ class ConnectionPipeline:
                 "ws outbound frame over the frame limit", **self._fields(frame), size=item.size
             )
         self.queue.push(item)
-        if self.queue.over_budget():  # §8.4 step 3; steps 1 and 2 arrive with the ladder
+        if frame.get("t") == "snap" and frame.get("s") is None:
+            return  # a non-final chunk: the set is checked whole, after its last one (§3.6)
+        if self.ladder is not None:
+            self._apply(self.ladder.check(self._live.values()))
+        elif self.queue.over_budget():  # before `auth_ok`: no topic to drop, so step 3 alone
             cv_ws_overflow_total.labels(reason="close_budget").inc()
-            self._close("slow_consumer", bye=slow_consumer_bye(self._wall_ms()))
+            self._step3("budget", ())
+
+    def service(self, now: float) -> None:
+        """The writer's turn before each pop (after every send and wake): `drain` while a topic
+        awaits its snapshot, unparking all once per `classify_interval_ms` (the coarse timer)."""
+        ladder = self.ladder
+        if ladder is None or self.terminal is not None or not ladder.pacer.resnapshot_required:
+            self._retry_at = None
+            return
+        if self._retry_at is None:
+            self._retry_at = now + self._retry_s
+        elif now >= self._retry_at:
+            self._retry_at = now + self._retry_s
+            ladder.unpark()
+        self._apply(ladder.drain(self._live))
+
+    def _apply(self, events: list[LadderEvent]) -> None:
+        """A drop wakes the writer, whose `service` drains (never a drain from here); a close is
+        step 3. The ladder has counted both (§8.4 step 4)."""
+        for event in events:
+            if event.action == "drop":
+                self.queue.wake()
+            elif event.action == "close":
+                self._step3(event.trigger, event.topics)
+
+    def _step3(self, trigger: str | None, topics: tuple[str, ...]) -> None:
+        self.trigger = trigger
+        self._close("slow_consumer", bye=slow_consumer_bye(self._wall_ms(), topics))
+
+    def _snapshot(self, emitter: TopicEmitter, sub: Subscription) -> bool:
+        """`drain`'s emitter wrapper (D9): a snapshot that raises is logged by family and error
+        class only (C-12.6) and reads as not queued, so `drain` parks it (module docstring)."""
+        try:
+            return emitter.snapshot(sub, "backpressure")
+        except Exception as exc:
+            _log().error(
+                "ws backpressure snapshot failed",
+                connection_id=self._connection_id,
+                family=sub.topic.family.family,
+                error=type(exc).__name__,
+            )
+            return False
+
+    def _rebuilt(self, subs: Iterable[Subscription]) -> None:
+        """A hub `flush_pending` (a source rebuild) named `subs`: retry their parked snapshots."""
+        if self.ladder is not None and self.ladder.unpark(sub.sub_id for sub in subs):
+            self.queue.wake()
+
+    def audit_state(self) -> dict[str, Any] | None:
+        """The close audit's `after_state` (§4.3): `trigger` (step 3's `budget` or `redrop`, else
+        `flush_deadline` for an expired flush) and `flush_abandoned: true`; None for neither."""
+        state: dict[str, Any] = {}
+        if self.trigger is not None:
+            state["trigger"] = self.trigger
+        if self.abandoned:
+            state.setdefault("trigger", FLUSH_DEADLINE_TRIGGER)
+            state["flush_abandoned"] = True
+        return state or None
 
     def close(self, bye: dict[str, Any], code: int, *, flush: bool) -> int:
         """Take the terminal slot (`_Connection.close_with`; a later call changes nothing) and
