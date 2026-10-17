@@ -42,9 +42,8 @@ IDEM_CACHE_MAX = 4096
 #: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
 #: which `rules` may not import (a test pins them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
-#: How long one disarm of an armed rule above a hard cap waits for its record (#3232, decision
-#: 9). It runs beside the evaluator tick, never inside it; a miss is logged and the next tick
-#: tries again.
+#: How long one disarm of an armed rule above a hard cap waits for its record (#3232). It runs
+#: beside the evaluator tick, never inside it; a miss is logged and the next tick tries again.
 TICK_DISARM_TIMEOUT_S: Final = 2.0
 _ORDER_ACTIONS = frozenset(
     {
@@ -252,8 +251,7 @@ class RulesManager:
         self.lifecycle = lifecycle or RuleLifecycle()
         #: rule_id -> (ir_hash, first evaluation ts_ms): simulation window for the current hash.
         self._sim_window: dict[str, tuple[str, int]] = {}
-        #: rule_id -> the disarm in flight of that armed rule above a hard cap (#3232): at most
-        #: one per rule, each a tracked task that `stop()` cancels.
+        #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
         #: Forced disarms run one at a time, so their re-check of the chart holds (#3232).
         self._disarming = asyncio.Lock()
@@ -443,12 +441,10 @@ class RulesManager:
 
     async def _force_disarm(self, row: RuleRow, reason: str, detail: dict[str, Any]) -> None:
         """B9 `DISARM` of an armed rule, audited as `rule.disarmed` with `reason` and `detail`
-        (no actor: the server does it); the `rules` broadcast carries the reason only.
-
-        Presenters race (reads, lists, the evaluator tick) and `row` may be a stale read, so
-        forced disarms run one at a time and each first asks the live chart whether it still
-        handles DISARM. A DISARM it does not handle is never sent: the chart would park it
-        (`onUnhandled: "defer"`) and replay it into the rule's next transition."""
+        (no actor: the server does it); the `rules` broadcast carries the reason only. Presenters
+        race and `row` may be stale, so forced disarms run one at a time and send DISARM only to a
+        chart that still handles it: one that does not would park it (`onUnhandled: "defer"`) and
+        replay it into the rule's next transition."""
         async with self._disarming:
             handled = await self.lifecycle.handled_event(
                 row.id, row.mode, row.disabled_reason, "disabled"
@@ -734,10 +730,9 @@ class RulesManager:
         task.add_done_callback(lambda _done: self._tick_disarms.pop(rid, None))
 
     async def _disarm_on_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
-        """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out attempt is
-        logged and leaves the row armed, and the next tick starts another. The record is
-        written at least once: an append the writer finishes after the bound is recorded again
-        by that next attempt."""
+        """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`: a failed or timed-out one is logged
+        and leaves the row armed, and the next tick starts another (at least once: an append the
+        writer finishes after the bound is recorded again by that attempt)."""
         try:
             async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
                 await self._force_disarm(row, "limits_above_cap", capped)

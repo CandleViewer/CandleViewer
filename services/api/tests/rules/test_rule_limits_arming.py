@@ -13,18 +13,19 @@ them now.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import replace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.rules import manager as rules_manager
-from candleviewer.rules.arming import ArmingFacts, Refusal, check_arming
+from candleviewer.rules.arming import Refusal, check_arming
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.limits import BUDGET_FIELDS, LIMIT_CAPS, LIMIT_DEFAULTS
-from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RuleRow, RulesManager
+from candleviewer.rules.manager import Actor, Audit, InMemoryRuleStore, RuleError, RulesManager
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rule_limits import DAY, HOUR, MANAGER, ON_A, ON_B, OWNER, Audits
@@ -99,8 +100,7 @@ async def _seed(
     """A rule saved by the Owner whose active version holds `field` at `value`, simulated on its
     `ir_hash` and left in `mode`; nothing is audited or broadcast for it."""
     rid = str((await m.create(_ir(name=name, scope=dict(scope)), OWNER))["id"])
-    row = await m._s.get(rid)
-    assert row is not None
+    row = await m._row(rid)
     version = row.versions[0]
     version.ir["limits"][field] = value
     version.ir_hash = ir_hash(Rule.model_validate(version.ir))
@@ -111,28 +111,23 @@ async def _seed(
     return rid
 
 
-def _facts_raised(**kw: Any) -> ArmingFacts:
-    """Arming facts of a version whose daily budget is above its default."""
-    return _facts(limits_above_default=(DAY,), **kw)
+_RAISED = {"limits_above_default": (DAY,)}
+_OWNER_ONLY = "Only the Owner can arm a rule whose action budget is above the default."
 
 
 def test_check_arming_runs_the_promotion_gate_before_the_raised_budget() -> None:
-    gate = check_arming(_facts_raised(simulation_fires=0))
+    gate = check_arming(_facts(simulation_fires=0, **_RAISED))
     assert gate is not None and gate.code == "promotion_gate"
 
 
 def test_check_arming_refuses_a_non_owner_a_raised_budget_naming_its_fields() -> None:
     """Ahead of the `orders:write` check, which this rule would also fail."""
-    assert check_arming(_facts_raised(sends_orders=True)) == Refusal(
-        "forbidden",
-        403,
-        "Only the Owner can arm a rule whose action budget is above the default.",
-        (DAY,),
-    )
+    refusal = Refusal("forbidden", 403, _OWNER_ONLY, (DAY,))
+    assert check_arming(_facts(sends_orders=True, **_RAISED)) == refusal
 
 
 def test_check_arming_lets_the_owner_arm_a_raised_budget() -> None:
-    assert check_arming(_facts_raised(is_owner=True)) is None
+    assert check_arming(_facts(is_owner=True, **_RAISED)) is None
 
 
 async def test_arm_manager_above_default_version_is_403_audited_and_chart_untouched() -> None:
@@ -286,8 +281,8 @@ async def test_evaluable_rules_disarms_an_armed_rule_above_the_cap_with_its_reas
     sent |= {"b9_event": "DISARM", "reason": "limits_above_cap"}
     assert rec.audits == [("rule.disarmed", sent | {"limits_above_cap": over, "b9_to": "disarmed"})]
     assert rec.broadcasts == [{"topic": "rules", **sent}]
-    row = await m._s.get(rid)
-    assert row is not None and (row.mode, row.disabled_reason) == ("disabled", "disarmed")
+    row = await m._row(rid)
+    assert (row.mode, row.disabled_reason) == ("disabled", "disarmed")
 
 
 async def test_evaluable_rules_disarms_an_armed_rule_above_the_cap_once() -> None:
@@ -319,55 +314,41 @@ async def test_reading_a_corrupt_armed_rule_still_disarms_it_as_quarantined() ->
     """The quarantine disarm shares the helper and keeps its record: reason, no cap member."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    row = await m._s.get(rid)
-    assert row is not None
-    row.versions[0].ir["conditions"] = {"bogus": 1}
+    (await m._row(rid)).versions[0].ir["conditions"] = {"bogus": 1}
     assert (await m.get(rid, OWNER))["quarantined"] is True
     (disarmed,) = rec.audits
     assert disarmed[0] == "rule.disarmed" and disarmed[1]["reason"] == "quarantined"
     assert "limits_above_cap" not in disarmed[1]
 
 
-def _presenters(m: RulesManager, rid: str, pair: str) -> list[Coroutine[Any, Any, Any]]:
-    """Two of the paths that present a rule, so disarm one above a cap, started together."""
-    start: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {
-        "get": lambda: m.get(rid, OWNER),
-        "list_rules": lambda: m.list_rules(OWNER),
-        "evaluable_rules": m.evaluable_rules,
-    }
-    return [start[name]() for name in pair.split("+")]
+#: The paths that present a rule, and so disarm one armed above a cap.
+_PRESENT: dict[str, Callable[[RulesManager, str], Coroutine[Any, Any, Any]]] = {
+    "get": lambda m, rid: m.get(rid, OWNER),
+    "list_rules": lambda m, _rid: m.list_rules(OWNER),
+    "evaluable_rules": lambda m, _rid: m.evaluable_rules(),
+}
+_PAIRS = pytest.mark.parametrize("pair", ["get+get", "get+evaluable_rules", "list_rules+get"])
+
+
+async def _present_together(m: RulesManager, rid: str, pair: str) -> None:
+    await asyncio.gather(*(_PRESENT[p](m, rid) for p in pair.split("+")))
+    await _settle(m)
 
 
 async def _save_within_budget(m: RulesManager, rid: str) -> str:
-    """The Owner saves the rule again within its budget, simulated on its `ir_hash`; returns the
-    version id. A disabled rule activates it at once."""
-    row = await m._s.get(rid)
-    assert row is not None
+    """The Owner saves the rule again within its budget, simulated; returns the version id."""
+    row = await m._row(rid)
     saved = await m.update(rid, _ir(name=row.name, scope=dict(ON_A)), row.latest_version, OWNER)
     await m.record_simulation(rid, saved["version"]["ir_hash"], 5, 0.0)
     return str(saved["version"]["id"])
 
 
-def _answering(row: RuleRow) -> Callable[[str], Coroutine[Any, Any, RuleRow]]:
-    """A store read that answers `row`: a copy read before a change, as a Postgres read can be."""
-
-    async def get(_rule_id: str) -> RuleRow:
-        return row
-
-    return get
-
-
-_PAIRS = pytest.mark.parametrize("pair", ["get+get", "get+evaluable_rules", "list_rules+get"])
-
-
 @_PAIRS
 async def test_two_presenters_at_once_record_one_disarm(pair: str) -> None:
-    """Forced disarms run one at a time, and each sends DISARM only to a chart that still takes
-    it: one `rule.disarmed` record for one disarm (C-2.9)."""
+    """Forced disarms run one at a time, each only through a chart that still takes DISARM."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    await asyncio.gather(*_presenters(m, rid, pair))
-    await _settle(m)
+    await _present_together(m, rid, pair)
     assert [a for a, _ in rec.audits] == ["rule.disarmed"]
 
 
@@ -376,52 +357,39 @@ async def test_arming_after_two_presenters_disarmed_it_succeeds_first_time(pair:
     """No DISARM is left parked on the chart (`onUnhandled: defer`) to replay into the next arm."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    await asyncio.gather(*_presenters(m, rid, pair))
-    await _settle(m)
+    await _present_together(m, rid, pair)
     await _save_within_budget(m, rid)
     assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
     assert m.lifecycle.leaf(rid) == "armed"
 
 
-async def test_a_stale_armed_row_sends_nothing_to_a_chart_demoted_to_simulating(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Read while armed above the cap, presented after the Owner activated a version within the
-    budget: nothing is sent, so no parked DISARM turns the next arm into a disarm."""
-    m, rec = _mgr()
-    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    row = await m._s.get(rid)
-    assert row is not None
-    stale = replace(row)
-    await m.set_active_version(rid, await _save_within_budget(m, rid), "within budget", OWNER)
-    rec.audits.clear()
-    rec.broadcasts.clear()
-    monkeypatch.setattr(m._s, "get", _answering(stale))
-    await m.get(rid, OWNER)
-    monkeypatch.undo()
-    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], "simulating")
-    assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
-    assert [p["b9_to"] for a, p in rec.audits if a == "rule.armed"] == ["armed"]
+async def _demoted(m: RulesManager, rid: str) -> None:
+    """The Owner activates a version within the budget: `armed --EDIT--> simulating`."""
+    await m.set_active_version(rid, await _save_within_budget(m, rid), "within", OWNER)
 
 
-async def test_a_stale_armed_row_sends_nothing_to_a_disarmed_chart(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Read while armed, presented after another read disarmed it: nothing is sent, so the first
-    arm of a version within the budget succeeds."""
-    m, rec = _mgr()
-    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    row = await m._s.get(rid)
-    assert row is not None
-    stale = replace(row)
+async def _disarmed(m: RulesManager, rid: str) -> None:
+    """Another read disarms the rule; the Owner then saves a version within the budget."""
     await m.get(rid, OWNER)
-    rec.audits.clear()
-    rec.broadcasts.clear()
-    monkeypatch.setattr(m._s, "get", _answering(stale))
-    await m.get(rid, OWNER)
-    monkeypatch.undo()
-    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], "disarmed")
     await _save_within_budget(m, rid)
+
+
+@pytest.mark.parametrize(("left", "leaf"), [(_demoted, "simulating"), (_disarmed, "disarmed")])
+async def test_a_stale_armed_row_sends_nothing_to_a_chart_that_left_armed(
+    monkeypatch: pytest.MonkeyPatch, left: Callable[[RulesManager, str], Awaitable[None]], leaf: str
+) -> None:
+    """A row read while armed above the cap (a Postgres read can be stale) is presented after the
+    chart left armed: nothing is sent, so no parked DISARM turns the next arm into a disarm."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    stale = replace(await m._row(rid))
+    await left(m, rid)
+    rec.audits.clear()
+    rec.broadcasts.clear()
+    monkeypatch.setattr(m._s, "get", AsyncMock(return_value=stale))
+    await m.get(rid, OWNER)
+    monkeypatch.undo()
+    assert (rec.audits, rec.broadcasts, m.lifecycle.leaf(rid)) == ([], [], leaf)
     assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
 
 
@@ -429,8 +397,7 @@ async def test_a_stale_armed_row_sends_nothing_to_a_disarmed_chart(
 async def test_reading_a_rule_above_the_cap_that_is_not_armed_changes_nothing(
     mode: str, reason: str | None
 ) -> None:
-    """Only an armed rule is disarmed when read: nothing is recorded, broadcast or sent, and its
-    chart is not even built (DISARM is not handled in `simulating` or `disarmed`)."""
+    """Nothing is recorded, broadcast or sent, and its chart is not even built."""
     m, rec = _mgr()
     rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode=mode, reason=reason)
     assert (await m.get(rid, OWNER))["mode"] == mode
@@ -446,23 +413,17 @@ async def test_evaluable_rules_keeps_a_simulating_rule_above_the_cap() -> None:
     assert (rec.audits, _tick_disarms(), m.lifecycle.leaf(rid)) == ([], [], None)
 
 
-async def test_a_forced_disarm_the_chart_does_not_take_is_neither_recorded_nor_broadcast(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_disarm_the_chart_refuses_is_not_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nor broadcast: an equal leaf before and after means the chart did not move."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-
-    async def refused(_rule_id: str, _event: str, **_payload: Any) -> tuple[str, str]:
-        return "armed", "armed"  # leaf before == leaf after: the chart did not move
-
-    monkeypatch.setattr(m.lifecycle, "send", refused)
+    monkeypatch.setattr(m.lifecycle, "send", AsyncMock(return_value=("armed", "armed")))
     assert (await m.get(rid, OWNER))["mode"] == "armed"
     assert (rec.audits, rec.broadcasts) == ([], [])
 
 
 async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running() -> None:
-    """Decision 9's accepted residual: armed by a Manager before the caps, it runs until it is
-    re-armed."""
+    """Decision 9's accepted residual: armed by a Manager before the caps, it runs till re-armed."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR], mode="armed")
     assert [str(r.rule_id) for r in await m.evaluable_rules()] == [rid]
@@ -471,13 +432,10 @@ async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running()
 
 
 async def test_a_protected_system_rule_above_the_cap_is_disarmed_then_reported_tampered() -> None:
-    """Built-ins get no exemption from the caps (RE-E10): E35-T05 seeds them within the caps.
-    One found armed above a cap, which only an out-of-band write can cause, is disarmed like any
-    rule, and the start-up check reports it as tampered."""
+    """No exemption from the caps (RE-E10): disarmed like any rule, then reported as tampered."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    row = await m._s.get(rid)
-    assert row is not None
+    row = await m._row(rid)
     row.name = row.versions[0].ir["name"] = "sys.native_sl_watchdog"
     assert await m.evaluable_rules() == []
     await _settle(m)
@@ -489,19 +447,31 @@ async def _down(_action: str, _payload: dict[str, Any]) -> None:
     raise RuntimeError("audit down")
 
 
-async def test_a_disarm_that_fails_beside_a_tick_is_logged_and_leaves_the_rule_armed() -> None:
-    """Fail closed per rule: the runner never gets the rule, the loss is logged, and nothing is
-    recorded or broadcast."""
+async def _stalled(_action: str, _payload: dict[str, Any]) -> None:
+    """Never answers: a bound of 0 s ends it at its first yield; unbounded, it fails the test."""
+    for _ in range(100):
+        await asyncio.sleep(0)
+    raise AssertionError("the disarm was not bounded")
+
+
+@pytest.mark.parametrize(
+    ("writer", "bound", "error"), [(_down, 2.0, "RuntimeError"), (_stalled, 0.0, "TimeoutError")]
+)
+async def test_a_failed_tick_disarm_is_logged_and_leaves_the_rule_armed(
+    monkeypatch: pytest.MonkeyPatch, writer: Audit, bound: float, error: str
+) -> None:
+    """Fail closed per rule when the writer fails or outlasts `TICK_DISARM_TIMEOUT_S`: the runner
+    never gets the rule, and nothing is recorded or broadcast."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-    m.set_hooks(audit=_down)
+    m.set_hooks(audit=writer)
+    monkeypatch.setattr(rules_manager, "TICK_DISARM_TIMEOUT_S", bound)
     with capture_logs() as logs:
         assert await m.evaluable_rules() == []
         await _settle(m)
     failed = [(e["event"], e["rule_id"], e["error"]) for e in logs if e["log_level"] == "error"]
-    assert failed == [("rules.limits_disarm_failed", rid, "RuntimeError")]
-    row = await m._s.get(rid)
-    assert row is not None and row.mode == "armed" and rec.broadcasts == []
+    assert failed == [("rules.limits_disarm_failed", rid, error)]
+    assert ((await m._row(rid)).mode, rec.broadcasts) == ("armed", [])
 
 
 async def test_a_failed_disarm_is_tried_again_on_the_next_tick() -> None:
@@ -513,42 +483,23 @@ async def test_a_failed_disarm_is_tried_again_on_the_next_tick() -> None:
     m.set_hooks(audit=rec.audit)
     assert await m.evaluable_rules() == []
     await _settle(m)
-    row = await m._s.get(rid)
-    assert row is not None and row.mode == "disabled"
-    assert [a for a, _ in rec.audits] == ["rule.disarmed"]
+    assert ((await m._row(rid)).mode, [a for a, _ in rec.audits]) == ("disabled", ["rule.disarmed"])
 
 
-async def _stalled(_action: str, _payload: dict[str, Any]) -> None:
-    """Never answers: a bound of 0 s ends it at its first yield; unbounded, it fails the test."""
-    for _ in range(100):
-        await asyncio.sleep(0)
-    raise AssertionError("the disarm was not bounded")
-
-
-async def test_a_disarm_that_outlasts_its_bound_is_logged_and_leaves_the_rule_armed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    m, rec = _mgr()
-    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
-    m.set_hooks(audit=_stalled)
-    monkeypatch.setattr(rules_manager, "TICK_DISARM_TIMEOUT_S", 0.0)
-    with capture_logs() as logs:
-        assert await m.evaluable_rules() == []
-        await _settle(m)
-    assert [e["error"] for e in logs if e["log_level"] == "error"] == ["TimeoutError"]
-    row = await m._s.get(rid)
-    assert row is not None and row.mode == "armed"
-
-
-async def test_a_tick_returns_while_its_disarm_is_held_by_the_audit_writer() -> None:
-    """The rule is skipped before it is disarmed, so the tick never waits for the disarm: a
-    stalled writer delays no other rule's evaluation."""
-    m, rec = _mgr()
-    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+async def _held_tick(m: RulesManager, rec: _Recorder) -> _HeldWriter:
+    """A tick that returned while the audit writer holds its disarm of a rule above the cap."""
     writer = _HeldWriter(rec)
     m.set_hooks(audit=writer.audit)
     assert await m.evaluable_rules() == []
     await writer.entered.wait()
+    return writer
+
+
+async def test_a_tick_returns_while_its_disarm_is_held_by_the_audit_writer() -> None:
+    """The rule is skipped before it is disarmed, so a stalled writer holds no tick."""
+    m, rec = _mgr()
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    writer = await _held_tick(m, rec)
     assert rec.audits == [] and len(_tick_disarms()) == 1
     writer.release.set()
     await _settle(m)
@@ -558,42 +509,25 @@ async def test_a_tick_returns_while_its_disarm_is_held_by_the_audit_writer() -> 
 async def test_a_tick_starts_no_second_disarm_while_one_is_in_flight() -> None:
     m, rec = _mgr()
     await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
-    writer = _HeldWriter(rec)
-    m.set_hooks(audit=writer.audit)
-    await m.evaluable_rules()
-    await writer.entered.wait()
+    writer = await _held_tick(m, rec)
     assert await m.evaluable_rules() == []
     assert len(_tick_disarms()) == 1
     writer.release.set()
     await _settle(m)
 
 
-async def test_stop_cancels_a_disarm_in_flight_and_leaves_the_rule_armed() -> None:
-    m, rec = _mgr()
-    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
-    writer = _HeldWriter(rec)
-    m.set_hooks(audit=writer.audit)
-    await m.evaluable_rules()
-    await writer.entered.wait()
-    await m.stop()
-    row = await m._s.get(rid)
-    assert row is not None and (row.mode, rec.audits, _tick_disarms()) == ("armed", [], [])
-
-
 async def test_stopping_the_rules_service_cancels_a_disarm_in_flight() -> None:
+    """The rule stays armed in the store, and the evaluator skips it until it is disarmed."""
     rec = _Recorder()
     svc = RulesService()
     svc.bind(audit=rec.audit, broadcast=rec.broadcast)
     await svc.start(None)  # type: ignore[arg-type]  # no AppContext: the evaluator stays off
     m = svc.manager()
     assert m is not None
-    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
-    writer = _HeldWriter(rec)
-    m.set_hooks(audit=writer.audit)
-    await m.evaluable_rules()
-    await writer.entered.wait()
+    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    await _held_tick(m, rec)
     await svc.stop(1.0)
-    assert (rec.audits, _tick_disarms()) == ([], [])
+    assert ((await m._row(rid)).mode, rec.audits, _tick_disarms()) == ("armed", [], [])
 
 
 def test_put_mode_armed_above_the_default_is_a_403_forbidden_problem_for_a_manager() -> None:
@@ -604,10 +538,7 @@ def test_put_mode_armed_above_the_default_is_a_403_forbidden_problem_for_a_manag
     r = manager.mode(rid, "armed", "arm")
     assert (r.status_code, r.headers["content-type"]) == (403, "application/problem+json")
     body = r.json()
-    assert (body["code"], body["detail"]) == (
-        "forbidden",
-        "Only the Owner can arm a rule whose action budget is above the default.",
-    )
+    assert (body["code"], body["detail"]) == ("forbidden", _OWNER_ONLY)
     assert [(x["field"], x["rule"]) for x in body["errors"]] == [
         ("limits.max_fires_per_hour", "owner_only_above_default")
     ]
