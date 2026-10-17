@@ -402,6 +402,11 @@ describe("the accounts pack", () => {
     expect(validateSchema(schema, manifests.get(name))).toEqual([]);
   });
 
+  it("rejects only reduce-only creates under close_rejected: its stub matches the body", () => {
+    const stub = readPack().manifests.get("close_rejected").rest["POST /v5/order/create"];
+    expect(stub.when).toEqual({ body: { reduceOnly: true } });
+  });
+
   it("is inside the package redaction gate, and the gate passes over the whole package", () => {
     const { files, findings } = verifyDirectories(SCAN_DIRS, KEY_SHAPE_DIRS);
     expect(findings).toEqual([]);
@@ -758,6 +763,70 @@ describe("planted failures on a copy of the pack", () => {
     expect(problems()).toContain(
       "the merge patch on _base/query_api.json does not yield an object",
     );
+  });
+
+  const ANY_SCALAR = "expected string or boolean";
+
+  it.each([
+    [
+      "an unknown when key",
+      (w) => (w.query = { symbol: "BTCUSDT" }),
+      'when: unexpected property "query"',
+    ],
+    ["a when without a body", (w) => delete w.body, 'when: missing required property "body"'],
+    [
+      "an object as a matched value",
+      (w) => (w.body.reduceOnly = { is: true }),
+      `reduceOnly: ${ANY_SCALAR}, got object`,
+    ],
+    [
+      "null as a matched value",
+      (w) => (w.body.reduceOnly = null),
+      `reduceOnly: ${ANY_SCALAR}, got null`,
+    ],
+    [
+      "a number as a matched value",
+      (w) => (w.body.positionIdx = 0),
+      `positionIdx: ${ANY_SCALAR}, got integer`,
+    ],
+    [
+      "an empty body matcher",
+      (w) => (w.body = {}),
+      'rest "POST /v5/order/create" has an empty body matcher',
+    ],
+  ])("fails on %s", (_label, change, message) => {
+    copyPack();
+    edit("close_rejected", (m) => change(m.rest["POST /v5/order/create"].when));
+    expect(problems()).toContain(message);
+  });
+
+  it("fails on a body matcher on a GET call, which never carries a body", () => {
+    copyPack();
+    edit(
+      "ip_missing",
+      (m) => (m.rest["GET /v5/user/query-api"].when = { body: { reduceOnly: true } }),
+    );
+    expect(problems()).toContain(
+      'ip_missing: rest "GET /v5/user/query-api" matches a body, which a GET never carries',
+    );
+  });
+
+  it("never counts a stub with a body matcher as answering intake", () => {
+    copyPack();
+    edit("compliant", (m) => {
+      delete m.rest["GET /v5/user/query-api"];
+      m.rest["*"] = { payload: "_base/query_api.json", when: { body: { reduceOnly: true } } };
+    });
+    expect(problems()).toContain('compliant: nothing answers "GET /v5/user/query-api" at 0 ms');
+  });
+
+  it("accepts a body matcher on an overlay's stub, as on a key scenario's", () => {
+    copyPack();
+    edit(
+      "working_orders_2",
+      (m) => (m.rest["POST /v5/position/switch-mode"].when = { body: { category: "linear" } }),
+    );
+    expect(problems()).toBe("");
   });
 
   it("fails on a manifest that is not even an object", () => {

@@ -15,7 +15,9 @@ live call (C-13.5).
 
 - **Automation (now):** `tests/_account_fixtures.py` in `services/api` resolves a scenario:
   `load("withdraw_enabled", now=<tz-aware datetime>)` returns `reply(method, path, at_ms=...)` for
-  REST, `ws` for the private-WS script, `clock` for the anchored times and `egress_ip`.
+  REST (pass `body=`, the request's JSON body or `None` without one, so that a stub's `when` can
+  match it; left out, a stub with `when` raises `TypeError` instead of passing the call on), `ws`
+  for the private-WS script, `clock` for the anchored times and `egress_ip`.
   `overlays=["open_position_btcusdt_5x_sl"]` combines overlays with it, `switched=True` answers
   after a runtime switch (`stored_key_rejected`), and `load_rotation("rotation_ok", now=...)`
   returns the old and new key. Tests serve the replies to the adapter's own REST client through an
@@ -55,13 +57,23 @@ a **key scenario** (one key: `tester_inputs.key_id`), a **rotation pair** (`rota
   recorded: the echo service is not specified anywhere in the repository.
 - `rest` maps `"<METHOD> <path>"` (or `"*"`, every other call) to a reply: `payload` (a file in
   `_base/`, in the scenario directory or in the shared corpus `../bybit/<date>/rest/`), an optional
-  RFC 7396 `merge_patch`, `http_status` (default 200), `headers`, and an optional window
-  `from_ms`/`until_ms` in scenario time. **Lookup:** the scenario's own manifests along its
-  `extends` chain, nearest first, then the overlays in the order named, then the root `compliant`;
-  in each, the exact call before `*`. A fault the scenario sets therefore beats the state an
-  overlay seeds (`close_rejected` with an open position, `ws_drop_rest_fail`'s 503s), and seeded
-  state beats `compliant`'s defaults. A call nothing answers is a test failure, never a silent
-  success.
+  RFC 7396 `merge_patch`, `http_status` (default 200), `headers`, an optional window
+  `from_ms`/`until_ms` in scenario time and an optional request matcher `when` (next item).
+  **Lookup:** the scenario's own manifests along its `extends` chain, nearest first, then the
+  overlays in the order named, then the root `compliant`; in each, the exact call before `*`. A
+  stub outside its window, or whose `when` the request does not meet, is passed over: the next
+  entry in that order answers. A fault the scenario sets therefore beats the state an overlay
+  seeds (`close_rejected` with an open position, `ws_drop_rest_fail`'s 503s), and seeded state
+  beats `compliant`'s defaults. A call nothing answers, including one every stub for it passed
+  over, is a test failure (the resolver raises `UnstubbedCall`), never a silent success.
+- `when` is `{"body": {...}}`: a subset match on the request's JSON body. Each field it names is a
+  top-level body field, and its value a string or a boolean (v5 order bodies carry quantities and
+  prices as strings) that the body must hold with the same type and value, so `true` never
+  matches `"true"` or `1`. A field the body lacks never matches, nor does a request without a
+  JSON object body; fields it does not name are ignored. The pack checks refuse an empty `body`
+  and a matcher on a `GET` call, which carries no body. `close_rejected` rejects only a create
+  with `reduceOnly: true` (the flatten's close), so the reference order (plan §9.7) passes it over
+  and `compliant`'s ack answers.
 - `clock` sets times relative to the injected `now`: `server_offset_ms` (the stub exchange clock),
   `key_created_offset_ms` and `key_expires_offset_ms` (`null` = no expiry).
 - **Scenario time.** `from_ms`, `until_ms` and the timeline's `at_ms` count from the scenario
@@ -149,7 +161,7 @@ Unless the row says otherwise, a scenario extends `compliant` and the account is
 | `rotation_ok`                    | plan                                 | Pair: old `compliant`, new `compliant_alt`                                                                                                            | 201 202 203 205                                             |
 | `rotation_new_key_withdraw`      | plan                                 | Pair: old `compliant`, new `withdraw_enabled`                                                                                                         | 204                                                         |
 | `key_delete_5xx`                 | plan                                 | Account `90000011`; both key-delete calls answer 503 (a negative guard)                                                                               | 306                                                         |
-| `close_rejected`                 | plan                                 | Account `90000011`; order create rejected with `110017` (reduce-only)                                                                                 | 305                                                         |
+| `close_rejected`                 | plan                                 | Account `90000011`; a reduce-only order create (`when`) rejected with `110017`; other creates as `compliant`                                          | 305                                                         |
 | `leverage_ok`                    | plan                                 | Set-leverage answers `retCode` 0                                                                                                                      | 415 417 418                                                 |
 | `leverage_refused_open_position` | plan                                 | Set-leverage refused with `110013` (risk limit level)                                                                                                 | 416                                                         |
 | `open_position_btcusdt_5x_sl`    | overlay                              | One 0.001 BTCUSDT long at 5x with a native SL; mode switches refused (`110024`; margin mode `110073`, unconfirmed)                                    | 126 132 205 302-305 310 316 410 412 415-418 420             |
@@ -351,6 +363,8 @@ scenario of its own once the plan adds it.
   full clock, WS script and `egress_ip`; a `switch_to` names another key scenario without a switch;
 - a rotation pair names two key scenarios and carries no stubs or key id of its own;
 - an overlay carries REST stubs only: no key, account, clock, WS, egress, `*` or verdict;
+- a body matcher (`when`) names a field and is never on a `GET` call, and a stub with one never
+  counts as answering key info or the probe;
 - key ids follow the rule, with unique tails;
 - there are no orphan files, and no credential-named field holds a value;
 - **no bare key-shaped token** appears anywhere under `accounts/`.

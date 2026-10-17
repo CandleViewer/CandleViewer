@@ -82,7 +82,7 @@
       }
     },
     "rest": {
-      "description": "Stubbed REST calls keyed by '<METHOD> <path>'; '*' answers every call the scenario does not list. Lookup: this scenario's exact key, then its '*', then the extended scenario.",
+      "description": "Stubbed REST calls keyed by '<METHOD> <path>'; '*' answers every call the scenario does not list. Lookup: this scenario's exact key, then its '*', then the extended scenario; a stub whose 'when' the request does not meet is passed over (README).",
       "type": "object",
       "additionalProperties": false,
       "patternProperties": {
@@ -171,6 +171,19 @@
         },
         "from_ms": { "type": "integer", "minimum": 0 },
         "until_ms": { "type": "integer", "minimum": 1 },
+        "when": {
+          "description": "A request matcher (README): the stub answers only a request whose JSON body is an object holding every field 'body' names, at its top level, with the same type and value, so true never matches \"true\" or 1. A field the body lacks never matches, nor does a request without a JSON object body; fields 'body' does not name are ignored. A stub that does not match is passed over for the next one in lookup order. scripts/accounts-pack.mjs refuses an empty 'body' and a matcher on a GET call, which carries no body.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["body"],
+          "properties": {
+            "body": {
+              "description": "Top-level request body fields and the value each must have: a string or a boolean (v5 order bodies carry quantities and prices as strings).",
+              "type": "object",
+              "additionalProperties": { "type": ["string", "boolean"] }
+            }
+          }
+        },
         "code_unconfirmed": {
           "description": "The reply's retCode and retMsg could not be confirmed (README).",
           "const": true
