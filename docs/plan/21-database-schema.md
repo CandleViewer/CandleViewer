@@ -3306,6 +3306,8 @@ A restore drill into a scratch namespace runs **monthly** and is a PRR gate item
 - Revision id format: `NNNN_<slug>` (`0001_initial`, `0002_add_trade_groups`) so file order matches apply order.
 - Migrations run as `cv_owner`; the app role `cv_app` has no DDL privileges.
 - QuestDB DDL lives in `backend/db/questdb/NNNN_*.sql`, applied by a small idempotent runner keyed on a `_cv_migrations` table inside QuestDB. DuckDB views are recreated from source on every start (they hold no state).
+  - `_cv_migrations` is a WAL table: an `INSERT` is acknowledged once it is committed to the sequencer, but a `SELECT` sees it only after QuestDB's apply job has run. The record is the only idempotency guard (0003/0005 use a plain `ADD COLUMN`: `IF NOT EXISTS` is rejected on the pinned 8.1.1), so before it reads the record set the runner waits (async, bounded 30 s, backoff 20 ms doubling to 250 ms) until `wal_tables()` shows `writerTxn` has reached `sequencerTxn` (#3064). A stale read would re-run the newest file and fail with `column '…' already exists`.
+  - A suspended apply fails the wait at once and a stuck one at the bound, both as `StorageWalNotApplied` (`STORAGE_WAL_NOT_APPLIED`, `reason` = `suspended` / `timeout` / `unexpected_shape`), never as a stale read. Operator remedy for `suspended`: `ALTER TABLE _cv_migrations RESUME WAL` (`docs/ops/runbooks/recorder-rolloff.md`).
 
 ### 9.2 Layout
 

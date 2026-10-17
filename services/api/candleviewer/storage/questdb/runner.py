@@ -8,18 +8,26 @@ on a `_cv_migrations` table inside QuestDB." Run at boot by
 Also performs the column-drift guard: compares the live `tables()`/
 `table_columns()` listing against the parsed DDL files and raises
 `StorageSchemaDrift` rather than let a write path touch a mismatched shape.
+
+`_cv_migrations` is a WAL table, so `applied_migrations` waits for QuestDB's apply job
+(`wait_for_wal_apply`) before it reads: a stale read re-ran the newest file's DDL (#3064).
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
 
-from candleviewer.storage.errors import StorageSchemaDrift
+from candleviewer.storage.errors import (
+    StorageSchemaDrift,
+    StorageWalNotApplied,
+    WalNotAppliedReason,
+)
 from candleviewer.storage.questdb.ddl import TableDef, parse_ddl_dir
 from candleviewer.storage.sql_identifiers import checked_identifier
 
@@ -58,14 +66,116 @@ class QuestDbExecutor(Protocol):
     async def fetch(self, sql: str, *args: object) -> list[dict[str, object]]: ...
 
 
-async def applied_migrations(executor: QuestDbExecutor) -> set[str]:
-    """Filenames already recorded in `_cv_migrations`."""
+#: Wall clock for the whole wait, every poll included. Generous: the apply job is shared with every
+#: other WAL table (a recorder backlog, a bulk import), so a busy server must not read as a failure.
+WAL_APPLY_TIMEOUT_S = 30.0
+#: Poll backoff: doubles from 20 ms and caps at 250 ms (a healthy apply takes a few milliseconds).
+WAL_POLL_MIN_S = 0.02
+WAL_POLL_MAX_S = 0.25
+_TRUTHY = frozenset({"true", "t", "1"})
+
+# A fixed literal: the table name is a bind value, never interpolated into the statement.
+_SELECT_WAL_STATUS = "SELECT writerTxn, sequencerTxn, suspended FROM wal_tables() WHERE name = $1"
+
+
+def _txns_behind(row: dict[str, object]) -> int | None:
+    """Txns committed to the sequencer that the apply job has not applied yet (`None`: unreadable).
+
+    `sequencerTxn <= 0` means nothing was ever committed, so nothing can be pending whatever
+    `writerTxn` reports for an untouched table.
+    """
+    try:
+        writer, sequencer = int(str(row["writerTxn"])), int(str(row["sequencerTxn"]))
+    except (KeyError, ValueError):
+        return None
+    return max(0, sequencer - writer) if sequencer > 0 else 0
+
+
+def _wal_not_applied(
+    table: str, reason: WalNotAppliedReason, start: float, clock: Callable[[], float]
+) -> StorageWalNotApplied:
+    """One structured warning per failed wait (never per poll), then the typed error."""
+    waited = clock() - start
+    logger().warning(
+        "questdb_wal_not_applied", table=table, reason=reason, waited_s=round(waited, 3)
+    )
+    return StorageWalNotApplied(
+        f"questdb WAL apply of {table!r} did not catch up after {waited:.1f}s",
+        reason=reason,
+        table=table,
+        waited_s=waited,
+    )
+
+
+async def wait_for_wal_apply(
+    executor: QuestDbExecutor,
+    table: str,
+    *,
+    timeout_s: float = WAL_APPLY_TIMEOUT_S,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Return once QuestDB's WAL apply job has caught up with `table`'s sequencer.
+
+    A write to a WAL table is acknowledged once committed to the sequencer, and a SELECT sees it
+    only after the apply job ran: `wal_tables()` shows `writerTxn` below `sequencerTxn` until then.
+    A reader that must see an earlier write (the `_cv_migrations` record) waits here first. No
+    `wal_tables()` row means not a WAL table: nothing to wait for.
+
+    Bounded by `timeout_s` of wall clock, every poll included (a hung query too), with an
+    exponential backoff. Raises `StorageWalNotApplied`: `timeout` at the bound, `suspended` at once
+    (it never catches up; an operator must resume it), `unexpected_shape` at once when the row has
+    no readable txns (fail closed: guessing "caught up" would reopen the race). Cancellation
+    propagates.
+    """
+    start, delay = clock(), WAL_POLL_MIN_S
+    try:
+        async with asyncio.timeout(timeout_s) as bound:
+            while True:
+                rows = await executor.fetch(_SELECT_WAL_STATUS, table)
+                if not rows:
+                    return
+                behind = _txns_behind(rows[0])
+                if behind is None:
+                    raise _wal_not_applied(table, "unexpected_shape", start, clock)
+                if behind == 0:
+                    return
+                if str(rows[0].get("suspended")).lower() in _TRUTHY:
+                    raise _wal_not_applied(table, "suspended", start, clock)
+                if clock() - start >= timeout_s:
+                    raise _wal_not_applied(table, "timeout", start, clock)
+                await sleep(delay)
+                delay = min(delay * 2, WAL_POLL_MAX_S)
+    except TimeoutError:
+        # Only the bound's own expiry is a `timeout`; a TimeoutError raised by the driver inside a
+        # poll is a storage failure and keeps its cause.
+        if not bound.expired():
+            raise
+        raise _wal_not_applied(table, "timeout", start, clock) from None
+
+
+async def applied_migrations(
+    executor: QuestDbExecutor,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> set[str]:
+    """Filenames already recorded in `_cv_migrations`, read once the WAL apply has caught up.
+
+    A stale read missed the newest record: the second pass re-ran its file and the plain
+    `ADD COLUMN` failed with "column 'batch_index' already exists" (#3064).
+    """
     await executor.execute(_CREATE_MIGRATIONS_TABLE)
+    await wait_for_wal_apply(executor, _MIGRATIONS_TABLE, sleep=sleep)
     rows = await executor.fetch(_SELECT_APPLIED)
     return {str(row["filename"]) for row in rows}
 
 
-async def run_migrations(executor: QuestDbExecutor, ddl_dir: Path) -> list[str]:
+async def run_migrations(
+    executor: QuestDbExecutor,
+    ddl_dir: Path,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> list[str]:
     """Apply every `NNNN_*.sql` file not already recorded, in filename order.
 
     Returns the list of filenames newly applied this call (empty on a
@@ -73,8 +183,9 @@ async def run_migrations(executor: QuestDbExecutor, ddl_dir: Path) -> list[str]:
     statements are executed individually (`CREATE TABLE IF NOT EXISTS` makes
     per-statement idempotency redundant but harmless) and the file is
     recorded in `_cv_migrations` only after every statement in it succeeds.
+    `sleep` is the backoff between WAL-apply polls of the record read (injectable for tests).
     """
-    already = await applied_migrations(executor)
+    already = await applied_migrations(executor, sleep=sleep)
     newly_applied: list[str] = []
     # `Path.glob` on a small local `backend/db/questdb/` directory at boot is
     # not a hot-path blocking call in the C-2.18 sense; kept sync for
