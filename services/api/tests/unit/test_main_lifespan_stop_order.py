@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import structlog
 from fastapi import FastAPI
 
 from candleviewer.main import _lifespan
@@ -38,10 +39,11 @@ _MODULES = (
 
 
 class _Stops:
-    """Every fake appends its name here when it stops."""
+    """Every fake appends its name to `order` when it stops, and to `started` when it starts."""
 
     def __init__(self) -> None:
         self.order: list[str] = []
+        self.started: list[str] = []
 
 
 class _Module:
@@ -49,7 +51,7 @@ class _Module:
         self.name, self.stops = name, stops
 
     async def start(self, ctx: object) -> None:
-        return None
+        self.stops.started.append(f"module:{self.name}")
 
     async def stop(self, grace_s: float) -> None:
         self.stops.order.append(f"module:{self.name}")
@@ -62,7 +64,7 @@ class _Task:
         self.name, self.stops = name, stops
 
     def start(self) -> None:
-        return None
+        self.stops.started.append(self.name)
 
     async def stop(self) -> None:
         self.stops.order.append(self.name)
@@ -120,6 +122,7 @@ def _app(stops: _Stops) -> FastAPI:
         "ws_runtime",
         "health_registry",
         "scrub_task",
+        "audit_verify_job",
         "rule_prune_task",
         "funding_refresh_task",
         "alert_purge_task",
@@ -145,3 +148,31 @@ async def test_lifespan_stops_the_ws_gateway_before_anything_else() -> None:
     # Everything else did stop, after it: every runtime, task, pool and supervised module.
     assert {"health_registry", "bars_runtime", "health_pg", "mesh_self_check"} <= set(stops.order)
     assert {f"module:{name}" for name in _MODULES} <= set(stops.order)
+
+
+async def test_lifespan_starts_the_audit_verify_job_once_after_the_audit_module() -> None:
+    """#2111: a run writes its records through the audit writer, which `start_all` brings up."""
+    stops = _Stops()
+    async with _lifespan(_app(stops)):
+        assert stops.started.index("module:audit") < stops.started.index("audit_verify_job")
+        assert stops.started.count("audit_verify_job") == 1
+
+
+async def test_lifespan_stops_the_audit_verify_job_before_the_audit_module() -> None:
+    """#2111: a verify run writes its records through the audit writer, so it ends first."""
+    stops = _Stops()
+    with structlog.testing.capture_logs() as logs:
+        async with _lifespan(_app(stops)):
+            pass
+    assert stops.order.index("audit_verify_job") < stops.order.index("module:audit")
+    assert "audit.verify_job_not_wired" not in [e["event"] for e in logs]  # a job is wired
+
+
+async def test_lifespan_logs_at_boot_that_no_audit_verify_job_is_wired() -> None:
+    """#2111: an audit chain that nothing verifies is visible in the boot log."""
+    app = _app(_Stops())
+    app.state.audit_verify_job = None
+    with structlog.testing.capture_logs() as logs:
+        async with _lifespan(app):
+            pass
+    assert {"event": "audit.verify_job_not_wired", "log_level": "warning"} in logs

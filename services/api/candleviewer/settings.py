@@ -321,6 +321,14 @@ class Settings(BaseSettings):
     # this timeout instead of hanging startup indefinitely (ADR-0013 rule 9).
     migration_lock_timeout_s: float = Field(default=300.0, gt=0.0)
 
+    # #2111 (E09-X04 R-5): the start-up and nightly audit chain verify job, `cv-audit-verify`
+    # (24-internal-schemas.md section 15.4): the UTC hour of the daily run, and the deadline of
+    # one run, at most 6 h (past it the run stops: recorded as stopped, never a success).
+    audit_verify_nightly_hour_utc: int = Field(default=4, ge=0, le=23)
+    audit_verify_nightly_deadline_s: float = Field(
+        default=1800.0, gt=0.0, le=21600.0, allow_inf_nan=False
+    )
+
     # E09-T02: `audit.emit` durably buffers to an on-disk WAL before writing
     # to `audit_log` (F8 — survives a Postgres outage), and the daily
     # checkpoint job appends the head hash to a file outside the database

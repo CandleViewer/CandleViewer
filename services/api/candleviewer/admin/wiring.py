@@ -19,6 +19,9 @@ from typing import Any
 from candleviewer.audit.models import Severity
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
+from candleviewer.audit.verify_job import AuditVerifyJob
+from candleviewer.audit.verify_runner import VerifyRunner
+from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
     CredentialBorrower,
     CredentialStore,
@@ -31,6 +34,7 @@ from candleviewer.secrets import (
     export_secrets_metrics,
     mint_borrower,
 )
+from candleviewer.settings import Settings
 
 #: What `AppContext.secrets` holds: lifecycle + health only (C-3.2). `admin` is injected
 #: `SecretsMeta`; M4 is injected the one `CredentialBorrower` minted here.
@@ -49,16 +53,20 @@ class SecretsBundle:
 
 __all__ = [
     "AuditHandle",
+    "AuditVerifyRunner",
     "SecretsBundle",
     "SecretsHandle",
     "SecretsMeta",
     "audit_writer_sink",
     "build_audit_service",
+    "build_audit_verify_job",
     "build_secrets_service",
     "export_secrets_metrics",
     "secrets_audit_sink",
 ]
 AuditHandle = AuditService
+#: The scheduled verify run's port (#2111), so `app` can type an injected runner.
+AuditVerifyRunner = VerifyRunner
 
 
 def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], Awaitable[None]]:
@@ -72,9 +80,11 @@ def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], A
             actor_user_id=fields.get("actor_user_id"),
             object_kind="api_key" if "key_id" in fields else "kek",
             object_id=fields.get("key_id"),
-            severity=Severity.ERROR
-            if action in ("security.kek_load_failed", "security.kek_rotation_failed")
-            else Severity.INFO,
+            severity=(
+                Severity.ERROR
+                if action in ("security.kek_load_failed", "security.kek_rotation_failed")
+                else Severity.INFO
+            ),
             after_state=dict(fields),
         )
 
@@ -105,6 +115,22 @@ def build_audit_service(repository: AuditRepository | None = None) -> AuditHandl
     #1658) `start()` wires the real WAL-backed `AuditWriter`; without one it
     stays the scaffold."""
     return AuditService(repository)
+
+
+def build_audit_verify_job(
+    audit: AuditService, settings: Settings, metrics: Metrics, runner: VerifyRunner | None
+) -> AuditVerifyJob | None:
+    """The start-up and nightly verify job (#2111), or `None` while no runner is wired (nothing
+    runs or pages). No I/O; the lifespan starts it once the audit module is up."""
+    if runner is None:
+        return None
+    return AuditVerifyJob(
+        runner,
+        lambda: audit.query.verify_slot,
+        metrics,
+        hour_utc=settings.audit_verify_nightly_hour_utc,
+        deadline_s=settings.audit_verify_nightly_deadline_s,
+    )
 
 
 def _before(data: dict[str, str]) -> dict[str, Any] | None:
