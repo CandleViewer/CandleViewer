@@ -1,6 +1,7 @@
 """E17-T08 `machines.{entity}.state` (`23-ws-protocol.md` §6.4): the entity grammar, the per-entity
-refusal with no existence oracle, the bounded registry that answers `sub`, entity-scoped matching
-and the §9.5 re-check on the stored scope. No network, no clock reads, no sleeps."""
+refusal with no existence oracle, the bounded registry that answers `sub` and fans each publish
+out, its metrics, entity-scoped matching and the §9.5 re-check on the stored scope. No network, no
+clock reads, no sleeps."""
 
 from __future__ import annotations
 
@@ -14,16 +15,18 @@ from typing import Any
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.permissions import VersionedSnapshot
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.topics import MACHINE_KINDS, EntityScope, TopicError, machine_refusal
 from candleviewer.ws.topics import parse_topic as parse
-from tests.unit.ws._seq_support import Conn, Source, principal
+from tests.unit.ws._seq_support import Clock, Conn, Source, principal
 
 A, B = uuid.UUID(int=0xA), uuid.UUID(int=0xB)
 OID, OTHER = "0a000000-0000-4000-8000-000000000001", "0a000000-0000-4000-8000-000000000002"
@@ -164,12 +167,27 @@ _SCOPE_MESSAGE = "None of the requested accounts are in scope."  # §6.2, whatev
 
 
 def _world(**kw: Any) -> tuple[Conn, MachineStateRegistry, SequencingHub]:
-    """A manager granted account A, whose `sub` is authorised and snapped from the registry."""
-    registry, hub, conn = MachineStateRegistry(**kw), SequencingHub(), Conn(Source())
+    """A manager granted account A, whose `sub` is authorised and snapped from the registry; a
+    registry publish fans out through the hub."""
+    hub, conn = SequencingHub(), Conn(Source())
+    registry = MachineStateRegistry(hub=hub, **kw)
+    _attach(conn, registry, hub)
+    return conn, registry, hub
+
+
+def _attach(conn: Conn, registry: MachineStateRegistry, hub: SequencingHub) -> None:
     services = conn.authz.services
     services.machines = services.snapshots = conn.emitter.source = registry
     hub.register(conn.authz, conn.emitter)
-    return conn, registry, hub
+
+
+def _count(metric: str, kind: str = "order") -> float:
+    return REGISTRY.get_sample_value(metric, {"entity_kind": kind}) or 0.0
+
+
+def _line(event: str, level: str) -> dict[str, str]:
+    """A log line holds its event, level and `entity_kind` alone: no id, no payload (C-12.6)."""
+    return {"event": event, "log_level": level, "entity_kind": "order"}
 
 
 def test_sub_is_snapped_from_the_registry() -> None:
@@ -182,14 +200,88 @@ def test_sub_is_snapped_from_the_registry() -> None:
     assert (snap["s"], snap["meta"]["reason"], snap["p"]["state"]) == (1, "initial", "submitted")
 
 
-def test_a_delta_reaches_the_subscriber_of_its_entity() -> None:
-    conn, registry, hub = _world()
+def test_a_registry_publish_reaches_the_subscriber_of_its_entity() -> None:
+    conn, registry, _ = _world()
     order = MachineEntity("order", OID, ON_A)
     registry.publish(order, _payload())
     conn.sub(order.ch)
-    assert hub.publish(order.ch, _payload(state="filled")) == 1
+    assert registry.publish(order, _payload(state="filled"))
     d = conn.take()[-1]
     assert (d["t"], d["s"], d["p"]["state"]) == ("d", 2, "filled")
+
+
+def test_the_first_publish_wakes_a_pending_subscription() -> None:
+    conn, registry, _ = _world()
+    conn.sub("machines.kill_switch.state")
+    registry.publish(MachineEntity("kill_switch"), _payload("kill_switch", "clear"))
+    (snap,) = conn.take()
+    assert (snap["t"], snap["s"], snap["meta"]["reason"]) == ("snap", 1, "initial")
+
+
+def test_a_wake_leaves_a_backpressure_held_subscription_alone() -> None:
+    conn, registry, _ = _world()
+    _, sub = conn.sub("machines.kill_switch.state")  # pending: no entry yet
+    sub.pending_reason = "backpressure"  # the ladder's hold: only its `drain` sends (#2831)
+    registry.publish(MachineEntity("kill_switch"), _payload("kill_switch", "clear"))
+    assert conn.take() == [] and sub.snapshot_pending
+
+
+def test_a_published_payload_is_copied_whole() -> None:
+    conn, registry, _ = _world()
+    order, payload = MachineEntity("order", OID, ON_A), _payload()
+    registry.publish(order, payload)
+    payload["tags"].append("terminal")  # the producer reuses its dict
+    conn.sub(order.ch)
+    assert conn.take()[0]["p"] == _payload()
+    registry.publish(order, payload)  # the `d` is queued, not yet written
+    payload["tags"].append("again")  # so the hub must hold the stored copy, not the producer's dict
+    assert conn.take()[0]["p"]["tags"] == ["terminal"]
+
+
+def test_a_payload_that_cannot_be_copied_leaves_no_entry() -> None:
+    registry, order = MachineStateRegistry(), MachineEntity("order", OID, ON_A)
+    with pytest.raises(TypeError):  # a generator has no deep copy: a publisher bug
+        registry.publish(order, {**_payload(), "feed": (n for n in ())})
+    assert len(registry) == 0 and registry.scope(order.ch) is None
+
+
+def test_a_publish_counts_once_however_many_subscribe() -> None:
+    conn, registry, hub = _world()
+    second = Conn(Source())
+    _attach(second, registry, hub)
+    switch = MachineEntity("kill_switch")  # not the `order` the helper defaults to
+    registry.publish(switch, _payload("kill_switch"))
+    conn.sub(switch.ch)
+    second.sub(switch.ch)
+    before = _count("cv_machine_ws_publish_total", "kill_switch")
+    registry.publish(switch, _payload("kill_switch", "tripped"))
+    assert _count("cv_machine_ws_publish_total", "kill_switch") - before == 1
+    assert [f["t"] for f in conn.take() + second.take()] == ["snap", "d", "snap", "d"]
+
+
+def test_a_scoped_entry_without_a_scope_is_counted_at_every_publish() -> None:
+    registry = MachineStateRegistry()
+    before = _count("cv_machine_ws_scope_missing_total")
+    registry.publish(MachineEntity("order", OID), _payload())
+    registry.publish(MachineEntity("order", OID, ON_A), _payload())  # the first scope stays
+    registry.publish(MachineEntity("kill_switch"), _payload("kill_switch"))  # unscoped kind
+    assert _count("cv_machine_ws_scope_missing_total") - before == 2
+    alerts = _count("cv_machine_ws_scope_missing_total", "alert")  # a user kind needs its user
+    registry.publish(MachineEntity("alert", OID, EntityScope(user=A)), _payload("alert"))
+    registry.publish(MachineEntity("alert", OTHER), _payload("alert"))
+    assert _count("cv_machine_ws_scope_missing_total", "alert") - alerts == 1
+
+
+def test_a_scoped_entry_without_a_scope_logs_a_warning() -> None:
+    with capture_logs() as logs:
+        MachineStateRegistry().publish(MachineEntity("order", OID), _payload())
+    assert logs == [_line("machine state without a scope: refused to every role", "warning")]
+
+
+def test_the_metric_bound_is_the_closed_kind_set() -> None:
+    specs = [s for s in CATALOGUE if s.name.startswith("cv_machine_ws_")]
+    assert len(specs) == 3
+    assert {(s.labels, s.max_series) for s in specs} == {(("entity_kind",), len(MACHINE_KINDS))}
 
 
 def test_unscoped_kind_without_an_entry_stays_pending() -> None:
@@ -201,12 +293,40 @@ def test_unscoped_kind_without_an_entry_stays_pending() -> None:
 def test_registry_bound_refuses_a_new_entity() -> None:
     conn, registry, _ = _world(max_entries=1)
     one, two = MachineEntity("order", OID, ON_A), MachineEntity("order", OTHER, ON_A)
-    with capture_logs() as logs:
-        assert registry.publish(one, _payload()) and not registry.publish(two, _payload())
-    assert [(e["event"], e["entity_kind"]) for e in logs] == [
-        ("machine state refused: registry full", "order")
-    ]
+    assert registry.publish(one, _payload()) and not registry.publish(two, _payload())
     assert conn.authz.admit(two.ch)[0]["error"]["code"] == "account_scope_denied"
+
+
+def test_a_refusal_at_the_bound_is_counted_and_not_recorded() -> None:
+    registry, kind = MachineStateRegistry(max_entries=0), "kill_switch"
+    full, recorded = (
+        _count(f"cv_machine_ws_{m}_total", kind) for m in ("registry_full", "publish")
+    )
+    registry.publish(MachineEntity(kind), _payload(kind))
+    assert _count("cv_machine_ws_registry_full_total", kind) - full == 1
+    assert _count("cv_machine_ws_publish_total", kind) == recorded
+
+
+def test_a_refusal_at_the_bound_logs_at_most_once_a_minute() -> None:
+    clock = Clock()
+    registry = MachineStateRegistry(max_entries=0, clock=clock)
+    with capture_logs() as logs:
+        for at in (0.0, 59.9, 60.0):
+            clock.now = at
+            registry.publish(MachineEntity("order", OID, ON_A), _payload())
+    assert logs == [_line("machine state refused: registry full", "error")] * 2
+
+
+def test_each_event_of_a_kind_logs_once_a_minute() -> None:
+    """The rate limit is per (event, kind): a scope change never hides a registry-full error."""
+    registry = MachineStateRegistry(max_entries=1, clock=Clock())
+    with capture_logs() as logs:
+        for ident, scope in ((OID, ON_A), (OTHER, ON_A), (OID, ON_B)):  # new, full, scope change
+            registry.publish(MachineEntity("order", ident, scope), _payload())
+    assert logs == [
+        _line("machine state refused: registry full", "error"),
+        _line("machine scope change ignored", "warning"),
+    ]
 
 
 def test_registry_bound_keeps_updating_the_others() -> None:
@@ -231,6 +351,14 @@ def test_scope_is_bound_by_the_first_payload() -> None:
     registry.publish(MachineEntity("order", OID, ON_A), _payload())
     registry.publish(MachineEntity("order", OID, ON_B), _payload(state="filled"))
     assert registry.scope(f"machines.order:{OID}.state") == ON_A
+
+
+def test_a_scope_change_is_logged() -> None:
+    registry = MachineStateRegistry()
+    with capture_logs() as logs:
+        registry.publish(MachineEntity("order", OID, ON_A), _payload())
+        registry.publish(MachineEntity("order", OID, ON_B), _payload(state="filled"))
+    assert logs == [_line("machine scope change ignored", "warning")]
 
 
 def test_sub_refuses_exchange_account_ids() -> None:
@@ -292,6 +420,14 @@ def test_demoted_owner_loses_the_pending_decision_kinds_with_permission_revoked(
         (e.ch, "permission_revoked") for e in pending
     }
     assert conn.authz.find(order.ch) is not None
+
+
+def test_a_publish_wakes_no_principal_swapped_out_of_the_kind() -> None:
+    conn, registry, _ = _world()
+    conn.sub("machines.kill_switch.state")  # pending: no entry yet
+    conn.authz.principal = BARE  # §9.5 swaps the principal in before it removes anything
+    registry.publish(MachineEntity("kill_switch"), _payload("kill_switch", "clear"))
+    assert conn.take() == []
 
 
 def test_no_delta_reaches_a_principal_swapped_out_of_the_entity() -> None:

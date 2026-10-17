@@ -1168,15 +1168,17 @@ def create_app(
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
     # (pending stubs until #2195-#2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
-    # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them.
-    machine_states = MachineStateRegistry()
+    # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
+    # publish fans out through the sequencing hub, waking a pending subscription.
+    ws_sequencing = SequencingHub()
+    machine_states = MachineStateRegistry(hub=ws_sequencing)
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
         audit=_LazyAuditEmitter(ctx.audit),
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
         snapshots=default_snapshot_router({"machines": machine_states}),
-        sequencing=SequencingHub(),
+        sequencing=ws_sequencing,
         bars_off=not resolved.bars_enabled,
         machines=machine_states,
     )

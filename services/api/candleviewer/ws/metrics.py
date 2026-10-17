@@ -299,7 +299,8 @@ cv_ws_frame_bytes = FastHistogram(
     label_values=[(k,) for k in FRAME_KINDS],
 )
 
-#: Every `cv_ws_*` series the ws package owns (module-level, re-exported on the app registry).
+#: Every series the ws package owns (module-level, re-exported on the app registry): the `cv_ws_*`
+#: ones and the 23 section 6.4 `cv_machine_ws_*` ones (`machines.py`).
 CV_WS_NAMES: Final[frozenset[str]] = frozenset(
     {
         "cv_ws_connections_in_use",
@@ -323,6 +324,9 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_frame_bytes",
         "cv_ws_overflow_total",
         "cv_ws_malformed_updates_total",
+        "cv_machine_ws_publish_total",
+        "cv_machine_ws_scope_missing_total",
+        "cv_machine_ws_registry_full_total",
     }
 )
 
@@ -361,9 +365,15 @@ FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()
 
 
 def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
-    """Serve every `cv_ws_*` series on `registry` (the scraped one) with `env`."""
-    # The owning modules declare their series at import; import them so all 21 families exist.
-    from candleviewer.ws import permissions, revocation, sequencing, upstream  # noqa: F401
+    """Serve every `CV_WS_NAMES` series on `registry` (the scraped one) with `env`."""
+    # The owning modules declare their series at import; import them so every family exists.
+    from candleviewer.ws import (  # noqa: F401
+        machines,
+        permissions,
+        revocation,
+        sequencing,
+        upstream,
+    )
 
     return ReexportCollector(registry, names=CV_WS_NAMES, const_labels={"env": env})
 
