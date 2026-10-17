@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from candleviewer.api.rules_actor import SessionRulesActorResolver
+from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.auth.models import SessionRecord
 from candleviewer.rules.manager import InMemoryRuleStore, RulesManager
@@ -42,11 +42,14 @@ class _TouchingSessions(_Sessions):
 
 async def _armable(w: _World, count: int = 1) -> tuple[list[str], list[str]]:
     """Mount `/rules` on the harness app and create `count` live-scoped rules, simulated and
-    ready to arm. Returns their ids and the rules audit trail."""
+    ready to arm. Returns their ids and the rules audit trail. The manager's records go to the
+    harness writer, as `make_rules_audit` wires them in the app: the one the step-up writes to."""
     trail: list[str] = []
+    to_writer = make_rules_audit(w.audit)
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
         trail.append(action)
+        await to_writer(action, payload)
 
     async def broadcast(payload: dict[str, Any]) -> None:
         return None

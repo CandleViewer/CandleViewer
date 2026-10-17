@@ -70,6 +70,16 @@ def test_canonical_json_matches_the_rfc_8785_example() -> None:
     assert canonical_json(json.loads(source)) == expected.encode()
 
 
+@pytest.mark.parametrize(
+    ("char", "short"),
+    [("\b", "\\b"), ("\t", "\\t"), ("\f", "\\f"), ("\r", "\\r")],
+    ids=["backspace", "tab", "form-feed", "carriage-return"],
+)
+def test_canonical_json_writes_the_short_escape_never_the_u_escape(char: str, short: str) -> None:
+    """RFC 8785 §3.2.2.2: these four control characters have a short form, not `\\u000X`."""
+    assert canonical_json(char) == f'"{short}"'.encode()
+
+
 def test_canonical_json_sorts_members_by_utf16_code_units() -> None:
     """RFC 8785 §3.2.3: U+1F600 (a surrogate pair) sorts before U+FB33, unlike code points."""
     names = ["\u20ac", "\r", "\ufb33", "1", "\U0001f600", "\u0080", "\u00f6"]

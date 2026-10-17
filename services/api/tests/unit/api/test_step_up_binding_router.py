@@ -25,8 +25,9 @@ def _fingerprint(body: dict[str, Any], target: bytes = b"/trading/kill-switch") 
 
 
 async def test_held_request_executes_once_after_its_bound_step_up() -> None:
-    """Re-sent unchanged with the same key, the held request is a first submission: it executes
-    once and is never answered from an idempotency store; a second re-send is challenged."""
+    """Re-sent unchanged with the same key, the held request executes once; a second re-send is
+    challenged. The harness keeps no idempotency store: that a refusal binds no key is the route
+    slice's test over every `x-idempotency: required` route."""
     w = await _world()
     challenge_id = w.send(_RELEASE).json()["challenge_id"]
     ok = w.step_up(challenge_id=challenge_id)
@@ -38,7 +39,7 @@ async def test_held_request_executes_once_after_its_bound_step_up() -> None:
     assert granted["object_id"] == challenge_id
     assert granted["after_state"]["bound_request_sha256"] == _fingerprint(_RELEASE)
     resent = w.send(_RELEASE)
-    assert resent.status_code == 200 and "idempotency-replayed" not in resent.headers
+    assert resent.status_code == 200
     again = w.send(_RELEASE)
     assert again.status_code == 403 and again.json()["challenge_id"] != challenge_id
     assert len(w.executed) == 1 and len(w.of("auth.step_up_required")) == 2

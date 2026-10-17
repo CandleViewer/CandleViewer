@@ -13,11 +13,14 @@ class passes only with the one-shot grant bound to that request (#2304).
 `make_read_only_guard` is the middleware refusing every write during the
 5-minute downgrade. A step-up that cannot answer its challenge is audited
 `auth.step_up_failed` (DENIED, the refusal rule as reason) within a
-per-session budget; no factor is checked or counted.
+per-session budget; no factor is checked or counted. That record, the reset's and
+`auth.step_up_mismatch` are written ahead of their answer, within `AUDIT_TIMEOUT_S`:
+a writer that is down or slow makes the answer `503 audit_unavailable`, never the 400, 403 or 200.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import uuid
@@ -34,8 +37,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
-from candleviewer.api.csrf import ANON_REFUSAL_WINDOW_S, SESSION_REFUSALS_PER_WINDOW
+from candleviewer.api.csrf import (
+    ANON_REFUSAL_WINDOW_S,
+    AUDIT_TIMEOUT_S,
+    SESSION_REFUSALS_PER_WINDOW,
+)
 from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
@@ -61,6 +69,7 @@ from candleviewer.auth.step_up import (
 )
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.redaction import redact_text
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _PROBLEM = "application/problem+json"
 #: `403 step_up_required`'s title and detail on every route that issues a challenge (#2304): the
@@ -77,6 +86,13 @@ SESSION_READ_ONLY_TITLE = "Session is read-only"
 SESSION_READ_ONLY_DETAIL = (
     "Too many invalid step-up codes; this session is read-only for 5 minutes."
 )
+#: `503 audit_unavailable` where the record an answer is written ahead of cannot be written
+#: (C-2.9): the catalogued code and title (`x-error-codes`), also for `api.rules_actor`.
+AUDIT_UNAVAILABLE_CODE = ErrorCode.AUDIT_UNAVAILABLE.value
+AUDIT_UNAVAILABLE_TITLE = ERROR_META[ErrorCode.AUDIT_UNAVAILABLE].title
+AUDIT_UNAVAILABLE_DETAIL = "audit unavailable"
+#: What `AuditService.writer` raises before `start()`; any other `RuntimeError` is a defect.
+_AUDIT_NOT_STARTED = "AuditService.start() has not wired"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
     "challenge_required": "A step-up for this action class must send the challenge_id.",
@@ -90,8 +106,8 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
 
 
-class _AuditRefused(Exception):
-    """The reset's write-ahead audit record could not be written; nothing was changed."""
+class AuditRefused(Exception):
+    """A write-ahead audit record could not be written in time; nothing was changed."""
 
 
 def _log() -> Any:
@@ -105,7 +121,7 @@ class _StepUpBody(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     code: str = Field(pattern=r"^[0-9]{6}$")
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=512)  # as `LoginRequest.password`
     challenge_id: uuid.UUID | None = None
     #: Checked against the closed class set by `StepUpService` (`UnknownActionClass`).
     action_class: str | None = None
@@ -156,6 +172,29 @@ def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> J
     )
 
 
+def _audit_unavailable() -> JSONResponse:
+    return _problem(503, AUDIT_UNAVAILABLE_CODE, AUDIT_UNAVAILABLE_TITLE, AUDIT_UNAVAILABLE_DETAIL)
+
+
+async def _ahead(record: Awaitable[None]) -> None:
+    """Await the audit record an answer depends on, ahead of the answer (C-2.9): `AuditRefused`
+    when the writer is down or not started, or takes longer than `AUDIT_TIMEOUT_S`, so the
+    request fails closed and a stalled WAL cannot hold it. `AuditWriter.emit` is safe to cancel
+    at the bound (#2250). A defect is not an outage and propagates (a 500, never a retryable
+    503): an `UnknownAuditAction` (a call site names an action the registry lacks) and a
+    `RuntimeError` other than "audit not started"."""
+    try:
+        async with asyncio.timeout(AUDIT_TIMEOUT_S):
+            await record
+    except (AuditError, RuntimeError, TimeoutError) as exc:
+        if isinstance(exc, UnknownAuditAction) or (
+            isinstance(exc, RuntimeError) and not str(exc).startswith(_AUDIT_NOT_STARTED)
+        ):
+            raise
+        _log().error("auth.step_up_audit_refused", error=type(exc).__name__)
+        raise AuditRefused from exc
+
+
 def _bearer(request: Request) -> str | None:
     scheme, _, value = request.headers.get("authorization", "").partition(" ")
     return value.strip() or None if scheme.lower() == "bearer" else None
@@ -190,13 +229,23 @@ def _challenge_refused(field: str, rule: str) -> JSONResponse:
 
 
 def _invalid_body(exc: ValidationError) -> JSONResponse:
-    """The body is not `authStepUp`'s schema: a missing or empty `password` is 422 (contract), a
-    malformed `challenge_id` the `format` refusal, anything else 400. Decided before any factor
-    is checked; no input value is echoed."""
+    """The body is not `authStepUp`'s schema: a missing, empty or over-long `password` is 422
+    (contract), a malformed `challenge_id` the `format` refusal (its fixed message: the UUID
+    parser's quotes a character of the input), anything else 400. Decided before any factor is
+    checked. Nothing the client sent is echoed: a member the schema does not declare is
+    reported as `body`, never by name."""
     errors = exc.errors(include_url=False, include_context=False, include_input=False)
-    fields = [str(err["loc"][0]) if err["loc"] else "body" for err in errors]
+    declared = _StepUpBody.model_fields
+    fields = [
+        str(err["loc"][0]) if err["loc"] and err["loc"][0] in declared else "body" for err in errors
+    ]
     if "password" in fields:
-        return _problem(422, "validation_failed", "Unprocessable entity", "password is required")
+        long = any(
+            field == "password" and err["type"] == "string_too_long"
+            for field, err in zip(fields, errors, strict=True)
+        )
+        detail = "password is too long" if long else "password is required"
+        return _problem(422, "validation_failed", "Unprocessable entity", detail)
     if "challenge_id" in fields:
         return _challenge_refused("challenge_id", "format")
     return _problem(
@@ -238,23 +287,29 @@ async def consume_bound_grant(
 ) -> StepUpChallenge | None:
     """No-grace gate (#2304): None when the grant bound to `fingerprint` was used, else the
     challenge issued for this request. A grant bound to another request is left in place and
-    the mismatch is audited first (write-ahead, C-2.9): no emitter means no answer."""
+    the mismatch is audited first (write-ahead, C-2.9, `AuditRefused` when it cannot be): no
+    emitter means no answer."""
     try:
         await step_up.consume_single_use(session_id, action_class, fingerprint=fingerprint)
     except StepUpMismatch as exc:
         if emitter is None:
             raise RuntimeError("auth.step_up_mismatch: no audit emitter wired") from exc
-        await emitter.emit(
-            "auth.step_up_mismatch",
-            actor_label=exc.user_id,
-            actor_user_id=exc.user_id,
-            session_id=session_id,
-            object_kind="step_up_challenge",
-            object_id=exc.challenge_id,
-            outcome=AuditOutcome.DENIED,
-            severity=Severity.WARNING,
-            reason=action_class,
-            after_state={"bound_request_sha256": exc.bound, "refused_request_sha256": fingerprint},
+        await _ahead(
+            emitter.emit(
+                "auth.step_up_mismatch",
+                actor_label=exc.user_id,
+                actor_user_id=exc.user_id,
+                session_id=session_id,
+                object_kind="step_up_challenge",
+                object_id=exc.challenge_id,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=action_class,
+                after_state={
+                    "bound_request_sha256": exc.bound,
+                    "refused_request_sha256": fingerprint,
+                },
+            )
         )
     except StepUpRequired:
         pass
@@ -299,6 +354,8 @@ async def require_elevation_for(
         return readonly_problem(exc)
     except SessionRevoked:
         return _unauthenticated()
+    except AuditRefused:  # the mismatch record could not be written ahead: no answer, no challenge
+        return _audit_unavailable()
     except UnknownActionClass:
         # The route demanded a class the service does not register: a defect to fix, not a user
         # error. One line for the operator; the class is a server-side constant, never a secret.
@@ -346,14 +403,6 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
     ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess
     ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
-    # restoreBackup (no-grace): this guard spends the one-shot grant before RBAC and before the
-    # handler validates, so a refused restore costs the code and a retry waits for the next TOTP
-    # step. The handler must not gate again (a second check always fails); its ticket may instead
-    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation.
-    # `consume_single_use` spends the grant with one conditional UPDATE (#2895), so concurrent
-    # restores cannot share one code. Before it is mounted, the restore's write-ahead audit
-    # record must name the step-up (B16 records no spend: #2799).
-    ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
     ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
     ("PUT", re.compile(r"^/recording/symbols/[^/]+/pin$"), "recorder"),  # pinRecordedSymbol
@@ -371,6 +420,14 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # E16-T06: irreversible purge. The handler checks RBAC, then owner-only (capability 9a),
     # THEN step-up, so a non-owner gets the audited `purge_owner_only`, not a step-up prompt.
     ("POST", "/admin/recorder/purge", "recorder"),
+    # restoreBackup (04 §7.2.2 row 52, #2751), no-grace and irreversible. A no-grace grant is
+    # bound to the request its handler validated (#2304), which a path alone cannot name, so a
+    # path-gated no-grace class fails closed: the handler gates it after RBAC and validation, with
+    # `require_elevation_for(..., fingerprint=request_fingerprint(...), emitter=...)`. Not mounted
+    # yet: its ticket drops it from the registry test's `_PENDING_HANDLER_GATES` and adds the
+    # handler test. Before it is mounted, the restore's write-ahead audit record must name the
+    # step-up (B16 records no spend: #2799).
+    ("POST", "/admin/backups/{backupId}/restore", "backups"),
     # #2738 (SR-025, 04 §7.2.2 rows 8, 9 and 9a). Not mounted yet: the E16-T08 (#492) PR that
     # mounts them must drop them from the registry test's `_PENDING_HANDLER_GATES` (it fails
     # while a listed route is mounted), add the handler test, and demand `recorder` elevation
@@ -503,20 +560,23 @@ def make_step_up_router(
 
     async def _refused(record: SessionRecord, rule: str, challenge_id: uuid.UUID | None) -> None:
         """Audit a step-up that cannot answer its challenge (C-12.8), before its 400: the rule
-        and the presented `challenge_id`, never a factor or a body."""
+        and the presented `challenge_id`, never a factor or a body. A record that cannot be
+        written ahead of the answer is `AuditRefused`: the answer is 503, never the 400."""
         key = f"sid:{record.id}"
         if refusals.is_blocked(key):  # over budget: still refused, not audited
             _log().warning("auth.step_up_refused.unaudited", rule=rule)
             return
         refusals.record_failure(key)
-        await _audit(
-            "auth.step_up_failed",
-            record,
-            outcome=AuditOutcome.DENIED,
-            severity=Severity.WARNING,
-            reason=rule,
-            object_kind="step_up_challenge",
-            object_id=None if challenge_id is None else str(challenge_id),
+        await _ahead(
+            _audit(
+                "auth.step_up_failed",
+                record,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=rule,
+                object_kind="step_up_challenge",
+                object_id=None if challenge_id is None else str(challenge_id),
+            )
         )
 
     @router.post("/auth/step-up")
@@ -545,7 +605,10 @@ def make_step_up_router(
                 challenge_id=body.challenge_id,
             )
         except StepUpChallengeRefused as exc:  # decided before any factor is checked
-            await _refused(record, exc.rule, body.challenge_id)
+            try:
+                await _refused(record, exc.rule, body.challenge_id)
+            except AuditRefused:
+                return _audit_unavailable()
             return _challenge_refused(exc.field, exc.rule)
         except SessionRevoked:
             return _unauthenticated()
@@ -676,13 +739,13 @@ def make_step_up_router(
                     requires_acknowledge_unknown_positions=True,
                 )
         if not audit_ready():
-            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
+            return _audit_unavailable()
 
         async def write_ahead(methods: int, sessions: int, /) -> None:
             """C-2.9 (#2510): awaited by `reset_totp` before its first revoke, with the
             counts it is about to revoke (the reset cannot be undone)."""
-            try:
-                await _audit(
+            await _ahead(
+                _audit(
                     "auth.mfa_reset_by_owner",
                     record,
                     severity=Severity.CRITICAL,
@@ -690,8 +753,7 @@ def make_step_up_router(
                     object_id=str(user_id),
                     after_state={"methods_revoked": methods, "sessions_revoked": sessions},
                 )
-            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
-                raise _AuditRefused from exc
+            )
 
         try:
             result = await auth.step_up.reset_totp(
@@ -702,14 +764,16 @@ def make_step_up_router(
             )
         except SelfResetRefused:
             return _problem(403, "forbidden", "Forbidden", "owners cannot reset their own TOTP")
+        except SessionReadOnly as exc:  # downgraded after the gate, as `require_elevation_for`
+            return readonly_problem(exc)
         except StepUpRequired:  # the grace window lapsed after the gate: a new challenge
             try:
                 challenge = await auth.step_up.record_pending(str(record.id), "users")
             except SessionRevoked:  # the session ended in that window: nothing to challenge
                 return _unauthenticated()
             return required_problem(challenge)
-        except _AuditRefused:
-            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
+        except AuditRefused:
+            return _audit_unavailable()
         # Reveals nothing: no secret, recovery code or position data.
         return JSONResponse(
             {

@@ -167,12 +167,39 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
 
    Both kinds of step-up trouble are audited as `auth.step_up_failed`; `outcome` tells them apart
    (#2304). A wrong password or code (or a locked account) is outcome `failure`, reason
-   `users:remaining=<n>`, and counts a strike. A step-up refused before any factor is checked
-   (`400 validation_failed`, for example a `challenge_id` that is stale or unknown) is outcome
-   `denied`, object kind `step_up_challenge`, with the rule as reason (`challenge_expired`,
-   `challenge_required`, `challenge_mismatch` or `required`); it counts no strike and moves no
-   metric. To see only factor failures:
+   `users:remaining=<n>`, and counts a strike. A step-up that the service refuses before any
+   factor is checked (`400 validation_failed`, for example a `challenge_id` that is stale or
+   unknown) is outcome `denied`, object kind `step_up_challenge`, with the rule as reason
+   (`challenge_expired`, `challenge_required`, `challenge_mismatch` or `required`); it counts no
+   strike and moves no metric. A body outside the request schema and an unknown `action_class`
+   are also `400` but write no record. A record the audit writer cannot take within 2 s makes the
+   answer `503 audit_unavailable`, not the `400`: nothing changed, so repeat the request once audit
+   recovers. Each such `503` logs one error line, `auth.step_up_audit_refused`, with only the error
+   class (`AuditUnavailable`, `AuditWriterStopped`, `RuntimeError` for a writer not started yet, or
+   `TimeoutError`). To see only factor failures:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.step_up_failed&outcome=failure"`.
+
+   **`auth.step_up_mismatch`** (outcome `denied`, severity `warning`) means a one-shot grant
+   (`live_enablement`, `killswitch`, `backups`) was presented with a request other than the one it
+   is bound to (another body, path or query). The answer was `403 step_up_required` with a new
+   challenge, and the grant was not used up. Find it with
+   `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.step_up_mismatch"`:
+   `actor_user_id` is the session's user and `subject_id` the challenge the grant answered (the id
+   on that user's `auth.step_up_required` and `auth.step_up_granted` rows). The action class and
+   both request fingerprints (never a body, password or code) are on the stored record only. One
+   row right after a step-up is most often a client that changed the request before re-sending it:
+   nothing ran, so the user repeats the action and steps up for the new challenge. Rows the user
+   did not cause, or several for one session, mean something in the session sent a request the
+   user never approved: nothing executed, but treat the session as exposed and have the user sign
+   out everywhere (`POST $API/auth/logout` with `{"all_sessions": true}`). An Owner cannot revoke
+   another user's sessions today (§4); the reset below does, but locks the user out (step 4).
+
+   A live arm (`PUT /rules/{ruleId}/mode`) whose mismatch record cannot be written is the same
+   `503`, counted in `rule_mode_transitions_total{result="audit_unavailable"}`. The route also
+   audits its own refusal as `rule.mode_refused`, within 2 s; when that record cannot be written
+   either, the `503` is still answered and the error line `rules.mode_refusal_unrecorded` (rule id
+   and error class) is the only trace. A rise of either signal means the audit writer cannot take
+   records.
 
 3. Reset:
 

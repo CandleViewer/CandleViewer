@@ -26,7 +26,7 @@ from candleviewer.api.step_up import (
     dangerous_action_class,
 )
 from candleviewer.app import create_app
-from candleviewer.auth.step_up import ACTION_CLASSES
+from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
 
 _WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 #: Dangerous-looking writes that are deliberately not step-up gated.
@@ -196,7 +196,6 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("DELETE", "/users/u", "users"),  # deleteUser (04 row 38)
         ("PUT", "/users/u/account-access", "users"),  # setUserAccountAccess (04 row 40)
         ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
-        ("POST", "/admin/backups/b/restore", "backups"),  # restoreBackup (04 row 52)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
         ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
     ],
@@ -234,6 +233,23 @@ def test_invites_router_write_routes_are_gated() -> None:
     assert missing == []
 
 
+def test_no_path_gated_row_names_a_no_grace_class() -> None:
+    """A no-grace grant binds the request its handler validated (#2304), which a path cannot
+    name: the guard fails closed on such a class, so a row naming one nothing can pass."""
+    path_gated = {action_class for _method, _pattern, action_class in DANGEROUS_ROUTES}
+    assert path_gated & NO_GRACE_ACTION_CLASSES == set()
+
+
+def test_restore_backup_is_handler_gated_because_its_grant_binds_one_request() -> None:
+    """04 §7.2.2 row 52 (#2751): `backups` is no-grace, so only the handler that validated the
+    restore can gate it (the guard of #2813 spent the grant before the body was validated)."""
+    path = "/admin/backups/{backupId}/restore"
+    assert DANGEROUS_PATH_PATTERN.match(path)
+    assert dangerous_action_class("POST", _concrete(path)) is None
+    assert ("POST", path, "backups") in HANDLER_GATED_ROUTES
+    assert "backups" in NO_GRACE_ACTION_CLASSES and not _ungated("POST", path)
+
+
 def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
     """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check."""
     assert dangerous_action_class("POST", "/admin/recorder/purge") is None
@@ -268,8 +284,10 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 
 #: Handler-gated rows whose handler is not mounted yet (#2738): declarations nothing enforces.
 #: The E16-T08 (#492) PR that mounts one removes it here and adds the handler test proving its
-#: body- or query-aware `recorder` branch, and that the rest of the route passes.
+#: body- or query-aware `recorder` branch, and that the rest of the route passes; the restore
+#: ticket (`restoreBackup`) adds the test that its handler gates the request it validated.
 _PENDING_HANDLER_GATES = {
+    ("POST", "/admin/backups/{backupId}/restore"),
     ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),

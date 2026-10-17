@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from dataclasses import replace
@@ -11,6 +12,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.rules import manager as rules_manager
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
 from candleviewer.rules.vocabulary import default_registry
@@ -466,3 +468,24 @@ async def test_arm_gated_on_simulation_count_then_succeeds() -> None:
     assert e.value.status == 422 and e.value.code == "promotion_gate"
     await m.consume_evaluation(_res(rid, True))
     assert (await m.set_mode(rid, "armed", OWNER, "k-a2"))["mode"] == "armed"
+
+
+async def _stalled(action: str, payload: dict[str, Any]) -> None:
+    """Never answers: a bound of 0 s ends it at its first yield; unbounded, it fails the test."""
+    for _ in range(100):
+        await asyncio.sleep(0)
+    raise AssertionError("the record was not bounded")
+
+
+async def test_refusal_whose_record_never_arrives_raises_within_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a `503 audit_unavailable` stands without its record (route test:
+    `test_step_up_route_hardening`); any other refusal waits at most the bound for it."""
+    m, _, _ = _mgr()
+    rid = (await m.create(_ir(), OWNER))["id"]
+    await m.set_mode(rid, "simulate", OWNER, "k-sim")  # no simulation yet: arming is refused 422
+    m.set_hooks(audit=_stalled)
+    monkeypatch.setattr(rules_manager, "REFUSAL_AUDIT_TIMEOUT_S", 0.0)
+    with pytest.raises(TimeoutError):
+        await m.set_mode(rid, "armed", OWNER, "k-arm")
