@@ -80,7 +80,7 @@ jobs:
       # E35-T01 follow-up: the committed rule IR JSON Schema
       # (candleviewer/rules/ir/rule-ir.json) is generated from the pydantic
       # models; a model change without regenerating it must fail CI. Lives in
-      # this lane (not `_job-gen.yml`) because the generator needs the synced
+      # this lane (not pr.yml's `gen` step) because the generator needs the synced
       # backend environment, and every IR model edit is under services/api/**.
       - name: Rule IR JSON Schema drift check (E35-T01)
         run: uv run python scripts/generate_rule_ir_schema.py --check

@@ -120,7 +120,8 @@ rules are enforced server-side by CI and cannot be weakened by `--no-verify`.
 `make gen` and commit the resulting diff under `packages/protocol` — never hand-edit
 `packages/protocol/src/generated/**`.
 
-The `gen` job (`.github/workflows/_job-gen.yml`) is an always-on required check. If it fails:
+The `gen` gate (the last `gates` step in `.github/workflows/pr.yml`) is an always-on required check.
+If it fails:
 
 1. **`CI-GEN-003` (codegen is not deterministic)** — the generator itself is flaky; this is a bug in
    `packages/protocol/scripts/*`, not something you can fix by regenerating again. Reproduce locally

@@ -1,6 +1,7 @@
 """#3076: ten gates are steps of one `gates` job, each judged under its old `ci-required` lane
 (#2988 semantics); `architecture` mirrors `py` from pr.yml; PRs skip `xstate-sync-parity`.
-#3104: `xstate-contract` is an eleventh step, running the one script the nightly runs too."""
+#3104: `xstate-contract` is an eleventh step, running the one script the nightly runs too, and
+`gen` the twelfth, last of all: its full install runs the PR's build scripts."""
 
 from __future__ import annotations
 
@@ -26,8 +27,9 @@ GATES: dict[str, int | str] = {
     **dict.fromkeys(["statechart-lint", "event-coverage", "machine-hash-lock"], VAR),
     "xstate-pin-attestation": 10,
     "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at 59bec409
+    "gen": 5,  # #3104: _job-gen.yml:27 at 4a0d7694
 }
-OTHER_LANES = ["changed-paths", "gen", "js", "py", "rule-roundtrip", "contract"]
+OTHER_LANES = ["changed-paths", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
 # The blocking statechart contract run, defined once (#3104); it starts with `uv sync`.
 SCRIPT = "tools/statechart/run_xstate_contract.sh"
@@ -105,7 +107,7 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
     installers = [i for i, text in enumerate(texts) if any(word in text for word in INSTALLERS)]
     readers = [i for i, s in enumerate(steps) if s.get("id") in GATES and i not in installers]
     assert len(readers) == 8 and min(installers) > max(readers)
-    assert steps[-2]["id"] == "commitlint"
+    assert [step.get("id") for step in steps[-3:-1]] == ["commitlint", "gen"]
     verdict = steps[-1]
     assert verdict["if"] == "${{ !cancelled() }}"
     assert verdict["env"] == {"OUTCOMES": "${{ toJSON(steps) }}"}
@@ -114,6 +116,24 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
     assert not any("failure()" in text or "actions/cache@" in text for text in texts)
     nodes = [s for s in steps if "setup-node@" in s.get("uses", "")]
     assert nodes and all("cache" not in s["with"] for s in nodes)
+
+
+def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
+    steps = JOBS["gates"]["steps"]
+    lines = [line.strip() for line in steps[-2]["run"].splitlines()]
+    # _job-gen.yml at 4a0d7694: the full install (commitlint's is `--filter .`), then PyYAML at its
+    # pin in a fresh venv, so `pnpm generate`'s python3 sees nothing an earlier gate installed into
+    # setup-python's 3.13 (pytest, pypi-attestations). The failure summary is the step's own.
+    order = ["pnpm install --frozen-lockfile", 'python -m venv "$RUNNER_TEMP/gen-venv"']
+    order += ['export PATH="$RUNNER_TEMP/gen-venv/bin:$PATH"']
+    order += ["python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"]
+    order += ["python tools/ci/check_gen_freshness.py || {", '} >> "$GITHUB_STEP_SUMMARY"']
+    order += ["exit 1"]
+    assert [line for line in lines if line in order] == order
+    (python,) = [s for s in steps if "actions/setup-python@" in s.get("uses", "")]
+    assert python["with"] == {"python-version": "3.13"}  # the old job's; no step activates a venv
+    assert not [s for s in steps if "activate-environment" in (s.get("with") or {})]
+    assert not (ROOT / ".github" / "workflows" / "_job-gen.yml").exists()
 
 
 def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
@@ -140,6 +160,9 @@ GATE_FAILED = {"needs.gates.outputs.licence-header": "failure", "needs.gates.res
 # #3104's live proof: a failing contract test fails only its step, so `gates` and that lane.
 XSTATE_FAILED = {"needs.gates.outputs.xstate-contract": "failure", "needs.gates.result": "failure"}
 XSTATE_RED = {FAIL % ("xstate-contract", "failure"), FAIL % ("gates", "failure")}
+# PR3's live proof: generation writes a file the commit lacks (CI-GEN-002); only `gen` fails.
+GEN_FAILED = {"needs.gates.outputs.gen": "failure", "needs.gates.result": "failure"}
+GEN_RED = {FAIL % ("gen", "failure"), FAIL % ("gates", "failure")}
 
 
 @pytest.mark.parametrize(
@@ -154,9 +177,10 @@ XSTATE_RED = {FAIL % ("xstate-contract", "failure"), FAIL % ("gates", "failure")
         ({"py"}, {"needs.architecture.result": "skipped"}, set()),
         (set(), XSTATE_FAILED, XSTATE_RED),
         ({"py"}, {"needs.gates.outputs.xstate-contract": "skipped"}, set()),
+        (set(), GEN_FAILED, GEN_RED),
     ],
     ids=["green", "failed", "filtered", "misconfigured", "never-ran", "arch-failed", "arch-no-py"]
-    + ["xstate-failed", "xstate-no-py"],
+    + ["xstate-failed", "xstate-no-py", "gen-failed"],
 )
 def test_resolver_step_judges_each_gate_as_its_old_job(
     off: set[str], context: dict[str, str], expected: set[str]
@@ -202,8 +226,8 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
     ("change", "count"),
     # On 33887603: 8 / 31 / 32 / 51; after #3076: 4 / 22 / 22 / 41. #3104 folds four security
     # scans into one job and bandit into semgrep's (4 / 18 / 18 / 37), then runs xstate-contract
-    # in `gates`; the second PR's own run (py+infra+docs) is 17.
-    [("docs", 4), ("py", 17), ("py,infra", 17), ("all", 36)],
+    # in `gates` (4 / 17 / 17 / 36), then `gen` (3 / 16 / 16 / 35); the third PR's own run is 16.
+    [("docs", 3), ("py", 16), ("py,infra", 16), ("all", 35)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

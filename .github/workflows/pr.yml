@@ -183,6 +183,7 @@ jobs:
       machine-hash-lock: ${{ steps.machine-hash-lock.outcome }}
       xstate-contract: ${{ steps.xstate-contract.outcome }}
       commitlint: ${{ steps.commitlint.outcome }}
+      gen: ${{ steps.gen.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -302,6 +303,38 @@ jobs:
           corepack prepare pnpm@12.5.1 --activate
           pnpm install --frozen-lockfile --filter . --prod=false
           pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+      # E03-T05: generated-code freshness (ADR-0013 rule 3), last: its full install runs the PR's
+      # build scripts. Clean as its old job: no pnpm or turbo cache, and no earlier step writes a
+      # generated path. Its venv keeps `pnpm generate` on a bare 3.13 + PyYAML (py gates install
+      # pytest and pypi-attestations into setup-python's interpreter).
+      - name: gen (E03-T05; tools/ci/check_gen_freshness.py, CI-GEN-001..004)
+        id: gen
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@12.5.1 --activate
+          pnpm install --frozen-lockfile
+          python -m venv "$RUNNER_TEMP/gen-venv"
+          export PATH="$RUNNER_TEMP/gen-venv/bin:$PATH"
+          python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML
+          python tools/ci/check_gen_freshness.py || {
+            {
+              echo "### Generated-code freshness gate failed"
+              echo ""
+              echo "Reproduce locally:"
+              echo '```'
+              echo "make gen"
+              echo "git diff -- packages/protocol"
+              echo "git status --porcelain -- packages/protocol"
+              echo '```'
+              echo ""
+              echo "See the \`gen\` step log of the \`gates\` job for the CI-GEN-* code and diff."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
       # `ci-required` reads each gate's own outcome; this keeps the gates job's own result honest.
       - name: Verdict (every gate succeeded or was skipped)
         if: ${{ !cancelled() }}
@@ -316,12 +349,6 @@ jobs:
               summary.writelines(f"| {gate} | {outcome} |\n" for gate, outcome in outcomes.items())
           failed = [gate for gate, outcome in outcomes.items() if outcome not in ("success", "skipped")]
           raise SystemExit(f"gates not successful: {', '.join(failed)}" if failed else 0)
-
-  gen:
-    name: gen
-    # E03-T05: generated-code freshness gate is always-on (ADR-0013 rule 3) —
-    # the contract sources can change from any lane, not just `protocol`.
-    uses: ./.github/workflows/_job-gen.yml
 
   # --- Path-filtered lanes ---------------------------------------------------
   # Each callee is a `workflow_call` stub in this Task (echoes a placeholder
@@ -445,7 +472,6 @@ jobs:
     needs:
       - changed-paths
       - gates
-      - gen
       - js
       - py
       - architecture
@@ -486,7 +512,7 @@ jobs:
           RESULT_CHANGELOG_FRAGMENT: ${{ needs.gates.outputs.changelog-fragment }}
           RESULT_LICENCE_HEADER: ${{ needs.gates.outputs.licence-header }}
           RESULT_DOCS_LINK_CHECK: ${{ needs.gates.outputs.docs-link-check }}
-          RESULT_GEN: ${{ needs.gen.result }}
+          RESULT_GEN: ${{ needs.gates.outputs.gen }}
           RESULT_JS: ${{ needs.js.result }}
           RESULT_PY: ${{ needs.py.result }}
           RESULT_ARCHITECTURE: ${{ needs.architecture.result }}
