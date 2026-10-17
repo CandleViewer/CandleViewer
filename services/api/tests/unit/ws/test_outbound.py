@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import msgpack
 import pytest
 
+from candleviewer.ws.binary import encode_b64
+from candleviewer.ws.codec import encode_server_frame
+from candleviewer.ws.cvwb_vectors import vector_frames
 from candleviewer.ws.metrics import cv_ws_overflow_total
 from candleviewer.ws.outbound import (
     DRAIN_PCT,
@@ -19,6 +23,9 @@ from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import SnapshotBody
 from tests.unit.ws._seq_support import ACC_A, Book, Conn, Source, validate
+
+RS = "bb000000-0000-4000-8000-000000000001"
+BTC, ETH, TRADES = ("book.BTCUSDT.50", None), ("book.ETHUSDT.50", None), ("trades.BTCUSDT", None)
 
 
 def _frame(t: str, ch: str | None = None, **p: Any) -> dict[str, Any]:
@@ -79,7 +86,7 @@ def _bid(symbol: str, price: str) -> dict[str, Any]:
 def _drain(queue: OutboundQueue) -> list[dict[str, Any]]:
     out = []
     while (frame := queue.pop()) is not None:
-        out.append(json.loads(frame.text))
+        out.append(json.loads(frame.payload))
     return out
 
 
@@ -88,16 +95,19 @@ def _drain(queue: OutboundQueue) -> list[dict[str, Any]]:
 
 def test_outbound_encode_classifies_lanes_and_droppable_frames() -> None:
     assert encode(_frame("d", "book.BTCUSDT.50")) == Queued(
-        '{"t":"d","p":{},"ch":"book.BTCUSDT.50"}', False, "book", "book.BTCUSDT.50"
+        '{"t":"d","p":{},"ch":"book.BTCUSDT.50"}', False, "book", BTC
     )
-    assert encode(_frame("snap", "trades.BTCUSDT")).topic == "trades.BTCUSDT"
+    assert encode(_frame("snap", "trades.BTCUSDT")).key == TRADES
+    replay = encode(_frame("d", "book.BTCUSDT.50") | {"rs": RS})
+    assert (replay.key, replay.droppable) == (("book.BTCUSDT.50", RS), True)  # D13
     orders = encode(_frame("d", "orders"))
-    assert (orders.priority, orders.family, orders.topic) == (True, "orders", None)
+    assert (orders.priority, orders.family, orders.key) == (True, "orders", ("orders", None))
+    assert not orders.droppable  # a priority-lane data frame keeps its key, never dropped
     assert encode(_frame("d", "system")).priority
     assert encode(_frame("ping")).priority
     assert encode(_frame("pong")).priority
     sub_ok = encode(_frame("sub_ok", "book.BTCUSDT.50"))
-    assert (sub_ok.priority, sub_ok.topic) == (False, None)  # control frames are never dropped
+    assert (sub_ok.priority, sub_ok.key) == (False, None)  # control frames are never dropped
     assert encode(_frame("err")).family is None
 
 
@@ -119,12 +129,12 @@ def test_outbound_resnap_stays_queued_until_its_last_chunk_leaves() -> None:
         queue.push(chunk)
     queue.push(encode(_frame("snap", "book.ETHUSDT.50") | meta))
     assert queue.pop() == chunks[0]
-    assert queue.resnap_queued("book.BTCUSDT.50")
+    assert queue.resnap_queued(BTC)
     assert queue.pop() == chunks[1]
-    assert not queue.resnap_queued("book.BTCUSDT.50")
-    assert queue.resnap_queued("book.ETHUSDT.50")
-    queue.drop({"book.ETHUSDT.50"})
-    assert not queue.resnap_queued("book.ETHUSDT.50")
+    assert not queue.resnap_queued(BTC)
+    assert queue.resnap_queued(ETH)
+    queue.drop({ETH})
+    assert not queue.resnap_queued(ETH)
 
 
 def test_outbound_priority_lane_drains_first_and_bytes_are_exact() -> None:
@@ -133,19 +143,19 @@ def test_outbound_priority_lane_drains_first_and_bytes_are_exact() -> None:
     frames.append(encode(_frame("ping")))
     for frame in frames:
         queue.push(frame)
-    assert queue.bytes == sum(len(f.text) for f in frames)
+    assert queue.bytes == sum(f.size for f in frames)
     assert [queue.pop() for _ in range(3)] == [frames[1], frames[2], frames[0]]
     assert queue.pop() is None
     assert queue.bytes == 0
 
 
-def test_outbound_topic_bytes_count_only_droppable_frames() -> None:
+def test_outbound_key_bytes_count_only_droppable_frames() -> None:
     queue = OutboundQueue()
     book = encode(_frame("d", "book.BTCUSDT.50", pad="x" * 30))
     queue.push(book)
     queue.push(encode(_frame("sub_ok", "book.BTCUSDT.50")))
     queue.push(encode(_frame("d", "orders")))
-    assert queue.topic_bytes() == {"book.BTCUSDT.50": len(book.text)}
+    assert queue.key_bytes() == {BTC: book.size}
 
 
 def test_outbound_encode_refuses_a_non_finite_number() -> None:
@@ -157,7 +167,8 @@ def test_outbound_budget_counts_utf8_bytes_of_non_ascii_text() -> None:
     queue = OutboundQueue()
     frame = encode(_frame("d", "book.BTCUSDT.50", note="prix élevé €"))
     queue.push(frame)
-    assert queue.bytes == len(frame.text.encode("utf-8"))  # what the writer actually sends
+    assert isinstance(frame.payload, str)
+    assert queue.bytes == len(frame.payload.encode("utf-8"))  # what the writer actually sends
 
 
 def test_outbound_ready_event_tracks_emptiness() -> None:
@@ -186,10 +197,69 @@ def test_outbound_drop_removes_only_droppable_frames_of_the_topics() -> None:
     queue.push(encode(_frame("d", "book.BTCUSDT.50", n=1)))
     queue.push(kept[1])
     queue.push(encode(_frame("d", "book.BTCUSDT.50", n=2)))
-    assert queue.drop({"book.BTCUSDT.50"}) == 2
-    assert queue.topic_bytes().keys() == {"trades.BTCUSDT"}
-    assert queue.bytes == sum(len(f.text) for f in kept)
+    assert queue.drop({BTC}) == 2
+    assert queue.key_bytes().keys() == {TRADES}
+    assert queue.bytes == sum(f.size for f in kept)
     assert [queue.pop(), queue.pop()] == kept
+
+
+def test_outbound_encode_counts_the_msgpack_bytes_it_will_send() -> None:
+    """#2887: on `cv.v1.msgpack` a frame is encoded once as MessagePack, its CVWB payload raw
+    (`e: "b"`, §3.2), and counted at that length; it rides the lanes as on JSON."""
+    part = dict(vector_frames())["trades"]
+    frame = {"t": "d", "ch": "trades.BTCUSDT", "s": 1, "ts": 1, "e": "b64", "p": encode_b64(part)}
+    packed = encode(frame, encode_server_frame)
+    assert packed.payload == encode_server_frame(frame)
+    assert msgpack.unpackb(packed.payload)["e"] == "b"
+    assert packed.size == len(packed.payload) < encode(frame).size  # raw bytes, not base64 text
+    assert (packed.priority, packed.family, packed.key) == (False, "trades", TRADES)
+    queue = OutboundQueue()
+    queue.push(packed)
+    assert queue.bytes == len(packed.payload) and queue.key_bytes() == {TRADES: packed.size}
+
+
+def test_outbound_encode_carries_the_fanout_stamp() -> None:
+    assert encode(_frame("d", "book.BTCUSDT.50"), received=12.5).received == 12.5
+    assert encode(_frame("d", "book.BTCUSDT.50")).received is None
+
+
+def test_outbound_drop_keeps_a_replay_key_apart_from_its_live_key() -> None:
+    """D13: dropping the live subscription's frames leaves the replay session's frames of the same
+    `ch` queued (AC-28)."""
+    queue = OutboundQueue()
+    live = encode(_frame("d", "book.BTCUSDT.50"))
+    replay = encode(_frame("d", "book.BTCUSDT.50") | {"rs": RS})
+    queue.push(live)
+    queue.push(replay)
+    assert queue.drop({BTC}) == 1
+    assert queue.key_bytes() == {("book.BTCUSDT.50", RS): replay.size}
+    assert queue.pop() == replay
+
+
+def test_outbound_drop_never_touches_the_priority_lane() -> None:
+    queue = OutboundQueue()
+    queue.push(encode(_frame("d", "orders")))
+    assert queue.drop({("orders", None)}) == 0
+    assert len(queue) == 1
+
+
+def test_outbound_clear_discards_the_normal_lane_or_every_lane_exactly() -> None:
+    queue = OutboundQueue()
+    queue.push(encode(_frame("snap", "book.BTCUSDT.50") | {"meta": {"reason": "backpressure"}}))
+    queue.push(encode(_frame("sub_ok")))
+    kept = encode(_frame("d", "system", n=1))
+    queue.push(kept)
+    assert queue.clear(normal_only=True) == 2
+    assert (len(queue), queue.bytes, queue.key_bytes()) == (1, kept.size, {})
+    assert not queue.resnap_queued(BTC) and queue.ready.is_set()
+    assert queue.clear() == 1
+    assert (len(queue), queue.bytes, queue.ready.is_set()) == (0, 0, False)
+
+
+def test_outbound_wake_sets_ready_with_nothing_queued() -> None:
+    queue = OutboundQueue()
+    queue.wake()
+    assert queue.ready.is_set() and queue.pop() is None
 
 
 # -- the ladder (§8.4) ----------------------------------------------------------------------------
@@ -243,7 +313,7 @@ def test_backpressure_undroppable_backlog_closes_after_the_drop_naming_costs() -
         LadderEvent("drop", ("book.BTCUSDT.50",)),
         LadderEvent("close", ("book.BTCUSDT.50",), "budget"),
     ]
-    assert all(json.loads(f.text)["ch"] == "orders" for f in list(queue._priority))
+    assert all(json.loads(f.payload)["ch"] == "orders" for f in list(queue._priority))
     assert not orders.snapshot_pending  # never dropped
 
 
@@ -352,7 +422,7 @@ def test_backpressure_drops_frames_of_pending_and_unsubscribed_topics() -> None:
     book.snapshot_pending = True  # e.g. a client resync is under way
     events = Backpressure(queue, pacer).check([book, other])
     assert events == [LadderEvent("drop", ("book.ETHUSDT.50",))]
-    assert queue.topic_bytes() == {}
+    assert queue.key_bytes() == {}
     assert pacer.resnapshot_required == {other.sub_id: other}  # the pending one is not re-marked
 
 
@@ -370,6 +440,23 @@ def test_backpressure_close_hint_counts_pending_state() -> None:
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([book, other, orders])
     assert events[-1] == LadderEvent("close", ("book.BTCUSDT.50", "book.ETHUSDT.50"), "budget")
+
+
+def test_backpressure_close_hint_sums_a_topics_live_and_replay_frames_once() -> None:
+    """D13: frames are keyed by (`ch`, replay session); the `bye` hint names topics, so a live and
+    a replay subscription of one `ch` count together and the topic is named once."""
+    conn, pacer, queue, _ = _setup(max_frames=3)
+    orders = _orders(conn)
+    live = encode(_frame("d", "trades.BTCUSDT", pad="x"))
+    replay = encode(_frame("d", "trades.BTCUSDT", pad="x") | {"rs": RS})
+    eth = encode(_frame("d", "trades.ETHUSDT", pad="x" * 60))
+    assert max(live.size, replay.size) < eth.size < live.size + replay.size
+    for frame in (live, replay, eth):
+        queue.push(frame)
+    for _ in range(4):
+        pacer.offer(orders, {"orders": []})
+    events = Backpressure(queue, pacer).check([orders])
+    assert events == [LadderEvent("close", ("trades.BTCUSDT", "trades.ETHUSDT"), "budget")]
 
 
 def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> None:
@@ -426,7 +513,7 @@ def test_backpressure_busy_topic_whose_snapshot_was_sent_never_closes(drained: b
         conn.clock.now += 1.0
         pacer.offer(book, _bid("BTCUSDT", str(100 + i)))  # queued behind the snap
         snap = queue.pop()
-        assert snap is not None and json.loads(snap.text)["t"] == "snap"  # the writer sends it
+        assert snap is not None and json.loads(snap.payload)["t"] == "snap"  # the writer sends it
         if drained:
             assert ladder.drain() == []
         for j in range(4):  # the topic stays busy until the queue is over budget again
