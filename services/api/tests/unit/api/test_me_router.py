@@ -9,20 +9,23 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import jsonschema
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from structlog.testing import capture_logs
 
+import candleviewer.app as appmod
 from candleviewer.api import me
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpChallenge
-from candleviewer.settings import Environment
+from candleviewer.settings import Environment, Settings
 from tests.openapi_helpers import deref
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -36,11 +39,17 @@ _ACCOUNT = "00000000-0000-4000-8000-00000000000a"
 
 
 def _assert_problem(resp: Any, status: int, code: str) -> dict[str, Any]:
-    """A contract `Problem` (RFC 9457) with the stable `code`, nothing else of the caller."""
+    """A `Problem` (RFC 9457) with the stable `code`, nothing else of the caller, and the answer
+    the contract declares for `status` on the operation `resp` came from (C-6.2): an undeclared
+    status fails here, and so does a body its declared response does not describe."""
     assert resp.status_code == status, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
+    path = resp.request.url.path.removeprefix("/api/v1")
+    declared = _SPEC["paths"][path]["get"]["responses"]
+    assert str(status) in declared, f"{path} answers {status}, which the contract does not declare"
     body: dict[str, Any] = resp.json()
-    jsonschema.validate(body, deref(_SPEC, {"$ref": "#/components/schemas/Problem"}))
+    schema = deref(_SPEC, declared[str(status)])["content"]["application/problem+json"]["schema"]
+    jsonschema.validate(body, schema)
     assert body["code"] == code
     return body
 
@@ -189,6 +198,32 @@ async def test_get_for_a_user_the_identity_store_no_longer_has_is_401(env: _Env,
     user_id, headers, _ = await env.sign_in()
     del env.identity.users[user_id]
     _assert_problem(env.client.get(path, headers=headers), 401, "unauthenticated")
+
+
+@pytest.mark.parametrize("permissions", [None, []], ids=["default_permissions", "no_permissions"])
+@pytest.mark.parametrize("roles", [["auditor"], ["viewer", "auditor"], ["owner", "superuser"]])
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_get_for_a_user_holding_a_role_outside_the_closed_set_is_the_same_401(
+    env: _Env, path: str, roles: list[str], permissions: list[str] | None
+) -> None:
+    """The snapshot and rules-actor resolvers build a `PrincipalSnapshot`, which refuses a role
+    outside the closed set, and answer no principal (401). One unknown role refuses the whole
+    principal, whatever else it holds: the answer must not depend on which roles come with it,
+    and it must be the anonymous body. The refusal also comes before the permission check: with no
+    permission at all (the default set holds `settings:read`) the two settings routes still answer
+    the 401, not the `403 forbidden` that names what the caller lacks."""
+    _, headers, _ = await env.sign_in(roles=roles, permissions=permissions)
+    refused = _assert_problem(env.client.get(path, headers=headers), 401, "unauthenticated")
+    assert refused == env.client.get(path).json()
+
+
+@pytest.mark.parametrize("role", _SPEC["components"]["schemas"]["RoleName"]["enum"])
+async def test_every_role_the_contract_names_is_served(env: _Env, role: str) -> None:
+    """The closed set the gate admits is the contract's `RoleName`: a role added there must be
+    served here, not refused as unknown."""
+    _, headers, _ = await env.sign_in(roles=[role])
+    resp = env.client.get(_ME, headers=headers)
+    assert resp.status_code == 200 and resp.json()["role"] == role
 
 
 async def test_a_request_is_activity_that_extends_the_idle_deadline(env: _Env) -> None:
@@ -377,13 +412,16 @@ async def test_me_elevated_until_is_null_when_no_grace_window_is_live(env: _Env)
     assert session["elevated_until"] is None
 
 
-async def test_me_serves_an_address_the_contract_email_format_would_refuse(env: _Env) -> None:
+async def test_me_serves_the_owner_address_on_a_special_use_domain(env: _Env) -> None:
     """`users.email` is only `position('@' in email) > 1` and the owner's address is operator
-    input (`CV_BOOTSTRAP_OWNER_EMAIL`), so `owner@candleviewer.local` is real data. Refusing it
-    would make `/me`, and with it the whole shell, a 500."""
+    input (`CV_BOOTSTRAP_OWNER_EMAIL`), so `owner@candleviewer.local` is real data, and the
+    contract's `User.email` accepts it. Refusing it would make `/me`, and with it the whole
+    shell, a 500."""
     _, headers, _ = await env.sign_in(roles=["owner"], email="owner@candleviewer.local")
     resp = env.client.get(_ME, headers=headers)
-    assert resp.status_code == 200 and resp.json()["user"]["email"] == "owner@candleviewer.local"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user"]["email"] == "owner@candleviewer.local"
+    jsonschema.validate(resp.json(), deref(_SPEC, {"$ref": "#/components/schemas/Me"}))
 
 
 async def test_me_carries_no_secret_field_even_when_the_store_returns_one(env: _Env) -> None:
@@ -468,6 +506,74 @@ async def test_routes_answer_503_while_the_session_backend_is_not_active(
     _assert_problem(env.client.get(path, headers=headers), 503, "store_unavailable")
 
 
+#: The text of the failure a stopping session store raises. It must never reach a client, and the
+#: log gives it no field of its own.
+_STORE_FAILURE = "session store stopped"
+
+
+def _fail_the_session_store(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, failure: type[Exception] = RuntimeError
+) -> None:
+    """The store fails with `failure` while `authenticate_access_token` is awaited: the router has
+    already taken `sessions_is_active` and `sessions` (nothing awaits between those reads, so that
+    is the shape a stopping backend reaches it in; `AuthService.sessions` itself cannot raise
+    there)."""
+
+    async def _stopped(*_args: Any, **_kwargs: Any) -> Any:
+        raise failure(_STORE_FAILURE)
+
+    monkeypatch.setattr(env.svc, "authenticate_access_token", _stopped)
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_routes_answer_503_when_the_session_store_fails_under_the_call(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same answer as an inactive backend, not an unhandled `RuntimeError` (a 500): the audit
+    and snapshot resolvers catch it as well. The failure's text is not echoed."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch)
+    resp = env.client.get(path, headers=headers)
+    failed = _assert_problem(resp, 503, "store_unavailable")
+    assert _STORE_FAILURE not in resp.text
+    env.auth.sessions_is_active = False
+    assert env.client.get(path, headers=headers).json() == failed
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_a_session_store_failure_is_logged_with_its_class_and_a_traceback(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broad catch must not hide a defect: one error line names the class and carries the
+    exception, which the processor chain renders as a traceback and then redacts. The message has
+    no field of its own, so only that traceback can carry it."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch)
+    with capture_logs() as logs:
+        env.client.get(path, headers=headers)
+    (entry,) = logs
+    assert (entry["event"], entry["log_level"], entry["error"]) == (
+        "auth.me.session_backend_error",
+        "error",
+        "RuntimeError",
+    )
+    assert isinstance(entry["exc_info"], RuntimeError)
+    assert _STORE_FAILURE not in repr({k: v for k, v in entry.items() if k != "exc_info"})
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_a_session_store_failure_that_is_not_a_runtime_error_is_not_answered_503(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The contract's `503` names `RuntimeError` and nothing wider. A store that fails another way
+    (a refused connection, say) is not described by it and is not hidden behind it: the exception
+    reaches the boundary handler, as any defect does."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch, ConnectionError)
+    with pytest.raises(ConnectionError, match=_STORE_FAILURE):
+        env.client.get(path, headers=headers)
+
+
 @pytest.mark.parametrize("path", _ROUTES)
 async def test_routes_answer_501_without_an_identity_provider_after_authenticating(
     path: str,
@@ -476,3 +582,66 @@ async def test_routes_answer_501_without_an_identity_provider_after_authenticati
     _, headers, _ = await bare.sign_in()
     _assert_problem(bare.client.get(path, headers=headers), 501, "not_implemented")
     _assert_problem(bare.client.get(path), 401, "unauthenticated")
+
+
+# -- the app composes the 501 away: the session backend and the identity provider come together --
+
+
+@pytest.mark.parametrize(
+    "headers", [{}, {"Authorization": "Bearer not-a-handle-we-issued"}], ids=["no_token", "a_token"]
+)
+@pytest.mark.parametrize("path", [route.removeprefix("/api/v1") for route in _ROUTES])
+def test_the_default_app_answers_503_on_every_route_with_or_without_a_token(
+    path: str, headers: dict[str, str]
+) -> None:
+    """The default (fake) storage backend gives `create_app` no session backend and no identity
+    provider, so the gate answers `503 store_unavailable` before it looks at a token. The `501` the
+    contract also declares is not what that app answers: the contract text says so."""
+    app = appmod.create_app()
+    assert not app.state.app_context.auth.sessions_is_active
+    assert app.state.identity_provider is None
+    client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
+    _assert_problem(client.get(path, headers=headers), 503, "store_unavailable")
+
+
+@pytest.mark.parametrize(("backend", "wired"), [("fake", False), ("real", True)])
+def test_the_session_backend_and_the_identity_provider_are_wired_together(
+    backend: Literal["fake", "real"], wired: bool
+) -> None:
+    """The `501` needs an active session backend and no identity provider. The composition builds
+    both on the real storage backend and neither on the fake one (nothing connects at
+    construction), so only a router built by hand reaches it. A change that wires one without the
+    other makes the `501` text of the contract, and this test, the place to look."""
+    settings = Settings(
+        storage_backend=backend,
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_pepper=SecretStr("pepper"),
+    )
+    assert (appmod.build_auth_service(settings)._session_repository is not None) is wired
+    assert (appmod.build_identity_provider(settings) is not None) is wired
+
+
+# -- wiring: the app hands the router its auth clock -------------------------------------------
+
+
+async def test_the_app_gives_the_me_router_the_auth_clock_it_was_built_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`create_app` passes `make_me_router` the clock it builds the auth service with. Real UTC
+    and the auth clock differ only under `CV_TEST_CLOCK` (#2086), so no other test here can tell
+    them apart. This clock sits years before the wall clock: an elevation recorded on it reads
+    live on it, and a router left on real UTC would read the same window as lapsed."""
+    env = _Env()
+    env.now = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: env.identity)
+    app = appmod.create_app(auth_clock=lambda: env.now)
+    # The lifespan does not run, so the session service is wired by hand, as in the RBAC pack.
+    app.state.app_context.auth._sessions = env.svc
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    _, headers, minted = await env.sign_in()
+    window = env.now + timedelta(minutes=4)
+    await _seed_step_up(env, minted, {"users": window})
+    resp = client.get("/me", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["session"]["elevated_until"] == _wire(window)

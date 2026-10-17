@@ -9519,7 +9519,12 @@ paths:
         live step-up grace expiry on the session (`null` when none) and
         `session.one_click_armed_until` is `null` until one-click arming is served.
         `onboarding_complete` is not served yet and is omitted. A user with no live role is
-        `403 forbidden`. The response is `Cache-Control: no-store`.
+        `403 forbidden`. `503 store_unavailable`: the session backend is not active, or it raised
+        `RuntimeError` while the access token was checked; nothing was read.
+        `501 not_implemented`: the session backend is active but no identity provider is wired.
+        The API wires both or neither, so the fake storage backend (no session backend) answers
+        `503` first. A `501` is answered once the access token is accepted; nothing is read or
+        served. The response is `Cache-Control: no-store`.
       x-rbac: { permissions: [], scope: self }
       responses:
         "200":
@@ -9530,6 +9535,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /me/preferences:
     get:
@@ -9542,7 +9549,12 @@ paths:
 
         Self only: any query parameter is refused with `422` (SR-026). Until a store for
         per-user overrides and a deployment default set exist, the effective settings are empty
-        (`_meta.overridden` is `[]`) and the client applies its built-in defaults. The response is
+        (`_meta.overridden` is `[]`) and the client applies its built-in defaults.
+        `503 store_unavailable`: the session backend is not active, or it raised `RuntimeError`
+        while the access token was checked; nothing was read. `501 not_implemented`: the session
+        backend is active but no identity provider is wired. The API wires both or neither, so
+        the fake storage backend (no session backend) answers `503` first. A `501` is answered
+        once the access token is accepted; nothing is read or served. The response is
         `Cache-Control: no-store`.
       x-rbac: { permissions: [settings:read], scope: self }
       responses:
@@ -9554,6 +9566,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [settings]
       operationId: updateMyPreferences
@@ -9643,7 +9657,12 @@ paths:
 
         Self only: any query parameter is refused with `422` (SR-026). While the caller has no
         stored profile, `hotkey_profile_id` is absent and `bindings` is empty, and the client
-        applies its built-in keymap. The response is `Cache-Control: no-store`.
+        applies its built-in keymap. `503 store_unavailable`: the session backend is not active,
+        or it raised `RuntimeError` while the access token was checked; nothing was read.
+        `501 not_implemented`: the session backend is active but no identity provider is wired.
+        The API wires both or neither, so the fake storage backend (no session backend) answers
+        `503` first. A `501` is answered once the access token is accepted; nothing is read or
+        served. The response is `Cache-Control: no-store`.
       x-rbac: { permissions: [settings:read], scope: self }
       responses:
         "200":
@@ -9658,6 +9677,8 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/step-up:
     post:
@@ -13433,7 +13454,15 @@ components:
       properties:
         id: { type: string, format: uuid }
         username: { type: string }
-        email: { type: string, format: email }
+        email:
+          type: string
+          pattern: "^[^@]+@"
+          description: >
+            The address as stored, not a verified mailbox. The pattern is the database check
+            `users_email_fmt` (`position('@' in email) > 1`): an `@` that is not the first
+            character, and nothing about the rest. A special-use domain such as `.local` is
+            accepted (an operator-set address like `owner@candleviewer.local` is valid data), so
+            this is a pattern and not `format: email`.
         display_name: { type: ["string", "null"] }
         roles: { type: array, items: { $ref: "#/components/schemas/RoleName" } }
         status: { $ref: "#/components/schemas/UserStatus" }
