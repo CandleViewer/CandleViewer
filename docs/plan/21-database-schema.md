@@ -2557,7 +2557,8 @@ CREATE INDEX ix_se_symbol    ON system_events (symbol, event_ts DESC) WHERE symb
 
 The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes
-the Owner's MFA methods and sessions (`revoked_reason='break_glass'`).
+the Owner's MFA methods and sessions (`revoked_reason='break_glass'`). The same transaction also
+upserts the event's incident (§3.10.2a).
 
 #### 3.10.2a `incidents` (E42-T05, migration `0028_incidents_backups`)
 

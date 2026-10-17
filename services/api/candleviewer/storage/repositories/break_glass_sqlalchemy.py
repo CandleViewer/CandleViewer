@@ -9,7 +9,8 @@ Every other repository call commits its own unit of work, so chaining
 `revoke_method`, `revoke_all_for_user` and an event write could leave a half
 reset. This runs the whole reset as ONE unit of work: lock the target `users` row
 and match the owner-floor predicate of migration 0001, consume the code, revoke
-every unrevoked method and live session, insert the critical event, commit once.
+every unrevoked method and live session, insert the critical event and upsert
+its incident (E42-T05, `21-database-schema.md` 3.10.2a), commit once.
 A refusal or any error rolls back and changes zero rows. In M10 so `auth` imports
 no storage driver (ADR-0003). Static, parameterised statements; the recovery code
 arrives as its keyed hash, never in clear, and only the consume statement binds it.
@@ -23,6 +24,8 @@ from typing import Literal, NamedTuple
 
 import sqlalchemy as sa
 
+from candleviewer.storage.repositories.incident_grouping import incident_occurrence
+from candleviewer.storage.repositories.incidents_sqlalchemy import record_occurrence
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -53,6 +56,10 @@ _INSERT_EVENT = sa.text(
 _MESSAGE = (
     "Break-glass used: the Owner's MFA methods and sessions were revoked offline (SR-023); "
     "the Owner must enrol TOTP again"
+)
+#: The event as an incident (`_INSERT_EVENT`'s component, kind and severity), stamped `now`.
+_INCIDENT = incident_occurrence(
+    component="auth", kind="break_glass_used", severity="critical", message=_MESSAGE
 )
 _UNRESOLVED = sa.text(
     "SELECT count(*) FROM system_events WHERE component = 'auth' "
@@ -102,11 +109,12 @@ class SqlAlchemyBreakGlassRepository:
                 return refusal
             methods = len((await run(_REVOKE_METHODS, params)).all())
             sessions = len((await run(_REVOKE_SESSIONS, params)).all())
+            # No secret key (24-internal-schemas 15.4); redacted once a root builds this repository
             details = {
                 "target_user_id": target_user_id,
                 "methods_revoked": methods,
                 "sessions_revoked": sessions,
-                "recovery_code_consumed": recovery_code_hash is not None,
+                "codes_consumed": recovery_code_hash is not None,
             }
             event = await run(
                 _INSERT_EVENT,
@@ -118,6 +126,7 @@ class SqlAlchemyBreakGlassRepository:
                 },
             )
             row = BreakGlassResetRow(methods, sessions, int(event.scalar_one()))
+            await record_occurrence(uow.session, _INCIDENT, seen_at=now)
             await uow.commit()
         return row
 

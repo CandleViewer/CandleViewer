@@ -16,6 +16,7 @@ from typing import Any, cast, get_args
 
 import pytest
 
+from candleviewer.audit.redact import redact
 from candleviewer.auth.break_glass import (
     BreakGlassRefusal,
     BreakGlassResetResult,
@@ -30,6 +31,10 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import (
 )
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     SqlAlchemyBreakGlassRepository,
+)
+from candleviewer.storage.repositories.incident_grouping import (
+    incident_signature,
+    normalise_message,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -56,6 +61,7 @@ class _Rel:
         self.results = list(results)
         self.sql: list[str] = []
         self.params: list[dict[str, Any]] = []
+        self.statements: list[Any] = []
         self.ended: list[str] = []
         self.units = 0
 
@@ -63,9 +69,10 @@ class _Rel:
     async def unit_of_work(self) -> AsyncIterator[SimpleNamespace]:
         self.units += 1
 
-        async def execute(stmt: object, params: dict[str, Any]) -> SimpleNamespace:
+        async def execute(stmt: object, params: dict[str, Any] | None = None) -> SimpleNamespace:
             self.sql.append(" ".join(str(stmt).split()))
-            self.params.append(params)
+            self.params.append(params or {})
+            self.statements.append(stmt)
             rows = self.results.pop(0)
             if isinstance(rows, Exception):
                 raise rows
@@ -91,27 +98,41 @@ def _service(rel: _Rel, environment: Environment) -> BreakGlassResetService:
 
 
 async def test_reset_runs_in_one_unit_of_work_committed_once() -> None:
-    rel = _Rel([1], [1], [1, 2, 3], [1, 2], [41])
+    rel = _Rel([1], [1], [1, 2, 3], [1, 2], [41], [])
     svc = _service(rel, Environment.LIVE)
     got = await svc.reset(_UID, recovery_code=_CODE, correlation_id=_CORR)
     assert got == BreakGlassResetResult(_UID, 3, 2, True, 41)
     assert rel.units == 1 and rel.ended == ["commit"]
     tables = ["FROM users", "recovery_codes", "mfa_methods", "UPDATE sessions", "system_events"]
+    tables.append("INSERT INTO incidents")  # E42-T05: the event's incident, in the same unit
     assert all(t in s for t, s in zip(tables, rel.sql, strict=True))
     assert "FOR UPDATE OF u" in rel.sql[0] and "revoked_reason = 'break_glass'" in rel.sql[3]
     assert "'auth', 'break_glass_used', 'critical'" in rel.sql[4]
     assert rel.params[1]["h"] == hash_recovery_code(_CODE, key=_KEY)
     # The keyed hash is bound to the consume statement only, never to the event.
-    assert ["h" in p for p in rel.params] == [False, True, False, False, False]
+    assert ["h" in p for p in rel.params] == [False, True, False, False, False, False]
     assert set(rel.params[4]) == {"message", "details", "corr", "now"}
     assert not any(_CODE in str(p) for p in rel.params)  # the plaintext never reaches SQL
-    assert json.loads(rel.params[4]["details"]) == {
+    details = json.loads(rel.params[4]["details"])
+    assert details == {
         "methods_revoked": 3,
-        "recovery_code_consumed": True,
+        "codes_consumed": True,  # the name `admin/breakglass.py` uses; no secret fragment in it
         "sessions_revoked": 2,
         "target_user_id": str(_UID),
     }
+    assert redact(details) == details  # 24-internal-schemas 15.4: the serializer masks none of it
     assert (rel.params[4]["corr"], rel.params[4]["now"]) == (str(_CORR), _NOW)
+    incident = rel.statements[5].compile().params  # the event's own fields and time, no hash
+    title = normalise_message(rel.params[4]["message"])
+    assert {k: incident[k] for k in ("component", "signature", "severity", "title")} == {
+        "component": "auth",
+        "signature": incident_signature("auth", "break_glass_used", title),
+        "severity": "critical",
+        "title": title,
+    }
+    assert incident["detail"] == rel.params[4]["message"]
+    assert incident["first_seen_at"] == incident["last_seen_at"] == _NOW
+    assert not any(_CODE in str(v) or _NORMALIZED in str(v) for v in incident.values())
 
 
 @pytest.mark.parametrize(
@@ -154,7 +175,7 @@ async def test_live_with_blank_code_is_refused_before_any_statement(code: str) -
 async def test_outside_live_without_code_skips_the_consume_statement(
     environment: Environment, code: str | None
 ) -> None:
-    rel = _Rel([1], [], [], [5])
+    rel = _Rel([1], [], [], [5], [])
     got = await _service(rel, environment).reset(_UID, recovery_code=code, correlation_id=_CORR)
     assert got == BreakGlassResetResult(_UID, 0, 0, False, 5)
     assert not any("recovery_codes" in s for s in rel.sql) and rel.ended == ["commit"]
@@ -164,7 +185,7 @@ async def test_live_rule_follows_the_configured_environment_not_a_caller_flag() 
     # A caller hands over the target, the code and a correlation id: no environment flag.
     params = inspect.signature(BreakGlassResetService.reset).parameters
     assert list(params) == ["self", "target_user_id", "recovery_code", "correlation_id"]
-    live, demo = _Rel(), _Rel([1], [], [], [5])
+    live, demo = _Rel(), _Rel([1], [], [], [5], [])
     with pytest.raises(BreakGlassRefused):
         await _service(live, Environment.LIVE).reset(_UID, recovery_code=None, correlation_id=_CORR)
     await _service(demo, Environment.DEMO).reset(_UID, recovery_code=None, correlation_id=_CORR)

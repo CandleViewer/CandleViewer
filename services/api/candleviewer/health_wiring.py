@@ -33,6 +33,11 @@ from candleviewer.observability.health_probes import (
     ProbeResult,
     SystemEvent,
 )
+from candleviewer.storage.repositories.incident_grouping import (
+    INCIDENT_SEVERITIES,
+    incident_occurrence,
+)
+from candleviewer.storage.repositories.incidents_sqlalchemy import record_occurrence
 
 
 def logger() -> Any:
@@ -52,24 +57,51 @@ class _Publisher(Protocol):
     async def publish(self, topic: Topic, event: Any) -> None: ...
 
 
-class PgSystemEventWriter:
-    """Persists one `system_events` row per component state transition."""
+#: The audit serializer `system_events.details` pass through, injected by the composition root
+#: (`candleviewer.admin.wiring.system_event_redactor`): this module may not import M19 (C-3.3).
+DetailsRedactor = Callable[[dict[str, Any]], dict[str, Any] | None]
 
-    def __init__(self, repo: _UowFactory) -> None:
+
+class PgSystemEventWriter:
+    """Persists one `system_events` row per event (a health state transition, a TOTP clock skew).
+
+    E42-T05: `details` pass through the same redaction serializer as audit
+    (`24-internal-schemas.md` 15.4), and an `error` or `critical` event materialises its incident
+    in the same unit of work (`21-database-schema.md` 3.10.2a): the event row and its incident
+    commit together or not at all, the incident stamped with the row's own `event_ts`. The
+    normalising and redacting are done before the transaction opens."""
+
+    def __init__(self, repo: _UowFactory, *, redact_details: DetailsRedactor) -> None:
         self._repo = repo
+        self._redact_details = redact_details
 
     async def write(self, event: SystemEvent) -> None:
+        details = self._redact_details(dict(event.details)) or {}
+        incident = (
+            incident_occurrence(
+                component=event.component,
+                kind=event.kind,
+                severity=event.severity,
+                message=event.message,
+            )
+            if event.severity in INCIDENT_SEVERITIES
+            else None
+        )
         async with self._repo.unit_of_work() as uow:
-            await uow.session.execute(
-                insert(system_events).values(
+            row = await uow.session.execute(
+                insert(system_events)
+                .values(
                     component=event.component,
                     kind=event.kind,
                     severity=event.severity,
                     message=event.message,
-                    details=dict(event.details),
+                    details=details,
                     correlation_id=event.correlation_id,
                 )
+                .returning(system_events.c.event_ts)
             )
+            if incident is not None:
+                await record_occurrence(uow.session, incident, seen_at=row.scalar_one())
             await uow.commit()
 
 

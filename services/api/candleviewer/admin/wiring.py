@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from candleviewer.audit.models import Severity
+from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
 from candleviewer.audit.verify_job import AuditVerifyJob
@@ -63,6 +64,7 @@ __all__ = [
     "build_secrets_service",
     "export_secrets_metrics",
     "secrets_audit_sink",
+    "system_event_redactor",
 ]
 AuditHandle = AuditService
 #: The scheduled verify run's port (#2111), so `app` can type an injected runner.
@@ -131,6 +133,13 @@ def build_audit_verify_job(
         hour_utc=settings.audit_verify_nightly_hour_utc,
         deadline_s=settings.audit_verify_nightly_deadline_s,
     )
+
+
+def system_event_redactor() -> Callable[[dict[str, Any] | None], dict[str, Any] | None]:
+    """The audit serializer that `system_events.details` pass through (`24-internal-schemas.md`
+    15.4, `21-database-schema.md` 12), for the event writers the composition root builds: they
+    may not import M19 themselves (C-3.3). No I/O."""
+    return redact
 
 
 def _before(data: dict[str, str]) -> dict[str, Any] | None:

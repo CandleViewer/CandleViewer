@@ -48,6 +48,7 @@ from candleviewer.admin.wiring import (
     build_audit_verify_job,
     build_secrets_service,
     export_secrets_metrics,
+    system_event_redactor,
 )
 from candleviewer.admin_wiring import (
     build_admin_incidents,
@@ -518,7 +519,7 @@ def build_auth_service(
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
         # #2146: a TOTP clock-skew event is a `system_events` row (the health board's table).
-        system_events=PgSystemEventWriter(relational),
+        system_events=PgSystemEventWriter(relational, redact_details=system_event_redactor()),
         # E09-S11 (O4): whether a break-glass reset is unresolved, for the WS `system` notice.
         break_glass_events=SqlAlchemyBreakGlassEvents(relational),
     )
@@ -1182,7 +1183,11 @@ def create_app(
     )
     app.state.health_pg = health_pg
     health_registry = HealthRegistry(
-        events=PgSystemEventWriter(health_pg) if health_pg is not None else None,
+        events=(
+            PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
+            if health_pg is not None
+            else None
+        ),
         on_snapshot=HealthSystemPublisher(ctx.bus.bus, resolved.environment.value),
     )
     health_registry.register_placeholders()
