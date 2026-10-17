@@ -1,9 +1,9 @@
 """E27 accounts fault-injection pack: its resolver (E27-Q01, #833; dev-only since #2893 S5).
 
 A pack is a directory of scenario manifests (`packages/fixtures/accounts/` in a checkout; its
-README is the user guide). Every function here takes the `Pack` to read, so a running stack can
-mount the fixtures package anywhere (see `Pack`), and turns one scenario into concrete data the
-same way for every test and for #2893's stub:
+README is the user guide). Every function that reads the pack takes the `Pack`, so a running stack
+can mount the fixtures package anywhere (see `Pack`). The module turns one scenario into concrete
+data the same way for every test and for #2893's stub:
 
 - REST: `Scenario.reply(method, path, at_ms=...)` follows the manifest's lookup rule (the
   scenario's own answers along its `extends` chain, then the overlays named with it, then the
