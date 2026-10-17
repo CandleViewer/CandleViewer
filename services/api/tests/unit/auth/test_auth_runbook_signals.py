@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from candleviewer.api import sessions
 from candleviewer.api.sessions import (
     PROBE_AUDIT_WINDOW_S,
@@ -17,6 +19,10 @@ from candleviewer.api.sessions import (
 
 _RUNBOOK = Path(__file__).resolve().parents[5] / "docs" / "ops" / "runbooks" / "auth-rbac.md"
 _SCHEMA = _RUNBOOK.parents[2] / "plan" / "21-database-schema.md"
+_PACKAGE = Path(sessions.__file__).resolve().parents[1]  # `candleviewer/`
+#: A statement that drops `sessions` rows, written as every repository here writes SQL
+#: (`DELETE FROM drawings ...`): any case and spacing, the table quoted or schema-qualified.
+_SESSIONS_ROW_DELETE = re.compile(r'\bDELETE\s+FROM\s+(?:"?\w+"?\.)?"?sessions\b', re.IGNORECASE)
 #: Words a finished clause does not end on: a cell that does is cut off, or lost its last words.
 _DANGLING = frozenset(
     "a an and are as at but by for if in is not of on or than the to was with".split()
@@ -101,6 +107,40 @@ def test_the_probe_triage_sends_the_session_id_search_through_the_indexes_the_sc
     no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
     assert "`session_id` is not indexed" in no_row
     assert "start from the indexed `action` or `actor_user_id`" in no_row
+
+
+@pytest.mark.parametrize(
+    ("sql", "drops_sessions_rows"),
+    [
+        ("DELETE FROM sessions WHERE expires_at < :cutoff", True),
+        ("delete\n    from public.sessions where true", True),
+        ('DELETE FROM "public"."sessions" WHERE true', True),
+        ("DELETE FROM sessions_rotation WHERE true", False),
+        ("DELETE FROM replay_sessions WHERE id = :id", False),
+        ("UPDATE sessions SET revoked_at = :now", False),
+    ],
+)
+def test_the_sessions_row_delete_pattern_matches_the_table_and_no_other(
+    sql: str, drops_sessions_rows: bool
+) -> None:
+    assert bool(_SESSIONS_ROW_DELETE.search(sql)) is drops_sessions_rows
+
+
+def test_no_code_drops_a_sessions_row_while_the_runbook_says_the_job_has_not_shipped() -> None:
+    # #3054 review: the wording pin above holds the sentence, not the fact. A job that drops
+    # `sessions` rows (section 7 of the schema doc, 30 days after expiry) makes "today a missing row
+    # means the id was never issued" false: an old id has no row either. This fails then, so the
+    # job's author edits the no-row paragraph of the runbook and the pins above with it.
+    droppers = [
+        str(path.relative_to(_PACKAGE))
+        for path in sorted(_PACKAGE.rglob("*.py"))
+        if _SESSIONS_ROW_DELETE.search(path.read_text(encoding="utf-8"))
+    ]
+    assert droppers == [], (
+        f"{droppers} drop `sessions` rows, but the no-row paragraph of "
+        "docs/ops/runbooks/auth-rbac.md says the retention job has not shipped: update it "
+        "and the probe-triage tests above"
+    )
 
 
 def test_the_failed_login_telemetry_names_the_mfa_refusal_of_a_disabled_user() -> None:

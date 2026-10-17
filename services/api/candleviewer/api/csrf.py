@@ -368,7 +368,10 @@ class RefusalAuditTracker:
     async def drain(self, timeout_s: float = AUDIT_TIMEOUT_S) -> int:
         """Wait up to *timeout_s* for in-flight audits; returns how many remain. Each one
         that remains may be lost when the audit module stops, so its `on_lost` is called
-        once (a later failure of the same write is not reported again)."""
+        once. The tracker then forgets the write and reports no later failure of it; a caller
+        still awaiting it reports its own (`_audit_failed`, `_fixation_audit_failed`), so that
+        one write can count twice. `main.py` calls this at shutdown, and the double count
+        over-reports a loss rather than hiding one (#3054)."""
         pending = set(self._tasks)
         if pending:
             await asyncio.wait(pending, timeout=timeout_s)
