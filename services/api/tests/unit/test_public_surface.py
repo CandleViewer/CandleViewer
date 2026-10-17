@@ -178,15 +178,17 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "SecretsLifecycleFacade",
         "SecretsMetadataFacade",
     },
-    # E26-T02: the replay read path's request, in-stream gap marker, storage ports and typed
-    # errors (docs/plan/24-internal-schemas.md Sec.13.7).
+    # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
+    # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).
     "M12": {
+        "ReadAheadConfig",
         "ReplayConfigInvalid",
         "ReplayGap",
         "ReplayItem",
         "ReplayMemoryCeilingExceeded",
         "ReplayRequest",
         "ReplayRequestInvalid",
+        "ReplaySource",
         "ReplaySourceUnavailable",
         "ReplayTierStraddle",
         "ReplayTiers",

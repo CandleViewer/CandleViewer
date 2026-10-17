@@ -7,6 +7,7 @@ import dataclasses
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
+from annotated_types import Le
 from hypothesis import example, given
 from hypothesis import strategies as st
 from pydantic import ValidationError
@@ -22,6 +23,8 @@ from candleviewer.replay import (
     ReplayTierStraddle,
     SourceTier,
 )
+from candleviewer.replay.models import MAX_SPAN_CEILING_US
+from candleviewer.settings import Settings
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     REPLAYABLE_STREAMS,
@@ -184,6 +187,25 @@ def test_the_callers_cap_refuses_a_window_one_microsecond_over_it() -> None:
 
     with pytest.raises(ReplayRequestInvalid, match=f"exceeds the {HOUR_US} µs cap"):
         ReplayRequest.model_validate(GOOD | {"end": START + hour + US, "max_span_us": HOUR_US})
+
+
+def test_the_cap_ceiling_is_the_ceiling_of_the_window_setting() -> None:
+    """One source of truth: `CV_REPLAY_MAX_WINDOW_HOURS` cannot be set above this many hours."""
+    field = Settings.model_fields["replay_max_window_hours"]
+    ceiling_hours = next(rule.le for rule in field.metadata if isinstance(rule, Le))
+
+    assert isinstance(ceiling_hours, int)
+    assert MAX_SPAN_CEILING_US == ceiling_hours * HOUR_US == 24 * 31 * HOUR_US
+
+
+def test_a_cap_no_deployment_can_configure_is_refused_and_the_ceiling_itself_accepted() -> None:
+    accepted = ReplayRequest.model_validate(GOOD | {"max_span_us": MAX_SPAN_CEILING_US})
+
+    with pytest.raises(ReplayRequestInvalid) as raised:
+        ReplayRequest.model_validate(GOOD | {"max_span_us": MAX_SPAN_CEILING_US + 1})
+
+    assert accepted.max_span_us == MAX_SPAN_CEILING_US
+    assert str(raised.value) == "invalid replay request: max_span_us (less_than_equal)"
 
 
 def test_the_request_is_immutable() -> None:

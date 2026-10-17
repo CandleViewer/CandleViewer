@@ -28,9 +28,9 @@ class ReplayRequestInvalid(ReplayError):
 
 
 class ReplayConfigInvalid(ReplayError, ValueError):
-    """A replay read was configured outside its bounds (read windows, storage timeout, memory
-    budget): a composition bug, refused before any storage read rather than looping or
-    waiting without a bound."""
+    """A replay read was configured or used outside its bounds (read windows, storage timeout,
+    memory and read-ahead budgets, a single-pass merge read twice): a composition bug, refused
+    before any storage read rather than looping, waiting without a bound or skipping events."""
 
     code = "REPLAY_CONFIG_INVALID"
 

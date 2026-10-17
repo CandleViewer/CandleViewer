@@ -26,7 +26,6 @@ from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent, RecordedGap
 from candleviewer.storage.testing import StaticGapReader
 from tests.unit.replay._events import (
-    ROOMY,
     SECOND,
     SYM,
     T0,
@@ -406,18 +405,3 @@ async def test_a_straddling_session_is_refused_before_any_gap_is_read() -> None:
         await harness.read_all()
 
     assert harness.gaps.limits == []
-
-
-async def test_a_second_pass_finds_the_merge_drained_and_reads_no_gap_again() -> None:
-    """`batches()` is single-pass (a seek builds a new merge); a repeat yields nothing."""
-    req = request(start_us=START, end_us=END)
-    harness = Harness(hot=[trade(START)], gaps=[gap(START, START + 5)], req=req)
-    merge = harness.merge()
-
-    first = [item async for batch in merge.batches(max_events=8, max_bytes=ROOMY) for item in batch]
-    second = [
-        item async for batch in merge.batches(max_events=8, max_bytes=ROOMY) for item in batch
-    ]
-
-    assert len(first) == 2 and second == []
-    assert harness.gaps.limits == [CEILING + 1]

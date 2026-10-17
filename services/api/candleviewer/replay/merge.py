@@ -46,6 +46,11 @@ row ceiling when it, not the byte share, bound). Markers are at most that many r
 outside the byte share. Every storage await is bounded by `io_timeout_s`. A failure while the
 merge runs ends the replay after the events already merged: their batch is yielded first, then
 the error is raised.
+
+**One pass.** `batches()` is called once: a second call is refused, whether the first pass
+finished, failed or was closed, because resuming would skip the batch the first had in flight.
+A source's entries are released as soon as it leaves the heap and every one when the pass ends,
+so a merge holds no recorded data once it has been read or abandoned.
 """
 
 from __future__ import annotations
@@ -54,7 +59,7 @@ import asyncio
 import heapq
 import math
 import time
-from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from itertools import chain
 from operator import itemgetter
 from types import MappingProxyType
@@ -202,6 +207,10 @@ class _Cursor:
         """Whether storage may still hold rows of this cursor past `buf`."""
         return self._next_us < self._end_us
 
+    def release(self) -> None:
+        """Drop the entries held: the cursor is drained, or the pass is over."""
+        self.buf, self.pos = [], 0
+
     def window(self) -> tuple[int, int]:
         """The next read: `width` from where the last one ended, clipped to the replay end."""
         return self._next_us, min(self._end_us, self._next_us + self._width)
@@ -250,6 +259,10 @@ class _Markers:
         self.buf = buf
         self.pos = 0
 
+    def release(self) -> None:
+        """Drop the entries held: the markers are drained, or the pass is over."""
+        self.buf, self.pos = [], 0
+
 
 type _Source = _Cursor | _Markers
 
@@ -257,9 +270,10 @@ type _Source = _Cursor | _Markers
 class RecordedMerge:
     """Every `(symbol, stream)` cursor of one request, merged with its gap markers.
 
-    Single pass: `batches()` may be iterated once; a seek builds a new merge from the target.
-    Out-of-bound windows, timeouts or budgets are refused with `ReplayConfigInvalid` before any
-    storage read: a window under 1 µs would re-read one empty window forever."""
+    Single pass: `batches()` is called once (a seek builds a new merge from the target) and a
+    second call raises `ReplayConfigInvalid`. Out-of-bound windows, timeouts or budgets are
+    refused with `ReplayConfigInvalid` before any storage read: a window under 1 µs would re-read
+    one empty window forever."""
 
     def __init__(
         self,
@@ -283,8 +297,8 @@ class RecordedMerge:
         self._io_timeout_s = io_timeout_s
         self._budget_bytes = budget_bytes
         self._tier: Tier | None = None
+        self._started = False
         self._symbols = tuple(sorted(request.symbols))
-        self._symbol_markers: list[_Markers] | None = None
         streams = [s for s in REPLAYABLE_STREAMS if s in request.streams]
         share = budget_bytes // (len(self._symbols) * len(streams))
         self._cursors: list[_Cursor] = []
@@ -306,49 +320,65 @@ class RecordedMerge:
                 )
                 self._cursors.append(cursor)
 
-    async def batches(self, *, max_events: int, max_bytes: int) -> AsyncIterator[list[ReplayItem]]:
+    def batches(self, *, max_events: int, max_bytes: int) -> AsyncGenerator[list[ReplayItem]]:
         """The merged items in order, cut into batches of at most `max_events` items or about
-        `max_bytes` estimated bytes, whichever binds first. A replay failure while refilling a
-        cursor first yields the items already merged, then is raised."""
-        await self.tier()  # refuse a straddling `auto` session before reading any event
-        cursors = self._cursors
-        # Read once: a second pass finds the markers drained, like the cursors, and reads nothing.
-        if self._symbol_markers is None:
-            self._symbol_markers = [
-                await self._markers(symbol_ord, symbol)
-                for symbol_ord, symbol in enumerate(self._symbols)
+        `max_bytes` estimated bytes (a batch ends once it reaches them, so it stays under
+        `max_bytes` plus its last item), whichever binds first. A replay failure while refilling
+        a cursor first yields the items already merged, then is raised. Close the generator
+        (`aclosing`) to release the entries held when stopping early.
+
+        Called once: a second call raises `ReplayConfigInvalid` before any read, however the first
+        pass ended (finished, failed or closed by a cancellation), because resuming would skip
+        the batch it had in flight."""
+        if self._started:
+            raise ReplayConfigInvalid("a merge is read once: build a new one for another read")
+        self._started = True
+        return self._batches(max_events=max_events, max_bytes=max_bytes)
+
+    async def _batches(
+        self, *, max_events: int, max_bytes: int
+    ) -> AsyncGenerator[list[ReplayItem]]:
+        sources: list[_Source] = [*self._cursors]  # each symbol's markers join them once read
+        try:
+            await self.tier()  # refuse a straddling `auto` session before reading any event
+            for symbol_ord, symbol in enumerate(self._symbols):
+                sources.append(await self._markers(symbol_ord, symbol))
+            for cursor in self._cursors:
+                await self._fill(cursor)
+            heap = [
+                (s.buf[s.pos][0], index) for index, s in enumerate(sources) if s.pos < len(s.buf)
             ]
-        sources: list[_Source] = [*cursors, *self._symbol_markers]
-        for cursor in cursors:
-            await self._fill(cursor)
-        heap = [(s.buf[s.pos][0], index) for index, s in enumerate(sources) if s.pos < len(s.buf)]
-        heapq.heapify(heap)
-        batch: list[ReplayItem] = []
-        size = 0
-        while heap:
-            index = heap[0][1]
-            source = sources[index]
-            _, item, item_bytes = source.buf[source.pos]
-            source.pos += 1
-            batch.append(item)
-            size += item_bytes
-            if isinstance(source, _Markers):
-                replay_gap_warnings_total.inc()
-            elif source.pos >= len(source.buf) and source.more:
-                try:
-                    await self._fill(source)
-                except ReplayError:
-                    yield batch  # what was merged before the failure is delivered first
-                    raise
-            if source.pos < len(source.buf):
-                heapq.heapreplace(heap, (source.buf[source.pos][0], index))
-            else:
-                heapq.heappop(heap)
-            if len(batch) >= max_events or size >= max_bytes:
+            heapq.heapify(heap)
+            batch: list[ReplayItem] = []
+            size = 0
+            while heap:
+                index = heap[0][1]
+                source = sources[index]
+                _, item, item_bytes = source.buf[source.pos]
+                source.pos += 1
+                batch.append(item)
+                size += item_bytes
+                if isinstance(source, _Markers):
+                    replay_gap_warnings_total.inc()
+                elif source.pos >= len(source.buf) and source.more:
+                    try:
+                        await self._fill(source)
+                    except ReplayError:
+                        yield batch  # what was merged before the failure is delivered first
+                        raise
+                if source.pos < len(source.buf):
+                    heapq.heapreplace(heap, (source.buf[source.pos][0], index))
+                else:
+                    heapq.heappop(heap)
+                    source.release()  # drained: nothing in it is read again
+                if len(batch) >= max_events or size >= max_bytes:
+                    yield batch
+                    batch, size = [], 0
+            if batch:
                 yield batch
-                batch, size = [], 0
-        if batch:
-            yield batch
+        finally:
+            for held in sources:
+                held.release()  # a pass that fails or is closed frees whatever it still holds
 
     async def _fill(self, cursor: _Cursor) -> None:
         """Read windows until `cursor` has an entry or its range is exhausted. Terminates: a
