@@ -51,6 +51,7 @@ _VERDICTS = {
     "enrolling": SessionClass.ENROLMENT_ONLY,
     "full": SessionClass.FULL,
     "overlong": SessionClass.ENROLMENT_ONLY_EXPIRED,
+    "inactive": SessionClass.USER_INACTIVE,
 }
 _USERS = {who: uuid.uuid5(_OTHER, who) for who in _VERDICTS}
 _REVOKE_OTHER = f"/me/sessions/{uuid.uuid5(_OTHER, 'session')}"
@@ -276,12 +277,13 @@ def test_sessionless_operations_are_the_matrix_public_rows() -> None:
 # -- what the guard leaves alone ---------------------------------------------------------------
 
 
+@pytest.mark.parametrize("who", ["full", "inactive"])  # inactive: the route's #2911 check answers
 @pytest.mark.parametrize(("method", "path"), _PROTECTED)
 def test_guard_cross_user_a_full_session_is_never_restricted(
-    world: _World, method: str, path: str
+    world: _World, method: str, path: str, who: str
 ) -> None:
-    assert world.call(method, path, "full").status_code == 200
-    assert world.auth.classified == [_USERS["full"]]  # its own user, nobody else's
+    assert world.call(method, path, who).status_code == 200
+    assert world.auth.classified == [_USERS[who]]  # its own user, nobody else's
 
 
 @pytest.mark.parametrize("header", ["", "Basic dG9r", "Bearer ", "tok-enrolling"])

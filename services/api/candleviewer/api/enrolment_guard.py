@@ -9,7 +9,8 @@ operational routes) are left alone whatever bearer they carry, so sign-in stays 
 `POST /auth/mfa/verify` still audits a carried foreign session (E09-X02 AC2). The class is
 `AuthService.classify`, read from the user's state on every request (no session flag). A
 request without a bearer, or whose bearer has no live session, is left to the route (401, or
-a pre-session operation). A session lookup or a classification that fails answers
+a pre-session operation), and so is one whose user is gone or disabled: the route revokes that
+session (#2911, SR-029). A session lookup or a classification that fails answers
 `503 store_unavailable`: deny by default (C-12.4). An enrolment-only session that would
 outlive `ENROLMENT_ONLY_LIFETIME` was not minted as one (Q7), and one past its expiry is dead
 (a refreshed access handle outlives it): both get 401 like an expired session, except on
@@ -346,7 +347,7 @@ def make_enrolment_only_guard(
             refusals.unclassified(exc, channel="http", method=method, path=template)
             return _unavailable()
         operation = (request.method, path)
-        if verdict is SessionClass.FULL:
+        if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
             return await call_next(request)
         if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED and operation != _SIGN_OUT:
             refusals.expired(record, channel="http", method=method, path=template)
