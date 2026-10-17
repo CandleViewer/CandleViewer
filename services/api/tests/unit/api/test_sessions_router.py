@@ -156,6 +156,7 @@ async def test_session_info_of_an_unclassifiable_session_fails_closed(
     response = env.client.get("/api/v1/auth/session", headers=_h(minted.access_token))
 
     assert response.status_code == 503
+    assert (response.json()["code"], response.headers["Retry-After"]) == ("store_unavailable", "5")
     assert "permissions" not in response.text and "unreachable" not in response.text
 
 
