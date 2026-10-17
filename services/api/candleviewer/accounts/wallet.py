@@ -19,21 +19,31 @@ One Decimal snapshot per tracked account. The private-WS `wallet` stream feeds i
   (`KeyRefused`): that goes to `CredentialRejections` (24-internal-schemas.md section 8.6).
   The private-WS consumer feeds `ws_heartbeat`, for every message; nothing here does.
 
-Sizing follows the stale flag, as the ticket words it (a flag "consumed by risk-based sizing so
-that it is disabled for a stale account"): unavailable from 10 s after the last refresh, not only
-once a reconciliation has failed too (US-ACCT-008's "Stale data" scenario, `listExchangeAccounts`).
-That fails closed. Three consequences show once the streams feed the cache (W2, W4):
-- an account whose wallet stream is quiet (a flat one pushes only on change) reads stale, with
-  sizing unavailable, for about 50 s of every 60 s, until the next truth-check;
-- while the WS is down the read repeats every `CV_ACCOUNT_HEARTBEAT_S`, which is the stale window
-  by default, so such an account shows stale for a moment at the end of each cycle (a poll below
-  the stale window removes that);
-- a tracked account with no snapshot waits a full reconcile window for its first figure while its
-  WS is healthy, and `CV_ACCOUNT_HEARTBEAT_S` while it is down.
-Sizing unavailable only after a failed reconciliation would need a "last attempt failed" input to
-the flag: a contract decision, not one made here.
+Risk-based sizing follows the last reconciliation, not the 10 s stale flag (the ruling on #837,
+Option B; `listExchangeAccounts`: "if that fails too, risk-based sizing is unavailable").
+`risk_sizing_available` is false only when the snapshot is stale and the last reconciliation
+attempt failed. `balance_stale` and `balance_stale_since` stay at the 10 s window and are for
+display: a quiet but healthy account (a flat one pushes only on change) keeps sizing between its
+truth-checks. A tracked account with no snapshot has unknown sizing, which also fails closed.
+- The reconciler reports each attempt (`record_attempt`). A failed read, a timeout, a credential
+  rejection and a read that cannot run at all (no credentials loaded, no exchange connection, no
+  adapter yet) are failures. A success, or any refresh from the stream or from a read, clears one.
+- "No attempt" never reads as "the last attempt succeeded": a period (`CV_WALLET_RECONCILE_S`)
+  that passes with no refresh counts as a failed attempt, because a read the cache took would have
+  refreshed. That is derived on every read, so it holds even when the reconciler's task has died.
+  A read still in flight at the end of a period does not cover it: sizing is off until it
+  answers, for a tick and a read each period. Nor does a read that succeeded but lost to a newer
+  snapshot: sizing never uses a snapshot older than one period, however it got that old. (One
+  dated ahead of the exchange's own answers blocks every later refresh, so it must not keep
+  sizing on.)
+- Every decision taken on a snapshot older than the period is logged, as
+  `wallet.sizing_on_old_snapshot` with `wallet_snapshot_age_seconds`, and counted in
+  `cv_wallet_sizing_old_snapshot_total`, so the choice is observable. The accepted residual (E27
+  threat model, KV-T13): sizing may use a balance up to one period old while the private wallet
+  stream is silent and the reconciliation succeeds.
 
-The cache is synchronous O(1) with no I/O (C-2.21), for one event loop.
+The cache is synchronous and O(1), with no network or disk I/O (C-2.21), for one event loop. A
+decision on an old snapshot adds one log line and one counter increment.
 
 The reconciler awaits one injected port per due account, concurrently and under a timeout, never
 with two reads of an account at once (a hung exchange must not multiply the calls against the
@@ -48,7 +58,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -66,6 +76,9 @@ from candleviewer.settings import (
     Settings,
 )
 
+if TYPE_CHECKING:
+    from candleviewer.observability.metrics import BoundedMetric
+
 #: The bound on one REST wallet read.
 WALLET_REST_TIMEOUT_S: Final = 5.0
 #: A balance or rate: finite, and hidden from `repr()` (balances are Confidential, C-12.6).
@@ -73,8 +86,9 @@ Amount = Annotated[Decimal, Field(repr=False, allow_inf_nan=False)]
 
 
 class WalletUnavailable(AccountsError):
-    """A REST wallet read gave no figures (a 5xx, a timeout, a dropped connection, a rate limit, or
-    no adapter yet). Never health evidence."""
+    """A REST wallet read gave no figures (a 5xx, a timeout, a dropped connection, a rate limit,
+    no credentials loaded, no exchange connection, or no adapter yet). Never health evidence, and
+    a failed reconciliation attempt for risk-based sizing."""
 
 
 class WalletSnapshot(BaseModel):
@@ -99,10 +113,12 @@ class WalletSnapshot(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class WalletThresholds:
-    """`CV_WALLET_STALE_S`: older than this is stale (`listExchangeAccounts`' display rule).
-    `CV_WALLET_RECONCILE_S`: the REST read after this long without a refresh (US-ACCT-008's
-    truth-check). `ws_down_poll_s` (`CV_ACCOUNT_HEARTBEAT_S`): the cadence while the private WS is
-    down, never slower than `reconcile_s`. The first two must not be conflated.
+    """`CV_WALLET_STALE_S`: older than this is stale (`listExchangeAccounts`' display rule; sizing
+    follows the last reconciliation). `CV_WALLET_RECONCILE_S`: the REST read after this long
+    without a refresh (US-ACCT-008's truth-check), and the age past which a snapshot no longer
+    sizes: a period without a refresh counts as a failed attempt. `ws_down_poll_s`
+    (`CV_ACCOUNT_HEARTBEAT_S`): the cadence while the private WS is down, never slower than
+    `reconcile_s`. The first two must not be conflated.
 
     Neither of them may exceed its US-ACCT-008 default, which is also its cap: `WALLET_STALE_S` and
     `WALLET_RECONCILE_S`, written once in `settings`, where `Settings` bounds both fields by them.
@@ -142,20 +158,44 @@ class WalletView:
     stale_since: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class SizingDecision:
+    """One risk-based sizing decision. `available`: `True` the account's balance may size an order,
+    `False` it may not, `None` unknown (no snapshot yet, or an untracked account).
+    `wallet_snapshot_age_seconds`: the age of the snapshot at the moment of the decision, to the
+    millisecond, on the clock the stale window and the reconciliation period are measured on;
+    `None` with no snapshot."""
+
+    available: bool | None
+    wallet_snapshot_age_seconds: float | None
+
+
 @dataclass(slots=True)
 class _Entry:
     refreshed: float  # monotonic: the last refresh, or when tracking began
     refreshed_at: datetime  # the same instant on the wall clock
     snapshot: WalletSnapshot | None = None
+    attempt_failed: bool = False  # the last reported attempt failed; a success or refresh clears it
 
 
 class WalletCache:
-    """The latest snapshot per tracked account, and how fresh it is. A `WalletReconciler` follows
-    its cache's `clock` and `thresholds`."""
+    """The latest snapshot per tracked account, how fresh it is, and whether risk-based sizing may
+    use it. A `WalletReconciler` follows its cache's `clock` and `thresholds`.
 
-    def __init__(self, clock: Clock, thresholds: WalletThresholds | None = None) -> None:
+    `old_snapshot_decisions`: the catalogue's `cv_wallet_sizing_old_snapshot_total`, counted once
+    per decision taken on a snapshot older than the reconciliation period; the composition root
+    passes it, and without one the decisions are still logged."""
+
+    def __init__(
+        self,
+        clock: Clock,
+        thresholds: WalletThresholds | None = None,
+        *,
+        old_snapshot_decisions: BoundedMetric | None = None,
+    ) -> None:
         self.clock = clock
         self.thresholds = thresholds or WalletThresholds()
+        self._old_snapshot_decisions = old_snapshot_decisions
         self._entries: dict[UUID, _Entry] = {}
 
     def track(self, account_id: UUID) -> None:
@@ -166,47 +206,87 @@ class WalletCache:
         self._entries.pop(account_id, None)
 
     def apply(self, account_id: UUID, snapshot: WalletSnapshot) -> bool:
-        """Take a snapshot from the WS stream or a REST read; `True` if it refreshed the cache. One
-        for an untracked account, or older than the cached one, changes nothing."""
+        """Take a snapshot from the WS stream or a REST read; `True` if it refreshed the cache, and
+        so cleared a failed reconciliation attempt. One for an untracked account, or older than the
+        cached one, changes nothing."""
         entry = self._entries.get(account_id)
         held = None if entry is None else entry.snapshot
         if entry is None or (held is not None and snapshot.updated_at < held.updated_at):
             return False
         entry.snapshot, entry.refreshed = snapshot, self.clock.monotonic()
         entry.refreshed_at = self.clock.now()
+        entry.attempt_failed = False
         return True
 
+    def record_attempt(self, account_id: UUID, *, ok: bool) -> None:
+        """The reconciler reports how one attempt ended, as it ends. A failure (a failed read, a
+        credential rejection, a read that cannot run) stays until a success or a refresh clears
+        it. A success clears it but refreshes nothing: it does not extend the period (see
+        `sizing_decision`). Untracked: ignored."""
+        entry = self._entries.get(account_id)
+        if entry is not None:
+            entry.attempt_failed = not ok
+
     def view(self, account_id: UUID) -> WalletView | None:
-        """Derived on every read, so a lapse shows without a tick; `None` if untracked."""
+        """Derived on every read, so a lapse shows without a tick; `None` if untracked. The stale
+        flag is for display: on its own it does not decide sizing."""
         entry = self._entries.get(account_id)
         if entry is None:
             return None
-        stale = self._stale(entry)
+        stale = self._stale(entry, self.clock.monotonic())
         since = entry.refreshed_at + timedelta(seconds=self.thresholds.stale_s) if stale else None
         return WalletView(entry.snapshot, stale, since)
 
-    def risk_sizing_available(self, account_id: UUID) -> bool | None:
-        """`order_gate.SizingSource`: `True` fresh, `False` stale, `None` (unknown) for no
-        snapshot yet or an untracked account."""
+    def sizing_decision(self, account_id: UUID) -> SizingDecision:
+        """Whether risk-based sizing may use the account's balance now, and the snapshot's age.
+        Unavailable only when the snapshot is stale and the last reconciliation attempt failed,
+        where a period (`reconcile_s`) with no refresh counts as a failed attempt (exactly one
+        period old is not yet past it): so it never uses a snapshot older than one period. `None`
+        (unknown) for no snapshot yet or an untracked account. A decision on a snapshot older than
+        the reconciliation period is logged and counted."""
         entry = self._entries.get(account_id)
         if entry is None or entry.snapshot is None:
-            return None
-        return not self._stale(entry)
+            return SizingDecision(None, None)
+        now = self.clock.monotonic()
+        age = now - entry.refreshed
+        lapsed = age > self.thresholds.reconcile_s
+        failed = entry.attempt_failed and self._stale(entry, now)
+        decision = SizingDecision(not (lapsed or failed), round(age, 3))
+        if lapsed:
+            self._note_old_snapshot(account_id, decision)
+        return decision
+
+    def risk_sizing_available(self, account_id: UUID) -> bool | None:
+        """`order_gate.SizingSource`: `sizing_decision(...).available`."""
+        return self.sizing_decision(account_id).available
 
     def silence_s(self) -> dict[UUID, float]:
         """Seconds since each tracked account's last refresh, or since tracking began."""
         now = self.clock.monotonic()
         return {account_id: now - entry.refreshed for account_id, entry in self._entries.items()}
 
-    def _stale(self, entry: _Entry) -> bool:
+    def _stale(self, entry: _Entry, now: float) -> bool:
         """Older than the window: exactly 10 s old is not yet older than 10 s."""
-        return self.clock.monotonic() - entry.refreshed > self.thresholds.stale_s
+        return now - entry.refreshed > self.thresholds.stale_s
+
+    def _note_old_snapshot(self, account_id: UUID, decision: SizingDecision) -> None:
+        """Make a decision on a snapshot older than the reconciliation period observable. The line
+        carries the age and the verdict, never a balance (Confidential, C-12.6)."""
+        structlog.get_logger(__name__).warning(
+            "wallet.sizing_on_old_snapshot",
+            account_id=str(account_id),
+            available=decision.available,
+            wallet_snapshot_age_seconds=decision.wallet_snapshot_age_seconds,
+        )
+        if self._old_snapshot_decisions is not None:
+            self._old_snapshot_decisions.child().inc()
 
 
 class WalletRestPort(Protocol):
     """One authenticated REST wallet read for an account (E29 implements `TradingPort.wallet`). It
     raises `KeyRefused` when the exchange rejects the credential, as the adapter classifies it, and
-    `WalletUnavailable` (by convention) for a read that gave no figures."""
+    `WalletUnavailable` (by convention) for a read that gave no figures, among them one that cannot
+    run at all (no credentials loaded, no exchange connection). Any error is a failed attempt."""
 
     async def wallet(self, account_id: UUID) -> WalletSnapshot: ...
 
@@ -302,11 +382,14 @@ class WalletReconciler:
                 async with asyncio.timeout(self._timeout_s):
                     snapshot = await self._rest.wallet(account_id)
             except KeyRefused as refused:
+                self._cache.record_attempt(account_id, ok=False)
                 self._rejections.credential_rejected(account_id, refused.reason)
                 log.warning("wallet.reconcile_refused", reason=refused.reason.value)
                 return WalletPoll(account_id, "rejected", False, None)
             except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
+                self._cache.record_attempt(account_id, ok=False)
                 log.warning("wallet.reconcile_failed", error=type(exc).__name__)
                 return WalletPoll(account_id, "failed", False, None)
             refreshed = self._cache.apply(account_id, snapshot)
+            self._cache.record_attempt(account_id, ok=True)
             return WalletPoll(account_id, "ok", refreshed, self._health.rest_ok(account_id))

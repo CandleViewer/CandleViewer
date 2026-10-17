@@ -544,7 +544,7 @@ SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). 
 
 **E27 accounts and key vault** (`docs/security/threat-models/E27-accounts.md`, ticket E27-X01) re-derives Area 1
 (K1-K10) against the built M2 credential broker (E27-T02), the E27-K01 KEK custody finding and the
-`exchange-accounts` contract. 69 rows (KV-S01..KV-E14): one inherent Critical (a key that can move funds, KV-E05)
+`exchange-accounts` contract. 70 rows (KV-S01..KV-E14): one inherent Critical (a key that can move funds, KV-E05)
 and 23 High; a threat that lets value leave the account is raised one band, as K4 is. Four concerns get dedicated
 analysis: the withdrawal and fund-movement gate (C-2.8), where the substring rule alone passed fund-moving permission
 groups such as `FiatP2P` (the M2 allow-list of #2270 now refuses them) and the contract text is weaker than the rule; the M2 boundary, a capability discipline
