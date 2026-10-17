@@ -40,6 +40,12 @@ QUESTDB_PG_DEFAULT_PORT = 8812
 #: bounds below and `HealthThresholds` share one value.
 ACCOUNT_HEARTBEAT_MAX_S: Final = 10.0
 ACCOUNT_DOWN_MAX_S: Final = 30.0
+#: US-ACCT-008's windows for `wallet_stale_s` (the `balance_stale` flag) and `wallet_reconcile_s`
+#: (the REST truth-check after this long without a refresh): their defaults, and their caps too.
+#: Written once, here, for the same reason as the account windows: `accounts/wallet.py` imports
+#: them, so the bounds below and `WalletThresholds` share one value.
+WALLET_STALE_S: Final = 10.0
+WALLET_RECONCILE_S: Final = 60.0
 
 # #2565: timings of the planned shutdown that are code constants, not settings. They live in M1
 # because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
@@ -534,6 +540,19 @@ class Settings(BaseSettings):
         default=ACCOUNT_HEARTBEAT_MAX_S, gt=0.0, le=ACCOUNT_HEARTBEAT_MAX_S
     )
     account_down_s: float = Field(default=ACCOUNT_DOWN_MAX_S, gt=0.0, le=ACCOUNT_DOWN_MAX_S)
+    # E27-T04 (US-ACCT-008): a wallet snapshot is `balance_stale` once older than
+    # `CV_WALLET_STALE_S`, and a REST read truth-checks it after `CV_WALLET_RECONCILE_S` without a
+    # refresh (while the private WS is down, every `CV_ACCOUNT_HEARTBEAT_S` instead). Two
+    # thresholds, not one: the display flag and the reconciliation cadence. The caps are the
+    # contract's, not tuning room: config may tighten a window, never loosen it, so that no value
+    # (an infinite window, or milliseconds mistaken for seconds) switches the stale flag or the
+    # truth-check off (C-4.14). The stale flag comes before the truth-check.
+    wallet_stale_s: float = Field(
+        default=WALLET_STALE_S, gt=0.0, le=WALLET_STALE_S, allow_inf_nan=False
+    )
+    wallet_reconcile_s: float = Field(
+        default=WALLET_RECONCILE_S, gt=0.0, le=WALLET_RECONCILE_S, allow_inf_nan=False
+    )
     # E27-T04: key-age policy (US-ACCT-005), deployment config for v1 (decision Q4 on #837).
     # Bounded so that no value switches the reminder off (C-4.14): overdue within a year, and a
     # warning window of at least a day that ends before the due date (Settings and the policy
@@ -826,6 +845,18 @@ class Settings(BaseSettings):
         if heartbeat_s is not None and not heartbeat_s < down_s:
             raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
         return down_s
+
+    @field_validator("wallet_reconcile_s")
+    @classmethod
+    def _refuse_unordered_wallet_windows(cls, reconcile_s: float, info: ValidationInfo) -> float:
+        """E27-T04: the stale flag comes before the REST truth-check, as `WalletThresholds`
+        requires. A field validator on the second window, as for the account windows, so a
+        refusal never carries another setting (#2728, C-12.6); a stale window whose own check
+        failed is absent from `info.data` and its error is the one to report."""
+        stale_s = info.data.get("wallet_stale_s")
+        if stale_s is not None and not stale_s < reconcile_s:
+            raise ValueError("CV_WALLET_STALE_S must be less than CV_WALLET_RECONCILE_S")
+        return reconcile_s
 
     @field_validator("rotation_warn_days")
     @classmethod
