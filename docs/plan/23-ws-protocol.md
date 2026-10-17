@@ -3761,21 +3761,22 @@ left out. So `message` must be role-neutral in every kind, as the notices above 
 of any other `kind` is sent to nobody, and so is every frame to a connection whose principal
 holds no role (the deny-all principal of a failed load, and every socket on the fake backend).
 
-| `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` (as below) |
-| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`)                                                                 |
-| `feature_flags`      | none: the frame is not sent. Until the push above resolves each key's `visibility` (E42-T03), only the Owner receives this kind                                                                             |
-| `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                   |
-| `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                   |
-| `shutdown_notice`    | `reason`, `closing_in_ms`, `expected_downtime_ms`                                                                                                                                                           |
-| `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                       |
-| `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                           |
-| `notice`             | `reason`                                                                                                                                                                                                    |
+| `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` and `feature_flags` (each as below) |
+| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`)                                                                                          |
+| `feature_flags`      | `feature_flags` with only the keys whose registry `visibility` admits the role, never one that no flag definition names; left out when none remains, and then a frame of this kind is not sent                                       |
+| `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                                            |
+| `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                                            |
+| `shutdown_notice`    | `reason`, `closing_in_ms`, `expected_downtime_ms`                                                                                                                                                                                    |
+| `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                                                |
+| `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                                                    |
+| `notice`             | `reason`                                                                                                                                                                                                                             |
 
 So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-text `reason`, the
-`actions` counts and the accounts outside the connection's scope reach the Owner only. This uses
-the existing schema; no schema change.
+`actions` counts, the accounts outside the connection's scope, the `owner_only` flag keys and any
+key that no flag definition names reach the Owner only. This uses the existing schema; no schema
+change.
 
 An engaged kill switch covers a connection, as of that frame, when its `scope` is `global`, or when
 the `exchange_account_ids` that connection receives is not empty. Under `scope: "accounts"` a frame
