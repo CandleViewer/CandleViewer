@@ -28,7 +28,7 @@ body:
         - label: Full test pyramid green on main tip (unit, contract, integration, E2E, load/perf, security, a11y)
         - label: "@demo-rest-only tagged E2E subset green against staging (demo); no WS order-entry frames asserted"
         - label: Coverage thresholds met (>=85% backend/engine, >=80% frontend), no regression from previous release
-        - label: CHANGELOG.md Unreleased section reviewed for accuracy and completeness
+        - label: CHANGELOG.md Unreleased synced by a reviewed sync PR (preview reports 0 pending) and reviewed for accuracy and completeness
   - type: checkboxes
     id: cut-soak
     attributes:

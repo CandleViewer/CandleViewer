@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 1.1.0 · Last updated 2026-09-25 · Owner `@basiltt`
+> **Version:** 1.2.0 · Last updated 2026-10-17 · Owner `@basiltt`
 
 ---
 
@@ -382,6 +382,13 @@ the source of truth for ticket _content_.
 | Backlog ticket schema + cross-file rule validation (GOV-004)                       | `python scripts/validate-backlog.py` (`--summary` for the per-epic point rollup, `--json` for machine output) |
 | Both, as `pr-metadata`'s `governance` job will invoke them (job wiring: `E01-Q02`) | `make governance`                                                                                             |
 | Governance script tests                                                            | `python -m pytest scripts/tests --cov=scripts --cov-fail-under=85`                                            |
+
+### Release / changelog (docs/plan/07-release-and-prr.md §3)
+
+| Task                                            | Command                                                          |
+| ----------------------------------------------- | ---------------------------------------------------------------- |
+| Preview the Unreleased section (writes nothing) | `python tools/ci/update_changelog.py --since-last-tag --preview` |
+| Sync Unreleased for a sync PR                   | `python tools/ci/update_changelog.py --since-last-tag`           |
 
 ---
 

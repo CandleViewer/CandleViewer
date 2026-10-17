@@ -42,6 +42,9 @@ merge to main (.github/workflows/main.yml)
 ├─ build-scan-sign        → non-root hardening, Trivy, SBOM, cosign      (CI-IMG-002..006)
 └─ deploy-dev.yml (workflow_run, self-hosted dev-host) → verify+deploy+smoke (CI-DEP-001..004, see §8)
 
+merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/workflows/changelog.yml)
+└─ changelog-preview → tools/ci/update_changelog.py --preview (job summary; never commits)
+
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
