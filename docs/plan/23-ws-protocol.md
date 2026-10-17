@@ -40,7 +40,7 @@ This document specifies the **client-facing** WebSocket protocol between the Can
 | --- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | G1  | One socket carries everything the app needs after the REST bootstrap. | Multiplexed topics on a single connection; no per-widget sockets.                                                                       |
 | G2  | The chart engine can upload frames to the GPU with minimal CPU work.  | Binary payload encoding with fixed-layout typed arrays for the hot topics (§3.4).                                                       |
-| G3  | Correctness under loss is deterministic, not best-effort.             | Snapshot+delta with per-topic sequence numbers and an explicit resync protocol (§7), never a checksum (Bybit has none — digest 06 §19). |
+| G3  | Correctness under loss is deterministic, not best-effort.             | Snapshot+delta with per-stream sequence numbers and an explicit resync protocol (§7), never a checksum (Bybit has none, digest 06 §19). |
 | G4  | A slow or backgrounded client can never grow server memory.           | Coalescing queues with fixed depth and forced re-snapshot (§8), never unbounded buffering (arch P6).                                    |
 | G5  | Authorisation is server-authoritative and revocable mid-connection.   | Per-subscribe permission checks plus live revocation frames (§9.5) (arch P8).                                                           |
 | G6  | Live and replay are the same code path on both sides.                 | `replay_session_id` on subscribe routes the same topics from the replay clock (§11) (arch P2).                                          |
@@ -139,7 +139,7 @@ Every frame in both directions is a single map with this shape. Field order is i
   "t": "d", // type   — see table below
   "id": "c-0007", // correlation id (client→server requests and their replies)
   "ch": "trades.BTCUSDT", // channel/topic (data, snapshot, delta, topic-scoped errors)
-  "s": 1048577, // sequence number, per (connection, topic)
+  "s": 1048577, // sequence number, per (connection, stream) (§3.3)
   "ts": 1789132262104, // server send time, epoch milliseconds UTC
   "e": "b", // payload encoding: "j" = inline structured, "b" = binary blob
   "p": {}, // payload (map) or binary blob (bytes)
@@ -158,7 +158,7 @@ Every frame in both directions is a single map with this shape. Field order is i
 | `unsub_ok`          | unsubscribe result    | S→C       | Confirmation.                                                                    |
 | `snap`              | snapshot              | S→C       | Full state for a topic; resets the sequence baseline.                            |
 | `d`                 | delta                 | S→C       | Incremental update; requires an unbroken sequence.                               |
-| `resync`            | resync request        | C→S       | Client asks for a fresh snapshot on a topic.                                     |
+| `resync`            | resync request        | C→S       | Client asks for a fresh snapshot on a stream (§3.3).                             |
 | `revoked`           | subscription revoked  | S→C       | Server ended a subscription (permission/scope/kill), or narrowed it (§9.5).      |
 | `permission_change` | authorisation changed | S→C       | Live re-resolved identity, permissions and scope; precedes any `revoked` (§9.5). |
 | `ping`              | ping                  | both      | Liveness probe.                                                                  |
@@ -189,7 +189,7 @@ Control frames (`hello`, `welcome`, `auth`, `sub`, `err`, …) are **always** `e
 
 ### 3.3 Why sequence numbers live on the envelope
 
-`s` is scoped to `(connection, topic)` and increments by exactly 1 per frame delivered on that topic, starting at the `s` of the `snap` that opened the stream. It is **not** the exchange's `u`/`seq` — those are carried inside book payloads as `xu`/`xseq` for diagnostics. Keeping our own counter means:
+`s` is scoped to `(connection, stream)`, a stream being a `ch` and, on replay, its `rs` (§11), and increments by exactly 1 per frame delivered on that stream, starting at the `s` of the `snap` that opened it. It is **not** the exchange's `u`/`seq` — those are carried inside book payloads as `xu`/`xseq` for diagnostics. Keeping our own counter means:
 
 - gap detection is uniform across every topic, including derived ones Bybit has no sequence for (footprint, metrics, heatmap);
 - coalescing (§8) is visible to the client — a coalesced delta still consumes exactly one sequence number, so "no gap" always means "no loss of _state_", even when it means loss of _intermediate frames_.
@@ -559,6 +559,8 @@ When more than one applies, the first in this list names the code and the `field
 
 **Audit (SR-192, #2292).** The refusals in one `sub_ok` that are audited, every `forbidden` and `account_scope_denied` and any refusal of a private-family topic, are one `ws.subscribe.denied` record for the frame, never one per topic. Each such refusal has an `object_id`, its topic family, and a `reason`, its code; for a `machines` topic they are the full `ch` and, when its entity was refused, the internal reason (§6.4). The record's `object_id` and `reason` are the first refusal's. It has an `after_state` only when the frame has two or more such refusals: their `count`, every code among them (`codes`, sorted) and the `[object_id, reason]` pairs of the first 10 in request order (`refusals`). A topic name the client sent is recorded only for a `machines` topic (§6.4); any other is recorded by its family. A `sub` refused whole writes no record.
 
+**The subscription a result names (#3218).** An accepted result carries its subscription's `sub_id`: an opaque id, valid only on this connection and never reused on it (as built `s_<n>`, and `system` for `system`). A refused result has none. Each result of a replay `sub` (§11) whose `replay_session_id` is a uuid also carries `rs`, that id in lower-case canonical form as its data frames carry it, whether accepted or refused; the `system` result never does. So a client tells a replay result from its live twin's without the request `id`. As built, until the server slice of #3218, no result carries `rs`, and `sub` also reads a `urn:uuid:`, braced or hyphen-less `replay_session_id` as that id; the server slice refuses those spellings (§7.5).
+
 ```jsonc
 {
   "t": "sub_ok",
@@ -627,10 +629,12 @@ When more than one applies, the first in this list names the code and the `field
 
 ```jsonc
 { "t": "unsub", "id": "c-0020", "p": { "topics": ["book.BTCUSDT.50"] } }
-{ "t": "unsub_ok", "id": "c-0020", "ts": 1789132999100, "p": { "results": [ { "ch": "book.BTCUSDT.50", "ok": true } ] } }
+{ "t": "unsub_ok", "id": "c-0020", "ts": 1789132999100, "p": { "results": [ { "ch": "book.BTCUSDT.50", "ok": true, "ended": [ { "sub_id": "s_01" } ] } ] } }
 ```
 
 Unsubscribing from an unknown or already-removed topic is **not** an error (`ok: true`, `noop: true`) — this keeps teardown idempotent during pane close races.
+
+**Live and replay (#3218).** An `unsub` names its streams as a `resync` does (§7.5): each entry's `ch`, with the envelope `rs` of a replay session, which applies to every entry of the frame. An entry ends the subscription of its `ch` in that session, or the live one when there is no `rs`, so an `unsub` without `rs` never ends a replay stream, and a live and a replay stream of one `ch` take two frames. An entry that matches nothing is `ok: true, noop: true`, as above. `unsub` carries no `sub_id` (§16.6 W10). An `rs` that is present and not `null` but is not a uuid refuses the whole frame, after the shape checks below: `err` `invalid_options` (`field`: `rs`), nothing unsubscribed, no strike. An `ok: true` result that ended a subscription lists it in `ended`: one entry, since an entry ends at most one subscription, with its `sub_id` and, for a replay one, its `rs` (§5.2). As built, until the server slice of #3218, `rs` is ignored, an entry ends every subscription of its `ch`, live and replay alike, and no result carries `ended`.
 
 **A malformed `unsub` is refused whole (#2572, #2875).** As for `sub` (§5.2), an `unsub` whose shape breaks §13.5 in one of the following ways gets one `err` `invalid_options` instead of an `unsub_ok`: nothing is unsubscribed, and it is not a protocol strike (§4.3). The ways are:
 
@@ -649,7 +653,7 @@ Retuning the throttle without tearing down the subscription or re-snapshotting:
 
 ```jsonc
 { "t": "ctl", "id": "c-0030", "ch": "book.BTCUSDT.50", "p": { "throttle_ms": 200 } }
-{ "t": "ctl_ok", "id": "c-0030", "ch": "book.BTCUSDT.50", "ts": 1789133000000, "p": { "effective": { "throttle_ms": 200 } } }
+{ "t": "ctl_ok", "id": "c-0030", "ch": "book.BTCUSDT.50", "ts": 1789133000000, "p": { "effective": { "throttle_ms": 200 }, "sub_id": "s_01" } }
 ```
 
 Changing `depth`, `price_grouping`, `time_bucket_ms` or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
@@ -658,9 +662,11 @@ Changing `depth`, `price_grouping`, `time_bucket_ms` or the `metrics` list **inv
 
 **Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. The pause holds until a `ctl` sets `paused: false`: a `ctl` that omits `paused` (a hidden window's throttle change, §8.5) leaves it in place, and its `ctl_ok.effective` echoes `paused: true`. A `ctl` that resumes the subscription (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` comes before any further `d`, as for an identity change. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
 
+**The subscription a `ctl` names (#3218).** A `ctl` names its stream as a `resync` does (§7.5): the envelope `ch`, with the envelope `rs` of a replay stream. It retunes the subscription of `ch` in that session, or the live one when there is no `rs`; a `ctl` without `rs` never reaches a replay stream. `ctl` carries no `sub_id`: its payload is §13.6's options (§16.6 W10). After the envelope `ch` check below, an `rs` that is present and not `null` but is not a uuid gets `err` `invalid_options` (`field`: `rs`), then a `ctl` whose stream does not exist gets `not_subscribed`, and only then are the options read; none of these changes anything or is a strike. `ctl_ok` names the subscription it retuned: `p.sub_id`, and the envelope `rs` when it is a replay one (§11). As built, until the server slice of #3218, `rs` is ignored, a `ctl` retunes the live subscription of `ch`, else one of its replay subscriptions, and `ctl_ok` carries neither name.
+
 **As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` refuses the whole frame with `too_many_topics` (§5.2, #2292).
 
-**The envelope `ch` (#2572).** A `ctl` whose `ch` is present and not `null`, but is not a topic name (`common.schema.json#/$defs/topic`: not a string, or a string of another shape) gets `err` `invalid_options` (`field`: `ch`) and changes nothing. It is not a protocol strike (§4.3). The `err` carries no `ch`, because the envelope `ch` is a topic name (§13.1) and the server never echoes one that is not. A `ctl` with no `ch` (absent or `null`) gets `not_subscribed` without one, as before. A topic name that holds no subscription gets `not_subscribed` with that name.
+**The envelope `ch` (#2572).** A `ctl` whose `ch` is present and not `null`, but is not a topic name (`common.schema.json#/$defs/topic`: not a string, or a string of another shape) gets `err` `invalid_options` (`field`: `ch`) and changes nothing. It is not a protocol strike (§4.3). The `err` carries no `ch`, because the envelope `ch` is a topic name (§13.1) and the server never echoes one that is not. A `ctl` with no `ch` (absent or `null`) gets `not_subscribed` without one, as before, unless its `rs` is malformed (`invalid_options`, above). A topic name that holds no subscription gets `not_subscribed` with that name.
 
 **Why `ctl` exists.** The UI changes throttle constantly: a pane that scrolls out of view drops to 1 000 ms, a maximised DOM goes to 20 ms, a backgrounded Electron window goes to 1 000 ms for everything. Doing that with unsub/sub would re-snapshot a 200-level book every time the user switches tabs.
 
@@ -913,17 +919,17 @@ The columns use the actors and outcomes of the RBAC matrix (`services/api/tests/
 
 ### 7.1 The contract
 
-For every topic, the server guarantees:
+For every stream (§3.3), the server guarantees:
 
 1. The first data frame after a successful `sub` (with `snapshot: true`) is a `snap`. It carries complete state and an initial sequence `s0`.
-2. Every subsequent `d` on that topic carries `s = previous_s + 1`.
+2. Every subsequent `d` on that stream carries `s = previous_s + 1`.
 3. Applying every `d` in order to the `snap` state yields exactly the server's state, except for a `bars` update the server lost without a gap (§3.4).
-4. A `snap` may appear at **any** time (server-initiated resync, §7.4). It resets the baseline; the client discards prior state for that topic.
+4. A `snap` may appear at **any** time (server-initiated resync, §7.4). It resets the baseline; the client discards prior state for that stream.
 
 The client guarantees:
 
-1. It tracks `last_seq` per topic.
-2. On receiving `d` with `s != last_seq + 1`, it **immediately discards local state for that topic** and issues `resync`. It does **not** attempt to patch around the gap.
+1. It tracks `last_seq` per stream: per topic, and per topic and `rs` on replay (§11).
+2. On receiving `d` with `s != last_seq + 1`, it **immediately discards local state for that stream** and issues `resync`. It does **not** attempt to patch around the gap.
 3. It never renders state assembled across a gap.
 
 ```mermaid
@@ -1076,7 +1082,29 @@ A `bars.*` subscription gets the `instrument_revision` snap too: the server re-s
 }
 ```
 
-The server replies with a `snap` on that topic (correlated by `ch`, not by `id`). Rate limit: **5 resyncs per topic per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer. That revocation writes one `ws.subscription.revoked` row (reason `resync_rate_limited`) through the bounded writer of a §9.5 change, and counts in `cv_ws_revoked_total{reason="resync_rate_limited"}` (SR-187, #2174).
+The server replies with a `snap` on that stream (correlated by `ch`, and `rs` on replay, not by `id`). Rate limit: **5 resyncs per stream per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer. That revocation writes one `ws.subscription.revoked` row (reason `resync_rate_limited`), naming the subscription from the #3218 server slice on, through the bounded writer of a §9.5 change, and counts in `cv_ws_revoked_total{reason="resync_rate_limited"}` (SR-187, #2174).
+
+**The subscription a `resync` names (#3218).** A `resync` names the stream it lost as that stream's frames do: the envelope `ch`, with the envelope `rs` of a replay stream (§11). The server resolves it, whatever its `reason`, to the subscription of `ch` in that replay session, or to the live one when there is no `rs`: a `resync` without `rs` never reaches a replay stream. `p.sub_id` (§5.2) is an optional pin: when sent, it must be the `sub_id` of the subscription that `ch` and `rs` name.
+
+```jsonc
+{
+  "t": "resync",
+  "id": "c-0041",
+  "ch": "book.BTCUSDT.200",
+  "rs": "bb000000-0000-4000-8000-000000000001",
+  "p": { "last_seq": 77, "reason": "sequence_gap", "sub_id": "s_07" },
+}
+```
+
+Here, in a `sub`'s `replay_session_id` (§5.2) and wherever a request carries `rs` (§5.3, §5.4), a uuid is the §13 `$defs/uuid` form: 36 characters, ASCII hex digits in 8-4-4-4-12 groups, each in either letter case; any other spelling (`urn:uuid:`, braces, no hyphens) is not one. The server compares `rs` in canonical lower case, the form of every `rs` it sends. `null` counts as absent for `rs` and `sub_id`. A `resync` is refused by the first of these that applies:
+
+1. a `ch` that is present and not `null` but is not a topic name: `invalid_options`, `field` `ch`, with no `ch` (below);
+2. no `ch`, a `p` that is not an object, an unknown `reason`, or a `last_seq` that is neither an integer nor `null`: `frame_malformed` (§7.7);
+3. an `rs` that is not a uuid: `invalid_options`, `field` `rs`;
+4. a `sub_id` that is not a string of 1 to 64 characters: `invalid_options`, `field` `sub_id`;
+5. no subscription of `ch` in that session (without `rs`, no live one), or a `sub_id` that is not its own: `not_subscribed`.
+
+No refusal re-snapshots, revokes, spends any of the limit above or counts as a protocol strike (§4.3), and none echoes a malformed value. An `err` with a `ch` that answers a `resync` or a `ctl` (§5.4) also carries the request's `rs` when that is a uuid, in canonical form. A `not_subscribed` after a `revoked` or `unsub_ok` that ended the stream is a routine race: the client drops that stream's resync and state, does not retry, and sends a new `sub` only if a consumer still wants the stream. A `not_subscribed` to a `resync` that carried a `sub_id`, with no such frame before it, means the id was stale: the client ends the stream with an `unsub` (naming its `rs` on replay), subscribes again, and takes a `sub_id` only from the latest `sub_ok` on this connection. The `snap` that answers carries the subscription's `rs`, as each of its data frames does. The limit above is kept per resolved subscription: per `ch` and, on replay, per `ch` and that subscription's `rs`. So the share is per stream: a live stream and its replay twins never spend each other's resyncs, and the connection's total stays bounded by the 200-subscription cap and the inbound frame rate (§8.5, §16.2). As built, until the server slice of #3218, both fields are ignored and a `resync` resolves by `ch` alone: the live subscription, else one replay subscription.
 
 The envelope `ch` follows the `ctl` rule (§5.4): a `ch` that is present and not `null`, but is not a topic name, gets `err` `invalid_options` (`field`: `ch`) with no `ch` (#2572). That takes no snapshot, spends none of the limit above and does not revoke the subscription.
 
@@ -1105,7 +1133,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 - While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted; a `book` subscription (#2196) is snapped only while its book is live, and a `bars` one (#2195) only from the live series it holds; each stays pending otherwise. Such a pending subscription is never an error; the §6.1 `bars.*` refusals happen at subscribe, before it is pending. A `footprint.*` subscription stays pending until #2197, but it is bounded at subscribe as §6.1 says.
 - `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
 - `book` topics (#2196) never claim continuity: the book module keeps no delta history and the book publisher (#604) starts its deltas at the attach point, so every `snapshot: false` attach to a `book` topic is `snapshot_forced` until a publisher catch-up exists. A `book` snapshot holds the best `min(depth, tier)` levels per side, the tier being the depth the book module keeps for the symbol, and its `depth` field is that served depth (`sub_ok`'s `effective.depth` still echoes the topic's). Until the book publisher (#604) lands, a `book` subscription gets that `snap` and no `d`.
-- A `resync` with no `ch` (absent or `null`), or with an unknown `reason`, is answered with `err` `frame_malformed`. A `ch` that is present and not `null`, but is not a topic name, is answered with `invalid_options` instead (§7.5, #2572).
+- A `resync` with no `ch` (absent or `null`), a `p` that is not an object, an unknown `reason` or a `last_seq` that is neither an integer nor `null` is answered with `err` `frame_malformed`. A `ch` that is present and not `null`, but is not a topic name, is answered with `invalid_options` instead (§7.5, #2572).
 - A §7.4 resync of a subscription that already awaits a `snap` keeps that `snap`'s `reason`, as `ctl` does (§5.4), except that `upstream_desync`, an incident, replaces any reason but `initial` and `backpressure` (#2831).
 - A topic held for a `backpressure` snapshot (§8.4 step 2) answers a client resync (§7.5) with that `snap` only: the resync still counts against the 5-per-minute limit, and the overflow ladder alone sends the `snap` (#2831).
 - Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
@@ -1358,11 +1386,14 @@ Then one `revoked` frame per affected subscription:
     "message": "Access to account a1000000-…-0002 was withdrawn.",
     "removed_accounts": ["a1000000-0000-4000-8000-000000000002"],
     "resubscribe_allowed": true,
+    "sub_id": "s_02",
   },
 }
 ```
 
 `reason` ∈ `permission_revoked` | `account_scope_changed` | `user_disabled` | `session_revoked` | `key_revoked` | `account_disabled` | `replay_session_ended` | `resync_rate_limited` | `topic_removed`.
+
+Each `revoked` names the subscription it concerns (#3218): `p.sub_id` always, and the envelope `rs` when it is a replay subscription (§11). So a `replay_session_ended` never reads as the end of a live twin, and a narrowing that continues a subscription names the one it continues. As built, until the server slice of #3218, `revoked` carries neither name.
 
 If the user is disabled entirely, the server sends `bye` with `4403` and closes. A live session of a disabled (or deleted) user that no disable revoked (#2911) is revoked as `user_disabled` the first time a strict-path request presents its access token: a REST request that authenticates the session, or a socket `auth`. `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` read the session with `allow_locked` and do not revoke it. The revocation is published, so the REST request answers 401 and every socket already running on that session ends with `bye` `user_disabled` and `4403`. The socket whose first `auth` presented the token is not registered yet: it gets `err` `auth_failed` like any refused `auth` (§4.3), not `bye` `user_disabled`. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set. The invitation is optional: that `revoked` does not end the subscription, which continues with the kept accounts. With the backpressure flag on, the next data frame on that `ch` is the `reconfigure` `snap` described next, which the client applies as a new baseline (§7.1, item 4); a new `sub` is needed only to change the set.
 
@@ -1447,8 +1478,8 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `subscription_limit`       | topic      | yes         | `rate_limited`         | A subscription (§3.6) or bars spec cap (§6.1) is reached. Unsubscribe something.     |
 | `too_many_topics`          | request    | yes         | `rate_limited`         | More than 50 topics in one `sub`. Split the request.                                 |
 | `duplicate_subscription`   | topic      | no          | `conflict`             | Already subscribed; use `ctl` to retune.                                             |
-| `not_subscribed`           | topic      | no          | `not_found`            | `ctl`/`resync` on a topic with no subscription.                                      |
-| `resync_rate_limited`      | topic      | yes         | `rate_limited`         | >5 resyncs/min on one topic; subscription revoked.                                   |
+| `not_subscribed`           | topic      | no          | `not_found`            | `ctl`/`resync` naming no subscription: none on the topic or with its `rs`/`sub_id`.  |
+| `resync_rate_limited`      | topic      | yes         | `rate_limited`         | >5 resyncs/min on one stream; subscription revoked.                                  |
 | `client_rate_limited`      | connection | yes         | `rate_limited`         | Inbound frame rate or per-user connect rate (`bye`, §4.3) exceeded. Back off.        |
 | `slow_consumer`            | connection | yes         | —                      | Outbound queue overflow; closes `4429`.                                              |
 | `no_data_recorded`         | topic      | no          | =                      | Topic needs recorded history that does not exist. Start recording first.             |
@@ -1506,7 +1537,8 @@ Rules:
 - A `seek` produces `snap` frames with `reason: "replay_seek"` on every subscribed topic.
 - `pause` stops frames; sequence numbers simply stop advancing. No keepalive frames are sent on paused topics, but the connection heartbeat continues.
 - Reaching `to` puts the session in `finished` and emits one `revoked` per topic with `reason: "replay_session_ended"`.
-- Live and replay subscriptions **may coexist** on one connection (a live DOM beside a replayed chart). They are distinct subscriptions; `book.BTCUSDT.200` live and `book.BTCUSDT.200` replay are disambiguated by `sub_id`, and replay frames carry `rs` (the replay session id) in the envelope.
+- Live and replay subscriptions **may coexist** on one connection (a live DOM beside a replayed chart), and so may two replay sessions of one topic. They are distinct subscriptions; `book.BTCUSDT.200` live and `book.BTCUSDT.200` replay are disambiguated by `sub_id`, and replay frames carry `rs` (the replay session id) in the envelope. These frames name one stream by its `ch` and `rs`, no `rs` meaning the live one (#3218): its data frames; the client's `resync`, `ctl` and `unsub` (§7.5, §5.4, §5.3); `ctl_ok` and `revoked`, which carry its `sub_id` too (§5.4, §9.5); each `sub_ok` and `unsub_ok` result (§5.2, §5.3); and an `err` with a `ch` that answers a `resync` or `ctl` naming one (§7.5). Until the server slice of #3218 the server reads no `rs` or `sub_id` on a request, and sends no `rs` on a `sub_ok` result or an `err` and no `sub_id` or `rs` on `ctl_ok`, `revoked` or `unsub_ok`, so a client treats these as optional. A client sends `rs` on `ctl` and `unsub` only once the server slice has landed: until then the server ignores it there (§5.3, §5.4).
+- These names are additive (§2.3) and `cv.v1` stays, with one change of meaning recorded in §16.1 (2026-10-17): a `resync`, `ctl` or `unsub` without `rs` names the live stream only.
 - Private topics **cannot** be replayed. A `sub` with `replay_session_id` that names `orders`/`positions`/`executions`/`wallet` is rejected with `invalid_options`. Paper-trading state during replay comes from the paper matcher on the normal private topics, tagged `is_paper: true` (the `environment` field keeps its real value — `demo`, or `live` when replaying live-recorded data — because the environment and the paper/real distinction are orthogonal).
 
 ```mermaid
@@ -1607,6 +1639,31 @@ C→S {"t":"resync","id":"c-90","ch":"book.BTCUSDT.50","p":{"last_seq":1002,"rea
 S→C {"t":"snap","ch":"book.BTCUSDT.50","s":1005,"ts":1789132262700,"e":"b","meta":{"reason":"client_resync","previous_seq":1004},"p":"<CVWB kind=1, full book>"}
 ```
 
+A replay stream beside that live one (§11, #3218) recovers the same way. Its frames, its `resync`, `ctl` and `unsub` and the answers name it by `rs`, and the live stream is never touched:
+
+```jsonc
+// the live book.BTCUSDT.50 above is s_05 (§12.1); the client adds a replay stream of it
+C→S {"t":"sub","id":"c-91","p":{"replay_session_id":"bb000000-0000-4000-8000-000000000001","topics":[{"ch":"book.BTCUSDT.50","opts":{"encoding":"binary"}}]}}
+S→C {"t":"sub_ok","id":"c-91","ts":1789132262710,"p":{"results":[{"ch":"book.BTCUSDT.50","ok":true,"sub_id":"s_11","rs":"bb000000-0000-4000-8000-000000000001","snapshot_pending":true,"effective":{"throttle_ms":50,"encoding":"binary","depth":50}}]}}
+S→C {"t":"snap","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","s":1,"ts":1788980400000,"wt":1789132262720,"e":"b","meta":{"reason":"initial","source":"replay"},"p":"<CVWB kind=1, full book>"}
+S→C {"t":"d","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","s":2,"ts":1788980400100,"wt":1789132262820,"e":"b","p":"<…>"}
+// s=3 of the replay stream lost in transit
+S→C {"t":"d","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","s":4,"ts":1788980400300,"wt":1789132263020,"e":"b","p":"<…>"}
+C→S {"t":"resync","id":"c-92","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","p":{"last_seq":2,"reason":"sequence_gap","sub_id":"s_11"}}
+S→C {"t":"snap","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","s":5,"ts":1788980400350,"wt":1789132263100,"e":"b","meta":{"reason":"client_resync","previous_seq":4,"source":"replay"},"p":"<CVWB kind=1, full book>"}
+// the replay pane scrolls out of view: its ctl names the replay stream, the live s_05 keeps 50 ms
+C→S {"t":"ctl","id":"c-93","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","p":{"throttle_ms":1000}}
+S→C {"t":"ctl_ok","id":"c-93","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","ts":1789132263200,"p":{"effective":{"throttle_ms":1000},"sub_id":"s_11"}}
+// the session reaches its end: the replay stream ends, the live s_05 goes on
+S→C {"t":"revoked","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","ts":1789132270000,"p":{"reason":"replay_session_ended","message":"The replay session ended.","resubscribe_allowed":false,"sub_id":"s_11"}}
+// a new consumer's client_restart resync that crossed the revoked: no subscription of book.BTCUSDT.50 has that rs now
+C→S {"t":"resync","id":"c-94","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","p":{"reason":"client_restart"}}
+S→C {"t":"err","id":"c-94","ch":"book.BTCUSDT.50","rs":"bb000000-0000-4000-8000-000000000001","p":{"code":"not_subscribed","message":"ctl/resync on a topic with no subscription","retryable":false,"close":false}}
+// the pane of a second session R2 (its stream s_12, subscribed like s_11) closes: the unsub names R2 only
+C→S {"t":"unsub","id":"c-95","rs":"bb000000-0000-4000-8000-000000000002","p":{"topics":["book.BTCUSDT.50"]}}
+S→C {"t":"unsub_ok","id":"c-95","ts":1789132270100,"p":{"results":[{"ch":"book.BTCUSDT.50","ok":true,"ended":[{"sub_id":"s_12","rs":"bb000000-0000-4000-8000-000000000002"}]}]}}
+```
+
 ### 12.4 Upstream desync (Bybit `u` gap) — server-initiated
 
 ```jsonc
@@ -1646,9 +1703,9 @@ S→C {"t":"d","ch":"system","s":30,"ts":1789133200000,"e":"j","p":{"kind":"conn
 S→C {"t":"snap","ch":"heatmap.BTCUSDT","s":812,"ts":1789133201000,"e":"b","meta":{"reason":"backpressure","previous_seq":811},"p":"<CVWB kind=6 columns>"}
 // client reacts: collapses two panes, lowers throttles
 C→S {"t":"ctl","id":"c-80","ch":"book.BTCUSDT.500","p":{"throttle_ms":500}}
-S→C {"t":"ctl_ok","id":"c-80","ch":"book.BTCUSDT.500","ts":1789133202000,"p":{"effective":{"throttle_ms":500},"resnapshot":false}}
+S→C {"t":"ctl_ok","id":"c-80","ch":"book.BTCUSDT.500","ts":1789133202000,"p":{"effective":{"throttle_ms":500},"resnapshot":false,"sub_id":"s_12"}}
 C→S {"t":"unsub","id":"c-81","p":{"topics":["heatmap.BTCUSDT","profile.BTCUSDT.volume"]}}
-S→C {"t":"unsub_ok","id":"c-81","ts":1789133202100,"p":{"results":[{"ch":"heatmap.BTCUSDT","ok":true},{"ch":"profile.BTCUSDT.volume","ok":true}]}}
+S→C {"t":"unsub_ok","id":"c-81","ts":1789133202100,"p":{"results":[{"ch":"heatmap.BTCUSDT","ok":true,"ended":[{"sub_id":"s_13"}]},{"ch":"profile.BTCUSDT.volume","ok":true,"ended":[{"sub_id":"s_14"}]}]}}
 S→C {"t":"d","ch":"system","s":31,"ts":1789133210000,"e":"j","p":{"kind":"connection_quality","class":"healthy","queue_pct":8,"rtt_ms":31,"applied":{"throttle_multiplier":1,"forced_coalesce":false,"degraded_topics":[]}}}
 ```
 
@@ -1662,7 +1719,7 @@ S→C {"t":"snap","ch":"machines.order:0a000000-0000-4000-8000-000000000001.stat
 // a fill and the exchange-confirmed native SL land inside one 100 ms window: one d, latest state only
 S→C {"t":"d","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":2,"ts":1789134000120,"e":"j","p":{"machine_kind":"order","state":"partially_filled","regions":{"lifecycle":"partially_filled","protection":"sl_present"},"tags":["protected"],"degraded":false,"machine_hash":"743dfaada4e382a4c29d40a582e454285aa3f4d5142b1ade45603086c8087255","environment":"live","updated_at_ms":1789134000101,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
 // later the owner withdraws the manager's grant on a1…01 (after the §9.5 permission push)
-S→C {"t":"revoked","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ts":1789134060000,"p":{"reason":"account_scope_changed","message":"Access to one or more accounts was withdrawn.","removed_accounts":["a1000000-0000-4000-8000-000000000001"],"resubscribe_allowed":false}}
+S→C {"t":"revoked","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ts":1789134060000,"p":{"reason":"account_scope_changed","message":"Access to one or more accounts was withdrawn.","removed_accounts":["a1000000-0000-4000-8000-000000000001"],"resubscribe_allowed":false,"sub_id":"s_41"}}
 ```
 
 The refused lockout and an unknown order id would get the identical `account_scope_denied` result, so the reply never says whether an entity exists (§6.4).
@@ -1698,6 +1755,12 @@ Shared definitions used throughout:
       "minLength": 1,
       "maxLength": 120,
       "pattern": "^[a-z_]+(\\.[A-Za-z0-9:_-]+)*$"
+    },
+    "subId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection."
     },
     "environment": {
       "$comment": "Mirrors OpenAPI `Environment` / Postgres `exchange_env` exactly. `paper` is NOT a member: paper trading is the orthogonal boolean `is_paper`, because a paper fill still belongs to a real environment (demo, or live during a replay) and collapsing the two would lose that.",
@@ -1849,7 +1912,7 @@ Shared definitions used throughout:
     },
     "rs": {
       "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
-      "description": "Replay session id; present only on replay frames."
+      "description": "Replay session id (§11): on a replay subscription's data frames, `ctl_ok` and `revoked`, on a client `resync`, `ctl` or `unsub` naming one (§5.3, §5.4, §7.5), and on an `err` with a `ch` that answers a `resync` or `ctl` (§7.5); never on a live stream's."
     },
     "sp": {
       "type": "string",
@@ -2196,6 +2259,10 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
           "ch": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" },
           "ok": { "type": "boolean" },
           "sub_id": { "type": "string" },
+          "rs": {
+            "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
+            "description": "On each result of a replay `sub` but the `system` one, accepted or refused (§5.2)."
+          },
           "snapshot_pending": { "type": "boolean" },
           "snapshot_forced": { "type": "boolean" },
           "effective": { "type": "object", "additionalProperties": true },
@@ -2243,7 +2310,21 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "properties": {
           "ch": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" },
           "ok": { "type": "boolean" },
-          "noop": { "type": "boolean" }
+          "noop": { "type": "boolean" },
+          "ended": {
+            "type": "array",
+            "minItems": 1,
+            "description": "What this entry ended (§5.3).",
+            "items": {
+              "type": "object",
+              "required": ["sub_id"],
+              "properties": {
+                "sub_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/subId" },
+                "rs": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
+              },
+              "additionalProperties": false
+            }
+          }
         },
         "additionalProperties": false
       }
@@ -2293,6 +2374,10 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
       "type": "boolean",
       "default": false,
       "description": "When true, a fresh `snap` follows and prior state must be discarded."
+    },
+    "sub_id": {
+      "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+      "description": "The subscription the `ctl` retuned (§5.4); a replay one's `rs` is on the envelope."
     }
   },
   "additionalProperties": false
@@ -2309,6 +2394,10 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     "last_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
     "reason": {
       "enum": ["sequence_gap", "decode_error", "state_corrupt", "client_restart", "manual"]
+    },
+    "sub_id": {
+      "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+      "description": "Optional pin: the `sub_id` of the subscription the envelope `ch` and `rs` name (§7.5)."
     }
   },
   "additionalProperties": false
@@ -2340,7 +2429,11 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
       "type": "array",
       "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
     },
-    "resubscribe_allowed": { "type": "boolean", "default": false }
+    "resubscribe_allowed": { "type": "boolean", "default": false },
+    "sub_id": {
+      "$ref": "cv://ws/v1/common.schema.json#/$defs/subId",
+      "description": "The subscription revoked or narrowed (§9.5); a replay one's `rs` is on the envelope."
+    }
   },
   "additionalProperties": false
 }
@@ -4009,7 +4102,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | --- | ---------------------------------------------------------------------------------------------------- |
 | S1  | Emit exactly one `sub_ok` result per requested topic, in request order.                              |
 | S2  | Emit a `snap` before any `d` on a newly-subscribed topic (unless `snapshot:false` was accepted).     |
-| S3  | Increment `s` by exactly 1 per delivered frame per topic; never reuse or skip.                       |
+| S3  | Increment `s` by exactly 1 per delivered frame per stream; never reuse or skip.                      |
 | S4  | Never coalesce or throttle `orders` or `executions`.                                                 |
 | S5  | Preserve causal order across private topics: `executions` → `orders` → `positions` → `trade_groups`. |
 | S6  | Bound the outbound queue; never buffer unboundedly (arch P6).                                        |
@@ -4029,7 +4122,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | #   | Requirement                                                                                 |
 | --- | ------------------------------------------------------------------------------------------- |
 | C1  | Send `hello` as the first frame and `auth` before any subscription.                         |
-| C2  | Track `s` per topic and resync on any gap without patching around it.                       |
+| C2  | Track `s` per stream (`ch`, `rs`) and resync on any gap without patching around it.         |
 | C3  | Never treat `confirm: false` bars as closed.                                                |
 | C4  | Honour `effective` options rather than assuming its requested values.                       |
 | C5  | Discard state on `snap` and on `ctl_ok` with `resnapshot: true`.                            |
@@ -4047,6 +4140,9 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | C17 | Apply an amended close (always sent structured) by the §8.2 rule (§3.4).                    |
 | C18 | Treat an unknown snap `reason` as a routine re-snapshot; never validate it (§7.4, §16.5).   |
 | C19 | Binary `bars`: ignore `close_t_ms`/`min_delta`/`max_delta` wherever they appear (§3.4).     |
+| C20 | Name a replay stream by `rs` in `resync`, `ctl`, `unsub`; read `sub_id`, `rs` when present. |
+
+**Contract change, 2026-10-17 (#3218).** A `resync` or `ctl` without `rs` names the live subscription of its `ch` only, and an `unsub` entry without it ends only that one (§5.3, §5.4, §7.5). Before, a `resync` or `ctl` fell back to a replay subscription when the `ch` had no live one, and an `unsub` ended the replay subscriptions of its `ch` too. This changes meaning (C-6.3) before the protocol freeze (#572), within `cv.v1`: a replay stream always has an `rs` the client knows, the old fallback was the defect of #3218, and no shipped client sends a `resync` today; the web client's S4 (#413, per #3166) will send `rs` on every one. The server applies it from the #3218 server slice on. This is an orchestrator contract decision (2026-10-17); the owner may override it.
 
 ### 16.2 Limits summary
 
@@ -4067,7 +4163,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | Outbound queue budget          | 8 MiB or 2 000 frames                              |
 | Min throttle                   | 50 ms (0 ms only for `orders`/`executions`)        |
 | Client inbound rate            | 30/s, 300/min (`pong` exempt after `auth_ok`)      |
-| Resync rate                    | 5 / topic / minute                                 |
+| Resync rate                    | 5 / stream (`ch`, `rs`) / minute                   |
 | Heartbeat interval / timeout   | 15 s / 45 s                                        |
 | Auth timeout                   | 10 s; 3 failed attempts; each auth call 6 s        |
 | Replay `history` caps          | bars ≤1 000, footprint ≤200, heatmap window ≤900 s |
@@ -4112,6 +4208,10 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |
 | Integration      | Replay subscribe → seek → finish emits the documented frame series.                                                                                                                                   | §11.                                                      |
+| Integration      | A live and a replay stream of one `ch`: a gap on the replay one, and its `resync` with `rs`, re-snapshot it alone; a new replay consumer's `client_restart` gets its own `snap`.                      | §7.5, §11 (#3218); the limit per `ch` and `rs`.           |
+| Contract         | A `resync` naming an unknown `rs` or `sub_id`, or a `sub_id` of another stream, gets `not_subscribed` and changes nothing; with no `rs`, it, `ctl` and `unsub` reach only the live stream.            | §5.3, §5.4, §7.5 resolution and refusal order (#3218).    |
+| Contract         | A `ctl` or `unsub` naming `rs` retunes or ends that replay stream only, the live stream unchanged.                                                                                                    | §5.3, §5.4 (#3218).                                       |
+| Contract         | `sub_ok` and `unsub_ok` results, `ctl_ok` and `revoked` name their subscription: `sub_id` (`ended` on `unsub_ok`), and `rs` on a replay one; an `err` answering a `resync` or `ctl` carries its `rs`. | §5.2, §5.3, §5.4, §7.5, §9.5 (#3218).                     |
 | Integration      | A burst of transitions inside one throttle window yields one `d` with the latest state; a resubscribe mid-burst gets a `snap` of the latest state.                                                    | §6.4, §8.2.                                               |
 | Chaos            | Kill the upstream public WS; assert resync, no gap delivered to client.                                                                                                                               | G3.                                                       |
 | Chaos            | Client stops reading for 60 s; assert bounded memory, degradation order, `4429`.                                                                                                                      | §8.4, G4, S6.                                             |
@@ -4167,3 +4267,4 @@ Both this document and `22-api-openapi.yaml` are too large for manual review to 
 | W7     | `machines.{entity}.state` B17 `live_gate` for Manager and Viewer: no REST read rule exists, and the gate reaches clients only as the `system` feature flag. Refused until decided (§6.4).                                                                                                                                                                                                                                         | Owner                              | Before E44 consumes it.    |
 | W8     | `machines.{entity}.state` B19 `reconciliation` for Manager and Viewer: no REST read rule exists. Refused until decided (§6.4).                                                                                                                                                                                                                                                                                                    | Owner + Security                   | Before E45 consumes it.    |
 | W9     | Public ids for `machines.{entity}.state`: B8 `position_protection` (per position, or per account and symbol, given hedge mode), B9 `rule_instance` (rule × scope; `scope_instance` contains `@`), B13 `ws_conn` (an internal connection key) and B15 `paper_account` (identity and owner). Not exposed until decided (§6.4).                                                                                                      | Architect                          | On first consumer need.    |
+| W10    | **Contract set (#3218):** `ctl` and `unsub` name their stream like `resync`, by `ch` and the envelope `rs` only (no `rs`: the live one), from #3218's server slice on (§5.3, §5.4); as built they ignore `rs`. Left for #572: `sub_id` on `ctl` or `unsub` (a §13.5/§13.6 schema change), per-entry naming in one `unsub` (one `rs` covers the frame), and the `ch`-only lists of `system` (`degraded_topics`) and `bye.hint`.    | Backend (#3218), Architect (#572)  | #3218 server slice; #572.  |
