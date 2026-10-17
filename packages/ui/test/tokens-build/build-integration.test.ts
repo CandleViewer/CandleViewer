@@ -11,25 +11,60 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, "..", "..");
 const BUILD_SCRIPT = path.join(UI_ROOT, "scripts", "build-tokens.mjs");
-const BUILD_DIR = path.join(UI_ROOT, "build");
 
 function runBuild(cwd = UI_ROOT) {
   const script = path.join(cwd, "scripts", "build-tokens.mjs");
   return execFileSync(process.execPath, [script], { cwd, encoding: "utf-8" });
 }
 
+/** A temp copy of the files the token build reads; `<dir>/packages/ui` is where it builds. */
+function makeSandbox() {
+  const dir = mkdtempSync(path.join(tmpdir(), "cv-tokens-"));
+  mkdirSync(path.join(dir, "packages", "ui", "tokens"), { recursive: true });
+  cpSync(path.join(UI_ROOT, "tokens"), path.join(dir, "packages", "ui", "tokens"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(dir, "packages", "ui", "scripts"), { recursive: true });
+  cpSync(BUILD_SCRIPT, path.join(dir, "packages", "ui", "scripts", "build-tokens.mjs"));
+  cpSync(
+    path.join(UI_ROOT, "scripts", "chart-color-modes.mjs"),
+    path.join(dir, "packages", "ui", "scripts", "chart-color-modes.mjs"),
+  );
+  mkdirSync(path.join(dir, "tools", "style-dictionary", "formats"), { recursive: true });
+  cpSync(
+    path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "formats"),
+    path.join(dir, "tools", "style-dictionary", "formats"),
+    { recursive: true },
+  );
+  cpSync(
+    path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "package.json"),
+    path.join(dir, "tools", "style-dictionary", "package.json"),
+  );
+  return dir;
+}
+
+// The real `build/` feeds `dist/` (tsup's `onSuccess`) and other lanes, and `ui#build` may run beside the
+// tests, so nothing here builds into or deletes it: the builds run in a temp copy.
 describe("token build integration (real Style Dictionary run)", () => {
-  afterEach(() => {
-    rmSync(BUILD_DIR, { recursive: true, force: true });
+  let sandbox = "";
+  let ui = "";
+  let buildDir = "";
+  beforeAll(() => {
+    sandbox = makeSandbox();
+    ui = path.join(sandbox, "packages", "ui");
+    buildDir = path.join(ui, "build");
+  });
+  afterAll(() => {
+    rmSync(sandbox, { recursive: true, force: true });
   });
 
   it("produces all six documented, non-empty artefacts", () => {
-    runBuild();
+    runBuild(ui);
     const artefacts = [
       "css/tokens.dark.css",
       "css/tokens.light.css",
@@ -39,14 +74,14 @@ describe("token build integration (real Style Dictionary run)", () => {
       "electron/tokens.main.json",
     ];
     for (const rel of artefacts) {
-      const full = path.join(BUILD_DIR, rel);
+      const full = path.join(buildDir, rel);
       expect(existsSync(full), `missing artefact: ${rel}`).toBe(true);
       expect(readFileSync(full, "utf-8").length).toBeGreaterThan(0);
     }
   });
 
   it("is byte-identical across two consecutive runs (deterministic build)", () => {
-    runBuild();
+    runBuild(ui);
     const snapshot: Record<string, string> = {};
     for (const rel of [
       "css/tokens.dark.css",
@@ -54,19 +89,19 @@ describe("token build integration (real Style Dictionary run)", () => {
       "engine/theme-uniforms.json",
       "electron/tokens.main.json",
     ]) {
-      snapshot[rel] = readFileSync(path.join(BUILD_DIR, rel), "utf-8");
+      snapshot[rel] = readFileSync(path.join(buildDir, rel), "utf-8");
     }
-    rmSync(BUILD_DIR, { recursive: true, force: true });
-    runBuild();
+    rmSync(buildDir, { recursive: true, force: true });
+    runBuild(ui);
     for (const rel of Object.keys(snapshot)) {
-      expect(readFileSync(path.join(BUILD_DIR, rel), "utf-8")).toBe(snapshot[rel]);
+      expect(readFileSync(path.join(buildDir, rel), "utf-8")).toBe(snapshot[rel]);
     }
   });
 
   it("emits every chart-category token as numeric RGBA with no hex-string leakage in values", () => {
-    runBuild();
+    runBuild(ui);
     const uniforms = JSON.parse(
-      readFileSync(path.join(BUILD_DIR, "engine", "theme-uniforms.json"), "utf-8"),
+      readFileSync(path.join(buildDir, "engine", "theme-uniforms.json"), "utf-8"),
     );
     expect(Object.keys(uniforms).length).toBeGreaterThan(0);
     for (const [name, entry] of Object.entries(uniforms) as [
@@ -84,9 +119,9 @@ describe("token build integration (real Style Dictionary run)", () => {
   });
 
   it("emits a flat, CSS/TS-free JSON map for the Electron main process", () => {
-    runBuild();
+    runBuild(ui);
     const flat = JSON.parse(
-      readFileSync(path.join(BUILD_DIR, "electron", "tokens.main.json"), "utf-8"),
+      readFileSync(path.join(buildDir, "electron", "tokens.main.json"), "utf-8"),
     );
     expect(flat["color.buy.default"]).toBe("#2EBD59");
     for (const value of Object.values(flat)) {
@@ -104,31 +139,6 @@ describe("token build failure modes (copied fixture tree)", () => {
     if (sandbox) rmSync(sandbox, { recursive: true, force: true });
     sandbox = undefined;
   });
-
-  function makeSandbox() {
-    const dir = mkdtempSync(path.join(tmpdir(), "cv-tokens-"));
-    mkdirSync(path.join(dir, "packages", "ui", "tokens"), { recursive: true });
-    cpSync(path.join(UI_ROOT, "tokens"), path.join(dir, "packages", "ui", "tokens"), {
-      recursive: true,
-    });
-    mkdirSync(path.join(dir, "packages", "ui", "scripts"), { recursive: true });
-    cpSync(BUILD_SCRIPT, path.join(dir, "packages", "ui", "scripts", "build-tokens.mjs"));
-    cpSync(
-      path.join(UI_ROOT, "scripts", "chart-color-modes.mjs"),
-      path.join(dir, "packages", "ui", "scripts", "chart-color-modes.mjs"),
-    );
-    mkdirSync(path.join(dir, "tools", "style-dictionary", "formats"), { recursive: true });
-    cpSync(
-      path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "formats"),
-      path.join(dir, "tools", "style-dictionary", "formats"),
-      { recursive: true },
-    );
-    cpSync(
-      path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "package.json"),
-      path.join(dir, "tools", "style-dictionary", "package.json"),
-    );
-    return dir;
-  }
 
   it("fails with TOKENS-E001 when a theme defines a token the others don't", () => {
     sandbox = makeSandbox();

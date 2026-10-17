@@ -4,6 +4,7 @@ import { expect, userEvent, within } from "@storybook/test";
 import {
   DENSITIES,
   MOTION_OVERRIDES,
+  TEXT_SCALES,
   THEMES,
   toggleHighContrastAnnounced,
   useThemeSnapshot,
@@ -39,6 +40,8 @@ interface ChoiceProps<T extends string | number> {
   readonly legend: string;
   readonly options: readonly T[];
   readonly value: T;
+  /** Appended to each label, so a bare number reads as a quantity ("150 %"). */
+  readonly unit?: string;
   readonly onChange: (value: T) => void;
 }
 
@@ -54,7 +57,7 @@ function Choice<T extends string | number>(props: ChoiceProps<T>): JSX.Element {
             checked={props.value === option}
             onChange={() => props.onChange(option)}
           />
-          {option}
+          {`${option}${props.unit ?? ""}`}
         </label>
       ))}
     </fieldset>
@@ -145,6 +148,29 @@ function Benchmark(): JSX.Element {
   );
 }
 
+/** Unbreakable text in a box of fixed width: it has to reflow, not clip or scroll sideways, as text grows (WCAG 1.4.4, 1.4.10). */
+const UNBREAKABLE = "CANCEL_ALL_WORKING_ORDERS";
+/** The reflow reference width in CSS px; unlike rem or em it does not grow with the text scale. A fixture, not a design value. */
+const BOX_WIDTH = 320;
+
+function Reflow(): JSX.Element {
+  const store = useThemeStore();
+  const { textScale } = useThemeSnapshot();
+  return (
+    <main style={PAGE}>
+      <h1>Text scale reflow</h1>
+      <Choice
+        legend="Text scale"
+        options={TEXT_SCALES}
+        unit=" %"
+        value={textScale}
+        onChange={store.setTextScale}
+      />
+      <p style={{ width: `${BOX_WIDTH}px`, overflowWrap: "anywhere" }}>{UNBREAKABLE}</p>
+    </main>
+  );
+}
+
 const meta: Meta = { title: "Theme/Runtime", parameters: { layout: "fullscreen" } };
 export default meta;
 type Story = StoryObj;
@@ -165,6 +191,37 @@ export const Default: Story = {
       "reduce",
     ]);
     await expect(ui.getByLabelText("Mount count").textContent).toBe(before);
+  },
+};
+
+/**
+ * Reflow: at every text scale and at a 200 % text zoom the fixed-width text really is bigger (its computed
+ * font size, not only `--cv-text-scale`) and still stays inside its box (ticket: 125 % and 200 %).
+ */
+export const TextScaleReflow: Story = {
+  render: () => <Reflow />,
+  play: async ({ canvasElement }) => {
+    const ui = within(canvasElement);
+    const text = ui.getByText(UNBREAKABLE);
+    const size = (): number => parseFloat(getComputedStyle(text).fontSize);
+    const fits = async (): Promise<void> => {
+      await expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
+    };
+    const pick = (scale: number): Promise<void> =>
+      userEvent.click(ui.getByRole("radio", { name: `${scale} %` }));
+    let base = 0;
+    for (const scale of TEXT_SCALES) {
+      await pick(scale); // 100 first: the preview store outlives a story, so this is a known start
+      base ||= size();
+      const factor = getComputedStyle(document.documentElement).getPropertyValue("--cv-text-scale");
+      await expect(factor.trim()).toBe(String(scale / 100));
+      await expect(size()).toBeCloseTo((base * scale) / 100, 1); // the text grew; wrapping alone would pass `fits`
+      await fits();
+    }
+    await pick(100);
+    text.style.fontSize = "200%"; // text-only zoom on top of the page text size
+    await expect(size()).toBeCloseTo(base * 2, 1);
+    await fits();
   },
 };
 

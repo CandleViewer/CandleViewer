@@ -16,6 +16,30 @@
 }
 
 /*
+ * Text scale (WCAG 1.4.4 and 1.4.10): the root font size scales everything sized in rem or em, and
+ * `--cv-text-scale` carries the same factor for sizes that are plain px counts in the tokens and for
+ * canvas text.
+ */
+:root {
+  --cv-text-scale: 1;
+}
+
+html[data-text-scale="112"] {
+  font-size: 112%;
+  --cv-text-scale: 1.12;
+}
+
+html[data-text-scale="125"] {
+  font-size: 125%;
+  --cv-text-scale: 1.25;
+}
+
+html[data-text-scale="150"] {
+  font-size: 150%;
+  --cv-text-scale: 1.5;
+}
+
+/*
  * Motion switch for the recipes: 1 = motion-safe, 0 = reduced.
  * TODO(#3174, blocked by #162): the named motion recipes (E05-D03) land with #3174 and multiply their
  * durations by this switch. No recipe values live here.

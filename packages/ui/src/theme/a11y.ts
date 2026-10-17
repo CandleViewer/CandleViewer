@@ -1,15 +1,18 @@
 import type { ThemeStore } from "./store.js";
 
 /**
- * Design-system shortcut contract for the high-contrast toggle (`05-accessibility-standard.md` §3.2).
- * The global hotkey registry is E10's: it registers `id`/`binding` and calls
- * `toggleHighContrastAnnounced` as the handler. The binding string uses the registry's canonical
- * `Ctrl+Alt+Shift+Key` form. This package never listens for keys itself.
+ * Shortcut contract for the high-contrast toggle (`05-accessibility-standard.md` §3.2). The E10 hotkey
+ * registry registers a command from it and calls `toggleHighContrastAnnounced`. `id`, `label` and
+ * `defaultBinding` (canonical `Ctrl+Alt+Shift+Key` form) are fields of today's `KeymapCommand`;
+ * `ignoreRepeat`, and a `repeat` field on `KeyEventLike`, are to be added by #305. The registry must not
+ * run the handler for a key auto-repeat, and the handler ignores a repeat too (`{ repeat: event.repeat }`),
+ * so holding the keys cannot flap the theme. This package never listens for keys.
  */
 export const HIGH_CONTRAST_SHORTCUT = {
   id: "global.toggle_high_contrast",
-  binding: "Ctrl+Shift+H",
+  defaultBinding: "Ctrl+Shift+H",
   label: "Toggle high-contrast theme",
+  ignoreRepeat: true,
 } as const;
 
 /** Single replaceable home for the announcement copy (no copy layer exists in the package yet). */
@@ -48,11 +51,18 @@ export function announcePolite(message: string, doc: Document = document): void 
   mountLiveRegion(doc).textContent = message;
 }
 
-/** `Ctrl+Shift+H` handler: toggles high contrast and announces the new state politely. */
+export interface ToggleHighContrastOptions {
+  /** `KeyboardEvent.repeat`: a held key must not flap the theme, so a repeat changes nothing. */
+  readonly repeat?: boolean;
+  readonly announce?: (message: string) => void;
+}
+
+/** `Ctrl+Shift+H` handler: toggles high contrast and announces it; a repeat returns the unchanged state. */
 export function toggleHighContrastAnnounced(
   store: ThemeStore,
-  announce: (message: string) => void = announcePolite,
+  { repeat = false, announce = announcePolite }: ToggleHighContrastOptions = {},
 ): boolean {
+  if (repeat) return store.getSnapshot().highContrast;
   const on = store.toggleHighContrast();
   announce(on ? THEME_ANNOUNCEMENTS.highContrastOn : THEME_ANNOUNCEMENTS.highContrastOff);
   return on;

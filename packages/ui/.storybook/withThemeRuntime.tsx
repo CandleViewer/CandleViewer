@@ -26,7 +26,8 @@ function SyncGlobals({ theme, density, motion }: ThemeGlobals): JSX.Element | nu
       theme === "high-contrast"
         ? { highContrast: true }
         : { baseTheme: theme, highContrast: false, matchSystem: false };
-    store.apply({ ...base, density, motionOverride: motion });
+    // No toolbar for text scale: pin it, or a story that picks 150 % leaks into the next one.
+    store.apply({ ...base, density, motionOverride: motion, textScale: 100 });
   }, [theme, density, motion]);
   return null;
 }

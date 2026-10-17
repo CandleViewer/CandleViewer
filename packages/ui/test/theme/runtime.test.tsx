@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { act, useEffect } from "react";
+import { resolve } from "node:path";
+import { act, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { composeStories } from "@storybook/react";
+import { composeStories, type StoryContext } from "@storybook/react";
 import { within } from "@storybook/test";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { withThemeRuntime } from "../../.storybook/withThemeRuntime.js";
 import * as stories from "../../src/theme/ThemeRuntime.stories.js";
 import {
   HIGH_CONTRAST_SHORTCUT,
@@ -173,9 +176,9 @@ describe("theme provider and hooks", () => {
     expect(sharedThemeStore({ root })).toBe(sharedThemeStore(options));
   });
 
-  it("exposes the Ctrl+Shift+H contract and announces each toggle through one polite live region", () => {
+  it("exposes the Ctrl+Shift+H contract, announces each toggle through one polite live region and ignores key auto-repeat", () => {
     const store = newStore();
-    expect(HIGH_CONTRAST_SHORTCUT.binding).toBe("Ctrl+Shift+H");
+    expect(HIGH_CONTRAST_SHORTCUT.defaultBinding).toBe("Ctrl+Shift+H");
     expect(toggleHighContrastAnnounced(store)).toBe(true);
     const region = within(document.body).getByRole("status");
     expect([region.getAttribute("aria-live"), region.textContent]).toEqual([
@@ -185,6 +188,16 @@ describe("theme provider and hooks", () => {
     toggleHighContrastAnnounced(store);
     expect(within(document.body).getAllByRole("status")).toHaveLength(1);
     expect(region.textContent).toBe("High-contrast theme off");
+    expect(HIGH_CONTRAST_SHORTCUT.ignoreRepeat).toBe(true);
+    expect(toggleHighContrastAnnounced(store, { repeat: true })).toBe(false);
+    expect(region.textContent).toBe("High-contrast theme off");
+    expect(toggleHighContrastAnnounced(store)).toBe(true);
+    expect(toggleHighContrastAnnounced(store, { repeat: true })).toBe(true); // a held key leaves it on
+    expect(region.textContent).toBe("High-contrast theme on");
+    const announce = vi.fn();
+    toggleHighContrastAnnounced(store, { announce });
+    expect(announce).toHaveBeenCalledWith("High-contrast theme off");
+    expect(region.textContent).toBe("High-contrast theme on"); // an injected announcer replaces the region
   });
 
   it("pre-renders the empty polite live region at mount, so the first announcement is heard", async () => {
@@ -194,7 +207,7 @@ describe("theme provider and hooks", () => {
 });
 
 describe("theme runtime stories", () => {
-  const { Default, StyleRecalcBenchmark } = composeStories(stories);
+  const { Default, StyleRecalcBenchmark, TextScaleReflow } = composeStories(stories);
   const render = (Story: typeof Default) =>
     mount(
       <ThemeProvider store={newStore()}>
@@ -214,6 +227,7 @@ describe("theme runtime stories", () => {
   it.each([
     ["Default", Default],
     ["StyleRecalcBenchmark", StyleRecalcBenchmark],
+    ["TextScaleReflow", TextScaleReflow],
   ])(
     "%s has no serious or critical axe violations",
     async (_name, Story) => {
@@ -241,5 +255,88 @@ describe("theme runtime stories", () => {
     expect(ms["theme"]).toBeLessThan(250);
     expect(ms["density"]).toBeLessThan(250);
     expect(host.querySelector("tbody")?.innerHTML).toBe(rows);
+  });
+});
+
+describe("TextScaleReflow story", () => {
+  const { TextScaleReflow } = composeStories(stories);
+  const themeCss = readFileSync(resolve(import.meta.dirname, "../../src/theme/theme.css"), "utf-8");
+  afterEach(() => vi.restoreAllMocks());
+
+  // jsdom has no layout, so what the play function reads is stubbed the way a browser reports it: the text
+  // overflows its box (480 > 320) in the one leg the test names, and an element's font size is its
+  // inherited size times its own percentage (jsdom computes neither), starting from the root's declared
+  // percentage of 16 px, which jsdom does take from the page's CSS. `pageCss` is that stylesheet: without
+  // theme.css, or without its font-size rules, the text never grows and an overflow check alone passes.
+  async function playWithOverflowAt(leg?: string, pageCss = themeCss): Promise<void> {
+    const legNow = (el: Element): string | undefined =>
+      el instanceof HTMLElement && el.style.fontSize === "200%" ? "200" : rootData["textScale"];
+    vi.spyOn(Element.prototype, "clientWidth", "get").mockReturnValue(320);
+    vi.spyOn(Element.prototype, "scrollWidth", "get").mockImplementation(function (this: Element) {
+      return legNow(this) === leg ? 480 : 320;
+    });
+    const computed = window.getComputedStyle.bind(window);
+    const fontPx = (el: Element): number => {
+      const parent = el.parentElement;
+      const declared = parent === null ? computed(el).fontSize : (el as HTMLElement).style.fontSize;
+      const inherited = parent === null ? 16 : fontPx(parent);
+      return declared.endsWith("%") ? (inherited * parseFloat(declared)) / 100 : inherited;
+    };
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = computed(el, pseudo);
+      return new Proxy(style, {
+        get: (target, name) => {
+          const value: unknown = Reflect.get(target, name);
+          if (name === "fontSize") return `${fontPx(el)}px`;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    });
+    const css = document.head.appendChild(document.createElement("style"));
+    css.textContent = pageCss;
+    try {
+      const host = await mount(
+        <ThemeProvider store={newStore()}>
+          <TextScaleReflow />
+        </ThemeProvider>,
+      );
+      await act(async () => TextScaleReflow.play?.({ canvasElement: host }));
+    } finally {
+      css.remove();
+    }
+  }
+
+  it("passes while the text fits at every text scale and at a 200 % zoom", async () => {
+    await expect(playWithOverflowAt()).resolves.toBeUndefined();
+  });
+
+  it.each(["100", "112", "125", "150", "200"])(
+    "fails when the text overflows its box at %s",
+    async (leg) => {
+      await expect(playWithOverflowAt(leg)).rejects.toThrow(/less than or equal to 320/);
+    },
+  );
+
+  it("fails when theme.css is not loaded, instead of passing with text that never grows", async () => {
+    await expect(playWithOverflowAt(undefined, "")).rejects.toThrow(/expected '' to be '1'/);
+  });
+
+  it("fails when --cv-text-scale moves but the text does not grow", async () => {
+    const pinned = themeCss.replace(/^\s*font-size: \d+%;\n/gm, "");
+    expect(pinned).not.toBe(themeCss);
+    await expect(playWithOverflowAt(undefined, pinned)).rejects.toThrow(/close to 17\.92/);
+  });
+});
+
+describe("preview decorator", () => {
+  it("starts every story at 100 % text scale, so a story cannot leak its scale into the next", async () => {
+    const globals = { theme: "dark", density: "compact", motion: "system" };
+    const story = (): ReactNode =>
+      withThemeRuntime(() => <i />, { globals } as unknown as StoryContext);
+    await mount(story());
+    await act(async () => sharedThemeStore().setTextScale(150));
+    expect(rootData["textScale"]).toBe("150");
+    await mount(story()); // the next story applies the toolbar globals again on mount
+    expect(rootData["textScale"]).toBe("100");
   });
 });

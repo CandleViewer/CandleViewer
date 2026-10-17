@@ -111,12 +111,39 @@ describe("theme.css behaviour (jsdom cascade)", () => {
     document.head.querySelector("style")?.remove();
   });
 
-  it("density re-points the row and control aliases at the matching scale step", () => {
+  it("density re-points the row and control aliases at the matching scale step, per panel too", () => {
     const store = setup();
-    expect(rootStyle("--size-row-height")).toBe("var(--size-row-compact)");
+    const heights = (el: Element): string[] =>
+      ["--size-row-height", "--size-control-height"].map((name) =>
+        getComputedStyle(el).getPropertyValue(name),
+      );
+    const compact = ["var(--size-row-compact)", "var(--size-control-compact)"];
+    const comfortable = ["var(--size-row-comfortable)", "var(--size-control-comfortable)"];
+    const panel = document.body.appendChild(document.createElement("div"));
+    panel.dataset["density"] = "comfortable"; // a nested wrapper re-points its own subtree (brief §3)
+    expect(heights(panel)).toEqual(comfortable);
+    expect(heights(document.documentElement)).toEqual(compact);
     store.setDensity("comfortable");
-    expect(rootStyle("--size-row-height")).toBe("var(--size-row-comfortable)");
-    expect(rootStyle("--size-control-height")).toBe("var(--size-control-comfortable)");
+    expect(heights(document.documentElement)).toEqual(comfortable);
+    panel.dataset["density"] = "compact"; // and a compact panel inside a comfortable page
+    expect(heights(panel)).toEqual(compact);
+    panel.remove();
     document.head.querySelector("style")?.remove();
   });
+
+  it.each([
+    [100, "1", ""],
+    [112, "1.12", "112%"],
+    [125, "1.25", "125%"],
+    [150, "1.5", "150%"],
+  ] as const)(
+    "text scale %s gives --cv-text-scale %s and a root font size of %s",
+    (scale, factor, size) => {
+      const store = setup();
+      store.setTextScale(scale);
+      expect(rootStyle("--cv-text-scale")).toBe(factor);
+      expect(getComputedStyle(document.documentElement).fontSize).toBe(size);
+      document.head.querySelector("style")?.remove();
+    },
+  );
 });
