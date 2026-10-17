@@ -158,14 +158,15 @@ describe("persistence", () => {
   });
 
   it.each([
-    ["setTextScale", 130, "text-scale", "125"],
-    ["setDensity", "huge", "density", "comfortable"],
-    ["setTheme", "neon", "theme", "light"],
+    ["setTextScale", 130, false, "text-scale", "125"],
+    ["setDensity", "huge", false, "density", "comfortable"],
+    ["setTheme", "neon", false, "theme", "light"],
+    ["setTheme", "neon", true, "theme", "high-contrast"],
   ] as const)(
-    "%s(%j) keeps the current value instead of reaching the root or storage",
-    (setter, value, attribute, current) => {
+    "%s(%j) with high contrast %s keeps the current value instead of reaching the root or storage",
+    (setter, value, highContrast, attribute, current) => {
       const { root, storage, store } = setup();
-      store.apply({ baseTheme: "light", density: "comfortable", textScale: 125 });
+      store.apply({ baseTheme: "light", density: "comfortable", textScale: 125, highContrast });
       (store[setter] as (value: unknown) => void)(value);
       expect(root.getAttribute(`data-${attribute}`)).toBe(current);
       expect(storage.data.get(THEME_STORAGE_KEY)).not.toContain(String(value));
@@ -220,6 +221,34 @@ describe("persistence", () => {
     media.set({ dark: false });
     store.apply({ matchSystem: true });
     expect(setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-op commits (connect, an OS flip that resolves the same) never write hydrated state", () => {
+    const { media, storage, store } = setup();
+    store.apply({ baseTheme: "light" }, { persist: false });
+    store.connect();
+    media.set({ dark: false }); // match-system is off, so nothing resolves differently
+    expect(storage.data.size).toBe(0);
+    store.setTheme("light"); // only the user confirming it flushes it
+    expect(storage.data.size).toBe(1);
+  });
+
+  it("a storage write that throws leaves hydrated state pending for the next persisting apply", () => {
+    let full = true;
+    const data = new Map<string, string>();
+    const setItem = (key: string, value: string): void => {
+      if (full) throw new Error("quota");
+      data.set(key, value);
+    };
+    const { store } = setup({}, { storage: { getItem: () => null, setItem } });
+    store.apply({ baseTheme: "light" }, { persist: false });
+    store.setDensity("comfortable"); // the write throws
+    full = false;
+    store.setDensity("comfortable"); // changes nothing, but retries the write
+    expect(parsePreferences(data.get(THEME_STORAGE_KEY))).toMatchObject({
+      baseTheme: "light",
+      density: "comfortable",
+    });
   });
 });
 
@@ -496,15 +525,28 @@ describe("shared store per root", () => {
   it("warns in development when a later caller passes options the existing store ignores", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const root = document.createElement("html");
-    sharedThemeStore({ root, storage: memoryStorage() });
-    sharedThemeStore({ root });
+    const first = {
+      storage: memoryStorage(),
+      matchMedia: mediaStub().matchMedia,
+      onAnalytics: vi.fn(),
+    };
+    sharedThemeStore({ root, ...first });
+    sharedThemeStore({ root }); // passes nothing: nothing to ignore
+    sharedThemeStore({ root, ...first }); // the very same options: nothing to ignore
     expect(warn).not.toHaveBeenCalled();
-    sharedThemeStore({ root, storage: memoryStorage() });
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain("storage");
+    const different: ThemeStoreOptions[] = [
+      { storage: memoryStorage() },
+      { matchMedia: mediaStub().matchMedia },
+      { onAnalytics: vi.fn() },
+    ];
+    different.forEach((options, index) => {
+      sharedThemeStore({ root, ...options });
+      expect(warn).toHaveBeenCalledTimes(index + 1);
+      expect(warn.mock.calls[index]?.[0]).toContain(Object.keys(options)[0]);
+    });
     vi.stubEnv("DEV", false);
     sharedThemeStore({ root, storage: memoryStorage() });
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(3);
   });
 
   it("resetSharedThemeStores forgets every shared store", () => {

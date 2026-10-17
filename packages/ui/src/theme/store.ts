@@ -103,7 +103,7 @@ export interface ThemeStore {
    * value is ignored: that field keeps its current preference.
    */
   apply(patch: Partial<ThemePreferences>, options?: ApplyOptions): void;
-  /** `high-contrast` turns the overlay on; `dark`/`light` pick that theme and leave match-system and HC. */
+  /** `high-contrast` turns the overlay on; `dark`/`light` pick that theme and turn match-system and HC off; anything else is ignored. */
   setTheme(theme: ThemeName): void;
   /** Returns the new state of the high-contrast overlay. */
   toggleHighContrast(): boolean;
@@ -285,10 +285,12 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
     }
   };
 
-  /** Writes the preferences to storage; from then on storage and memory agree. */
+  /** Writes the preferences to storage. A write that throws does not clear `unpersisted`, so the next persisting `apply` retries it. */
   const save = (p: ThemePreferences): void => {
-    attempt(() => storage?.setItem(THEME_STORAGE_KEY, JSON.stringify(p)), undefined);
-    unpersisted = false;
+    attempt(() => {
+      storage?.setItem(THEME_STORAGE_KEY, JSON.stringify(p));
+      unpersisted = false; // storage and memory agree from here on
+    }, undefined);
   };
 
   /** The single mutation path: write once, announce the engine event once, notify once. */
@@ -334,12 +336,14 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
       return () => queries.forEach((q) => q.removeEventListener("change", syncOs));
     },
     apply,
-    setTheme: (theme) =>
+    setTheme: (theme) => {
+      if (!THEMES.includes(theme)) return; // an unknown theme (untyped caller) changes nothing, high contrast included
       apply(
         theme === "high-contrast"
           ? { highContrast: true }
           : { baseTheme: theme, matchSystem: false, highContrast: false },
-      ),
+      );
+    },
     toggleHighContrast: () => {
       apply({ highContrast: !prefs.highContrast });
       return prefs.highContrast;
