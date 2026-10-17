@@ -245,9 +245,34 @@ def test_each_error_carries_its_stable_code(error: ReplayError, code: str) -> No
 
 
 def test_the_memory_ceiling_error_names_the_stream_and_the_budget() -> None:
-    assert str(_ceiling()) == (
+    error = _ceiling()
+
+    assert str(error) == (
         "replay memory budget of 1024 bytes cannot hold one read of orderbook_delta for BTCUSDT"
     )
+    assert (error.budget_bytes, error.stream, error.max_rows) == (
+        1024,
+        StreamKind.ORDERBOOK_DELTA,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stream", "what"), [(StreamKind.TRADES, "trades"), (None, "recording_gaps")]
+)
+def test_the_memory_ceiling_error_names_the_row_ceiling_when_it_bound_the_read(
+    stream: StreamKind | None, what: str
+) -> None:
+    """A gap read has no stream and no byte share, only the row ceiling."""
+    error = ReplayMemoryCeilingExceeded(
+        budget_bytes=1024, symbol="BTCUSDT", stream=stream, max_rows=8192
+    )
+
+    assert (
+        str(error)
+        == f"replay row ceiling of 8192 rows per read cannot hold one read of {what} for BTCUSDT"
+    )
+    assert (error.stream, error.max_rows) == (stream, 8192)
 
 
 def test_an_unavailable_gap_read_names_recording_gaps_and_the_reason() -> None:

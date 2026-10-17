@@ -8,15 +8,21 @@ from collections.abc import Callable
 
 import pytest
 
-from candleviewer.replay import ReplayConfigInvalid, ReplaySourceUnavailable
-from candleviewer.replay.merge import RecordedMerge
+from candleviewer.replay import (
+    ReplayConfigInvalid,
+    ReplayMemoryCeilingExceeded,
+    ReplaySourceUnavailable,
+)
+from candleviewer.replay.merge import DEFAULT_MAX_ROWS_PER_READ, RecordedMerge, row_bytes
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
-from tests.unit.replay._events import SECOND, BoundedTier, Harness, drain, trade
+from candleviewer.storage.testing import StaticManifestCoverage
+from tests.unit.replay._events import SECOND, SYM, BoundedTier, Harness, drain, trade
 
 #: Storage error text may carry a path (RP-I02); the typed replay error must not.
 COLD_PATH = "/srv/cv/cold/env=live/symbol=BTCUSDT/date=2026-10-01"
+TRADES = StreamKind.TRADES
 
 
 class _FailingTier(BoundedTier):
@@ -116,3 +122,77 @@ async def test_a_failure_mid_replay_is_raised_after_every_event_already_merged(b
         f"r{t:02}" for t in range(10)
     ]
     assert isinstance(error, ReplaySourceUnavailable)
+
+
+class _FailingCoverage(StaticManifestCoverage):
+    async def archived(self, symbol: str, stream: StreamKind, rng: TimeRange) -> list[TimeRange]:
+        raise StorageTierUnavailable("cold manifests unreadable")
+
+
+async def test_a_failing_manifest_lookup_is_typed_and_reads_nothing() -> None:
+    harness = Harness(hot=recording()).replace_ports(coverage=_FailingCoverage())
+
+    delivered, error = await drain(harness.merge(), batch=8)
+
+    assert delivered == []
+    assert isinstance(error, ReplaySourceUnavailable)
+    assert (error.tier, error.reason) == ("manifest", "STORAGE_TIER_UNAVAILABLE")
+    assert harness.hot.reads == harness.cold.reads == 0
+
+
+@pytest.mark.parametrize("batch", [1, 4, 64])
+async def test_a_dense_instant_is_raised_after_every_event_already_merged(batch: int) -> None:
+    """The row cap (4) refuses the 6-row instant at 40 s while the cursor refills after the three
+    early trades: those are delivered first, whatever the batch size, then the ceiling error."""
+    early = [trade(t * SECOND, trade_id=f"e{t}") for t in (1, 2, 3)]
+    dense = [trade(40 * SECOND, trade_id=f"d{i}") for i in range(6)]
+    harness = Harness(hot=early + dense)
+
+    delivered, error = await drain(
+        harness.merge(budget_bytes=row_bytes(TRADES, 200) * 4), batch=batch
+    )
+
+    assert [e.tiebreak[0] for e in delivered if isinstance(e, RecordedEvent)] == ["e1", "e2", "e3"]
+    assert isinstance(error, ReplayMemoryCeilingExceeded)
+    assert (error.symbol, error.stream) == (SYM, TRADES)
+
+
+async def test_the_ceiling_error_names_the_byte_budget_when_the_budget_bound_the_read() -> None:
+    budget = row_bytes(TRADES, 200) * 2
+    harness = Harness(hot=[trade(0, trade_id=f"s{i}") for i in range(5)])
+
+    _, error = await drain(harness.merge(budget_bytes=budget), batch=8)
+
+    assert isinstance(error, ReplayMemoryCeilingExceeded)
+    assert (error.budget_bytes, error.max_rows) == (budget, None)
+    assert str(error) == (
+        f"replay memory budget of {budget} bytes cannot hold one read of trades for {SYM}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("rows_the_budget_fits", "named"),
+    [
+        (DEFAULT_MAX_ROWS_PER_READ + 100, DEFAULT_MAX_ROWS_PER_READ),
+        (DEFAULT_MAX_ROWS_PER_READ, DEFAULT_MAX_ROWS_PER_READ),  # a larger budget would not help
+        (DEFAULT_MAX_ROWS_PER_READ - 1, None),  # a larger budget would
+    ],
+    ids=["ceiling-below-budget", "ceiling-equals-budget", "budget-below-ceiling"],
+)
+async def test_the_ceiling_error_names_the_row_ceiling_when_it_bound_the_read(
+    rows_the_budget_fits: int, named: int | None
+) -> None:
+    """One more row than the cap at a single instant: cap = min(budget rows, row ceiling)."""
+    cap = min(rows_the_budget_fits, DEFAULT_MAX_ROWS_PER_READ)
+    budget = row_bytes(TRADES, 200) * rows_the_budget_fits
+    harness = Harness(hot=[trade(0, trade_id=f"s{i:05}") for i in range(cap + 1)])
+
+    _, error = await drain(harness.merge(budget_bytes=budget), batch=8)
+
+    assert isinstance(error, ReplayMemoryCeilingExceeded)
+    assert error.max_rows == named
+    assert (
+        f"replay row ceiling of {named} rows per read" in str(error)
+        if named is not None
+        else f"replay memory budget of {budget} bytes" in str(error)
+    )

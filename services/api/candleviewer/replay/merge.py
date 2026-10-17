@@ -1,4 +1,4 @@
-"""The ordered k-way merge of one replay's recorded streams (E26-T02).
+"""The ordered, gap-aware k-way merge of one replay's recorded streams (E26-T02).
 
 **Order** (C-2.15; `24-internal-schemas.md` Sec.13.7): ascending
 `(ts_us, rank, symbol ordinal, sequence-domain ordinal, seq, stream ordinal, tiebreak)`. `rank`
@@ -11,12 +11,21 @@ stream's dedup key. Every component is stored data and the key is unique per eve
 reads of one recorded window are identical whichever tier or storage order served them, never
 the heap's incidental behaviour.
 
+**Gaps.** Each symbol's `recording_gaps` rows that intersect the window (requested streams
+only) are read once, before any event, and become `ReplayGap` markers at `max(gap_start, start)`
+carrying the stored bounds and cause. A marker sorts on the same key as an event: rank 0, its
+symbol and stream's domain ordinal, `seq` 0, its stream ordinal and `(gap_start, gap_end, cause)`
+as the tiebreak, so identical rows report once. The read is bounded by `DEFAULT_MAX_ROWS_PER_READ`
+rows per symbol: more is refused whole, never replayed with some gaps unreported. A table that
+size is built in steps that yield to the event loop (C-2.17). A gap table that cannot be read
+fails the replay rather than hide its holes.
+
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows, the
 last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s), doubles while the
 stream is sparse (up to `max_window_us`), and halves and is re-read when a read hits the
 cursor's row cap. Each window is sorted and duplicate rows are dropped, keeping the copy read
 last: readers return a re-exported cold part's copies oldest first (21 Sec.5.3). A heap then
-interleaves the cursors.
+interleaves the cursors and the gap markers.
 
 **Tiers.** A session reads one tier, never both (ADR-0035 decision 4, refined: a partly
 archived range is refused, not read hot): `questdb` or `parquet`, or for `auto` the one the
@@ -26,11 +35,17 @@ Sec.5.3): Parquet if every cursor's range is manifested whole, QuestDB if none o
 read, so a span archived mid-session ends it with a typed error, never a hole. An explicit tier
 is an operator override: no coverage checks, so a span it lacks reads empty.
 
+**Anchor.** `anchor_at` is the seek engine's lookup (E26-T04): one row, so under `auto` it asks
+both tiers and the latest by `order_key` wins, and the answer never depends on roll-off. A row a
+tier returns outside the asked bound fails the lookup rather than seed a wrong book.
+
 **Memory and failure.** The cursors share `budget_bytes`: each read is capped at its cursor's
 share in rows and at `DEFAULT_MAX_ROWS_PER_READ` whatever the budget, so a stream too dense for
-even a 1 µs window raises `ReplayMemoryCeilingExceeded` instead of growing memory. Every
-storage await is bounded by `io_timeout_s`. A failure while the merge runs ends the replay
-after the events already merged: their batch is yielded first, then the error is raised.
+even a 1 µs window raises `ReplayMemoryCeilingExceeded` instead of growing memory (naming the
+row ceiling when it, not the byte share, bound). Markers are at most that many rows a symbol,
+outside the byte share. Every storage await is bounded by `io_timeout_s`. A failure while the
+merge runs ends the replay after the events already merged: their batch is yielded first, then
+the error is raised.
 """
 
 from __future__ import annotations
@@ -52,10 +67,11 @@ from candleviewer.replay.errors import (
     ReplayConfigInvalid,
     ReplayError,
     ReplayMemoryCeilingExceeded,
+    ReplayRequestInvalid,
     ReplaySourceUnavailable,
     ReplayTierStraddle,
 )
-from candleviewer.replay.models import ReplayItem, ReplayRequest, ReplayTiers
+from candleviewer.replay.models import ReplayGap, ReplayItem, ReplayRequest, ReplayTiers
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
@@ -63,6 +79,7 @@ from candleviewer.storage.repositories.recorded import (
     RecordedBookSnapshot,
     RecordedEvent,
     Tiebreak,
+    order_key,
 )
 
 Tier = Literal["questdb", "parquet"]
@@ -72,6 +89,9 @@ type _Entry = tuple[_Key, ReplayItem, int]
 
 replay_events_read_total = Counter(
     "replay_events_read_total", "Recorded events replay sources read.", ["stream", "tier"]
+)
+replay_gap_warnings_total = Counter(
+    "replay_gap_warnings_total", "ReplayGap markers replay sources emitted."
 )
 replay_source_read_seconds = Histogram(
     "replay_source_read_seconds", "Replay storage read latency.", ["tier"]
@@ -99,10 +119,18 @@ STREAM_ORDINAL: Final[Mapping[StreamKind, int]] = MappingProxyType(
 DEFAULT_WINDOW_US: Final = 30 * US_PER_SECOND
 DEFAULT_MAX_WINDOW_US: Final = 3_600 * US_PER_SECOND
 DEFAULT_IO_TIMEOUT_S: Final = 30.0
+#: How far before a seek target the anchor lookup searches: 60x the 60 s snapshot cadence.
+ANCHOR_LOOKBACK_US: Final = 3_600 * US_PER_SECOND
 #: Rows one storage read may return whatever the memory budget (threat model Sec.4): bounds the
 #: synchronous sort and dedup of one window on the event loop (C-2.17's 50 ms; 8 193 shuffled
-#: book deltas took 11 ms median, 25 ms worst of 15 on a Windows laptop).
+#: book deltas took 11 ms median, 25 ms worst of 15 on a Windows laptop). One symbol's
+#: `recording_gaps` read is held to it too.
 DEFAULT_MAX_ROWS_PER_READ: Final = 8_192
+#: Gap rows turned into markers between two yields to the event loop (C-2.17): a symbol at the
+#: ceiling takes tens of milliseconds to build in one go, and more under load, so it is cut into
+#: steps of 1 024 rows.
+_MARKER_YIELD_EVERY: Final = 1_024
+_RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
 #: Order-of-magnitude bytes per buffered event (E26-K01 measured ~0.4 KB/event) and per
 #: snapshot level (two Decimals and a tuple).
@@ -212,8 +240,22 @@ class _Cursor:
         return len(keyed) - len(buf)
 
 
+class _Markers:
+    """One symbol's gap markers, read whole before the first event; `buf[pos:]` are its next
+    entries, already in merge order."""
+
+    __slots__ = ("buf", "pos")
+
+    def __init__(self, buf: list[_Entry]) -> None:
+        self.buf = buf
+        self.pos = 0
+
+
+type _Source = _Cursor | _Markers
+
+
 class RecordedMerge:
-    """Every `(symbol, stream)` cursor of one request, merged into one order.
+    """Every `(symbol, stream)` cursor of one request, merged with its gap markers.
 
     Single pass: `batches()` may be iterated once; a seek builds a new merge from the target.
     Out-of-bound windows, timeouts or budgets are refused with `ReplayConfigInvalid` before any
@@ -242,6 +284,7 @@ class RecordedMerge:
         self._budget_bytes = budget_bytes
         self._tier: Tier | None = None
         self._symbols = tuple(sorted(request.symbols))
+        self._symbol_markers: list[_Markers] | None = None
         streams = [s for s in REPLAYABLE_STREAMS if s in request.streams]
         share = budget_bytes // (len(self._symbols) * len(streams))
         self._cursors: list[_Cursor] = []
@@ -269,29 +312,36 @@ class RecordedMerge:
         cursor first yields the items already merged, then is raised."""
         await self.tier()  # refuse a straddling `auto` session before reading any event
         cursors = self._cursors
-        heap: list[tuple[_Key, int]] = []
-        for index, cursor in enumerate(cursors):
+        # Read once: a second pass finds the markers drained, like the cursors, and reads nothing.
+        if self._symbol_markers is None:
+            self._symbol_markers = [
+                await self._markers(symbol_ord, symbol)
+                for symbol_ord, symbol in enumerate(self._symbols)
+            ]
+        sources: list[_Source] = [*cursors, *self._symbol_markers]
+        for cursor in cursors:
             await self._fill(cursor)
-            if cursor.pos < len(cursor.buf):
-                heap.append((cursor.buf[cursor.pos][0], index))
+        heap = [(s.buf[s.pos][0], index) for index, s in enumerate(sources) if s.pos < len(s.buf)]
         heapq.heapify(heap)
         batch: list[ReplayItem] = []
         size = 0
         while heap:
             index = heap[0][1]
-            cursor = cursors[index]
-            _, item, item_bytes = cursor.buf[cursor.pos]
-            cursor.pos += 1
+            source = sources[index]
+            _, item, item_bytes = source.buf[source.pos]
+            source.pos += 1
             batch.append(item)
             size += item_bytes
-            if cursor.pos >= len(cursor.buf) and cursor.more:
+            if isinstance(source, _Markers):
+                replay_gap_warnings_total.inc()
+            elif source.pos >= len(source.buf) and source.more:
                 try:
-                    await self._fill(cursor)
+                    await self._fill(source)
                 except ReplayError:
                     yield batch  # what was merged before the failure is delivered first
                     raise
-            if cursor.pos < len(cursor.buf):
-                heapq.heapreplace(heap, (cursor.buf[cursor.pos][0], index))
+            if source.pos < len(source.buf):
+                heapq.heapreplace(heap, (source.buf[source.pos][0], index))
             else:
                 heapq.heappop(heap)
             if len(batch) >= max_events or size >= max_bytes:
@@ -308,10 +358,13 @@ class RecordedMerge:
             events = await self._read_window(cursor, lo_us, hi_us)
             if len(events) > cursor.row_cap:
                 if not cursor.shrink(hi_us - lo_us):
+                    # The row ceiling is named when it, not the byte share, set the cap.
+                    by_rows = cursor.row_cap == DEFAULT_MAX_ROWS_PER_READ
                     raise ReplayMemoryCeilingExceeded(
                         budget_bytes=self._budget_bytes,
                         symbol=cursor.symbol,
                         stream=cursor.stream,
+                        max_rows=DEFAULT_MAX_ROWS_PER_READ if by_rows else None,
                     )
                 continue
             dropped = cursor.load(hi_us, events, self._max_window_us)
@@ -386,3 +439,94 @@ class RecordedMerge:
         except StorageError as exc:
             reason = exc.code
         raise ReplaySourceUnavailable(tier=tier, symbol=symbol, stream=stream, reason=reason)
+
+    async def _markers(self, symbol_ord: int, symbol: str) -> _Markers:
+        """One symbol's gap markers: each `recording_gaps` row of a requested stream that
+        intersects `[start, end)`, at `max(gap_start, start)`. The read asks for one row past the
+        ceiling, and a symbol that fills it is refused whole rather than reported in part. The
+        reader is not trusted to have filtered: symbol, stream and the half-open intersection are
+        re-checked, and rows identical in symbol, stream, start, end and cause report once. A row
+        that ends before it starts cannot exist (`rg_window` CHECK, 21 Sec.3.6.2): its shape is
+        the table's to guard, not re-checked here. The build yields to the event loop every
+        `_MARKER_YIELD_EVERY` rows (C-2.17)."""
+        req = self._request
+        start_us, end_us = req.start_us, req.end_us
+        window = TimeRange(start_us=start_us, end_us=end_us)
+        read = self._tiers.gaps.recording_gaps(symbol, window, limit=DEFAULT_MAX_ROWS_PER_READ + 1)
+        rows = await self._guarded(read, tier="recording_gaps", symbol=symbol, stream=None)
+        if len(rows) > DEFAULT_MAX_ROWS_PER_READ:
+            raise ReplayMemoryCeilingExceeded(
+                budget_bytes=self._budget_bytes,
+                symbol=symbol,
+                stream=None,
+                max_rows=DEFAULT_MAX_ROWS_PER_READ,
+            )
+        found: dict[_Key, _Entry] = {}
+        for n, gap in enumerate(rows):
+            if n and n % _MARKER_YIELD_EVERY == 0:
+                await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 8 192-row table
+            if gap.symbol != symbol or gap.stream not in req.streams:
+                continue
+            if gap.start_us >= end_us or gap.end_us <= start_us:
+                continue
+            at_us = max(gap.start_us, start_us)
+            key: _Key = (
+                at_us,
+                _RANK_GAP,
+                symbol_ord,
+                SEQUENCE_DOMAIN[gap.stream],
+                0,
+                STREAM_ORDINAL[gap.stream],
+                (gap.start_us, gap.end_us, gap.cause),
+            )
+            marker = ReplayGap(at_us, symbol, gap.stream, gap.start_us, gap.end_us, gap.cause)
+            found[key] = (key, marker, _EVENT_BYTES)
+        return _Markers(sorted(found.values(), key=itemgetter(0)))
+
+    async def anchor_at(self, symbol: str, at_us: int) -> RecordedEvent | None:
+        """Seek anchor (E26-T04): the latest `orderbook_snapshot` of `symbol` at the replay's
+        depth with `at_us - ANCHOR_LOOKBACK_US <= ts_us <= at_us`, else `None`. Bounded on both
+        sides, so it never scans unbounded history. It is one row, not a stream: under `auto`
+        both tiers are asked and the latest by `order_key` wins (a row both hold maps
+        identically), so the answer never depends on how far roll-off has got; an explicit tier
+        looks only there. A symbol outside the replay or an instant outside its window (the end
+        included, where a finished replay sits) is refused with `ReplayRequestInvalid`. A tier
+        that answers with a row outside the bound fails the lookup (`anchor_out_of_bounds`)
+        rather than seed a wrong book."""
+        req = self._request
+        if symbol not in req.symbols:
+            raise ReplayRequestInvalid("symbol is not part of this replay")
+        if not req.start_us <= at_us <= req.end_us:
+            raise ReplayRequestInvalid("anchor instant is outside the replay window")
+        tiers: tuple[Tier, ...] = ("questdb", "parquet")
+        if req.source_tier != "auto":
+            tiers = (req.source_tier,)
+        found: list[RecordedEvent] = []
+        for tier in tiers:
+            reader = self._tiers.hot if tier == "questdb" else self._tiers.cold
+            lookup = reader.snapshot_at(
+                symbol, req.depth, at_us, not_before_us=at_us - ANCHOR_LOOKBACK_US
+            )
+            stream = StreamKind.ORDERBOOK_SNAPSHOT
+            hit = await self._guarded(lookup, tier=tier, symbol=symbol, stream=stream)
+            if hit is None:
+                continue
+            if not self._is_anchor(hit, symbol, at_us):  # a reader is not trusted to have filtered
+                raise ReplaySourceUnavailable(
+                    tier=tier, symbol=symbol, stream=stream, reason="anchor_out_of_bounds"
+                )
+            found.append(hit)
+        return max(found, key=order_key, default=None)
+
+    def _is_anchor(self, row: RecordedEvent, symbol: str, at_us: int) -> bool:
+        """Whether `row` is what `anchor_at` asked a tier for: a snapshot of `symbol` at the
+        session depth inside the two-sided bound. A row outside it fails the lookup (never
+        silently a wrong anchor)."""
+        payload = row.payload
+        return (
+            row.symbol == symbol
+            and row.stream is StreamKind.ORDERBOOK_SNAPSHOT
+            and isinstance(payload, RecordedBookSnapshot)
+            and payload.depth == self._request.depth
+            and at_us - ANCHOR_LOOKBACK_US <= row.ts_us <= at_us
+        )

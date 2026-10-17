@@ -36,19 +36,35 @@ class ReplayConfigInvalid(ReplayError, ValueError):
 
 
 class ReplayMemoryCeilingExceeded(ReplayError):
-    """The per-session memory budget cannot hold even the smallest read of one stream: the
-    replay stops with this error instead of growing memory (ticket E26-T02)."""
+    """A read cannot fit the replay's bounds, so the replay stops with this error instead of
+    growing memory (ticket E26-T02): the per-session byte budget cannot hold even the smallest
+    read of one stream, or one instant (one µs) holds more rows than the per-read row ceiling.
+
+    `max_rows` is that ceiling when it, not the byte budget, bound the read, so a larger budget
+    would not help; otherwise `None`. `stream` is `None` for one symbol's `recording_gaps` read,
+    which is bounded by rows only and refused whole rather than reported in part."""
 
     code = "REPLAY_MEMORY_CEILING_EXCEEDED"
 
-    def __init__(self, *, budget_bytes: int, symbol: str, stream: StreamKind) -> None:
-        super().__init__(
-            f"replay memory budget of {budget_bytes} bytes cannot hold one read of "
-            f"{stream.value} for {symbol}"
+    def __init__(
+        self,
+        *,
+        budget_bytes: int,
+        symbol: str,
+        stream: StreamKind | None,
+        max_rows: int | None = None,
+    ) -> None:
+        what = stream.value if stream is not None else "recording_gaps"
+        bound = (
+            f"replay memory budget of {budget_bytes} bytes"
+            if max_rows is None
+            else f"replay row ceiling of {max_rows} rows per read"
         )
+        super().__init__(f"{bound} cannot hold one read of {what} for {symbol}")
         self.budget_bytes = budget_bytes
         self.symbol = symbol
         self.stream = stream
+        self.max_rows = max_rows
 
 
 class ReplaySourceUnavailable(ReplayError):
