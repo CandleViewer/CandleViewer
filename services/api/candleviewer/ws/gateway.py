@@ -443,10 +443,12 @@ class _Connection:
         comes with `received`, the `clock` reading at which the hub took it, and is queued with it
         as `(received, frame)`: the writer observes `cv_ws_fanout_seconds` from that pair once the
         socket has the frame, and times and sizes its encode (`cv_ws_frame_*`) before the send. It
-        never reaches the wire, and a frame dropped from the queue (a seal, a full queue) is never
-        observed. Any other frame is queued bare. With the flag on the pipeline queues it
-        (`ws/pipeline.py`), the stamp on its `Queued`: it encodes the frame once, at push, and
-        times and sizes a stamped one there, so the writer observes only the fan-out span."""
+        never reaches the wire, and with the flag off a frame dropped from the queue (a seal, a
+        full queue) is never observed. Any other frame is queued bare. With the flag on the
+        pipeline queues it (`ws/pipeline.py`), the stamp on its `Queued`: it encodes the frame
+        once, at push, and times and sizes a stamped one there, so the writer observes only the
+        fan-out span, and a stamped frame that a close drops after its push is in
+        `cv_ws_frame_*` but not in `cv_ws_fanout_seconds`."""
         if self.closing:
             return
         if self.pipeline is not None:
