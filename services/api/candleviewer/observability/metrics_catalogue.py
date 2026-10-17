@@ -1809,6 +1809,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E32",
     ),
     _s(
+        "oms_db_write_seconds",
+        "histogram",
+        "seconds",
+        ("table",),
+        "OMS Postgres write time per table, failed writes included (orders: an order with its "
+        "first event); recorded by the M14 repositories (E29-T01).",
+        "p99 near the store's 2 s statement cap: order writes at risk of refusal",
+        _P,
+        "E29",
+        STORAGE_BUCKETS,
+        max_series=5,
+    ),
+    _s(
         "bybit_clock_drift_ms",
         "gauge",
         "milliseconds",

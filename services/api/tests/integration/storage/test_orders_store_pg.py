@@ -1,12 +1,14 @@
-"""Integration: the order stores and the M14 repositories on real Postgres 16 (E29-T01 #845).
+"""Integration: the OMS stores and the M14 repositories on real Postgres 16 (E29-T01 #845).
 
 The database (`testcontainers`) is set up like production (`pg_bootstrap.sql`'s roles, the
 migrations as `cv_owner`) and the stores run as `cv_app`. What only a database proves: the
 one-statement create and its atomicity, `ux_orders_link` surfacing as `DuplicateOrderLinkId`,
 numeric(38,18) through asyncpg with no float, the named constraints the store reports, account
 scoping, a dense `seq` under concurrent appends, `list_open` planned over `ix_orders_open`, the
-store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest.
-The DDL itself is `test_oms_core_migration.py`'s.
+store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest;
+for slice 3, one row per fill whatever reports it, the account-scoped order link of a fill, the
+position upsert with a cleared stop, and `list_unprotected` planned over `ix_pos_no_sl`. The DDL
+itself is `test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations
@@ -29,13 +31,23 @@ from typing import Any
 import psycopg
 import pytest
 import pytest_asyncio
+from psycopg import sql
 from sqlalchemy.engine import Dialect, make_url
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.domain.primitives import AccountId, GroupId
-from candleviewer.oms import DuplicateOrderLinkId, OrderEventRepository, OrderRepository
+from candleviewer.oms import (
+    DuplicateOrderLinkId,
+    ExecutionRepository,
+    OrderEventRepository,
+    OrderRepository,
+    PositionRepository,
+    PositionSnapshotRepository,
+)
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.repositories.executions import NewExecution
+from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
 from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
@@ -45,6 +57,11 @@ from candleviewer.storage.repositories.orders import (
 from candleviewer.storage.repositories.orders_sqlalchemy import (
     SqlAlchemyOrderStore,
     list_open_statement,
+)
+from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
+from candleviewer.storage.repositories.positions_sqlalchemy import (
+    SqlAlchemyPositionStore,
+    list_unprotected_statement,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -58,7 +75,7 @@ _T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 _KEY = "DUMMYKEY_" + "Q3w9" * 5  # synthetic credential shapes, built at run time (SR-145)
 _MAC = hashlib.sha256(b"cv-test-vector").hexdigest()
 _BOOTSTRAP = _ROOT.parents[1] / "infra" / "scripts" / "pg_bootstrap.sql"
-_PSYCOPG: Dialect = make_url("postgresql+psycopg://").get_dialect()()
+_ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
 
 
 def _login(dsn: str, role: str) -> str:
@@ -273,14 +290,17 @@ async def test_list_open_returns_the_open_orders_of_the_account_oldest_first(
     ]  # fmt: skip
 
 
-def _plan(dsn: str, symbol: str | None, account: uuid.UUID) -> str:
-    """EXPLAIN of the statement `list_open` runs, with sequential scans priced out."""
-    compiled = list_open_statement(account, symbol).compile(
-        dialect=_PSYCOPG, compile_kwargs={"render_postcompile": True}
-    )
+def _plan(dsn: str, stmt: Any) -> str:
+    """EXPLAIN of a store statement as asyncpg runs it, a prepared statement, on its generic plan
+    (the driver caches statements, so Postgres may switch to it), with sequential scans priced
+    out. A partial index matches only a predicate written with literals there."""
+    compiled = stmt.compile(dialect=_ASYNCPG, compile_kwargs={"render_postcompile": True})
+    args = sql.SQL(", ").join(sql.Literal(compiled.params[n]) for n in compiled.positiontup or ())
     with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql")) as c, c.transaction():
         c.execute("SET LOCAL enable_seqscan = off")
-        rows = c.execute("EXPLAIN " + str(compiled), compiled.params).fetchall()
+        c.execute("SET LOCAL plan_cache_mode = force_generic_plan")
+        c.execute(sql.SQL("PREPARE probe AS {}").format(sql.SQL(str(compiled))))
+        rows = c.execute(sql.SQL("EXPLAIN EXECUTE probe ({})").format(args)).fetchall()
     return "\n".join(str(row[0]) for row in rows)
 
 
@@ -310,7 +330,7 @@ async def test_list_open_is_planned_over_ix_orders_open(
         for state in ("pending_submit", "accepted"):
             await orders.create(_order(account, state=state), _event())
     _sql(pg_dsn, "ANALYZE orders")
-    plan = _plan(pg_dsn, symbol, accounts[0])
+    plan = _plan(pg_dsn, list_open_statement(accounts[0], symbol))
     assert "ix_orders_open" in plan, plan
     assert ("symbol" in plan.split("ix_orders_open", 1)[1]) is (symbol is not None), plan
 
@@ -404,3 +424,120 @@ async def test_a_write_blocked_by_a_row_lock_fails_within_the_store_cap(
         await rel.dispose()
     assert err.value.sqlstate == "57014"  # query_canceled: the statement timeout
     assert _sql(pg_dsn, "SELECT count(*) FROM order_events WHERE order_id = %s", new.id) == [(1,)]
+
+
+# -- slice 3: executions, positions and position snapshots -------------------------------------
+
+Ledger = tuple[ExecutionRepository, PositionRepository, PositionSnapshotRepository]
+
+
+@pytest_asyncio.fixture
+async def ledger(app_dsn: str) -> AsyncIterator[Ledger]:
+    rel = SqlAlchemyRelationalRepository(app_dsn, "positions-it")
+    positions = SqlAlchemyPositionStore(rel)
+    try:
+        yield (
+            ExecutionRepository(SqlAlchemyExecutionStore(rel)),
+            PositionRepository(positions),
+            PositionSnapshotRepository(positions),
+        )
+    finally:
+        await rel.dispose()
+
+
+def _fill(account: uuid.UUID, **over: Any) -> NewExecution:
+    base: dict[str, Any] = {
+        "exchange_account_id": account, "exec_id": "E1", "symbol": "BTCUSDT", "side": "Buy",
+        "exec_qty": Decimal("0.010"), "exec_price": Decimal("63099.80"),
+        "exec_value": Decimal("630.998"), "exec_type": "Trade", "is_maker": False, "exec_ts": _T0,
+    }  # fmt: skip
+    return NewExecution(**(base | over))
+
+
+def _state(account: uuid.UUID, symbol: str, **over: Any) -> PositionState:
+    base: dict[str, Any] = {"exchange_account_id": account, "symbol": symbol}
+    return PositionState(**(base | {"size": Decimal("0.010")} | over))
+
+
+async def test_fills_deduplicate_across_sources(stores: Repos, ledger: Ledger, pg_dsn: str) -> None:
+    """Gherkin "Fills deduplicate across sources": E1 of account A, from the private stream, again
+    from it and from the REST backfill, is one row, and another account's E1 is its own. It is
+    stored digit for digit, a Decimal (Gherkin "Monetary precision is preserved")."""
+    executions = ledger[0]
+    a, b = _account(pg_dsn), _account(pg_dsn)
+    order = await stores[0].create(_order(a), _event())
+    tiny = Decimal("0.000000000000000001")
+    fill = _fill(a, order_id=order.id, order_link_id=order.order_link_id, exec_qty=tiny)
+    assert [await executions.insert(fill) for _ in ("ws", "ws", "rest")] == [True, False, False]
+    assert await executions.insert(_fill(b)) is True
+    count = "SELECT count(*) FROM executions WHERE exchange_account_id = %s AND exec_id = 'E1'"
+    assert [_sql(pg_dsn, count, account) for account in (a, b)] == [[(1,)], [(1,)]]
+    stored = await executions.get(a, "E1")
+    assert stored is not None and (stored.order_id, stored.recv_ts.tzinfo is not None) == (
+        order.id, True,
+    )  # fmt: skip
+    for got, want in ((stored.exec_qty, tiny), (stored.exec_price, Decimal("63099.80"))):
+        assert type(got) is Decimal and got.as_tuple() == want.quantize(tiny).as_tuple()
+    assert await executions.get(b, "E2") is None
+
+
+async def test_a_fill_naming_another_accounts_order_is_refused_and_not_stored(
+    stores: Repos, ledger: Ledger, pg_dsn: str
+) -> None:
+    order = await stores[0].create(_order(_account(pg_dsn)), _event())
+    other = _account(pg_dsn)
+    with pytest.raises(OrderNotFoundError):
+        await ledger[0].insert(_fill(other, order_id=order.id))
+    count = "SELECT count(*) FROM executions WHERE exchange_account_id = %s"
+    assert _sql(pg_dsn, count, other) == [(0,)]
+
+
+async def test_an_open_position_whose_stop_was_cleared_is_listed_unprotected(
+    ledger: Ledger, pg_dsn: str
+) -> None:
+    """C-2.6: the exchange reports a cleared stop as 0, which is stored as NULL, so the upserted
+    row reads as unprotected; flat, protected and other accounts' positions do not."""
+    positions = ledger[1]
+    a, b = _account(pg_dsn), _account(pg_dsn)
+    first = await positions.upsert(_state(a, "BTCUSDT", stop_loss=Decimal("62000")))
+    cleared = await positions.upsert(_state(a, "BTCUSDT", stop_loss=Decimal(0), size=Decimal(2)))
+    await positions.upsert(_state(a, "ETHUSDT", stop_loss=Decimal("2400")))
+    await positions.upsert(_state(a, "SOLUSDT", size=Decimal(0)))
+    await positions.upsert(_state(b, "XRPUSDT"))
+    assert (cleared.id, cleared.size, cleared.stop_loss) == (first.id, Decimal(2), None)
+    assert cleared.updated_at >= first.updated_at
+    assert [p.symbol for p in await positions.list_unprotected(a)] == ["BTCUSDT"]
+    assert [p.symbol for p in await positions.list_open(a)] == ["BTCUSDT", "ETHUSDT"]
+    assert [p.symbol for p in await positions.list_unprotected(b)] == ["XRPUSDT"]
+
+
+async def test_list_unprotected_is_planned_over_ix_pos_no_sl(ledger: Ledger, pg_dsn: str) -> None:
+    """#845 performance notes: the naked-position read scans the partial index. Each account holds
+    many protected and flat positions, as in use, and the planner has statistics."""
+    accounts = [_account(pg_dsn), _account(pg_dsn)]
+    for account in accounts:
+        _sql(
+            pg_dsn,
+            "INSERT INTO positions (id, exchange_account_id, symbol, size, stop_loss) "
+            "SELECT gen_random_uuid(), %s, 'S' || g || 'USDT', g %% 2, 100 "
+            "FROM generate_series(1, 300) AS g",
+            account,
+        )
+        await ledger[1].upsert(_state(account, "BTCUSDT"))
+    _sql(pg_dsn, "ANALYZE positions")
+    plan = _plan(pg_dsn, list_unprotected_statement(accounts[0]))
+    assert "ix_pos_no_sl" in plan, plan
+
+
+async def test_a_position_snapshot_is_appended_as_given(ledger: Ledger, pg_dsn: str) -> None:
+    account = _account(pg_dsn)
+    equity = Decimal("12345.000000000000000001")
+    snap = await ledger[2].append(
+        NewPositionSnapshot(
+            exchange_account_id=account, symbol="BTCUSDT", size=Decimal("0.010"),
+            equity_usd=equity, reason="minute_tick",
+        )
+    )  # fmt: skip
+    assert (snap.size, snap.equity_usd, snap.reason) == (Decimal("0.010"), equity, "minute_tick")
+    count = "SELECT count(*) FROM position_snapshots WHERE exchange_account_id = %s"
+    assert snap.id > 0 and _sql(pg_dsn, count, account) == [(1,)]
