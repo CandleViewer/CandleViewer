@@ -26,6 +26,7 @@ from candleviewer.storage.repositories.rows import (
     OrderflowMetricRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 
 
@@ -102,6 +103,14 @@ class MarketDataRepository(Protocol):
     async def first_trade_us(self, sym: str) -> int | None:
         """Open time (µs) of the oldest stored trade for `sym` (where recorded tape begins),
         or `None` when no tape exists (E12-S05 `meta.recording_started_at`)."""
+        ...
+
+    async def trade_totals(self, sym: str, rng: TimeRange, tier: TierHint = "auto") -> TradeTotals:
+        """Print count and summed qty of `sym`'s trades within `rng` (SR-E12-02 pre-query
+        estimate for non-time `/market/bars`, #2093), as one aggregate row. The count's cost is
+        unmeasured; a BR-28 residual tracked in #3279. `qty` is the store's own sum (a DOUBLE sum
+        on QuestDB), not exact decimal arithmetic. Raises `StorageTierUnavailable`, or
+        `OSError`/`TimeoutError` when the connection or its timeout fails."""
         ...
 
     async def read_book_snapshot_at(

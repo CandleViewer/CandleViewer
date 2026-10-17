@@ -15,7 +15,10 @@ import re
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 
+import asyncpg
+
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TierHint, TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.reader import (
@@ -29,6 +32,7 @@ from candleviewer.storage.questdb.reader import (
     build_read_klines,
     build_read_orderflow_metrics,
     build_read_trades,
+    build_trade_totals,
 )
 from candleviewer.storage.questdb.schemas import BAR_SCHEMAS_BY_FAMILY
 from candleviewer.storage.repositories.rows import (
@@ -40,6 +44,7 @@ from candleviewer.storage.repositories.rows import (
     OrderflowMetricRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 
 #: A conservative default symbol allowlist check: venue USDT-perp symbols are
@@ -49,6 +54,10 @@ from candleviewer.storage.repositories.rows import (
 #: regardless (SR-047 — `SYMBOL` filters are the only user-controlled
 #: predicate reaching SQL).
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,32}$")
+
+#: asyncpg's three error roots: the server's, the client's and its client-internal ones
+#: (`ProtocolError` and kin). `CancelledError`, a `BaseException`, is none of them and propagates.
+_DRIVER_ERRORS = (asyncpg.PostgresError, asyncpg.InterfaceError, asyncpg.InternalClientError)
 
 
 class SymbolNotAllowed(ValueError):
@@ -243,6 +252,15 @@ class QuestDbMarketDataRepository:
         self._check_symbol(sym)
         rows = await self._reader.run(build_first_trade(sym))
         return ts_us_from_row(rows[0]["ts"]) if rows else None
+
+    async def trade_totals(self, sym: str, rng: TimeRange, tier: TierHint = "auto") -> TradeTotals:
+        self._check_symbol(sym)
+        try:
+            rows = await self._reader.run(build_trade_totals(sym, rng))
+        except _DRIVER_ERRORS as exc:
+            raise StorageTierUnavailable("the trades count failed in the driver") from exc
+        n, qty = (rows[0]["n"], rows[0]["qty"]) if rows else (0, None)
+        return TradeTotals(int(str(n)), Decimal(0) if qty is None else Decimal(str(qty)))
 
     async def read_trades(
         self, sym: str, rng: TimeRange, tier: TierHint = "auto"

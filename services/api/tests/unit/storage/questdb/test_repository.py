@@ -9,17 +9,23 @@ is skipped in this environment).
 
 from __future__ import annotations
 
+import asyncio
 import json
+from decimal import Decimal
 
+import asyncpg
 import pytest
 
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TimeRange
+from candleviewer.storage.questdb.reader import build_trade_totals
 from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository, SymbolNotAllowed
 from candleviewer.storage.repositories.rows import (
     BookDeltaRow,
     BookSnapshotRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 
 
@@ -154,6 +160,61 @@ async def test_read_trades_passes_symbol_only_as_bind_parameter() -> None:
     assert reader.last_builder is not None
     assert reader.last_builder.params[0] == "BTCUSDT"  # type: ignore[attr-defined]
     assert "BTCUSDT" not in reader.last_builder.sql  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("canned", "expected"),
+    [
+        ([{"n": 3, "qty": 0.30000000000000004}], TradeTotals(3, Decimal("0.30000000000000004"))),
+        ([{"n": 0, "qty": None}], TradeTotals(0, Decimal(0))),  # QuestDB: sum of nothing is NULL
+        ([], TradeTotals(0, Decimal(0))),
+    ],
+)
+async def test_trade_totals_maps_the_one_aggregate_row(
+    canned: list[dict[str, object]], expected: TradeTotals
+) -> None:
+    """#2093: the DOUBLE sum is read as its shortest repr, never re-rounded through float."""
+    reader, rng = _FakeReader(canned), TimeRange(start_us=0, end_us=2_000)
+    repo = QuestDbMarketDataRepository(_FakeWriter(), reader)  # type: ignore[arg-type]
+    assert await repo.trade_totals("BTCUSDT", rng) == expected
+    assert reader.last_builder == build_trade_totals("BTCUSDT", rng)
+    with pytest.raises(SymbolNotAllowed):
+        await repo.trade_totals("BTC'; DROP TABLE trades;--", rng)
+
+
+class _FailingReader(_FakeReader):
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
+
+    async def run(self, builder: object) -> list[dict[str, object]]:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        asyncpg.exceptions.QueryCanceledError("canceling statement due to user request"),
+        asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed"),
+        asyncpg.InterfaceError("pool is closing"),
+        asyncpg.exceptions.ProtocolError("unexpected row description"),  # client-internal
+    ],
+    ids=["query-cancelled", "connection-gone", "interface", "protocol"],
+)
+async def test_trade_totals_turns_a_driver_error_into_the_tier_error(error: Exception) -> None:
+    """#2093 review: the route maps the tier error to 503; a raw asyncpg error would be a 500."""
+    reader = _FailingReader(error)
+    repo = QuestDbMarketDataRepository(_FakeWriter(), reader)  # type: ignore[arg-type]
+    with pytest.raises(StorageTierUnavailable) as caught:
+        await repo.trade_totals("BTCUSDT", TimeRange(start_us=0, end_us=1))
+    assert caught.value.__cause__ is error
+
+
+async def test_trade_totals_lets_cancellation_through() -> None:
+    reader = _FailingReader(asyncio.CancelledError())
+    repo = QuestDbMarketDataRepository(_FakeWriter(), reader)  # type: ignore[arg-type]
+    with pytest.raises(asyncio.CancelledError):
+        await repo.trade_totals("BTCUSDT", TimeRange(start_us=0, end_us=1))
 
 
 @pytest.mark.asyncio

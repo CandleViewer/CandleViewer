@@ -82,6 +82,17 @@ def build_first_trade(sym: str) -> QueryBuilder:
     return QueryBuilder("SELECT ts FROM trades WHERE symbol = $1 ORDER BY ts LIMIT 1", (sym,))
 
 
+def build_trade_totals(sym: str, rng: TimeRange) -> QueryBuilder:
+    """SR-E12-02 (#2093): print count and summed `size` of `sym`'s trades in `rng`. One aggregate
+    row (`n` 0, `qty` NULL when empty). The count's cost is unmeasured; a BR-28 residual tracked
+    in #3279."""
+    sql = (
+        "SELECT count() AS n, sum(size) AS qty FROM trades "
+        "WHERE symbol = $1 AND ts >= $2 AND ts < $3"
+    )
+    return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us)))
+
+
 def build_read_klines(
     sym: str, interval: str, rng: TimeRange, limit: int | None = None
 ) -> QueryBuilder:

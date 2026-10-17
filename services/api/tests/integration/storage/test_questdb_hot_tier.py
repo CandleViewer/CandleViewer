@@ -442,6 +442,40 @@ async def test_trades_and_deltas_readers_bind_datetime_ts_on_real_questdb(
 
 
 @pytest.mark.asyncio
+async def test_trade_totals_count_and_sum_on_real_questdb(
+    questdb_container: tuple[str, int, int],
+) -> None:
+    """#2093: `count()`/`sum(size)` over bound `ts` binds run on the engine; an empty range is
+    one row, `n` 0 and `qty` NULL, read as zero."""
+    from decimal import Decimal
+
+    from candleviewer.storage.models import TimeRange
+    from candleviewer.storage.repositories.rows import TradeTotals
+
+    host, pg_port, ilp_port = questdb_container
+    conn = await _connect(host, pg_port)
+    try:
+        await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
+        writer = IlpWriter(_AsyncpgTcpIlpTransport(host, ilp_port), ALL_SCHEMAS)
+        await writer.start()
+        repo = QuestDbMarketDataRepository(writer, QuestDbReader(_AsyncpgExecutor(conn)))
+        await repo.write_trades([
+            TradeRow(ts_us=_T0 + i, symbol=sym, price="1", qty=qty, side="buy", trade_id=f"t{i}")
+            for i, (sym, qty) in enumerate([("BTCUSDT", "0.5"), ("BTCUSDT", "0.25"),
+                                            ("ETHUSDT", "4"), ("BTCUSDT", "8")])
+        ])  # fmt: skip
+        await writer.flush("trades")
+        await writer.stop()
+        await wait_for_row_count(conn, "trades", 4)
+        got = await repo.trade_totals("BTCUSDT", TimeRange(start_us=_T0, end_us=_T0 + 3))
+        assert got == TradeTotals(2, Decimal("0.75"))  # ETHUSDT and the end bound excluded
+        empty = TimeRange(start_us=_T0 + 10, end_us=_T0 + 20)
+        assert await repo.trade_totals("BTCUSDT", empty) == TradeTotals(0, Decimal(0))
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_bar_writer_row_lands_on_real_questdb(
     questdb_container: tuple[str, int, int],
 ) -> None:

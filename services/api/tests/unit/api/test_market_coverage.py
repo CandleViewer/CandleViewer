@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -145,6 +146,38 @@ async def test_create_app_wires_sessions_provider_and_mounts_route() -> None:
     assert resp.status_code == 501
 
 
+async def test_create_app_hands_the_bars_route_its_storages_trade_totals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2093 review (A1): `create_app` composes `trade_totals_source(ctx)`. Without it every
+    non-time `/market/bars` request is a 503 that no route test sees."""
+    from decimal import Decimal
+
+    from candleviewer import app as app_module
+    from candleviewer.api.market_bars import make_market_bars_router
+    from candleviewer.settings import Settings
+    from candleviewer.storage.models import TimeRange
+    from candleviewer.storage.repositories.rows import TradeRow, TradeTotals
+    from candleviewer.storage.testing import FakeMarketDataRepository
+
+    seen: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return make_market_bars_router(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "make_market_bars_router", spy)
+    app = app_module.create_app(Settings(git_sha="test", version="0.0.0-test"))
+    repo = FakeMarketDataRepository()
+    app.state.app_context.storage._market_data = repo  # after composition: resolved per call
+    await repo.write_trades([
+        TradeRow(ts_us=ts, symbol=sym, price="1", qty=qty, side="buy", trade_id=f"{sym}{ts}")
+        for ts, sym, qty in [(5, "BTCUSDT", "0.5"), (50, "BTCUSDT", "8"), (5, "ETHUSDT", "4")]
+    ])  # fmt: skip
+    got = await seen["trade_totals"]("BTCUSDT", TimeRange(start_us=0, end_us=10))
+    assert got == TradeTotals(1, Decimal("0.5"))  # this symbol, this range only
+
+
 async def _ctx_with(trade_ts: list[int], session_first: datetime | None) -> Any:
     from candleviewer.app import build_app_context
     from candleviewer.storage.repositories.rows import TradeRow
@@ -194,7 +227,7 @@ def test_regression_bars_with_tape_and_no_sessions_is_served_not_422() -> None:
     import asyncio
 
     from candleviewer.api.market_bars import make_market_bars_router
-    from candleviewer.app import recording_started_at_us
+    from candleviewer.app import recording_started_at_us, trade_totals_source
     from candleviewer.bars.reader import BarReader
 
     ctx = asyncio.run(_ctx_with([NOW - 3_600_000_000], None))
@@ -210,6 +243,7 @@ def test_regression_bars_with_tape_and_no_sessions_is_served_not_422() -> None:
     app.include_router(make_market_bars_router(
         lambda: BarReader(_Empty(), no_rebuild),
         recording_started_at_us=recording_started_at_us(ctx),
+        trade_totals=trade_totals_source(ctx),
         principal_resolver=_Resolver(frozenset({"marketdata:read"})),
         symbol_listed=lambda s: s == "BTCUSDT", now_us=lambda: NOW))  # fmt: skip
     resp = TestClient(app, client=("127.0.0.1", 50000)).get("/market/bars", params={

@@ -10,6 +10,7 @@ lets the same contract-test suite run against `[fake]` today and
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from typing import Any
 
 from candleviewer.storage.errors import StorageExportVerifyFailed
@@ -23,6 +24,7 @@ from candleviewer.storage.repositories.rows import (
     OrderflowMetricRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 
 
@@ -98,6 +100,10 @@ class FakeMarketDataRepository:
     async def read_trades(self, sym: str, rng: TimeRange, tier: str = "auto") -> list[TradeRow]:
         rows = [r for r in self._trades.values() if r.symbol == sym and _in_range(r.ts_us, rng)]
         return sorted(rows, key=lambda r: (r.ts_us, r.trade_id))
+
+    async def trade_totals(self, sym: str, rng: TimeRange, tier: str = "auto") -> TradeTotals:
+        rows = [r for r in self._trades.values() if r.symbol == sym and _in_range(r.ts_us, rng)]
+        return TradeTotals(len(rows), sum((Decimal(r.qty) for r in rows), Decimal(0)))
 
     async def read_book_snapshot_at(
         self, sym: str, ts_us: int, depth: int, tier: str = "auto"

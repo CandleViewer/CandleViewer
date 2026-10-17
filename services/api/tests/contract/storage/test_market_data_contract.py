@@ -9,11 +9,13 @@ implementations; this ticket runs it against `FakeMarketDataRepository` only.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.repositories.market_data import MarketDataRepository
-from candleviewer.storage.repositories.rows import BarRow, BookDeltaRow, TradeRow
+from candleviewer.storage.repositories.rows import BarRow, BookDeltaRow, TradeRow, TradeTotals
 from candleviewer.storage.testing import FakeMarketDataRepository
 
 
@@ -81,6 +83,25 @@ async def test_read_trades_scoped_by_symbol(repo: MarketDataRepository) -> None:
     )
     result = await repo.read_trades("BTCUSDT", TimeRange(start_us=0, end_us=1_000))
     assert [r.symbol for r in result] == ["BTCUSDT"]
+
+
+async def test_trade_totals_count_and_sum_the_symbols_prints_in_the_range(
+    repo: MarketDataRepository,
+) -> None:
+    """#2093: start-inclusive, end-exclusive, symbol-scoped, deduplicated like `read_trades`.
+    Binary-exact quantities, so a store that sums DOUBLEs gives the same total."""
+    await repo.write_trades(
+        [
+            TradeRow(ts_us=ts, symbol=sym, price="1", qty=qty, side="buy", trade_id=f"{sym}{ts}")
+            for ts, sym, qty in [(99, "BTCUSDT", "5"), (100, "BTCUSDT", "0.5"),
+                                 (100, "ETHUSDT", "7"), (150, "BTCUSDT", "0.25"),
+                                 (150, "BTCUSDT", "0.25"), (200, "BTCUSDT", "9")]
+        ]
+    )  # fmt: skip
+    got = await repo.trade_totals("BTCUSDT", TimeRange(start_us=100, end_us=200))
+    assert got == TradeTotals(2, Decimal("0.75"))
+    none = await repo.trade_totals("BTCUSDT", TimeRange(start_us=300, end_us=400))
+    assert none == TradeTotals(0, Decimal(0))
 
 
 async def test_write_then_read_bars_round_trips(repo: MarketDataRepository) -> None:
