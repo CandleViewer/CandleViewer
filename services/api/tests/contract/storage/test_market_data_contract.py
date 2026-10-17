@@ -88,17 +88,18 @@ async def test_read_trades_scoped_by_symbol(repo: MarketDataRepository) -> None:
 async def test_trade_totals_count_and_sum_the_symbols_prints_in_the_range(
     repo: MarketDataRepository,
 ) -> None:
-    """#2093: start-inclusive, end-exclusive, symbol-scoped, deduplicated like `read_trades`."""
+    """#2093: start-inclusive, end-exclusive, symbol-scoped, deduplicated like `read_trades`.
+    Binary-exact quantities, so a store that sums DOUBLEs gives the same total."""
     await repo.write_trades(
         [
             TradeRow(ts_us=ts, symbol=sym, price="1", qty=qty, side="buy", trade_id=f"{sym}{ts}")
-            for ts, sym, qty in [(99, "BTCUSDT", "5"), (100, "BTCUSDT", "0.1"),
-                                 (100, "ETHUSDT", "7"), (150, "BTCUSDT", "0.2"),
-                                 (150, "BTCUSDT", "0.2"), (200, "BTCUSDT", "9")]
+            for ts, sym, qty in [(99, "BTCUSDT", "5"), (100, "BTCUSDT", "0.5"),
+                                 (100, "ETHUSDT", "7"), (150, "BTCUSDT", "0.25"),
+                                 (150, "BTCUSDT", "0.25"), (200, "BTCUSDT", "9")]
         ]
     )  # fmt: skip
     got = await repo.trade_totals("BTCUSDT", TimeRange(start_us=100, end_us=200))
-    assert got == TradeTotals(2, Decimal("0.3"))
+    assert got == TradeTotals(2, Decimal("0.75"))
     none = await repo.trade_totals("BTCUSDT", TimeRange(start_us=300, end_us=400))
     assert none == TradeTotals(0, Decimal(0))
 

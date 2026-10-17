@@ -15,7 +15,10 @@ import re
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 
+import asyncpg
+
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TierHint, TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.reader import (
@@ -51,6 +54,10 @@ from candleviewer.storage.repositories.rows import (
 #: regardless (SR-047 — `SYMBOL` filters are the only user-controlled
 #: predicate reaching SQL).
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,32}$")
+
+#: asyncpg's three error roots: the server's, the client's and its client-internal ones
+#: (`ProtocolError` and kin). `CancelledError`, a `BaseException`, is none of them and propagates.
+_DRIVER_ERRORS = (asyncpg.PostgresError, asyncpg.InterfaceError, asyncpg.InternalClientError)
 
 
 class SymbolNotAllowed(ValueError):
@@ -248,7 +255,10 @@ class QuestDbMarketDataRepository:
 
     async def trade_totals(self, sym: str, rng: TimeRange, tier: TierHint = "auto") -> TradeTotals:
         self._check_symbol(sym)
-        rows = await self._reader.run(build_trade_totals(sym, rng))
+        try:
+            rows = await self._reader.run(build_trade_totals(sym, rng))
+        except _DRIVER_ERRORS as exc:
+            raise StorageTierUnavailable("the trades count failed in the driver") from exc
         n, qty = (rows[0]["n"], rows[0]["qty"]) if rows else (0, None)
         return TradeTotals(int(str(n)), Decimal(0) if qty is None else Decimal(str(qty)))
 
