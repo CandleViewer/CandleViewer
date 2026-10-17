@@ -5,20 +5,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.audit import query as query_mod
 from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.cursor import decode_cursor
 from candleviewer.audit.errors import AuditChainBroken
-from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity
+from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService
 
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
@@ -203,6 +207,183 @@ async def test_verify_broken_prev_link_located(repo: FakeAuditRepository, clock:
     del repo.rows[2]  # out-of-band delete of id 3
     result = await AuditQueryService(repo).verify()
     assert not result.verified and result.first_bad_id == 4
+    assert result.kind is ChainBreakKind.PREV_HASH_MISMATCH
+
+
+async def test_verify_anchors_on_the_greatest_id_below_from_id(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Design §1 gap 10: ids have gaps (a WAL-replay duplicate or a rolled-back insert uses
+    up a sequence value). With no row at `from_id - 1`, the anchor is the stored
+    `entry_hash` of the greatest id below `from_id`, never genesis (a false break)."""
+    await _seed(repo, 3, clock)
+    repo.burn_ids(1)  # id 4 is never written
+    await _seed(repo, 3, clock, first=3)  # ids 5, 6, 7
+    svc = AuditQueryService(repo)
+    for from_id in (4, 5):
+        result = await svc.verify(from_id=from_id)
+        assert (result.verified, result.entries_checked, result.first_bad_id) == (True, 3, None)
+    assert (await svc.verify()).verified  # and the whole chain, across the gap
+
+
+async def test_verify_clamps_to_the_head_read_when_it_starts(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Entries appended during the run, and a `to_id` beyond the head, are not checked."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def fetch_then_append(**kw: Any) -> list[tuple[Any, ...]]:
+        rows = await fetch(**kw)
+        await _seed(repo, 1, clock, first=100 + len(repo.rows))  # a write lands mid-run
+        return rows
+
+    repo.fetch_verify_batch = fetch_then_append  # type: ignore[method-assign]  # spy on the fake
+    result = await AuditQueryService(repo).verify(to_id=1_000, batch_size=2)
+    assert (result.verified, result.entries_checked) == (True, 5)
+    assert {to_id for _, to_id, _ in repo.verify_calls} == {5}
+
+
+async def test_verify_walks_keyset_batches_of_ten_thousand_by_default(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 10, clock)
+    assert VERIFY_BATCH_SIZE == 10_000
+    await AuditQueryService(repo).verify()
+    assert repo.verify_calls == [(0, 10, 10_000)]
+    repo.verify_calls.clear()
+    await AuditQueryService(repo).verify(from_id=3, batch_size=4)
+    assert repo.verify_calls == [(2, 10, 4), (6, 10, 4)]  # a full last batch ends at the head
+
+
+class _SpyHasher:
+    """Runs each batch check inline and records how many fetches were issued by then."""
+
+    def __init__(self, repo: FakeAuditRepository) -> None:
+        self.repo, self.fetched_at_submit = repo, list[int]()
+
+    async def run(self, fn: Callable[[], Any]) -> Any:
+        await asyncio.sleep(0)  # one loop turn: a prefetch scheduled before this call starts
+        self.fetched_at_submit.append(len(self.repo.verify_calls))
+        return fn()
+
+    def shutdown(self) -> None:
+        return None
+
+
+async def test_verify_fetches_the_next_batch_while_hashing_one(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Pipelined: batch n+1 is in flight while batch n is hashed, and batch n+2 is not
+    fetched before batch n is done, so at most two batches are held."""
+    await _seed(repo, 9, clock)
+    hasher = _SpyHasher(repo)
+    svc = AuditQueryService(repo, hasher)  # type: ignore[arg-type]  # structural stand-in
+    assert (await svc.verify(batch_size=3)).entries_checked == 9
+    assert hasher.fetched_at_submit == [2, 3, 3]
+
+
+async def test_verify_hashes_off_the_event_loop(
+    repo: FakeAuditRepository, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(repo, 3, clock)
+    threads: list[int] = []
+    walk = query_mod._walk_batch
+
+    def spy(expected: str, rows: Any) -> Any:
+        threads.append(threading.get_ident())
+        return walk(expected, rows)
+
+    monkeypatch.setattr(query_mod, "_walk_batch", spy)
+    assert (await AuditQueryService(repo).verify()).verified
+    assert threads and threading.get_ident() not in threads
+
+
+async def test_verify_stops_at_the_first_divergence_and_cancels_the_prefetch(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 9, clock)
+    repo.rows[1]["reason"] = "forged"  # id 2
+    repo.rows[7]["reason"] = "forged"  # id 8, never reached
+    result = await AuditQueryService(repo).verify(batch_size=3)
+    assert (result.verified, result.entries_checked, result.first_bad_id) == (False, 2, 2)
+    assert result.kind is ChainBreakKind.ENTRY_HASH_MISMATCH
+    assert len(repo.verify_calls) <= 2  # the prefetch of ids 4-6, never the third batch
+
+
+async def test_verify_reports_a_broken_link_before_a_bad_hash(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Both checks fail on id 3: the link is checked first (`prev_hash_mismatch`)."""
+    await _seed(repo, 4, clock)
+    repo.rows[2].update(prev_hash="f" * 64, reason="forged")
+    result = await AuditQueryService(repo).verify()
+    assert (result.first_bad_id, result.kind) == (3, ChainBreakKind.PREV_HASH_MISMATCH)
+    assert "kind" not in result.model_dump(mode="json")  # internal: not in the response
+
+
+async def test_verify_takes_checked_at_from_the_injected_clock(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    from datetime import UTC, datetime
+
+    await _seed(repo, 2, clock)
+    at = datetime(2026, 10, 14, 23, 0, tzinfo=UTC)
+    assert (await AuditQueryService(repo, clock=lambda: at).verify()).checked_at == at
+
+
+async def test_verify_an_empty_or_past_the_head_range_checks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    result = await AuditQueryService(repo).verify(from_id=4)
+    assert (result.verified, result.entries_checked, repo.verify_calls) == (True, 0, [])
+
+
+async def test_verify_a_range_inside_an_id_gap_checks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 2, clock)
+    repo.burn_ids(2)  # ids 3 and 4 are never written
+    await _seed(repo, 1, clock, first=2)  # id 5
+    result = await AuditQueryService(repo).verify(from_id=3, to_id=4)
+    assert (result.verified, result.entries_checked) == (True, 0)
+    assert repo.verify_calls == [(2, 4, VERIFY_BATCH_SIZE)]
+
+
+async def test_verify_cancelled_mid_run_leaves_no_fetch_running(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 6, clock)
+    gate, fetch = asyncio.Event(), repo.fetch_verify_batch
+    pending: list[asyncio.Task[Any]] = []
+
+    async def stalled(**kw: Any) -> list[tuple[Any, ...]]:
+        if kw["after_id"] > 0:  # the prefetch never answers
+            pending.append(asyncio.current_task())  # type: ignore[arg-type]  # inside a task
+            gate.set()
+            await asyncio.Event().wait()
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = stalled  # type: ignore[method-assign]  # spy on the fake
+    svc = AuditQueryService(repo)
+    run = asyncio.ensure_future(svc.verify(batch_size=3))
+    await gate.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert pending and all(task.done() for task in pending)
+    assert svc._hasher.pending == 0  # the hashing job finished, too
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+async def test_verify_with_no_room_in_a_batch_is_refused_not_verified(
+    repo: FakeAuditRepository, clock: FakeClock, batch_size: int
+) -> None:
+    """Review of #2450: a batch of 0 rows used to walk nothing and report `verified`."""
+    await _seed(repo, 2, clock)
+    with pytest.raises(ValueError, match="batch_size"):
+        await AuditQueryService(repo).verify(batch_size=batch_size)
 
 
 _FIELDS = ["actor_label", "action", "reason", "before_state", "object_id", "event_ts", "severity"]
@@ -328,3 +509,15 @@ def test_sqlstate_extraction_and_timeout_mapping() -> None:
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Orig())) == "57014"
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Wrapped())) == "57014"
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, Exception())) is None
+
+
+async def test_verify_a_deleted_predecessor_breaks_at_from_id(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2449: with row `from_id - 1` deleted out of band, the anchor is the
+    greatest id below it, so `from_id`'s link is wrong and the break is `from_id`."""
+    await _seed(repo, 6, clock)
+    del repo.rows[3]  # id 4
+    result = await AuditQueryService(repo).verify(from_id=5)
+    assert (result.verified, result.first_bad_id, result.entries_checked) == (False, 5, 1)
+    assert result.kind is ChainBreakKind.PREV_HASH_MISMATCH
