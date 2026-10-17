@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { format, resolveConfig } from "prettier";
 
 // This test binds docs/plan/ws-schema.json (machine-authoritative) to
 // docs/plan/23-ws-protocol.md (human-authoritative) — the "doc-drift" pattern
@@ -20,12 +21,13 @@ const repoRoot = join(packageRoot, "..", "..");
 const extractScript = join(packageRoot, "scripts", "extract-ws-schema.mjs");
 const schemaPath = join(repoRoot, "docs", "plan", "ws-schema.json");
 
-let tempDir: string | undefined;
+type Artefact = { topicCatalogue: Array<{ topicPattern: string }> };
+
+const tempDirs: string[] = [];
 
 afterEach(() => {
-  if (tempDir !== undefined) {
-    rmSync(tempDir, { recursive: true, force: true });
-    tempDir = undefined;
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -34,8 +36,9 @@ function run(args: string[]): void {
 }
 
 function copyOfArtefact(contents: string): string {
-  tempDir = mkdtempSync(join(tmpdir(), "cv-ws-schema-"));
-  const copy = join(tempDir, "ws-schema.json");
+  const dir = mkdtempSync(join(tmpdir(), "cv-ws-schema-"));
+  tempDirs.push(dir);
+  const copy = join(dir, "ws-schema.json");
   writeFileSync(copy, contents, "utf8");
   return copy;
 }
@@ -47,6 +50,18 @@ function exitStatus(args: string[]): number | null {
   } catch (err) {
     return (err as { status: number | null }).status;
   }
+}
+
+function readArtefact(): Artefact {
+  return JSON.parse(readFileSync(schemaPath, "utf8")) as Artefact;
+}
+
+// Serialises `artefact` as extract-ws-schema.mjs does: Prettier, with the config and `filepath` of
+// the tracked file. A bare JSON.stringify lays arrays out differently (Prettier keeps short ones on
+// one line), so a check on it would fail on layout whatever the copy held.
+async function formattedAsTracked(artefact: Artefact): Promise<string> {
+  const config = (await resolveConfig(schemaPath)) ?? {};
+  return format(JSON.stringify(artefact, null, 2) + "\n", { ...config, filepath: schemaPath });
 }
 
 describe("ws-schema.json drift", () => {
@@ -64,29 +79,39 @@ describe("ws-schema.json drift", () => {
     const tampered = committed.replace('"schemaCount":', '"schemaCount_TAMPERED":');
     expect(tampered).not.toBe(committed);
 
-    expect(() => run(["--check", "--schema", copyOfArtefact(tampered)])).toThrow();
+    expect(exitStatus(["--check", "--schema", copyOfArtefact(tampered)])).toBe(1);
   });
 
-  it("fails --check when the markdown's §6 topic catalogue gains a row missing from the artefact", () => {
+  it("passes --check on the untouched artefact parsed, re-serialised and formatted as the generator does", async () => {
+    // The control for the next case: that copy is built the same way, so only its removed row can
+    // make --check fail.
+    const copy = copyOfArtefact(await formattedAsTracked(readArtefact()));
+    expect(() => run(["--check", "--schema", copy])).not.toThrow();
+  });
+
+  it("fails --check when the markdown's §6 topic catalogue gains a row missing from the artefact", async () => {
     // Simulates AC4: a new topic row in 23-ws-protocol.md that the committed
     // ws-schema.json does not yet know about. We can't (and mustn't) hand-edit
     // the markdown here, so we assert the mechanism directly: removing a known
     // topic row from a copy of the artefact must reproduce the same failure
     // mode --check reports for "markdown row present, artefact row absent".
-    const artefact = JSON.parse(readFileSync(schemaPath, "utf8")) as {
-      topicCatalogue: Array<{ topicPattern: string }>;
-    };
+    const artefact = readArtefact();
     expect(artefact.topicCatalogue.length).toBeGreaterThan(0);
     artefact.topicCatalogue.pop();
-    const copy = copyOfArtefact(JSON.stringify(artefact, null, 2) + "\n");
+    const copy = copyOfArtefact(await formattedAsTracked(artefact));
 
-    expect(() => run(["--check", "--schema", copy])).toThrow();
+    expect(exitStatus(["--check", "--schema", copy])).toBe(1);
   });
 
-  it.each([[["--schema", "x.json"]], [["--check", "--schema"]], [["--check", "--bogus"]]])(
-    "refuses %j with exit status 2",
-    (args) => {
-      expect(exitStatus(args)).toBe(2);
-    },
-  );
+  // Each refused shape carries a `--check`, so a parser that regressed to accept it would run the
+  // read-only check, never the generator that rewrites docs/plan/ws-schema.json.
+  it.each([
+    [["--schema", "x.json", "--check"]], // wrong order
+    [["--schema", "--check"]], // --schema without a --check before it
+    [["--check", "--schema"]], // no path
+    [["--check", "--schema", "--check"]], // a flag where the path belongs
+    [["--check", "--bogus"]], // an unknown flag
+  ])("refuses %j with exit status 2", (args) => {
+    expect(exitStatus(args)).toBe(2);
+  });
 });

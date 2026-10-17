@@ -19,11 +19,17 @@ const mdPath = join(repoRoot, "docs", "plan", "23-ws-protocol.md");
 const outPath = join(repoRoot, "docs", "plan", "ws-schema.json");
 // `--schema` checks another copy of the artefact, formatted as the tracked one, so the drift test
 // tampers with a temp copy and never rewrites docs/plan/ws-schema.json (#2970). Any other argument
-// is refused.
+// is refused, and so is a path that starts with `--`: that is a mistyped flag, not a file.
 function parseArgs(args) {
   if (args.length === 0) return { checkMode: false, schemaPath: outPath };
   if (args.length === 1 && args[0] === "--check") return { checkMode: true, schemaPath: outPath };
-  if (args.length === 3 && args[0] === "--check" && args[1] === "--schema" && args[2]) {
+  if (
+    args.length === 3 &&
+    args[0] === "--check" &&
+    args[1] === "--schema" &&
+    args[2] &&
+    !args[2].startsWith("--")
+  ) {
     return { checkMode: true, schemaPath: resolve(args[2]) };
   }
   console.error("usage: node scripts/extract-ws-schema.mjs [--check [--schema <path>]]");
