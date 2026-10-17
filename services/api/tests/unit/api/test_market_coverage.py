@@ -154,17 +154,17 @@ async def test_create_app_hands_the_bars_route_its_storages_trade_totals(
     from decimal import Decimal
 
     from candleviewer import app as app_module
+    from candleviewer.api.market_bars import make_market_bars_router
     from candleviewer.settings import Settings
     from candleviewer.storage.models import TimeRange
     from candleviewer.storage.repositories.rows import TradeRow, TradeTotals
     from candleviewer.storage.testing import FakeMarketDataRepository
 
     seen: dict[str, Any] = {}
-    real = app_module.make_market_bars_router
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.update(kwargs)
-        return real(*args, **kwargs)
+        return make_market_bars_router(*args, **kwargs)
 
     monkeypatch.setattr(app_module, "make_market_bars_router", spy)
     app = app_module.create_app(Settings(git_sha="test", version="0.0.0-test"))
