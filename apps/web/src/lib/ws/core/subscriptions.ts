@@ -15,8 +15,23 @@ import { createSequencer, topicKey } from "./sequencer";
 import { createSnapshotAssembler } from "./snapshotAssembler";
 
 const MAX_SUB_ID_LENGTH = 64;
+/** `effective` is a few small options, lists and maps of them: what nests deeper than this is not options. */
+const MAX_OPTIONS_DEPTH = 8;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+/**
+ * True when containers nest deeper than `limit`. Walked level by level, without recursion: JSON can
+ * nest a million deep, and this stops at the limit, so `frozen` below never recurses past it.
+ */
+function nestsDeeperThan(value: unknown, limit: number): boolean {
+  let level: unknown[] = [value];
+  for (let depth = 1; ; depth += 1) {
+    const containers = level.filter((v): v is object => typeof v === "object" && v !== null);
+    if (containers.length === 0) return false;
+    if (depth > limit) return true;
+    level = containers.flatMap((c) => Object.values(c));
+  }
+}
 /** A deep, read-only copy: `effective` is read by every consumer of the stream, and the frame it came from stays untouched. */
 function frozen<T>(value: T): T {
   if (typeof value !== "object" || value === null) return value;
@@ -48,11 +63,17 @@ export interface RegistryHost {
   /** The last consumer left a stream the server still holds: send its `unsub`. */
   unsubscribe(ch: string, rs: string | undefined): void;
   /**
-   * A resync the guard admitted: frame it and pace it. `rs` is the replay stream it is for, and the
-   * engine puts it on the envelope (13.1): the gateway resolves a bare `ch` to the live stream, so
-   * a replay stream's loss would re-snapshot its live twin and stay void (#572).
+   * A resync the guard admitted: frame it and pace it. `rs` is the replay stream it is for and
+   * `subId` the subscription `sub_ok` named, if it has: the engine puts them on the frame (13.1),
+   * since the gateway resolves a bare `ch` to the live stream, so a replay stream's loss would
+   * re-snapshot its live twin and stay void (#572).
    */
-  resync(ch: string, rs: string | undefined, payload: ResyncPayload): void;
+  resync(
+    ch: string,
+    rs: string | undefined,
+    payload: ResyncPayload,
+    subId: string | undefined,
+  ): void;
   /**
    * One validated frame of a stream, in order: a `snap` replaces all before it, a `reset` voids
    * them, a `d` extends them. The host owns what happens next: a bounded queue (C-2.18), a copy per
@@ -92,14 +113,14 @@ export interface SubscriptionRegistry {
   /**
    * `sub_ok`, `ctl_ok` and `unsub_ok` name a `ch`, never its stream, and a live and a replay stream of
    * one `ch` can coexist (23 11): the frames carry no `rs` or `sub_id` (#572). `to` is the stream of
-   * the request being answered, which the engine knows from the request `id` the reply echoes. Without
-   * it a reply applies only when the `ch` has one stream, and is ignored when that is ambiguous: it
-   * never lands on the twin of the stream it was for.
+   * the request being answered, which the engine knows from the request `id` the reply echoes, and it
+   * is required: the engine drops a reply that answers no request it sent, and a reply for a stream
+   * that is gone applies to nothing, never to the twin of the stream it was for.
    */
-  onSubOk(frame: ControlOf<"sub_ok">, to?: RequestScope): void;
-  onCtlOk(frame: ControlOf<"ctl_ok">, to?: RequestScope): void;
+  onSubOk(frame: ControlOf<"sub_ok">, to: RequestScope): void;
+  onCtlOk(frame: ControlOf<"ctl_ok">, to: RequestScope): void;
   /** Concerns only a stream with no baseline yet: what it holds of a chunk set is the old subscription's. */
-  onUnsubOk(frame: ControlOf<"unsub_ok">, to?: RequestScope): void;
+  onUnsubOk(frame: ControlOf<"unsub_ok">, to: RequestScope): void;
   /**
    * Names a `ch` too. `replay_session_ended` ends replay streams only; every other reason reaches
    * each stream of the `ch`, live and replay. With two replay streams of one `ch` it ends both.
@@ -127,6 +148,8 @@ interface Rec {
   stale: boolean;
   /** Chunk sets dropped for size since the last complete `snap`: it comes back the same, so a second in a row ends the asking. */
   overflows: number;
+  /** The server owes the `snap` that `resnapshot` promised: a `d` first says it went on without one. */
+  snapDue: boolean;
   /** A `reset` was delivered and no `snap` since: consumers already hold nothing, so none repeats it. */
   voided: boolean;
   /** Sticky until the next baseline: a frame that says replay makes the stream replay (C11). */
@@ -153,12 +176,9 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
   /** The streams of a `ch` that are not ended: an ended one gets no control frame and no resync. */
   const named = (ch: string): Rec[] =>
     [...records.values()].filter((rec) => rec.ch === ch && !rec.revoked);
-  /** The streams a reply means: its request's (`to`), else the only stream of the `ch`. */
-  const targets = (ch: string, to?: RequestScope): Rec[] => {
-    const all = named(ch);
-    if (to === undefined) return all.length === 1 ? all : [];
-    return all.filter((rec) => rec.rs === to.rs);
-  };
+  /** The streams a reply means: the stream of its request. */
+  const targets = (ch: string, to: RequestScope): Rec[] =>
+    named(ch).filter((rec) => rec.rs === to.rs);
   const send = (rec: Rec, frame: TopicFrame): void => host.deliver(rec.ch, rec.rs, frame);
   const reset = (rec: Rec, reason: ResetReason): void => send(rec, { kind: "reset", reason });
   /** A resync is owed while a stream of this `ch` has lost its baseline. */
@@ -175,7 +195,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     if (rec.overflows > 1) return; // see applySnap: asking again would get the same snapshot
     const go = () => {
       counters.resyncsSent += 1;
-      host.resync(rec.ch, rec.rs, { last_seq: seq.lastSeq(rec.key), reason });
+      host.resync(rec.ch, rec.rs, { last_seq: seq.lastSeq(rec.key), reason }, rec.subId);
     };
     if (guard.request(rec.ch, go) === "deferred") counters.resyncsDeferred += 1;
   }
@@ -185,6 +205,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     seq.discard(rec.key);
     if (!rec.voided) reset(rec, why);
     rec.voided = true;
+    rec.snapDue = why === "resnapshot"; // the server owes a `snap` for that one alone (C5)
     if (resync !== undefined) requestResync(rec, resync);
   }
 
@@ -212,12 +233,17 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
   /**
    * A delta of a stream with no baseline is dropped unread: there is nothing to extend, and a bad
    * body must not void a stream that is already void. If a chunk set is held, the server went on
-   * without it (3.6) and nothing will complete it: it is dropped and a snapshot asked for.
+   * without it (3.6) and nothing will complete it: it is dropped and a snapshot asked for. The same
+   * when `resnapshot` promised a snap and a delta comes first: the server went on without one.
    */
   function orphaned(rec: Rec): void {
-    if (!assembler.holds(rec.key)) return;
-    assembler.discard(rec.key);
-    lose(rec, "gap", "state_corrupt");
+    if (assembler.holds(rec.key)) {
+      assembler.discard(rec.key);
+      return lose(rec, "gap", "state_corrupt");
+    }
+    if (!rec.snapDue) return;
+    rec.snapDue = false;
+    requestResync(rec, "state_corrupt");
   }
 
   function applyDelta(rec: Rec, frame: DataFrame, decodeMs: number, replay: boolean): void {
@@ -312,6 +338,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
           revoked: false,
           stale: false,
           overflows: 0,
+          snapDue: false,
           voided: false,
           replay: false,
         };
@@ -335,7 +362,10 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
             rec.subId = result.sub_id;
           }
           // C4: what the server clamped the options to, never what was asked for.
-          if (isRecord(result.effective)) rec.effective = frozen(result.effective);
+          const options = result.effective;
+          if (isRecord(options) && !nestsDeeperThan(options, MAX_OPTIONS_DEPTH)) {
+            rec.effective = frozen(options);
+          }
           if (result.snapshot_forced === true) counters.forcedSnapshots += 1;
         }
       }
@@ -343,11 +373,13 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
 
     onCtlOk(frame, to) {
       if (frame.ch === undefined) return;
+      const retune = !nestsDeeperThan(frame.p.effective, MAX_OPTIONS_DEPTH);
       for (const rec of targets(frame.ch, to)) {
-        rec.effective = frozen({ ...rec.effective, ...frame.p.effective });
+        if (retune) rec.effective = frozen({ ...rec.effective, ...frame.p.effective });
         if (frame.p.resnapshot !== true) continue;
-        // C5: the state is void and a `snap` follows by itself (5.4): nothing to ask for.
-        assembler.forget(rec.key);
+        // C5: the state is void and a `snap` follows by itself (5.4): nothing to ask for, unless a
+        // `d` comes first (`orphaned`). A tail of the set held now must not assemble into it.
+        assembler.discard(rec.key);
         lose(rec, "resnapshot");
       }
     },
@@ -375,8 +407,9 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
           continue;
         }
         // Rows of a removed account must not outlive the narrowing, and with the backpressure flag
-        // off the gateway sends no `reconfigure` snap, so one is asked for.
-        assembler.forget(rec.key);
+        // off the gateway sends no `reconfigure` snap, so one is asked for. A tail of the set held
+        // now must not assemble into one.
+        assembler.discard(rec.key);
         lose(rec, "narrowed", "state_corrupt");
       }
     },
