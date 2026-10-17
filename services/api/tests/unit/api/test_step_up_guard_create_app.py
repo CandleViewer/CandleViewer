@@ -84,7 +84,8 @@ async def test_invite_create_fails_closed_when_sessions_are_wired_without_step_u
     assert not w.auth.step_up_is_active  # the wiring fault
     owner = await _login(w, "owner", _OWNER_PERMS)
     r = w.client.post("/users", headers=_h(owner), json=_BODY)
-    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+    # #2295 (C-12.4): without the user store no session can be classified, so the
+    # enrolment-only guard, outside the step-up guard, refuses every session first.
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
     assert not w.invites.rows and not w.audit.of("users.invited")
-    # Not an outage: the owner's non-dangerous read is served as before.
-    assert w.client.get("/users/invites", headers=_h(owner)).status_code == 200
+    assert w.client.get("/users/invites", headers=_h(owner)).status_code == 503

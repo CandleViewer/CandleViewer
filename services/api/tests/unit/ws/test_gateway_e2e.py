@@ -21,6 +21,7 @@ from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from tests.csrf_helpers import arm_csrf
+from tests.unit.auth.auth_fakes import MFA_PROVED_AT, FullUsers
 
 ADMIN = uuid.uuid4()
 MGR = uuid.uuid4()
@@ -114,7 +115,7 @@ class _Sessions:
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "admin-token":  # noqa: S105
             raise SessionNotFound("x")
-        return SimpleNamespace(id=_ADMIN_SID, user_id=ADMIN)
+        return SimpleNamespace(id=_ADMIN_SID, user_id=ADMIN, mfa_satisfied_at=MFA_PROVED_AT)
 
 
 async def _authenticate(presented: str) -> tuple[str, uuid.UUID, datetime]:
@@ -137,6 +138,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, _World]:
     # The router holds this same AuthService: wire the step-up/session seams.
     auth: Any = app.state.app_context.auth
     auth._sessions = _Sessions()
+    auth._repository = FullUsers()  # #2295: classified as full
     auth._step_up = _StepUp()
     client = TestClient(
         app, client=("127.0.0.1", 50000), headers={"Authorization": "Bearer admin-token"}

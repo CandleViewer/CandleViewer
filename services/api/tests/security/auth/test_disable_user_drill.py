@@ -40,7 +40,7 @@ from candleviewer.auth.step_up import StepUpService
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
-from tests.unit.auth.auth_fakes import FakeUserRepository
+from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -221,6 +221,7 @@ def _with_the_hubs_sink(env: Any) -> Any:
         clock=env.clock,
         publish_revocation=app_module._hub_publisher(env.hub),
     )
+    auth._repository = FullUsers()  # #2295: classified as full
     return auth
 
 

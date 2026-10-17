@@ -16,6 +16,7 @@ import candleviewer.app as appmod
 from tests.csrf_helpers import arm_csrf
 from tests.drawings._drawings_api_env import TRENDLINE, FakeDrawingRepo
 from tests.drawings._drawings_api_env import wire as drawing_wire
+from tests.unit.auth.auth_fakes import FullUsers
 
 
 @pytest.fixture
@@ -99,6 +100,7 @@ def test_a_key_stored_by_one_router_is_never_replayed_by_the_other(
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     writer = app.state.app_context.audit._writer = fakes.Audit()
     app.state.workspaces_repository = workspaces = fakes.FakeWorkspaceRepo()
     app.state.drawings_repository = drawings = FakeDrawingRepo()

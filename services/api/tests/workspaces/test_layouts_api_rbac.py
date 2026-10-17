@@ -15,6 +15,7 @@ import candleviewer.app as appmod
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.storage.errors import StorageTierUnavailable
 from tests.csrf_helpers import arm_csrf
+from tests.unit.auth.auth_fakes import FullUsers
 
 ACTORS = {"owner": USER_A, "other": USER_B, "viewer": VIEWER}
 #: method -> status for (owner, other, viewer) on a path that names A's own layout.
@@ -180,6 +181,7 @@ def test_production_create_app_resolves_callers_from_the_session(
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     app.state.workspaces_repository = fakes.FakeWorkspaceRepo()
     c = TestClient(app, client=peer)
     assert c.get(url, headers=ok).json()["meta"]["count"] == 6
@@ -194,6 +196,7 @@ def test_create_app_serves_workspaces_and_layouts_behind_csrf(
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()  # as main.py: no principal_resolver
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     writer = app.state.app_context.audit._writer = fakes.Audit()
     h, peer = {"Authorization": "Bearer tok-a"}, ("127.0.0.1", 50000)
     c = arm_csrf(TestClient(app, client=peer), app.state.csrf_codec, SID)
@@ -231,6 +234,7 @@ def test_every_unsafe_route_refuses_a_request_without_a_csrf_pair(
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     writer = app.state.app_context.audit._writer = fakes.Audit()
     app.state.workspaces_repository = repo = fakes.FakeWorkspaceRepo()
     c = TestClient(app, client=("127.0.0.1", 50000))

@@ -1,10 +1,9 @@
 """Enrolment-only session on the composed app (#2295; contract #2661).
 
 Real `create_app()` over the in-memory auth stack of `_stack.py`: the real session service and
-user store and the real middleware order. Sessions are minted directly, as the sign-in slice
-will mint them; of the endpoints only refresh changes here (it classifies the presented
-session). One fake instant drives the auth stack. Each refusal must leave a trail: the audit
-record and the scraped metric.
+user store and the real middleware order. Sessions are minted directly, as sign-in does; of
+the endpoints only refresh changes here (it classifies the presented session). One fake instant
+drives the auth stack. Each refusal must leave a trail: the audit record and the scraped metric.
 """
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
 
 
 def _mint(stack: Stack, user: UserRecord, **kw: Any) -> tuple[MintedSession, dict[str, str]]:
-    """A session minted the way the sign-in slice will: no MFA, 15 minutes at most."""
+    """A session minted directly, as sign-in does: no MFA, 15 minutes at most."""
     expires_at = stack.clock.now + ENROLMENT_ONLY_LIFETIME
     minted: MintedSession = stack.call(
         stack.auth.sessions.mint, str(user.id), mfa_satisfied=False, expires_at=expires_at, **kw

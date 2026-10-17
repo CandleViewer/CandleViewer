@@ -13,6 +13,7 @@ from candleviewer import app as app_module
 from candleviewer.app import create_app
 from candleviewer.auth.errors import SessionNotFound
 from tests.csrf_helpers import arm_csrf, wire_fake_sessions
+from tests.unit.auth.auth_fakes import MFA_PROVED_AT, FullUsers
 
 PATH = "/telemetry/frontend"
 _BODY = {
@@ -38,7 +39,7 @@ class _Sessions:
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "good":  # noqa: S105 - test token
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=_SID, user_id=_SID)
+        return SimpleNamespace(id=_SID, user_id=_SID, mfa_satisfied_at=MFA_PROVED_AT)
 
 
 class _Identity:
@@ -62,6 +63,7 @@ def test_authenticated_session_gets_204_and_series_recorded(
     monkeypatch.setattr(app_module, "build_identity_provider", lambda _s: _Identity())
     app = create_app()
     app.state.app_context.auth._sessions = _Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     c = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec, _SID)
     anon = c.post(PATH, json=_BODY)  # SR-041: no session -> CSRF 403 before the route's 401
     assert anon.status_code == 403 and anon.json()["code"] == "csrf_token_invalid"

@@ -701,24 +701,32 @@ def make_session_router(
 
     async def _refresh_refusal(record: SessionRecord) -> JSONResponse | None:
         """#2295 (Q7): an enrolment-only session that would outlive its 15 minutes was not
-        minted as one, and the enrolment guard answers its every request 401. Refresh ends it
-        the same way, before any audit write or rotation, so "sign in again" is reached
-        without a bearer too. A session that cannot be classified is refused (fail closed)."""
+        minted as one, and one past them is dead; the enrolment guard answers their every
+        request 401. Refresh ends them the same way, before any audit write or rotation, so
+        "sign in again" is reached without a bearer too. A session that cannot be classified
+        is refused (fail closed)."""
         if not auth_service.enrolment_gate_is_active:
-            return None  # no user store: nobody signs in, so no such session exists
+            return None  # no session store: nothing authenticates, so no such session exists
         try:
             verdict = await auth_service.classify(record)
         except Exception as exc:
             auth_enrolment_refused_total.labels(channel="http", reason="unclassified").inc()
             _log().error(
-                "auth.enrolment_only.unclassified", path="/auth/refresh", error=type(exc).__name__
+                "auth.enrolment_only.unclassified",
+                path="/auth/refresh",
+                error=type(exc).__name__,
+                session_id=str(record.id),
+                user_id=str(record.user_id),
             )
             return _problem(503, "Service unavailable", "the session could not be checked")
         if verdict is not SessionClass.ENROLMENT_ONLY_EXPIRED:
             return None
         auth_enrolment_refused_total.labels(channel="http", reason="expired").inc()
         _log().warning(
-            "auth.enrolment_only.expired", path="/auth/refresh", session_id=str(record.id)
+            "auth.enrolment_only.expired",
+            path="/auth/refresh",
+            session_id=str(record.id),
+            user_id=str(record.user_id),
         )
         return _unauthorized("refresh_token_invalid")
 

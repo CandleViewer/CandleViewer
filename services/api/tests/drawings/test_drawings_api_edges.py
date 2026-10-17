@@ -26,6 +26,7 @@ from candleviewer.storage.repositories.drawings import (
     DrawingVersionConflictError,
 )
 from tests.csrf_helpers import arm_csrf
+from tests.unit.auth.auth_fakes import FullUsers
 
 PTS = TRENDLINE["geometry"]["points"]
 MISSING = "00000000-0000-4000-8000-0000000000ff"  # fixed: parametrize ids must be stable
@@ -258,6 +259,7 @@ def test_create_app_serves_drawings_behind_csrf(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()  # as main.py: no principal_resolver
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     writer = app.state.app_context.audit._writer = fakes.Audit()
     h, peer = {"Authorization": "Bearer tok-a"}, ("127.0.0.1", 50000)
     c = arm_csrf(TestClient(app, client=peer), app.state.csrf_codec, SID)

@@ -1,4 +1,4 @@
-"""Enrolment-only sweep over every mounted route of the RBAC matrix (#2295 slice 2/3, SR-018).
+"""Enrolment-only sweep over every mounted route of the RBAC matrix (#2295, SR-018).
 
 The pack's real `create_app()` world, where the owner is a user with `mfa_required` and no
 confirmed method. The owner holds every permission, so any refusal here is the enrolment guard's

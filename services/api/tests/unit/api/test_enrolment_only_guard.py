@@ -357,7 +357,7 @@ async def test_guard_reads_the_bearer_exactly_as_the_route_resolvers_do(header: 
     """A parse that drifted from the routes' would let a token past the guard that a route
     then accepts. The RBAC routes' resolver, the session routes and the CSRF binding agree."""
     request = _request(header)
-    resolver_store = _TokenRecorder()
+    resolver_store: Any = _TokenRecorder()  # the resolver's session seam, structurally
     await SessionSnapshotResolver(lambda: resolver_store, cast(Any, None)).resolve(request)
     routes_see = sessions_module._bearer(request)
     auth = _Auth()
@@ -483,10 +483,11 @@ def test_guard_refusal_is_counted_and_logged_with_the_template_never_the_raw_pat
         "DELETE",
         "/me/sessions/{sessionId}",
     )
+    assert line["user_id"] == str(_USERS["enrolling"])  # names the account (AGENTS.md 5.2)
     assert _REVOKE_OTHER not in repr(logs)
 
 
-def test_guard_refusal_audits_stay_within_the_per_session_budget() -> None:
+def test_guard_refusal_audits_stay_within_the_per_user_budget() -> None:
     world = _World(budget=2)
     before = _count("http", "audit_throttled")
 
@@ -545,7 +546,7 @@ async def test_refusal_audit_that_outlasts_the_wait_is_left_to_finish() -> None:
 
     tracker = RefusalAuditTracker()
     refusals = EnrolmentRefusals(_Slow(), tracker=tracker, audit_timeout_s=0.01)
-    record = SessionRecord.model_construct(id=uuid.uuid4(), user_id=uuid.uuid4())
+    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
     before = _count("ws", "audit_slow")
 
     await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
@@ -560,7 +561,7 @@ async def test_refusal_audit_that_outlasts_the_wait_is_left_to_finish() -> None:
 async def test_refusal_is_not_audited_while_the_in_flight_cap_is_full() -> None:
     audit = _Audit()
     refusals = _refusals(audit, cap=0)
-    record = SessionRecord.model_construct(id=uuid.uuid4(), user_id=uuid.uuid4())
+    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
     before = _count("ws", "audit_throttled")
 
     await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)

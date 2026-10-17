@@ -72,13 +72,13 @@ class SessionsAuth:
     """The session router's auth service: a real `SessionService` over the fake repo."""
 
     sessions_is_active = True
-    enrolment_gate_is_active = False  # no user store here (#2295)
+    enrolment_gate_is_active = False  # these router tests classify nothing (#2295)
 
     def __init__(self, service: SessionService) -> None:
         self.sessions = service
 
     async def classify(self, session: SessionRecord) -> SessionClass:
-        raise AssertionError("the enrolment-only gate is inert without a user store")
+        raise AssertionError("the enrolment-only gate is off in these router tests")
 
 
 class _VerifyingMfa:
