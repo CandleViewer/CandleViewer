@@ -10,7 +10,12 @@ required (TypeError at wiring time).
 `GET /users/{userId}/account-access` (E42-T08 S9b, #2648): the user's live grants, owner only
 (`users:read`, no step-up: a read). RBAC runs before any lookup, so a refused caller gets one 403
 for an existing and a missing id (threat U25), audited naming the target. Its problem codes are
-the contract's `x-error-codes`. `account_access=None` fails closed with 501; the `PUT` is S9c.
+the contract's `x-error-codes`. `account_access=None` fails closed with 501.
+
+`PUT /users/{userId}/account-access` (S9c): `users:write` and SR-055 refused as the GET refuses;
+then the step-up, the closed body (at most 64 KiB and 256 grants, SR-040) and
+`AccountAccessService.replace`, whose store refusals map to the design's codes. It answers with
+the set the store read under its locks; unwired, 501.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
@@ -23,15 +28,18 @@ first, so this order is the second line: it alone decides an elevated caller.
 from __future__ import annotations
 
 import inspect
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from functools import partial
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
+from candleviewer.admin.account_access import AccountAccessService, GrantStore
 from candleviewer.admin.errors import (
     LastOwnerError,
     LifecycleAuditUnavailableError,
@@ -60,11 +68,54 @@ from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_id
 from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
+from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.account_access import AccessGrant, AccessUserNotFoundError
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
 _RETRY_AFTER_S = 5
+_ACK = TypeAdapter(bool)  # `acknowledge_unknown_positions`, a query parameter
+_Input = tuple[api.AccountAccessGrantInput, ...]
+#: SR-040: the PUT's body bounds. Both answer 400 `validation_failed`: the operation declares no
+#: 413, and the contract is not this slice's to change (C-6.1). 256 grants take about 20 KiB. The
+#: contract has no `maxItems` yet; it is proposed in the #965 comment of 2026-10-17 10:40Z
+#: (issuecomment-6232927455), which does not cover the 64 KiB cap: that one is this change's own.
+_MAX_BODY_BYTES: Final = 64 * 1024
+_MAX_GRANTS: Final = 256
+_LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
+#: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
+_REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
+    aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
+    aa.AccessUserNotFoundError: (ErrorCode.NOT_FOUND, 404, "user not found"),
+    aa.AccessUnknownAccountError: (ErrorCode.NOT_FOUND, 404, "an exchange account was not found"),
+    aa.AccessUserNotActiveError: (ErrorCode.CONFLICT, 409, "the user is not active"),
+    aa.AccessBusyError: (ErrorCode.CONFLICT, 409, "the grants are being changed; retry"),
+    aa.AccessPositionsUnknownError: (ErrorCode.POSITIONS_UNKNOWN, 409, "positions are unknown"),
+    aa.AccessAuditUnavailableError: (ErrorCode.AUDIT_UNAVAILABLE, 503, "change not audited"),
+}
+_REFUSALS = tuple(_REFUSED)
+
+
+def _refusal(exc: Exception) -> JSONResponse:
+    """The answer for a store refusal, or for the nearest mapped class above it: a subclass of a
+    refusal is answered as its parent, never as a 500."""
+    return _registered(*next(_REFUSED[kind] for kind in type(exc).__mro__ if kind in _REFUSED))
+
+
+class _ReplaceBody(BaseModel):
+    """`setUserAccountAccess`'s body, closed at both levels (#2658): a freeze field, the cap,
+    `can_trade`, `granted_by` or `user_id` is refused, as is an account named twice (I5) or a
+    grant past the 256th (SR-040)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    grants: Annotated[_Input, Field(max_length=_MAX_GRANTS)]
+
+    @field_validator("grants")
+    @classmethod
+    def _distinct(cls, grants: _Input) -> _Input:
+        if len({g.exchange_account_id for g in grants}) != len(grants):
+            raise ValueError("an exchange account is named twice")
+        return grants
 
 
 class _Emitter(Protocol):
@@ -100,7 +151,7 @@ class UserRoleStore(Protocol):
         ...
 
 
-class AccountAccessStore(Protocol):
+class AccountAccessStore(GrantStore, Protocol):  # its writes go through `AccountAccessService`
     async def list_grants(self, user_id: uuid.UUID) -> list[AccessGrant]:
         """The user's live grants of live accounts. Raises `AccessUserNotFoundError` (missing or
         deleted user), `StorageQueryFailed` or the driver's `OSError` (database down)."""
@@ -214,12 +265,31 @@ class _NamesTarget:
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         named = {"object_kind": "user", "object_id": str(self._target)}
-        await self._emitter.emit(action, **kwargs | named | {"session_id": await self._session()})
+        try:
+            session = await self._session()
+        except Exception as exc:  # the session store may be down: name no session, drop no record
+            _log().warning("account access refusal names no session", error=type(exc).__name__)
+            session = None
+        await self._emitter.emit(action, **kwargs | named | {"session_id": session})
 
 
 def _log() -> Any:
     """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The body, or `None` past `_MAX_BODY_BYTES` (SR-040): a larger declared `Content-Length` is
+    refused before any read, and a stream is cut off as soon as it passes the cap."""
+    declared = request.headers.get("content-length", "")
+    if _LENGTH.fullmatch(declared) and int(declared) > _MAX_BODY_BYTES:
+        return None
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > _MAX_BODY_BYTES:
+            return None
+    return bytes(raw)
 
 
 def _grant_json(grant: AccessGrant) -> dict[str, Any]:
@@ -234,6 +304,21 @@ def _grant_json(grant: AccessGrant) -> dict[str, Any]:
         }
     )
     return shown.model_dump(mode="json", exclude_none=True)
+
+
+async def _elevated(auth: _AuthLike | None, request: Request) -> JSONResponse | uuid.UUID:
+    """SR-025 after RBAC and SR-055, as `put_user_roles`: the elevated session's id, which the
+    change's audit records name (C-2.9), else the problem."""
+    if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
+        return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "step-up is not wired")
+    try:
+        record: SessionRecord = await auth.sessions.authenticate_access_token(
+            _bearer(request) or ""
+        )
+    except AuthError:
+        return _registered(ErrorCode.UNAUTHENTICATED, 401, "authentication required")
+    gate = await require_elevation_for(auth, str(record.id), "users")
+    return record.id if gate is None else gate
 
 
 async def _audit(
@@ -268,6 +353,7 @@ def make_users_router(
     *,
     auth: _AuthLike | None = None,
     account_access: AccountAccessStore | None = None,
+    access_service: AccountAccessService | None = None,
     user_disable: UserDisable | None = None,
 ) -> APIRouter:
     """`emitter` and `notifier` are mandatory: a role change without an
@@ -448,6 +534,75 @@ def make_users_router(
                 ErrorCode.STORE_UNAVAILABLE, 503, "the account access store is unavailable"
             )
         return JSONResponse({"items": [_grant_json(grant) for grant in grants]})
+
+    @router.put("/users/{userId}/account-access")
+    async def set_user_account_access(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> JSONResponse:
+        if principal_resolver is None or access_service is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no resolver or service wired")
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
+        if principal is None:
+            return _registered(ErrorCode.UNAUTHENTICATED, 401, "no verified session")
+        ip, rid = source_ip(request.scope), current_request_id()  # a UUID4, as the GET reads it
+        who: dict[str, Any] = {"actor_ip": ip, "request_id": uuid.UUID(rid) if rid else None}
+        denials = _NamesTarget(emitter, user_id, partial(session_of, request))
+        try:  # before any lookup, as the GET: one 403 for an existing and a missing id (U25)
+            await enforce(principal, Permission.USERS_WRITE, emitter=denials, **who)
+            if user_id == principal.user_id:  # SR-055: never the acting user, step-up or not
+                await denials.emit(
+                    "rbac.denied",
+                    actor_label=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="self_target",
+                    **who,
+                )
+                return _forbidden("self_target")
+        except ForbiddenError as exc:
+            return _forbidden(exc.deny.reason.value)
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started (F6)
+            _log().warning("account access refusal not audited", error=type(exc).__name__)
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
+        if isinstance(session := await _elevated(auth, request), JSONResponse):
+            return session
+        if (raw := await _read_capped(request)) is None:  # never held whole, nor echoed
+            return _registered(
+                ErrorCode.VALIDATION_FAILED, 400, f"the body exceeds {_MAX_BODY_BYTES} bytes"
+            )
+        try:
+            body = _ReplaceBody.model_validate_json(raw)
+            ack = _ACK.validate_python(
+                request.query_params.get("acknowledge_unknown_positions", "false")
+            )
+        except ValidationError:  # nothing of the input is echoed
+            return _registered(
+                ErrorCode.VALIDATION_FAILED, 400, "the request does not match its schema"
+            )
+        try:
+            change = await access_service.replace(
+                user_id,
+                {g.exchange_account_id: g.level for g in body.grants},
+                actor_user_id=principal.user_id,
+                acknowledge_unknown_positions=ack,
+                actor_ip=ip,
+                session_id=session,
+            )
+        except _REFUSALS as exc:
+            return _refusal(exc)
+        except (StorageQueryFailed, OSError) as exc:
+            _log().error(
+                "account access write failed",
+                error=type(exc).__name__,
+                sqlstate=exc.sqlstate if isinstance(exc, StorageQueryFailed) else None,
+                target_user_id=str(user_id),
+            )
+            return _registered(
+                ErrorCode.STORE_UNAVAILABLE, 503, "the account access store is unavailable"
+            )
+        return JSONResponse({"items": [_grant_json(grant) for grant in change.granted]})
 
     async def users_elevation(request: Request) -> JSONResponse | None:
         """SR-025: `None` when the session holds a live `users` elevation, else the answer."""
