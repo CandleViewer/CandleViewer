@@ -307,6 +307,27 @@ async def test_a_symbol_with_exactly_the_ceiling_of_gap_rows_reports_them_all() 
     assert len(markers(await harness.read_all())) == CEILING
 
 
+async def test_a_dense_gap_table_is_built_in_slices_that_yield_to_the_event_loop() -> None:
+    """C-2.17: 8 192 rows take about 30 ms to turn into markers, so the loop is served every
+    1 024 rows (7 yields here); a build that never yields leaves the heartbeat at zero."""
+    turns = 0
+
+    async def heartbeat() -> None:
+        nonlocal turns
+        while True:
+            await asyncio.sleep(0)
+            turns += 1
+
+    beat = asyncio.create_task(heartbeat())
+    harness = Harness(gaps=dense_gaps(CEILING), req=request(start_us=START, end_us=END))
+
+    got = markers(await harness.read_all())
+    beat.cancel()
+
+    assert len(got) == CEILING
+    assert turns >= 6
+
+
 async def test_the_ceiling_of_gap_rows_holds_per_symbol_not_across_symbols() -> None:
     rows = dense_gaps(CEILING) + dense_gaps(8, symbol=ETH)
     harness = Harness(gaps=rows, req=request(start_us=START, end_us=END, symbols=(SYM, ETH)))

@@ -16,8 +16,9 @@ only) are read once, before any event, and become `ReplayGap` markers at `max(ga
 carrying the stored bounds and cause. A marker sorts on the same key as an event: rank 0, its
 symbol and stream's domain ordinal, `seq` 0, its stream ordinal and `(gap_start, gap_end, cause)`
 as the tiebreak, so identical rows report once. The read is bounded by `DEFAULT_MAX_ROWS_PER_READ`
-rows per symbol: more is refused whole, never replayed with some gaps unreported. A gap table
-that cannot be read fails the replay rather than hide its holes.
+rows per symbol: more is refused whole, never replayed with some gaps unreported. A table that
+size is built in steps that yield to the event loop (C-2.17). A gap table that cannot be read
+fails the replay rather than hide its holes.
 
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows, the
 last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s), doubles while the
@@ -124,6 +125,9 @@ ANCHOR_LOOKBACK_US: Final = 3_600 * US_PER_SECOND
 #: book deltas took 11 ms median, 25 ms worst of 15 on a Windows laptop). One symbol's
 #: `recording_gaps` read is held to it too.
 DEFAULT_MAX_ROWS_PER_READ: Final = 8_192
+#: Gap rows turned into markers between two yields to the event loop (C-2.17): a symbol at the
+#: ceiling takes about 30 ms to build, so it is cut into steps of about 4 ms (1 024 rows).
+_MARKER_YIELD_EVERY: Final = 1_024
 _RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
 #: Order-of-magnitude bytes per buffered event (E26-K01 measured ~0.4 KB/event) and per
@@ -434,7 +438,8 @@ class RecordedMerge:
         intersects `[start, end)`, at `max(gap_start, start)`. The read asks for one row past the
         ceiling, and a symbol that fills it is refused whole rather than reported in part. The
         reader is not trusted to have filtered: symbol, stream and the half-open intersection are
-        re-checked, and rows identical in symbol, stream, start, end and cause report once."""
+        re-checked, and rows identical in symbol, stream, start, end and cause report once. The
+        build yields to the event loop every `_MARKER_YIELD_EVERY` rows (C-2.17)."""
         req = self._request
         start_us, end_us = req.start_us, req.end_us
         window = TimeRange(start_us=start_us, end_us=end_us)
@@ -448,7 +453,9 @@ class RecordedMerge:
                 max_rows=DEFAULT_MAX_ROWS_PER_READ,
             )
         found: dict[_Key, _Entry] = {}
-        for gap in rows:
+        for n, gap in enumerate(rows):
+            if n and n % _MARKER_YIELD_EVERY == 0:
+                await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 8 192-row table
             if gap.symbol != symbol or gap.stream not in req.streams:
                 continue
             if gap.start_us >= end_us or gap.end_us <= start_us:
