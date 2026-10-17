@@ -33,6 +33,7 @@ from candleviewer.account_fixture_wiring import (
 )
 from candleviewer.exchange.base.errors import TransportError
 from candleviewer.exchange.bybit import key_verify
+from candleviewer.exchange.bybit import service as bybit_service
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.observability.support_bundle import filter_config
@@ -225,15 +226,17 @@ async def test_unset_the_adapter_builds_its_verification_clients_with_transport_
 async def test_set_the_adapter_builds_its_verification_clients_on_the_fixture_transport(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """S4: the transport comes only from the door's handle; until the serving slice it refuses
-    every request."""
+    """S4: the transport comes only from the door's handle, through a view that never closes it;
+    until the serving slice it refuses every request."""
     seen = _client_transports(monkeypatch)
     app = app_module.create_app(_dev(tmp_path))
 
     await _build_a_verification_client(app)
 
-    assert seen == [app.state.account_fixture.rest_transport]
-    assert isinstance(seen[0], RefusingTransport)
+    (view,) = seen
+    assert isinstance(view, bybit_service._NonClosingTransport)
+    assert view._transport is app.state.account_fixture.rest_transport
+    assert isinstance(view._transport, RefusingTransport)
 
 
 def test_set_logs_a_boot_warning(tmp_path: Path) -> None:

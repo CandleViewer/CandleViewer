@@ -47,8 +47,9 @@ class AccountFixtureRefused(RuntimeError):
 
 class AccountFixture(Protocol):
     """What the dev-only package hands the composition root: the transport of the account REST
-    clients (`BybitRestClient(transport=...)`, threaded into the exchange adapter by S4) and the
-    private socket's zero-argument connector, which a later slice threads."""
+    clients (`BybitRestClient(transport=...)`, threaded into the exchange adapter by S4, which
+    shares it and never closes it) and the private socket's zero-argument connector, which a later
+    slice threads."""
 
     @property
     def rest_transport(self) -> httpx.AsyncBaseTransport: ...

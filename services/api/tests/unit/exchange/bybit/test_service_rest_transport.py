@@ -51,6 +51,23 @@ class _MarkedTransport(httpx.MockTransport):
         return MARK
 
 
+class _ClosableTransport(httpx.MockTransport):
+    """A transport that frees what it holds on `aclose()`, as a stateful one would: once closed,
+    it serves nothing more."""
+
+    def __init__(self, handler: Callable[[httpx.Request], httpx.Response]) -> None:
+        super().__init__(handler)
+        self.closes = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.closes:
+            raise httpx.ConnectError("closed", request=request)
+        return await super().handle_async_request(request)
+
+    async def aclose(self) -> None:
+        self.closes += 1
+
+
 def _calls(svc: ExchangeBybitService) -> key_verify.KeyVerificationCalls:
     return svc.key_verification_calls("demo", CREDENTIAL_ID, uid=UID, recv_window_ms=5000)
 
@@ -69,6 +86,25 @@ async def test_an_injected_transport_receives_the_self_checks_key_info_and_probe
     assert facts.uid == UID
     assert [(r.url.host, r.url.path) for r in sent] == [(DEMO, KEY_INFO_PATH), (DEMO, PROBE_PATH)]
     assert all(r.headers["X-BAPI-SIGN"] for r in sent)  # signed by M2, as without the seam
+
+
+async def test_closing_each_keys_client_leaves_the_shared_transport_open_and_serving() -> None:
+    """Every key's client is built on the one transport and closed after its check: none of them
+    closes it, so it still serves the next key's request."""
+    sent: list[httpx.Request] = []
+    transport = _ClosableTransport(_answering(sent))
+    svc = ExchangeBybitService(credentials=fake_capability(), rest_transport=transport)
+
+    with respx.mock():
+        for calls in (_calls(svc), _calls(svc)):
+            await calls.key_info()
+            await calls.aclose()
+        later = _calls(svc)
+        await later.probe()
+        await later.aclose()
+
+    assert transport.closes == 0
+    assert [r.url.path for r in sent] == [KEY_INFO_PATH, KEY_INFO_PATH, PROBE_PATH]
 
 
 async def test_the_transport_stays_out_of_every_repr_and_log() -> None:

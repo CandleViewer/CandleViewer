@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
+
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
     ArchiveConfig,
@@ -45,10 +47,23 @@ from candleviewer.exchange.bybit.trades import (
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
-    import httpx
-
     from candleviewer.app import AppContext
     from candleviewer.secrets import CredentialBorrower
+
+
+class _NonClosingTransport(httpx.AsyncBaseTransport):
+    """#2893 S4: the adapter's one account REST transport as its clients see it. Requests go
+    through; `aclose()` does not, since each key's client is closed after its check while the
+    transport serves the next key. Only its owner, the composition root, may close it."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return await self._transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        """Leaves the shared transport open."""
 
 
 class ExchangeBybitService:
@@ -68,8 +83,11 @@ class ExchangeBybitService:
         self._verify_governor = verification_governor()
         #: #2893 S4: the transport of every account REST client built here, chosen once. None in
         #: production, so httpx keeps its own; the composition root passes the dev-only account
-        #: fixture's only when `CV_ACCOUNT_FIXTURE` is set. Never in a repr or a log line.
-        self._rest_transport = rest_transport
+        #: fixture's only when `CV_ACCOUNT_FIXTURE` is set, and the clients get a view of it that
+        #: cannot close it. Never in a repr or a log line.
+        self._rest_transport = (
+            None if rest_transport is None else _NonClosingTransport(rest_transport)
+        )
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
