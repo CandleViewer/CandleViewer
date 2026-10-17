@@ -20,7 +20,9 @@ Every Gherkin scenario in the ticket maps to a method here:
 
 Audit emission is the router's job, exactly like `LoginService`/
 `MfaService` (`auth` may not import `audit` — `forbidden-M18`); this module
-raises typed errors and returns typed results only.
+raises typed errors and returns typed results only. The one exception is the `require_active`
+backstop, which no router wraps (any route and the WS `auth` reach it): it hands each revocation
+to an injected `BackstopAuditSink` (C-2.9, #3120).
 
 Revocation propagation (#2272, `23-ws-protocol.md` §9.5) is this module's:
 every path that revokes a session publishes its id to the injected
@@ -31,11 +33,13 @@ in place (§4.1).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -116,6 +120,26 @@ class UnlockOutcome(StrEnum):
 
 #: `unlock(write_ahead=...)`: awaited with the decided outcome before the row changes.
 UnlockWriteAhead = Callable[[UnlockOutcome], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class BackstopRevocation:
+    """A session `require_active` revoked as `user_disabled` (SR-029, #3120): what the audit
+    record needs, and nothing that could be a credential."""
+
+    session_id: uuid.UUID
+    user_id: uuid.UUID
+    user_status: UserStatus | None  # `None`: the user row is gone
+
+
+#: Awaited once per session `require_active` revoked as `user_disabled`, after the revoke, the
+#: count, the log and the publish. The composition root wires it to the audit writer (`auth` never
+#: imports `audit`, `forbidden-M18`; C-2.9): `AuthService.attach_backstop_audit`.
+BackstopAuditSink = Callable[[BackstopRevocation], Awaitable[None]]
+
+#: Longest `require_active` waits for that port before it answers. The record may still land (the
+#: real port shields its write), and the revocation never depends on it.
+BACKSTOP_AUDIT_TIMEOUT_S = 2.0
 
 
 def _utc_now() -> datetime:
@@ -216,12 +240,16 @@ class SessionService:
         clock: Clock = _utc_now,
         refresh_token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(48),
         publish_revocation: RevocationSink | None = None,
+        backstop_audit: BackstopAuditSink | None = None,
+        backstop_audit_timeout_s: float = BACKSTOP_AUDIT_TIMEOUT_S,
     ) -> None:
         self._repository = repository
         self._hasher = hasher
         self._clock = clock
         self._refresh_token_factory = refresh_token_factory
         self._publish_revocation = publish_revocation
+        self._backstop_audit = backstop_audit
+        self._backstop_audit_timeout_s = backstop_audit_timeout_s
         #: Review finding (PR #1628, low): bounded, in-process counter of
         #: consecutive failed `unlock()` attempts per session id. Not
         #: persisted (a restart resets it, same trade-off as
@@ -449,14 +477,14 @@ class SessionService:
             raise SessionRevoked(session.revoked_reason or "revoked")
 
         if session.user_status in (UserStatus.DISABLED, None):
-            # A session no disable revoked (SR-029 breach signal). Counted and logged only when
-            # this call revoked the row (#3029): a request that read it live while another
+            # A session no disable revoked (SR-029 breach signal). Counted, logged and audited only
+            # when this call revoked the row (#3029): a request that read it live while another
             # revoked it is refused all the same, but adds nothing, so the counter and the log
-            # line move once per row, as the revocation counted under `user_disabled` does. Both
-            # come before the publish, which suspends: a request cancelled there leaves the row
-            # revoked, and its retry would find it so and count nothing. No audit row: `auth` may
-            # not import `audit` (`forbidden-M18`) and any route reaches this, so the counter and
-            # this log are the trail (runbook auth-rbac section 4).
+            # line move once per row, as the revocation counted under `user_disabled` does, and
+            # the record is written once. Count and log come before the publish, which suspends: a
+            # request cancelled there leaves the row revoked, and its retry would find it so and
+            # count nothing. The record goes last, bounded and isolated (C-2.9, #3120): a port
+            # that fails or hangs can hide neither the revocation nor the signal.
             revoked = await self._revoke_row(session_id, reason="user_disabled")
             if revoked is not None:
                 auth_disabled_user_sessions_revoked_total.inc()
@@ -467,6 +495,8 @@ class SessionService:
                     user_status=session.user_status,
                 )
             await self._publish_row(revoked, "user_disabled")
+            if revoked is not None:
+                await self._audit_backstop(session)
             raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now) and not allow_locked:
@@ -476,6 +506,26 @@ class SessionService:
             )
 
         return session
+
+    async def _audit_backstop(self, session: SessionRecord) -> None:
+        """Hand the revocation just made to the audit port. The revocation stands whatever the
+        port does: a failure is logged and dropped (never queued, C-2.18; the exception EX-08,
+        `04-security-program.md` section 16.2), a wait past the bound is logged as slow (the record
+        may still land), and neither changes the refusal. A cancel is no failure: it propagates."""
+        if self._backstop_audit is None:
+            return
+        revocation = BackstopRevocation(session.id, session.user_id, session.user_status)
+        try:
+            async with asyncio.timeout(self._backstop_audit_timeout_s) as bound:
+                await self._backstop_audit(revocation)
+        except Exception as exc:  # isolate the port, as `publish_revoked` isolates the sink
+            ids = {"session_id": str(session.id), "user_id": str(session.user_id)}
+            if isinstance(exc, TimeoutError) and bound.expired():
+                _log().warning("auth.disabled_user_session_audit_slow", **ids)
+            else:
+                _log().error(
+                    "auth.disabled_user_session_audit_failed", error=type(exc).__name__, **ids
+                )
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None:
         """Read-only: the session an access handle was issued for, ignoring the

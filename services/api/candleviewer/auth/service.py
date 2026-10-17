@@ -24,7 +24,12 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
-from candleviewer.auth.session_service import RevocationSink, SessionService
+from candleviewer.auth.session_service import (
+    BackstopAuditSink,
+    BackstopRevocation,
+    RevocationSink,
+    SessionService,
+)
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.observability.health import HealthReport, HealthStatus
@@ -37,6 +42,11 @@ if TYPE_CHECKING:
     from candleviewer.auth.mfa_repository import MfaRepository
     from candleviewer.auth.repository import UserRepository
     from candleviewer.auth.session_repository import SessionRepository
+
+
+class BackstopAuditNotAttached(RuntimeError):
+    """`require_active` revoked a disabled user's session but no audit port is attached: a wiring
+    fault. It is raised (and logged by the session service) rather than skipped in silence."""
 
 
 class AuthService:
@@ -81,6 +91,9 @@ class AuthService:
         #: #2272: where every session this module revokes is published (the
         #: WS `RevocationHub`); attached by the composition root.
         self._revocation_sink: RevocationSink | None = None
+        #: #3120: where the audit record of a backstop revocation goes (an adapter over the audit
+        #: writer); attached by the composition root, like the revocation sink.
+        self._backstop_audit: BackstopAuditSink | None = None
         self._skew_reporter: TotpSkewReporter | None = None
         #: E09-S11 (O4): the unresolved break-glass state behind the WS `system` notice.
         self._break_glass_notice = BreakGlassNotice(break_glass_events)
@@ -149,6 +162,17 @@ class AuthService:
         if self._revocation_sink is not None:
             await self._revocation_sink(session_id, reason)
 
+    def attach_backstop_audit(self, sink: BackstopAuditSink) -> None:
+        """Write the audit record of every session `require_active` revokes as `user_disabled`
+        through *sink* (C-2.9; `auth` may not import `audit`). Looked up per call, so it reaches
+        the session service whether it is attached before or after `start()`."""
+        self._backstop_audit = sink
+
+    async def _audit_backstop(self, revocation: BackstopRevocation) -> None:
+        if self._backstop_audit is None:
+            raise BackstopAuditNotAttached
+        await self._backstop_audit(revocation)
+
     async def start(self, ctx: AppContext) -> None:
         """Start the module. Wires `LoginService`/`MfaService` only when a
         concrete repository was injected by the composition root;
@@ -167,6 +191,7 @@ class AuthService:
                 Hasher(pepper=self._pepper),
                 clock=self._clock,
                 publish_revocation=self._publish_revocation,
+                backstop_audit=self._audit_backstop,
             )
         if self._mfa_repository is not None:
             # `totp_encryption_key` stands in for the real M2 KEK wiring

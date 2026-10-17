@@ -332,10 +332,13 @@ it (login refuses `disabled` only):
   same session are refused all the same and add nothing, so each stray revocation also moves
   `auth_session_revocations_total{reason="user_disabled"}` by one (that series counts a disable's
   own revocations too). The `AuthDisabledUserSessionRevoked` ticket fires on any increase
-  (`docs/plan/07-release-and-prr.md`, section 9). It writes **no audit
-  row** yet: `auth` may not import `audit`, so the counter and the log line are the whole trail
-  until the injected port of #3120 lands. Any increase means a session outlived a disable (SR-029):
-  escalate with the log line.
+  (`docs/plan/07-release-and-prr.md`, section 9). The same call writes one audit record,
+  `auth.disabled_user_session_revoked` (warning): the session, its user as the actor and the status
+  read in `after_state.user_status` (`detail.after.user_status` in `GET /admin/audit`; `gone` when
+  the user row is gone), no IP. `auth` may not import `audit`, so the composition root attaches the
+  writer (#3120). The record comes last, after the revocation: an audit sink that is down never
+  undoes the revocation, and never holds the `401` for more than 2 seconds. Any increase means a
+  session outlived a disable (SR-029): escalate with the log line and the record.
 - One loss the count has. The count, the log and the publish follow the revoking `UPDATE`, so a
   request cancelled after that `UPDATE` committed but before the repository's `revoke` returned
   (in the unit of work's commit or exit: a cancel within one local `COMMIT` round trip, such as a
@@ -348,6 +351,43 @@ it (login refuses `disabled` only):
   Before #3029 the count came first, so a cancel there over-counted instead of losing the signal.
   Shielding the bookkeeping after the `UPDATE` is not built: it is the follow-up #3332 (P2), filed
   with the ruling of 2026-10-18 ([comment](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
+- When the audit sink is down the record is dropped, not queued (C-2.18; exception EX-08,
+  `04-security-program.md` section 16.2), and the log says so:
+  `auth.disabled_user_session_audit_failed` (ERROR, with `session_id`, `user_id` and `error`, the
+  failure's class: `BackstopAuditSaturated` at the in-flight cap, `BackstopAuditNotAttached` for a
+  wiring fault). A write still running after the 2 seconds logs
+  `auth.disabled_user_session_audit_slow` (with the ids; the record may still land), and if it
+  then fails, or fails after its request was cancelled while waiting for it,
+  `auth.disabled_user_session_audit_failed_late` follows with `error` only and no session, so count
+  those lines. Five losses leave no log line that names the session and says its record is missing
+  (the `WARNING`, logged as soon as `revoke` returns, names it in four of them but cannot say the
+  record failed): the process dies between the revoke and the write; it shuts down while the write
+  is still running (the drain waits 2 seconds, then logs only a count); the request is cancelled
+  after the revoking `UPDATE` committed but before `revoke` returned (the bullet above: the count,
+  the log and the publish go with the record); the request is cancelled while the revocation is
+  published to the sockets, before the record is handed over; or the request is cancelled while it
+  waits for the write and the write then fails (an `_audit_failed_late` line says so, with no
+  session). Only the reconcile step finds all five, and what each `_audit_failed_late` line lost.
+  To reconcile, after an outage or any restart, list the sessions revoked as `user_disabled` in
+  that window (UTC; `psql` runs inside the `postgres` container, as the user and database it was
+  started with, in a read-only session):
+
+  ```bash
+  docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
+    -e PGOPTIONS='-c default_transaction_read_only=on' postgres \
+    sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+  SELECT id, user_id, revoked_at FROM sessions
+  WHERE revoked_reason = 'user_disabled'
+    AND revoked_at >= '2026-10-17 06:00+00' AND revoked_at < '2026-10-17 07:00+00'
+  ORDER BY revoked_at;
+  SQL
+  ```
+
+  As an Owner, look each id up in
+  `GET $API/admin/audit?action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`:
+  one with no record there is unaudited, unless a disable's own sweep revoked it (that disable's
+  audit records cover it).
+
 - A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
   presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
   session by its `cv_refresh` cookie once the token has ended and still checks the user's status
