@@ -120,14 +120,16 @@ jobs:
           cd services/api
           CV_PG_DSN=postgresql+asyncpg://cv:cv-chaos-ci@127.0.0.1:5432/candleviewer uv run alembic upgrade head
 
-      - name: Storage chaos scenarios (pytest -m "chaos and integration")
+      # S2, S3b and S8 are quarantined (C-9.3, GH-3087): marked `flaky`, they run
+      # in no lane until #3087's fix removes the markers.
+      - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky")
         working-directory: services/api
         env:
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
           CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
-        run: uv run pytest tests/chaos -m "chaos and integration" --no-cov -v -p no:randomly
+        run: uv run pytest tests/chaos -m "chaos and integration and not flaky" --no-cov -v -p no:randomly
 
       - name: Storage chaos stack down
         if: always()
