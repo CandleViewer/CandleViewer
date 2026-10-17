@@ -23,7 +23,7 @@ from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.ws.coalescing import CoalescingQueue
 from tests.contract.ws._harness import SCHEMAS, check_schema
-from tests.unit.accounts._fakes import ACC, FakeClock
+from tests.unit.accounts._fakes import ACC, Dms, FakeClock
 
 _SPEC: dict[str, Any] = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -151,7 +151,7 @@ def test_each_health_state_maps_to_its_documented_connection_state(
 
 def _degraded_view() -> AccountHealth:
     """The monitor's view of an account that REST polling alone keeps up."""
-    monitor = AccountHealthMonitor(FakeClock())
+    monitor = AccountHealthMonitor(FakeClock(), Dms())
     monitor.track(ACC)
     monitor.rest_ok(ACC)
     view = monitor.view(ACC)
