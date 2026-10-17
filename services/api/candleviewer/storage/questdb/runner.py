@@ -130,7 +130,7 @@ async def wait_for_wal_apply(
     """
     start, delay = clock(), WAL_POLL_MIN_S
     try:
-        async with asyncio.timeout(timeout_s):
+        async with asyncio.timeout(timeout_s) as bound:
             while True:
                 rows = await executor.fetch(_SELECT_WAL_STATUS, table)
                 if not rows:
@@ -147,6 +147,10 @@ async def wait_for_wal_apply(
                 await sleep(delay)
                 delay = min(delay * 2, WAL_POLL_MAX_S)
     except TimeoutError:
+        # Only the bound's own expiry is a `timeout`; a TimeoutError raised by the driver inside a
+        # poll is a storage failure and keeps its cause.
+        if not bound.expired():
+            raise
         raise _wal_not_applied(table, "timeout", start, clock) from None
 
 

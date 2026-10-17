@@ -172,7 +172,7 @@ async def questdb_container() -> AsyncIterator[tuple[str, int, int]]:
 
 
 @pytest.mark.asyncio
-# Stale _cv_migrations read after async WAL apply (C-9.3). ticket: GH-3064 quarantined: 2026-10-17
+# Stale _cv_migrations read after async WAL apply (C-9.3). ticket: GH-3092 quarantined: 2026-10-17
 @pytest.mark.flaky
 async def test_ddl_runner_applies_all_tables_idempotently(
     questdb_container: tuple[str, int, int],

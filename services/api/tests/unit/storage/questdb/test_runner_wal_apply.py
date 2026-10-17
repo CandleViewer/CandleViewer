@@ -95,8 +95,8 @@ async def test_wait_for_wal_apply_polls_with_doubling_backoff_until_the_writer_c
 
 @pytest.mark.parametrize(
     "status",
-    [[], [_wal(-1, 0)]],
-    ids=["not-a-wal-table", "no-txn-committed-yet"],
+    [[], [_wal(-1, 0)], [_wal(8, 7)]],
+    ids=["not-a-wal-table", "no-txn-committed-yet", "writer-ahead-of-a-stale-sequencer-read"],
 )
 async def test_wait_for_wal_apply_nothing_pending_returns_at_once(
     status: list[dict[str, object]],
@@ -154,6 +154,23 @@ async def test_wait_for_wal_apply_hung_poll_is_a_typed_timeout() -> None:
             wait_for_wal_apply(_HungWal(), "_cv_migrations", timeout_s=0.01), timeout=5
         )
     assert exc.value.reason == "timeout"
+
+
+class _DriverTimeoutWal:
+    """The driver's own command timeout fires inside the poll."""
+
+    async def execute(self, sql: str, *args: object) -> None:
+        raise AssertionError("the wait must only read")
+
+    async def fetch(self, sql: str, *args: object) -> list[dict[str, object]]:
+        raise TimeoutError("driver command timeout")
+
+
+async def test_wait_for_wal_apply_driver_timeout_inside_a_poll_is_not_relabelled() -> None:
+    # Only the wait's own bound expiring is a `timeout` reason; a TimeoutError raised by the driver
+    # is a storage failure that keeps its type and cause.
+    with pytest.raises(TimeoutError, match="driver command timeout"):
+        await wait_for_wal_apply(_DriverTimeoutWal(), "_cv_migrations", timeout_s=5)
 
 
 async def test_wait_for_wal_apply_cancellation_is_not_swallowed() -> None:
