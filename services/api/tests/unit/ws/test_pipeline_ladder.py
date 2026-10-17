@@ -7,7 +7,9 @@ sleeps: every wait is on a frame or an event, bounded by `asyncio.timeout`.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable, Mapping
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from structlog.testing import capture_logs
@@ -25,6 +27,7 @@ from tests.unit.ws.test_pipeline_outbound import (
     _DEADLINE_S,
     _MARK,
     _closes,
+    _d,
     _overflow,
     _pipe,
     _queued,
@@ -35,6 +38,8 @@ from tests.unit.ws.test_pipeline_outbound import (
 
 _TRADES = "trades.BTCUSDT"
 _STEPS = ("drop", "resnapshot", "close_budget", "close_redrop")
+_SNAPSHOT_FAILED = "ws backpressure snapshot failed"
+_UNENCODABLE = "ws frame unencodable"
 
 
 def _counts(since: list[float] | None = None) -> list[float]:
@@ -79,6 +84,11 @@ def _bid(i: int) -> dict[str, Any]:
 def _structured(conn: Conn, ch: str) -> Subscription:
     _, sub = conn.sub({"ch": ch, "opts": {"encoding": "structured"}})
     return sub
+
+
+def _suppressed(logs: Iterable[Mapping[str, Any]]) -> list[tuple[str, Any]]:
+    """Each captured line's event and its `suppressed`: the lines held back before it."""
+    return [(e["event"], e.get("suppressed")) for e in logs]
 
 
 # -- the pipeline alone --------------------------------------------------------------------------
@@ -311,7 +321,7 @@ async def test_a_backpressure_snapshot_that_does_not_queue_is_parked_until_rebui
             handler.cancel()
             await asyncio.wait({handler})
     assert (snap["t"], snap["meta"]["reason"], attempts) == ("snap", "backpressure", [_BOOK] * 2)
-    failed = [e for e in logs if e["event"] == "ws backpressure snapshot failed"]
+    failed = [e for e in logs if e["event"] == _SNAPSHOT_FAILED]
     named = [(e["family"], e["error"], e["log_level"]) for e in failed]
     assert named == ([("book", "RuntimeError", "error")] if fault == "raises" else [])
     assert _MARK not in repr(logs)
@@ -357,6 +367,46 @@ async def test_the_timer_retries_one_parked_snapshot_per_tick_and_logs_once_per_
         pipe.ladder.pacer.drop(subs[0])
         pipe.service(3.0)  # marked again, the book is tried at once: it was retried, not parked
     assert [f["ch"] for f in _queued(pipe)] == [_TRADES, _BOOK, _BOOK]
-    failed = [(e["family"], e["suppressed"]) for e in logs if e["event"].endswith("ot failed")]
+    failed = [(e["family"], e["suppressed"]) for e in logs if e["event"] == _SNAPSHOT_FAILED]
     assert failed == [("book", 0), ("trades", 0), ("book", 1), ("book", 0), ("book", 0)]
+    assert _MARK not in repr(logs)
+
+
+def test_the_log_window_is_held_per_event_and_family() -> None:
+    """#3194 round 2: an unencodable frame and a failed snapshot of one family each log in one
+    window (`suppressed` 0); a second line of either is held back."""
+    pipe, _ = _pipe()
+    keys = [("snapshot", "book"), ("unencodable", "book")]
+    assert [pipe._quiet(key) for key in keys] == [0, 0]
+    assert [pipe._quiet(key) for key in keys] == [None, None]
+
+
+async def test_an_unencodable_frame_and_its_failed_snapshot_each_log_once_per_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§10.1, §8.4 step 2 (#3194 round 2), through the pipeline's two log sites: an unencodable
+    book delta and the `backpressure` snapshot it leads to, which fails, each log one line in the
+    window (`suppressed` 0), neither spending the other's. A second of either is held back, and
+    the next window's line counts it. No line names the payload (C-12.6)."""
+    pipe, _, conn = _attached(classify_interval_ms=1000)
+    source, rebuilt = conn.emitter.source, conn.emitter.on_rebuild
+    assert isinstance(source, Source) and rebuilt is not None
+    book = _structured(conn, _BOOK)
+    _queued(pipe)  # the initial snapshot
+    monkeypatch.setattr(source, "build", Mock(side_effect=RuntimeError(_MARK)))
+    source.gen += 1  # the cached render is stale: the snapshot is built again, and fails
+    refused = _d(_BOOK, x=float("nan"), note=_MARK)  # the JSON encoder refuses a NaN
+    window = [(_UNENCODABLE, 0), (_SNAPSHOT_FAILED, 0)]
+    with capture_logs() as logs:
+        pipe.push(refused)  # dropped to a re-snapshot
+        pipe.service(0.0)  # which fails to build, and is parked
+        assert _suppressed(logs) == window
+        pipe.push(refused)  # the same window: held back
+        rebuilt([book])  # the source rebuilt: the parked snapshot is retried
+        pipe.service(0.5)  # it fails again, in the same window: held back
+        assert _suppressed(logs) == window
+        rebuilt([book])
+        pipe.service(1.0)  # the window ends at 1.0: this failure opens the next, counting one
+        pipe.push(refused)
+    assert _suppressed(logs) == [*window, (_SNAPSHOT_FAILED, 1), (_UNENCODABLE, 1)]
     assert _MARK not in repr(logs)

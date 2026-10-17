@@ -5,9 +5,10 @@ every control frame and `orders`, `executions`, `system` (D1): never dropped, se
 lane carries everything else, in order. Every frame is encoded once, in the connection's
 subprotocol (`encode`: MessagePack bytes, or JSON text that refuses a non-finite number), and
 counted at that exact length, so the budget, `max_bytes` (8 MiB) or `max_frames` (2 000) whichever
-binds first, is what the socket is sent. Only market-data frames (`d` / `snap` of a throttled
-topic) can be dropped; control frames never are. Data frames are keyed by subscription, `(ch,
-replay session)`, so a drop never touches the live and the replay subscription of one `ch` together.
+binds first, is what the socket is sent. Only a `d` or `snap` of a throttled topic (any family
+outside `PRIORITY_FAMILIES`) can be dropped; control frames never are. Data frames are keyed by
+subscription, `(ch, replay session)`, so a drop never touches the live and the replay subscription
+of one `ch` together.
 
 `Backpressure` runs the §8.4 ladder against that budget plus the pacer's pending state:
 
@@ -99,7 +100,8 @@ class Queued:
 
     @property
     def droppable(self) -> bool:
-        """A market-data frame of a throttled topic: the only kind step 1 drops."""
+        """A `d` or `snap` of a throttled topic (any family outside `PRIORITY_FAMILIES`): the
+        only kind step 1 drops."""
         return self.key is not None and not self.priority
 
 

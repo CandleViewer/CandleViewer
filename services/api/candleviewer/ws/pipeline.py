@@ -330,7 +330,8 @@ class ConnectionPipeline:
 
     def _invalidate(self, pacer: Pacer, subs: Sequence[Subscription]) -> None:
         """`ConnectionAuthz.on_drop` (module docstring). A `backpressure` mark stays: `drain`
-        deletes an ended subscription's entry unsent, and snapshots a held one as it is then."""
+        deletes an ended subscription's entry unsent, and snapshots a held one that is not
+        paused, as it is then."""
         self.queue.drop({(sub.ch, sub.replay_session_id) for sub in subs})
         for sub in subs:
             pacer.lanes.pop(sub.sub_id, None)
