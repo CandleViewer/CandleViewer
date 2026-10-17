@@ -71,6 +71,7 @@ def test_every_ts_bind_is_a_datetime_in_every_builder() -> None:
     built = [
         r.build_read_bars("BTCUSDT", "time", "1m", rng),
         r.build_read_trades("BTCUSDT", rng),
+        r.build_trade_totals("BTCUSDT", rng),
         r.build_read_klines("BTCUSDT", "1", rng),
         r.build_read_klines("BTCUSDT", "1", rng, 3),
         r.build_read_funding("BTCUSDT", rng, 3),

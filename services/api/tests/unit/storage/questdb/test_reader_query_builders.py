@@ -22,6 +22,7 @@ RNG = TimeRange(start_us=1_000, end_us=2_000)
 _BUILDERS_WITH_RANGE = [
     (reader.build_read_bars, ("BTCUSDT", "time", "1m", RNG)),
     (reader.build_read_trades, ("BTCUSDT", RNG)),
+    (reader.build_trade_totals, ("BTCUSDT", RNG)),
     (reader.build_read_big_trades, ("BTCUSDT", RNG, 1000.0)),
     (reader.build_read_book_deltas, ("BTCUSDT", RNG)),
     (reader.build_read_orderflow_metrics, ("BTCUSDT", "cvd", RNG)),
@@ -51,6 +52,16 @@ def test_no_builder_interpolates_symbol_into_sql_text() -> None:
     qb = reader.build_read_trades("BTCUSDT", RNG)
     assert "BTCUSDT" not in qb.sql
     assert qb.params[0] == "BTCUSDT"
+
+
+def test_build_trade_totals_is_one_bound_aggregate_never_rows() -> None:
+    """#2093: count and sum over the designated-timestamp range; the symbol is a bind."""
+    qb = reader.build_trade_totals("BTCUSDT", RNG)
+    assert qb.sql == (
+        "SELECT count() AS n, sum(size) AS qty FROM trades "
+        "WHERE symbol = $1 AND ts >= $2 AND ts < $3"
+    )
+    assert qb.params == ("BTCUSDT", ts_param(1_000), ts_param(2_000))
 
 
 def test_build_read_bars_rejects_unknown_family() -> None:

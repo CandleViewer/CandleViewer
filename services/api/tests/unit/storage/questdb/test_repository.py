@@ -10,16 +10,19 @@ is skipped in this environment).
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 
 from candleviewer.storage.models import TimeRange
+from candleviewer.storage.questdb.reader import build_trade_totals
 from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository, SymbolNotAllowed
 from candleviewer.storage.repositories.rows import (
     BookDeltaRow,
     BookSnapshotRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 
 
@@ -154,6 +157,26 @@ async def test_read_trades_passes_symbol_only_as_bind_parameter() -> None:
     assert reader.last_builder is not None
     assert reader.last_builder.params[0] == "BTCUSDT"  # type: ignore[attr-defined]
     assert "BTCUSDT" not in reader.last_builder.sql  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("canned", "expected"),
+    [
+        ([{"n": 3, "qty": 0.30000000000000004}], TradeTotals(3, Decimal("0.30000000000000004"))),
+        ([{"n": 0, "qty": None}], TradeTotals(0, Decimal(0))),  # QuestDB: sum of nothing is NULL
+        ([], TradeTotals(0, Decimal(0))),
+    ],
+)
+async def test_trade_totals_maps_the_one_aggregate_row(
+    canned: list[dict[str, object]], expected: TradeTotals
+) -> None:
+    """#2093: the DOUBLE sum is read as its shortest repr, never re-rounded through float."""
+    reader, rng = _FakeReader(canned), TimeRange(start_us=0, end_us=2_000)
+    repo = QuestDbMarketDataRepository(_FakeWriter(), reader)  # type: ignore[arg-type]
+    assert await repo.trade_totals("BTCUSDT", rng) == expected
+    assert reader.last_builder == build_trade_totals("BTCUSDT", rng)
+    with pytest.raises(SymbolNotAllowed):
+        await repo.trade_totals("BTC'; DROP TABLE trades;--", rng)
 
 
 @pytest.mark.asyncio

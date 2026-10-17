@@ -16,6 +16,7 @@ All timestamps are integer microseconds UTC (matching `TimeRange`), never
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 
 @dataclass(slots=True, frozen=True)
@@ -28,6 +29,14 @@ class TradeRow:
     qty: str
     side: str  # "buy" | "sell" (taker side)
     trade_id: str
+
+
+@dataclass(slots=True, frozen=True)
+class TradeTotals:
+    """How many prints one symbol has in a `TimeRange`, and their summed qty (#2093)."""
+
+    prints: int
+    qty: Decimal  # the store's sum of the prints' qty; 0 when there are none
 
 
 @dataclass(slots=True, frozen=True)
