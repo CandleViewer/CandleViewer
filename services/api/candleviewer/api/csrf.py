@@ -318,7 +318,8 @@ class RefusalAuditTracker:
 
     def mark_timed_out(self, task: asyncio.Task[None]) -> None:
         """The caller stopped waiting for *task* (timeout, or its request was cancelled): the
-        tracker reports its failure, when it ends or, if it has ended already, now."""
+        tracker reports its failure, when it ends or, if it has ended already, now. Never raises:
+        callers call it from their `except asyncio.CancelledError:` block (`_report_failure`)."""
         if task.done():
             self._report_failure(task)
         else:
@@ -333,7 +334,11 @@ class RefusalAuditTracker:
 
     def _report_failure(self, task: asyncio.Task[None]) -> None:
         """Log *task*'s failure under its owner's event and call the owner's `on_lost`, at most
-        once for the write (the owner entry goes with the report)."""
+        once for the write (the owner entry goes with the report).
+
+        A caller reaches this from its `except asyncio.CancelledError:` block, where a raise would
+        replace the cancellation with its own error (#3054). So neither step may raise: one that
+        fails goes to the loop's exception handler, and the other still runs."""
         owner = self._owners.pop(task, None)
         if owner is None or task.cancelled():
             return
@@ -341,9 +346,24 @@ class RefusalAuditTracker:
         if exc is None:
             return
         on_lost, late_event = owner
-        _log().error(late_event, error=type(exc).__name__)
+        try:
+            _log().error(late_event, error=type(exc).__name__)
+        except Exception as report_error:
+            self._report_failed(task, report_error)
         if on_lost is not None:
-            on_lost()
+            try:
+                on_lost()
+            except Exception as report_error:
+                self._report_failed(task, report_error)
+
+    @staticmethod
+    def _report_failed(task: asyncio.Task[None], error: Exception) -> None:
+        """Hand a report's own error to the loop's exception handler (logged, never raised). The
+        write's task is left out of the context: its `repr` carries the failure text, which the
+        late-failure line keeps to the type name."""
+        task.get_loop().call_exception_handler(
+            {"message": "refusal-audit late-failure report failed", "exception": error}
+        )
 
     async def drain(self, timeout_s: float = AUDIT_TIMEOUT_S) -> int:
         """Wait up to *timeout_s* for in-flight audits; returns how many remain. Each one

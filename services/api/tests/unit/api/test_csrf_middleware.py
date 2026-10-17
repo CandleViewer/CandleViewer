@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import uuid
+import weakref
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -815,6 +817,81 @@ def test_a_write_the_drain_gave_up_on_is_not_reported_again_by_a_late_handover()
     assert lost == ["owned"] and logs == []
 
 
+def test_the_tracker_keeps_no_strong_reference_to_a_write_that_has_ended() -> None:
+    """#3054 review: `_done` drops no owner for a write nobody handed over, so the owner map has to
+    be weak. Refusals are triggered from outside: a plain dict would keep one finished task per
+    audited refusal for as long as the tracker lives."""
+
+    async def land_one(tracker: RefusalAuditTracker) -> weakref.ref[asyncio.Task[None]]:
+        async def lands() -> None:
+            return None
+
+        task = tracker.track(lands())
+        await asyncio.wait({task})  # ended and settled, never handed over
+        return weakref.ref(task)  # the task stays in this frame, which is gone once it returns
+
+    async def drive() -> tuple[bool, int]:
+        tracker = RefusalAuditTracker()
+        written = await land_one(tracker)
+        await asyncio.sleep(0)  # the loop's queued callbacks for the ended write have run
+        gc.collect()
+        return written() is None, len(tracker)
+
+    assert asyncio.run(drive()) == (True, 0)
+
+
+class _BrokenErrorLog:
+    """What `csrf._log()` returns while the log pipeline is down for an error line."""
+
+    def error(self, event: str, **kw: Any) -> None:
+        raise RuntimeError("log pipeline down")
+
+
+@pytest.mark.parametrize(
+    ("breaks", "lines_logged"), [("owner_on_lost", 1), ("late_failure_log", 0)]
+)
+def test_a_report_that_raises_goes_to_the_loop_and_never_to_the_caller_handing_it_over(
+    breaks: str, lines_logged: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3054 review: a caller hands a write over from its `except asyncio.CancelledError:` block,
+    where a raise would replace the cancellation. The report is two steps (the late-failure line,
+    the owner's `on_lost`): one that raises is handed to the loop's exception handler and the other
+    still runs, once. Only the report's own error goes there: the write's task would carry its
+    failure text (`repr`), which the late-failure line deliberately leaves out."""
+    from structlog.testing import capture_logs
+
+    told: list[str] = []
+    unhandled: list[dict[str, Any]] = []
+
+    def on_lost() -> None:
+        told.append("owner")
+        if breaks == "owner_on_lost":
+            raise RuntimeError("counter backend down")
+
+    if breaks == "late_failure_log":
+        monkeypatch.setattr("candleviewer.api.csrf._log", _BrokenErrorLog)
+
+    async def drive() -> None:
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, ctx: unhandled.append(ctx))
+
+        async def fails() -> None:
+            raise OSError("EIO")
+
+        tracker = RefusalAuditTracker()
+        task = tracker.track(fails(), on_lost=on_lost)
+        await asyncio.gather(task, return_exceptions=True)  # ended, settled, never marked
+        tracker.mark_timed_out(task)  # returns: the caller's cancel goes on
+        tracker.mark_timed_out(task)  # and a second hand-over reports nothing more
+
+    with capture_logs() as logs:
+        asyncio.run(drive())
+    assert told == ["owner"] and len(logs) == lines_logged
+    assert [(type(c["exception"]), set(c)) for c in unhandled] == [
+        (RuntimeError, {"message", "exception"})
+    ]
+    assert "EIO" not in repr(unhandled)
+
+
 # -- audit bookkeeping through the middleware (#2264) ---------------------------------------------
 
 
@@ -931,6 +1008,28 @@ class _FailsThenCancelsItsRequest(_FailsWhenSignalled):
         await super().emit(action, **kw)
 
 
+async def _cancel_a_request_as_its_audit_fails(
+    window: str,
+) -> tuple[asyncio.Future[Any], dict[str, float]]:
+    """One refused request whose audit write fails while the request is cancelled, in the window
+    `window` names: in the very loop iteration of the cancel (the tracker's done-callback still
+    queued), or after that callback ran (the write's last done-callback cancels). The tracker is
+    drained before it returns; the result is the request and the series that moved."""
+    sink, before = _FailsThenCancelsItsRequest(), _snapshot()
+    mw = _middleware(sink, timeout_s=30)
+    request = asyncio.ensure_future(_refused_request(mw))
+    await sink.started.wait()  # the request is parked on its audit wait
+    if window == "done_callback_ran":
+        sink.request = request  # cancelled by the write's last done-callback
+        sink.fail.set()
+    else:
+        sink.fail.set()  # the write fails in the next loop iteration ...
+        request.cancel()  # ... and the request is cancelled in that same one
+    await asyncio.gather(request, return_exceptions=True)
+    assert await mw.tracker.drain(5) == 0
+    return request, _delta(before)
+
+
 @pytest.mark.parametrize("window", ["done_callback_queued", "done_callback_ran"])
 def test_a_request_cancelled_as_its_audit_fails_still_counts_the_write_unavailable(
     window: str,
@@ -941,25 +1040,39 @@ def test_a_request_cancelled_as_its_audit_fails_still_counts_the_write_unavailab
     from structlog.testing import capture_logs
 
     async def drive() -> dict[str, float]:
-        sink, before = _FailsThenCancelsItsRequest(), _snapshot()
-        mw = _middleware(sink, timeout_s=30)
-        request = asyncio.ensure_future(_refused_request(mw))
-        await sink.started.wait()  # the request is parked on its audit wait
-        if window == "done_callback_ran":
-            sink.request = request  # cancelled by the write's last done-callback
-            sink.fail.set()
-        else:
-            sink.fail.set()  # the write fails in the next loop iteration ...
-            request.cancel()  # ... and the request is cancelled in that same one
-        await asyncio.gather(request, return_exceptions=True)
+        request, moved = await _cancel_a_request_as_its_audit_fails(window)
         assert request.cancelled()
-        assert await mw.tracker.drain(5) == 0
-        return _delta(before)
+        return moved
 
     with capture_logs() as logs:
         assert asyncio.run(drive()) == {"audit_unavailable": 1}
     late = [e for e in logs if e["event"] == "auth.csrf_refused.audit_failed_late"]
     assert [(e["log_level"], e["error"]) for e in late] == [("error", "OSError")]
+
+
+@pytest.mark.parametrize("window", ["done_callback_queued", "done_callback_ran"])
+def test_a_request_cancelled_as_its_audit_fails_stays_cancelled_when_the_report_raises(
+    window: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3054 review: the guard hands the failed write over from its `except asyncio.CancelledError:`
+    block, and the report (the counter, the log line) runs there. A raise would replace the
+    cancellation with its own error: the server would see a failed request where it cancelled one.
+    The request ends cancelled, and the report's error goes to the loop's exception handler."""
+    unhandled: list[dict[str, Any]] = []
+
+    def counter_down() -> None:
+        raise RuntimeError("counter backend down")
+
+    monkeypatch.setattr("candleviewer.api.csrf._count_audit_unavailable", counter_down)
+
+    async def drive() -> tuple[asyncio.Future[Any], dict[str, float]]:
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, ctx: unhandled.append(ctx))
+        return await _cancel_a_request_as_its_audit_fails(window)
+
+    request, moved = asyncio.run(drive())
+    assert request.cancelled()
+    assert moved == {}  # the counter that raised did not move
+    assert [type(c["exception"]) for c in unhandled] == [RuntimeError]
 
 
 def test_a_writer_raising_timeout_itself_is_a_failure_not_slowness() -> None:

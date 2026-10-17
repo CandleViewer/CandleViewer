@@ -158,7 +158,7 @@ async def test_a_cancelled_requests_row_lands_or_its_failure_is_reported_and_cou
     monkeypatch: pytest.MonkeyPatch, fails: bool, write_first: bool
 ) -> None:
     # write_first: the write ends in the very loop iteration of the cancel, ahead of it, so it is
-    # done when the route sees the cancel and the tracker stays silent about it: the route reports.
+    # already done when the route hands it over, and the tracker reports it then (#3054).
     w, entered, release = _World(), asyncio.Event(), asyncio.Event()
     unavailable, rows = fixation_count("audit_unavailable"), list[str]()
 

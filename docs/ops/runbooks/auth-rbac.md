@@ -449,13 +449,19 @@ budget, or while the audit writer is saturated, is still counted and gets no row
 `auth.session_revoke_denied.unaudited` with `cause` `audit_throttled` or `audit_saturated`, so a rate
 of that line is the number of probes left out on purpose.
 
-A hit whose `object_id` has no `sessions` row at all named no other user's session, and is not the
-caller's own ended one (that keeps its row). Either the id was never issued here (a guess or a
-made-up id: a probe), or its row was reaped (retention drops a session row 30 days after it expired,
-`docs/plan/21-database-schema.md` section 7), which only a client that kept the id for over a month
-still names. Search `audit_log` for the id as `session_id`: a row shows it was issued once, so it
-was reaped. None does not show it was never issued (a session minted by a rotation can end unused
-without one), so read several different ids with no row from one user as a probe.
+A hit whose `object_id` has no `sessions` row is an unknown id: treat it as a probe unless the
+actor's own history explains it. The caller's own ended session keeps its row, so it is not this
+case. Nothing drops a `sessions` row yet: section 7 of `docs/plan/21-database-schema.md` sets the
+policy (30 days after expiry) and the job that applies it has not shipped, so today a missing row
+means the id was never issued in this database. Once the job ships, an old id has no row either,
+and it may be another user's leaked one, so a missing row never makes a hit harmless. To see whose
+id it was, search `audit_log` for rows that name it as `session_id` and compare their
+`actor_user_id` with the caller's (the `actor_user_id` of the hit's `auth.session_revoke_denied`
+row): the caller's own means a stale client, another user's means a probe, as for a live row.
+`session_id` is not indexed, so a search on it alone scans the whole table: start from the indexed
+`action` or `actor_user_id` with an `event_ts` window, then filter on `session_id`. A search that
+finds no row settles nothing (a session minted by a rotation can end unused without one), so read
+several different ids with no row from one user as a probe.
 
 A probe whose row was lost by accident is counted too, and the log says why. A write that fails, or
 an audit sink that is down (`error` is `inactive`), logs

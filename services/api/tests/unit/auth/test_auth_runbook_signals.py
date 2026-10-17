@@ -16,6 +16,7 @@ from candleviewer.api.sessions import (
 )
 
 _RUNBOOK = Path(__file__).resolve().parents[5] / "docs" / "ops" / "runbooks" / "auth-rbac.md"
+_SCHEMA = _RUNBOOK.parents[2] / "plan" / "21-database-schema.md"
 #: Words a finished clause does not end on: a cell that does is cut off, or lost its last words.
 _DANGLING = frozenset(
     "a an and are as at but by for if in is not of on or than the to was with".split()
@@ -67,15 +68,39 @@ def _paragraph(start: str) -> str:
 
 
 def test_the_probe_triage_classifies_a_hit_whose_id_has_no_sessions_row() -> None:
-    # #3054 (3): a hit is triaged by what its `object_id` finds in `sessions`. Another user's row
-    # and the caller's own ended one were covered; an id with no row at all (never issued, or
-    # reaped) is the third case, and the runbook says how to tell the two readings apart.
+    # #3054 (3) and its review: a hit is triaged by what its `object_id` finds in `sessions`.
+    # Another user's row and the caller's own ended one were covered; an id with no row at all is
+    # the third case. It is an unknown id, never called harmless (it may be another user's, leaked);
+    # the runbook says how to tell a stale client from a probe, and what an empty lookup is worth.
     triage = _paragraph("A lone `auth_session_revoke_denied_total` hit")
     assert "another user's row means a probe" in triage  # the part that was there
     no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
-    assert "never issued" in no_row and "reaped" in no_row
-    assert "`audit_log`" in no_row and "`session_id`" in no_row  # the lookup that tells them apart
-    assert "probe" in no_row  # and what to do with the answer
+    assert "treat it as a probe unless the actor's own history explains it" in no_row
+    assert "a missing row never makes a hit harmless" in no_row
+    lookup = ("`audit_log`", "`session_id`", "`actor_user_id`")  # whose id it was, and the caller's
+    assert [name for name in lookup if name not in no_row] == []
+    assert "read several different ids with no row from one user as a probe" in no_row
+
+
+def test_the_probe_triage_does_not_present_the_sessions_retention_as_shipped() -> None:
+    # #3054 review: no code deletes a `sessions` row today. Section 7 of the schema doc is the
+    # policy, and the paragraph says the job that applies it has not shipped.
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "the job that applies it has not shipped" in no_row
+    assert "`docs/plan/21-database-schema.md`" in no_row and "section 7" in no_row
+
+
+def test_the_probe_triage_sends_the_session_id_search_through_the_indexes_the_schema_has() -> None:
+    # #3054 review: `audit_log` has no `session_id` index, so a search on it alone scans the table.
+    # The runbook says so, and points at the indexes that exist; if the schema ever indexes
+    # `session_id`, this fails and the paragraph has to change.
+    schema = _SCHEMA.read_text(encoding="utf-8")
+    indexed = set(re.findall(r"^CREATE INDEX \w+\s+ON audit_log \(([^)]*)\)", schema, re.MULTILINE))
+    assert {"actor_user_id, event_ts DESC", "action, event_ts DESC"} <= indexed
+    assert [columns for columns in indexed if "session_id" in columns] == []
+    no_row = _paragraph("A hit whose `object_id` has no `sessions` row")
+    assert "`session_id` is not indexed" in no_row
+    assert "start from the indexed `action` or `actor_user_id`" in no_row
 
 
 def test_the_failed_login_telemetry_names_the_mfa_refusal_of_a_disabled_user() -> None:
