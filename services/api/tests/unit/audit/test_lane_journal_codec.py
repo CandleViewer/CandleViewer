@@ -29,6 +29,8 @@ from candleviewer.audit.lane_journal import (
     encode_frame,
     encode_marker,
     key_id,
+    scan,
+    segment_name,
 )
 
 KEY, PREVIOUS = bytes(range(32)), bytes(range(32, 64))
@@ -73,9 +75,9 @@ def test_lane_kid_is_one_way_and_the_previous_key_only_verifies() -> None:
     newer = encode_frame(rotated, lane=LANE, seq=2, prev="a" * 64, cls="shared", rec={})
 
     assert key_id(KEY) == hmac.new(KEY, b"cv-audit-lane/v1/kid", hashlib.sha256).digest()[:8].hex()
-    assert isinstance(decode_frame(rotated, GOOD), LaneFrame)
+    assert isinstance(decode_frame(rotated, GOOD, lane=LANE), LaneFrame)
     assert rotated.current_kid == key_id(PREVIOUS) != key_id(KEY)
-    assert decode_frame(KEYS, newer) == "hold"
+    assert decode_frame(KEYS, newer, lane=LANE) == "hold"
 
 
 @pytest.mark.parametrize(
@@ -148,17 +150,17 @@ def framed_body(body: bytes) -> bytes:
     ids="sign zero torn trailing upper non_ascii_mac len_11 array non_ascii not_json deep".split(),
 )
 def test_lane_bytes_that_fail_steps_1_or_2_do_not_parse(data: bytes) -> None:
-    assert decode_frame(KEYS, data) is None
+    assert decode_frame(KEYS, data, lane=LANE) is None
 
 
 def test_lane_frame_limit_is_the_whole_encoded_frame() -> None:
     pad = MAX_FRAME_BYTES - len(frame_of(envelope(rec={"pad": ""}))) - 2  # `len` gains 2 digits
     largest = frame_of(envelope(rec={"pad": "x" * pad}))
-    rec = {"pad": "x" * (pad + 1)}
+    rec: dict[str, object] = {"pad": "x" * (pad + 1)}
 
     assert len(largest) == MAX_FRAME_BYTES
-    assert isinstance(decode_frame(KEYS, largest), LaneFrame)
-    assert decode_frame(KEYS, frame_of(envelope(rec=rec))) is None
+    assert isinstance(decode_frame(KEYS, largest, lane=LANE), LaneFrame)
+    assert decode_frame(KEYS, frame_of(envelope(rec=rec)), lane=LANE) is None
     with pytest.raises(LaneFrameTooLarge):
         encode_frame(KEYS, lane=LANE, seq=1, prev=ZERO_MAC, cls="reserved", rec=rec)
 
@@ -211,9 +213,12 @@ def test_lane_marker_holds_on_an_unknown_kid_or_v_and_is_strict(
 
 def test_lane_logs_and_errors_carry_no_record_or_key() -> None:
     record = "do-not-print-this-record"
+    frame = encode_frame(KEYS, lane=LANE, seq=1, prev=ZERO_MAC, cls="shared", rec={"s": record})
+    segment = frame + record.encode()  # a hand-over, then a run of bytes that do not parse
     with capture_logs() as logs:
-        decode_frame(KEYS, GOOD.replace(b"auth.logout", b"auth.logouT"))
+        decode_frame(KEYS, GOOD.replace(b"auth.logout", b"auth.logouT"), lane=LANE)
         decode_marker(KEYS, marker_of(v=2))
+        result = scan(KEYS, marker=None, names=[segment_name(1)], read=lambda _: segment)
         with pytest.raises(LaneKeyInvalid) as short:
             LaneKeys(KEY[:31])
         with pytest.raises(LaneFrameTooLarge) as large:
@@ -223,8 +228,9 @@ def test_lane_logs_and_errors_carry_no_record_or_key() -> None:
     shown = " ".join(f"{e} {e!r}" for e in (short.value, large.value)) + repr(
         LaneKeys(KEY, PREVIOUS)
     )
+    shown += repr((decode_frame(KEYS, frame, lane=LANE), result, *result.units))
 
-    assert logs == []
+    assert logs == [] and len(result.units) == 3  # a marker_lost run, the frame, the record
     assert large.value.reason == "too_large"
     assert key_id(KEY) in shown
     for leak in (record, KEY.hex(), PREVIOUS.hex(), repr(KEY), repr(PREVIOUS)):
