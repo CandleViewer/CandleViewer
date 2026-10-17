@@ -19,12 +19,11 @@ from tests.unit.credentials_m2 import test_auth_keyring as core
 
 _KILLED = (AssertionError, pytest.fail.Exception)
 _AKEY, _TOTP, _RC = env.akey_aad, env.totp_aad, env.rc_preimage
-_INIT, _ZERO = ak.LoadedAuthKeyring.__init__, UUID(int=0)
+_INIT, _ZERO, _RING = ak.LoadedAuthKeyring.__init__, UUID(int=0), ak.LoadedAuthKeyring
 _SWAP = core.test_wrap_opens_only_under_its_own_binding
-_MOVED = core.test_totp_seal_moved_to_another_user_is_refused
+_MOVED = partial(core.test_refused_call_raises_its_error_and_leaves_no_secret, "moved_seal")
 _TAMPER = core.test_load_fails_closed_on_a_tampered_row
 _STRANDED = core.test_rows_at_an_older_kek_version_without_its_kek_are_stranded
-_FRAMES = core.test_keyring_failure_leaves_no_key_seed_or_code_in_its_frames
 _OPEN, _ALL_ENVS = ak.LoadedAuthKeyring.open_totp_seed, frozenset({"demo", "testnet", "live"})
 
 
@@ -59,11 +58,9 @@ MUTANTS: dict[str, tuple[object, str, object, Callable[[], None]]] = {
     "import_in_live": (ak, "IMPORT_ENVIRONMENTS", _ALL_ENVS, core.test_import_is_refused_in_live),
     "load_imported_in_live": (ak, "IMPORT_ENVIRONMENTS", _ALL_ENVS,
                               partial(_TAMPER, "imported_in_live")),
-    "key_alias_in_frame": (ak.LoadedAuthKeyring, "open_totp_seed", _aliased_open,
-                           partial(_FRAMES, "moved_seal")),
-    "close_no_zero": (ak.LoadedAuthKeyring, "close", _close_flag_only,
-                      partial(core.test_close_zeroes_both_keys_and_later_calls_refuse, "digests")),
-    "old_formats_generated": (ak.LoadedAuthKeyring, "__init__", _always_imported,
+    "key_alias_in_frame": (_RING, "open_totp_seed", _aliased_open, _MOVED),
+    "close_no_zero": (_RING, "close", _close_flag_only, core.test_close_zeroes_both_keys),
+    "old_formats_generated": (_RING, "__init__", _always_imported,
                               core.test_generated_keyring_digest_is_the_bound_v2_golden),
 }  # fmt: skip
 

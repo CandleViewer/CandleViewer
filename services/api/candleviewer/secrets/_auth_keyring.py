@@ -32,9 +32,7 @@ GENERATED, IMPORTED = "generated", "imported_env"
 IMPORT_ENVIRONMENTS = frozenset({"demo", "testnet"})
 #: `secret_key_ref` of a seal under the old env key, with no AAD (imported keyrings only).
 LEGACY_TOTP_REF = "local-dev-v1"
-#: Bytes of a normalised code. The contract's 64 characters normalise to at most 384, since
-#: `upper()` can make one character 6 bytes (U+0390); only a longer code is refused.
-_CODE_MAX = 512
+_CODE_MAX = 512  # bytes; a 64-character contract code normalises to <= 384 (U+0390 -> 6 bytes)
 _ORIGIN_SETS = ({GENERATED}, {IMPORTED})  # a mixed keyring is a tampered one
 Records = list[dict[str, Any]]
 
@@ -108,9 +106,8 @@ class LoadedAuthKeyring:
 
     def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
         """Hex digests of `code` for `user_id`: the one to store (bound to the user), then, on an
-        imported keyring only, the env key's old digest, which a lookup also accepts. A code over
-        `_CODE_MAX` (no contract body reaches it) raises `ValueError`, which S5's adapter counts as
-        a wrong code, never a 500."""
+        imported keyring only, the env key's old digest, which a lookup also accepts. Over the cap
+        (no contract body is), `ValueError`: S5's adapter counts that as a wrong code."""
         try:
             self._require_open()
             norm = normalise_code(code)
@@ -183,9 +180,8 @@ def _new_keyring(
          "dek_ref": refs[p], "kek_version": kek.version}
         for p in keys
     ]  # fmt: skip
-    imported = origin == IMPORTED
     ring = LoadedAuthKeyring(
-        kek.env_name, imported=imported, totp_id=ids[TOTP], totp=totp, recovery=recovery
+        kek.env_name, imported=origin == IMPORTED, totp_id=ids[TOTP], totp=totp, recovery=recovery
     )
     return records, ring
 
@@ -207,14 +203,13 @@ def load_keyring(
 ) -> LoadedAuthKeyring:
     """Unwrap the environment's two rows (`prev`: the previous KEK at a rotation boot). Fails
     closed, never regenerates: `auth_keyring_stranded` for a row at a KEK version this process
-    does not hold, else `auth_keyring_mismatch` (a missing, extra, moved or tampered row, or an
-    imported keyring outside `IMPORT_ENVIRONMENTS`: D3, the old formats are never read in live)."""
+    does not hold, else `auth_keyring_mismatch` (a missing, extra, moved or tampered row)."""
     by_purpose = {r["purpose"]: r for r in rows}
     origins = {r["origin"] for r in rows}
     imported = origins == {IMPORTED}
     if len(rows) != 2 or set(by_purpose) != {TOTP, RECOVERY} or origins not in _ORIGIN_SETS:
         raise AuthKeyringUnavailable("auth_keyring_mismatch")
-    if imported and kek.env_name not in IMPORT_ENVIRONMENTS:
+    if imported and kek.env_name not in IMPORT_ENVIRONMENTS:  # D3: no old format is read in live
         raise AuthKeyringUnavailable("auth_keyring_mismatch")
     totp = _unwrap(by_purpose[TOTP], kek, prev)
     try:

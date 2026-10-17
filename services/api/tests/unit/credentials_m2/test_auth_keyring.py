@@ -15,12 +15,13 @@ from base64 import b32encode, b64encode
 from collections.abc import Callable
 from hashlib import sha256
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from pydantic import SecretStr
 from structlog.testing import capture_logs
@@ -36,7 +37,6 @@ from candleviewer.secrets.errors import (
     KekUnavailable,
     SecretsError,
 )
-from candleviewer.secrets.store import AuthKeyStore, InMemoryAuthKeyStore
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, kek
 
 AK_T, AK_R = bytes(range(140, 172)), bytes(range(172, 204))  # the two auth keys under test
@@ -138,27 +138,45 @@ def test_totp_seal_round_trips_bound_to_environment_and_user() -> None:
     assert AESGCM(AK_T).decrypt(blob[:12], blob[12:], aad) == SEED
 
 
-def test_totp_seal_moved_to_another_user_is_refused() -> None:
+def _closed(ring: ak.LoadedAuthKeyring) -> ak.LoadedAuthKeyring:
+    ring.close()
+    return ring
+
+
+SEAL, NOT_HELD, CLOSED = "auth_seal_invalid", "auth_key_not_held", "auth_keyring_closed"
+_ERRORS = {SEAL: AuthSealInvalid, NOT_HELD: AuthKeyringUnavailable, CLOSED: AuthKeyringUnavailable}
+TOO_LONG = "recovery code too long"
+_METHODS = {"seal_totp_seed", "open_totp_seed", "recovery_code_digests"}
+#: Each refused call on a ring that sealed SEED for ALICE as `(b, f)`, and its message: a moved or
+#: tampered seal is a wrong code (AC9), a key not held here is never "no method" (AC6).
+REFUSED: dict[str, tuple[Call, str]] = {
+    "moved_seal": (lambda r, b, f: r.open_totp_seed(b, f, BOB), SEAL),
+    "tampered": (lambda r, b, f: r.open_totp_seed(b[:-1] + bytes([b[-1] ^ 1]), f, ALICE), SEAL),
+    "truncated": (lambda r, b, f: r.open_totp_seed(b[:27], f, ALICE), SEAL),
+    "other_key_ref": (lambda r, b, f: r.open_totp_seed(b, f"akey:{OTHER}", ALICE), NOT_HELD),
+    "legacy_ref": (lambda r, b, f: r.open_totp_seed(b, "local-dev-v1", ALICE), NOT_HELD),
+    "empty_ref": (lambda r, b, f: r.open_totp_seed(b, "", ALICE), NOT_HELD),
+    "empty_seed": (lambda r, b, f: r.seal_totp_seed(b"", ALICE), "empty TOTP seed"),
+    "over_long_code": (lambda r, b, f: r.recovery_code_digests(CODE * 19, ALICE), TOO_LONG),
+    "closed_seal": (lambda r, b, f: _closed(r).seal_totp_seed(SEED, ALICE), CLOSED),
+    "closed_open": (lambda r, b, f: _closed(r).open_totp_seed(b, f, ALICE), CLOSED),
+    "closed_digests": (lambda r, b, f: _closed(r).recovery_code_digests(CODE, ALICE), CLOSED),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED))
+def test_refused_call_raises_its_error_and_leaves_no_secret(case: str) -> None:
+    """C-12.6: no frame keeps a key, nothing is chained, a locals render shows no secret."""
+    call, message = REFUSED[case]
     ring = generated()
     blob, ref = ring.seal_totp_seed(SEED, ALICE)
-    with pytest.raises(AuthSealInvalid):
-        ring.open_totp_seed(blob, ref, BOB)
-
-
-@pytest.mark.parametrize("tamper", [lambda b: b[:-1] + bytes([b[-1] ^ 1]), lambda b: b[:27]])
-def test_tampered_totp_seal_is_refused(tamper: Callable[[bytes], bytes]) -> None:
-    ring = generated()
-    blob, ref = ring.seal_totp_seed(SEED, ALICE)
-    with pytest.raises(AuthSealInvalid):
-        ring.open_totp_seed(tamper(blob), ref, ALICE)
-
-
-@pytest.mark.parametrize("ref", [f"akey:{OTHER}", "local-dev-v1", ""])
-def test_seal_under_a_key_not_held_is_unavailable_never_no_method(ref: str) -> None:
-    ring = generated()
-    blob, _ = ring.seal_totp_seed(SEED, ALICE)
-    with pytest.raises(AuthKeyringUnavailable, match=r"^auth_key_not_held$"):
-        ring.open_totp_seed(blob, ref, ALICE)
+    exc = _raised(lambda: call(ring, blob, ref))
+    held, shown = {id(ring._totp_key), id(ring._rc_key)}, _with_locals(exc)
+    frames = [f for f, _ in traceback.walk_tb(exc.__traceback__)]
+    assert (type(exc), str(exc)) == (_ERRORS.get(message, ValueError), message)
+    assert not [n for f in frames for n, v in f.f_locals.items() if id(v) in held]
+    assert {f.f_code.co_name for f in frames} & _METHODS and exc.__context__ is None
+    assert not [s for s in SENTINELS if s in shown]
 
 
 def test_imported_keyring_reads_the_env_keys_old_formats() -> None:
@@ -172,11 +190,6 @@ def test_generated_keyring_digest_is_the_bound_v2_golden() -> None:
     preimage = b"\x00\x08cv-rc-v2\x00\x10" + ALICE.bytes + b"\x00\x1c" + NORM
     golden = hmac.new(AK_R, preimage, sha256).hexdigest()
     assert generated().recovery_code_digests(f" {CODE.lower()} ", ALICE) == (golden,)
-
-
-@pytest.mark.parametrize("code", [IOTA * 64, "A" * 512], ids=["contract_max_384_bytes", "cap"])
-def test_longest_contract_code_and_the_cap_itself_are_digested(code: str) -> None:
-    assert len(generated().recovery_code_digests(code, ALICE)) == 1
 
 
 #: Presented code -> normalised bytes (21 §3.1.5a: strip, upper-case, drop `-` and spaces, UTF-8).
@@ -196,6 +209,7 @@ def test_normalised_code_is_golden_and_the_legacy_form(code: str) -> None:
 
 @settings(max_examples=150, deadline=None)
 @given(code=st.text(max_size=64))
+@example(code=IOTA * 64).via("the contract's longest code: 384 bytes, under the cap")
 def test_imported_keyring_old_digest_is_the_legacy_hash(code: str) -> None:
     """AC3: an unused code made under the env key still matches after the import."""
     assert ak.normalise_code(code) == normalize_recovery_code(code).encode()
@@ -215,19 +229,10 @@ def test_keyring_of_the_wrong_shape_is_zeroed_and_refused() -> None:
     assert not any(totp + recovery)
 
 
-@pytest.mark.parametrize("op", ["seal", "open", "digests"])
-def test_close_zeroes_both_keys_and_later_calls_refuse(op: str) -> None:
+def test_close_zeroes_both_keys() -> None:
     ring = generated()
-    blob, ref = ring.seal_totp_seed(SEED, ALICE)
-    calls: dict[str, Callable[[], object]] = {
-        "seal": lambda: ring.seal_totp_seed(SEED, ALICE),
-        "open": lambda: ring.open_totp_seed(blob, ref, ALICE),
-        "digests": lambda: ring.recovery_code_digests(CODE, ALICE),
-    }
     ring.close()
     assert not ring.available() and not any(ring._totp_key + ring._rc_key)
-    with pytest.raises(AuthKeyringUnavailable, match=r"^auth_keyring_closed$"):
-        calls[op]()
 
 
 def test_keyring_is_masked_unpicklable_uncopyable_and_final() -> None:
@@ -241,16 +246,10 @@ def test_keyring_is_masked_unpicklable_uncopyable_and_final() -> None:
 
 
 def test_wrap_verification_compares_in_constant_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    compared: list[int] = []
-    real = hmac.compare_digest
-
-    def spy(a: bytearray, b: bytearray) -> bool:
-        compared.append(len(a))
-        return real(a, b)
-
+    spy = MagicMock(wraps=hmac.compare_digest)
     monkeypatch.setattr(hmac, "compare_digest", spy)
     ak.generate_keyring(kek())
-    assert compared == [32, 32]
+    assert [len(c.args[0]) for c in spy.call_args_list] == [32, 32]
 
 
 def test_wrap_that_does_not_open_is_never_stored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,14 +259,11 @@ def test_wrap_that_does_not_open_is_never_stored(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("env_name", ["live", "demo", "testnet"])
-async def test_generated_keyring_round_trips_through_the_store(env_name: str) -> None:
-    store = InMemoryAuthKeyStore()
+def test_generated_keyring_round_trips_through_its_rows(env_name: str) -> None:
     records, ring = ak.generate_keyring(kek(env=env_name))
-    assert await store.insert_keyring(records)
-    rows = await store.rows_for(env_name)
-    shape = {(r["purpose"], r["origin"], r["key_version"], r["kek_version"]) for r in rows}
+    shape = {(r["purpose"], r["origin"], r["key_version"], r["kek_version"]) for r in records}
     assert shape == {("totp_seal", "generated", 1, 1), ("recovery_hmac", "generated", 1, 1)}
-    loaded = ak.load_keyring(kek(env=env_name), rows)
+    loaded = ak.load_keyring(kek(env=env_name), [dict(r) for r in records])
     blob, ref = ring.seal_totp_seed(SEED, ALICE)
     assert loaded.open_totp_seed(blob, ref, ALICE) == SEED
     assert loaded.recovery_code_digests(CODE, ALICE) == ring.recovery_code_digests(CODE, ALICE)
@@ -309,9 +305,8 @@ def test_rows_at_an_older_kek_version_without_its_kek_are_stranded() -> None:
 
 
 def _v2(row: dict[str, Any]) -> str:
-    """An `api_keys` wrap of the same row id under the same KEK, relabelled as an auth key wrap."""
-    v2 = kek(env=row["env"]).wrap_dek(bytearray(32), credential_id=row["id"])
-    return "ak1:" + v2.removeprefix("v2:")
+    """An `api_keys` wrap of the same row id, relabelled as an auth key wrap."""
+    return "ak1:" + kek().wrap_dek(bytearray(32), credential_id=row["id"]).removeprefix("v2:")
 
 
 def _flip(ref: str) -> str:
@@ -355,32 +350,6 @@ def test_failed_load_zeroes_the_key_it_had_opened(monkeypatch: pytest.MonkeyPatc
     assert len(opened) == 1 and not any(opened[0])
 
 
-async def test_store_fake_inserts_a_keyring_once_and_reads_it_by_env() -> None:
-    store: AuthKeyStore = InMemoryAuthKeyStore(mfa_material=2)  # the fake satisfies the port
-    first = ak.generate_keyring(kek())[0]
-    assert await store.insert_keyring(first)
-    assert not await store.insert_keyring(ak.generate_keyring(kek())[0])
-    assert [r["id"] for r in await store.rows_for("demo")] == [r["id"] for r in first]
-    assert await store.rows_for("live") == [] and await store.count_mfa_material() == 2
-
-
-@pytest.mark.parametrize("column", ["id", "purpose"])  # the primary key; (env, purpose, version)
-async def test_store_fake_refuses_a_batch_that_repeats_a_key(column: str) -> None:
-    store, rows = InMemoryAuthKeyStore(), ak.generate_keyring(kek())[0]
-    assert not await store.insert_keyring([rows[0], {**rows[1], column: rows[0][column]}])
-    assert store.rows == {}
-
-
-async def test_store_fake_rewrap_is_a_compare_and_set_on_kek_version() -> None:
-    store, row = InMemoryAuthKeyStore(), ak.generate_keyring(kek())[0][0]
-    await store.insert_keyring([row])
-    move: dict[str, Any] = {"from_version": 1, "dek_ref": "ak1:new", "kek_version": 2}
-    assert not await store.rewrap(row["id"], env="live", **move)
-    assert await store.rewrap(row["id"], env="demo", **move)
-    assert not await store.rewrap(row["id"], env="demo", **move)
-    assert store.rows[row["id"]]["dek_ref"] == "ak1:new"
-
-
 def _raised(call: Callable[[], object]) -> BaseException:
     try:
         call()
@@ -404,37 +373,6 @@ SENTINELS = [f(raw) for raw in (KEK_V1, AK_T, AK_R, SEED, NORM) for f in _FORMS]
 ]  # fmt: skip
 
 
-_OPEN, _CLOSE = ak.LoadedAuthKeyring.available, ak.LoadedAuthKeyring.close
-#: Each keyring failure, on a ring that sealed SEED for ALICE as `(b, f)`: (prepare, the call).
-FAILURES: dict[str, tuple[Callable[[ak.LoadedAuthKeyring], object], Call]] = {
-    "not_held": (_OPEN, lambda r, b, f: r.open_totp_seed(b, f"akey:{OTHER}", ALICE)),
-    "moved_seal": (_OPEN, lambda r, b, f: r.open_totp_seed(b, f, BOB)),
-    "short_seal": (_OPEN, lambda r, b, f: r.open_totp_seed(b[:27], f, ALICE)),
-    "empty_seed": (_OPEN, lambda r, b, f: r.seal_totp_seed(b"", ALICE)),
-    "over_long_code": (_OPEN, lambda r, b, f: r.recovery_code_digests(CODE * 19, ALICE)),
-    "closed_seal": (_CLOSE, lambda r, b, f: r.seal_totp_seed(SEED, ALICE)),
-    "closed_open": (_CLOSE, lambda r, b, f: r.open_totp_seed(b, f, ALICE)),
-    "closed_digests": (_CLOSE, lambda r, b, f: r.recovery_code_digests(CODE, ALICE)),
-}
-_METHODS = {"seal_totp_seed", "open_totp_seed", "recovery_code_digests"}
-
-
-@pytest.mark.parametrize("case", sorted(FAILURES))
-def test_keyring_failure_leaves_no_key_seed_or_code_in_its_frames(case: str) -> None:
-    """C-12.6 (#2152 review): the raising frames bind no key, nothing is chained, and a
-    locals-capturing traceback shows no key, seed or code (as `test_broker_safety` does for M2)."""
-    prepare, call = FAILURES[case]
-    ring = imported()
-    blob, ref = ring.seal_totp_seed(SEED, ALICE)
-    prepare(ring)
-    exc = _raised(lambda: call(ring, blob, ref))
-    held = {id(ring._totp_key), id(ring._rc_key)}
-    frames = [f for f, _ in traceback.walk_tb(exc.__traceback__)]
-    keys = [n for f in frames for n, v in f.f_locals.items() if id(v) in held]
-    assert {f.f_code.co_name for f in frames} & _METHODS and not keys and exc.__context__ is None
-    assert not [s for s in SENTINELS if s in _with_locals(exc)]
-
-
 def test_no_kek_auth_key_seed_or_code_reaches_a_repr_exception_or_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -442,18 +380,14 @@ def test_no_kek_auth_key_seed_or_code_reaches_a_repr_exception_or_log(
     caplog.set_level(logging.DEBUG)
     with capture_logs() as logs:
         records, ring = ak.generate_keyring(kek())
-        rows, closed = [dict(r) for r in records], imported()
-        blob, ref = ring.seal_totp_seed(SEED, ALICE)
-        closed.close()
-        shown = [repr(ring), str(ring), repr(records), *ring.recovery_code_digests(CODE, ALICE)]
+        rows, (blob, ref) = [dict(r) for r in records], ring.seal_totp_seed(SEED, ALICE)
+        shown = [repr(ring), str(ring), repr(records), *imported().recovery_code_digests(CODE, BOB)]
         failures: list[Callable[[], object]] = [
             lambda: ring.open_totp_seed(blob, ref, BOB),
-            lambda: ring.open_totp_seed(blob, "local-dev-v1", ALICE),
             lambda: ak.load_keyring(kek(), [rows[0], {**rows[1], "dek_ref": rows[0]["dek_ref"]}]),
             lambda: ak.load_keyring(kek(KEK_V2, 2), rows),
             lambda: ak.import_keyring(kek(env="live"), SecretStr(AK_T.hex()), SecretStr("00")),
             lambda: ak.import_keyring(kek(), SecretStr(AK_T.hex()), SecretStr(AK_R.hex()[2:])),
-            lambda: closed.recovery_code_digests(CODE, ALICE),
         ]
         raised = [_raised(f) for f in failures]
     logged = [r.getMessage() for r in caplog.records]

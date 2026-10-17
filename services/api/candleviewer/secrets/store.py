@@ -1,4 +1,4 @@
-"""Persistence ports for `api_keys` envelope columns, `kek_versions` and `auth_keys`.
+"""Persistence port for `api_keys` envelope columns and `kek_versions`.
 
 Records are plain dicts keyed by `CredentialRow` field names, so the Postgres adapter in
 M10 (`storage`) satisfies these Protocols structurally without importing M2 (C-3.2).
@@ -109,55 +109,3 @@ class InMemoryCredentialStore:
         if (env, version) not in self.kcvs and kcv in self.kcvs.values():
             raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
         return self.kcvs.setdefault((env, version), kcv)
-
-
-class AuthKeyStore(Protocol):
-    """`auth_keys` (#2152, 21 §3.1.5a) plus the counts-only MFA probe. Records are plain dicts
-    keyed by column: `id` (UUID), `env`, `purpose`, `key_version`, `origin`, `dek_ref`,
-    `kek_version`."""
-
-    async def rows_for(self, env: str) -> list[dict[str, Any]]:
-        """Every row of `env` (C-2.11: env-namespaced read)."""
-
-    async def insert_keyring(self, records: list[dict[str, Any]]) -> bool:
-        """All `records` in one transaction; False, with nothing written, on any conflict."""
-
-    async def count_mfa_material(self) -> int:
-        """Unrevoked TOTP methods plus unused recovery codes, in every environment."""
-
-    async def rewrap(
-        self, key_id: UUID, *, env: str, from_version: int, dek_ref: str, kek_version: int
-    ) -> bool:
-        """Compare-and-set on `kek_version`; True iff this call moved the row."""
-
-
-class InMemoryAuthKeyStore:
-    """Test fake for `AuthKeyStore`. Never used with real keys."""
-
-    def __init__(self, *, mfa_material: int = 0) -> None:
-        self.rows: dict[UUID, dict[str, Any]] = {}
-        self.mfa_material = mfa_material
-
-    async def rows_for(self, env: str) -> list[dict[str, Any]]:
-        return [dict(r) for r in self.rows.values() if r["env"] == env]
-
-    async def insert_keyring(self, records: list[dict[str, Any]]) -> bool:
-        rows = [*self.rows.values(), *records]  # the table and the batch, as one transaction sees
-        ids = {r["id"] for r in rows}
-        keys = {(r["env"], r["purpose"], r["key_version"]) for r in rows}
-        if not len(ids) == len(keys) == len(rows):
-            return False  # the primary key and ak_env_purpose_key_version: all or nothing
-        self.rows.update((r["id"], dict(r)) for r in records)
-        return True
-
-    async def count_mfa_material(self) -> int:
-        return self.mfa_material
-
-    async def rewrap(
-        self, key_id: UUID, *, env: str, from_version: int, dek_ref: str, kek_version: int
-    ) -> bool:
-        row = self.rows.get(key_id)
-        if row is None or row["env"] != env or row["kek_version"] != from_version:
-            return False
-        row["dek_ref"], row["kek_version"] = dek_ref, kek_version
-        return True
