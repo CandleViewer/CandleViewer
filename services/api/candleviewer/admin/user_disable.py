@@ -15,7 +15,9 @@ each armed rule the user owns (S5: a rule its chart refuses fails its own run an
 on; O4 and O5 hold it until a repeat), an `invited` user's open invite (R6; the invite store
 writes its record ahead); each await bounded, all by a deadline. A repeat (AC5's no-op) re-runs
 the sweep (and B16 for swept sessions), the scope refresh and the disarm, all idempotent, so a
-failed step can be re-driven by the same DELETE."""
+failed step can be re-driven by the same DELETE. Repeats may overlap, and the disarm stays
+idempotent: its adapter runs one disarm at a time, so the second finds the rule disarmed and
+writes nothing."""
 
 from __future__ import annotations
 

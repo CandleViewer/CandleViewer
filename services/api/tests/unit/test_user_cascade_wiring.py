@@ -154,13 +154,32 @@ async def test_a_later_disable_disarms_a_rule_that_was_armed_again() -> None:
 
 async def test_a_rule_already_disarmed_is_a_noop_that_audits_nothing() -> None:
     """A repeat that finds a rule disarmed is silent: `set_mode` to the mode a rule is in writes
-    no event and no record, so re-driving a cascade cannot write a second one (AC5)."""
+    no event and no record, so re-driving a cascade after the first has finished cannot write a
+    second one (AC5); overlapping repeats are the next test."""
     e = _Engine()
     rid = await e.rule(_A, "a-one")
     await e.disarm(rid)
     before = list(e.audits)
     await e.disarm(rid, at=_T0 + timedelta(minutes=1))
     assert e.audits == before and await e.mode(rid) == ("disabled", "disarmed")
+
+
+async def test_overlapping_disarms_of_one_rule_write_one_record_and_park_nothing() -> None:
+    """AC5 makes a repeat of the DELETE legal while the first cascade still runs (a double submit,
+    a client retry), so two disarms of one rule can overlap. `RulesManager.set_mode` has no
+    per-rule lock: unserialised, both pass `RuleLifecycle.handled_event` while the chart is armed
+    and both send DISARM, the second lands in `disarmed` and is parked by `onUnhandled: defer`
+    (CV-C06), and both write `rule.disarmed`. The adapter serialises them, so the second finds
+    the rule disarmed and is `set_mode`'s state-based no-op: one record, nothing parked, and the
+    rule arms again the first time it is asked to."""
+    e = _Engine()
+    rid = await e.rule(_A, "a-one")
+    later = _T0 + timedelta(milliseconds=3)  # a different key: only the lock can stop the second
+    await asyncio.gather(e.disarm(rid), e.disarm(rid, at=later))
+    assert e.disarmed() == [(rid, str(_OWNER), "DISARM")]
+    assert e.manager.lifecycle._charts[rid].deferred_count == 0
+    await e.manager.set_mode(rid, "armed", _actor(_A), "arm-again")  # E42-T09 enable, then arm
+    assert await e.mode(rid) == ("armed", None)
 
 
 async def test_rules_module_not_running_is_a_failed_disarm() -> None:

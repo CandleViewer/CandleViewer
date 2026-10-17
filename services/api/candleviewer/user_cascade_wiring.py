@@ -19,6 +19,7 @@ permission readers refuse a user who is not active (C-2.21).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -67,6 +68,13 @@ class RuleDisarmAdapter:
 
     def __init__(self, store: RuleStore, manager: Callable[[], RulesManager | None]) -> None:
         self._store, self._manager = store, manager
+        # One disarm at a time. `RulesManager.set_mode` has no per-rule lock, so two disarms of one
+        # rule that overlap (a repeated DELETE while the first cascade runs, which AC5 makes legal)
+        # both pass its `can()` pre-check while the chart is armed and both send DISARM: the second
+        # is parked by `onUnhandled: defer` (CV-C06) and `rule.disarmed` is written twice. Held, the
+        # second finds the rule disarmed and takes `set_mode`'s state-based no-op. Disarms are rare
+        # and a few writes each, so one lock does; a lock per rule would need cleaning up.
+        self._lock = asyncio.Lock()
 
     async def armed_rule_ids(self, user_id: uuid.UUID) -> tuple[str, ...]:
         """Ids of the live rules whose `owner_user_id` is `user_id` and that can still act, in a
@@ -80,14 +88,16 @@ class RuleDisarmAdapter:
     async def disarm(
         self, rule_id: str, *, user_id: uuid.UUID, actor: uuid.UUID, disabled_at: datetime
     ) -> None:
-        """B9 DISARM for one rule. A rule that is already disarmed is a no-op with no record;
-        any refusal or failure is raised after one error line that names the rule."""
+        """B9 DISARM for one rule, one at a time. A rule that is already disarmed is a no-op with no
+        record, also when two disarms of it overlap; any refusal or failure is raised after one
+        error line that names the rule."""
         manager = self._manager()
         if manager is None:
             raise RulesNotRunning(rule_id)
         key = disarm_key(user_id, rule_id, disabled_at)
         try:
-            await manager.set_mode(rule_id, DISARMED, _acting_owner(actor), key)
+            async with self._lock:
+                await manager.set_mode(rule_id, DISARMED, _acting_owner(actor), key)
         except Exception as exc:
             _log().error(
                 "users.disable.rule_not_disarmed",
