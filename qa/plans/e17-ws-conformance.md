@@ -38,7 +38,7 @@ and close codes, never an internal class. The automated half lives in `services/
   (`03-testing-strategy.md` §4.1); no case consumes exchange rate-limit budget. The automated half needs no corpus
   (see the deviations above).
 - **Case id:** `E17-TC-<group><nn>`; groups A–E = §1–§5.
-- **Case columns:** Case · Preconditions · Steps · Expected · Req (`S1`–`S13`, §16.1) · Automation (test name in
+- **Case columns:** Case · Preconditions · Steps · Expected · Req (`S1`–`S14`, §16.1) · Automation (test name in
   `tests/contract/ws/`, a unit test named with its file, or `manual-only`).
 - **Time:** cases that wait on a deadline (auth 10 s, heartbeat 45 s, token expiry) use the staging
   advanceable clock; no case depends on wall-clock luck.
@@ -161,11 +161,12 @@ Reconnect policy by close code (C7): do not auto-reconnect on `1002`, `4400`, `4
 `services/api/tests/contract/ws/` (stacked across five parts, see §11): `_support.py` (self-contained fake clock, bounded
 receive, per-family sample bodies; imports no other test module), `_harness.py` (real `make_ws_router` + `SequencingHub`,
 fake identity/snapshot source, a client that validates both inbound and outbound frames, the §10.2 and §6.1.1 document
-parsers), `conftest.py` (the `wire` fixture, and the matrix that prints which of S1-S13 ran, and under which wire, so a
+parsers), `conftest.py` (the `wire` fixture, and the matrix that prints which of S1-S14 ran, and under which wire, so a
 skipped requirement is visible; it counts this directory's rows only, and ends with a pointer to E17-Q04 for C1-C12),
 `test_ws_s1.py`, `test_ws_s2_s9.py`, `test_ws_s10_s13.py`, `test_ws_contract.py` (§16.4 contract/unit/integration rows and
 client-rejection rows), and the later contract slices `test_ws_control_shapes.py`, `test_ws_sub_shape.py`,
-`test_ws_break_glass_notice.py` and `test_ws_machines_state_contract.py`.
+`test_ws_break_glass_notice.py`, `test_ws_machines_state_contract.py` and `test_ws_s14.py` (S14, the
+envelope span id `sp`, E17-T06).
 Run: `cd services/api && uv run pytest -p no:cacheprovider tests/contract/ws -m "not integration" -q --no-cov`.
 
 **Both subprotocols.** A test that names `World` or `connect` runs once under `cv.v1.json` and once with
@@ -196,6 +197,8 @@ test directory). Result is the first failing tests.
 | S12 unknown option ignored                 | `test_s1_*`, `test_s12_*` (generated rows)                                   |
 | S13 origin check skipped                   | `test_s13_a_bad_origin_is_refused_…` (2)                                     |
 | §2.2 server prefers JSON over msgpack      | `connect()`'s echoed-subprotocol assert: the `msgpack-preferred` rows        |
+| S14 `sp` on every delta, not 1 in 32       | `test_s14_sp_rides_only_…` (2), 11 unit rows                                 |
+| S14 `sp` drawn while telemetry is off      | `test_s14_no_frame_carries_sp_while_…_off` (2), 2 unit rows                  |
 
 ### 9.1 Closing audit and closing PR (2026-10-17)
 

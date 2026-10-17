@@ -103,11 +103,22 @@ class Queued:
         return self.key is not None and not self.priority
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Spanned(Queued):
+    """A sampled frame that carries a span id (23 §3.1): its `sp` and its sequence number `s`, which
+    the writer's span record names. Only such a frame is built as one, so every other `Queued`,
+    the 31 of 32 that are unsampled included, has neither field and costs what it did."""
+
+    sp: str
+    s: int | None
+
+
 def encode(
     frame: Mapping[str, Any], dumps: FrameEncoder = json_payload, *, received: float | None = None
 ) -> Queued:
     """Serialise `frame` once with the connection's `dumps`, exactly as the writer sends it, and
-    classify it for the lanes. Raises what `dumps` raises."""
+    classify it for the lanes; a sampled frame that carries `sp` comes back as a `Spanned`. Raises
+    what `dumps` raises."""
     payload = dumps(frame)
     ch, kind, meta, rs = frame.get("ch"), frame.get("t"), frame.get("meta"), frame.get("rs")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
@@ -121,6 +132,8 @@ def encode(
         and isinstance(meta, Mapping)
         and meta.get("reason") == "backpressure"
     )
+    if received is not None and (sp := frame.get("sp")) is not None:  # 23 §3.1
+        return Spanned(payload, priority, family, key, resnap, received, sp=sp, s=frame.get("s"))
     return Queued(payload, priority, family, key, resnap, received)
 
 

@@ -178,6 +178,9 @@ class SubscriptionServices:
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
     machines: EntityScopes | None = None
+    #: E17-T06: draws each connection's span ids (`sp`, 23 §3.1); the app sets it from
+    #: `CV_TELEMETRY_ENABLED`, and `None` (latency telemetry off) means no frame carries one.
+    span_ids: Callable[[], str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

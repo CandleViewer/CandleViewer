@@ -13,7 +13,7 @@ import pytest
 from tests.contract.ws._harness import JSON_ONLY_ATTR, OFFERS, current_wire, reset_wire, use_wire
 
 #: §16.1 server MUSTs; client obligations C1-C12 are E17-Q04's (cross-referenced in the plan).
-REQUIREMENTS = tuple(f"S{n}" for n in range(1, 14))
+REQUIREMENTS = tuple(f"S{n}" for n in range(1, 15))
 #: Only this directory's `test_sN_` rows count: the `py` lane runs other suites in the same session.
 _NAME = re.compile(r"(?:^|/)tests/contract/ws/[^:]*::test_(s\d+)_")
 #: A test drives a socket when its own code names one of these (`World()` builds the gateway,

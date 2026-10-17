@@ -170,6 +170,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-I07 | F14, P9        | Decoded private data leaks through worker `postMessage` to another context                                                       | L   | M   | Low    | Worker is same-origin and dedicated to the app; no cross-origin messaging; CSP (SR-127)                                                                                                                                                                                                                                     | E17-T04          | review            | M     | Low      |
 | WS-I08 | F9-F13, P5/P7  | Account-scoped data reaches the wrong subscriber through the shared upstream reference or reuse of an encode-once fan-out buffer | L   | H   | Medium | Shared upstream refs and encode-once buffers are used only for **public** families; private families never take a shared upstream ref (`subscribe_upstream` skips them) and are encoded per subscription after account filtering; a test asserts no private frame buffer is shared across subscriptions (SR-190)            | E17-S02, E17-T03 | unit, integration | M     | Low      |
 | WS-I09 | F10-F11, P4    | Cross-user alert disclosure through the fan-out: another user's `alerts` delta reaches a connection that may not read it         | M   | M   | Medium | `alerts` deltas reach only the owning user's connections, and nobody when the event names no owner. Since #2521 a private delta also needs the family's permission on the connection's current principal; `recorder` (scope NONE) relies on 23 §9.5 revocation plus that check. Tests: `tests/unit/ws/test_sequencing.py`   | E17-S03          | unit              | M     | Low      |
+| WS-I10 | F2, F11, F13   | The span id `sp` links frames across users or connections, or a client's own `sp` is echoed, logged or trusted                   | M   | L   | Low    | `sp` is 8 bytes from the OS CSPRNG (`secrets`) for each stamped frame: never a counter, a seeded PRNG or derived from a user, account, session, order or request id, so ids link nothing; a log field, never a metric label (20 §12.1). The server never reads, echoes or logs a client's `sp` (23 §3.1)                    | E17-T06          | unit, contract    | M     | Low      |
 
 ### 3.5 Denial of service
 
@@ -211,7 +212,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | P1 Handshake (F1-F4)           | S01-S06                                                      | T02, T05, T08      | R03           | I01, I04, I06 | D02, D05-D07  | E05      |
 | P2 SubscriptionManager (F5-F6) | S04                                                          | T03, T04, T06      | R01           | I02, I03      | D04, D15, D16 | E01, E03 |
 | P3 Revocation (F7-F8)          | S01                                                          | —                  | R02           | I06           | D09           | E02, E04 |
-| P4 Snapshot / sequencing (F11) | —                                                            | T05, T07           | —             | I05, I09      | D03, D16      | —        |
+| P4 Snapshot / sequencing (F11) | —                                                            | T05, T07           | —             | I05, I09, I10 | D03, D16      | —        |
 | P5 Multiplexer (F9-F10)        | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | I02           | D04, D08      | —        |
 | P6 Coalescing (F12)            | —                                                            | —                  | —             | —             | D01, D08      | —        |
 | P7 Encoder (F13)               | —                                                            | T01                | —             | I01           | D08           | —        |
@@ -221,8 +222,8 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | E2 Session service (F3-F4)     | S01, S02                                                     | —                  | —             | —             | —             | E02      |
 | E3 Internal bus (F9)           | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | —             | D08           | —        |
 
-Every STRIDE category has analysed rows. Counts: 51 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
-WS-I09 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored in #3123);
+Every STRIDE category has analysed rows. Counts: 52 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
+WS-I09 and WS-I10 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored in #3123);
 residual Medium: WS-D08, WS-D15 (until measured), WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until
 #2176 merges (open items, §10).
 
@@ -650,3 +651,4 @@ scope on the open tickets named above.
 | 2026-10-17 | author (agent; PR for #3123)                      | WS-D15 and WG9 re-scored Medium after SR-192; WS-D04 back to Low; RR-08 closure proposed; §8 exception names both halves                     |
 | 2026-10-17 | author (agent; PR for #3125)                      | WS-I05 as built (#3125): nested allow-lists, a guard on the one queueing point, a counter for withheld frames (§3.4, §8)                     |
 | 2026-10-17 | author (agent; PR for #2174)                      | SR-186/187 built (#2174): R01-R04 controls, §8 rows and §10 status; `cv_ws_audit_failures_total`, `WsAuditWriteFailed`                       |
+| 2026-10-17 | author (agent; PR for #571 slice D2)              | WS-I10 added (#571 D2): `sp` from the OS CSPRNG per frame, a log field only; a client's `sp` never read, echoed or logged (§3.4, §3.7)       |
