@@ -6,6 +6,7 @@ Source: docs/plan/22-api-openapi.yaml, via datamodel-code-generator.
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -671,6 +672,14 @@ class CreateApiKeyRequest(BaseModel):
         str | None,
         Field(description="Must equal the account's `exchange_uid`; mismatch is rejected."),
     ] = None
+
+
+class Permission(RootModel[str]):
+    root: Annotated[str, Field(pattern="^[A-Za-z][A-Za-z0-9]{0,63}$")]
+
+
+class IpWhitelistItem(RootModel[str]):
+    root: Annotated[str, Field(max_length=49, pattern="^([*]|[0-9A-Fa-f:.]{2,45}(/[0-9]{1,3})?)$")]
 
 
 class RotateApiKeyRequest(BaseModel):
@@ -5939,19 +5948,32 @@ class KeyVerification(BaseModel):
         Field(description="From the key-info `readOnly` field, which alone decides write access."),
     ] = None
     permissions: Annotated[
-        dict[str, list[str]] | None,
+        dict[str, list[Permission]] | None,
         Field(
-            description="As reported. Every right must be on the `createApiKey` allow-list (step 2)."
+            description="As reported. Every right must be on the `createApiKey` allow-list (step 2). A group or right whose name is not a plain identifier is left out of the display, though the right is still refused.\n",
+            max_length=32,
         ),
     ] = None
     withdraw_enabled: Annotated[
         bool, Field(description="Must be false; a true value causes rejection.")
     ]
-    ip_whitelist: list[str] | None = None
+    ip_whitelist: Annotated[
+        list[IpWhitelistItem] | None,
+        Field(
+            description="At most 20 entries, each an address, a range or `*`: any other entry is left out of the display.\n",
+            max_length=20,
+        ),
+    ] = None
     ip_whitelist_matches_egress: Annotated[
         bool | None,
         Field(
             description="True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range)."
+        ),
+    ] = None
+    egress_ip: Annotated[
+        IPv4Address | IPv6Address | None,
+        Field(
+            description="The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP whitelist may hold; `null` while none is configured. It comes from configuration, never from a request header. It is the address the Owner adds to the key's whitelist at the exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or `keys:read`, and never written to an audit record or used as a metric label.\n"
         ),
     ] = None
     clock_offset_ms: int | None = None
@@ -5959,9 +5981,8 @@ class KeyVerification(BaseModel):
     warnings: list[Literal["key_expiring_soon", "clock_skew"]] | None = None
 
 
-class ApiKeyWithVerification(BaseModel):
-    key: ApiKey | None = None
-    verification: KeyVerification | None = None
+class KeyVerificationPassed(KeyVerification):
+    passed: Literal[True]
 
 
 class ApiKeyRotation(BaseModel):
@@ -6171,6 +6192,11 @@ class CapacityReport(BaseModel):
     rate_budget: list[RateBudgetItem] | None = None
     rate_budget_status: AdminSliceStatus | None = None
     subaccounts: SubaccountCapacity | None = None
+
+
+class ApiKeyWithVerification(BaseModel):
+    key: ApiKey
+    verification: KeyVerificationPassed
 
 
 class RuleArithmeticNode(BaseModel):

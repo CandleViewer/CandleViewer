@@ -449,6 +449,10 @@ x-error-codes:
     title: Caller has no granted access to the targeted exchange account
     retryable: false
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: kek_unavailable
+    status: 403
+    title: The credential key is unavailable; operations that need it are refused
+    retryable: false
   - code: trading_disabled
     status: 403
     title: Order entry refused
@@ -2509,6 +2513,7 @@ paths:
                       withdraw_enabled: false
                       ip_whitelist: ["203.0.113.10"]
                       ip_whitelist_matches_egress: true
+                      egress_ip: "203.0.113.10"
                       clock_offset_ms: 4
                       probe_ret_code: 0
                       warnings: []
@@ -2634,6 +2639,7 @@ paths:
                         withdraw_enabled: false,
                         ip_whitelist: ["203.0.113.10"],
                         ip_whitelist_matches_egress: true,
+                        egress_ip: "203.0.113.10",
                         clock_offset_ms: 3,
                         probe_ret_code: 0,
                         permissions: { ContractTrade: [Order, Position] },
@@ -2695,6 +2701,7 @@ paths:
                         withdraw_enabled: false,
                         ip_whitelist: ["203.0.113.10"],
                         ip_whitelist_matches_egress: true,
+                        egress_ip: "203.0.113.10",
                         clock_offset_ms: 6,
                         probe_ret_code: 0,
                         permissions: { ContractTrade: [Order, Position] },
@@ -12232,7 +12239,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
       content:
         application/problem+json:
           schema:
@@ -12261,6 +12268,17 @@ components:
                   detail: "X-CSRF-Token header is missing.",
                   instance: "urn:cv:req:0193f2bb-2223",
                   code: csrf_token_invalid,
+                }
+            kekUnavailable:
+              summary: A key operation while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/kek_unavailable",
+                  title: "The credential key is unavailable; operations that need it are refused",
+                  status: 403,
+                  detail: "The credential key is unavailable, so keys cannot be added, tested or rotated until the app restarts with it.",
+                  instance: "urn:cv:req:0193f2bb-2229",
+                  code: kek_unavailable,
                 }
             mfaEnrollmentRequired:
               summary: Enrolment-only session calling an operation outside its allow-list
@@ -13810,19 +13828,51 @@ components:
           }
         permissions:
           type: object
-          description: "As reported. Every right must be on the `createApiKey` allow-list (step 2)."
-          additionalProperties: { type: array, items: { type: string } }
+          description: >
+            As reported. Every right must be on the `createApiKey` allow-list (step 2). A group
+            or right whose name is not a plain identifier is left out of the display, though the
+            right is still refused.
+          maxProperties: 32
+          # `then` holds what the generated model cannot take: a `propertyNames` pattern becomes a
+          # `constr` key, which `mypy --strict` refuses, and a bounded nested list becomes an alias.
+          if: true
+          then:
+            propertyNames: { pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$" }
+            additionalProperties: { maxItems: 32 }
+          additionalProperties:
+            type: array
+            items: { type: string, pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$" }
         withdraw_enabled:
           { type: boolean, description: "Must be false; a true value causes rejection." }
-        ip_whitelist: { type: array, items: { type: string } }
+        ip_whitelist:
+          type: array
+          description: >
+            At most 20 entries, each an address, a range or `*`: any other entry is left out of the
+            display.
+          maxItems: 20
+          items:
+            { type: string, maxLength: 49, pattern: "^([*]|[0-9A-Fa-f:.]{2,45}(/[0-9]{1,3})?)$" }
         ip_whitelist_matches_egress:
           {
             type: boolean,
             description: "True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range).",
           }
+        egress_ip: { $ref: "#/components/schemas/EgressIp" }
         clock_offset_ms: { type: integer }
         probe_ret_code: { type: ["integer", "null"] }
         warnings: { type: array, items: { $ref: "#/components/schemas/KeyVerificationWarning" } }
+    EgressIp:
+      description: >
+        The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP
+        whitelist may hold; `null` while none is configured. It comes from configuration, never
+        from a request header. It is the address the Owner adds to the key's whitelist at the
+        exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is
+        false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or
+        `keys:read`, and never written to an audit record or used as a metric label.
+      anyOf:
+        - { type: "null" }
+        - { type: string, format: ipv4 }
+        - { type: string, format: ipv6 }
     KeyVerificationWarning:
       type: string
       enum: [key_expiring_soon, clock_skew]
@@ -13860,9 +13910,23 @@ components:
         error text, header, URL or request fragment is echoed.
     ApiKeyWithVerification:
       type: object
+      description: >
+        The `201` of `createApiKey`: the key is stored only if every check passes, so both members
+        are always present and `verification` is the full `KeyVerification` with `passed: true`.
+        A key that fails a check is a `422`, never this body.
+      required: [key, verification]
       properties:
         key: { $ref: "#/components/schemas/ApiKey" }
-        verification: { $ref: "#/components/schemas/KeyVerification" }
+        verification: { $ref: "#/components/schemas/KeyVerificationPassed" }
+    KeyVerificationPassed:
+      description: >
+        A `KeyVerification` of a key that passed every check: the one verification a stored key
+        has, and the only one a `201` carries (`ApiKeyWithVerification`). A failed check is never
+        shown in it.
+      allOf:
+        - { $ref: "#/components/schemas/KeyVerification" }
+        - type: object
+          properties: { passed: { const: true } }
     RotateApiKeyRequest:
       type: object
       additionalProperties: false
