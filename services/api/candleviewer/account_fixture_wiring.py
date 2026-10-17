@@ -12,8 +12,9 @@ re-checks it as well.
 S4 threads the handle into the exchange adapter's account REST clients and private socket. Until
 the guard and serving slices land, the package's transport and connector refuse every request.
 
-S8: the lifespan awaits `account_fixture_boot`, the dev package's boot guard, which writes its
-audit record through the writer injected here: `cvdev` never imports `candleviewer.audit`.
+S8: the lifespan awaits `account_fixture_guard`, the dev package's boot guard, before any module
+starts, and `account_fixture_record` once they run: the guard's boot record goes through the audit
+writer injected here, so `cvdev` never imports `candleviewer.audit`.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import structlog
 from candleviewer.settings import Settings
 
 #: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`
-#: and (S8) the boot guard `guard_boot(settings, audit) -> None`, which refuses by raising.
+#: and (S8) the boot guard `guard_boot(settings) -> AccountFixtureBoot`, which refuses by raising.
 _DEV_PACKAGE: Final = "cvdev"
 _DEV_WIRING: Final = "cvdev.account_fixture.wiring"
 #: S8 (FX-R01): one record per boot while the fixture is on, written once its guard passed.
@@ -79,7 +80,8 @@ def build_account_fixture(settings: Settings) -> AccountFixture | None:
 
 
 class AccountFixtureAudit(Protocol):
-    """The slice of `AuditWriter.emit` the boot record needs, injected into the dev package."""
+    """The slice of `AuditWriter.emit` the boot record needs, injected into the dev package. C-3.3
+    keeps this module from importing `candleviewer.audit`, hence `Any` for its enum parameters."""
 
     async def emit(
         self,
@@ -102,29 +104,30 @@ class _AuditModule(Protocol):
     def writer(self) -> AccountFixtureAudit: ...
 
 
-class BootContext(Protocol):
-    """What `account_fixture_boot` reads of the `AppContext`."""
+class AccountFixtureBoot(Protocol):
+    """A passed boot guard: `record` writes its boot record once the audit writer runs."""
 
-    @property
-    def settings(self) -> Settings: ...
-
-    @property
-    def audit(self) -> _AuditModule: ...
+    async def record(self, audit: AccountFixtureAudit) -> None: ...
 
 
-async def account_fixture_boot(ctx: BootContext) -> None:
-    """#2893 S8, for the lifespan, after the modules start and before the app serves: the dev
-    package's boot guard refuses boot (`AccountFixtureRefused`) while the database holds a key the
-    stub must never answer for, then logs a warning and writes the boot record through the audit
-    writer. The fake backend has no audit writer, so there the warning is the only record. Unset,
-    it imports nothing and does nothing."""
-    settings = ctx.settings
+async def account_fixture_guard(settings: Settings) -> AccountFixtureBoot | None:
+    """#2893 S8, for the lifespan before any module starts: the dev package's boot guard refuses
+    boot (`AccountFixtureRefused`) while the database holds a key the stub must never answer for;
+    a pass logs a warning. Unset, it imports nothing and returns None."""
     if settings.account_fixture is None:
-        return
-    guard: Callable[[Settings, AccountFixtureAudit | None], Awaitable[None]] = _dev_module(
+        return None
+    guard: Callable[[Settings], Awaitable[AccountFixtureBoot]] = _dev_module(
         settings, _DEV_WIRING
     ).guard_boot
-    await guard(settings, ctx.audit.writer if ctx.audit.is_active else None)
+    return await guard(settings)
+
+
+async def account_fixture_record(passed: AccountFixtureBoot | None, audit: _AuditModule) -> None:
+    """#2893 S8, for the lifespan once the modules run, before the app serves: the passed guard's
+    boot record, through the audit writer. The fake backend has none (`is_active` is False and
+    `writer` raises), so there the guard's warning is the only record."""
+    if passed is not None and audit.is_active:
+        await passed.record(audit.writer)
 
 
 def _dev_module(settings: Settings, name: str) -> ModuleType:

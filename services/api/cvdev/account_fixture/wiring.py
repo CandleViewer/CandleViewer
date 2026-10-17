@@ -17,11 +17,7 @@ from typing import Final, NoReturn
 
 import httpx
 
-from candleviewer.account_fixture_wiring import (
-    AccountFixture,
-    AccountFixtureAudit,
-    AccountFixtureRefused,
-)
+from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused
 from candleviewer.settings import Settings
 from cvdev.account_fixture import boot
 
@@ -55,6 +51,7 @@ def build(settings: Settings) -> AccountFixture:
     return _Fixture(rest_transport=RefusingTransport(), private_ws_connect=refuse_private_socket)
 
 
-async def guard_boot(settings: Settings, audit: AccountFixtureAudit | None) -> None:
-    """The boot guard (`boot.run`): refuses boot by raising, or passes and writes the record."""
-    await boot.run(settings, audit)
+async def guard_boot(settings: Settings) -> boot.Passed:
+    """The boot guard (`boot.run`), before any module starts: refuses boot by raising, or passes
+    and hands back the boot record to write once the audit writer runs."""
+    return await boot.run(settings)

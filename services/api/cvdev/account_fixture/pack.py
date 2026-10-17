@@ -45,9 +45,14 @@ from typing import Any, Final
 
 #: The manifest schema, in the pack root.
 _SCHEMA: Final = "manifest.schema.json"
+#: A running stack's pack (#2893): under its working directory, as the synthetic feed's sample is
+#: (`Settings.feed_sample_path`). The boot guard (S8) and the stub's guards read the same one.
+PACK_ROOT: Final = Path("packages") / "fixtures" / "accounts"
 #: A scenario name, as the schema's `scenarioName` defines it: never a path, so a name looked up
 #: (given, `extends`, `switch_to`, an overlay or a rotation key) cannot leave the pack root.
 _SCENARIO_NAME: Final = re.compile(r"[a-z][a-z0-9_]*")
+#: A pack key id (README): hyphenated, so never key-shaped; the four-digit tail is unique per pack.
+_FIXTURE_KEY_ID: Final = re.compile(r"fixture-[a-z][a-z0-9_]*-[0-9]{4}")
 #: Test plan section 9.2: the accounts a key is stored on, by UID, each with the main account it
 #: belongs to (`None` for a main account).
 ACCOUNT_PARENTS: Final[Mapping[str, str | None]] = {
@@ -202,6 +207,12 @@ def manifest(pack: Pack, name: str) -> dict[str, Any]:
         raise KeyError(f"no such scenario: {name}")
     body: dict[str, Any] = _read(path)
     return body
+
+
+def fixture_key_ids(pack: Pack) -> frozenset[str]:
+    """The key ids the pack's key scenarios name, fixture-shaped ones only (blocking reads)."""
+    named = (manifest(pack, n).get("tester_inputs", {}).get("key_id") for n in scenario_names(pack))
+    return frozenset(i for i in named if isinstance(i, str) and _FIXTURE_KEY_ID.fullmatch(i))
 
 
 def _iso(moment: datetime) -> str:

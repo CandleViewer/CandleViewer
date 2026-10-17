@@ -1,7 +1,8 @@
 """Integration: the account fixture boot guard reads `api_keys` on real Postgres 16 (#2893 S8).
 
 Fabricated rows only (placeholder ciphertext). Each test starts with every stored key revoked,
-which the guard ignores, so order does not matter. Not run locally (no docker); CI integration lane.
+which the guard never reads, so order does not matter. Not run locally (no docker); CI integration
+lane. `Settings` is built from the test's fields alone: every CV_* variable is cleared.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from candleviewer.settings import Environment, FeedMode, Settings
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from cvdev.account_fixture import boot
 from cvdev.account_fixture.boot import PgStoredKeys, StoredKey, run
 from tests._account_fixtures import PACK
 
@@ -33,6 +35,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.integration_db]
 _ROOT = Path(__file__).resolve().parents[3]
 _SNAP = '{"uid": "1", "permissions": {"ContractTrade": ["Order"]}}'
 _IDS = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in [n for n in os.environ if n.upper().startswith("CV_")]:
+        monkeypatch.delenv(name)
 
 
 @pytest.fixture(scope="module")
@@ -90,8 +98,8 @@ def _key(c: psycopg.Connection, env: str, last4: str, *, revoked: bool = False) 
     return key
 
 
-async def test_guard_reads_api_keys_on_postgres(
-    db: psycopg.Connection, pg_dsn: str, settings: Settings
+async def test_guard_reads_unrevoked_api_keys_on_postgres(
+    db: psycopg.Connection, pg_dsn: str, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _key(db, "demo", "0001")
     _key(db, "demo", "0002")
@@ -103,10 +111,9 @@ async def test_guard_reads_api_keys_on_postgres(
     finally:
         await relational.dispose()
 
-    unrevoked = sorted((k.env, k.key_id_last4) for k in stored if not k.revoked)
-    assert unrevoked == [("demo", "0001"), ("demo", "0002")]
-    assert {StoredKey("live", "Ab12", True), StoredKey("demo", "Zq9X", True)} <= set(stored)
-    await run(settings, None, pack=PACK)  # fixture tails only, so boot passes
+    assert sorted(stored, key=str) == [StoredKey("demo", "0001"), StoredKey("demo", "0002")]
+    monkeypatch.setattr(boot, "MAX_STORED_KEYS", 2)  # revoked rows do not count toward the cap
+    await run(settings, pack=PACK)  # fixture tails only, so boot passes
 
 
 @pytest.mark.parametrize(
@@ -121,7 +128,7 @@ async def test_guard_refuses_a_stored_key_until_it_is_revoked(
     offending = _key(db, env, last4)
 
     with pytest.raises(AccountFixtureRefused, match=re.escape(reason)):
-        await run(settings, None, pack=PACK)
+        await run(settings, pack=PACK)
 
     _revoke(db, offending)
-    await run(settings, None, pack=PACK)
+    await run(settings, pack=PACK)

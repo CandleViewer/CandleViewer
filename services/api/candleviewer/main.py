@@ -21,7 +21,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
-from candleviewer.account_fixture_wiring import account_fixture_boot
+from candleviewer.account_fixture_wiring import account_fixture_guard, account_fixture_record
 from candleviewer.app import AppContext, Supervisor, audit_test_clock_boot, create_app
 from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
@@ -48,11 +48,12 @@ def logger() -> Any:
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx: AppContext = app.state.app_context
+    fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
     supervisor = Supervisor(ctx)
     await supervisor.start_all()
     try:
         await audit_test_clock_boot(ctx)  # #2728: before serving; a failed write fails boot
-        await account_fixture_boot(ctx)  # #2893 S8: a stored non-fixture key refuses boot
+        await account_fixture_record(fixture_boot, ctx.audit)  # #2893 S8: its record, likewise
     except BaseException:
         await supervisor.stop_all(1.0)  # as `start_all` does: never leave modules running
         raise
