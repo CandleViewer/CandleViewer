@@ -1,4 +1,4 @@
-"""Driver-free order and order-event store surface (E29-T01 #845 slice 2/3, `0029_oms_core`).
+"""Driver-free order and order-event store surface (E29-T01 #845, `0029_oms_core`).
 
 M14 (`oms`) may not import a storage driver (ADR-0003), so it types against `OrderStore` and
 `OrderEventStore` and these frozen dataclasses; `orders_sqlalchemy.py` is the Postgres

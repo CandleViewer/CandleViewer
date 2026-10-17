@@ -1,4 +1,4 @@
-"""Order store port, without a database (E29-T01 #845 slice 2/3).
+"""Order store port, without a database (E29-T01 #845).
 
 The port is pinned to `0029_oms_core` (enums, CHECK vocabularies, `ix_orders_open`, the column
 lists, the money and time columns `NewOrder` checks). The Postgres adapter's tests join this file
