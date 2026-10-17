@@ -123,15 +123,20 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # degradation boundary (docs/plan/20-architecture.md Sec.3.x Validator) —
     # not `*Service`/`*Error` by name, but the module's documented public
     # interface alongside `OmsService`.
-    # E29-T01 (#845): the order persistence the OMS writes through, `OrderRepository` and
-    # `OrderEventRepository` over M10's driver-free stores, and `DuplicateOrderLinkId`, which
-    # `OrderRepository.create` raises when `ux_orders_link` already holds the id.
+    # E29-T01 (#845): the persistence the OMS writes through, its five repositories over M10's
+    # driver-free stores, the `WriteTimer` behind `oms_db_write_seconds{table}`, and
+    # `DuplicateOrderLinkId`, which `OrderRepository.create` raises when `ux_orders_link` already
+    # holds the id.
     "M14": {
         "Validator",
         "ReadOnlyCheck",
         "OrderPlacementRefused",
         "OrderRepository",
         "OrderEventRepository",
+        "ExecutionRepository",
+        "PositionRepository",
+        "PositionSnapshotRepository",
+        "WriteTimer",
         "DuplicateOrderLinkId",
     },
     # E27-T01 (#2495): the accounts facade and the domain types it returns, consumed by the

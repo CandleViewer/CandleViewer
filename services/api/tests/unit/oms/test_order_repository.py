@@ -4,25 +4,39 @@ The facade's own behaviour: `DuplicateOrderLinkId` for the unique index (Gherkin
 enforced by the database", unit half), the 24 Sec.8.3 rule 5 lookup the #846 allocator uses, the
 account passed through on every read, and the `order_link_id` logged on every write (ADR-0006
 rule 1). The stores themselves are tested in `tests/unit/storage/test_orders_store.py` and against
-Postgres in `tests/integration/storage/test_orders_store_pg.py`.
+Postgres in `tests/integration/storage/test_orders_store_pg.py`. Below them: the execution,
+position and snapshot repositories and `oms_db_write_seconds{table}` on every write.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import fields
+from collections.abc import Awaitable, Callable
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId, GroupId
-from candleviewer.oms import DuplicateOrderLinkId, OrderEventRepository, OrderRepository
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE, OMS_WRITE_BUCKETS
+from candleviewer.oms import (
+    DuplicateOrderLinkId,
+    ExecutionRepository,
+    OrderEventRepository,
+    OrderRepository,
+    PositionRepository,
+    PositionSnapshotRepository,
+    WriteTimer,
+)
 from candleviewer.oms.errors import OmsError
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator, OrderLinkLookup
+from candleviewer.oms.repository import WRITE_TABLES
+from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     NewOrder,
@@ -31,6 +45,8 @@ from candleviewer.storage.repositories.orders import (
     OrderEventRow,
     OrderRow,
 )
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
+from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -198,3 +214,97 @@ async def test_a_failed_append_logs_nothing() -> None:
             ACCOUNT, ORDER, EVENT_IN
         )
     assert logs == []
+
+
+# -- executions, positions, snapshots, and `oms_db_write_seconds` -------------------------------
+
+FILL = NewExecution(
+    exchange_account_id=ACCOUNT, exec_id="E1", symbol="BTCUSDT", side="Buy",
+    exec_qty=Decimal("0.010"), exec_price=Decimal("63099.80"), exec_value=Decimal("630.998"),
+    exec_type="Trade", is_maker=False, exec_ts=T0, order_id=ORDER, order_link_id=LINK,
+)  # fmt: skip
+STATE = PositionState(exchange_account_id=ACCOUNT, symbol="BTCUSDT", size=Decimal("0.010"))
+SNAP = NewPositionSnapshot(
+    exchange_account_id=ACCOUNT, symbol="BTCUSDT", size=Decimal("0.010"), reason="ws_push"
+)
+
+
+class _AnyStore:
+    """A stub of any store: records each call and answers `result`, or raises `error`."""
+
+    def __init__(self, result: object = None, error: Exception | None = None) -> None:
+        self.result, self.error = result, error
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[object]]:
+        async def call(*args: Any) -> object:
+            self.calls.append((name, args))
+            if self.error is not None:
+                raise self.error
+            return self.result
+
+        return call
+
+
+_WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
+    "orders": (lambda s, t: OrderRepository(s, t).create(ORDER_IN, EVENT_IN), _row()),
+    "order_events": (lambda s, t: OrderEventRepository(s, t).append(ACCOUNT, ORDER, EVENT_IN),
+                     _event_row()),
+    "executions": (lambda s, t: ExecutionRepository(s, t).insert(FILL), True),
+    "positions": (lambda s, t: PositionRepository(s, t).upsert(STATE), object()),
+    "position_snapshots": (lambda s, t: PositionSnapshotRepository(s, t).append(SNAP), object()),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("table", WRITE_TABLES)
+async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) -> None:
+    """One observation per store call, its clock delta, a refused write included: it held the
+    order path as long."""
+    metrics = Metrics("dev")
+    histogram = metrics.histogram(
+        "oms_db_write_seconds", "OMS writes", ("table",), buckets=OMS_WRITE_BUCKETS, max_series=5
+    )
+    ticks = iter([10.0, 10.25, 20.0, 22.0])
+    timer = WriteTimer(histogram, clock=lambda: next(ticks))
+    write, result = _WRITES[table]
+    assert await write(_AnyStore(result), timer) is result
+    with pytest.raises(OrderConstraintError):
+        await write(_AnyStore(error=OrderConstraintError("ord_cum")), timer)
+    sample, labels = metrics.registry.get_sample_value, {"env": "dev", "table": table}
+    assert sample("oms_db_write_seconds_count", labels) == 2
+    assert sample("oms_db_write_seconds_sum", labels) == 2.25
+
+
+def test_the_catalogue_bounds_the_table_label_by_the_tables_written() -> None:
+    (spec,) = (s for s in CATALOGUE if s.name == "oms_db_write_seconds")
+    assert (spec.kind, spec.labels, spec.buckets) == ("histogram", ("table",), OMS_WRITE_BUCKETS)
+    assert spec.max_series == len(WRITE_TABLES) == len(_WRITES)
+    cap = OMS_STATEMENT_TIMEOUT_MS / 1000  # a p99 near the store's statement cap shows apart
+    assert {cap - 0.5, cap, cap + 0.5} <= set(OMS_WRITE_BUCKETS)
+
+
+@pytest.mark.parametrize(
+    ("fill", "stored", "event", "level"),
+    [(FILL, True, "oms_execution_stored", "info"),
+     (replace(FILL, order_id=None, order_link_id=None), False, "oms_execution_duplicate", "debug")],
+)  # fmt: skip
+async def test_an_execution_write_logs_its_ids(
+    fill: NewExecution, stored: bool, event: str, level: str
+) -> None:
+    with capture_logs() as logs:
+        assert await ExecutionRepository(cast(Any, _AnyStore(stored))).insert(fill) is stored
+    order = {"order_link_id": fill.order_link_id, "order_id": fill.order_id and str(fill.order_id)}
+    ids = order | {"account_id": str(ACCOUNT), "exec_id": "E1"}
+    assert logs == [{"event": event, "log_level": level, **ids}]
+
+
+async def test_the_execution_and_position_reads_pass_the_account_through() -> None:
+    store = _AnyStore(rows := object())
+    got: list[object] = [
+        await ExecutionRepository(cast(Any, store)).get(ACCOUNT, "E7"),
+        await PositionRepository(cast(Any, store)).list_open(ACCOUNT),
+        await PositionRepository(cast(Any, store)).list_unprotected(ACCOUNT),
+    ]
+    assert all(answer is rows for answer in got)
+    reads = [("get", (ACCOUNT, "E7")), ("list_open", (ACCOUNT,)), ("list_unprotected", (ACCOUNT,))]
+    assert store.calls == reads

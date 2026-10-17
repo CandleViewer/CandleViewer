@@ -47,6 +47,8 @@ rules:
       # from_source, to_source (E12, SR-E12-10, #1998): bar sources from `bars/rows.SOURCE_RANK`
       #   {tape, parquet, kline}; a refusal needs a lower rank, so only kline -> tape|parquet;
       #   max_series=2.
+      # table, also (E29-T01, #845): the five tables the OMS repositories write {orders, order_events,
+      #   executions, positions, position_snapshots}, a `Literal` in code; max_series=5.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"

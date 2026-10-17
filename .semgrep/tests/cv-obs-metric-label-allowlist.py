@@ -39,3 +39,7 @@ def ok_entity_kind(reg: object) -> None:
 def ok_bars_1998(reg: object) -> None:
     reg.gauge("cv_t_rows", "help", ("table",))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_u", "h", ("from_source", "to_source"))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_table(reg: object) -> None:
+    reg.histogram("cv_t_seconds", "help", ("table",))  # ok: cv-obs-metric-label-allowlist
