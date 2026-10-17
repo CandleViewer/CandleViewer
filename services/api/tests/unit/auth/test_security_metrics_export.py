@@ -22,10 +22,12 @@ from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import (
     AUTH_EXPORTED_NAMES,
+    ENROLMENT_ONLY_ROLES,
     LOGIN_FAILURE_METHODS,
     authz_denied_total,
     export_auth_metrics,
     normalise_permission,
+    normalise_role,
 )
 from candleviewer.auth.models import MfaMethodKind
 from candleviewer.observability.metrics import Metrics
@@ -52,6 +54,11 @@ read = REGISTRY.get_sample_value
 series = {m: read("auth_login_failures_total", {"method": m}) for m in LOGIN_FAILURE_METHODS}
 print(json.dumps(series))
 """
+
+#: #2295 (U34 monitoring): each enrolment counter with its one label and closed value set.
+_ENROLMENT_SERIES = {
+    "auth_enrolment_only_sessions_total": ("role", ENROLMENT_ONLY_ROLES),
+}
 
 
 def test_catalogue_declares_the_three_security_series_live_and_exported() -> None:
@@ -242,3 +249,21 @@ def test_the_revoke_to_close_latency_has_one_name_catalogued_and_exported() -> N
     assert (spec.kind, spec.labels, spec.status, spec.exported) == ("histogram", (), "live", True)
     assert _LATENCY in AUTH_EXPORTED_NAMES
     assert spec.buckets is not None and 5.0 in spec.buckets  # SR-029's line is a bucket edge
+
+
+def test_enrolment_series_are_catalogued_exported_and_bound_from_process_start() -> None:
+    for name, (label, values) in _ENROLMENT_SERIES.items():
+        spec = _SPECS[name]
+        assert (spec.kind, spec.status, spec.exported) == ("counter", "live", True), name
+        assert (spec.labels, spec.max_series) == ((label,), len(values)), name
+        assert name in AUTH_EXPORTED_NAMES, name
+        for value in values:
+            assert REGISTRY.get_sample_value(name, {label: value}) is not None, (name, value)
+
+
+def test_normalise_role_keeps_the_highest_system_role_and_clamps_the_rest() -> None:
+    assert normalise_role(["viewer", "owner"]) == "owner"
+    assert normalise_role(("viewer", "manager")) == "manager"
+    assert normalise_role(["viewer"]) == "viewer"
+    for hostile in ([], ["admin"], ["OWNER"], ["owner "], ["x" * 500]):
+        assert normalise_role(hostile) == "other", hostile
