@@ -220,7 +220,16 @@ async def test_store_projects_snapshot_and_drops_api_key(
     stored = store.rows[meta.key_id]["permission_snapshot"]
     assert "apiKey" not in stored and API_KEY not in repr(stored)
     assert set(stored) <= {"fetched_at", "uid", "note", "readOnly", "permissions", "ips",
-                           "type", "expiredAt"}  # fmt: skip
+                           "type", "expiredAt", "uta"}  # fmt: skip
+
+
+async def test_store_keeps_the_uta_flag_in_the_stored_snapshot(
+    broker: CredentialBroker, store: Any
+) -> None:
+    meta = await broker.store(
+        ENV, ACCOUNT, "l", Secret(API_KEY), Secret(API_SECRET), {**SNAPSHOT, "uta": 1}
+    )
+    assert store.rows[meta.key_id]["permission_snapshot"]["uta"] == 1
 
 
 async def test_dek_of_wrong_length_is_refused(broker: CredentialBroker, store: Any) -> None:

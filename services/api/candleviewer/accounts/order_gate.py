@@ -29,6 +29,8 @@ class DisabledReason(StrEnum):
     disable; the verifier reports it as no active key."""
 
     KEY_WITHDRAW_PERMISSION = "key_withdraw_permission"
+    KEY_PERMISSION_NOT_ALLOWED = "key_permission_not_allowed"
+    KEY_NOT_READ_ONLY = "key_not_read_only"
     KEY_IP_WHITELIST_MISSING = "key_ip_whitelist_missing"
     KEY_IP_WHITELIST_MISMATCH = "key_ip_whitelist_mismatch"
     ACCOUNT_DISABLED = "account_disabled"

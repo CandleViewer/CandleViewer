@@ -129,10 +129,20 @@ def test_only_an_active_key_that_is_exactly_true_admits_an_order(truthy: object)
     assert refusal is not None and refusal.reason == "no_active_key"
 
 
+#: The rules that say a key is unusable or wrong, not that it breaks the key policy (C-2.8: a right
+#: outside the allow-list, write access, a whitelist other than the egress IP): the verifier
+#: reports no active key. Every other rule is a `DisabledReason`.
+NO_ACTIVE_KEY_RULES = {
+    Rule.MISSING_SCOPES, Rule.UID_MISMATCH, Rule.NOT_UNIFIED, Rule.WRONG_ENVIRONMENT,
+    Rule.KEY_EXPIRED, Rule.PROBE_FAILED,
+}  # fmt: skip
+
+
 def test_the_policy_disable_codes_are_the_key_verifiers_rule_codes() -> None:
-    """`DisabledReason` repeats three codes that `Rule` owns: a rename there must fail here."""
-    verifier = {Rule.WITHDRAW_PERMISSION, Rule.IP_WHITELIST_MISSING, Rule.IP_WHITELIST_MISMATCH}
-    assert {d.value for d in DisabledReason} == {r.value for r in verifier} | {"account_disabled"}
+    """`DisabledReason` repeats the key-policy codes `Rule` owns: a rename there, or a new `Rule`
+    not listed above, must fail here."""
+    policy = {r.value for r in set(Rule) - NO_ACTIVE_KEY_RULES}
+    assert {d.value for d in DisabledReason} == policy | {"account_disabled"}
 
 
 @pytest.mark.parametrize("disabled", list(DisabledReason))

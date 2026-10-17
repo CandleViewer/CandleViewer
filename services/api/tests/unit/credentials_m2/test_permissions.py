@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.secrets._permissions import reject_withdraw
+from candleviewer.secrets._permissions import project_snapshot, reject_withdraw
 from candleviewer.secrets.errors import (
     WithdrawPermissionRejected,
 )
@@ -52,3 +52,14 @@ def test_malformed_snapshot_has_its_own_code(perms: dict[str, Any]) -> None:
     with pytest.raises(SnapshotInvalid) as ei:
         reject_withdraw(perms)
     assert str(ei.value) == "snapshot_invalid"
+
+
+@pytest.mark.parametrize("flag", [0, 1])
+def test_project_snapshot_keeps_the_uta_flag_the_verification_found(flag: int) -> None:
+    """SR-E27-04: UTA is stored in the snapshot, so the projection keeps it beside `readOnly`."""
+    assert project_snapshot({**SNAPSHOT, "uta": flag})["uta"] == flag
+
+
+def test_project_snapshot_still_drops_the_reply_fields_it_does_not_list() -> None:
+    kept = project_snapshot({**SNAPSHOT, "uta": 1, "unified": 1, "apiKey": "x", "parentUid": "9"})
+    assert {"unified", "apiKey", "parentUid"}.isdisjoint(kept)

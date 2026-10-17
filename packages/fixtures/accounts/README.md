@@ -95,12 +95,10 @@ a **key scenario** (one key: `tester_inputs.key_id`), a **rotation pair** (`rota
 - `expected` records the outcome named as in the plan (`outcome` text, `cases`, and for a key
   scenario `verification`, `problem` with the rule after the slash, `health`). Lettered case ids
   (`E27-TC-103a`) are the plan's runs of one case. The plan binds one rule name,
-  `key_withdraw_permission` for TC-102, and records the others (pending #2417), except that the six
-  inputs of E27 threat model AC-15 must get six different rules. So a recorded rule is the shipped
-  pipeline's (`candleviewer/accounts/verification.py`, E27-T03, #2854) where that holds, and a bare
-  `validation_failed` where the pipeline gives an AC-15 input another one's rule. The Python suite
-  asserts every recorded verdict and rule against the pipeline; the rows where they differ are
-  listed below.
+  `key_withdraw_permission` for TC-102, and records the others as the merged contract names them
+  (`createApiKey`, #3089), so a recorded rule is the shipped pipeline's
+  (`candleviewer/accounts/verification.py`, E27-T03, #2854). The Python suite asserts every
+  recorded verdict and rule against the pipeline; the rows where they differ are listed below.
 
 **Clock and account.** The loader applies both before the merge patch: the envelope `time` and
 `X-Bapi-Limit-Reset-Timestamp` follow the stub exchange clock (`now + server_offset_ms`); server
@@ -312,32 +310,31 @@ stub behaviour is checked by review and the Python suite. Where a row leaves the
 ### Where the shipped pipeline differs from the plan
 
 The Python suite runs every key scenario through `accounts/verification.py` (#2854). Its verdicts
-and rules agree with the recorded ones except in four rows. Three are pinned, so a test fails the
-day the pipeline catches up and the row then records the pipeline's answer:
+and rules agree with the plan's except in two rows. One is pinned, so a test fails the day the
+pipeline catches up and the row then records the pipeline's answer:
 
 - `new_key_48h` (`PLAN_AHEAD_OF_PIPELINE`): the plan expects one warning naming the 48 h
   restriction (TC-130, DC-23); the pipeline has no such warning and passes the key with none.
-- `fiat_p2p_enabled` and `ip_wildcard` (`AC15_SHARED_RULE`): E27 threat model AC-15 refuses each
-  of its six inputs with a rule of its own (plan §2: TC-103a, 103d, 104, 106a, 106b and 108). The
-  pipeline gives `fiat_p2p_enabled` (TC-103d) the rule of `transfer_enabled` (TC-103a),
-  `key_withdraw_permission`. It gives `ip_wildcard` (TC-106b) the rule of `ip_missing` (TC-104),
-  `key_ip_whitelist_missing`, with the copy "the key has no IP whitelist". Both rows record a bare
-  `validation_failed`: their rule is pending #2417 and must differ.
 
-The fourth is judged outside the pipeline by design, so no pin could flip
+The other is judged outside the pipeline by design, so no pin could flip
 (`JUDGED_OUTSIDE_THE_PIPELINE`):
 
 - `ws_auth_timeout`: the plan's `refused` is the test route's private-WS probe (TC-125); the
   pipeline judges the two signed REST calls only, and passes.
 
-Elsewhere the recorded rule is the pipeline's. The pipeline gives every right outside its
-allow-list `key_withdraw_permission`, so every transfer, fiat, card and extra-scope row except
-`fiat_p2p_enabled` records that rule, which the plan records rather than requires.
+Elsewhere the recorded rule is the pipeline's. The pipeline gives a withdraw or transfer right
+`key_withdraw_permission` and every other right outside its allow-list `key_permission_not_allowed`
+(`createApiKey` step 2), so the transfer rows record the first and the fiat, card and extra-scope
+rows the second, which the plan records rather than requires.
 `stored_key_rejected` after its switch fails `key_wrong_environment` (a `10003`); TC-134's key
 status `invalid` is the status layer's, not the pipeline's. The UTA check (plan DC-33) agrees
 with the plan: the adapter reads UTA from `uta` (`exchange/bybit/key_info.py`), so `compliant`
 (`unified: 0`, `uta: 1`) passes and `non_uta` (both 0) fails `key_not_unified`. A build that read
 the deprecated `unified` would refuse `compliant`, which the plan files against DC-33.
+
+The six inputs of E27 threat model AC-15 get five rules: `ip_wildcard` (TC-106b) records the rule
+of `ip_extra_foreign` (TC-106a), `key_ip_whitelist_mismatch` (`createApiKey` step 5). The pin
+`AC15_SHARED_RULE` fails if that pair is separated or a second pair shares a rule.
 
 ### Where the plan's rows differ from what the exchange would likely do
 

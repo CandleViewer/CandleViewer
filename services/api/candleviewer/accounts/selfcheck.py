@@ -19,8 +19,9 @@ another environment (C-2.11). Outcomes (threat model `E27-accounts.md` D7, SR-E2
   `interval_s` plus `FRESHNESS_GRACE` latches the gate as stale.
 
 Audit records hold rule codes and the verified permission facts (SR-031), never an IP or a message
-naming one: Viewers read the audit log (C-12.4), while the key's whitelist and the egress IP are
-Confidential and keys:read-gated. They stay in the `api_keys` columns and the standing result.
+naming one, and never an exchange UID: Viewers read the audit log (C-12.4), while the key's
+whitelist, the egress IP and the UID are Confidential and keys:read-gated. They stay in the
+`api_keys` columns and the standing result (decision 4b on #836).
 
 What cannot be checked latches the gate too and disables nothing: keys found while no egress IP is
 configured, a key list that cannot be read (at boot, or once a known key is past its window), a
@@ -102,7 +103,7 @@ _REASON_TEXT: Final = {
 #: Latch precedence: a failure replaces a weaker latch of this job's. Another module's latch (the
 #: KEK's: no key can be verified without it) is never replaced.
 _RANK: Final = {UNAVAILABLE: 0, STALE: 0, FAILED: 1}
-#: `last_error_code` holds a fixed code (a rule, a venue code or a taxonomy code), never text.
+#: `last_error_code` holds a fixed code, never text: a rule, a `KeyProbeError` name or a job code.
 _CODE: Final = re.compile(r"[a-z0-9_]{1,40}")
 
 Outcome = Literal["passed", "failed", "inconclusive"]
@@ -164,6 +165,7 @@ def _facts(result: VerificationResult, now: datetime) -> dict[str, object]:
         "fetched_at": now.isoformat(),
         "uid": result.uid,
         "readOnly": int(result.read_only),
+        "uta": int(result.uta),
         "permissions": {group: list(rights) for group, rights in result.permissions.items()},
         "ips": list(result.ip_whitelist),
         "expiredAt": None if expiry is None else expiry.isoformat(),
@@ -466,14 +468,16 @@ class KeySelfCheck:
     @staticmethod
     def _summary(result: VerificationResult, now: datetime) -> dict[str, object]:
         """A verdict's audit record (SR-031): the rule and warning codes, and the key-info facts
-        when that call returned them (a refusal fetched none), without the whitelist."""
+        when that call returned them (a refusal fetched none), without the whitelist or the
+        exchange UID."""
         summary: dict[str, object] = {
             "warnings": [str(w) for w in result.warnings],
             "failures": [str(f.rule) for f in result.failures],
         }
         if result.key_info_ret_code == 0:
-            summary |= {k: v for k, v in _facts(result, now).items() if k != "ips"}
-            summary |= {"uta": result.unified, "withdraw_enabled": result.withdraw_enabled}
+            hidden = {"ips", "uid", "uta"}
+            summary |= {k: v for k, v in _facts(result, now).items() if k not in hidden}
+            summary |= {"uta": result.uta, "withdraw_enabled": result.withdraw_enabled}
         return summary
 
     async def _emit(self, action: str, kind: str, object_id: UUID, **fields: Any) -> None:

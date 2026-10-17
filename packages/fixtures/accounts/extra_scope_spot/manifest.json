@@ -23,9 +23,9 @@
     }
   },
   "expected": {
-    "outcome": "Refused (check: scopes outside the allow-list; SR-030a, #2417): a trading key carries only the contract trade scopes, and the allow-list refuses any other right under rule key_withdraw_permission; not persisted.",
+    "outcome": "Refused (check: scopes outside the allow-list; SR-030a, #2417): a trading key carries only the contract trade scopes, and the allow-list refuses any other right under rule key_permission_not_allowed; not persisted.",
     "verification": "refused",
-    "problem": "validation_failed/key_withdraw_permission",
+    "problem": "validation_failed/key_permission_not_allowed",
     "cases": ["E27-TC-112"]
   }
 }

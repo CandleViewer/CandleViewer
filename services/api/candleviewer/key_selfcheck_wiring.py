@@ -2,7 +2,7 @@
 
 M13 judges keys and may import neither M3 nor M4 (C-3.1); M4 makes the signed calls and may not
 import M13. This glue binds them: a refusal that is a verdict about the key becomes `KeyRefused`,
-every other adapter error `VerificationInconclusive` carrying the venue code or the taxonomy code,
+every other adapter error `VerificationInconclusive` carrying its `KeyProbeError` name,
 never exchange text (SR-E27-08). Each call, its budget wait and its signing included, is cut at the
 adapter's own per-call bound, read from the adapter surface (`key_call_timeout_s`; ticket
 performance notes), so this file imports no venue module (C-2.2). The store, the calls and the job
@@ -74,6 +74,8 @@ class KeyVerifyingExchange(Protocol):
 
     def key_refusal(self, error: ExchangeError) -> tuple[str, int] | None: ...
 
+    def key_probe_error(self, error: ExchangeError) -> str: ...
+
 
 @asynccontextmanager
 async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
@@ -88,10 +90,7 @@ async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
         verdict = exchange.key_refusal(error)
         if verdict is not None:
             raise KeyRefused(Refusal(verdict[0]), verdict[1]) from None
-        code = error.exchange_ret_code
-        raise VerificationInconclusive(
-            error.code.value.lower() if code is None else str(code)
-        ) from None
+        raise VerificationInconclusive(exchange.key_probe_error(error)) from None
 
 
 class JudgedCalls:

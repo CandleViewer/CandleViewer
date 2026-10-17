@@ -76,7 +76,8 @@ KEK = "secrets.kek_unavailable"
 TESTED, DISABLED = "account.tested", "account.disabled_by_policy"
 RECORD = {"actor_label", "object_kind", "object_id", "env", "after_state"}
 FAILURE = {"outcome", "severity", "reason"}
-FACTS = {"fetched_at", "uid", "readOnly", "permissions", "expiredAt", "uta", "withdraw_enabled"}
+#: No audit record names an exchange UID: it is Confidential, and Viewers read the audit log (4b).
+FACTS = {"fetched_at", "readOnly", "permissions", "expiredAt", "uta", "withdraw_enabled"}
 CODES = {"warnings", "failures"}
 WITHDRAW_FAILURE = [
     ("latch", FAILED), ("audit", TESTED), ("error", KEY), ("disable", ACCT), ("audit", DISABLED),
@@ -110,7 +111,7 @@ def target(
 
 
 def inconclusive() -> VerificationInconclusive:
-    return VerificationInconclusive("10018")
+    return VerificationInconclusive("rate_limited")
 
 
 async def within(call: Awaitable[object]) -> None:
@@ -262,17 +263,21 @@ async def test_pass_audits_then_refreshes_the_verified_columns() -> None:
         "fetched_at": NOW.isoformat(),
         "uid": "1000001",
         "readOnly": 0,
+        "uta": 1,
         "permissions": dict(facts().permissions),
         "ips": [EGRESS],
         "expiredAt": "2027-04-13T00:00:00+00:00",
     }
-    shown = {k: v for k, v in snapshot.items() if k != "ips"}  # the whitelist stays in api_keys
+    hidden = {"ips", "uid"}  # the whitelist stays in api_keys; the UID is Confidential (4b)
+    shown = {k: v for k, v in snapshot.items() if k not in hidden}
     assert "outcome" not in audit and audit["after_state"] == {
         **shown, "uta": True, "withdraw_enabled": False, "warnings": [], "failures": [],
     }  # fmt: skip
     assert w.of("pass") == [
         ("pass", KEY, VerifiedKey(snapshot, True, False, (EGRESS,), facts().expires_at, NOW))
     ]
+    stored, shown_uta = w.of("pass")[0][2].snapshot["uta"], audit["after_state"]["uta"]
+    assert (type(stored), type(shown_uta)) == (int, bool)  # the snapshot mirrors the exchange's 0/1
     check = w.check.results[KEY]
     assert (check.outcome, check.code, check.last_pass_at, w.built) == (
         "passed", None, NOW, [(KEY, "1000001")],
@@ -356,6 +361,14 @@ async def test_an_audit_record_holds_codes_and_permissions_never_an_ip(
     assert EGRESS not in text and "198.51.100.9" not in text
 
 
+async def test_a_uid_mismatch_record_names_no_exchange_uid() -> None:
+    w = World(target(uid="2000002"))  # the fixture key reports 1000001: another account's
+    await w.run()
+    assert w.audit(TESTED)["reason"] == "key_uid_mismatch"
+    text = json.dumps(w.of("audit"))  # the failure and the disable records alike
+    assert "1000001" not in text and "2000002" not in text
+
+
 async def test_ip_mismatch_keeps_the_egress_ip_for_copying_into_the_whitelist() -> None:
     w = World(target(), info=facts(ips=["198.51.100.9"]))
     await w.run()
@@ -432,16 +445,16 @@ async def test_a_disable_that_fails_has_an_unknown_outcome_and_leaves_the_failur
 @pytest.mark.parametrize(
     ("info", "probe", "code"),
     [
-        (VerificationInconclusive("10004"), None, "10004"),
-        (VerificationInconclusive("10018"), None, "10018"),
-        (VerificationInconclusive("transport_error"), None, "transport_error"),
-        (VerificationInconclusive("unknown_state"), None, "unknown_state"),
-        (None, VerificationInconclusive("10002"), "10002"),
+        (VerificationInconclusive("auth_error"), None, "auth_error"),
+        (VerificationInconclusive("rate_limited"), None, "rate_limited"),
+        (VerificationInconclusive("service_unavailable"), None, "service_unavailable"),
+        (VerificationInconclusive("exchange_unknown"), None, "exchange_unknown"),
+        (None, VerificationInconclusive("clock_drift"), "clock_drift"),
         (TimeoutError(), None, "timeout"),
         (RuntimeError("signing refused"), None, "check_error"),
         (VerificationInconclusive("Not a code"), None, "inconclusive"),
     ],
-    ids=["10004", "10018", "5xx", "malformed", "probe-10002", "timeout", "error", "odd-text"],
+    ids=["auth", "rate-limit", "5xx", "malformed", "probe-clock", "timeout", "error", "odd-text"],
 )
 async def test_inconclusive_check_never_disables_or_refreshes(
     info: object, probe: object, code: str
@@ -462,7 +475,7 @@ async def test_an_inconclusive_check_is_logged_as_a_warning() -> None:
     w = World(target(), info=inconclusive())
     with capture_logs() as logs:
         await w.run()
-    expected = {"event": "key_selfcheck_inconclusive", "key_id": str(KEY), "code": "10018"}
+    expected = {"event": "key_selfcheck_inconclusive", "key_id": str(KEY), "code": "rate_limited"}
     assert {**expected, "log_level": "warning"} in logs
 
 
@@ -519,7 +532,7 @@ async def test_an_inconclusive_check_keeps_the_last_pass_and_records_its_code() 
     await w.run()
     check = w.check.results[KEY]
     assert (check.outcome, check.checked_at) == ("passed", NOW)
-    assert w.of("error") == [("error", KEY, "10018")]
+    assert w.of("error") == [("error", KEY, "rate_limited")]
 
 
 async def test_a_refused_audit_refuses_the_pass_write_and_keeps_the_last_pass() -> None:

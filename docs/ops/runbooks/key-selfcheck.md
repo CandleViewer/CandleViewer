@@ -28,8 +28,9 @@ key at the exchange. The whitelist is edited in the exchange's web dashboard onl
 
 | Rule                                                    | Fix at the exchange                                                                                                                              |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `key_withdraw_permission`                               | Remove every right but `ContractTrade` `Order`/`Position` and `Derivatives` `DerivativesTrade`. Safer: delete the key and store a compliant one. |
-| `key_missing_scopes`                                    | A trade key needs write access with `ContractTrade` `Order` and `Position`; a read-only key must be read-only.                                   |
+| `key_withdraw_permission`, `key_permission_not_allowed` | Remove every right but `ContractTrade` `Order`/`Position` and `Derivatives` `DerivativesTrade`. Safer: delete the key and store a compliant one. |
+| `key_missing_scopes`                                    | A trade key needs write access with `ContractTrade` `Order` and `Position`.                                                                      |
+| `key_not_read_only`                                     | A key stored as read-only must be read-only at the exchange: switch it to read-only there, or replace it.                                        |
 | `key_not_unified`, `key_uid_mismatch`                   | The key must belong to the account's own unified trading account; otherwise replace it.                                                          |
 | `key_ip_whitelist_missing`, `key_ip_whitelist_mismatch` | Whitelist exactly `CV_EGRESS_IP`: no other entry, range or wildcard. If the egress address changed, correct the setting instead.                 |
 | `key_wrong_environment`                                 | This environment's host does not know the key (a live key in a demo account, say): store a key of the account's environment.                     |
@@ -45,11 +46,13 @@ is an audited admin action that comes with the key routes (#2417, #836); never r
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and
-`api_keys.last_error_code` give the cause: a venue code (10004 signature refused, 10002 clock drift:
-the host clock is off and the ingestion clock guard has not measured the offset, 10006 or 10018 rate
-limit), `rate_limited` (an IP-level hold after a 10018 is in force, so the key was not called),
-`transport_error`, `timeout`, `unknown_state`, `probe_slow` or
-`check_error`. `unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
+`api_keys.last_error_code` give the cause, as a `KeyProbeError` name: `auth_error` (10004, the
+signature was refused), `clock_drift` (10002: the host clock is off and the ingestion clock guard has
+not measured the offset), `rate_limited` (10006, 10018, or the IP-level hold after a 10018, which
+makes no call), `service_unavailable` (10016, 10019 or an HTTP 5xx), `transport_error` (a reset, or
+a reply that is not JSON), `timeout`, `exchange_unknown` (any other refusal or unreadable reply), or
+one of the job's own: `probe_slow` (accepted later than the receive window), `probe_clock_step` (the
+host clock stepped during the probe) or `check_error`. `unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
 the key list could not be read (`key_selfcheck_targets_failed`), a key's check passed its deadline
 (`key_selfcheck_unfinished`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
 with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)

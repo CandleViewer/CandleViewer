@@ -20,9 +20,9 @@
     }
   },
   "expected": {
-    "outcome": "Refused (check: no wildcard; SR-030a, #2417, E27 threat model AC-15): 422 validation_failed with a rule of its own, never the one ip_missing (TC-104) gets; the rule name is pending #2417. Not persisted. A 201 is P0 (plan DC-03).",
+    "outcome": "Refused (check: every allowlist entry equals the egress IP, so no wildcard; SR-030a, E27 threat model AC-15): 422 validation_failed with key_ip_whitelist_mismatch, the one rule a wildcard, a range and any other address share (createApiKey step 5, #3089), never the key_ip_whitelist_missing that ip_missing (TC-104) gets. Not persisted. A 201 is P0 (plan DC-03).",
     "verification": "refused",
-    "problem": "validation_failed",
+    "problem": "validation_failed/key_ip_whitelist_mismatch",
     "cases": ["E27-TC-106b"]
   }
 }

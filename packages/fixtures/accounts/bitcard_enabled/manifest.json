@@ -23,9 +23,9 @@
     }
   },
   "expected": {
-    "outcome": "Refused (check: fund-moving group outside the allow-list; #2417, E27 threat model AC-15): 422 validation_failed with rule key_withdraw_permission; not persisted. A 201 is P0 (plan DC-01).",
+    "outcome": "Refused (check: fund-moving group outside the allow-list; #2417, E27 threat model AC-15): 422 validation_failed with rule key_permission_not_allowed; not persisted. A 201 is P0 (plan DC-01).",
     "verification": "refused",
-    "problem": "validation_failed/key_withdraw_permission",
+    "problem": "validation_failed/key_permission_not_allowed",
     "cases": ["E27-TC-103g"]
   }
 }

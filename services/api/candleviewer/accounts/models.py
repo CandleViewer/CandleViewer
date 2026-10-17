@@ -131,6 +131,8 @@ class PermissionSnapshot(BaseModel):
     ips: tuple[str, ...] = ()
     type: int = 1
     expiredAt: str | None = None
+    #: The key-info `uta` flag (SR-E27-04); `None` for a key stored before it was kept: unknown.
+    uta: Literal[0, 1] | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from candleviewer.exchange.base.errors import (
@@ -27,6 +28,7 @@ from candleviewer.exchange.bybit.key_info import (
     ApiKeyFacts,
     parse_key_info,
     parse_probe,
+    probe_error,
     refusal,
 )
 from candleviewer.exchange.bybit.mapping import map_ret_code
@@ -53,7 +55,7 @@ def key_info(**result: Any) -> dict[str, Any]:
 def test_parse_key_info_reads_the_gate_fields(uid: int | str) -> None:
     assert parse_key_info(key_info(userID=uid)) == ApiKeyFacts(
         uid="1000001",
-        unified=True,
+        uta=True,
         read_only=False,
         permissions=load("key_info_trade.json")["result"]["permissions"],
         ip_whitelist=("203.0.113.7",),
@@ -61,11 +63,11 @@ def test_parse_key_info_reads_the_gate_fields(uid: int | str) -> None:
     )
 
 
-@pytest.mark.parametrize(("uta", "deprecated", "unified"), [(0, 1, False), (1, 0, True)])
-def test_uta_flag_decides_unified_not_the_deprecated_flag(
-    uta: int, deprecated: int, unified: bool
+@pytest.mark.parametrize(("flag", "deprecated", "uta"), [(0, 1, False), (1, 0, True)])
+def test_uta_flag_decides_uta_not_the_deprecated_unified_flag(
+    flag: int, deprecated: int, uta: bool
 ) -> None:
-    assert parse_key_info(key_info(uta=uta, unified=deprecated)).unified is unified
+    assert parse_key_info(key_info(uta=flag, unified=deprecated)).uta is uta
 
 
 @pytest.mark.parametrize("raw", ["", None, "1970-01-01T00:00:00Z", "0001-01-01T00:00:00Z"])
@@ -178,3 +180,64 @@ def test_other_failures_are_inconclusive(error: ExchangeError) -> None:
 @pytest.mark.parametrize("path", [KEY_INFO_PATH, PROBE_PATH])
 def test_paths_pass_the_rest_path_guard(path: str) -> None:
     assert validate_rest_path(path) == path
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        (10002, "clock_drift"),
+        (10003, "auth_error"),
+        (10004, "auth_error"),
+        (10005, "permission_denied"),
+        (10006, "rate_limited"),
+        (10010, "ip_not_allowed"),
+        (10016, "service_unavailable"),
+        (10018, "rate_limited"),
+        (10019, "service_unavailable"),
+        (10429, "rate_limited"),
+    ],
+)
+def test_probe_error_is_named_by_the_exchange_code(code: int, name: str) -> None:
+    """Its own table (#3089), not `map_ret_code`, which folds 10005 and 10010 into an auth error."""
+    assert probe_error(map_ret_code(code, "exchange text")) == name
+
+
+@pytest.mark.parametrize("code", [10001, 10403, 33004, 110001, 3400139])
+def test_any_other_exchange_code_is_exchange_unknown_whatever_its_error_class(code: int) -> None:
+    """A code outside the contract's table (#3089) is unknown, whatever class the mapping gives."""
+    assert probe_error(map_ret_code(code, "exchange text")) == "exchange_unknown"
+
+
+def test_the_local_ip_hold_refusal_is_rate_limited_without_an_exchange_code() -> None:
+    assert probe_error(RateLimitError("an IP-level hold is in force", retry_after_s=600.0)) == (
+        "rate_limited"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [UnknownStateError("malformed key-info reply"), ExchangeError("untyped")],
+    ids=["malformed_reply", "untyped"],
+)
+def test_an_error_with_no_exchange_code_and_no_class_of_its_own_is_exchange_unknown(
+    error: ExchangeError,
+) -> None:
+    assert probe_error(error) == "exchange_unknown"
+
+
+@pytest.mark.parametrize(
+    ("cause", "name"),
+    [
+        (None, "service_unavailable"),
+        (httpx.ConnectError("unreachable"), "transport_error"),
+        (httpx.ReadTimeout("slow"), "timeout"),
+        (httpx.ConnectTimeout("slow"), "timeout"),
+        (TimeoutError(), "timeout"),
+        (ValueError("not json"), "transport_error"),
+    ],
+    ids=["5xx", "reset", "read_timeout", "connect_timeout", "deadline", "non_json_body"],
+)
+def test_a_transport_error_is_refined_by_its_cause(cause: Exception | None, name: str) -> None:
+    error = TransportError("transport fault")
+    error.__cause__ = cause
+    assert probe_error(error) == name

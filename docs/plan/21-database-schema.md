@@ -816,7 +816,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `status`                    | key_status  | no   | `'pending'`     |                                                             |
 | `expires_at`                | timestamptz | yes  | NULL            | Bybit key expiry if set                                     |
 | `last_used_at`              | timestamptz | yes  | NULL            | ≤1 attempt/min/key, async; only writer: M2 broker `_touch`  |
-| `last_error_code`           | text        | yes  | NULL            | e.g. `10003`, `10018`, `10002`                              |
+| `last_error_code`           | text        | yes  | NULL            | rule or `KeyProbeError` name, e.g. `key_probe_failed`       |
 | `last_error_at`             | timestamptz | yes  | NULL            |                                                             |
 | `rotation_due_at`           | timestamptz | yes  | NULL            | Never written; derived on read (`key_age.py`), stays NULL   |
 | `created_by` / `updated_by` | uuid        | yes  | NULL            |                                                             |
@@ -887,6 +887,7 @@ group is empty:
   "uid": "123456",
   "note": "cv-main-live",
   "readOnly": 0,
+  "uta": 1,
   "permissions": {
     "ContractTrade": ["Order", "Position"],
     "Spot": [],
@@ -902,6 +903,14 @@ group is empty:
   "expiredAt": null
 }
 ```
+
+`uta` is the key-info field of that name (`1`: a unified trading account); the deprecated `unified`
+is never read (SR-E27-04). The self-check writes it on every pass and an import keeps it (M2's
+`project_snapshot` lists it beside `readOnly`); a key stored before has none, which
+`PermissionSnapshot` reads as unknown, never as a non-UTA. `last_error_code`
+holds a fixed code and never text: the failing rule (`key_withdraw_permission`, `key_probe_failed`),
+the contract's `KeyProbeError` name for a call that gave no verdict, or one of the job's own
+(`probe_slow`, `probe_clock_step`, `check_error`, `inconclusive`).
 
 ```sql
 -- Current definition (migration 0019_snapshot_withdraw_transfer, #2240): 0017's rule plus three

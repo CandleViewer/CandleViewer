@@ -22,7 +22,7 @@ from candleviewer.exchange.bybit.archive import (
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.funding import BybitFundingFetcher
 from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
-from candleviewer.exchange.bybit.key_info import refusal
+from candleviewer.exchange.bybit.key_info import probe_error, refusal
 from candleviewer.exchange.bybit.key_verify import (
     CALL_TIMEOUT_S,
     KeyVerificationCalls,
@@ -156,6 +156,8 @@ class ExchangeBybitService:
 
     #: E27-T03: `(reason, code)` when a key-verification refusal is a verdict about the key.
     key_refusal = staticmethod(refusal)
+    #: E27-T03: the contract's `KeyProbeError` name of any other key-verification failure.
+    key_probe_error = staticmethod(probe_error)
     #: E27-T03: the bound on one key-verification call, its budget wait and M2's signing included.
     #: The composition root cuts each call at this value, read here (C-2.2), never imported.
     key_call_timeout_s: float = CALL_TIMEOUT_S

@@ -16,9 +16,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from candleviewer.exchange.base.errors import AuthError, ExchangeError, UnknownStateError
+from candleviewer.exchange.base.errors import (
+    AuthError,
+    ExchangeError,
+    RateLimitError,
+    TransportError,
+    UnknownStateError,
+)
 
 KEY_INFO_PATH: Final = "/v5/user/query-api"
 PROBE_PATH: Final = "/v5/account/wallet-balance"
@@ -35,6 +42,26 @@ _VERDICTS: Final[Mapping[int, tuple[str, tuple[type[ExchangeError], ...]]]] = {
 }
 #: The verdict vocabulary. M13's `Refusal` holds exactly these values (a parity test pins it).
 VERDICT_REASONS: Final = frozenset(reason for reason, _ in _VERDICTS.values())
+#: The probe's own table (#3089; not `map_ret_code`, which folds 10005 and 10010 into an auth error
+#: and 10016 and 10019 into a rate-limit error): a refused call's exchange code -> its
+#: `KeyProbeError` name, `exchange_unknown` when unlisted. `probe_error` reads the HTTP 5xx row from
+#: the REST client's own error; the 403 and 429 rows wait for the client's HTTP status (#3281).
+_PROBE_CODES: Final[Mapping[int, str]] = {
+    10002: "clock_drift",
+    10003: "auth_error",
+    10004: "auth_error",
+    10005: "permission_denied",
+    10006: "rate_limited",
+    10010: "ip_not_allowed",
+    10016: "service_unavailable",
+    10018: "rate_limited",
+    10019: "service_unavailable",
+    10429: "rate_limited",
+}
+#: `KeyProbeError`, closed (SR-E27-08): every name `probe_error` returns; a test pins the enum.
+PROBE_ERRORS: Final = frozenset(
+    {*_PROBE_CODES.values(), "transport_error", "timeout", "exchange_unknown"}
+)
 #: Plausible exchange clock (ms): 2020-01-01 to 2100-01-01.
 _MS_MIN, _MS_MAX = 1_577_836_800_000, 4_102_444_800_000
 #: No-expiry forms (#836). The venue's reference fills the expiry only for a key with no IP
@@ -49,7 +76,7 @@ _NO_DEADLINE: Final = -1
 @dataclass(frozen=True, slots=True)
 class ApiKeyFacts:
     uid: str
-    unified: bool
+    uta: bool
     read_only: bool
     permissions: Mapping[str, object]
     ip_whitelist: tuple[str, ...]
@@ -107,7 +134,7 @@ def parse_key_info(body: Mapping[str, Any]) -> ApiKeyFacts:
         raise UnknownStateError("malformed key-info reply")
     return ApiKeyFacts(
         uid=info.userID,
-        unified=info.uta == 1,
+        uta=info.uta == 1,
         read_only=info.readOnly == 1,
         permissions=info.permissions,
         ip_whitelist=tuple(info.ips),
@@ -131,3 +158,29 @@ def refusal(error: ExchangeError) -> tuple[str, int] | None:
         return None
     reason, classes = _VERDICTS[code]
     return (reason, code) if isinstance(error, classes) else None
+
+
+def probe_error(error: ExchangeError) -> str:
+    """The `KeyProbeError` name of a signed call's failure (SR-E27-08): a closed set of fixed
+    words, with no exchange text, header, URL or request fragment in it.
+
+    An exchange code decides when there is one. Without a code the class does: the local IP-hold
+    refusal is `rate_limited`, and a `TransportError` is read from how the REST client raised it.
+    A timeout chains its httpx or builtin timeout and is `timeout`, a refinement of the transport
+    error the contract names; a reset or a body that is not JSON chains its own error and is
+    `transport_error`; the one raised with no cause is an HTTP 5xx, `service_unavailable`. The
+    client exposes no HTTP status yet, so a 403 or 429 with no JSON body reads as `transport_error`;
+    the contract's `ip_not_allowed` and `rate_limited` rows wait for it (#3281)."""
+    code = error.exchange_ret_code
+    if code is not None:
+        return _PROBE_CODES.get(code, "exchange_unknown")
+    if isinstance(error, RateLimitError):
+        return "rate_limited"
+    if isinstance(error, TransportError):
+        cause = error.__cause__
+        if cause is None:
+            return "service_unavailable"
+        if isinstance(cause, TimeoutError | httpx.TimeoutException):
+            return "timeout"
+        return "transport_error"
+    return "exchange_unknown"
