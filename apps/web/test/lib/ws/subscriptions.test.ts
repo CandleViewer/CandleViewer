@@ -400,8 +400,8 @@ describe("options (C4) and server strings", () => {
   });
 });
 
-describe("options nested too deep", () => {
-  // JSON.parse accepts a million levels, so `effective` can reach the registry that deep.
+describe("options too deep or too big", () => {
+  // JSON.parse accepts a million levels and a 4 MiB frame holds a million elements: `effective` can arrive so.
   const deep = (n: number) => '{"a":'.repeat(n) + "1" + "}".repeat(n);
   const subWith = (options: string) =>
     decodeFrame(
@@ -427,6 +427,34 @@ describe("options nested too deep", () => {
     expect(Object.keys(handle.effective)).toEqual(["a"]); // a retune too deep changed nothing
     registry.onCtlOk(ctlWith('{"b":1}'), LIVE);
     expect(Object.keys(handle.effective)).toEqual(["a", "b"]);
+  });
+
+  it("an effective of 100 000 keys or a 1 M-element list is ignored like one too deep", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onSubOk(subOk({ throttle_ms: 50 }), LIVE);
+    const keys = `{${Array.from({ length: 100_000 }, (_, i) => `"k${i}":1`).join(",")}}`;
+    const empties = `{"v":[${new Array<string>(1_000_000).fill("[]").join(",")}]}`;
+    for (const options of [keys, empties]) {
+      registry.onSubOk(subWith(options), LIVE);
+      registry.onCtlOk(ctlWith(options), LIVE);
+    }
+    expect(handle.effective).toEqual({ throttle_ms: 50 }); // nothing thrown or copied, what it had stays
+  }, 30_000); // four parses of a million values: slow on a busy machine, not a performance budget
+
+  it("keeps 1 024 values and ignores 1 025", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    const list = (n: number) => `{"v":[${new Array<string>(n).fill("1").join(",")}]}`;
+    const length = () => {
+      const items = handle.effective["v"];
+      return Array.isArray(items) ? items.length : -1;
+    };
+    registry.onSubOk(subWith(list(1022)), LIVE); // the root, the list and 1 022 elements
+    expect(length()).toBe(1022);
+    registry.onSubOk(subWith(list(1023)), LIVE);
+    registry.onCtlOk(ctlWith(list(1023)), LIVE);
+    expect(length()).toBe(1022);
   });
 
   it("still voids the stream when the resnapshot comes with options too deep to keep", () => {

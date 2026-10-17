@@ -15,20 +15,27 @@ import { createSequencer, topicKey } from "./sequencer";
 import { createSnapshotAssembler } from "./snapshotAssembler";
 
 const MAX_SUB_ID_LENGTH = 64;
-/** `effective` is a few small options, lists and maps of them: what nests deeper than this is not options. */
+/** `effective` is a few small options, lists and maps of them: more levels or more values than these is not options. */
 const MAX_OPTIONS_DEPTH = 8;
+const MAX_OPTIONS_NODES = 1024;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 /**
- * True when containers nest deeper than `limit`. Walked level by level, without recursion: JSON can
- * nest a million deep, and this stops at the limit, so `frozen` below never recurses past it.
+ * True when `value` is not options: its containers nest deeper than `MAX_OPTIONS_DEPTH`, or it holds
+ * more than `MAX_OPTIONS_NODES` values (the root, every key's value and every element count). Walked
+ * level by level, without recursion, and stopped at either limit: a 4 MiB frame can nest a million
+ * levels or hold a million elements, and `frozen` below copies what this lets through, so neither
+ * its stack nor its heap sees more than the limits.
  */
-function nestsDeeperThan(value: unknown, limit: number): boolean {
+function beyondOptions(value: unknown): boolean {
   let level: unknown[] = [value];
+  let nodes = 0;
   for (let depth = 1; ; depth += 1) {
+    nodes += level.length;
+    if (nodes > MAX_OPTIONS_NODES) return true;
     const containers = level.filter((v): v is object => typeof v === "object" && v !== null);
     if (containers.length === 0) return false;
-    if (depth > limit) return true;
+    if (depth > MAX_OPTIONS_DEPTH) return true;
     level = containers.flatMap((c) => Object.values(c));
   }
 }
@@ -363,7 +370,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
           }
           // C4: what the server clamped the options to, never what was asked for.
           const options = result.effective;
-          if (isRecord(options) && !nestsDeeperThan(options, MAX_OPTIONS_DEPTH)) {
+          if (isRecord(options) && !beyondOptions(options)) {
             rec.effective = frozen(options);
           }
           if (result.snapshot_forced === true) counters.forcedSnapshots += 1;
@@ -373,7 +380,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
 
     onCtlOk(frame, to) {
       if (frame.ch === undefined) return;
-      const retune = !nestsDeeperThan(frame.p.effective, MAX_OPTIONS_DEPTH);
+      const retune = !beyondOptions(frame.p.effective);
       for (const rec of targets(frame.ch, to)) {
         if (retune) rec.effective = frozen({ ...rec.effective, ...frame.p.effective });
         if (frame.p.resnapshot !== true) continue;

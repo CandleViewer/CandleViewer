@@ -10,7 +10,7 @@ export const MAX_HELD_BYTES = 128 * 1024 * 1024;
  * What one set may hold, so a set that never completes cannot starve the other streams. A structured
  * snapshot is split only when its JSON passes the 4 MiB frame limit (3.6), into chunks of nearly that
  * size each, so a real set is several full chunks: the budget has to sit well above the chunk size.
- * At `JSON_HEAP_FACTOR` this holds four of them, about 16 MiB of structured text.
+ * At `JSON_HEAP_FACTOR` it holds four chunks of up to 4 MiB less 64 characters, about 16 MiB of text.
  */
 export const MAX_SET_BYTES = 64 * 1024 * 1024;
 /** Chunks one set may have: far above any snapshot (3.6 splits at 4 MiB) and far below what tiny chunks reach under the byte caps. */
