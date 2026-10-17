@@ -56,5 +56,5 @@ def test_every_ws_err_frame_validates_against_the_error_schema(code: ErrorCode) 
     assert [e.message for e in _ERROR.iter_errors(frame["p"])] == []
 
 
-def test_catalogue_has_28_codes() -> None:
-    assert len(WS_ERROR_CODES) == 28 and ErrorCode.FORBIDDEN in WS_ERROR_CODES
+def test_catalogue_has_29_codes() -> None:
+    assert len(WS_ERROR_CODES) == 29 and ErrorCode.FORBIDDEN in WS_ERROR_CODES

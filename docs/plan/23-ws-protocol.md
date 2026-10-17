@@ -417,6 +417,7 @@ Rules:
 - `auth_timeout_ms` (10 s) without a successful `auth` → `bye` with `auth_timeout`, close code `4401`.
 - Three failed `auth` attempts → `bye` with `auth_failed`, close `4401`, and a `warning` audit entry.
 - An `auth` or re-`auth` whose session is enrolment-only (its user must enrol TOTP first; `22-api-openapi.yaml`, "Enrolment-only session") is refused at once and the socket closes: `bye` with reason `mfa_enrollment_required`, close `4403`. It does not count as a failed `auth`. The client completes enrolment over REST and connects again with the full session's token.
+- An `auth` or re-`auth` whose session holds a view-as context that the server ended (`22-api-openapi.yaml`, "View-as session") is refused the same way: `bye` with reason `view_as_expired`, close `4403`, and it does not count as a failed `auth`. The client clears the context over REST (`DELETE /auth/session/view-as`) and connects again (§9.6).
 - `token_expires_at_ms` tells the client when to re-`auth`. The client SHOULD refresh at `expires_at - 60 s`. If the token expires without re-auth, the server sends `bye` (`token_expired`, `4401`) and closes — subscriptions are not silently continued on an expired identity.
 
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
@@ -466,6 +467,8 @@ Rules:
 | `4400` | bad client      | Repeated protocol violations.                 | Surface a bug report; do not hot-loop.       |
 
 A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`. An `auth` or re-`auth` refused because the session is enrolment-only (§4.3) also closes with `4403`, reason `mfa_enrollment_required`. The client does not return to login: it finishes TOTP enrolment over REST, then connects with the full session's token, and never auto-retries. As built (#2155), `1013` has one cause: a socket shed at the cap on sockets that have not authenticated yet (§4.3).
+
+A view-as switch (§9.6) closes every socket of its session with `4401`, reason `view_as_changed`, and the client reconnects into the new scope as after any `4401` (§9.2). A view-as context that the server ended closes them with `4403`, reason `view_as_expired`, as it does an `auth` or re-`auth` while the context is held. The client does not return to login: it clears the context over REST before it connects again, and never auto-retries.
 
 `bye` is always sent _before_ the close frame (S11, §16.1; the gateway's two exceptions are noted below the example, and the host's own `1012` closes are in §9.4) so the client has a machine-readable reason:
 
@@ -1361,6 +1364,17 @@ If the user is disabled entirely, the server sends `bye` with `4403` and closes.
 
 **Narrowed subscriptions (E17-T03).** A subscription that kept some accounts is not left holding what it received under the old scope. The discard is part of the narrowing itself: before any frame that announces it (`permission_change`, `revoked`, or `auth_ok` after an in-place re-`auth`) is queued, the server drops the subscription's throttle window and every frame of it still queued on the normal lane (§8.4). What the priority lane holds of it (`orders`, `executions`) is queued ahead of `permission_change` in the same lane and is delivered before it. Only then does the server re-pend the subscription for a `snap` with `reason: "reconfigure"` (§5.4: unless another reason is already pending; §7.7: no `d` is sent until that `snap`); the `snap` is built under the new scope, carries only the kept accounts and replaces everything the client holds for that topic. So no row of a removed account is delivered after the first frame that announces the narrowing: `permission_change`, or `auth_ok` on an in-place re-`auth`, which sends none. A subscription dropped outright loses its window and its queued normal-lane frames the same way. _Flag off:_ the subscription is narrowed in place and not re-snapshotted; the single FIFO queue sends everything already queued ahead of `permission_change`.
 
+### 9.6 View-as sessions (read-only, #3085)
+
+An Owner can view the app as another user, read-only (`22-api-openapi.yaml`, "View-as session"; SCR-124). The view-as context belongs to one session: every socket authenticated on that session follows it, and sockets on the viewer's other sessions are unaffected. The gateway enforces these rules synchronously from the session's server-side state, as REST does (C-2.21).
+
+- **Scope.** While the context is live, the session's `auth_ok` (§4.3) carries its own `user_id` and `session_id` and the target's `roles`, `permissions` and `account_scope`. `account_scope` is built for the target as §4.3 builds it for a Manager or Viewer; a target is never an Owner. Every `sub` is authorised against that scope by §6.3 and §6.4 exactly as if the target had sent it: topics and entities scoped to the subscriber's own data (`alerts`, and the user-scoped kinds `alert`, `replay` and `session` of §6.4) resolve to the target, and `system` content is filtered by the target's role. Nothing the viewer may see and the target may not is delivered. View-as is the one audited exception to §6.4's rule that a user-scoped kind stays self-scoped for every role: only for the life of a context, and only on its session, the target's own entities are the subscriber's. A change to the target's roles or grants re-evaluates the session's sockets as §9.5 re-evaluates the target's own.
+- **Action frames.** `cv.v1` has no action frame. Every client frame type of §3.1 (`hello`, `auth`, `ping`, `pong`, `sub`, `unsub`, `ctl`, `resync`) reads or tunes the connection; orders and every other change go over REST (§1.2), where a viewing session is read-only. A client frame type added later that changes server-side state is an action frame unless the change that adds it lists it here as a read frame. While the session holds a context, the server answers every action frame with `err` `view_as_read_only` (§10.2) carrying the frame's `id`, keeps the socket open, changes nothing, and writes one `admin.view_as_refused` record whose object is the frame type, never its payload, within the viewer's refusal record budget (`22-api-openapi.yaml`, "View-as session"). A frame type this document does not define stays a protocol violation (§4.3).
+- **Start and end.** Starting a context, or ending a live one with `DELETE /auth/session/view-as`, replaces the socket's scope, and §9.5 only narrows a scope in place, so neither is applied in place. The server drops every frame still queued for each socket authenticated on the session, sends `bye` `view_as_changed` with `reconnect: true` and closes `4401`, as a revocation does (§4.3). The client reconnects (§9.2), re-reads `GET /auth/session/view-as` and authenticates again. The new `auth_ok` and every subscription are evaluated afresh in the new scope (§9.3), so no subscription, sequence number or queued frame from one scope reaches the client in the other.
+- **Server-side end.** When the server ends the context (at `expires_at`, or when the viewer or the target stops being eligible), the sockets end the same way, but with `bye` `view_as_expired` (`reconnect: false`) and close `4403`, so the client does not reconnect on its own (§9.2). While the context is held, an `auth` or re-`auth` on the session is refused with that `bye` and close (§4.3). The client clears the context over REST (`DELETE /auth/session/view-as`), then connects again.
+- **In-place re-`auth`.** A refresh rotation carries the context to the successor session, so a re-`auth` with the successor's token keeps the socket and its scope (§4.1). A re-`auth` whose session's view-as state differs from the socket's (it holds no context, or another one) gets `bye` `view_as_changed` and close `4401` instead of `auth_ok`.
+- **Audit.** Every record the gateway writes for a socket of the session (`ws.subscribe.denied`, `ws.connection.closed`, `admin.view_as_refused`) names the viewer and the viewer's session as the actor, never the target.
+
 ---
 
 ## 10. Error frames and the error-code catalogue
@@ -1402,7 +1416,7 @@ _Flag off:_ a frame that the connection's encoder cannot serialise (`json.dumps`
 
 **Single canonical registry.** This table is **not** an independently maintained list. It is a _rendering of a partition of the one product-wide error registry_ that lives in `22-api-openapi.yaml`:
 
-- `x-error-codes` — codes that can appear in an HTTP `problem+json` body. Six of them are dual-surface (marked `surface: [rest, ws]`) and appear in this table with identical slug and identical meaning: `forbidden`, `account_scope_denied`, `no_data_recorded`, `degraded_data`, `exchange_unavailable`, `internal_error`.
+- `x-error-codes` — codes that can appear in an HTTP `problem+json` body. Seven of them are dual-surface (marked `surface: [rest, ws]`) and appear in this table with identical slug and identical meaning: `forbidden`, `account_scope_denied`, `no_data_recorded`, `degraded_data`, `exchange_unavailable`, `internal_error`, `view_as_read_only`.
 - `x-error-codes-ws` — WS-only transport/stream codes with no REST analogue as a _status_, each carrying a `rest_analogue` field pointing at the nearest REST code so the client's single error-mapping table can collapse both surfaces.
 
 `tools/errorcodes/generate.py` emits `error_codes.py` and `errorCodes.ts` from that YAML alone, and CI gate **`error_registry_single_source`** (`22-api-openapi.yaml` §`x-contract-validation.gates`) asserts that the _Code_ column below equals the union of the two registry blocks — exactly, no extras, no omissions. Adding a code here without adding it there fails the build, and vice versa; drift between the two documents is structurally impossible rather than merely discouraged.
@@ -1420,6 +1434,7 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `token_expired`            | connection | yes         | `unauthenticated`      | Refresh over REST and re-`auth` (in place or on a new socket).                       |
 | `forbidden`                | topic      | no          | =                      | Missing permission for the topic family.                                             |
 | `account_scope_denied`     | topic      | no          | =                      | None of the requested accounts are in scope.                                         |
+| `view_as_read_only`        | request    | no          | =                      | Action frame on a view-as session (§9.6); `cv.v1` defines none yet. Nothing changes. |
 | `unknown_topic`            | topic      | no          | `not_found`            | Topic not in the catalogue, or `bars.*` while the bars feature is off (§6.1).        |
 | `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic (bad depth, dotted `param`, unknown bar type) or bad spec (§6.1).    |
 | `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not a Bybit USDT linear perpetual, or unknown instrument.                            |
@@ -1442,6 +1457,8 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 
 `mfa_enrollment_required` is deliberately absent from this table: it is a REST-only code (`x-error-codes`). An enrolment-only session never gets past `auth` (§4.3), so the WebSocket carries that refusal only as `bye.reason`, never as an `err` code.
 
+`view_as_expired` is absent for the same reason: a session whose view-as context the server ended never gets past `auth` (§4.3, §9.6), so the WebSocket carries it only as `bye.reason`. The other view-as codes (`view_as_self_target`, `view_as_owner_target`, `view_as_active`) answer `POST /admin/view-as` only.
+
 ### 10.3 Mapping to UI treatment
 
 | Class                   | Codes                                                        | UI                                                              |
@@ -1450,6 +1467,7 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | Transient, self-healing | `degraded_data`, `exchange_unavailable`, `token_expired`     | Inline staleness badge + connection chip; no modal.             |
 | Client bug              | `protocol_violation`, `frame_malformed`, `invalid_options`   | Console error + a "report a bug" toast; never a silent swallow. |
 | Capacity                | `slow_consumer`, `subscription_limit`, `client_rate_limited` | Toast advising fewer panes; auto-reduce throttles.              |
+| View-as read-only       | `view_as_read_only`                                          | The control stays disabled, with the read-only reason (§9.6).   |
 
 ---
 
@@ -1704,6 +1722,7 @@ Shared definitions used throughout:
         "user_disabled",
         "forbidden",
         "account_scope_denied",
+        "view_as_read_only",
         "unknown_topic",
         "invalid_topic_format",
         "unsupported_symbol",
@@ -3993,6 +4012,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | S13 | Refuse the upgrade before `accept` when §2.5 fails; never negotiate, read or authenticate first.     |
 | S14 | Put `sp` only on a sampled `snap`/`d` while CV_TELEMETRY_ENABLED is on; draw it fresh from a CSPRNG. |
 | S15 | Filter each `system` frame per connection before queueing it, as §15.9 says (SR-188).                |
+| S16 | On a view-as session, authorise every `sub` in the target's scope, refuse every action frame with `view_as_read_only`, and close the session's sockets on every start or end of its context (§9.6). |
 
 **Client MUST:**
 
@@ -4097,6 +4117,8 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Security         | An unknown, unpublished or foreign entity gets the identical refusal; a grant change revokes a `machines` subscription.                                                                               | §6.4 (no existence oracle), S7.                           |
 | Security         | A scoped `machines` entry without its scope is refused to every role; `sub` reads the in-memory entry synchronously; the owning module binds the scope at build and at restore.                       | §6.4 scope binding (fail closed).                         |
 | Security         | Demoting the Owner re-applies every §6.4 row: its `trade_group`, `live_gate` and `reconciliation` subscriptions are revoked with `permission_revoked`.                                                | §6.4 on a change, S7.                                     |
+| Security         | A view-as session is authorised in the target's scope only: an owner-only `system` kind, another user's entity or an account outside the target's grants is never delivered on it.                    | §9.6 scope, S16.                                          |
+| Security         | Starting, ending and the server ending a view-as context close only that session's sockets (`view_as_changed` `4401`, `view_as_expired` `4403`); a held context refuses `auth`.                       | §9.6, §4.3, S16.                                          |
 
 ### 16.5 Validation tooling and the CI contract gate
 

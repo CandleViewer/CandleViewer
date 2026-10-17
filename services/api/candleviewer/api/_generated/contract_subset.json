@@ -215,6 +215,28 @@
                   "title": "Order entry refused",
                   "type": "https://candleviewer.local/errors/trading_disabled"
                 }
+              },
+              "viewAsExpired": {
+                "summary": "Any request but the viewer's own ones after the server ended the context (#3085)",
+                "value": {
+                  "code": "view_as_expired",
+                  "detail": "Viewing as alex ended at 2026-09-14T10:30:00Z.",
+                  "instance": "urn:cv:req:0193f2bb-2228",
+                  "status": 403,
+                  "title": "View-as context ended by the server; clear it with DELETE /auth/session/view-as",
+                  "type": "https://candleviewer.local/errors/view_as_expired"
+                }
+              },
+              "viewAsReadOnly": {
+                "summary": "A state-changing request from a session that views as another user (#3085)",
+                "value": {
+                  "code": "view_as_read_only",
+                  "detail": "You are viewing as alex. End view-as to make changes.",
+                  "instance": "urn:cv:req:0193f2bb-2227",
+                  "status": 403,
+                  "title": "Session is viewing as another user, read-only; end view-as to make changes",
+                  "type": "https://candleviewer.local/errors/view_as_read_only"
+                }
               }
             },
             "schema": {
@@ -229,7 +251,7 @@
             }
           }
         },
-        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the operations it names and engaging the kill switch are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
       },
       "NotFound": {
         "content": {
@@ -2312,6 +2334,16 @@
         }
       }
     },
+    "/admin/view-as": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/alerts": {
       "get": {
         "x-rbac": {
@@ -2525,6 +2557,20 @@
     },
     "/auth/session/extend": {
       "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/session/view-as": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      },
+      "get": {
         "x-rbac": {
           "permissions": [],
           "scope": "self"

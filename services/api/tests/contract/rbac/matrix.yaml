@@ -226,6 +226,13 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  POST /admin/view-as:
+    permissions: ['users:write']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /alerts:
     permissions: ['alerts:read']
     scope: self
@@ -378,6 +385,20 @@ operations:
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml by #2300 slice 1/2 (contract); the route ships in slice 2/2
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  GET /auth/session/view-as:
+    permissions: []
+    scope: self
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  DELETE /auth/session/view-as:
+    permissions: []
+    scope: self
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /auth/sessions:
     permissions: []

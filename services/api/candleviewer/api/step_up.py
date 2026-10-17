@@ -459,6 +459,9 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     #   operation after the requester check, so anyone but the requester gets `404`, never a
     #   challenge. A GET with no path row: the guard passes it straight to the handler.
     ("GET", "/admin/audit/exports/{jobId}", "audit"),
+    # #3085 startViewAs (SR-025, 04 §7.2.2 row 40b): RBAC and the five view-as refusals come
+    # before the gate, so only the handler can gate it. Not mounted yet: pending in the test.
+    ("POST", "/admin/view-as", "users"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
@@ -466,11 +469,12 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: recorder prefixes are swept whole (SR-025: recorded data can be deleted from
 #: under any of them, #2738); their writes without step-up are allow-listed,
 #: each with its 04 §7.2.2 row, in the registry test. `feature-flags` (#3083):
-#: a flag write is owner-equivalent configuration (live gate, kill switches).
+#: a flag write is owner-equivalent configuration (live gate, kill switches). `view-as`
+#: (#3085): an impersonation start, handler-gated.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
     r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
-    r"|feature-flags)(/|$)"
+    r"|feature-flags|view-as)(/|$)"
 )
 
 
