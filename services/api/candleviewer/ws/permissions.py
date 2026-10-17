@@ -40,6 +40,8 @@ from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
+    FANOUT_AUDIT_MAX_FAILURES,
+    FANOUT_AUDIT_TIMEOUT_S,
     FANOUT_SEND_TIMEOUT_S,
     MAX_BARS_SUBSCRIPTIONS,
     MAX_SUBSCRIPTIONS,
@@ -109,6 +111,8 @@ cv_ws_permission_snapshots_refused_total = Counter(
     labelnames=("event",),
 )
 SnapshotEvent = Literal["reauth", "grant_change", "handshake"]  # the step that was refused
+#: `ws audit rows abandoned` names at most this many users; its `users` counts them all (#2824).
+_ABANDONED_USERS_LOGGED: Final = 10
 
 
 def _log() -> Any:
@@ -581,9 +585,12 @@ class ConnectionAuthz:
             try:
                 self._drop(sub)
             except Exception:
-                _log().error(
-                    "ws subscription release failed", consumer=self._consumer(sub), exc_info=True
-                )
+                with contextlib.suppress(Exception):  # a failing logger must not stop the rest
+                    _log().error(
+                        "ws subscription release failed",
+                        consumer=self._consumer(sub),
+                        exc_info=True,
+                    )
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
@@ -711,6 +718,37 @@ class ConnectionAuthz:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _AuditRow:
+    """One WS audit write, held until every socket of a change has its frames (#2824)."""
+
+    sink: AuditSink
+    action: str
+    fields: dict[str, Any]
+
+
+def _log_abandoned(
+    lost: list[_AuditRow],
+    cause: Literal["cancelled", "writer_down"],
+    in_flight: _AuditRow | None = None,
+) -> None:
+    """`ws audit rows abandoned`: `rows` counts the `lost` rows, never handed to the writer, and
+    `in_flight` names the row a cancellation interrupted, which still lands if it already held
+    the writer's lock. `actor_user_ids` names the users of both, the first
+    `_ABANDONED_USERS_LOGGED` (`users` counts them): ids, never a row's content (C-12.6).
+    Nothing may replace the cancellation, so a failing logger is ignored."""
+    with contextlib.suppress(Exception):
+        users = list(dict.fromkeys(r.fields.get("actor_user_id") for r in [in_flight, *lost] if r))
+        _log().warning(
+            "ws audit rows abandoned",
+            rows=len(lost),
+            cause=cause,
+            in_flight=None if in_flight is None else in_flight.fields.get("object_id"),
+            actor_user_ids=users[:_ABANDONED_USERS_LOGGED],
+            users=len(users),
+        )
+
+
 class ConnectionRegistry:
     """Live authenticated sockets; implements `PermissionChangeNotifier`.
 
@@ -730,6 +768,8 @@ class ConnectionRegistry:
         self._conns: dict[uuid.UUID, list[tuple[ConnectionAuthz, Any, Any]]] = {}
         self._closers: dict[int, Closer] = {}
         self.send_timeout_s = FANOUT_SEND_TIMEOUT_S
+        self.audit_timeout_s = FANOUT_AUDIT_TIMEOUT_S
+        self.audit_max_failures = FANOUT_AUDIT_MAX_FAILURES
         #: SR-189: one version source for every snapshot; `_changed_at`: the latest change's.
         self._versions = itertools.count(1)
         self._changed_at = 0
@@ -763,27 +803,32 @@ class ConnectionRegistry:
     ) -> list[dict[str, Any]]:
         """`authz.apply_snapshot`. An older snapshot is refused, counted and audited (best
         effort, like every WS audit write) and yields no frames (SR-189)."""
+        frames, refused = self._swap(authz, snap, now_ms, event)
+        await self._write_rows(refused)
+        return frames
+
+    def _swap(
+        self, authz: ConnectionAuthz, snap: VersionedSnapshot, now_ms: int, event: SnapshotEvent
+    ) -> tuple[list[dict[str, Any]], list[_AuditRow]]:
+        """`apply` without its I/O: the frames, or none and the counted refusal's audit row."""
         frames = authz.apply_snapshot(snap, now_ms)
         if frames is not None:
-            return frames
+            return frames, []
         cv_ws_permission_snapshots_refused_total.labels(event=event).inc()
+        if (audit := authz.services.audit) is None:
+            return [], []
         versions = {"applied_version": authz.version, "refused_version": snap.version}
-        if (audit := authz.services.audit) is not None:
-            try:
-                await audit.emit(
-                    "ws.permission_snapshot.refused",
-                    actor_label="ws",
-                    actor_user_id=authz.principal.user_id,
-                    object_kind="ws_connection",
-                    object_id=authz.connection_id,
-                    outcome=AuditOutcome.DENIED,
-                    severity=Severity.WARNING,
-                    reason="stale",
-                    after_state={"event": event, **versions},
-                )
-            except Exception:
-                _log().warning("ws refused-snapshot audit not written", exc_info=True)
-        return []
+        fields = {
+            "actor_label": "ws",
+            "actor_user_id": authz.principal.user_id,
+            "object_kind": "ws_connection",
+            "object_id": authz.connection_id,
+            "outcome": AuditOutcome.DENIED,
+            "severity": Severity.WARNING,
+            "reason": "stale",
+            "after_state": {"event": event, **versions},
+        }
+        return [], [_AuditRow(audit, "ws.permission_snapshot.refused", fields)]
 
     async def recheck(self, authz: ConnectionAuthz) -> None:
         """SR-189, right after `register` and before `auth_ok`: a change (any user's; one extra
@@ -795,16 +840,32 @@ class ConnectionRegistry:
 
     async def roles_changed(self, user_id: uuid.UUID) -> None:
         """Role / permission / account-grant change: push `permission_change` and the `revoked`
-        frames to every live socket of `user_id`."""
+        frames to every live socket of `user_id`, then write their audit rows."""
+        rows: list[_AuditRow] = []
+        try:
+            await self._fan_out(user_id, rows)
+        finally:  # also when the fan-out raised or was cancelled (see `_write_rows`)
+            await self._write_rows(rows)
+
+    async def _fan_out(self, user_id: uuid.UUID, rows: list[_AuditRow]) -> None:
+        """Swap `user_id`'s new snapshot into every live socket, then send each its frames. Each
+        socket's audit rows join `rows` at its swap, before any I/O, and the caller writes them
+        after the sends, so socket k's revocation never waits for the audit writes of sockets
+        1..k-1 and a later step that raises or is cancelled cannot drop them (#2824)."""
         # SR-189: before the early return, so a mid-handshake socket's `recheck` sees it.
         self._changed_at = version = next(self._versions)
         entries = list(self._conns.get(user_id, ()))
         if not entries:
             return
         snap = VersionedSnapshot(await self._resolve(user_id), version)
-        for authz, send, close in entries:
-            # Subscriptions are dropped/narrowed synchronously here, before any I/O.
-            frames = await self.apply(authz, snap, self._clock_ms(), event="grant_change")
+        # Every socket's subscriptions are dropped/narrowed synchronously here, before any I/O.
+        swapped = [self._swap_or_evict(e[0], snap, rows) for e in entries]
+        for (_authz, _send, close), frames in zip(entries, swapped, strict=True):
+            if frames is None:  # evicted at its swap: closed before any send, so on every exit,
+                await self._close_evicted(close)  # as `close` (`_Connection.evict`) never suspends
+        for (authz, send, close), frames in zip(entries, swapped, strict=True):
+            if frames is None:
+                continue
             try:
                 async with asyncio.timeout(self.send_timeout_s):
                     for frame in frames:
@@ -812,21 +873,97 @@ class ConnectionRegistry:
             except (TimeoutError, OSError, RuntimeError):
                 # C-2.18: a stalled/broken client must not block the change or other sockets.
                 self.unregister(authz)
-                if close is not None:
-                    with contextlib.suppress(Exception):
-                        async with asyncio.timeout(self.send_timeout_s):
-                            await close()
-            await _audit_revocations(authz, frames)
+                await self._close_evicted(close)
+
+    def _swap_or_evict(
+        self, authz: ConnectionAuthz, snap: VersionedSnapshot, rows: list[_AuditRow]
+    ) -> list[dict[str, Any]] | None:
+        """`_swap` for one socket of a fan-out, appending its audit rows to `rows`.
+
+        A swap that raises (`_drop` -> `BarsError` for a bar lease that another connection's
+        failed build dropped, the case `release_all` guards) leaves the socket half
+        re-evaluated, possibly still holding a withdrawn subscription. So it is evicted the way
+        a stalled socket is: unregistered and released here, then closed before any send, and
+        its client re-authenticates against the new snapshot. The other sockets still get
+        their frames and rows. Returns the frames, or `None` for an evicted socket."""
+        try:
+            frames, refused = self._swap(authz, snap, self._clock_ms(), "grant_change")
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the eviction
+                _log().error(
+                    "ws permission swap failed; socket evicted",
+                    connection_id=authz.connection_id,
+                    exc_info=True,
+                )
+            self.unregister(authz)
+            return None
+        rows.extend(refused + _revocation_rows(authz, frames))
+        return frames
+
+    async def _close_evicted(self, close: Any) -> None:
+        """Close a socket already dropped from the registry; bounded, and a failure is ignored."""
+        if close is not None:
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout(self.send_timeout_s):
+                    await close()
+
+    async def _write_rows(self, rows: list[_AuditRow]) -> None:
+        """Write `rows` in order, one at a time, each under `audit_timeout_s` (#2824).
+
+        Best effort, like every WS audit write (threat model WS-R04): a row that raises or times
+        out is logged and the next one is still written; only a cancellation leaves here. One at
+        a time on purpose: `AuditWriter` appends each row under one lock with an fsync, so
+        concurrent rows would only queue on that lock, where a row's own bound runs out while it
+        waits and a cancelled wait appends nothing. Bounded as a whole too: once
+        `audit_max_failures` rows in a row have raised or timed out, the rest are abandoned, so
+        a stalled WAL costs that many bounds and log lines, not one per row, and a writer only
+        slow for that long loses them as well (threat model WS-R04 as built, WS-D15).
+
+        The fan-out calls this in a `finally`: a change that raised or was cancelled still writes
+        the rows of the revocations it already made before that propagates, as the old per-socket
+        writes did for the sockets done before the failure. So a cancellation that lands before
+        the writes is held only for them, never swallowed, and one that lands during them ends
+        them at once. Not a shielded task: it would outlive its caller with no owner to stop or
+        drain it (C-2.18). Abandoned rows are logged with a count."""
+        failed = 0
+        for tried, row in enumerate(rows, 1):
+            try:
+                async with asyncio.timeout(self.audit_timeout_s):
+                    await row.sink.emit(row.action, **row.fields)
+            except asyncio.CancelledError:
+                _log_abandoned(rows[tried:], "cancelled", in_flight=row)
+                raise
+            except Exception:
+                failed += 1
+                with contextlib.suppress(Exception):  # a failing logger must not stop the rows
+                    # "Not confirmed": a timed-out row may still land (the writer shields it).
+                    _log().warning(
+                        "ws audit not confirmed",
+                        action=row.action,
+                        object_id=row.fields.get("object_id"),
+                        actor_user_id=row.fields.get("actor_user_id"),
+                        exc_info=True,
+                    )
+                if failed >= self.audit_max_failures:
+                    _log_abandoned(rows[tried:], "writer_down")
+                    return
+            else:
+                failed = 0
 
     async def grants_changed(self, user_id: uuid.UUID) -> None:
         """Account-grant change: same re-evaluation path as a role change."""
         await self.roles_changed(user_id)
 
     async def kill_switch_changed(self) -> None:
-        """§9.5: kill-switch transitions re-evaluate every connected user."""
+        """§9.5: kill-switch transitions re-evaluate every connected user. The audit rows wait
+        until every user's sockets have their frames, and are written on any exit (#2824)."""
         self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
-        for user_id in list(self._conns):
-            await self.roles_changed(user_id)
+        rows: list[_AuditRow] = []
+        try:
+            for user_id in list(self._conns):
+                await self._fan_out(user_id, rows)
+        finally:
+            await self._write_rows(rows)
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
         """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket."""
@@ -1040,29 +1177,34 @@ async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str, why: str | N
 _MACHINE_REVOKED: Final = {"permission_revoked": "role", "account_scope_changed": "foreign"}
 
 
-async def _audit_revocations(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> None:
-    """`ws.subscription.revoked` per `revoked` frame. A `machines` row names the full `ch` and
-    its internal §6.4 reason, in `reason` only (SR-067), as a refusal's row does."""
+def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> list[_AuditRow]:
+    """`ws.subscription.revoked`: one row per `revoked` frame, in frame order (WS-R02). A
+    `machines` row names the full `ch` and its internal §6.4 reason, in `reason` only (SR-067),
+    as a refusal's row does."""
     audit = authz.services.audit
     if audit is None:
-        return
+        return []
+    rows: list[_AuditRow] = []
     for f in frames:
         if f["t"] != "revoked":
             continue
-        try:
-            ch, reason = str(f["ch"]), f["p"]["reason"]
-            machines = topic_family(ch) == "machines"
-            await audit.emit(
+        ch, reason = str(f["ch"]), f["p"]["reason"]
+        machines = topic_family(ch) == "machines"
+        rows.append(
+            _AuditRow(
+                audit,
                 "ws.subscription.revoked",
-                actor_label="ws",
-                actor_user_id=authz.principal.user_id,
-                object_kind="ws_topic",
-                object_id=ch if machines else ch[:40],
-                reason=_MACHINE_REVOKED.get(reason, reason) if machines else reason,
-                after_state={"removed_accounts": f["p"].get("removed_accounts", [])},
+                {
+                    "actor_label": "ws",
+                    "actor_user_id": authz.principal.user_id,
+                    "object_kind": "ws_topic",
+                    "object_id": ch if machines else ch[:40],
+                    "reason": _MACHINE_REVOKED.get(reason, reason) if machines else reason,
+                    "after_state": {"removed_accounts": f["p"].get("removed_accounts", [])},
+                },
             )
-        except Exception:
-            _log().warning("ws revocation audit not written", exc_info=True)
+        )
+    return rows
 
 
 def close_connection(registry: ConnectionRegistry, authz: ConnectionAuthz) -> None:

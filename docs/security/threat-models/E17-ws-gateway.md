@@ -329,6 +329,7 @@ security review in the same PR.
 | Resync rate                            | 5 / topic / min                 | Resync loop (D03)            | Snapshot rebuild cost          | planned E17-S03                                |
 | Min throttle                           | 50 ms (0 for orders/executions) | Amplification (D08)          | Budget #3 tick-to-screen       | planned E17-T03                                |
 | Fan-out send timeout                   | 2 s                             | Revocation fan-out (D09)     | —                              | merged                                         |
+| Fan-out audit row timeout / give-up    | 2 s / 3 failed rows in a row    | Revocation audit (R02, R04)  | Change duration                | merged                                         |
 | Heartbeat interval / timeout           | 15 s / 45 s                     | Dead-socket reclamation      | Disconnect detection           | merged                                         |
 
 Memory outside the outbound budget (WS-D01, #2552): each `heatmap` subscription remembers up to 2 000
@@ -528,11 +529,23 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
   best effort both ways: a client's own `1012`, or a drop just before the host cancels the handler, reads `shutdown`; a
   send that fails as the host closes the socket can read `client_closed`. Only the row's `reason` is affected (both are
   `info`), and no decision reads it.
+- **WS-R04 as built (#2824, 2026-10-16):** the revocation fan-out writes its `ws.subscription.revoked` and
+  `ws.permission_snapshot.refused` rows once every socket has its frames, also when the change raises or is cancelled
+  part-way, one at a time and each bounded at 2 s. Its loss windows: a row still queued for the writer's lock at 2 s
+  is lost (`ws audit not confirmed`, with the row's user) and one already appending lands late; once 3 rows in a row
+  have raised or timed out, the rest are abandoned even when the writer would have taken them a moment later (a stall
+  of 6 s or more, WS-D15's flooding included), and so are the rows a cancellation during the writes leaves (both
+  `ws audit rows abandoned`, with a count and the users). A socket whose re-evaluation raises is evicted like a
+  stalled one: it gets no `revoked` frame and the revocations it had made get no row; its `ws.connection.closed` row
+  reads `slow_consumer`, and only the error log `ws permission swap failed; socket evicted` names the cause. The
+  revocations themselves never wait for a row. The alerting metric SR-E17-04 asks for is owed by E17-T06 (#571).
 - **Residual High (open, not accepted; release blocker until #2292 merges):** WS-D15 (audit-store flooding). Inherent
   High (L M x I H scores High in the `04-security-program.md` §5 template) and, with SR-192 unbuilt, the residual is
   High. Recorded as RR-08 in `04-security-program.md` §16.1 under the §5.11 release-blocker rule: mitigation ticket
   #2292, review date 2026-11-15, owner sign-off pending (queued on #2701; orchestrator interim record under the
   2026-10-12 delegation). It is re-scored when #2292 merges and AC-29 passes.
+  Since #2824 such a flood can make a revocation fan-out abandon the rest of its audit rows (WS-R04 as built), where it
+  used to delay revocations; a WS audit-failure counter and alert are owed by E17-T06 (#571, a follow-up listed there).
 - **Residual Medium (not eliminated):**
   - WS-S03 / WS-D07: pre-auth slot exhaustion by a tailnet device until #2155 adds a global cap and auth-await
     timeouts. Low once merged. Tracked as **RSK-063**'s first trigger.
@@ -564,3 +577,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |
 | 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag, floors and S11 flush deadline (§6), close fields and fail-closed close (§8), row (§9)   |
 | 2026-10-16 | author (agent; PR for #412 S2a-0)                 | Pre-auth inbound frame limits, #412 S2a-0: §4, §6, WS-T02, WS-T08, WS-D05 and WS-D06 state them                                              |
+| 2026-10-16 | author (agent; PR for #2824)                      | WS-R04 as built (#2824): fan-out rows after the frames, 2 s each, 3 failed in a row end them; swap eviction; D15 (§6, §10)                   |
