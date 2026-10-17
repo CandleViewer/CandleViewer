@@ -35,9 +35,10 @@ sign-in is audited as at the MFA step.
 `/auth/mfa/verify` mints a full session (QA #1658). `/auth/mfa/recovery`
 completes the same challenge with a recovery code and mints the
 enrolment-only session instead, never a full one. It checks the code without
-spending it, reads the user (fail closed without `mfa_required`, C-12.2),
-writes its audit records (C-2.9), then one transaction spends the code,
-satisfies the challenge and revokes every MFA method of the user; every
+spending it, reads the user (fail closed without `mfa_required`, C-12.2, or
+once disabled, #2911, read again under the user-row lock as the code is
+spent), writes its audit records (C-2.9), then one transaction spends the
+code, satisfies the challenge and revokes every MFA method of the user; every
 session of the user is revoked next and the new one minted. It used to answer
 200 with no session while it spent the code, which locked the user out.
 Every refusal is the contract's 401, a backend that is not wired and an audit
@@ -135,6 +136,8 @@ _FAILED = AuditOutcome.FAILURE
 _UNROTATED = "the new TOTP method is active but the session was not rotated; sign in again"
 #: The `title` of every refusal of `/auth/mfa/recovery`: its contract declares 401, never 503.
 _RECOVERY_FAILED = "Recovery failed"
+#: The row of a refused recovery whose user is disabled or gone, as `_audit_refusal` writes (#2911).
+_DISABLED: dict[str, Any] = {"severity": Severity.WARNING, "reason": "user_disabled"}
 #: The `detail` of a recovery whose commit spent the code but whose session step failed (#2344):
 #: no method is left, so the password alone signs in, enrolment-only.
 _UNMINTED = "the recovery code was used but no session was minted; sign in again with your password"
@@ -668,15 +671,17 @@ def make_auth_router(
     @router.post("/auth/mfa/recovery")
     async def mfa_recovery(request: Request, body: MfaRecoveryRequest) -> JSONResponse:
         """#2344 (contract `authMfaRecovery`): the code is checked first, unspent, and the user
-        read; a user without `mfa_required` is refused (C-12.2). The audit records come next
-        (C-2.9): the code's use, one `auth.session_revoked` per live session of the user and
-        the new session. Then one transaction spends the code, satisfies the challenge and
-        revokes every MFA method; every session of the user is revoked (their sockets close;
-        one the records could not name gets its own, `unplanned`) and an enrolment-only
-        session minted (15 minutes, never a full one). Every refusal spends nothing and is the
-        documented 401. A failure after the commit mints nothing: its 401 tells the client to
-        sign in again with the password, which is enrolment-only once no method is left, and
-        the error log `auth.recovery.completed_unminted` names the user and the sessions."""
+        read; a user without `mfa_required` (C-12.2) or disabled since the password step
+        (#2911) is refused. The audit records come next (C-2.9): the code's use, one
+        `auth.session_revoked` per live session of the user and the new session. Then one
+        transaction spends the code, satisfies the challenge and revokes every MFA method, or
+        rolls back for a user disabled meanwhile; every session of the user is revoked (their
+        sockets close; one the records could not name gets its own, `unplanned`) and an
+        enrolment-only session minted (15 minutes, never a full one). Every refusal spends
+        nothing, is the documented 401 and counts its row (SR-125). A failure after the commit
+        mints nothing: its 401 tells the client to sign in again with the password, which is
+        enrolment-only once no method is left, and the error log
+        `auth.recovery.completed_unminted` names the user and the sessions."""
         # 401 is this operation's documented refusal (its 503 is #2152's `AuthUnavailable`), as on
         # `/auth/mfa/verify`: nothing is checked or spent that could not be audited and minted.
         ready = _enrolment_ready(mfa=True, status=401, title=_RECOVERY_FAILED)
@@ -685,50 +690,46 @@ def make_auth_router(
         writer, ident = ready
         mfa, sessions, ip = auth_service.mfa, auth_service.sessions, _client_ip(request)
         # PR #1618 review finding 4 (low): one detail whether the challenge was invalid,
-        # expired or locked, or the code wrong or spent, so an unauthenticated caller cannot
-        # use the answer to narrow a brute-force search. `RecoveryCodesExhausted` stays
-        # distinct: the ticket's Gherkin ("Recovery codes exhausted") requires a
-        # contact-the-owner message the UI must render differently.
+        # expired or locked, the code wrong or spent, or a record could not be written (the
+        # cause is logged), so an unauthenticated caller cannot use the answer to narrow a
+        # brute-force search. `RecoveryCodesExhausted` stays distinct: the ticket's Gherkin
+        # ("Recovery codes exhausted") requires a contact-the-owner message the UI must render
+        # differently.
         refused = _problem(401, _RECOVERY_FAILED, "invalid or expired code")
-        unaudited = _problem(401, _RECOVERY_FAILED, "audit sink not active")  # C-2.9 write-ahead
+
+        async def failed(action: str, outcome: AuditOutcome, **row: Any) -> JSONResponse:
+            """A refusal's row, counted once (SR-125). It follows the refusal, never ahead of it:
+            one that cannot be written is logged and the answer stands, the same either way."""
+            auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
+            try:
+                await writer.emit(action, actor_ip=ip, outcome=outcome, **row)
+            except AuditError as exc:
+                _log().error(
+                    "auth.recovery.audit_unavailable", action=action, error=type(exc).__name__
+                )
+            return refused
+
         try:
             check = await mfa.check_recovery(body.mfa_token, body.recovery_code)
         except RecoveryCodesExhausted as exc:
-            auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
-            await _audit(
-                audit_service,
-                "auth.recovery_codes_exhausted",
-                actor_label="(mfa_token)",
-                actor_ip=ip,
-                outcome=AuditOutcome.DENIED,
-                severity=Severity.ERROR,
-            )
+            exhausted = {"actor_label": "(mfa_token)", "severity": Severity.ERROR}
+            await failed("auth.recovery_codes_exhausted", AuditOutcome.DENIED, **exhausted)
             return _problem(401, "Recovery codes exhausted", str(exc))
         except (MfaChallengeInvalid, MfaChallengeLocked, RecoveryCodeInvalid):
-            auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
-            await _audit(
-                audit_service,
-                "auth.mfa_failed",
-                actor_label="(mfa_token)",
-                actor_ip=ip,
-                outcome=_FAILED,
-            )
-            return refused
+            return await failed("auth.mfa_failed", _FAILED, actor_label="(mfa_token)")
         uid = check.user_id
+        mine: dict[str, Any] = {"actor_label": str(uid), "actor_user_id": uid}
         user = await auth_service.find_user(str(uid))
         if user is None or not user.mfa_required:
             # The contract fails a user without `mfa_required` closed: nothing is spent or
             # minted, and the answer is the one a wrong code gets.
-            await _audit(
-                audit_service,
-                "auth.mfa_failed",
-                actor_label=str(uid),
-                actor_ip=ip,
-                outcome=AuditOutcome.DENIED,
-            )
-            return refused
+            return await failed("auth.mfa_failed", AuditOutcome.DENIED, **mine)
+        if user.status is UserStatus.DISABLED:
+            # #2911: disabled since the password step, refused as a mint is (not `locked` or
+            # `invited`), before anything is written or spent; the answer stays uniform.
+            return await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **mine)
         if not await _audit_carried_sessions(request, uid, stage="mfa_recovery"):
-            return unaudited
+            return refused  # C-2.9 write-ahead; the cause is logged there
         profile = await ident.user(str(uid))  # before any change: one failure point fewer
         new_id = uuid.uuid4()  # named by the write-ahead records
         ending = [view.id for view in await sessions.list_sessions(str(uid))]
@@ -771,20 +772,30 @@ def make_auth_router(
         try:
             for action, sid, reason, after, severity in planned:
                 await write(action, sid, reason, after, severity)
-            await mfa.complete_recovery(check)
-        except AuditError:
-            return unaudited
-        except RecoveryCodeInvalid:  # a concurrent request spent the code or the challenge
-            # Nothing changed: this record voids the session and revocations announced above.
-            voided = {
-                "voids_session_created": str(new_id),
-                "voids_session_revoked": [str(sid) for sid in ending],
-            }
-            try:
-                await write("auth.mfa_failed", new_id, "lost_race", voided, outcome=_FAILED)
-            except AuditError:
-                return unaudited
+        except AuditError as exc:  # C-2.9 write-ahead: nothing is spent without its records
+            _log().error("auth.recovery.audit_unavailable", action=action, error=type(exc).__name__)
             return refused
+        # Should the transaction not commit, nothing changed, and the refusal's row voids the
+        # session and the revocations announced above.
+        voided = {
+            "voids_session_created": str(new_id),
+            "voids_session_revoked": [str(sid) for sid in ending],
+        }
+        void = {"session_id": new_id, "after_state": voided, **mine}
+        try:
+            await mfa.complete_recovery(check)
+        except UserDisabled:  # #2911: disabled since the read, under the user-row lock
+            return await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **void)
+        except RecoveryCodeInvalid:  # a concurrent request spent the code or the challenge
+            return await failed("auth.mfa_failed", _FAILED, reason="lost_race", **void)
+        except Exception as exc:  # a store failure (a timeout, a deadlock) rolls it back
+            _log().error(
+                "auth.recovery.commit_failed",
+                user_id=str(uid),
+                new_session_id=str(new_id),
+                error=type(exc).__name__,
+            )
+            return await failed("auth.mfa_failed", _FAILED, reason="store_error", **void)
         # SR-022 (#2496): each spent code pages the Owner (`AuthRecoveryCodeUsed`). Counted as soon
         # as the commit spent it, so no later failure can hide a use; a failing audit sink cannot
         # either, because nothing is spent without its record (written ahead above).
@@ -796,6 +807,10 @@ def make_auth_router(
             minted = await sessions.mint_enrolment_only(
                 str(uid), session_id=new_id, ip=ip, user_agent=request.headers.get("user-agent")
             )
+        except UserDisabled:  # #2911: disabled since the commit; the code is spent, nothing minted
+            created = {"session_id": new_id, "after_state": {"voids_session_created": str(new_id)}}
+            await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **mine, **created)
+            return _problem(401, _RECOVERY_FAILED, "account is disabled")
         except Exception as exc:  # any failure: the committed recovery stands, nothing is minted
             _log().error(
                 "auth.recovery.completed_unminted",

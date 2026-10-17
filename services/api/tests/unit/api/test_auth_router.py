@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
-from candleviewer.api.auth import make_auth_router
+from candleviewer.api.auth import AuditServiceLike, make_auth_router
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CsrfCodec
@@ -335,14 +335,16 @@ def test_mfa_verify_inactive_backend_returns_503() -> None:
 _RECOVERY_BODY = {"mfa_token": "tok", "recovery_code": "7F2A-91BC-4DE0"}
 
 
-def _recovery_app(mfa_outcome: object, audit_service: object) -> tuple[FastAPI, _FakeMfaService]:
+def _recovery_app(
+    mfa_outcome: object, audit_service: AuditServiceLike | None
+) -> tuple[FastAPI, _FakeMfaService]:
     """Every backend a recovery sign-in needs, wired; the MFA service answers *mfa_outcome*."""
     auth = _MintingAuthService(mfa_outcome)
     app = FastAPI()
     app.include_router(
         make_auth_router(
             auth,
-            audit_service=audit_service,  # type: ignore[arg-type]
+            audit_service=audit_service,
             identity=_FakeIdentity(),
             csrf=_CSRF_CODEC,
         )
