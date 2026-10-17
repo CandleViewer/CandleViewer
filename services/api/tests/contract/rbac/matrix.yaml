@@ -132,9 +132,7 @@ operations:
     permissions: ['admin:read']
     scope: none
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 501 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /admin/incidents:
     permissions: ['admin:read']

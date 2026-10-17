@@ -61,6 +61,7 @@ section 2 is executed on staging.
 - Case 1 executed through the real FastAPI router (not staging): `test_admin_health_rbac` asserts
   401 unauthenticated, 403 for a principal without `admin:read` with no component detail in the body.
   Staging re-run (incident list, support bundle, log-level override) remains for `deploy-staging`.
+  (E42-T05: `test_admin_health_rbac` is now `tests/contract/test_admin_ops_routes_contract.py::test_rbac_cell`.)
 - Case 7 / AC5 executed offline: `test_page_alert_payload_carries_no_ids_or_key_material` asserts the
   Page template interpolates only alertname/component/env/severity/summary/runbook_url, the rendered
   fixture holds no id or key material, and no alert rule interpolates labels outside that allow-list.

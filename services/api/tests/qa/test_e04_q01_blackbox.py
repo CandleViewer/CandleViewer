@@ -1,7 +1,8 @@
 """E04-Q01: API-level black-box regression pack for health and telemetry endpoints.
 
 Drives only the public HTTP surface (no module internals beyond router wiring).
-Cases: E04-TC-H01..H06 (health matrix), E04-TC-T01..T05 (telemetry rejections).
+Cases: E04-TC-H01..H04 and H06 (health matrix), E04-TC-T01..T05 (telemetry rejections). H05, the
+admin health RBAC cells, is `test_rbac_cell` in `tests/contract/test_admin_ops_routes_contract.py`.
 See qa/plans/e04-observability-test-plan.md.
 """
 
@@ -16,42 +17,15 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.health_report import make_health_report_router
 from candleviewer.api.telemetry import make_telemetry_router
-from candleviewer.observability.health_probes import HealthRegistry
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 
 CANARY = "CANARY-SECRET-e04q01-do-not-ship"  # obviously fake, greppable
 
 
-class _P:
-    def __init__(self, perms: set[str]) -> None:
-        self._perms = perms
-
-    def has(self, permission: str) -> bool:
-        return permission in self._perms
-
-
-class _Resolver:
-    def __init__(self, principal: _P | None) -> None:
-        self._principal = principal
-
-    def resolve(self, request: Request) -> _P | None:
-        return self._principal
-
-
-def _health(checks: dict[str, Any], resolver: _Resolver | None = None) -> TestClient:
+def _health(checks: dict[str, Any]) -> TestClient:
     app = FastAPI()
-    app.include_router(
-        make_health_report_router(
-            HealthRegistry(),
-            version="9.9.9",
-            git_sha="deadbeef",
-            environment="dev",
-            ready_checks=checks,
-            principal_resolver=resolver,
-            ready_timeout_s=0.1,
-        )
-    )
+    app.include_router(make_health_report_router(ready_checks=checks, ready_timeout_s=0.1))
     return TestClient(app)
 
 
@@ -103,19 +77,13 @@ def test_h03_slow_probe_is_bounded_and_does_not_block_liveness() -> None:
 def test_h04_live_body_is_static_and_leaks_nothing() -> None:
     r = _health({"postgres": _down_factory("postgres")}).get("/health/live")
     assert r.json() == {"status": "ok"}
-    assert "9.9.9" not in r.text and "deadbeef" not in r.text
+    assert CANARY not in r.text
 
 
-def test_h05_admin_health_rbac_denials() -> None:
-    assert _health({}, None).get("/admin/health").status_code == 501
-    assert _health({}, _Resolver(None)).get("/admin/health").status_code == 401
-    assert _health({}, _Resolver(_P(set()))).get("/admin/health").status_code == 403
-
-
-def test_h06_ready_503_carries_retry_after_and_no_version() -> None:
+def test_h06_ready_503_carries_retry_after_and_leaks_nothing() -> None:
     r = _health({"postgres": _down_factory("postgres")}).get("/health/ready")
     assert r.headers["retry-after"] == "5"
-    assert "9.9.9" not in r.text and "deadbeef" not in r.text
+    assert CANARY not in r.text
 
 
 PATH = "/telemetry/frontend"

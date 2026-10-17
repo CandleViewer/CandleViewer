@@ -31,7 +31,7 @@ recorded as *pending staging run* in `qa/plans/e04-alert-drill-matrix.md`.
 | E04-TC-R01 | rate-limit fixture | read budget panel | remaining budget per class/account shown | US-OBS-005 / E04-S01 | Staging |
 | E04-TC-R02 | induced 10006 | observe logs/metric | exact error logged, backoff, `OmsRateRejects` fires | US-OBS-005 / E04-T05 | Staging |
 | E04-TC-D01 | six dashboards, synthetic load | open every panel | data shown or annotated "awaits module X"; no silent-empty | US-OBS-001 / E04-S01 | Staging (lint: Auto) |
-| E04-TC-H01..H06 | health fixtures | see `test_e04_q01_blackbox.py` | live/ready/admin behave per E04-T04; slow probe isolated | US-OBS-001 / E04-T04 | Auto |
+| E04-TC-H01..H06 | health fixtures | see `test_e04_q01_blackbox.py` (H05, admin RBAC, is now `tests/contract/test_admin_ops_routes_contract.py::test_rbac_cell`, E42-T05) | live/ready/admin behave per E04-T04; slow probe isolated | US-OBS-001 / E04-T04 | Auto |
 | E04-TC-T01..T05 | telemetry fixtures | see `test_e04_q01_blackbox.py` | 401/400/429 rejections, counted, no cardinality mint | US-OBS-002 / E04-T06 | Auto |
 | E04-TC-T06 | k6 | `tests/perf/obs/telemetry.k6.js` | 204s at expected session load, 429 above limit | US-OBS-002 / E04-T06 | Staging |
 | E04-TC-B01 | window | generate bundle | logs, metric snapshot, config sans secrets, health, errors | US-OBS-007 / E04-S02 | Staging |

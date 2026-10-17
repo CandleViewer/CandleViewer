@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse
 from candleviewer.account_fixture_wiring import build_account_fixture
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
+from candleviewer.admin.ops.health import AdminHealthService
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
@@ -71,6 +72,7 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.admin_capacity import make_admin_capacity_router
+from candleviewer.api.admin_ops import make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alerts import make_alerts_router
@@ -1177,14 +1179,7 @@ def create_app(
     )
     register_public_ws_probe(health_registry, lambda: ctx.ingestion.ws)
     app.state.health_registry = health_registry
-    app.include_router(
-        make_health_report_router(
-            health_registry,
-            version=resolved.version,
-            git_sha=resolved.git_sha,
-            environment=resolved.environment.value,
-        )
-    )
+    app.include_router(make_health_report_router())
     csrf_codec = build_csrf_codec(resolved)
     app.state.csrf_codec = csrf_codec
     # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
@@ -1538,6 +1533,18 @@ def create_app(
     app.include_router(
         make_statechart_router(
             inspector, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+        )
+    )
+    # E42-T05: the health report over the E04 registry's cached snapshot, behind the same guard.
+    admin_health = AdminHealthService(
+        health_registry,
+        version=resolved.version,
+        git_sha=resolved.git_sha,
+        environment=resolved.environment.value,
+    )
+    app.include_router(
+        make_admin_ops_router(
+            admin_health, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
         )
     )
     app.state.admin_overview_metrics = export_overview_metrics(
