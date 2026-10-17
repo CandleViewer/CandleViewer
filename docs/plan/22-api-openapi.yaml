@@ -203,22 +203,31 @@ info:
     * **The viewer's own operations.** `POST /admin/view-as`, `GET` and
       `DELETE /auth/session/view-as`, `GET /auth/session`, `POST /auth/refresh`,
       `POST /auth/logout`, `POST /auth/session/extend` and `POST /auth/unlock` act on the
-      viewer's own session, as the viewer. None of the rules below applies to them, so leaving
-      view-as is one call that nothing refuses.
+      viewer's own session, as the viewer, and `POST /telemetry/frontend` carries only bucket
+      counts. None of the rules below applies to them, so leaving view-as is one call that
+      nothing refuses.
     * **Read-only.** Every other state-changing request, except the protective writes below,
       answers `403 view_as_read_only` and changes nothing. State-changing means the method
       (`POST`, `PUT`, `PATCH`, `DELETE`), not the effect, so view-as refuses all writes and fails
       closed: the write-method operations that need only a `*:read` permission
       (`previewTradeGroup`, `validateRule`, `compileRule`, `testApiKey`, `verifyAuditChain` and
-      `createSupportBundle`) are refused too. The refusal is decided after authentication, the
-      CSRF check (SR-041) and the session state (enrolment-only, the idle lock,
-      `session_read_only`), and before authorisation, request validation and the step-up gate.
-      A refused request is therefore never a step-up challenge and binds no idempotency key, and
-      a cross-site page cannot cause one.
+      `createSupportBundle`) are refused too. Except on the operations the protective writes
+      below pass to their handlers, the refusal is decided after authentication, the CSRF check
+      (SR-041) and the session state (enrolment-only, the idle lock, `session_read_only`), and
+      before authorisation, request validation and the step-up gate, so it is never a step-up
+      challenge and binds no idempotency key. A cross-site page cannot cause a refusal.
     * **Protective writes (C-2.6).** Neither the read-only rule nor the hold refuses the
-      operations the C-2.6 carve-out of the `Forbidden` response names, or engaging the kill
-      switch (`setKillSwitch` with `engaged: true`; releasing it stays refused). They run as the
-      viewer, within the target's account scope, and are audited with the viewer as the actor.
+      writes the C-2.6 carve-out of the `Forbidden` response names, or engaging the kill switch
+      on an account set (`setKillSwitch` with `engaged: true`, `scope: accounts`; releasing it
+      and `scope: global` stay refused: the viewer leaves view-as first). Both pass
+      `setKillSwitch`, `amendOrder`, `amendTradeGroup`, `setPositionTpSl` (the `trading-stop`
+      write) and `setRuleMode` (the rule re-arm) to their handlers, which decide after
+      validation by the classification of 24-internal-schemas.md section 8.10: a request with
+      any non-protective component is refused `view_as_read_only` (or `view_as_expired`) there,
+      before any effect, binds no key and writes its refusal record. A protective write runs as
+      the viewer, is audited with the viewer as the actor, and is admitted only when both the
+      viewer's own RBAC and the target's `x-rbac` allow it; in the hold it runs in the viewer's
+      own scope.
     * **Scope.** Every other read answers as it would answer the target: the target's role
       permissions (`x-permissions`) and account grants decide `x-rbac`, and a `scope: self` read
       returns the target's own data. The viewer's role adds nothing, so no owner-only
@@ -237,17 +246,18 @@ info:
       session that holds a context names the viewer and the viewer's session as the actor. The
       target is only ever the object, never the actor. `startViewAs` and `endViewAs` define the
       view-as records. An end, by the server or by `endViewAs`, never waits on its
-      `admin.view_as_ended`: one that cannot be written then is written late, with
-      `recorded_late: true`, once the audit writer takes records again. The start's record,
-      written ahead, already bounds the window to `expires_at`.
-    * **Refusal records (C-2.18).** Each `view_as_read_only` or `view_as_expired` refusal, each
-      refused start and each refused WebSocket action frame writes one `admin.view_as_refused`
-      ahead of its answer, under the viewer's per-user record budget of the `/admin/audit*`
-      operations, with its cap and its `suppressed` count ("Audit budget" in `queryAuditLog`;
-      a WebSocket frame gets one record, as in 23-ws-protocol.md section 5.2). Each refusal is
-      also counted in `auth_view_as_refused_total{reason}`. A due record that cannot be written
-      turns a REST refusal into `503 audit_unavailable`, and nothing changes. A refusal under
-      the target's scope is recorded as any authorisation refusal is.
+      `admin.view_as_ended`: one that cannot be written then stays pending on the session row
+      until its record is written, late (`recorded_late`), once the audit writer takes records
+      again. The start's record, written ahead, already bounds the window to `expires_at`.
+    * **Refusal records (AD-D06; requirement 1, #2836).** Each `view_as_read_only` or
+      `view_as_expired` refusal, each refused start and each refused WebSocket action frame
+      writes one `admin.view_as_refused` ahead of its answer (a WebSocket frame gets one record,
+      as in 23-ws-protocol.md section 5.2). They are counted per user by the mechanism of
+      "Audit budget" in `queryAuditLog`, with its `suppressed` count, under their own hourly cap,
+      `view_as_refusal_budget_per_hour` (default 120), and never use a slot of the `/admin/audit*`
+      budget. Each refusal is also counted in `auth_view_as_refused_total{reason}`. A due record
+      that cannot be written turns a REST refusal into `503 audit_unavailable`, and nothing
+      changes. A refusal under the target's scope is recorded as any authorisation refusal is.
 
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
@@ -1452,27 +1462,23 @@ paths:
               examples:
                 live:
                   value:
-                    {
-                      target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
-                      target_username: alex,
-                      target_display_name: "Alex M.",
-                      started_at: "2026-09-14T10:00:00Z",
-                      expires_at: "2026-09-14T10:30:00Z",
-                      read_only: true,
-                      state: active,
-                    }
+                    target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002"
+                    target_username: alex
+                    target_display_name: "Alex M."
+                    started_at: "2026-09-14T10:00:00Z"
+                    expires_at: "2026-09-14T10:30:00Z"
+                    read_only: true
+                    state: active
                 held:
                   summary: Ended by the server at expires_at; held until it is cleared
                   value:
-                    {
-                      target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
-                      target_username: alex,
-                      target_display_name: null,
-                      started_at: "2026-09-14T10:00:00Z",
-                      expires_at: "2026-09-14T10:30:00Z",
-                      read_only: true,
-                      state: expired,
-                    }
+                    target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002"
+                    target_username: alex
+                    target_display_name: null
+                    started_at: "2026-09-14T10:00:00Z"
+                    expires_at: "2026-09-14T10:30:00Z"
+                    read_only: true
+                    state: expired
         "204": { description: The session holds no view-as context. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1492,14 +1498,14 @@ paths:
         Each context gets exactly one `admin.view_as_ended` record, written when it ends:
         outcome `success`, severity `warning`, actor the viewer and the viewer's session, object
         `user` (the target), `before_state` `{target_user_id, started_at, expires_at}`,
-        `after_state` `{ended_at}`, and reason `ended` (this operation), `expired` (at
-        `expires_at`), `viewer_ineligible` (the session lost `users:write`),
-        `target_ineligible` (the target became an Owner or was disabled) or `session_ended`
-        (logout, or the revocation or expiry of the session). Leaving never fails on that record
-        (see "Audit" in "View-as session"): the context ends even when the record cannot be
-        written then, and the record follows late. A `503` means only that the session store
-        could not be reached, and then nothing changed. Clearing a held context writes no record
-        of its own, and neither does a call on a session that holds none.
+        `after_state` `{ended_at}` (plus `recorded_late: true`, only when late), and reason
+        `ended` (this operation), `expired` (at `expires_at`), `viewer_ineligible` (the session
+        lost `users:write`), `target_ineligible` (the target became an Owner or was disabled) or
+        `session_ended` (logout, or the revocation or expiry of the session). Leaving never fails
+        on that record (see "Audit" in "View-as session"): the context ends even when the record
+        cannot be written then, and the record follows late. A `503` means only that the session
+        store could not be reached, and then nothing changed. Clearing a held context writes no
+        record of its own, and neither does a call on a session that holds none.
 
         When a live context ends here, every socket authenticated on the session ends with
         `bye` `view_as_changed`, and reconnects into the viewer's own scope (23-ws-protocol.md
@@ -11442,10 +11448,8 @@ paths:
             examples:
               alex:
                 value:
-                  {
-                    target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
-                    reason: "Reproduce the empty positions panel alex reported",
-                  }
+                  target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002"
+                  reason: "Reproduce the empty positions panel alex reported"
       responses:
         "201":
           description: Started; the session now views as the target, read-only.
@@ -12185,7 +12189,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the operations it names and engaging the kill switch are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
       content:
         application/problem+json:
           schema:
@@ -17817,7 +17821,7 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-          pattern: "[^\\s\\u00AD\\u200B-\\u200F\\u2028-\\u202F\\u2060-\\u206F\\u2800\\u3164\\uFEFF]"
+          pattern: "[^\\s\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u2028-\\u202F\\u2060-\\u206F\\u2800\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\\uFFF9-\\uFFFB]"
           description: >
             Why the viewer needs this view; mandatory (SCR-124). It is recorded in the
             `admin.view_as_started` record only: never shown to the target, never part of a
@@ -17826,15 +17830,13 @@ components:
       type: object
       description: A session's view-as context ("View-as session" in `info.description`).
       required:
-        [
-          target_user_id,
-          target_username,
-          target_display_name,
-          started_at,
-          expires_at,
-          read_only,
-          state,
-        ]
+        - target_user_id
+        - target_username
+        - target_display_name
+        - started_at
+        - expires_at
+        - read_only
+        - state
       properties:
         target_user_id: { type: string, format: uuid, description: "The target's `User.id`." }
         target_username:
@@ -17857,7 +17859,7 @@ components:
             `active`: the session views as the target. `expired`: the server ended the context
             (at `expires_at`, or because the viewer or the target stopped being eligible), and it
             is held until `DELETE /auth/session/view-as` clears it. Until then every operation
-            outside the viewer's own ones answers `403 view_as_expired`.
+            but the viewer's own ones and the protective writes answers `403 view_as_expired`.
 
     SecuritySummary:
       type: object

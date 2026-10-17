@@ -1,10 +1,10 @@
 """Contract (#3085, contract slice): read-only view-as, finding AD-F03 of the E42 threat model
 (#890). Three operations: the start on `/admin/view-as` (`users:write`, step-up class `users`),
 and the read and the end on `/auth/session/view-as`, the caller's own session (SR-026). The
-session-wide rules (the viewer's own operations, read-only, scope, expiry and hold, the actor,
-the refusal budget) live in the "View-as session" section of `info.description`, the WebSocket
-rules in `23-ws-protocol.md` §9.6. Five problem codes and three audit actions are registered.
-Additive (C-6.3); the routes stay pending until the server slice serves them."""
+session-wide rules (the viewer's own operations, read-only, protective writes, scope, expiry and
+hold, the actor, the refusal budget) live in the "View-as session" section of `info.description`,
+the WebSocket rules in `23-ws-protocol.md` §9.6. Five problem codes and three audit actions are
+registered. Additive (C-6.3); the routes stay pending until the server slice serves them."""
 
 from __future__ import annotations
 
@@ -21,17 +21,8 @@ from candleviewer.api.step_up import DANGEROUS_PATH_PATTERN, HANDLER_GATED_ROUTE
 from candleviewer.audit.actions import AUDIT_ACTIONS, validate_action
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
 from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, ErrorCode
-from tests.contract._admin_support import (
-    OWNER_ONLY,
-    ROOT,
-    SPEC,
-    capability_rows,
-    example_cases,
-    grants,
-    text,
-    validate_example,
-    x_rbac,
-)
+from tests.contract import _admin_support as support
+from tests.contract._admin_support import ROOT, SPEC, text
 
 _START, _SELF_PATH = "/admin/view-as", "/auth/session/view-as"
 _PATH = {"get": _SELF_PATH, "post": _START, "delete": _SELF_PATH}
@@ -39,11 +30,10 @@ _TAG = {"get": "auth", "post": "admin", "delete": "auth"}
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 _TESTS = ROOT / "services/api/tests"
 _MATRIX = yaml.safe_load((_TESTS / "contract/rbac/matrix.yaml").read_text(encoding="utf-8"))
-_PENDING = json.loads(
-    (_TESTS / "unit/architecture/composition_allowlist.json").read_text(encoding="utf-8")
-)["openapi_pending"]
+_ALLOWLIST = _TESTS / "unit/architecture/composition_allowlist.json"
+_PENDING = json.loads(_ALLOWLIST.read_text(encoding="utf-8"))["openapi_pending"]
 _WS = (ROOT / "docs/plan/23-ws-protocol.md").read_text(encoding="utf-8")
-_EVERYONE = {**{actor: "allow" for actor in OWNER_ONLY}, "unauthenticated": "401"}
+_EVERYONE = {**{actor: "allow" for actor in support.OWNER_ONLY}, "unauthenticated": "401"}
 _SELF = {"permissions": [], "scope": "self"}
 #: method -> (operationId, exact statuses, x-rbac, x-idempotency, RBAC matrix outcomes)
 _OPS: dict[str, tuple[str, set[str], dict[str, Any], str | None, dict[str, str]]] = {
@@ -53,18 +43,12 @@ _OPS: dict[str, tuple[str, set[str], dict[str, Any], str | None, dict[str, str]]
         {"201", "401", "403", "404", "409", "422", "503"},
         {"permissions": ["users:write"], "scope": "none"},
         "ignored",
-        OWNER_ONLY,
+        support.OWNER_ONLY,
     ),
     "delete": ("endViewAs", {"204", "401", "403", "503"}, _SELF, "ignored", _EVERYONE),
 }
-_SHARED = {
-    "401": "Unauthorized",
-    "403": "Forbidden",
-    "404": "NotFound",
-    "409": "Conflict",
-    "422": "UnprocessableEntity",
-    "503": "ServiceUnavailable",
-}
+_SHARED = {"401": "Unauthorized", "403": "Forbidden", "404": "NotFound", "409": "Conflict"}
+_SHARED |= {"422": "UnprocessableEntity", "503": "ServiceUnavailable"}
 #: code -> (status, surfaces). `step_up_required` is reused, not added.
 _CODES = {
     "view_as_read_only": (403, ("rest", "ws")),
@@ -74,11 +58,10 @@ _CODES = {
     "view_as_active": (409, ("rest",)),
 }
 _ACTIONS = {"admin.view_as_started", "admin.view_as_ended", "admin.view_as_refused"}
-_EXAMPLES = example_cases([(_PATH[method], method) for method in _OPS]) + [
+_BODY = SPEC["paths"][_START]["post"]["requestBody"]["content"]["application/json"]
+_EXAMPLES = support.example_cases([(_PATH[method], method) for method in _OPS]) + [
     ("post request alex", "/components/schemas/StartViewAsRequest", value["value"])
-    for value in SPEC["paths"][_START]["post"]["requestBody"]["content"]["application/json"][
-        "examples"
-    ].values()
+    for value in _BODY["examples"].values()
 ]
 _UUID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002"
 
@@ -121,10 +104,7 @@ def test_state_changing_operations_take_the_csrf_token_and_the_read_takes_nothin
         assert _op(method)["parameters"] == [{"$ref": "#/components/parameters/CsrfToken"}]
     assert "parameters" not in _op("get") and "requestBody" not in _op("get")
     assert "requestBody" not in _op("delete")
-    assert set(SPEC["paths"][_START]) == {"post"} and set(SPEC["paths"][_SELF_PATH]) == {
-        "get",
-        "delete",
-    }
+    assert {(m, p) for p in {*_PATH.values()} for m in SPEC["paths"][p]} == {*_PATH.items()}
 
 
 @pytest.mark.parametrize("method", list(_OPS))
@@ -141,11 +121,8 @@ def test_start_cites_the_step_up_section_for_class_users() -> None:
     assert "users" in ACTION_CLASSES
     step_up = SPEC["paths"]["/auth/step-up"]["post"]["requestBody"]["content"]
     assert "users" in step_up["application/json"]["schema"]["properties"]["action_class"]["enum"]
-    start = _desc("post")
-    assert start.startswith(
-        "Requires `users:write` and step-up class `users` "
-        "(`POST /auth/step-up` defines the step-up rules)."
-    )
+    start, cite = _desc("post"), "(`POST /auth/step-up` defines the step-up rules)."
+    assert start.startswith(f"Requires `users:write` and step-up class `users` {cite}")
     # A grace class (#3088): the step-up section's rules apply and are not restated (C-16.5).
     assert "users" not in NO_GRACE_ACTION_CLASSES, "no-grace now: say the grant is bound (#2304)"
     assert "grace" not in start and "bound to" not in start
@@ -173,7 +150,9 @@ def test_every_new_problem_code_is_registered_with_its_status(code: str) -> None
 
 
 def test_no_other_view_as_code_and_step_up_is_reused() -> None:
-    assert "`view_as_expired` is absent for the same reason" in _ws_section("### 10.2 Catalogue")
+    catalogue = _ws_section("### 10.2 Catalogue")
+    assert "`view_as_expired` is absent for the same reason" in catalogue
+    assert "| `view_as_read_only` | request | no | = |" in catalogue  # class, retryable, REST
     registered = {e["code"] for e in SPEC["x-error-codes"] if e["code"].startswith("view_as")}
     assert registered == set(_CODES)
     assert "step_up_required" in {e["code"] for e in SPEC["x-error-codes"]}
@@ -186,31 +165,20 @@ def test_view_as_audit_actions_are_registered_by_exact_name() -> None:
 
 def test_request_and_context_schemas() -> None:
     request, context = _SCHEMAS["StartViewAsRequest"], _SCHEMAS["ViewAsContext"]
-    assert (request["required"], request["additionalProperties"]) == (
-        ["target_user_id", "reason"],
-        False,
-    )
+    assert request["required"] == ["target_user_id", "reason"]
+    assert request["additionalProperties"] is False
     assert set(request["properties"]) == {"target_user_id", "reason"}  # no client-set expiry
-    reason = request["properties"]["reason"]
+    reason, labels = request["properties"]["reason"], context["properties"]
     assert (reason["minLength"], reason["maxLength"]) == (1, 500) and "\\u200B" in reason["pattern"]
-    labels = context["properties"]
-    assert (labels["target_username"]["maxLength"], labels["target_display_name"]["maxLength"]) == (
-        40,
-        80,
-    )
-    assert (
-        set(context["required"])
-        == set(context["properties"])
-        == set(api.ViewAsContext.model_fields)
-    )
-    assert context["properties"]["read_only"]["const"] is True
-    assert context["properties"]["state"]["enum"] == ["active", "expired"]
-    body = _op("post")["requestBody"]["content"]["application/json"]["schema"]
-    assert body == {"$ref": "#/components/schemas/StartViewAsRequest"}
+    assert [labels[f"target_{k}"]["maxLength"] for k in ("username", "display_name")] == [40, 80]
+    assert set(context["required"]) == set(labels) == set(api.ViewAsContext.model_fields)
+    assert labels["read_only"]["const"] is True and labels["state"]["enum"] == ["active", "expired"]
+    assert _BODY["schema"] == {"$ref": "#/components/schemas/StartViewAsRequest"}
     ref = {"$ref": "#/components/schemas/ViewAsContext"}
     for method, status in (("get", "200"), ("post", "201")):
         assert _op(method)["responses"][status]["content"]["application/json"]["schema"] == ref
-    for bad in ({"reason": " \t\u200b"}, {"reason": "x", "expires_at": "2026-09-14T11:00:00Z"}):
+    invisible = " \t\u00ad\u034f\u061c\u115f\u180e\u200b\u3164\ufe0f\uffa0\ufff9"  # common ones
+    for bad in ({"reason": invisible}, {"reason": "x", "expires_at": "2026-09-14T11:00:00Z"}):
         with pytest.raises(ValidationError):
             api.StartViewAsRequest.model_validate({"target_user_id": _UUID, **bad})
 
@@ -219,7 +187,7 @@ def test_request_and_context_schemas() -> None:
 def test_every_example_validates_against_its_response_schema(
     case: str, pointer: str, value: Any
 ) -> None:
-    validate_example(pointer, value)
+    support.validate_example(pointer, value)
 
 
 def test_session_section_states_the_session_wide_rules() -> None:
@@ -227,8 +195,9 @@ def test_session_section_states_the_session_wide_rules() -> None:
     own = (
         "`POST /admin/view-as`, `GET` and `DELETE /auth/session/view-as`, `GET /auth/session`, "
         "`POST /auth/refresh`, `POST /auth/logout`, `POST /auth/session/extend` and "
-        "`POST /auth/unlock` act on the viewer's own session, as the viewer. None of the rules "
-        "below applies to them, so leaving view-as is one call that nothing refuses."
+        "`POST /auth/unlock` act on the viewer's own session, as the viewer, and "
+        "`POST /telemetry/frontend` carries only bucket counts. None of the rules below applies "
+        "to them, so leaving view-as is one call that nothing refuses."
     )
     for method, path in re.findall(r"`(GET|POST|DELETE) (/[a-z/-]+)`", own):
         assert method.lower() in SPEC["paths"][path], path
@@ -239,29 +208,35 @@ def test_session_section_states_the_session_wide_rules() -> None:
         "a refresh rotation (`POST /auth/refresh`) carries it to the successor session unchanged",
         "The server also ends it at once when the viewer's session no longer holds `users:write`, "
         "or when the target becomes an Owner or is disabled.",
-        "after authentication, the CSRF check (SR-041) and the session state (enrolment-only, "
-        "the idle lock, `session_read_only`), and before authorisation, request validation and "
-        "the step-up gate",
+        "Except on the operations the protective writes below pass to their handlers, the refusal "
+        "is decided after authentication, the CSRF check (SR-041) and the session state "
+        "(enrolment-only, the idle lock, `session_read_only`), and before authorisation, request "
+        "validation and the step-up gate, so it is never a step-up challenge and binds no "
+        "idempotency key.",
         "the target's role permissions (`x-permissions`) and account grants decide `x-rbac`",
         "no owner-only permission, flag or datum is reachable",
         "The server sets `expires_at` to `started_at` plus 30 minutes; the client cannot set or "
         "extend it",
         "the context ends on the server's clock, whether or not a request arrives",
-        "answers `403 view_as_expired`, whatever its method, and changes nothing, reads included",
-        "never waits on its `admin.view_as_ended`: one that cannot be written then is written "
-        "late, with `recorded_late: true`",
+        "every operation except the viewer's own ones and the protective writes answers "
+        "`403 view_as_expired`, whatever its method, and changes nothing, reads included",
+        "never waits on its `admin.view_as_ended`: one that cannot be written then stays pending "
+        "on the session row until its record is written, late (`recorded_late`)",
         "names the viewer and the viewer's session as the actor. The target is only ever the "
         "object, never the actor.",
         "and each refused WebSocket action frame writes one `admin.view_as_refused` ahead of its "
-        "answer, under the viewer's per-user record budget of the `/admin/audit*` operations, "
-        'with its cap and its `suppressed` count ("Audit budget" in `queryAuditLog`;',
+        "answer",
+        'They are counted per user by the mechanism of "Audit budget" in `queryAuditLog`, with '
+        "its `suppressed` count, under their own hourly cap, `view_as_refusal_budget_per_hour` "
+        "(default 120), and never use a slot of the `/admin/audit*` budget.",
         "Each refusal is also counted in `auth_view_as_refused_total{reason}`.",
         "A due record that cannot be written turns a REST refusal into `503 audit_unavailable`",
+        "(AD-D06; requirement 1, #2836)",
         "(C-12.4, C-2.21)",
         "(C-4.14)",
     ):
         assert claim in section, claim
-    assert section.count("record budget") == 1  # cited once, not restated (C-16.5)
+    assert section.count('"Audit budget"') == 1  # cited once, not restated (C-16.5)
     budget = text(SPEC["paths"]["/admin/audit"]["get"]["description"])
     assert "the next record written for the user carries the count (`suppressed`)" in budget
     reads = sorted(
@@ -277,14 +252,37 @@ def test_session_section_states_the_session_wide_rules() -> None:
     assert "`view_as_read_only` and `view_as_expired` of #3085" in binding.split(". ", 1)[0]
     forbidden = text(SPEC["components"]["responses"]["Forbidden"]["description"])
     assert "`code: view_as_read_only`" in forbidden and "`code: view_as_expired`" in forbidden
-    carve_out = "re-arming a protective trigger is never refused"  # the gate's list (C-16.5)
-    assert carve_out in forbidden and "Both honour the C-2.6 carve-out below" in forbidden
-    exemption = (
-        "Neither the read-only rule nor the hold refuses the operations the C-2.6 carve-out of "
-        "the `Forbidden` response names, or engaging the kill switch (`setKillSwitch` with "
-        "`engaged: true`; releasing it stays refused)."
-    )
-    assert exemption in section and "native SL" not in section  # pointed at, not restated
+
+
+def test_protective_writes_are_decided_by_their_handlers() -> None:
+    section = _session_section()
+    for claim in (
+        "Neither the read-only rule nor the hold refuses the writes the C-2.6 carve-out of the "
+        "`Forbidden` response names, or engaging the kill switch on an account set "
+        "(`setKillSwitch` with `engaged: true`, `scope: accounts`; releasing it and "
+        "`scope: global` stay refused: the viewer leaves view-as first).",
+        "Both pass `setKillSwitch`, `amendOrder`, `amendTradeGroup`, `setPositionTpSl` (the "
+        "`trading-stop` write) and `setRuleMode` (the rule re-arm) to their handlers, which "
+        "decide after validation by the classification of 24-internal-schemas.md section 8.10: "
+        "a request with any non-protective component is refused `view_as_read_only` (or "
+        "`view_as_expired`) there, before any effect, binds no key and writes its refusal record.",
+        "A protective write runs as the viewer, is audited with the viewer as the actor, and is "
+        "admitted only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the "
+        "hold it runs in the viewer's own scope.",
+    ):
+        assert claim in section, claim
+    assert "native SL" not in section  # the carve-out is pointed at, not restated (C-16.5)
+    handed = section.split("Both pass ", 1)[1].split(" to their handlers", 1)[0]
+    assert all(support.x_rbac(op) for op in re.findall(r"`([A-Za-z]+)`", handed))  # each exists
+    assert _SCHEMAS["SetKillSwitchRequest"]["properties"]["scope"]["enum"] == ["global", "accounts"]
+    gate = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
+    assert "### 8.10 Order-entry gate" in gate and "or re-arming a protective trigger is" in gate
+    forbidden = text(SPEC["components"]["responses"]["Forbidden"]["description"])
+    assert "re-arming a protective trigger is never refused" in forbidden  # the gate's list
+    honour = "while viewing, the writes it names and engaging the kill switch on an account set"
+    assert f"Both honour the C-2.6 carve-out below: {honour} are not refused" in forbidden
+    state = text(_SCHEMAS["ViewAsContext"]["properties"]["state"]["description"])
+    assert "every operation but the viewer's own ones and the protective writes answers" in state
 
 
 def test_start_states_its_refusal_order_audit_and_notification() -> None:
@@ -307,13 +305,15 @@ def test_start_states_its_refusal_order_audit_and_notification() -> None:
         "`admin.view_as_refused` is written for it.",
         "one conditional write on the session row, as `consume_single_use` is (#2895)",
         "A `step_up_required` refusal is recorded once, as `auth.step_up_required`",
+        "outcome `denied`, severity `warning`, reason the problem code",
+        "`admin.view_as_started`, outcome `success`, severity `warning`",
         "`after_state` `{target_user_id, started_at, expires_at, reason}`",
         "names the viewer by username and the window (`started_at` to `expires_at`), never "
         "`reason`",
         "If either cannot be recorded, nothing starts",
         "`409 conflict` when the target is `invited` or `disabled` (a `locked` user is only "
         "locked out of signing in, and can be viewed as)",
-        "ends with `bye` `view_as_changed`",
+        "ends with `bye` `view_as_changed`, and reconnects into the target's scope",
     ):
         assert claim in start, claim
 
@@ -323,7 +323,9 @@ def test_end_is_idempotent_and_audited_once_per_context() -> None:
     for claim in (
         "On a session that holds none it changes nothing and still answers `204`, so ending is "
         "idempotent",
-        "Each context gets exactly one `admin.view_as_ended` record",
+        "Each context gets exactly one `admin.view_as_ended` record, written when it ends: "
+        "outcome `success`, severity `warning`",
+        "`after_state` `{ended_at}` (plus `recorded_late: true`, only when late)",
         "reason `ended` (this operation), `expired` (at `expires_at`), `viewer_ineligible`",
         "`target_ineligible` (the target became an Owner or was disabled) or `session_ended`",
         "Leaving never fails on that record",
@@ -342,12 +344,16 @@ def test_ws_section_9_6_classifies_every_client_frame_and_closes_on_each_switch(
     for claim in (
         "`cv.v1` has no action frame.",
         "the server answers every action frame with `err` `view_as_read_only` (§10.2)",
+        "within the viewer's refusal record budget",
+        "If that record is due and cannot be written, the `err` is sent anyway.",
         "sends `bye` `view_as_changed` with `reconnect: true` and closes `4401`",
         "but with `bye` `view_as_expired` (`reconnect: false`) and close `4403`",
+        "A re-`auth` whose session's view-as state differs from the socket's (it holds no "
+        "context, or another one) gets `bye` `view_as_changed` and close `4401` instead of "
+        "`auth_ok`.",
         "names the viewer and the viewer's session as the actor, never the target",
         "View-as is the one audited exception to §6.4's rule that a user-scoped kind stays "
         "self-scoped for every role",
-        "within the viewer's refusal record budget",
     ):
         assert claim in section, claim
     must = text(_WS.split("**Server MUST:**", 1)[1].split("**Client MUST:**", 1)[0])
@@ -356,11 +362,11 @@ def test_ws_section_9_6_classifies_every_client_frame_and_closes_on_each_switch(
 
 
 def test_security_program_row_40b_and_sr_025() -> None:
-    cells = capability_rows()["40b"]
+    cells = support.capability_rows()["40b"]
     operations = {"startViewAs", "getViewAs", "endViewAs"}
-    assert grants(cells[1]) == ({"users:write"}, operations)
-    assert x_rbac("startViewAs") == ["users:write"]
-    assert x_rbac("getViewAs") == x_rbac("endViewAs") == []
+    assert support.grants(cells[1]) == ({"users:write"}, operations)
+    assert support.x_rbac("startViewAs") == ["users:write"]
+    assert support.x_rbac("getViewAs") == support.x_rbac("endViewAs") == []
     assert cells[2:] == ["✔(step-up)", "✖", "✖"]
     doc = (ROOT / "docs/plan/04-security-program.md").read_text(encoding="utf-8")
     (sr025,) = [line for line in doc.splitlines() if line.startswith("| SR-025 |")]

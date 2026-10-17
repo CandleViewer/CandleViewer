@@ -5682,7 +5682,7 @@ class StartViewAsRequest(BaseModel):
             description="Why the viewer needs this view; mandatory (SCR-124). It is recorded in the `admin.view_as_started` record only: never shown to the target, never part of a step-up `action_summary` and never written to a log line.\n",
             max_length=500,
             min_length=1,
-            pattern="[^\\s\\u00AD\\u200B-\\u200F\\u2028-\\u202F\\u2060-\\u206F\\u2800\\u3164\\uFEFF]",
+            pattern="[^\\s\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5\\u180B-\\u180F\\u200B-\\u200F\\u2028-\\u202F\\u2060-\\u206F\\u2800\\u3164\\uFE00-\\uFE0F\\uFEFF\\uFFA0\\uFFF9-\\uFFFB]",
         ),
     ]
 
@@ -5708,7 +5708,7 @@ class ViewAsContext(BaseModel):
     state: Annotated[
         Literal["active", "expired"],
         Field(
-            description="`active`: the session views as the target. `expired`: the server ended the context (at `expires_at`, or because the viewer or the target stopped being eligible), and it is held until `DELETE /auth/session/view-as` clears it. Until then every operation outside the viewer's own ones answers `403 view_as_expired`.\n"
+            description="`active`: the session views as the target. `expired`: the server ended the context (at `expires_at`, or because the viewer or the target stopped being eligible), and it is held until `DELETE /auth/session/view-as` clears it. Until then every operation but the viewer's own ones and the protective writes answers `403 view_as_expired`.\n"
         ),
     ]
 

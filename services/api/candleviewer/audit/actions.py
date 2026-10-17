@@ -173,12 +173,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "admin.audit_denied",
         # E42-T01: entering any /admin/* route (allowed or denied), {route, reauth_age_s}.
         "admin.area_entered",
-        # #3085 (E42 AD-F03): read-only view-as (`/admin/view-as`, `/auth/session/view-as`); its
-        # server slice emits them. Actor: the viewer and the viewer's session; object: `user`, the
-        # target. started: after {target_user_id, started_at, expires_at, reason}. ended (once per
-        # context, maybe recorded_late): before {target_user_id, started_at, expires_at}, after
-        # {ended_at}, reason ended|expired|viewer_ineligible|target_ineligible|session_ended.
-        # refused: denied, reason = the problem code, within the per-user record budget.
+        # #3085 (E42 AD-F03): read-only view-as, emitted by its server slice. Their fields,
+        # reasons and severity are 22-api-openapi.yaml's (`startViewAs`, `endViewAs`, "View-as
+        # session"); not restated here (C-16.5).
         "admin.view_as_started",
         "admin.view_as_ended",
         "admin.view_as_refused",
