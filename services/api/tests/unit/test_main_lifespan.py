@@ -12,14 +12,24 @@ never wired in) reappears silently.
 from __future__ import annotations
 
 import asyncio
+import os
+import re
+from collections.abc import Sequence
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
+from structlog.testing import capture_logs
 
+from candleviewer.account_fixture_wiring import ACCOUNT_FIXTURE_AUDIT_ACTION, AccountFixtureRefused
+from candleviewer.audit.service import AuditService
 from candleviewer.main import _lifespan
-from candleviewer.settings import Environment
+from candleviewer.settings import Environment, FeedMode, Settings
+from cvdev.account_fixture import boot
+from cvdev.account_fixture.boot import StoredKey
+from tests._account_fixtures import PACK_ROOT
 
 
 class _FakeGate:
@@ -101,7 +111,7 @@ def _fake_ctx() -> SimpleNamespace:
     ]
     modules = {name: _FakeModule() for name in module_names}
     return SimpleNamespace(
-        settings=SimpleNamespace(metrics_enabled=False, test_clock=False),
+        settings=SimpleNamespace(metrics_enabled=False, test_clock=False, account_fixture=None),
         mesh_self_check=_FakeSelfCheck(),
         oms_read_only_gate=_FakeGate(),
         **modules,
@@ -164,6 +174,7 @@ def _test_clock_ctx(audit: _FakeAudit) -> SimpleNamespace:
         test_clock=True,
         test_clock_file="/run/cv-test-clock/offset",
         environment=Environment.TESTNET,
+        account_fixture=None,
     )
     ctx.audit = audit
     return ctx
@@ -203,3 +214,95 @@ async def test_lifespan_stops_every_module_when_the_test_clock_audit_is_cancelle
         await _lifespan(app).__aenter__()
 
     assert (ctx.storage.stopped, ctx.audit.stopped, ctx.ws.stopped) == (True, True, True)
+
+
+def _fixture_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit: object
+) -> tuple[FastAPI, SimpleNamespace]:
+    """The harness with the fixture on (#2893 S8) and the checkout's pack."""
+    for name in [n for n in os.environ if n.upper().startswith("CV_")]:
+        monkeypatch.delenv(name)
+    monkeypatch.setattr(boot, "PACK_ROOT", PACK_ROOT)
+    app, ctx = FastAPI(), _fake_ctx()
+    ctx.settings = Settings(
+        environment=Environment.DEMO,
+        feed=FeedMode.SYNTHETIC,
+        account_fixture="compliant",
+        account_fixture_dir=str(tmp_path / "state"),
+        metrics_enabled=False,
+    )
+    ctx.audit = audit
+    app.state.app_context = ctx
+    return app, ctx
+
+
+def _modules(ctx: SimpleNamespace) -> list[_FakeModule]:
+    return [m for m in vars(ctx).values() if isinstance(m, _FakeModule)]
+
+
+class _AuditAfterStart(_FakeAudit):
+    async def emit(self, action: str, **fields: object) -> None:
+        assert self.started, "the boot record was written before the audit module started"
+        await super().emit(action, **fields)
+
+
+async def test_a_refused_boot_starts_no_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _a_live_key(settings: Settings) -> Sequence[StoredKey]:
+        return [StoredKey(env="live", key_id_last4="Ab12")]
+
+    monkeypatch.setattr(boot, "read_stored_keys", _a_live_key)
+    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit())
+
+    with pytest.raises(AccountFixtureRefused, match=re.escape("1 outside demo (live 1)")):
+        await _lifespan(app).__aenter__()
+
+    assert not [m for m in _modules(ctx) if m.started]
+    assert (ctx.mesh_self_check.run_once_calls, ctx.audit.actions) == (0, [])
+
+
+async def test_the_lifespan_decides_before_any_module_starts_and_records_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With an audit writer, as on the real backend (the read is faked): the guard reads before
+    any module starts, and its record is written once they run, before serving."""
+    app, ctx = _fixture_app(tmp_path, monkeypatch, _AuditAfterStart())
+    started_at_read: list[bool] = []
+
+    async def _read(settings: Settings) -> Sequence[StoredKey]:
+        started_at_read.append(any(m.started for m in _modules(ctx)))
+        return [StoredKey(env="demo", key_id_last4="0001")]
+
+    monkeypatch.setattr(boot, "read_stored_keys", _read)
+
+    async with _lifespan(app):
+        assert (started_at_read, ctx.audit.actions) == ([False], [ACCOUNT_FIXTURE_AUDIT_ACTION])
+
+
+async def test_on_the_fake_backend_the_warning_is_the_only_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real fake-backend path: no key is stored and `AuditService` has no writer (`is_active`
+    is False and `writer` raises), so the guard passes with its warning and nothing is written."""
+    app, ctx = _fixture_app(tmp_path, monkeypatch, AuditService())
+
+    with capture_logs() as logs:
+        async with _lifespan(app):
+            assert ctx.audit.is_active is False
+
+    passed = [e for e in logs if e["event"] == "exchange.account_fixture_boot_guard_passed"]
+    assert [(e["log_level"], e["storage_backend"], e["fixture_keys"]) for e in passed] == [
+        ("warning", "fake", 0)
+    ]
+
+
+async def test_a_failed_boot_record_stops_every_module_and_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit(failure=RuntimeError("audit down")))
+
+    with pytest.raises(RuntimeError, match="audit down"):
+        await _lifespan(app).__aenter__()
+
+    assert not [m for m in _modules(ctx) if not m.stopped]

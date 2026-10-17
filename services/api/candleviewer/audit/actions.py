@@ -191,6 +191,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",
+        # #2893 S8 (FX-R01): the dev-only account fixture transport is on and its boot guard
+        # passed (system actor `system:account-fixture`, `candleviewer/account_fixture_wiring.py`).
+        "system.config.account_fixture_enabled",
     }
 )
 
