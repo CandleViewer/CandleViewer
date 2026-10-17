@@ -41,8 +41,9 @@ from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment
 from cvdev.account_fixture.pack import Pack, Scenario, fixture_key_ids
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
-from cvdev.account_fixture.transport import PUBLIC_CALLS, FixtureTransport
+from cvdev.account_fixture.transport import PUBLIC_CALLS, FixtureTransport, _listed
 from tests._account_fixtures import PACK, PACK_ROOT, load, manifest, scenario_names
+from tests.unit.cvdev.test_request_log import OMS_LINK, ORDER
 from tests.unit.cvdev.test_transport_guards import DEMO, _client, _get, _key, _of, _secret
 from tests.unit.exchange.bybit.test_account_fixture_pack import (
     CLOSE_BODY,
@@ -60,6 +61,11 @@ from tests.unit.exchange.bybit.test_account_fixture_pack import (
 KEY_IDS: Final = fixture_key_ids(PACK)
 WALLET: Final = "/v5/account/wallet-balance"
 CREATE: Final = "/v5/order/create"
+AMEND, STOP = "/v5/order/amend", "/v5/position/trading-stop"
+#: An order id no scenario lists, and the orders working_orders_2 seeds: (orderId, orderLinkId).
+FOREIGN: Final = "00000000-0000-4000-8000-0000000000f9"
+_LISTED = manifest("working_orders_2")["rest"]["GET /v5/order/realtime"]["merge_patch"]["result"]
+SEEDED: Final = [(order["orderId"], order["orderLinkId"]) for order in _LISTED["list"]]
 #: Every call the pack stubs, but the wildcard.
 PACK_CALLS: Final = {c for n in scenario_names() for c in manifest(n).get("rest", {})} - {"*"}
 
@@ -252,6 +258,34 @@ async def test_order_create_echoes_order_link_id(stub: Stub) -> None:
     assert ids[0] == ids[2] == ids[3] != ids[1] and all(str(uuid.UUID(i)) == i for i in ids)
 
 
+@pytest.mark.parametrize(
+    ("overlays", "sent", "named"),
+    [
+        ((), {"orderId": FOREIGN}, (FOREIGN, "")),
+        ((), {"orderId": FOREIGN, "orderLinkId": OMS_LINK}, (FOREIGN, OMS_LINK)),
+        (("working_orders_2",), {"orderLinkId": SEEDED[0][1]}, SEEDED[0]),
+        (("working_orders_2",), {"orderId": SEEDED[1][0]}, SEEDED[1]),
+    ],
+    ids=["id-only", "id-and-link", "seeded-by-link", "seeded-by-id"],
+)
+async def test_a_cancel_names_the_order_it_cancels(
+    make: Make, overlays: tuple[str, ...], sent: dict[str, str], named: tuple[str, str]
+) -> None:
+    """Never another order: one the open-order list holds as listed, any other as sent, with no
+    link when none is sent."""
+    stub = make(kind=_Seeded)
+    assert isinstance(stub.transport, _Seeded)
+    stub.transport.overlays = overlays
+    cancel = _post("compliant", "/v5/order/cancel", {"category": "linear", **sent})
+    result = (await stub.send(cancel))[1]["result"]
+    assert (result["orderId"], result["orderLinkId"]) == named
+
+
+@pytest.mark.parametrize("rest", [{}, {"*": {"payload": "_base/error_10003.json"}}])
+def test_an_order_list_nothing_answers_or_an_error_names_no_order(rest: dict[str, Any]) -> None:
+    assert _listed(replace(load("compliant", now=NOW), chain=({"rest": rest},)), 0) == []
+
+
 async def test_the_verified_body_reaches_when(stub: Stub) -> None:
     """close_rejected rejects the flatten's reduce-only close and passes plan section 9.7's
     reference order to compliant's ack."""
@@ -265,14 +299,54 @@ async def test_the_verified_body_reaches_when(stub: Stub) -> None:
             "POST", CREATE, body=REFERENCE_ORDER, endpoint_class=EndpointClass.ORDER
         )
     assert (ack["retCode"], ack["result"]["orderLinkId"]) == (0, REFERENCE_ORDER["orderLinkId"])
-    headers = _get("close_rejected", payload=b"{").headers  # no JSON object: `when` never matches
-    raw = await stub.send(httpx.Request("POST", DEMO + CREATE, headers=headers, content=b"{"))
-    assert raw[1]["retCode"] == 0
     assert [_of(line, "outcome", "ret_code") for line in stub.lines()] == [
         ("served", 110017),
         ("served", 0),
-        ("served", 0),
     ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"{", b"", b"[]", b'"x"', b"[" * 10_000],
+    ids=["invalid", "empty", "list", "string", "recursion"],
+)
+async def test_a_signed_body_not_a_json_object_is_unstubbed(stub: Stub, content: bytes) -> None:
+    """No `when` can read such a body, so no stub answers it, the unconditional one neither: a
+    malformed close is never acked (the pack holds no 10001 reply to give instead)."""
+    headers = _get("close_rejected", payload=content).headers
+    request = httpx.Request("POST", DEMO + CREATE, headers=headers, content=content)
+    assert (await stub.send(request))[:2] == (404, {"error": "account_fixture_unstubbed"})
+    [line] = stub.lines()
+    assert _of(line, "outcome", "verified", "ret_code", "order") == ("unstubbed", True, None, None)
+
+
+async def test_the_log_keeps_an_orders_subset_and_no_other_field(stub: Stub) -> None:
+    """Plan section 9.7's evidence that an order carried its native SL (C-2.6), from the verified
+    body of a create, an amend (which the pack leaves unstubbed) and a trading-stop."""
+    extra = {"category": "linear", "timeInForce": "PostOnly", "tpslMode": "Full", "takeProfit": "7"}
+    sl = {"symbol": "BTCUSDT", "slTriggerBy": "MarkPrice"}
+    create = REFERENCE_ORDER | extra | sl | {"orderLinkId": OMS_LINK, "reduceOnly": False}
+    amend = extra | {"symbol": "BTCUSDT", "orderLinkId": OMS_LINK, "stopLoss": "56759.0"}
+    for path, body in ((CREATE, create), (AMEND, amend), (STOP, extra | sl | {"stopLoss": "0"})):
+        await stub.send(_post("compliant", path, body))
+    none, btc = dict.fromkeys(ORDER), {"symbol": "BTCUSDT"}
+    assert [_of(line, "outcome", "order") for line in stub.lines()] == [
+        ("served", ORDER),
+        ("unstubbed", none | btc | {"order_link_id": OMS_LINK, "stop_loss": "56759.0"}),
+        ("served", none | btc | {"stop_loss": "0", "sl_trigger_by": "MarkPrice"}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [{"orderLinkId": "not-a-minted-link"}, {"qty": "1e999999999"}, {"reduceOnly": "true"}],
+    ids=["link", "exponent", "flag"],
+)
+async def test_an_order_outside_the_log_rules_is_logged_without_it(stub: Stub, field: Any) -> None:
+    """The line keeps its path; an exponent is never parsed, so the log never formats it."""
+    assert (await stub.send(_post("compliant", CREATE, REFERENCE_ORDER | field)))[0] == 200
+    [line] = stub.lines()
+    assert _of(line, "outcome", "path", "order") == ("served", CREATE, None)
 
 
 class _Fenced(FixtureTransport):
