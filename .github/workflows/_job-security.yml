@@ -78,8 +78,8 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
 
       # analyze's own outcome does not gate: the gate step below judges its
-      # SARIF and fails CI-SEC-005 when there is none, so a crash is never a
-      # pass.
+      # SARIF and fails CI-SEC-005 when there is none (a crash before any
+      # SARIF is written never passes; one SARIF per language is #3261).
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         continue-on-error: true
         with:

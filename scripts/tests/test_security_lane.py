@@ -1,5 +1,5 @@
 """#3104: the security lane folds jobs that hold the same permissions. Each scan is a step judged as
-its old job was (`continue-on-error`, its old timeout), a verdict step fails the job unless every
+its old job was (`continue-on-error`, its old time budget), a verdict step fails the job unless every
 scan succeeded or was skipped, and `ci-required` still judges one `security` lane (#2988)."""
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ SCANS = {
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
 OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
+NODE_INSTALL = re.compile(r"\b(?:pnpm|npm|yarn)\s+(?:i|install|ci|add)\b")
 SCANNERS = ('"semgrep==', '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
@@ -120,9 +121,10 @@ def test_verdict_runs_last_and_no_folded_step_uses_failure(job: str) -> None:
 
 def test_the_shared_pnpm_install_never_runs_lifecycle_scripts() -> None:
     # read-only-scans installs once for four scans, so no package script may run there (C-12.3).
-    runs = [s.get("run", "") for job in JOBS for s in _steps(job)]
-    installs = [run for run in runs if "pnpm install" in run]
+    steps = [s for job in JOBS for s in _steps(job)]
+    installs = [s["run"] for s in steps if NODE_INSTALL.search(s.get("run", ""))]
     assert installs == ["pnpm install --frozen-lockfile --ignore-scripts"]
+    assert not any(s.get("with", {}).get("run_install") for s in steps)
 
 
 def test_freeze_proposal_upload_keys_on_the_freeze_step_outcome() -> None:
