@@ -9,9 +9,11 @@ from typing import Any
 from uuid import UUID
 
 from candleviewer.accounts.health import HealthTransition
+from candleviewer.accounts.order_gate import KeyStanding
 from candleviewer.observability.context import get_context
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
+DAY = timedelta(days=1)
 
 
 class FakeClock:
@@ -103,3 +105,17 @@ class Jitter(random.Random):
     def uniform(self, a: float, b: float) -> float:
         self.ranges.append((a, b))
         return a + (b - a) * self.fraction
+
+
+class Standings(dict[UUID, KeyStanding]):
+    """The key verifier's last result per account; an account with no entry is unknown."""
+
+    def standing(self, account_id: UUID) -> KeyStanding | None:
+        return self.get(account_id)
+
+
+class Sizing(dict[UUID, bool]):
+    """Wallet freshness per account; an account with no entry has no snapshot (`None`)."""
+
+    def risk_sizing_available(self, account_id: UUID) -> bool | None:
+        return self.get(account_id)

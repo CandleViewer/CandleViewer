@@ -8,9 +8,11 @@ serves these shapes agrees with them.
 
 from __future__ import annotations
 
+import re
 from typing import Any, get_args
 
 import pytest
+from pydantic import TypeAdapter
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
@@ -19,11 +21,15 @@ from candleviewer.accounts.health import (
     HealthReason,
     HealthState,
 )
+from candleviewer.accounts.key_age import KeyRotation, KeyRotationPolicy, RotationState
+from candleviewer.accounts.models import KeyStatus
+from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason, KeyStanding
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.domain.order_entry import REFUSAL_REASONS
 from candleviewer.ws.coalescing import CoalescingQueue
-from tests.contract.ws._harness import SCHEMAS, check_schema
-from tests.unit.accounts._fakes import ACC, Dms, FakeClock
+from tests.contract.ws._harness import REPO, SCHEMAS, check_schema
+from tests.unit.accounts._fakes import ACC, DAY, T0, Dms, FakeClock, Sizing, Standings
 
 _SPEC: dict[str, Any] = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -36,6 +42,7 @@ _ITEM = {"exchange_account_id": _ACC, "coin": "USDT", "equity": "1", "updated_at
 _FULL = _ITEM | {"stale": True, "stale_since_ms": 1}
 _HEALTH = dict(exchange_account_id=_ACC, state="degraded", reason="rest_only", rest_only=True)
 _ENTRY = _HEALTH | {"heartbeat_age_ms": None, "changed_at_ms": 1}
+_GATE_DOC = REPO / "docs" / "plan" / "24-internal-schemas.md"
 #: name -> (fields this change adds, the `required` list as it stood before it)
 _ADDED = {
     "ExchangeAccount": (
@@ -177,3 +184,35 @@ def test_the_monitor_view_validates_against_the_generated_rest_model() -> None:
 
 def test_the_monitor_ws_entry_validates_against_the_wallet_schema() -> None:
     check_schema(_WALLET, {"balances": [], "health": [_degraded_view().ws_entry(ACC)]}, "wallet")
+
+
+def test_the_account_check_asks_the_reasons_section_8_4_1_lists_in_order() -> None:
+    """§8.4.1 owns only the account side of the gate; §8.10 (E42-T03) owns the closed set."""
+    text = _GATE_DOC.read_text(encoding="utf-8")
+    section = text[text.index("**8.4.1 Account checks") : text.index("### 8.5 ")]
+    documented = re.findall(r"^\d\. `([a-z_]+)`:", section, flags=re.MULTILINE)
+    unmonitored = AccountHealthMonitor(FakeClock(), Dms())
+    asked = []
+    for standing in (  # each refuses on every remaining check; the first one asked answers
+        KeyStanding(False, DisabledReason.ACCOUNT_DISABLED),
+        KeyStanding(has_active_key=False),
+        KeyStanding(has_active_key=True),
+    ):
+        refusal = AccountHealthCheck(unmonitored, Standings({ACC: standing}), Sizing()).refusal(ACC)
+        assert refusal is not None
+        asked.append(refusal.reason)
+    assert asked == documented and set(asked) < REFUSAL_REASONS
+
+
+@pytest.mark.parametrize("status", [KeyStatus.ACTIVE, KeyStatus.REVOKED])
+def test_the_key_age_evaluator_serves_exactly_the_api_key_fields(status: KeyStatus) -> None:
+    schema = _SCHEMAS["ApiKey"]["properties"]
+    assert [*(s.value for s in RotationState), None] == schema["rotation_state"]["enum"]
+    rotation = KeyRotationPolicy().evaluate(T0, status, now=T0 + 80 * DAY)
+    wire = TypeAdapter(KeyRotation).dump_python(rotation, mode="json")
+    assert set(wire) == {"rotation_due_at", "rotation_state"} <= set(schema)
+    base = dict(id=_ACC, exchange_account_id=_ACC, key_id_masked="...AbC1", status=status.value)
+    key = api.ApiKey.model_validate(base | wire)
+    assert (key.rotation_due_at, key.rotation_state) == (
+        (T0 + 90 * DAY, "warn") if status is KeyStatus.ACTIVE else (None, None)
+    )

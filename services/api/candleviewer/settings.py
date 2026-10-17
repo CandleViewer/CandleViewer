@@ -10,8 +10,9 @@ runtime/per-user layers are owned by M21 `admin`.
 Security: `__repr__`/`__str__` never print secret values (redacting `__str__`
 below) — an early instance of M24's redaction-filter requirement. Any field
 whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is a
-`SecretStr` so it can never leak into logs, tracebacks or `repr()` by
-accident.
+`SecretStr`, except the `key_rotation_*` day counts, which hold no secret;
+`repr()` masks all of them, so none can leak into logs, tracebacks or
+`repr()` by accident.
 """
 
 from __future__ import annotations
@@ -529,6 +530,12 @@ class Settings(BaseSettings):
         default=ACCOUNT_HEARTBEAT_MAX_S, gt=0.0, le=ACCOUNT_HEARTBEAT_MAX_S
     )
     account_down_s: float = Field(default=ACCOUNT_DOWN_MAX_S, gt=0.0, le=ACCOUNT_DOWN_MAX_S)
+    # E27-T04: key-age policy (US-ACCT-005), deployment config for v1 (decision Q4 on #837).
+    # Bounded so that no value switches the reminder off (C-4.14): overdue within a year, and a
+    # warning window of at least a day that ends before the due date (Settings and the policy
+    # check that). Age never disables a key.
+    key_rotation_policy_days: int = Field(default=90, ge=2, le=365)
+    key_rotation_warn_days: int = Field(default=14, ge=1, le=364)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"
@@ -813,6 +820,24 @@ class Settings(BaseSettings):
         if heartbeat_s is not None and not heartbeat_s < down_s:
             raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
         return down_s
+
+    @field_validator("key_rotation_warn_days")
+    @classmethod
+    def _refuse_unordered_key_rotation_windows(cls, warn_days: int, info: ValidationInfo) -> int:
+        """E27-T04: the key-rotation warning must end inside the policy, as `KeyRotationPolicy`
+        requires. A bad pair refuses startup here rather than failing wherever the wiring first
+        builds one.
+
+        A field validator on the second window, not a model one (#2728, #2565): a refusal's
+        `errors()` and `json()` carry only this field's input, never every setting,
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the policy days, declared first;
+        a value whose own check failed is absent, and its error is the one to report."""
+        policy_days = info.data.get("key_rotation_policy_days")
+        if policy_days is not None and not warn_days < policy_days:
+            raise ValueError(
+                "CV_KEY_ROTATION_WARN_DAYS must be less than CV_KEY_ROTATION_POLICY_DAYS"
+            )
+        return warn_days
 
     @field_validator("bind_host")
     @classmethod
