@@ -315,3 +315,48 @@ async def test_a_backpressure_snapshot_that_does_not_queue_is_parked_until_rebui
     named = [(e["family"], e["error"], e["log_level"]) for e in failed]
     assert named == ([("book", "RuntimeError", "error")] if fault == "raises" else [])
     assert _MARK not in repr(logs)
+
+
+async def test_the_timer_retries_one_parked_snapshot_per_tick_and_logs_once_per_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3102's review: each tick of the coarse timer opens one pass over the parked snapshots, in
+    turn, ending at the first that does not queue: one failing build per tick, never all of them.
+    A failure logs at most once per family per interval, the next line counting those held back."""
+    pipe, _, conn = _attached(classify_interval_ms=1000)
+    source = conn.emitter.source
+    assert isinstance(source, Source) and pipe.ladder is not None
+    source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    subs = [_structured(conn, ch) for ch in (_BOOK, "book.ETHUSDT.50", _TRADES)]
+    _queued(pipe)
+    attempts, failing, real = list[str](), {_BOOK, "book.ETHUSDT.50", _TRADES}, source.build
+
+    def build(sub: Subscription) -> SnapshotBody | None:
+        attempts.append(sub.ch)
+        if sub.ch in failing:
+            raise RuntimeError(_MARK)
+        return real(sub)
+
+    monkeypatch.setattr(source, "build", build)
+    source.gen += 1  # every cached render is stale: each snapshot is built again
+    for sub in subs:
+        pipe.ladder.pacer.drop(sub)
+    with capture_logs() as logs:
+        pipe.service(0.0)
+        assert attempts == [_BOOK]  # one snapshot per turn, though it failed
+        for now in (0.0, 0.0, 0.0, 0.5):  # each mark tried once, one per turn, then parked
+            pipe.service(now)
+        assert attempts == [_BOOK, "book.ETHUSDT.50", _TRADES]
+        for now in (1.0, 1.0, 1.5, 2.0, 2.0):  # ticks at 1.0 and 2.0: one attempt each
+            pipe.service(now)
+        assert attempts[3:] == [_BOOK, "book.ETHUSDT.50"]
+        failing = {"book.ETHUSDT.50"}
+        for _ in range(4):  # a tick: its pass goes on while the snapshots queue, to a failure
+            pipe.service(3.0)
+        assert attempts[5:] == [_TRADES, _BOOK, "book.ETHUSDT.50"]
+        pipe.ladder.pacer.drop(subs[0])
+        pipe.service(3.0)  # marked again, the book is tried at once: it was retried, not parked
+    assert [f["ch"] for f in _queued(pipe)] == [_TRADES, _BOOK, _BOOK]
+    failed = [(e["family"], e["suppressed"]) for e in logs if e["event"].endswith("ot failed")]
+    assert failed == [("book", 0), ("trades", 0), ("book", 1), ("book", 0), ("book", 0)]
+    assert _MARK not in repr(logs)
