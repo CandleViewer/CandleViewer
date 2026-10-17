@@ -1,5 +1,7 @@
 # E42 — STRIDE appendix: user lifecycle (disable, grants, roles and sessions, deferred purge)
 
+- **Absorbed** into `e42-admin.md` §8 (E42-X01, #890). This file is kept as an annex so that its L, UL, UL-F and
+  UL-AC ids stay stable; the admin model cites them unchanged.
 - Issue: #2729. Owner: Security engineer (CODEOWNER). Status: **Draft** for security-reviewer and code-reviewer. It
   stays Draft until the Owner accepts the residual risks in §6.
 - Gate: decision O1 on #965 (decision record of 2026-10-15, interim and open to owner veto on #2701) adopts
