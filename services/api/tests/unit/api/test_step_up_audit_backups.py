@@ -100,7 +100,14 @@ async def test_backup_restore_grant_is_bound_to_the_restore_it_was_given_for() -
     assert w.client.post(_RESTORE, headers=w.h(), json=_HELD).status_code == 200  # still bound
 
 
-@pytest.mark.parametrize(("action_class", "single_use"), [("audit", False), ("backups", True)])
+@pytest.mark.parametrize(
+    ("action_class", "single_use"),
+    [
+        ("audit", False),
+        ("backups", True),
+        ("flags", False),  # #3083: the route answered `400` to `flags`, a contract class
+    ],
+)
 async def test_step_up_accepts_the_new_classes_and_b16_records_the_grant(
     action_class: str, single_use: bool
 ) -> None:

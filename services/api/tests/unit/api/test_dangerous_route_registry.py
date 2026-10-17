@@ -14,7 +14,7 @@ from __future__ import annotations
 import functools
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -57,7 +57,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
     # 04 row 22 (own rules, no step-up). Rows 26 (raising an action budget, loosening a stop) and
     # 27 (import) mark step-up, but the contract documents none for `updateRule` or `createRule`:
-    # an open contract question for the rule-engine lane, not decided here.
+    # `Problem.action_summary` says `rules:write` changes a rule without one and hands the rule
+    # questions that raises to the route slice of #2304. That slice settles rows 26 and 27; its PR
+    # deletes each rule row below that it gates and makes this note cite 04 for any it keeps.
     ("POST", "/rules"): "createRule: stored `disabled`; arming is `setRuleMode`, gated",
     ("PUT", "/rules/{ruleId}"): "updateRule: the contract (`Problem`) says no step-up",
     ("DELETE", "/rules/{ruleId}"): "deleteRule: refused while the rule is `armed`",
@@ -107,18 +109,26 @@ _STEP_UP_TEXT = re.compile(r"step[-_ ]up", re.IGNORECASE)
 #: `authStepUp` answers the challenges; it names every no-grace class and can never need a
 #: step-up itself (`_WRITE_EXEMPT_PATHS` in `api/step_up.py`).
 _ELEVATION = ("POST", "/auth/step-up")
+#: The OpenAPI path-item fields that are operations. The others (`parameters`, `servers`,
+#: `summary`, `description`, `$ref` and `x-` extensions) are not, whatever their type.
+_HTTP_METHODS = frozenset({"get", "put", "post", "patch", "delete", "head", "options", "trace"})
+
+
+def _operations(spec: Mapping[str, object]) -> dict[tuple[str, str], dict[str, Any]]:
+    """(METHOD, path) -> operation, for every operation in `spec`."""
+    paths = cast(dict[str, dict[str, Any]], spec["paths"])
+    return {
+        (method.upper(), path): op
+        for path, item in paths.items()
+        for method, op in item.items()
+        if method in _HTTP_METHODS
+    }
 
 
 @functools.cache
 def _contract_operations() -> dict[tuple[str, str], dict[str, Any]]:
     """(METHOD, path) -> operation, for every operation in the contract."""
-    paths = cast(dict[str, dict[str, Any]], load_openapi_spec()["paths"])
-    return {
-        (method.upper(), path): op
-        for path, item in paths.items()
-        for method, op in item.items()
-        if method != "parameters" and isinstance(op, dict)
-    }
+    return _operations(load_openapi_spec())
 
 
 def _operation(operation_id: str) -> tuple[tuple[str, str], dict[str, Any]]:
@@ -214,12 +224,36 @@ def test_mounting_a_step_up_operation_without_its_gate_is_caught(
     assert _step_up_findings(app) == [(method, prefix + route, "pending")]
 
 
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/me"),  # a read: the write-only path sweep #3083 replaced never saw one
+        ("PUT", "/admin/capacity/subaccount-tier"),
+    ],
+)
+def test_a_mounted_candidate_in_no_registry_and_no_allow_list_is_reported_ungated(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str
+) -> None:
+    """The `ungated` branch's self-test (#3083 review): without its allow-list row, a mounted
+    candidate that no registry row gates is reported, whatever its method."""
+    monkeypatch.delitem(_NOT_DANGEROUS, (method, path))
+    assert _step_up_findings(create_app()) == [(method, path, "ungated")]
+
+
 def test_the_contract_sweep_covers_reads() -> None:
     """A GET needing a dangerous permission is a candidate like any write."""
     candidates = _step_up_candidates()
     assert ("GET", "/admin/audit/exports/{jobId}") in candidates  # `audit:export`
     assert ("GET", "/users/{userId}/mfa/reset-preview") in candidates  # `users:write`
     assert _ELEVATION not in candidates
+
+
+def test_a_path_level_extension_object_is_not_read_as_an_operation() -> None:
+    """Only the method fields of a path item are operations (#3083 review): read as one, an
+    `x-` extension object would fail the sweep with a KeyError on `x-rbac` or `operationId`."""
+    get = {"operationId": "getThing", "x-rbac": {"permissions": ["flags:read"]}}
+    item = {"summary": "s", "parameters": [], "x-cv-owner": {"lane": "auth-rbac"}, "get": get}
+    assert _operations({"paths": {"/thing": item}}) == {("GET", "/thing"): get}
 
 
 @pytest.mark.parametrize(
