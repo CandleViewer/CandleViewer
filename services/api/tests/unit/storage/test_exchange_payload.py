@@ -197,6 +197,8 @@ def test_a_long_linear_symbol_is_kept_in_the_payload_and_in_a_message() -> None:
         "Q3w9" * 3 + "abUSDT",  # 18, mixed case: key-shaped although it ends in USDT
         "Q3W9" * 5,  # 20, upper case and digits, not ending in USDT
         "1" + "Q3W9" * 4 + "USDT",  # 21: past the `symbol_code` domain
+        "BTCUSDT" + "Q3W9" * 3 + "7",  # 20, a symbol then 13 more: the whole run is matched
+        _LONG_SYMBOL + "q",  # 20, the 19-character symbol then one more character
     ],
 )
 def test_a_key_shaped_run_that_is_no_symbol_is_still_redacted(text: str) -> None:
