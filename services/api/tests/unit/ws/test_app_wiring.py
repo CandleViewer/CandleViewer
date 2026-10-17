@@ -139,6 +139,7 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert publisher._swap == "generation_swap"
     assert isinstance(source, BarsSnapshotSource) and source._store is svc.series
     assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
+    assert source._stale == svc.bars.quarantined  # D3: a quarantined builder is `stale`
 
 
 def test_bars_scales_are_the_places_of_the_catalogue_tick_size_and_qty_step() -> None:

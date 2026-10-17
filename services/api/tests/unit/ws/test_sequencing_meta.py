@@ -1,7 +1,5 @@
 """E12-T06 slice D1a (#399): an owning module's `meta` on `snap` frames, `meta` on `d` frames,
-`publish(select=...)` and `flush_pending(match)`, in `ws/sequencing.py`. Frames are
-schema-checked without the owner keys (this `snapMeta` predates #2595), which are asserted
-directly."""
+`publish(select=...)` and `flush_pending(match)`, in `ws/sequencing.py`."""
 
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ from candleviewer.ws.sequencing import (
     SnapshotCache,
     SnapshotSource,
 )
-from tests.unit.ws._seq_support import ACC_A, ACC_B, Conn, OwnerMetaConn, Source
+from tests.unit.ws._seq_support import ACC_A, ACC_B, Conn, Source
 
 CH = "bars.BTCUSDT.time.5"
 RS = "bb000000-0000-4000-8000-000000000001"
@@ -35,12 +33,12 @@ EMPTY = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
 
 def _subscribed(
     *opts: dict[str, Any], cache: SnapshotCache | None = None
-) -> tuple[SequencingHub, list[tuple[OwnerMetaConn, Subscription]]]:
+) -> tuple[SequencingHub, list[tuple[Conn, Subscription]]]:
     """One connection per `opts`, each subscribed to `CH` and past its snapshot."""
     src, hub, subs = Source(), SequencingHub(), []
     src.bodies["bars"] = SnapshotBody(EMPTY)
     for o in opts:
-        conn = OwnerMetaConn(src, cache=cache)
+        conn = Conn(src, cache=cache)
         hub.register(conn.authz, conn.emitter)
         subs.append((conn, conn.sub({"ch": CH, "opts": o})[1]))
         conn.take()
@@ -104,7 +102,7 @@ def test_snapshot_meta_merge_lets_the_server_keys_win() -> None:
 
 def test_an_initial_snapshot_takes_no_server_key_from_the_owner() -> None:
     src = Source()
-    conn = OwnerMetaConn(src, cache=_OwnerCache())
+    conn = Conn(src, cache=_OwnerCache())
     conn.sub({"ch": CH, "opts": {"encoding": "structured"}})
     (snap,) = conn.take()  # the server sets no previous_seq on a first snap; nor may the owner
     assert snap["meta"] == {"reason": "initial", "source": "live", "history_bars": 3}
@@ -130,7 +128,7 @@ def test_owner_meta_rides_every_chunk_and_each_chunk_stays_within_the_limit(
     }
     server = servers[path]
     for limit in range(12_000, 12_400, 13):  # some limit packs a chunk tightly
-        hub, conn = SequencingHub(), OwnerMetaConn(src, max_frame_bytes=limit)
+        hub, conn = SequencingHub(), Conn(src, max_frame_bytes=limit)
         hub.register(conn.authz, conn.emitter)
         entry = {"ch": CH, "opts": {"encoding": encoding}}
         _, sub = conn.sub(entry, replay_session_id=RS if path == "replay" else None)

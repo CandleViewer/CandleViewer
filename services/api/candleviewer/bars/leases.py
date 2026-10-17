@@ -40,6 +40,7 @@ class SpecCaps:
 class _Series:
     holders: dict[str, str | None] = field(default_factory=dict)  # consumer -> user
     expires_at: int | None = None  # set while in grace
+    quarantined: bool = False  # its builder was removed; it ends with the series (#2195)
 
 
 DEFAULT_CAPS: Final = SpecCaps()
@@ -127,3 +128,14 @@ class SpecLeases:
     def drop(self, key: Key) -> None:
         """Forget a series immediately (its build failed)."""
         self._series.pop(key, None)
+
+    def quarantine(self, key: Key) -> None:
+        """Mark a leased series as having lost its builder, until the series ends."""
+        series = self._series.get(key)
+        if series is not None:
+            series.quarantined = True
+
+    def quarantined(self, key: Key) -> bool:
+        """O(1): True while a leased series has no builder (`quarantine`)."""
+        series = self._series.get(key)
+        return series is not None and series.quarantined

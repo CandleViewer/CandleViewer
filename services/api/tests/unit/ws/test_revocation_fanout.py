@@ -25,6 +25,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.bars.errors import BarsError
+from candleviewer.bars.models import BarSpec
 from candleviewer.ws import limits, permissions
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
@@ -113,6 +114,9 @@ class _DroppedSeries:
     def __init__(self, every: bool = False) -> None:
         self.released: list[str] = []
         self.every = every
+
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None:
+        return None
 
     async def register(self, *_args: Any, **_kw: Any) -> None:
         return None

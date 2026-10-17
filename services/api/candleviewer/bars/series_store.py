@@ -13,19 +13,23 @@ a WS snapshot source reads `latest` and `version`.
   so its generation is never stale (§8.2 generation swap). Generations are opaque epochs: none is
   assumed, and a series has none until an emission or a read names one. Naming the first is not a
   swap; a change of generation is, and leaves the series not `hydrated`, so the new generation's
-  rows are read (ADR-0033).
+  rows are read (ADR-0033). Resets are counted by cause (`bars_series_resets_total`), gaps (below)
+  in `bars_series_gaps_total`. A re-close of a bar the ring holds takes that bar's slot there.
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
   bars it held (those newer than the rows, or replacing a bar they hold, each with its build
   mark), the closes seen just before and during the read that re-close a bar now held, and the
   forming bar. It keeps one generation: the live one, else the newest row's, else none yet. One
   read at a time per series: a concurrent `ensure` waits for it, and takes it over if its reader
-  was cancelled. A failed read leaves the series as it was; a degraded one (SR-E12-11: served,
-  never final) or a live swap leaves it not `hydrated`. An `ensure` reads a series that is not
-  `hydrated`, or is `gapped`, again, but never sooner than `retry_after_s` after the last read;
-  nothing else starts a read. Without a reader, a series keeps only what the store has seen live.
-- **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. The last release keeps
-  the series `release_grace_s` (the builder's grace, US-MKT-005), so a quick resubscribe finds it
+  was cancelled. A failed read (`bars_series_hydrate_failed_total`) leaves the series as it was;
+  a degraded one (SR-E12-11: served, never final) or a live swap leaves it not `hydrated`. An
+  `ensure` reads a series that is not `hydrated`, or is `gapped`, again, but never sooner than
+  `retry_after_s` after the last read; nothing else starts a read. Without a reader, a series
+  keeps only what the store has seen live.
+- **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. A hold collected
+  unreleased (its consumer vanished) is released as of its collection: its finalizer only queues
+  it, and the next `ensure` applies the queue before its sweep. The last release keeps the
+  series `release_grace_s` (the builder's grace, US-MKT-005), so a quick resubscribe finds it
   as the sink kept it and, while it is `hydrated` and not `gapped`, reads nothing (BR-38); the
   next `ensure` sweeps the expired. At most `MAX_HISTORY` closed bars per series and `MAX_SERIES`
   series kept, held or in grace (the process-wide spec cap); rings for at most `MAX_SERIES`
@@ -56,6 +60,7 @@ import asyncio
 import functools
 import itertools
 import time
+import weakref
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -67,9 +72,14 @@ from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
-from candleviewer.bars.metrics import bars_spec_cap_rejected_total
+from candleviewer.bars.metrics import (
+    bars_series_gaps_total,
+    bars_series_hydrate_failed_total,
+    bars_series_resets_total,
+    bars_spec_cap_rejected_total,
+)
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.reader import MAX_TAIL, BarTail
+from candleviewer.bars.reader import MAX_TAIL, BarTail, degrade_reason
 
 #: The WS `history` cap (`23-ws-protocol.md` §6.1).
 MAX_HISTORY: Final = MAX_TAIL
@@ -103,15 +113,25 @@ class Latest(NamedTuple):
 
 class Hold:
     """One `ensure`'s claim on a series. `release` drops it once: a second call is a no-op, so a
-    double release never drops another caller's hold."""
+    double release never drops another caller's hold. A hold collected unreleased runs `lost`
+    (default: `drop`) once instead (`weakref.finalize`, which `release` detaches), so a consumer
+    that vanished without a release cannot pin its series."""
 
-    __slots__ = ("_drop", "spec_hash", "symbol")
+    __slots__ = ("__weakref__", "_drop", "_finalizer", "spec_hash", "symbol")
 
-    def __init__(self, symbol: str, spec_hash: str, drop: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        symbol: str,
+        spec_hash: str,
+        drop: Callable[[], None],
+        lost: Callable[[], None] | None = None,
+    ) -> None:
         self.symbol, self.spec_hash = symbol, spec_hash
         self._drop: Callable[[], None] | None = drop
+        self._finalizer = weakref.finalize(self, lost or drop)
 
     def release(self) -> None:
+        self._finalizer.detach()
         drop, self._drop = self._drop, None
         if drop is not None:
             drop()
@@ -170,6 +190,7 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
     if u.kind != "close":
         if i <= last:
             _clear(s)  # a bar at or below the newest close re-opened: restarted
+            bars_series_resets_total.labels(reason="restart").inc()
         s.forming = bar
         return True
     if _holds(s, bar):
@@ -180,8 +201,10 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
         if u.amended:
             return False  # an amended close of a bar this window does not hold
         _clear(s)  # another bar at or below the newest index: the builder restarted
+        bars_series_resets_total.labels(reason="restart").inc()
     elif gaps and s.closed and i > last + 1:
         s.gapped = True  # emitted before the hold and not stored yet, or lost: re-read
+        bars_series_gaps_total.inc()
         _log().warning(
             "bars_series_gap", spec_hash=bar.spec_hash, symbol=bar.symbol,
             from_index=last + 1, to_index=i - 1,
@@ -200,6 +223,7 @@ def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
     if generation != s.generation:
         if s.generation is not None:  # naming the first one is not a swap (23 §8.2)
             s.hydrated = False  # the new generation's rows are read again (ADR-0033)
+            bars_series_resets_total.labels(reason="generation_swap").inc()
         _clear(s)
         s.generation = generation
         _apply(s, u)
@@ -209,6 +233,21 @@ def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
 
 def _update(kind: str, bar: Bar) -> BarUpdate:
     return BarUpdate.model_construct(kind=kind, bar=bar, amended=False)
+
+
+def _reclose(ring: deque[Close], close: Close) -> bool:
+    """Put a re-close (amended or repeated) in its bar's slot, as a plain close so a new hold
+    takes it as that bar's close; False when the ring lacks the bar (same generation, index and
+    open time). Scans only a close at or below the ring's newest index."""
+    bar, gen = close[0].bar, close[1]
+    if bar.index > ring[-1][0].bar.index:
+        return False
+    for i in range(len(ring) - 1, -1, -1):
+        held, g = ring[i]
+        if g == gen and held.bar.index == bar.index and held.bar.open_time == bar.open_time:
+            ring[i] = (_update("close", bar), gen)
+            return True
+    return False
 
 
 class SeriesStore:
@@ -231,6 +270,8 @@ class SeriesStore:
         self._series: dict[Key, _Series] = {}
         self._recent: OrderedDict[Key, deque[Close]] = OrderedDict()
         self._versions = itertools.count(1)
+        #: Holds collected unreleased, with the time: one entry per hold at most (`_lose`).
+        self._lost: deque[tuple[_Series, float]] = deque()
 
     def series_count(self) -> int:
         """Series kept: held, or released and in their grace (an expired one until the next
@@ -258,6 +299,8 @@ class SeriesStore:
             ring = self._recent[key] = deque(maxlen=RECENT_CLOSES)
         else:
             self._recent.move_to_end(key)
+            if _reclose(ring, close):
+                return
         ring.append(close)
 
     async def ensure(self, symbol: str, spec: BarSpec) -> Hold:
@@ -265,7 +308,8 @@ class SeriesStore:
         done with it. Raises `SpecCapExceeded` (counted, nothing held) when `MAX_SERIES` series
         are kept; a cancelled `ensure` holds nothing either."""
         s = self._keep((symbol, spec.spec_hash))
-        hold = Hold(symbol, spec.spec_hash, functools.partial(self._release, s))
+        hold = Hold(symbol, spec.spec_hash, functools.partial(self._release, s),
+                    functools.partial(self._lose, s))  # fmt: skip
         try:
             await self._settle(s, symbol, spec)
         except BaseException:
@@ -274,6 +318,8 @@ class SeriesStore:
         return hold
 
     def _keep(self, key: Key) -> _Series:
+        while self._lost:  # holds collected unreleased: released as of their collection
+            self._release(*self._lost.popleft())
         now = self._clock()
         expired = [
             k for k, s in self._series.items() if s.expires_at is not None and s.expires_at <= now
@@ -292,10 +338,15 @@ class SeriesStore:
         s.expires_at = None
         return s
 
-    def _release(self, s: _Series) -> None:
+    def _release(self, s: _Series, at: float | None = None) -> None:
         s.refs -= 1
         if not s.refs:
-            s.expires_at = self._clock() + self._grace_s
+            s.expires_at = (self._clock() if at is None else at) + self._grace_s
+
+    def _lose(self, s: _Series) -> None:
+        """A `Hold`'s finalizer: O(1), never awaits. A collection can run on any thread, so it
+        only queues the release (a thread-safe `deque.append`); `_keep` applies it on the loop."""
+        self._lost.append((s, self._clock()))
 
     def version(self, symbol: str, spec_hash: str) -> int:
         """The series' change counter; 0 while the store does not keep it."""
@@ -356,6 +407,7 @@ class SeriesStore:
                 tail = await self._tail(symbol, spec, MAX_HISTORY)
         except Exception as exc:  # broad on purpose: any read failure leaves the series as it was
             s.attempted = True
+            bars_series_hydrate_failed_total.labels(reason=degrade_reason(exc)).inc()
             _log().warning(
                 "bars_series_hydrate_failed", spec_hash=spec.spec_hash, symbol=symbol,
                 error_type=type(exc).__name__, error=str(exc)[:120],

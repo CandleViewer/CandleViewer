@@ -324,6 +324,8 @@ class BarBuilderSet:
         a publisher already blocked in `queue.put` on it is released (#2030 review)."""
         self._unsubscribe(lane)
         self._lanes.pop(lane.symbol, None)
+        for e in lane.entries:  # its series lost their builders with it
+            self._leases.quarantine((lane.symbol, e.spec.spec_hash))
         task = spawn(self._drain_dead(lane), name=f"bars-drain-{lane.symbol}")
         self._drains.add(task)
         task.add_done_callback(self._drains.discard)
@@ -410,6 +412,11 @@ class BarBuilderSet:
     def active(self, symbol: str) -> tuple[str, ...]:
         lane = self._lanes.get(symbol)
         return () if lane is None else tuple(e.spec.spec_hash for e in lane.entries)
+
+    def quarantined(self, symbol: str, spec_hash: str) -> bool:
+        """O(1), no interpreter (C-2.20): True while a leased series has lost its builder (it
+        raised, or its lane died). The leases keep it so, without a new builder, until they end."""
+        return self._leases.quarantined((symbol, spec_hash))
 
     def _lane(self, symbol: str) -> _Lane:
         lane = self._lanes.get(symbol)
@@ -569,6 +576,7 @@ class BarBuilderSet:
         """Remove a failing series from its lane (the loop keeps draining for the others).
         Its leases stay, so it is not silently rebuilt; health reports the quarantine."""
         lane.entries = tuple(x for x in lane.entries if x is not e)
+        self._leases.quarantine((lane.symbol, e.spec.spec_hash))
         self._reasons.add(BarsHealthReason.BUILDER_QUARANTINED)
         bar_builder_quarantined_total.labels(reason="builder_error").inc()
         _log().error(

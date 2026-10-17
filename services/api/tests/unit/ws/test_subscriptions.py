@@ -1067,7 +1067,7 @@ class _Store:  # `SeriesHolds` fake: `ensure` writes to the shared `log`; a `Hol
         if self.fail is not None:
             raise self.fail
         self.log.append("ensure")
-        return Hold(symbol, spec.spec_hash, lambda: self.released.append(symbol))
+        return Hold(symbol, spec.spec_hash, lambda: self.released.append(symbol), lambda: None)
 
 
 class _LoggedBars(_Bars):

@@ -13,6 +13,10 @@ reads no storage itself.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
+- **`stale`** (§7.2, #2195) while the series' builder is quarantined (`BarBuilderSet.quarantined`,
+  an O(1) bool), so `cv_ws_stale_topics_in_use` counts the topic; `generation` is negated
+  meanwhile, so the render cache refreshes on a quarantine. `BarsBatch` (§14.3) has no `stale`
+  field and kind 4 no flag, so it stays off the wire until the contract adds one.
 - **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
   change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
   (`BarsPublisher.note_generation`): it seeds an unseen series, and a baseline or seed in another
@@ -22,6 +26,7 @@ reads no storage itself.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -42,6 +47,8 @@ if TYPE_CHECKING:
 
 #: `(symbol, spec, generation)` of a built snapshot: `BarsPublisher.note_generation`.
 Seed = Callable[[str, BarSpec, int], None]
+#: `(symbol, spec_hash) -> bool`: `BarBuilderSet.quarantined`.
+Stale = Callable[[str, str], bool]
 Item = dict[str, Any]
 
 
@@ -66,8 +73,11 @@ def _series(sub: Subscription) -> tuple[str, BarSpec, WireBarType, str] | None:
 class BarsSnapshotSource:
     """The `SnapshotSource` described in the module docstring."""
 
-    def __init__(self, store: SeriesStore, scales: Scales, *, seed: Seed | None = None) -> None:
-        self._store, self._scales, self._seed = store, scales, seed
+    def __init__(
+        self, store: SeriesStore, scales: Scales, *, seed: Seed | None = None,
+        stale: Stale | None = None,
+    ) -> None:  # fmt: skip
+        self._store, self._scales, self._seed, self._stale = store, scales, seed, stale
         self._logged: set[tuple[str, str]] = set()  # (ch, what) logged: module docstring
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
@@ -101,7 +111,10 @@ class BarsSnapshotSource:
         self._logged -= {(sub.ch, "refused"), (sub.ch, "structured")}
         if latest.generation is not None and self._seed is not None:
             self._seed(symbol, spec, latest.generation)
-        return body
+        return replace(body, stale=True) if self._quarantined(symbol, spec) else body
+
+    def _quarantined(self, symbol: str, spec: BarSpec) -> bool:
+        return self._stale is not None and self._stale(symbol, spec.spec_hash)
 
     def _kind4(
         self, ch: str, symbol: str, bars: list[Bar], gen: int, flow: bool, head: Item, meta: Item
@@ -133,7 +146,10 @@ class BarsSnapshotSource:
 
     def generation(self, sub: Subscription) -> int:
         series = _series(sub)
-        return 0 if series is None else self._store.version(series[0], series[1].spec_hash)
+        if series is None:
+            return 0
+        version = self._store.version(series[0], series[1].spec_hash)
+        return -version if self._quarantined(series[0], series[1]) else version
 
     def continuity(self, sub: Subscription, from_ts_ms: int | None) -> bool:
         return False

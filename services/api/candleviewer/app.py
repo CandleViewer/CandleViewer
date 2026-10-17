@@ -1104,8 +1104,9 @@ def create_app(
             publisher=publisher,
         )
         snapshot_adapters["bars"] = BarsSnapshotSource(
-            bars_series, scales, seed=publisher.note_generation
-        )
+            bars_series, scales, seed=publisher.note_generation,
+            stale=app.state.bars_runtime.builder_set.quarantined,
+        )  # fmt: skip
         if bars_reader is not None and ctx.ingestion.klines is not None:
             # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
             ctx.ingestion.klines.attach_tape(

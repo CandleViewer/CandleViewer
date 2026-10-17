@@ -134,6 +134,7 @@ def test_bars_snapshot_then_a_generation_swap_then_deltas_in_both_encodings(befo
 
 
 def _freed(w: _World) -> bool:  # whether the store let the series go
+    assert not w.store._lost  # released, never left to the `Hold` finalizer
     w.now += 1.0  # past its 0 s grace: the next `ensure` frees an expired series
     w.call(w.store.ensure, "ETHUSDT", SPEC)
     return w.store.latest(SYM, SPEC.spec_hash, 1) is None

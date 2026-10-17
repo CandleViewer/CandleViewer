@@ -13,6 +13,7 @@ from candleviewer.bars import builder_set
 from candleviewer.bars.builder_set import BarBuilderSet, BarsHealthReason, default_factory
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.errors import BarsError, BarServiceStopping
+from candleviewer.bars.leases import GRACE_US
 from candleviewer.bars.metrics import (
     bar_builder_quarantined_total,
     bar_emit_sink_errors_total,
@@ -95,6 +96,7 @@ async def test_dead_lane_task_unsubscribes_so_publisher_never_blocks(
         asyncio.gather(*(bus.publish(TOPIC, trade(T0 + i, seq=i)) for i in range(1, 50))), 5
     )
     assert BarsHealthReason.TASK_FAILED in s.health_reasons()
+    assert s.quarantined(SYM, T3.spec_hash)  # its lane's series lost their builders with it
     await s.stop()
 
 
@@ -134,6 +136,33 @@ async def test_on_clock_failure_quarantines_only_that_spec(tmp_path: Path) -> No
     m1.builder.on_clock = bad_clock  # type: ignore[method-assign,assignment]  # inject a fault
     await s.tick()
     assert s.active(SYM) == (T3.spec_hash,)
+    await s.stop()
+
+
+async def test_a_quarantined_series_reads_stale_until_a_new_builder_serves_it(
+    tmp_path: Path,
+) -> None:
+    """#2195: an O(1) answer for the bars snapshot. A consumer joining a quarantined series gets
+    no new builder (its leases stay), so it stays stale; once its leases end, a new one is not."""
+    clock = Clock(T0)
+    s = make_set(tmp_path, clock=clock)
+    await s.register(M1, SYM, "a")
+    assert not s.quarantined(SYM, M1.spec_hash)
+    (m1,) = s._lanes[SYM].entries
+
+    def bad_clock(now: int) -> Any:
+        raise ValueError("clock defect")
+
+    m1.builder.on_clock = bad_clock  # type: ignore[method-assign,assignment]  # inject a fault
+    await s.tick()
+    await s.register(M1, SYM, "b")
+    assert s.quarantined(SYM, M1.spec_hash) and s.active(SYM) == ()
+    for consumer in ("a", "b"):
+        s.release(M1.spec_hash, SYM, consumer)
+    clock.t += GRACE_US
+    await s.tick()  # the grace ends: the series is torn down
+    await s.register(M1, SYM, "c")
+    assert not s.quarantined(SYM, M1.spec_hash) and s.active(SYM) == (M1.spec_hash,)
     await s.stop()
 
 
