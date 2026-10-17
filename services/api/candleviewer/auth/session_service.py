@@ -17,6 +17,9 @@ Every Gherkin scenario in the ticket maps to a method here:
   still within the absolute lifetime.
 - `revoke()` / `revoke_all()` — single-session revoke and sign-out-
   everywhere (SCR-112).
+- `classify_session()` — #2295: the enrolment-only class of a resolved
+  session, derived from its user's state (`AuthService.classify` reads the
+  user store; this service never reads `users`).
 
 Audit emission is the router's job, exactly like `LoginService`/
 `MfaService` (`auth` may not import `audit` — `forbidden-M18`); this module
@@ -71,12 +74,18 @@ from candleviewer.auth.models import (
     SessionIntrospection,
     SessionRecord,
     SessionView,
+    UserRecord,
     UserStatus,
 )
 from candleviewer.auth.session_repository import SessionRepository
 
 #: Ticket "Scope / Deliverables": "12 h absolute lifetime".
 ABSOLUTE_LIFETIME = timedelta(hours=12)
+
+#: #2295 (Q7): an enrolment-only session lives at most this long from sign-in.
+#: `refresh()` hands the absolute `expires_at` on, so rotation never extends it;
+#: `classify_session` refuses an enrolment-only session that would outlive it.
+ENROLMENT_ONLY_LIFETIME = timedelta(minutes=15)
 
 #: ADR-0020 decision 3: opaque access-token TTL (12 min).
 ACCESS_TOKEN_TTL = timedelta(minutes=12)
@@ -229,6 +238,49 @@ def access_token_expires_at(session: SessionRecord) -> datetime:
 async def _write_ahead(hook: UnlockWriteAhead | None, outcome: UnlockOutcome) -> None:
     if hook is not None:
         await hook(outcome)
+
+
+class SessionClass(StrEnum):
+    """What a live session may do (#2295; `22-api-openapi.yaml` "Enrolment-only session").
+
+    Derived from the user's state on every request, never stored: the session row carries
+    no flag, so a TOTP reset, a recovery sign-in or a confirmed enrolment takes effect on
+    the next request of every session of that user."""
+
+    #: The user has a confirmed MFA method and the session proved one (`mfa_satisfied_at`),
+    #: or MFA is not required (which C-12.2 forbids).
+    FULL = "full"
+    #: `mfa_required` and no confirmed method, or a session minted on the password alone:
+    #: only the five enrolment operations.
+    ENROLMENT_ONLY = "enrolment_only"
+    #: As `ENROLMENT_ONLY`, but its absolute expiry lies more than `ENROLMENT_ONLY_LIFETIME`
+    #: ahead, so it was not minted as one (say, a full session whose user then lost every
+    #: method). Refused like an expired session: the user signs in again (Q7).
+    ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
+
+
+def classify_session(
+    session: SessionRecord, user: UserRecord | None, *, now: datetime
+) -> SessionClass:
+    """The one classification every HTTP request and every WS `auth` runs (#2295).
+
+    *user* is the session's user as the store reads it now, `None` when there is no such
+    live user. `UserRecord.mfa_methods` lists the confirmed, unrevoked methods, the same
+    rule `User.mfa_enabled` follows, so the server and the client always agree. Fail
+    closed: a user who cannot be read has no proven second factor.
+
+    A session that never proved a second factor (`mfa_satisfied_at` unset: minted with
+    `mfa_satisfied=False`, on the password alone) stays restricted even once its user has a
+    confirmed method. Revoke-all at confirm (ADR-0010 decision 2) ends such sessions; should
+    one be missed, it still never turns full. `mint` sets `mfa_satisfied_at` by default (the
+    MFA verify path) and `refresh` hands it on, so a full session keeps it."""
+    if user is not None and (
+        not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None)
+    ):
+        return SessionClass.FULL
+    if session.expires_at - now > ENROLMENT_ONLY_LIFETIME:
+        return SessionClass.ENROLMENT_ONLY_EXPIRED
+    return SessionClass.ENROLMENT_ONLY
 
 
 class SessionService:
