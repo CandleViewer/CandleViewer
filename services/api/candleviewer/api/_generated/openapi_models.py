@@ -5382,6 +5382,130 @@ class Incident(BaseModel):
     ] = None
 
 
+class StatechartMachine(BaseModel):
+    machine_key: Annotated[str, Field(description="The `machineKey` of this machine.")]
+    machine_kind: Annotated[str, Field(description="Catalogue id (`28-statechart-catalogue.md`).")]
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    state: Annotated[
+        str,
+        Field(
+            description="The published state as on the `machines.{entity}.state` topic: the active direct child of the chart root (the first region's, for a parallel chart).\n"
+        ),
+    ]
+    machine_hash: Annotated[
+        str,
+        Field(
+            description="The snapshot's chart hash (sha256 of the canonical chart JSON).",
+            pattern="^[0-9a-f]{64}$",
+        ),
+    ]
+    lock_matches: Annotated[
+        bool,
+        Field(
+            description="Whether `machine_hash` equals the committed `machine_hashes.lock` entry."
+        ),
+    ]
+    chain_trips: Annotated[
+        int,
+        Field(
+            description="The snapshot's `chain_trips` count; above 0 the machine is latched degraded.",
+            ge=0,
+        ),
+    ]
+    degraded: Annotated[bool, Field(description="`chain_trips > 0`; cleared only by an operator.")]
+    deferred_depth: Annotated[
+        int | None,
+        Field(
+            description="Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list.\n",
+            ge=0,
+        ),
+    ]
+    updated_at: Annotated[AwareDatetime, Field(description="When the snapshot was written.")]
+
+
+class RecentEvent(BaseModel):
+    event_type: str
+    phase: Literal["ahead", "commit", "fault"]
+    from_states: list[str] | None = None
+    to_states: list[str] | None = None
+    faulted: bool | None = None
+    occurred_at: AwareDatetime
+
+
+class StatechartMachineDetail(BaseModel):
+    snapshots: AdminSliceStatus
+    events: AdminSliceStatus | None = None
+    machine: StatechartMachine | None = None
+    context_summary: Annotated[
+        dict[str, str | float | bool | None] | None,
+        Field(description="Redacted scalar context; only the keys allowed for the kind."),
+    ] = None
+    configuration: Annotated[
+        list[str] | None, Field(description="Every active state id, ancestors included, sorted.")
+    ] = None
+    config: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="The chart JSON registered for the kind (`statechart/machines/*.machine.json`)."
+        ),
+    ] = None
+    recent_events: Annotated[
+        list[RecentEvent] | None,
+        Field(
+            description="The latest `machine_events` rows, newest first, without payloads.",
+            max_length=50,
+        ),
+    ] = None
+
+
+class StatechartExport(BaseModel):
+    machine_kind: str
+    machine_hash: Annotated[
+        str,
+        Field(
+            description="sha256 of the registered chart's canonical JSON (`registry.machine_hash`).",
+            pattern="^[0-9a-f]{64}$",
+        ),
+    ]
+    stately: Annotated[
+        dict[str, Any],
+        Field(
+            description="The chart without the six CV policy keys, importable into Stately Studio."
+        ),
+    ]
+
+
+class StatechartKindSummary(BaseModel):
+    machine_kind: str
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    machines: Annotated[int, Field(ge=1)]
+    by_state: Annotated[
+        dict[str, int],
+        Field(description="Live machines per published `state`; a state with none is left out."),
+    ]
+    chain_trips: Annotated[int, Field(description="Sum over the machines.", ge=0)]
+    degraded_machines: Annotated[
+        int, Field(description="Machines whose `chain_trips` latch is set.", ge=0)
+    ]
+    dropped_receipts: Annotated[
+        int | None,
+        Field(
+            description="`cv_machine_dropped_receipts_total` for the kind since process start (the library counts per interpreter and never persists it); `null` when the metric cannot be read.\n",
+            ge=0,
+        ),
+    ]
+
+
 class Key(BaseModel):
     exchange_account_id: UUID | None = None
     key_id_prefix: str | None = None

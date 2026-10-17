@@ -10099,6 +10099,231 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /admin/statecharts:
+    get:
+      tags: [admin]
+      operationId: listStatecharts
+      summary: Statechart inspector - live machines and their supervision counters
+      description: >
+        Read model for the statechart inspector (E42-T07). One row per live machine of a kind
+        that has a public entity id (the `machines.{entity}.state` grammar of E17-T08: B8, B9,
+        B13 and B15 have none yet, so they get no row). Rows come from the persisted quiescent
+        snapshots and the `cv_machine_*` metric families; the read path never holds, builds or
+        queries an `Interpreter` (MUSTNOT-03).
+        Per-entity visibility follows the `machines.{entity}.state` topic: the Owner sees every
+        entity of an account-scoped or unscoped kind, while `alert`, `replay` and `session` stay
+        self-scoped for every role, so only the caller's own appear. A row the caller may not see
+        is omitted, never redacted. `kinds` adds one counters-only summary per kind and
+        environment with no entity id, every live machine counted, so a latched machine without a
+        row (a B8 `position_protection`, another user's `session`) still shows. `kinds` is the same
+        on every page, and `kind` and `environment` narrow it as they narrow `items` (`degraded`
+        does not).
+        Machines are per environment (`machine_snapshots` is keyed by kind, entity and `env`): the
+        singletons `kill_switch` and `live_gate` run once per environment, and a `machine_key` is
+        unique within one environment. `environment` filters; each row carries its own. Rows are
+        ordered by `machine_kind`, `machine_key`, then `environment`, ascending.
+        Each snapshot's HMAC envelope is verified (`persistence.open_sealed`, CV-C53) before its
+        `state`, `chain_trips` or `degraded` is shown. A snapshot that fails is left out of `items`
+        and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not
+        verify". A failed seal also writes a `system_events` row (component `statechart`, severity
+        `critical`, a fixed message), once per machine, environment and snapshot `updated_at`, not
+        once per read, so it shows in `listIncidents`. `statechart` is not yet in the `se_component`
+        CHECK (migration 0008, `21-database-schema.md` §3.10.2), so the route slice widens it in a
+        new migration before it writes that row. When the snapshot store cannot be read, `items` and
+        `kinds` are empty and `snapshots` says why (`AdminSliceStatus`); the response is still
+        `200`.
+      x-rbac: { permissions: [admin:read], scope: none }
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/EnvironmentQuery"
+        - name: kind
+          in: query
+          description: Only machines of this catalogue `machine_kind`.
+          schema: { type: string, pattern: "^[a-z_]{1,32}$" }
+        - name: degraded
+          in: query
+          description: Only machines whose `chain_trips` latch is set (`true`) or clear (`false`).
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Machines page.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    required: [items, kinds, snapshots, metrics]
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/StatechartMachine" }
+                      kinds:
+                        type: array
+                        items: { $ref: "#/components/schemas/StatechartKindSummary" }
+                      snapshots: { $ref: "#/components/schemas/AdminSliceStatus" }
+                      metrics: { $ref: "#/components/schemas/AdminSliceStatus" }
+              examples:
+                degradedOrder:
+                  summary: One latched order machine; the metrics source timed out
+                  value:
+                    items:
+                      - machine_key: kill_switch
+                        machine_kind: kill_switch
+                        environment: demo
+                        state: clear
+                        machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                        lock_matches: true
+                        chain_trips: 0
+                        degraded: false
+                        deferred_depth: 0
+                        updated_at: "2026-10-15T18:00:00Z"
+                      - machine_key: "order:0a000000-0000-4000-8000-000000000001"
+                        machine_kind: order
+                        environment: demo
+                        state: submitted
+                        machine_hash: "743dfaada4e382a4c29d40a582e454285aa3f4d5142b1ade45603086c8087255"
+                        lock_matches: true
+                        chain_trips: 1
+                        degraded: true
+                        deferred_depth: 2
+                        updated_at: "2026-10-15T18:00:02Z"
+                    kinds:
+                      - machine_kind: kill_switch
+                        environment: demo
+                        machines: 1
+                        by_state: { clear: 1 }
+                        chain_trips: 0
+                        degraded_machines: 0
+                        dropped_receipts: null
+                      - machine_kind: order
+                        environment: demo
+                        machines: 1
+                        by_state: { submitted: 1 }
+                        chain_trips: 1
+                        degraded_machines: 1
+                        dropped_receipts: null
+                      - machine_kind: position_protection
+                        environment: demo
+                        machines: 2
+                        by_state: { protected: 2 }
+                        chain_trips: 0
+                        degraded_machines: 0
+                        dropped_receipts: null
+                    meta: { next_cursor: null, has_more: false, count: 2 }
+                    snapshots: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    metrics:
+                      {
+                        status: error,
+                        detail: "metrics timed out after 300 ms",
+                        generated_at: "2026-10-15T18:00:05Z",
+                      }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/statecharts/{machineKey}:
+    parameters:
+      - $ref: "#/components/parameters/MachineKey"
+    get:
+      tags: [admin]
+      operationId: getStatechart
+      summary: Statechart inspector - one machine's redacted context, chart and configuration
+      description: >
+        One live machine (E42-T07), with the same visibility rules as `listStatecharts`. Adds the
+        redacted `context_summary` (only the keys the `machines.{entity}.state` topic allows for
+        the kind; never secrets, user ids, free text, deadlines, exchange ids, prices,
+        quantities, balances or limits), the full active `configuration` (ancestors included,
+        from the snapshot), the registered chart (`config`), and the latest `machine_events`
+        rows without their payloads. An unknown machine and one the caller may not see are the same
+        `404 not_found`. The visibility check precedes the seal check, so a seal failure on a
+        machine the caller may not see is still `404`. `environment` is required, because a
+        `machineKey` is unique only within one environment. When the snapshot store cannot be read,
+        or the machine's HMAC envelope does not verify (`persistence.open_sealed`, CV-C53), the
+        answer is `200` with `snapshots` `error` and a fixed reason, and no machine fields; a failed
+        seal also writes the `system_events` row described on `listStatecharts`.
+      x-rbac: { permissions: [admin:read], scope: none }
+      parameters:
+        - name: environment
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Environment" }
+      responses:
+        "200":
+          description: The machine.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatechartMachineDetail" }
+              examples:
+                killSwitch:
+                  summary: The kill-switch machine (chart config trimmed for the example)
+                  value:
+                    snapshots: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    events: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    machine:
+                      machine_key: kill_switch
+                      machine_kind: kill_switch
+                      environment: demo
+                      state: clear
+                      machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                      lock_matches: true
+                      chain_trips: 0
+                      degraded: false
+                      deferred_depth: 0
+                      updated_at: "2026-10-15T18:00:00Z"
+                    context_summary: { scope: global, cancel_working: true, flatten: false }
+                    configuration: [kill_switch, kill_switch.clear]
+                    config: { id: kill_switch, initial: clear }
+                    recent_events:
+                      - event_type: RELEASE
+                        phase: commit
+                        from_states: [kill_switch.engaged]
+                        to_states: [kill_switch.clear]
+                        faulted: false
+                        occurred_at: "2026-10-15T17:59:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/statecharts/{machineKey}/export:
+    parameters:
+      - $ref: "#/components/parameters/MachineKey"
+    get:
+      tags: [admin]
+      operationId: exportStatechart
+      summary: Stately-compatible export of a machine's registered chart
+      description: >
+        The chart registered in `statechart/registry.py` for the key's kind, projected for
+        Stately Studio by `export_stately`, with its `machine_hash` (E42-T07). The projection
+        removes exactly the six CV policy keys (`strictConfig`, `strict`, `strictTargets`,
+        `actionErrorPolicy`, `guardErrorPolicy`, `spawnBlockingTimeout`) and keeps every other
+        key, `id`, `initial` and `states` included, so it validates against the authoring schema
+        (`statechart/schema.py` `MACHINE_SCHEMA`) with those six keys taken out. `machineKey`
+        may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or
+        not. The export reveals chart structure only: no instance is read,
+        so the answer is the same for any id of a registered kind. An `algo:{id}` key is
+        `404 not_found`, because without reading the instance the export cannot tell which of
+        the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or
+        `chase`) instead. A key outside the grammar (a singleton with an id) or a kind that is
+        not registered is `404 not_found` too.
+      x-rbac: { permissions: [admin:read], scope: none }
+      responses:
+        "200":
+          description: The Stately projection of the registered chart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatechartExport" }
+              examples:
+                killSwitch:
+                  summary: The kill-switch chart (states trimmed for the example)
+                  value:
+                    machine_kind: kill_switch
+                    machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                    stately: { id: kill_switch, initial: clear, states: { clear: {} } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /admin/security/summary:
     get:
       tags: [admin]
@@ -10608,6 +10833,20 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    MachineKey:
+      name: machineKey
+      in: path
+      required: true
+      description: >
+        A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton
+        (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a
+        `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`,
+        `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly
+        one key in its environment.
+      schema:
+        type: string
+        maxLength: 80
+        pattern: "^[a-z_]{1,32}(:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Z0-9]{2,20}USDT))?$"
     BackupId:
       name: backupId
       in: path
@@ -15634,6 +15873,136 @@ components:
           description: >
             Stable grouping key (E42-T05): a hash of the component, the error class and the
             normalised message. Equal signatures in one component are the same fault.
+
+    StatechartMachine:
+      type: object
+      description: >
+        One live machine (E42-T07), read from its persisted quiescent snapshot and the
+        `cv_machine_*` metric families, never from a live interpreter.
+      required:
+        [
+          machine_key,
+          machine_kind,
+          environment,
+          state,
+          machine_hash,
+          lock_matches,
+          chain_trips,
+          degraded,
+          deferred_depth,
+          updated_at,
+        ]
+      properties:
+        machine_key: { type: string, description: "The `machineKey` of this machine." }
+        machine_kind: { type: string, description: "Catalogue id (`28-statechart-catalogue.md`)." }
+        environment: { $ref: "#/components/schemas/Environment" }
+        state:
+          type: string
+          description: >
+            The published state as on the `machines.{entity}.state` topic: the active direct
+            child of the chart root (the first region's, for a parallel chart).
+        machine_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: The snapshot's chart hash (sha256 of the canonical chart JSON).
+        lock_matches:
+          type: boolean
+          description: Whether `machine_hash` equals the committed `machine_hashes.lock` entry.
+        chain_trips:
+          type: integer
+          minimum: 0
+          description: The snapshot's `chain_trips` count; above 0 the machine is latched degraded.
+        degraded: { type: boolean, description: "`chain_trips > 0`; cleared only by an operator." }
+        deferred_depth:
+          type: ["integer", "null"]
+          minimum: 0
+          description: >
+            Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no
+            deferred list.
+        updated_at:
+          { type: string, format: date-time, description: "When the snapshot was written." }
+    StatechartMachineDetail:
+      type: object
+      description: >
+        `getStatechart` (E42-T07). `snapshots` and `events` give each source's outcome; machine
+        fields are present only when `snapshots.status` is `ok`.
+      required: [snapshots]
+      properties:
+        snapshots: { $ref: "#/components/schemas/AdminSliceStatus" }
+        events: { $ref: "#/components/schemas/AdminSliceStatus" }
+        machine: { $ref: "#/components/schemas/StatechartMachine" }
+        context_summary:
+          type: object
+          additionalProperties: { type: ["string", "number", "boolean", "null"] }
+          description: Redacted scalar context; only the keys allowed for the kind.
+        configuration:
+          type: array
+          items: { type: string }
+          description: Every active state id, ancestors included, sorted.
+        config:
+          type: object
+          additionalProperties: true
+          description: The chart JSON registered for the kind (`statechart/machines/*.machine.json`).
+        recent_events:
+          type: array
+          maxItems: 50
+          description: The latest `machine_events` rows, newest first, without payloads.
+          items:
+            type: object
+            required: [event_type, phase, occurred_at]
+            properties:
+              event_type: { type: string }
+              phase: { type: string, enum: [ahead, commit, fault] }
+              from_states: { type: array, items: { type: string } }
+              to_states: { type: array, items: { type: string } }
+              faulted: { type: boolean }
+              occurred_at: { type: string, format: date-time }
+    StatechartExport:
+      type: object
+      required: [machine_kind, machine_hash, stately]
+      properties:
+        machine_kind: { type: string }
+        machine_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: sha256 of the registered chart's canonical JSON (`registry.machine_hash`).
+        stately:
+          type: object
+          additionalProperties: true
+          description: The chart without the six CV policy keys, importable into Stately Studio.
+    StatechartKindSummary:
+      type: object
+      description: >
+        Counters for one machine kind in one environment (E42-T07), with no entity id. Every live
+        machine of the kind is counted, including the kinds without a public id (B8, B9, B13,
+        B15) and the machines no row is shown for.
+      required:
+        [
+          machine_kind,
+          environment,
+          machines,
+          by_state,
+          chain_trips,
+          degraded_machines,
+          dropped_receipts,
+        ]
+      properties:
+        machine_kind: { type: string }
+        environment: { $ref: "#/components/schemas/Environment" }
+        machines: { type: integer, minimum: 1 }
+        by_state:
+          type: object
+          additionalProperties: { type: integer }
+          description: Live machines per published `state`; a state with none is left out.
+        chain_trips: { type: integer, minimum: 0, description: "Sum over the machines." }
+        degraded_machines:
+          { type: integer, minimum: 0, description: "Machines whose `chain_trips` latch is set." }
+        dropped_receipts:
+          type: ["integer", "null"]
+          minimum: 0
+          description: >
+            `cv_machine_dropped_receipts_total` for the kind since process start (the library
+            counts per interpreter and never persists it); `null` when the metric cannot be read.
 
     SecuritySummary:
       type: object
