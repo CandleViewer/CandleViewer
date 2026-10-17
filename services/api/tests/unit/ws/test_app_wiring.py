@@ -7,6 +7,7 @@ import asyncio
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,13 +16,18 @@ from fastapi.testclient import TestClient
 from prometheus_client import generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
-from candleviewer.app import create_app
+from candleviewer.app import _catalogue_scales, create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
+from candleviewer.bars.builder_set import BarBuilderSet
+from candleviewer.bars.emit import WriterSink
+from candleviewer.bars.series_store import SeriesStore
 from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
+from candleviewer.ws.bars_publish import BarsPublisher
+from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.metrics import CV_WS_NAMES
 from candleviewer.ws.sequencing import SequencingHub
@@ -33,6 +39,7 @@ from candleviewer.ws_wiring import (
     SnapshotRouter,
     WsEvents,
     WsRuntime,
+    ingestion_streams,
 )
 
 USER = uuid.uuid4()
@@ -111,6 +118,41 @@ def test_create_app_composes_gateway_services(world: tuple[TestClient, _Kill]) -
 def test_bars_feature_on_lets_bars_topics_through() -> None:
     app = create_app(_settings().model_copy(update={"bars_enabled": True}))
     assert app.state.ws_registry.services.bars_off is False
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_source(
+    enabled: bool,
+) -> None:
+    """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399
+    D2: the series store, then the publisher, ahead of the writer on the emit path, the store
+    behind the `bars` snapshots and the subscribe hold, the publisher on the gateway's hub."""
+    app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
+    svc = app.state.ws_registry.services
+    source = svc.snapshots._sources.get("bars")
+    if not enabled:
+        assert (svc.bars, svc.series, source) == (None, None, None)
+        return
+    assert isinstance(svc.bars, BarBuilderSet) and isinstance(svc.series, SeriesStore)
+    store, publisher, writer = svc.bars._router._sinks
+    assert store is svc.series and isinstance(writer, WriterSink)
+    assert isinstance(publisher, BarsPublisher) and publisher._hub is svc.sequencing
+    assert publisher._swap == "generation_swap"
+    assert isinstance(source, BarsSnapshotSource) and source._store is svc.series
+    assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
+
+
+def test_bars_scales_are_the_places_of_the_catalogue_tick_size_and_qty_step() -> None:
+    """§3.4's floor scales; None for a symbol the catalogue does not list, or no catalogue."""
+    snap = {"BTCUSDT": SimpleNamespace(tick_size=Decimal("0.10"), qty_step=Decimal("0.001")),
+            "XUSDT": SimpleNamespace(tick_size=Decimal("5"), qty_step=Decimal("1E+1"))}  # fmt: skip
+    ctx: Any = SimpleNamespace(
+        ingestion=SimpleNamespace(instruments=SimpleNamespace(snapshot=lambda: snap))
+    )
+    got = [_catalogue_scales(ctx, s) for s in ("BTCUSDT", "XUSDT", "ETHUSDT")]
+    assert got == [(1, 3), (0, 0), None]
+    bare: Any = SimpleNamespace(ingestion=SimpleNamespace(instruments=None))
+    assert _catalogue_scales(bare, "BTCUSDT") is None
 
 
 def test_welcome_carries_settings_build_info(world: tuple[TestClient, _Kill]) -> None:
@@ -202,6 +244,13 @@ async def test_ingestion_sink_leases_one_consumer_per_key_and_tolerates_refusal(
     ]
     refusing = IngestionUpstreamSink(lambda _f: _Stream(refuse=True))
     await refusing.open(("NOPEUSDT", "book", ("50",)))  # logged, never raised
+
+
+def test_a_bars_series_leases_its_symbols_trades() -> None:
+    """#399 D2: a bars series is built from its symbol's trades, so `bars` demands that stream."""
+    trades = _Stream()
+    ctx: Any = SimpleNamespace(ingestion=SimpleNamespace(trades=trades, books=None, tickers=None))
+    assert ingestion_streams(ctx)("bars") is trades and ingestion_streams(ctx)("footprint") is None
 
 
 def test_kill_switch_event_pushes_system_then_revokes(world: tuple[TestClient, _Kill]) -> None:

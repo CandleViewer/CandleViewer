@@ -66,7 +66,6 @@ PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
-    "bars": "#2195",
     "footprint": "#2197",
     "heatmap": "#2197",
     "profile": "#2197",
@@ -111,11 +110,12 @@ class IngestionUpstreamSink:
 
 def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
     """Family -> the ingestion stream that owns its upstream demand (resolved per call: the
-    streams are attached by `wire_public_ws` only when its flag is on)."""
+    streams are attached by `wire_public_ws` only when its flag is on). A `bars` series is built
+    from its symbol's trades, so it demands the trade stream (#399)."""
 
     def resolve(family: str) -> _Demand | None:
         ing = ctx.ingestion
-        if family == "trades":
+        if family in ("trades", "bars"):
             return ing.trades
         if family == "book":
             return ing.books

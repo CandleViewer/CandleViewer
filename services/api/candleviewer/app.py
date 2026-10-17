@@ -14,6 +14,7 @@ contracts and every later epic have a concrete injection point.
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import time
 import uuid
@@ -122,6 +123,7 @@ from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
+from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.service import BarsService
 from candleviewer.bars_wiring import wire_bars
 from candleviewer.book.service import BookService
@@ -287,13 +289,15 @@ from candleviewer.storage.retention.workspaces_tasks import (
 )
 from candleviewer.storage.service import StorageService
 from candleviewer.ws.backpressure_config import BackpressureConfig
+from candleviewer.ws.bars_publish import BarsPublisher
+from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
-from candleviewer.ws.sequencing import SequencingHub
+from candleviewer.ws.sequencing import SequencingHub, SnapshotSource
 from candleviewer.ws.service import WsService
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
@@ -1043,10 +1047,20 @@ def create_app(
         wire_public_ws(ctx, kline_boundary, public_rest)
     # E12 #2031 (flag `bars_enabled`, default off - C-4.13; removal with #398/#399): the set
     # and its writer are started/stopped by the lifespan (set first, then writer).
+    # #399: the WS series store (hydrated by the reader, built first) and the bars publisher on
+    # the gateway's one hub (the machine states below share it), both on the emit path.
+    ws_sequencing = SequencingHub()
     bars_reader: BarReader | None = None
+    bars_series: SeriesStore | None = None
+    snapshot_adapters: dict[str, SnapshotSource] = {}
     if resolved.bars_enabled:
         bars_sink = _build_bars_sink(resolved)
         bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
+        if bars_sink is not None:
+            bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
+        bars_series = SeriesStore(bars_reader.read_tail if bars_reader is not None else None)
+        scales = functools.partial(_catalogue_scales, ctx)
+        publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
         app.state.bars_runtime = wire_bars(
             ctx,
             inner_sink=bars_sink,
@@ -1054,9 +1068,12 @@ def create_app(
             sink_degraded=(lambda: bars_sink.pgwire.degraded) if bars_sink is not None else None,
             now_us=bars_clock,
             tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
+            series=bars_series,
+            publisher=publisher,
         )
-        if bars_sink is not None:
-            bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
+        snapshot_adapters["bars"] = BarsSnapshotSource(
+            bars_series, scales, seed=publisher.note_generation
+        )
         if bars_reader is not None and ctx.ingestion.klines is not None:
             # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
             ctx.ingestion.klines.attach_tape(
@@ -1175,19 +1192,19 @@ def create_app(
     # now-forbidden subscriptions. The principal is read from the store on
     # the real backend and is deny-all on the fake one (#2505).
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
-    # (book #2196; stubs until #2195, #2197), sequencing; lifecycle + shutdown in `WsRuntime`.
+    # (bars #2195, book #2196; stubs until #2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
     # publish fans out through the sequencing hub, waking a pending subscription.
-    ws_sequencing = SequencingHub()
     machine_states = MachineStateRegistry(hub=ws_sequencing)
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
         audit=_LazyAuditEmitter(ctx.audit),
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
+        series=bars_series,
         snapshots=default_snapshot_router(
-            {"machines": machine_states, "book": book_snapshot_source(ctx)}
+            {"machines": machine_states, "book": book_snapshot_source(ctx), **snapshot_adapters}
         ),
         sequencing=ws_sequencing,
         bars_off=not resolved.bars_enabled,
@@ -1904,6 +1921,21 @@ def _catalogue_tick_size(ctx: AppContext, symbol: str) -> Decimal | None:
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     return None if inst is None else inst.tick_size
+
+
+def _catalogue_scales(ctx: AppContext, symbol: str) -> tuple[int, int] | None:
+    """The bars wire's floor scales (`23-ws-protocol.md` §3.4): the decimal places of the
+    symbol's tick size and qty step; None while the catalogue does not list it."""
+    scheduler = ctx.ingestion.instruments
+    snap = scheduler.snapshot() if scheduler is not None else None
+    inst = snap.get(symbol) if snap is not None else None
+    return None if inst is None else (_places(inst.tick_size), _places(inst.qty_step))
+
+
+def _places(step: Decimal) -> int:
+    """`0.10` -> 1, `0.001` -> 3, `5` -> 0."""
+    exponent = step.normalize().as_tuple().exponent
+    return max(0, -exponent) if isinstance(exponent, int) else 0
 
 
 def _compose_funding(ctx: AppContext, settings: Settings) -> Any:

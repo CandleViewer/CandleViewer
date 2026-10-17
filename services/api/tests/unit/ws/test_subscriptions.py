@@ -15,6 +15,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError, SpecCapExceeded
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.series_store import Hold
 from candleviewer.ws import limits
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
@@ -1048,3 +1049,96 @@ def test_bars_volume_param_above_its_ceiling_is_refused() -> None:
     conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
     (r,) = _sub(conn, "bars.BTCUSDT.volume.1000000000001")
     assert r["error"]["message"].endswith("must be between 1 and 1000000000000.")
+
+
+# -- #399 slice D2: the bars series hold (`SeriesStore.ensure`), and the #2709 r2 carries -------
+
+
+class _Store:
+    """`SeriesHolds` fake: `ensure` writes to the shared `log`; its `Hold` records the release."""
+
+    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+        self.log, self.fail = log, fail
+        self.released: list[str] = []
+
+    async def ensure(self, symbol: str, spec: BarSpec) -> Hold:
+        if self.fail is not None:
+            raise self.fail
+        self.log.append("ensure")
+        return Hold(symbol, spec.spec_hash, lambda: self.released.append(symbol))
+
+
+class _LoggedBars(_Bars):
+    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+        super().__init__(fail)
+        self.log = log
+
+    async def register(
+        self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
+    ) -> None:
+        self.log.append("register")
+        await super().register(spec, symbol, consumer, user)
+
+
+def _holding(
+    bars: _LoggedBars | None = None, store_fail: Exception | None = None
+) -> tuple[ConnectionAuthz, _Store, _LoggedBars]:
+    log: list[str] = []
+    bars = bars or _LoggedBars(log)
+    bars.log = log
+    store = _Store(log, store_fail)
+    return ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), store, bars
+
+
+def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it() -> None:
+    """Closes the builder emits while it restores reach the held series (§6.1)."""
+    conn, store, _ = _holding()
+    assert all(r["ok"] for r in _sub(conn, "bars.BTCUSDT.time.5", "footprint.BTCUSDT.time.5"))
+    assert _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS)[0]["ok"]
+    assert store.log == ["ensure", "register", "register"]  # footprint and replay hold nothing
+    conn.unsubscribe("bars.BTCUSDT.time.5")
+    assert store.released == ["BTCUSDT"]
+
+
+@pytest.mark.parametrize(
+    ("fail", "ch", "code"),
+    [(SpecCapExceeded("per-user", 8, 8), "bars.BTCUSDT.time.5", "subscription_limit"),
+     (BarServiceStopping("stopping"), "bars.BTCUSDT.time.5", "internal_error"),
+     # #2709-1: wire-valid, so only `register` refuses it (renko off): the `except BarsError` arm
+     (BarSpecError("renko off"), "bars.BTCUSDT.renko.10", "invalid_topic_format")],
+)  # fmt: skip
+def test_a_refused_lease_releases_the_series_hold(fail: Exception, ch: str, code: str) -> None:
+    conn, store, _ = _holding(_LoggedBars([], fail))
+    (r,) = _sub(conn, ch)
+    assert (r["ok"], r["error"]["code"], conn.by_id) == (False, code, {})
+    assert store.released == ["BTCUSDT"]
+
+
+def test_a_full_series_store_is_a_subscription_limit_and_takes_no_lease() -> None:
+    conn, _, bars = _holding(store_fail=SpecCapExceeded("process-wide", 512, 512))
+    (r,) = _sub(conn, "bars.BTCUSDT.time.5")
+    assert (r["error"]["code"], bars.registered, conn.by_id) == ("subscription_limit", [], {})
+
+
+def test_release_all_releases_every_series_hold_even_when_a_lease_release_raises() -> None:
+    """#2735's raising release must not strand the hold of its own subscription either."""
+
+    class _FirstReleaseRaises(_LoggedBars):
+        def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
+            super().release(spec_hash, symbol, consumer)
+            if len(self.released) == 1:
+                raise BarsError("the series was dropped")
+
+    conn, store, _ = _holding(_FirstReleaseRaises([]))
+    _sub(conn, "bars.BTCUSDT.time.5", "bars.ETHUSDT.time.5")
+    conn.release_all()
+    assert store.released == ["BTCUSDT", "ETHUSDT"] and conn.by_id == {}
+
+
+def test_replay_footprint_param_is_bounded_with_no_bar_service_and_replay_bars_is_unknown() -> None:
+    """#2709-2: the replay half of `served`, with no bar service and the feature off."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars_off=True))
+    fp, bars = _sub(conn, "footprint.BTCUSDT.tick.1", "bars.BTCUSDT.time.5", replay_session_id=RS)
+    assert (fp["error"]["code"], bars["error"]["code"]) == ("invalid_topic_format", "unknown_topic")
+    assert fp["error"]["message"].endswith("must be between 100 and 1000000.")
+    assert conn.by_id == {}
