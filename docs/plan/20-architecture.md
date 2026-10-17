@@ -829,7 +829,9 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_KEK_PREV_HANDLE`             | path   | unset                     | process | previous KEK, only during a rotation window                                                                         |
 | `CV_KEK_ACK_PATH`                | path   | unset                     | process | handoff nonce-ack file (separate writable path)                                                                     |
 | `CV_DEK_CACHE_TTL_S`             | float  | `300`                     | process | unwrapped-DEK cache TTL, 0-300                                                                                      |
-| `CV_RECV_WINDOW_MS`              | int    | `5000`                    | process | raising it is a stopgap, alerts when > 5000                                                                         |
+| `CV_RECV_WINDOW_MS`              | int    | `5000`                    | process | raising it is a stopgap, alerts when > 5000; above 10000 or not positive, startup fails                             |
+| `CV_EGRESS_IP`                   | str    | unset                     | process | the one address a stored key's IP whitelist may hold (SR-E27-04); unset with keys stored, order entry stays off     |
+| `CV_KEY_SELFCHECK_INTERVAL_S`    | float  | `3600`                    | process | stored-key self-check cadence, 60 to 3600 (C-12.2); runs at start-up too, bounded at 60 s                           |
 | `CV_MAX_WS_TOPICS_PER_CONN`      | int    | `64`                      | runtime | gateway limit                                                                                                       |
 | `CV_WS_BACKPRESSURE_ENABLED`     | bool   | `false`                   | process | E17-T03 flag (C-4.13, #2900): inert until the wiring lands; keep off until then (23 §8.4); `coalescing` mirrors it  |
 | `CV_WS_QUEUE_BYTES`              | int    | `8388608`                 | process | outbound byte budget (23 §8.4): 4194304 floor (typo guard) to 8388608, lower only; unread until the wiring lands    |

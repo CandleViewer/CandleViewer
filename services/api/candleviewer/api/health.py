@@ -65,6 +65,7 @@ def make_health_router(
     write_behind: Callable[[], Sequence[WriteBehindStatus]] | None = None,
     ingestion_health: Callable[[], HealthReport] | None = None,
     secrets_health: Callable[[], HealthReport] | None = None,
+    accounts_health: Callable[[], HealthReport] | None = None,
 ) -> APIRouter:
     """Bind the health/metrics routes to a concrete `Settings` instance.
 
@@ -108,6 +109,11 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name="secrets", ok=ok, detail=rep.detail))
+        if accounts_health is not None:  # E27-T03: a failing stored key or a latched self-check
+            rep = accounts_health()
+            if rep.status is not HealthStatus.STOPPED:
+                ok = rep.status is HealthStatus.OK
+                checks.append(ReadyCheck(name="accounts", ok=ok, detail="" if ok else rep.detail))
         degraded = any(not c.ok for c in checks)
         return ReadinessResponse(
             status="degraded" if degraded else "ok",
