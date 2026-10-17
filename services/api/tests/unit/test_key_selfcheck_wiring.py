@@ -149,7 +149,7 @@ def test_the_fake_backend_wires_no_self_check() -> None:
 def test_the_real_backend_attaches_a_self_check_bound_to_the_process_environment() -> None:
     real = ctx(
         storage_backend="real", environment=Environment.TESTNET, egress_ip="203.0.113.7",
-        key_selfcheck_interval_s=600.0, recv_window_ms=4000,
+        CV_KEY_SELFCHECK_INTERVAL_S=600.0, recv_window_ms=4000,
     )  # fmt: skip
     audit = object()
     check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, audit))

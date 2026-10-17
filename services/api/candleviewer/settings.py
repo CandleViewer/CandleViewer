@@ -9,9 +9,9 @@ runtime/per-user layers are owned by M21 `admin`.
 
 Security: `__repr__`/`__str__` never print secret values (redacting `__str__`
 below) — an early instance of M24's redaction-filter requirement. Any field
-whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is
-redacted from `repr()`, and every such field that holds a secret is a
-`SecretStr`, so none can leak into logs, tracebacks or `repr()` by accident.
+whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is a
+`SecretStr` so it can never leak into logs, tracebacks or `repr()` by
+accident.
 """
 
 from __future__ import annotations
@@ -308,7 +308,11 @@ class Settings(BaseSettings):
     egress_ip: str | None = None
     # E27-T03: stored-key self-check cadence. C-12.2 asks for start-up and hourly, so no value
     # may lengthen it (C-4.14); the floor keeps a typo from flooding the audit log and the venue.
-    key_selfcheck_interval_s: float = Field(default=3600.0, ge=60.0, le=3600.0)
+    # It is no secret, so its name stays clear of the redaction pattern and `repr()` shows it; the
+    # alias keeps the documented variable, and is also the keyword `Settings(...)` takes.
+    selfcheck_interval_s: float = Field(
+        default=3600.0, ge=60.0, le=3600.0, alias="CV_KEY_SELFCHECK_INTERVAL_S"
+    )
     max_ws_topics_per_conn: int = 64
     heatmap_cadence_ms: int = 100
     book_depth: int = 200

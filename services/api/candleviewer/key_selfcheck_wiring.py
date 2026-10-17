@@ -139,7 +139,7 @@ def wire_key_selfcheck(ctx: AppContext, audit: AuditEmitter) -> KeySelfCheck | N
         policy=VerificationPolicy(egress_ip=settings.egress_ip, recv_window_ms=window),
         env=env,
         clock=lambda: datetime.now(UTC),
-        interval_s=settings.key_selfcheck_interval_s,
+        interval_s=settings.selfcheck_interval_s,
     )
     ctx.accounts.attach_key_selfcheck(selfcheck, release=relational.dispose)
     return selfcheck
