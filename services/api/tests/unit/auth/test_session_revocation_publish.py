@@ -3,9 +3,11 @@ revocation sink, after the row update (23-ws-protocol.md §9.5). A refresh-token
 publishes nothing: the client re-`auth`s its socket in place (§4.1).
 
 The call-site scan finds every revoking `SessionRepository` call in production code by its
-`now=` keyword; a new one without a driver below fails it. Two tests pin that premise to the
-Protocol: every revoking method is listed, and takes `reason` and `now` keyword-only, so a call
-that type-checks or runs names `now=`. A `**kwargs` splat or `getattr` is missed (call sites only).
+`now=` keyword, and every call of `SessionService._revoke_row`, which revokes a row and leaves
+the publish to its caller (#3029); a new one without a driver below fails it. Two tests pin the
+first premise to the Protocol: every revoking method is listed, and takes `reason` and `now`
+keyword-only, so a call that type-checks or runs names `now=`. A `**kwargs` splat or `getattr` is
+missed (call sites only).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import candleviewer
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import RefreshReuseDetected, SessionRevoked, UnlockPasswordInvalid
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.models import UserStatus
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
@@ -160,6 +163,22 @@ async def _revoke(w: _World) -> Calls:
     return {(sid, "user_revoked")}
 
 
+async def _require_active_user_disabled(w: _World) -> Calls:
+    user = str(uuid.uuid4())
+    sid = await w.mint(user)
+    w.repo.user_statuses[user] = UserStatus.DISABLED  # a disable that no sweep followed
+    with pytest.raises(SessionRevoked):
+        await w.sessions.require_active(sid)
+    return {(sid, "user_disabled")}
+
+
+async def _revoke_row(w: _World) -> Calls:
+    """`_revoke_row` is the one place `revoke` and the `require_active` backstop of #2911 revoke a
+    row, and each publishes after it: the backstop counts between the two (#3029), so the publish
+    is its own call there. Its callers are call sites too, with a driver each."""
+    return await _revoke(w) | await _require_active_user_disabled(w)
+
+
 async def _revoke_all(w: _World) -> Calls:
     mine = {await w.mint(), await w.mint()}
     await w.mint(str(uuid.uuid4()))  # another user's session is not touched
@@ -186,8 +205,10 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.refresh", "expired"): _refresh_expired,
     ("SessionService.refresh", "rotated"): _refresh_rotation,
     ("SessionService.require_active", "expired"): _require_active_expired,
+    ("SessionService.require_active", "user_disabled"): _require_active_user_disabled,
     ("SessionService.unlock", "unlock_attempts_exceeded"): _unlock_attempts_exceeded,
     ("SessionService.revoke", _CALLER): _revoke,
+    ("SessionService._revoke_row", _CALLER): _revoke_row,
     ("SessionService.revoke_all", _CALLER): _revoke_all,
     ("StepUpService.reset_totp", "mfa_reset_by_owner"): _owner_totp_reset,
 }
@@ -195,6 +216,9 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
 
 #: The `SessionRepository` methods that revoke a row: the scan looks for their calls.
 _REVOKING = frozenset({"revoke", "revoke_all_for_user"})
+#: `SessionService` helpers that revoke a row and leave its publish to the caller: the scan looks
+#: for their calls too, and each caller needs a driver.
+_ROW_REVOKERS = frozenset({"_revoke_row"})
 #: Every other `SessionRepository` method. None of them revokes a row.
 _NON_REVOKING = frozenset(
     "create_session find_by_id find_by_refresh_hash find_by_access_token_jti find_live_by_user "
@@ -204,8 +228,9 @@ _NON_REVOKING = frozenset(
 
 
 class _RevokeSites(ast.NodeVisitor):
-    """Collects `(Class.method, reason)` for every `_REVOKING` call passing `now=`: only the
-    repository takes `now`, unlike the services' and the B16 chart's own `revoke(...)`."""
+    """Collects `(Class.method, reason)` for every `_REVOKING` call passing `now=` (only the
+    repository takes `now`, unlike the services' and the B16 chart's own `revoke(...)`), and for
+    every `_ROW_REVOKERS` call."""
 
     def __init__(self) -> None:
         self.scope: list[str] = []
@@ -220,7 +245,9 @@ class _RevokeSites(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func, kwargs = node.func, {k.arg: k.value for k in node.keywords if k.arg}
-        if isinstance(func, ast.Attribute) and func.attr in _REVOKING and "now" in kwargs:
+        if isinstance(func, ast.Attribute) and (
+            (func.attr in _REVOKING and "now" in kwargs) or func.attr in _ROW_REVOKERS
+        ):
             reason = kwargs.get("reason")
             label = reason.value if isinstance(reason, ast.Constant) else _CALLER
             self.sites.add((".".join(self.scope), str(label)))
@@ -264,6 +291,27 @@ def test_revoking_repository_methods_take_reason_and_now_keyword_only(method: st
     assert [(params[a].kind, params[a].default) for a in ("reason", "now")] == [
         (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.empty)
     ] * 2
+
+
+@pytest.mark.parametrize("helper", sorted(_ROW_REVOKERS))
+def test_every_helper_the_scan_follows_exists(helper: str) -> None:
+    """A rename would leave the scan following a name nobody calls."""
+    assert callable(getattr(SessionService, helper, None))
+
+
+def test_the_scan_flags_a_new_caller_of_the_revoke_helper() -> None:
+    """`_revoke_row` does not publish, so each of its callers must: a method that revoked through
+    it and forgot the publish passed the scan, which only saw the repository call (#3029)."""
+    visitor = _RevokeSites()
+    visitor.visit(
+        ast.parse(
+            "class SessionService:\n"
+            "    async def sweep(self, session_id):\n"
+            "        await self._revoke_row(session_id, reason='swept')\n"
+        )
+    )
+
+    assert visitor.sites == {("SessionService.sweep", "swept")}
 
 
 @pytest.mark.parametrize("path", sorted(_PATHS), ids=lambda p: f"{p[0]}:{p[1]}")

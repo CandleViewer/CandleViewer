@@ -195,6 +195,7 @@ lives instead.
 | U42    | Not executable yet: the lane has no code (ADR-0037 is proposed; slices S1a to S4b build it). Cases AC-LANE-05 and AC-LANE-06 and the tests in its Verify column, `e09-auth-rbac.md` §3.6.2                                                                                                                            |
 | U43    | Not executable yet: the lane has no code (ADR-0037 is proposed; slices S1a to S4b build it). The tests in its Verify column, `e09-auth-rbac.md` §3.6.2                                                                                                                                                                |
 | U44    | Not executable yet: the lane has no code (ADR-0037 is proposed; slices S1a to S4b build it). Cases AC-LANE-07 and AC-LANE-08 and the tests in its Verify column, `e09-auth-rbac.md` §3.6.2                                                                                                                            |
+| U45    | Executable in part: a live session of a user disabled with no sweep is refused and its socket closed (`test_disable_user_drill_stray_session_is_refused_and_its_socket_closed_4403`, `tests/security/auth/test_disable_user_drill.py`). The socket-only window is the access-token TTL: not executable                |
 
 ## Observability per case (#2144)
 

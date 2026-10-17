@@ -35,6 +35,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | CredentialExpiryApproaching | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching` | synthetic | | | | | | pending |
 | AuthLoginFailureSpike | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authloginfailurespike` | synthetic | | | | | | pending |
 | AuthLockouts | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authlockouts` | synthetic | | | | | | pending |
+| AuthDisabledUserSessionRevoked | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authdisabledusersessionrevoked` | synthetic | | | | | | pending (promtool: fires on the first evaluation after the counter steps from 0 to 1, still firing at 9 h 49 m, resolved at 9 h 52 m once the `keep_firing_for` hold ends (tickets are muted 22:00-07:00 UTC), a flat counter silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 | AuthzDeniedSpike | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authzdeniedspike` | synthetic | | | | | | pending |
 | CredentialVerificationFailures | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-credentialverificationfailures` | synthetic | | | | | | pending |
 | OmsRateRejects | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-omsraterejects` | synthetic | | | | | | pending |

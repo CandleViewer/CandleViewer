@@ -159,6 +159,11 @@ _PASSED = 'cv_audit_verify_runs_total{env="live",result="ok"}'
 # A restart at 24 h re-seeds the gauge and resets the counter; start-up runs stop on each side.
 _RESTART = {_LAST_OK: "60+0x1439 86400+0x245", _STOPPED: "0+0x4 1+0x1434 0+0x4 1+0x240"}
 _PASS_AT_26H = {_LAST_OK: "60+0x1439 86400+0x119 93600+0x125", _PASSED: "0+0x1559 1+0x125"}
+_STRAY = 'auth_disabled_user_sessions_revoked_total{env="live"}'
+# One stray session at 6 min: the breach counter steps from 0 to 1. The first empty evaluation of
+# the 15 m window is 21 m (3.x range selectors: 20 m), so `keep_firing_for: 9h30m` ends at 9 h 51 m
+# (3.x: 9 h 50 m): firing at 9 h 49 m, resolved at 9 h 52 m.
+_ONE_STRAY = {_STRAY: "0+0x5 1+0x700"}
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: no
@@ -174,6 +179,14 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("28h", False, {**_RESTART, **_PASS_AT_26H}),
         ("1590m", False, {_LAST_OK: "3600+0x1590"}),
         ("1621m", True, {_LAST_OK: "3600+0x1621"}),
+    ),
+    # #3029. A ticket with no `for`: fires on the first evaluation after the step and is held past
+    # the 9 h quiet-hours mute (firing at 9 h 49 m, resolved at 9 h 52 m). A flat counter never fires.
+    "AuthDisabledUserSessionRevoked": (
+        ("6m", True, _ONE_STRAY),
+        ("9h49m", True, _ONE_STRAY),
+        ("9h52m", False, _ONE_STRAY),
+        ("30m", False, {_STRAY: "3+0x700"}),
     ),
 }
 

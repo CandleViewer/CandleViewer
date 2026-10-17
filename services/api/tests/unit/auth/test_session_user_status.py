@@ -31,7 +31,7 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 
-from .session_fakes import FakeSessionRepository
+from .session_fakes import FakeSessionRepository, LostRaceRepository, YieldingFindRepository
 
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 _WAIT_S = 5.0  # bounds every wait on the parked refresh: a regression fails instead of hanging
@@ -216,6 +216,107 @@ async def test_require_active_keeps_the_live_session_of_a_user_who_is_not_disabl
     assert (await service.require_active(str(minted.session_id))).id == minted.session_id
     assert published == [] and repo.sessions[str(minted.session_id)].revoked_at is None
     assert _sample("auth_disabled_user_sessions_revoked_total") == signals
+
+
+async def test_require_active_counts_a_stray_session_once_when_requests_race() -> None:
+    """#3029 item 1: three requests on one stray session each see it live, one wins the revoke.
+    Only that call counts, logs and publishes: the breach counter, the revocation counter under
+    `user_disabled` and the WARNING lines each move once. The other two are refused all the same."""
+    repo, published = YieldingFindRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user = str(uuid.uuid4())
+    sid = str((await service.mint(user)).session_id)
+    repo.user_statuses[user] = UserStatus.DISABLED
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
+
+    with capture_logs() as logs:
+        outcomes = await asyncio.gather(
+            *(service.require_active(sid) for _ in range(3)), return_exceptions=True
+        )
+
+    assert [o.reason for o in outcomes if isinstance(o, SessionRevoked)] == ["user_disabled"] * 3
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
+    assert [
+        e["session_id"] for e in logs if e["event"] == "auth.disabled_user_session_revoked"
+    ] == [sid]
+    assert published == [(sid, "user_disabled")]
+
+
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_require_active_counts_nothing_when_another_call_revoked_the_row(
+    status: UserStatus | None,
+) -> None:
+    """The stale copy is still refused as `user_disabled`, but nothing is counted, logged or
+    published: whoever revoked the row did that."""
+    repo, published = LostRaceRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user = str(uuid.uuid4())
+    minted = await service.mint(user)
+    repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
+
+    with capture_logs() as logs, pytest.raises(SessionRevoked) as refused:
+        await service.require_active(str(minted.session_id))
+
+    assert refused.value.reason == "user_disabled"
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations
+    assert [e for e in logs if e["event"] == "auth.disabled_user_session_revoked"] == []
+    assert published == []
+
+
+async def test_require_active_takes_the_revoked_session_off_the_active_gauge() -> None:
+    """The backstop revokes through the row update `revoke` makes, so the gauge of live
+    sessions falls with it, as it does for a logout."""
+    repo = FakeSessionRepository()
+    service = _service(repo)
+    user = str(uuid.uuid4())
+    sid = str((await service.mint(user)).session_id)
+    repo.user_statuses[user] = UserStatus.DISABLED
+    live = _sample("auth_sessions_active")
+
+    with pytest.raises(SessionRevoked):
+        await service.require_active(sid)
+
+    assert _sample("auth_sessions_active") == live - 1
+
+
+async def test_require_active_counts_the_stray_session_before_a_cancel_in_the_publish() -> None:
+    """The publish is a suspension point, and a request cancelled in it leaves the row revoked
+    and `auth_session_revocations_total{reason="user_disabled"}` moved. The breach counter and the
+    WARNING have to move with them, before the publish: the retry finds the row revoked, refuses
+    it with its stored reason and counts nothing, so a signal lost here is lost for good."""
+    repo, parked, never = FakeSessionRepository(), asyncio.Event(), asyncio.Event()
+
+    async def publish(session_id: str, reason: str) -> None:
+        parked.set()
+        await never.wait()
+
+    service = SessionService(
+        repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW, publish_revocation=publish
+    )
+    user = str(uuid.uuid4())
+    sid = str((await service.mint(user)).session_id)
+    repo.user_statuses[user] = UserStatus.DISABLED
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(service.require_active(sid))
+        await asyncio.wait_for(parked.wait(), _WAIT_S)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, _WAIT_S)
+
+    assert repo.sessions[sid].revoked_reason == "user_disabled"
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
+    assert [
+        e["session_id"] for e in logs if e["event"] == "auth.disabled_user_session_revoked"
+    ] == [sid]
 
 
 _SIGNAL = "auth_disabled_user_sessions_revoked_total"
