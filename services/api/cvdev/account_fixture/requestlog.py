@@ -1,7 +1,7 @@
 """#2893 S6: the test plan section 9.6 request log of the account fixture transport.
 
 One JSON line per answer or refusal in `<CV_ACCOUNT_FIXTURE_DIR>/requests.jsonl`: the `LOG` evidence
-of the E27 cases (host isolation, signing key, call counts, the plan 9.7 order and its stop loss).
+of the E27 cases (host isolation, signing key, call counts, the plan 9.7 order and its native SL).
 It never holds a signature or a secret (C-12.6). `RequestLog.write` takes allow-listed keyword
 scalars only, never a request, a header map or a body; an unknown keyword is a `TypeError`.
 `signing_key_id` is a pack key id or null: any other key is logged as `key_class="non_fixture"` with
@@ -59,6 +59,9 @@ _METHOD: Final = re.compile(r"[A-Z]{1,16}")
 _SYMBOL: Final = re.compile(r"[0-9A-Z]{1,26}USDT")
 _KEY_SHAPED: Final = re.compile(r"[A-Za-z0-9]{18,}")
 _ORDER_PATHS: Final = frozenset({"/v5/order/create", "/v5/order/amend"})
+#: A trading-stop sets or clears (stop_loss 0) a native SL: it logs only these (TC-316, TC-410).
+_TRADING_STOP: Final = "/v5/position/trading-stop"
+_STOP_FIELDS: Final = frozenset({"symbol", "stop_loss", "sl_trigger_by"})
 _O_FLAGS: Final = os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS: Final = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | _O_FLAGS
 _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | _O_FLAGS
@@ -74,8 +77,8 @@ class RequestLogFileError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OrderFields:
-    """The order subset of an order create or amend (plan section 9.7; TC-316, TC-410), each
-    field None when the request leaves it out. Logged under these names."""
+    """The order subset of an order create or amend (plan section 9.7), or the SL fields of a
+    trading-stop (TC-316, TC-410), each None when the request leaves it out; logged as named."""
 
     order_link_id: str | None = None
     symbol: str | None = None
@@ -161,7 +164,7 @@ def _order(order: object) -> dict[str, object] | None:
 
 def _check_against_the_guards(line: dict[str, object]) -> None:
     """Refuse a line no guard may produce: a non-fixture key or a failed signature answered, a key
-    id without its class, a verdict on a key with no secret, an order outside create or amend."""
+    id without its class, a verdict on a key with no secret, order fields its path cannot carry."""
     key_class, verified, outcome = line["key_class"], line["verified"], line["outcome"]
     if (key_class == "fixture") != (line["signing_key_id"] is not None):
         raise RequestLogFieldError("signing_key_id is set exactly when key_class is fixture")
@@ -175,8 +178,12 @@ def _check_against_the_guards(line: dict[str, object]) -> None:
         raise RequestLogFieldError(f"{outcome} needs a fixture key that verified, or no key")
     if outcome == "signature_mismatch" and verified is not False:
         raise RequestLogFieldError("signature_mismatch needs verified false")
-    if line["order"] is not None and line["path"] not in _ORDER_PATHS:
-        raise RequestLogFieldError("order is logged for an order create or amend only")
+    order, path = line["order"], line["path"]
+    if isinstance(order, dict) and path not in _ORDER_PATHS:
+        if path != _TRADING_STOP:
+            raise RequestLogFieldError("order is logged for an order create, amend or trading-stop")
+        if any(order[name] is not None for name in order.keys() - _STOP_FIELDS):
+            raise RequestLogFieldError("a trading-stop logs only symbol, stop_loss, sl_trigger_by")
 
 
 def _open_directory(directory: str | os.PathLike[str]) -> int:

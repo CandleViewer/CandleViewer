@@ -41,6 +41,7 @@ def _order(**fields: Any) -> OrderFields:
 
 NOW = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 ORDER_CREATE = "/v5/order/create"
+TRADING_STOP = "/v5/position/trading-stop"
 KEY_IDS = {
     name: str(manifest(name)["tester_inputs"]["key_id"])
     for name in scenario_names()
@@ -182,6 +183,14 @@ def test_order_subset_carries_the_stop_loss(log: RequestLog, log_dir: Path) -> N
     assert (create["stop_loss"], amended["stop_loss"]) == ("56769.0", "56759.0")
 
 
+def test_trading_stop_logs_the_sl_it_sets_or_clears(log: RequestLog, log_dir: Path) -> None:
+    sl: dict[str, Any] = dict(symbol="BTCUSDT", sl_trigger_by="MarkPrice")
+    for stop_loss in (Decimal("56769.0"), Decimal(0)):  # 0 clears the native SL (TC-316, TC-410)
+        _served(log, method="POST", path=TRADING_STOP, order=_order(**sl, stop_loss=stop_loss))
+    expected = [dict.fromkeys(ORDER) | sl | {"stop_loss": px} for px in ("56769.0", "0")]
+    assert [line["order"] for line in _lines(log_dir)] == expected
+
+
 @pytest.mark.parametrize("name", ["signature", "headers", "body", "request", "api_key", "secret"])
 def test_writer_rejects_unknown_fields(log: RequestLog, log_dir: Path, name: str) -> None:
     with pytest.raises(TypeError, match=name):
@@ -210,6 +219,7 @@ def test_field_names_avoid_the_redaction_deny_list(log: RequestLog, log_dir: Pat
         {"transport": None},
         {"key_class": None, "signing_key_id": None, "verified": None},
         {"order": REFERENCE_ORDER},
+        {"path": TRADING_STOP, "order": REFERENCE_ORDER},
     ],
 )
 def test_line_no_guard_may_produce_is_refused(
