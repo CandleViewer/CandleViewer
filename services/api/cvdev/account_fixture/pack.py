@@ -2,8 +2,8 @@
 
 A pack is a directory of scenario manifests (`packages/fixtures/accounts/` in a checkout; its
 README is the user guide). Every function here takes the `Pack` to read, so a running stack can
-mount one anywhere, and turns one scenario into concrete data the same way for every test and for
-#2893's stub:
+mount the fixtures package anywhere (see `Pack`), and turns one scenario into concrete data the
+same way for every test and for #2893's stub:
 
 - REST: `Scenario.reply(method, path, at_ms=...)` follows the manifest's lookup rule (the
   scenario's own answers along its `extends` chain, then the overlays named with it, then the
@@ -23,9 +23,11 @@ mount one anywhere, and turns one scenario into concrete data the same way for e
 It serves nothing and opens no socket: #2893's stub serves a scenario to a running stack
 (`CV_ACCOUNT_FIXTURE=<scenario>`), and tests drive the adapter's own client through an
 `httpx.MockTransport` built on `Scenario.reply` (`tests/_account_fixtures.py` binds the checkout's
-pack). A scenario name is never a path, a manifest never comes from outside the pack, and a
-payload never from outside the pack's parent directory, which is never a filesystem root. Nothing
-here imports `candleviewer`, so neither `secrets` nor `audit` (ADR-0036).
+pack). Its reads are blocking file I/O (a payload is read once per pack, then cached), so a running
+stack calls it at boot or through `asyncio.to_thread`, never on the event loop. A scenario name is
+never a path, a manifest never comes from outside the pack, and a payload never from outside the
+pack's parent directory, which is never a filesystem root. Nothing here imports `candleviewer`, so
+neither `secrets` nor `audit` (ADR-0036).
 """
 
 from __future__ import annotations
@@ -156,8 +158,10 @@ def _read(path: Path) -> Any:
 @dataclass(frozen=True, slots=True)
 class Pack:
     """The pack at `root`, resolved once: a directory per scenario, each with its `manifest.json`.
-    Payloads come from the pack and the shared corpus beside it, never from outside its parent, so
-    it may be mounted anywhere but at or directly under a filesystem root."""
+    Payloads come from the pack and the shared corpus beside it, never from outside its parent, but
+    a manifest may name any JSON file under that parent. So mount the fixtures package whole (the
+    pack and the corpus beside it, as `packages/fixtures` holds them), never a pack alone in a
+    directory that holds anything else. A root at or directly under a filesystem root is refused."""
 
     root: Path
 
