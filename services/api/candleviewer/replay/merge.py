@@ -17,9 +17,8 @@ carrying the stored bounds and cause. A marker sorts on the same key as an event
 symbol and stream's domain ordinal, `seq` 0, its stream ordinal and `(gap_start, gap_end, cause)`
 as the tiebreak, so identical rows report once. The read is bounded by `DEFAULT_MAX_ROWS_PER_READ`
 rows per symbol over the requested streams: more is refused whole, never replayed with some gaps
-unreported. A table that
-size is built in steps that yield to the event loop (C-2.17). A gap table that cannot be read
-fails the replay rather than hide its holes.
+unreported. A table that size is built in steps that yield to the event loop (C-2.17). A gap
+table that cannot be read fails the replay rather than hide its holes.
 
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows, the
 last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s), doubles while the
