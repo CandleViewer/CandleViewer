@@ -1,10 +1,13 @@
-"""Integration (E42-T08 S8, #2648): `SqlAlchemyAccountAccessStore` on real Postgres 16.
+"""Integration (E42-T08 S8 and S9a, #2648): `SqlAlchemyAccountAccessStore` on real Postgres 16.
 
 The audit record is written ahead of the commit, and a refused one changes nothing. A soft
 revoke keeps the freeze state and the cap. An unknown account or a user who is not active
 rolls the whole set back. A replacement racing a disable leaves no live grant in either order
 (a third connection sees the second caller queued in `pg_locks`). The ids read back are plain
-UUIDs. Onboarding ignores revoked grants.
+UUIDs. Onboarding ignores revoked grants. S9a: a grant and an account soft delete queue behind
+each other in either order, as a user soft delete does; a lock wait past `lock_timeout` changes
+nothing; no grant write leaves a frozen manager an unfrozen grant, and an inherited freeze
+never copies the cap.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -16,6 +19,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -28,8 +32,12 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.account_access import (
     AccessAuditUnavailableError,
+    AccessBusyError,
+    AccessLevel,
     AccessUnknownAccountError,
     AccessUserNotActiveError,
+    AccessUserNotFoundError,
+    RemovalContext,
 )
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
     SqlAlchemyAccountAccessStore,
@@ -70,6 +78,12 @@ _FREEZE = sa.text(
     "frozen_by = CAST(:by AS uuid), frozen_reason = 'drawdown', max_daily_loss_usd = 250 "
     "WHERE user_id = CAST(:id AS uuid)"
 )
+# One grant row frozen at its own time, by its own actor, for its own reason.
+_FREEZE_ROW = sa.text(
+    "UPDATE user_account_access SET frozen = true, frozen_at = CAST(:at AS timestamptz), "
+    "frozen_by = CAST(:by AS uuid), frozen_reason = :reason "
+    "WHERE user_id = CAST(:id AS uuid) AND exchange_account_id = CAST(:account AS uuid)"
+)
 # What the E42-T04 disable store does in one transaction: lock the user row first, then set
 # the status and soft-revoke every grant.
 _DISABLE = (
@@ -81,6 +95,13 @@ _DISABLE = (
     ),
 )
 _WAITING = sa.text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+_ACK = RemovalContext(acknowledged_unknown_positions=True)  # O2: these tests read no counts
+_USER_SOFT_DELETE = sa.text("UPDATE users SET deleted_at = now() WHERE id = CAST(:id AS uuid)")
+#: A grant row written outside the store, live or soft-revoked and never frozen.
+_ROW = sa.text(
+    "INSERT INTO user_account_access (user_id, exchange_account_id, can_view) "
+    "VALUES (CAST(:id AS uuid), CAST(:account AS uuid), :view)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -165,7 +186,7 @@ async def _until_blocked(probe: AsyncConnection, n: int) -> None:
         if (await probe.execute(_WAITING)).scalar_one() >= n:
             return
         await asyncio.sleep(0.025)
-    raise AssertionError(f"{n} callers never blocked on the user row")
+    raise AssertionError(f"{n} callers never blocked on a row lock")
 
 
 async def _disable(engine: AsyncEngine, user: uuid.UUID) -> None:
@@ -182,7 +203,7 @@ async def test_replace_write_ahead_audit(db: Any) -> None:
     gate = asyncio.Event()
     audit = _Audit(gate=gate)
     call = asyncio.create_task(
-        _store(rel, audit).replace_grants(user, {b: "trade"}, actor_user_id=owner)
+        _store(rel, audit).replace_grants(user, {b: "trade"}, actor_user_id=owner, removal=_ACK)
     )
     async with asyncio.timeout(_WAIT_S):
         await audit.entered.wait()
@@ -199,11 +220,19 @@ async def test_replace_audits_the_live_grants_before_and_after(db: Any) -> None:
     owner, user, (a, b) = await _setup(engine, 2)
     await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
     audit = _Audit()
-    await _store(rel, audit).replace_grants(user, {b: "trade"}, actor_user_id=owner)
+    await _store(rel, audit).replace_grants(user, {b: "trade"}, actor_user_id=owner, removal=_ACK)
     ((action, kwargs),) = audit.calls
     assert action == "users.access_change"
-    assert kwargs["before_state"] == {"grants": [{"exchange_account_id": str(a), "level": "read"}]}
-    assert kwargs["after_state"] == {"grants": [{"exchange_account_id": str(b), "level": "trade"}]}
+    before = [{"exchange_account_id": str(a), "level": "read", "frozen": False}]
+    after = [{"exchange_account_id": str(b), "level": "trade", "frozen": False}]
+    assert kwargs["before_state"] == {"grants": before}
+    assert kwargs["after_state"] == {
+        "grants": after,
+        "positions_decision": "leave",
+        "open_position_count": None,
+        "open_order_count": None,
+        "acknowledged_unknown_positions": True,
+    }
 
 
 async def test_refused_audit_changes_nothing(db: Any) -> None:
@@ -212,7 +241,9 @@ async def test_refused_audit_changes_nothing(db: Any) -> None:
     await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
     refusing = _Audit(error=RuntimeError("audit WAL unavailable"))
     with pytest.raises(AccessAuditUnavailableError):
-        await _store(rel, refusing).replace_grants(user, {b: "trade"}, actor_user_id=owner)
+        await _store(rel, refusing).replace_grants(
+            user, {b: "trade"}, actor_user_id=owner, removal=_ACK
+        )
     assert await _access(engine, user) == {a: (True, False)}
 
 
@@ -221,7 +252,7 @@ async def test_replace_returns_plain_uuids(db: Any) -> None:
     rel, engine = db
     owner, user, (a, b) = await _setup(engine, 2)
     await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
-    change = await _store(rel).replace_grants(user, {b: "trade"}, actor_user_id=owner)
+    change = await _store(rel).replace_grants(user, {b: "trade"}, actor_user_id=owner, removal=_ACK)
     body = orjson.dumps(
         {"before": change.before, "after": change.after}, option=orjson.OPT_NON_STR_KEYS
     )
@@ -235,7 +266,7 @@ async def test_keeps_freeze_and_cap(db: Any) -> None:
     await store.replace_grants(user, {s: "trade"}, actor_user_id=owner)
     await _exec(engine, _FREEZE, id=str(user), by=str(owner))
     frozen = [r[3:] for r in await _rows(engine, user)]
-    await store.replace_grants(user, {}, actor_user_id=owner)
+    await store.replace_grants(user, {}, actor_user_id=owner, removal=_ACK)
     revoked = await _rows(engine, user)
     await store.replace_grants(user, {s: "read"}, actor_user_id=owner)
     regranted = await _rows(engine, user)
@@ -317,7 +348,178 @@ async def test_onboarding_ignores_revoked(db: Any) -> None:
     store, onboarding = _store(rel), SqlAlchemyOnboardingStore(rel)
     await store.replace_grants(user, {a: "read"}, actor_user_id=owner)
     bound = await onboarding.has_account_binding(user), await onboarding.latest_binding_at(user)
-    await store.replace_grants(user, {}, actor_user_id=owner)
+    await store.replace_grants(user, {}, actor_user_id=owner, removal=_ACK)
     revoked = await onboarding.has_account_binding(user), await onboarding.latest_binding_at(user)
     assert bound[0] is True and bound[1] is not None
     assert revoked == (False, None)
+
+
+async def test_account_soft_delete_first_refuses_the_grant(db: Any) -> None:
+    """The delete holds the account row; the grant queues on `FOR SHARE`, then finds it gone."""
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    audit = _Audit()
+    async with engine.connect() as probe:
+        async with engine.begin() as deleter:
+            await deleter.execute(_SOFT_DELETE, {"id": str(a)})
+            call = asyncio.create_task(
+                _store(rel, audit).replace_grants(user, {a: "read"}, actor_user_id=owner)
+            )
+            await _until_blocked(probe, 1)
+        with pytest.raises(AccessUnknownAccountError):
+            async with asyncio.timeout(_WAIT_S):
+                await call
+    assert await _access(engine, user) == {} and not audit.calls
+
+
+async def test_grant_first_blocks_the_account_soft_delete_until_commit(db: Any) -> None:
+    """The grant holds the account `FOR SHARE` through its audit and commit: the delete queues.
+    A grant that committed first stays live after the delete (an E27 follow-up, not S9)."""
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    gate = asyncio.Event()
+    audit = _Audit(gate=gate)
+    async with engine.connect() as probe:
+        call = asyncio.create_task(
+            _store(rel, audit).replace_grants(user, {a: "read"}, actor_user_id=owner)
+        )
+        async with asyncio.timeout(_WAIT_S):
+            await audit.entered.wait()
+        delete = asyncio.create_task(_exec(engine, _SOFT_DELETE, id=str(a)))
+        await _until_blocked(probe, 1)
+        gate.set()
+        async with asyncio.timeout(_WAIT_S):
+            change = await call
+            await delete
+    assert change.after == {a: "read"} and await _access(engine, user) == {a: (True, False)}
+
+
+async def test_user_soft_delete_first_refuses_the_grant(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    audit = _Audit()
+    async with engine.connect() as probe:
+        async with engine.begin() as deleter:
+            await deleter.execute(_USER_SOFT_DELETE, {"id": str(user)})
+            call = asyncio.create_task(
+                _store(rel, audit).replace_grants(user, {a: "read"}, actor_user_id=owner)
+            )
+            await _until_blocked(probe, 1)
+        with pytest.raises(AccessUserNotFoundError):
+            async with asyncio.timeout(_WAIT_S):
+                await call
+    assert await _access(engine, user) == {} and not audit.calls
+
+
+async def test_lock_timeout_refuses_and_changes_nothing(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    audit = _Audit()
+    store = SqlAlchemyAccountAccessStore(rel, audit=audit, lock_timeout_ms=200)
+    async with engine.begin() as holder:  # holds the user row past the store's bound
+        await holder.execute(_DISABLE[0], {"id": str(user)})
+        with pytest.raises(AccessBusyError):
+            async with asyncio.timeout(_WAIT_S):
+                await store.replace_grants(user, {a: "read"}, actor_user_id=owner)
+    assert await _access(engine, user) == {} and not audit.calls
+
+
+#: Scenarios of writes to a frozen manager's grants, each from the same start: `a` trade and `b`
+#: read, both frozen and capped at 250, and `e` soft-revoked and never frozen. The last is the
+#: Q1 security rider: no sequence of writes leaves an unfrozen live grant.
+_FROZEN_MANAGER_WRITES = [
+    pytest.param([{"a": "trade", "b": "read", "c": "read"}], id="a-new-grant"),
+    pytest.param([{"a": "read", "b": "trade"}], id="a-frozen-grant-narrowed-another-widened"),
+    pytest.param([{"d": "trade"}], id="every-account-swapped"),
+    pytest.param([{"a": "trade", "b": "read", "e": "read"}], id="a-never-frozen-row-revived"),
+    pytest.param([{"a": "trade"}, {"a": "trade", "b": "read"}], id="a-frozen-row-revived"),
+    pytest.param([{}, {"f": "read"}], id="every-grant-revoked-then-a-new-account-granted"),
+    pytest.param(
+        [
+            {"a": "trade", "b": "read", "c": "read"},
+            {"a": "read"},
+            {"a": "trade", "e": "trade"},
+            {"d": "trade"},
+            {},
+            {"f": "read"},
+            {"b": "read", "c": "trade", "e": "read"},
+        ],
+        id="a-sequence-of-every-kind-of-write",
+    ),
+]
+
+
+@pytest.mark.parametrize("steps", _FROZEN_MANAGER_WRITES)
+async def test_no_grant_write_leaves_a_frozen_manager_an_unfrozen_grant(
+    db: Any, steps: list[dict[str, AccessLevel]]
+) -> None:
+    """#2648 Q1: a row a write inserts or revives for a frozen manager takes the donor's freeze
+    (time, actor, reason) and never its cap, and no write lowers a freeze."""
+    rel, engine = db
+    owner, user, ids = await _setup(engine, 6)
+    named = dict(zip("abcdef", ids, strict=True))
+    a, b, e = named["a"], named["b"], named["e"]
+    await _store(rel).replace_grants(user, {a: "trade", b: "read"}, actor_user_id=owner)
+    await _exec(engine, _FREEZE, id=str(user), by=str(owner))
+    await _exec(engine, _ROW, id=str(user), account=str(e), view=False)
+    freeze = (await _rows(engine, user))[0][3:7]  # (frozen, frozen_at, frozen_by, reason)
+    audit = _Audit()
+    for step in steps:
+        grants = {named[name]: level for name, level in step.items()}
+        await _store(rel, audit).replace_grants(user, grants, actor_user_id=owner, removal=_ACK)
+        assert [r[3:7] for r in await _rows(engine, user) if r[1]] == [freeze] * len(grants)
+    caps = {r[0]: r[7] for r in await _rows(engine, user) if r[7] is not None}
+    assert caps == {a: Decimal(250), b: Decimal(250)}  # never copied
+    states = [kw[k] for _, kw in audit.calls for k in ("before_state", "after_state")]
+    assert len(audit.calls) == len(steps)
+    assert all(g["frozen"] for state in states for g in state["grants"])  # the audit agrees
+
+
+async def test_rows_already_frozen_keep_their_own_freeze(db: Any) -> None:
+    """#2648 Q1: the latest freeze is copied onto the rows a write inserts or revives, never
+    over a row that is frozen already, widened or not: it keeps its time, actor and reason."""
+    rel, engine = db
+    owner, user, (a, b, c) = await _setup(engine, 3)
+    await _store(rel).replace_grants(user, {a: "read", b: "read"}, actor_user_id=owner)
+    older = (datetime(2026, 1, 1, tzinfo=UTC), owner, "drawdown")
+    latest = (datetime(2026, 2, 1, tzinfo=UTC), user, "manual")  # the donor
+    for account, (at, by, reason) in ((a, older), (b, latest)):
+        freeze = {"id": str(user), "account": str(account), "at": at, "by": str(by)}
+        await _exec(engine, _FREEZE_ROW, reason=reason, **freeze)
+    await _store(rel).replace_grants(user, {a: "trade", b: "read", c: "read"}, actor_user_id=owner)
+    freezes = {r[0]: r[3:7] for r in await _rows(engine, user)}
+    assert freezes == {a: (True, *older), b: (True, *latest), c: (True, *latest)}
+
+
+async def test_partial_freeze_is_not_extended(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a, b, c) = await _setup(engine, 3)
+    await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
+    await _exec(engine, _FREEZE, id=str(user), by=str(owner))
+    await _exec(engine, _ROW, id=str(user), account=str(b), view=True)  # live, not frozen
+    await _store(rel).replace_grants(user, {a: "read", b: "read", c: "read"}, actor_user_id=owner)
+    assert [r[3] for r in await _rows(engine, user)] == [True, False, False]
+
+
+@pytest.mark.parametrize("user_row_first", [True, False], ids=["user-row-first", "grant-rows-only"])
+async def test_replacement_queued_behind_a_freeze_inherits_it(
+    db: Any, user_row_first: bool
+) -> None:
+    """E39's freeze locks the user row first (21-database-schema.md §3.1.3) and the replacement
+    queues on that row; a writer that locks only the grant rows is caught by `_CURRENT`'s
+    `FOR NO KEY UPDATE`. Either way it reads the committed freeze, so its new row is frozen."""
+    rel, engine = db
+    owner, user, (a, b) = await _setup(engine, 2)
+    await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
+    async with engine.connect() as probe:
+        async with engine.begin() as freezer:
+            if user_row_first:
+                await freezer.execute(_DISABLE[0], {"id": str(user)})
+            await freezer.execute(_FREEZE, {"id": str(user), "by": str(owner)})
+            call = asyncio.create_task(
+                _store(rel).replace_grants(user, {a: "read", b: "read"}, actor_user_id=owner)
+            )
+            await _until_blocked(probe, 1)
+        async with asyncio.timeout(_WAIT_S):
+            await call
+    assert [r[3] for r in await _rows(engine, user)] == [True, True]

@@ -1,5 +1,6 @@
-"""E42-T08 S8 (#2648): `SqlAlchemyAccountAccessStore` over a fake unit of work. Real Postgres
-(transaction, rollback, races): tests/integration/storage/test_account_access_store_pg.py."""
+"""E42-T08 S8 and S9a (#2648): `SqlAlchemyAccountAccessStore` over a fake unit of work. Real
+Postgres (transaction, rollback, races): tests/integration/storage/test_account_access_store_pg.py.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import contextlib
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -16,30 +18,42 @@ import orjson
 import pytest
 import structlog
 from asyncpg.pgproto.pgproto import UUID as DriverUUID
+from sqlalchemy.exc import DBAPIError
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.writer import AuditWriter
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import account_access_sqlalchemy as m
 from candleviewer.storage.repositories import onboarding_sqlalchemy as onboarding
 from candleviewer.storage.repositories.account_access import (
     AccessAuditEmitter,
     AccessAuditUnavailableError,
+    AccessBusyError,
     AccessChange,
     AccessLevel,
+    AccessPositionsUnknownError,
+    AccessSelfTargetError,
     AccessUnknownAccountError,
     AccessUserNotActiveError,
     AccessUserNotFoundError,
+    RemovalContext,
 )
 
 _USER, _ACTOR, _RID = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 _A, _B, _C, _D = sorted(uuid.uuid4() for _ in range(4))
-_Row = tuple[uuid.UUID, bool, bool]  # (exchange_account_id, can_view, can_trade)
+_T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)
+_Row = tuple[uuid.UUID, bool, bool]  # (exchange_account_id, can_view, can_trade), not frozen
+_FrozenRow = tuple[uuid.UUID, bool, bool, bool, datetime | None]  # ..., frozen, frozen_at
 _LIVE_A: tuple[_Row, ...] = ((_A, True, False),)
 #: _A read, _B trade, and _D soft-revoked (not live).
 _MIXED: tuple[_Row, ...] = ((_A, True, False), (_B, True, True), (_D, False, False))
 #: Replaces `_MIXED`: _A left out, _B down to read, _C new, _D granted again.
 _SET: dict[uuid.UUID, AccessLevel] = {_B: "read", _C: "trade", _D: "read"}
+#: Both counts read and zero: a removal needs no acknowledgement.
+_KNOWN = RemovalContext(open_position_count=0, open_order_count=0)
+#: What a replacement naming accounts runs first: the wait bound, then the locks in order.
+_LOCKED_READS = [m._LOCK_TIMEOUT, m._LOCK_USER, m._KNOWN_ACCOUNTS, m._CURRENT]
 #: Bounds every wait on a fake: a regression fails fast instead of hanging CI.
 _WAIT_S = 5.0
 _CLOSE_FAILED = "account access closing audit record not written"
@@ -52,31 +66,38 @@ class _Rel:
     def __init__(
         self,
         status: str | None = "active",
-        rows: tuple[_Row, ...] = (),
+        rows: tuple[_Row | _FrozenRow, ...] = (),
         unknown: frozenset[uuid.UUID] = frozenset(),
         *,
         fail_on: object = None,
+        error: Exception | None = None,
         on_commit: Callable[[], Awaitable[None]] | None = None,
         on_close: Exception | None = None,
+        on_enter: Exception | None = None,
     ) -> None:
         self.status, self.rows, self.unknown = status, rows, unknown
-        self.fail_on, self.on_commit, self.on_close = fail_on, on_commit, on_close
+        self.fail_on, self.error = fail_on, error
+        self.on_commit, self.on_close, self.on_enter = on_commit, on_close, on_enter
         self.log: list[tuple[Any, Any]] = []
         self.committed = False
 
     def _result(self, stmt: Any, params: Any) -> list[Any]:
         if stmt is self.fail_on:
-            raise RuntimeError("deadlock detected")
+            raise self.error or RuntimeError("deadlock detected")
         if stmt is m._LOCK_USER:
             return [] if self.status is None else [(self.status,)]
         if stmt is m._KNOWN_ACCOUNTS:
             return [(DriverUUID(i),) for i in params["ids"] if uuid.UUID(i) not in self.unknown]
-        if stmt is m._CURRENT:
-            return [(DriverUUID(str(a)), view, trade) for a, view, trade in self.rows]
+        if stmt is m._CURRENT:  # a 3-tuple row reads back `frozen = false, frozen_at = NULL`
+            pad = (False, None)
+            return [(DriverUUID(str(r[0])), *r[1:], *pad[len(r) - 3 :]) for r in self.rows]
         return []
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
+        if self.on_enter is not None:  # the real one runs two `SET LOCAL`s on entry
+            raise self.on_enter
+
         async def execute(stmt: Any, params: Any = None) -> Any:
             self.log.append((stmt, params))
             rows = self._result(stmt, params)
@@ -134,17 +155,37 @@ def _store(
     )
 
 
-def _grants(*pairs: tuple[uuid.UUID, str]) -> dict[str, object]:
-    return {"grants": [{"exchange_account_id": str(a), "level": lvl} for a, lvl in pairs]}
+def _grants(
+    *pairs: tuple[uuid.UUID, str], frozen: frozenset[uuid.UUID] = frozenset()
+) -> dict[str, object]:
+    items = [
+        {"exchange_account_id": str(a), "level": lvl, "frozen": a in frozen} for a, lvl in pairs
+    ]
+    return {"grants": items}
+
+
+def _leave(removal: RemovalContext) -> dict[str, object]:
+    """What the record of a change that removes a grant adds to `after_state` (#965 O2)."""
+    return {
+        "positions_decision": "leave",
+        "open_position_count": removal.open_position_count,
+        "open_order_count": removal.open_order_count,
+        "acknowledged_unknown_positions": removal.acknowledged_unknown_positions,
+    }
 
 
 async def _lose_connection() -> None:
     raise RuntimeError("connection lost")
 
 
-async def _replace(rel: _Rel, audit: _Audit, grants: dict[uuid.UUID, AccessLevel]) -> AccessChange:
+async def _replace(
+    rel: _Rel,
+    audit: _Audit,
+    grants: dict[uuid.UUID, AccessLevel],
+    removal: RemovalContext | None = _KNOWN,
+) -> AccessChange:
     return await _store(rel, audit).replace_grants(
-        _USER, grants, actor_user_id=_ACTOR, request_id=_RID
+        _USER, grants, actor_user_id=_ACTOR, request_id=_RID, removal=removal
     )
 
 
@@ -177,7 +218,7 @@ async def test_replace_audits_after_the_constraints_and_before_the_commit() -> N
     audit = _Audit(rel)
     await _replace(rel, audit, _SET)
     ((_, _, ran_before_emit, committed_before_emit),) = audit.calls
-    order = [m._LOCK_USER, m._KNOWN_ACCOUNTS, m._CURRENT, m._REVOKE, m._UPSERT, m._IMMEDIATE]
+    order = [*_LOCKED_READS, m._REVOKE, m._UPSERT, m._IMMEDIATE]
     assert ran_before_emit == order and not committed_before_emit and rel.committed
 
 
@@ -193,7 +234,7 @@ async def test_replace_audit_record_names_the_grants_before_and_after() -> None:
         "object_kind": "user",
         "object_id": str(_USER),
         "before_state": _grants((_A, "read"), (_B, "trade")),
-        "after_state": _grants((_B, "read"), (_C, "trade"), (_D, "read")),
+        "after_state": _grants((_B, "read"), (_C, "trade"), (_D, "read")) | _leave(_KNOWN),
         "request_id": _RID,
         "outcome": "success",
         "reason": None,
@@ -213,7 +254,7 @@ async def test_replace_with_no_grants_soft_revokes_every_live_grant() -> None:
     rel = _Rel(rows=_MIXED)
     change = await _replace(rel, _Audit(rel), {})
     assert change.after == {} and change.changed and rel.committed
-    assert rel.ran() == [m._LOCK_USER, m._CURRENT, m._REVOKE, m._IMMEDIATE]
+    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, m._CURRENT, m._REVOKE, m._IMMEDIATE]
     assert rel.params(m._REVOKE)["revoked"] == [str(_A), str(_B)]
 
 
@@ -221,7 +262,7 @@ async def test_replace_adding_a_grant_leaves_the_unchanged_ones_unwritten() -> N
     rel = _Rel(rows=_LIVE_A)
     change = await _replace(rel, _Audit(rel), {_A: "read", _B: "trade"})
     assert change.before == {_A: "read"} and rel.committed
-    assert rel.ran() == [m._LOCK_USER, m._KNOWN_ACCOUNTS, m._CURRENT, m._UPSERT, m._IMMEDIATE]
+    assert rel.ran() == [*_LOCKED_READS, m._UPSERT, m._IMMEDIATE]
     assert rel.params(m._UPSERT)["accounts"] == [str(_B)]  # _A keeps its granted_by
 
 
@@ -237,8 +278,7 @@ async def test_replace_with_the_current_set_writes_and_audits_nothing() -> None:
     audit = _Audit(rel)
     change = await _replace(rel, audit, {_A: "trade"})
     assert not change.changed and change.after == {_A: "trade"}
-    assert rel.ran() == [m._LOCK_USER, m._KNOWN_ACCOUNTS, m._CURRENT]
-    assert not audit.calls and not rel.committed
+    assert rel.ran() == _LOCKED_READS and not audit.calls and not rel.committed
 
 
 @pytest.mark.parametrize(
@@ -258,7 +298,8 @@ async def test_replace_for_a_missing_or_inactive_user_changes_nothing(
     with pytest.raises(error) as err:
         await _replace(rel, audit, {})
     assert getattr(err.value, "status", None) == status
-    assert rel.ran() == [m._LOCK_USER] and not audit.calls and not rel.committed
+    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER] and not audit.calls
+    assert not rel.committed
 
 
 async def test_replace_naming_an_unknown_account_reports_only_the_unknown_ones() -> None:
@@ -274,7 +315,7 @@ async def test_replace_naming_an_unknown_account_rolls_back_the_whole_set() -> N
     audit = _Audit(rel)
     with pytest.raises(AccessUnknownAccountError):
         await _replace(rel, audit, {_B: "trade", _C: "read"})
-    assert rel.ran() == [m._LOCK_USER, m._KNOWN_ACCOUNTS] and not audit.calls
+    assert rel.ran() == [m._LOCK_TIMEOUT, m._LOCK_USER, m._KNOWN_ACCOUNTS] and not audit.calls
     assert not rel.committed
 
 
@@ -290,7 +331,9 @@ async def test_replace_never_commits_when_the_audit_record_cannot_be_written(
     audit = _Audit(rel, error=error, hang=hang)
     with pytest.raises(AccessAuditUnavailableError):
         async with asyncio.timeout(_WAIT_S):  # the store's own bound must fire first
-            await _store(rel, audit, timeout_s).replace_grants(_USER, {}, actor_user_id=_ACTOR)
+            await _store(rel, audit, timeout_s).replace_grants(
+                _USER, {}, actor_user_id=_ACTOR, removal=_KNOWN
+            )
     # No closing record: a refused record never landed; a hung one may still (the writer
     # finishes an append it has started), and the uncommitted grant rows are the truth.
     assert len(audit.calls) == 1 and not rel.committed
@@ -377,7 +420,9 @@ async def test_replace_writes_both_records_through_the_real_audit_writer(tmp_pat
     await writer.start()
     try:
         with pytest.raises(RuntimeError, match="connection lost"):
-            await _store(rel, writer).replace_grants(_USER, {}, actor_user_id=_ACTOR)
+            await _store(rel, writer).replace_grants(
+                _USER, {}, actor_user_id=_ACTOR, removal=_KNOWN
+            )
         await writer.flush(_WAIT_S)
     finally:
         await writer.stop(1)
@@ -430,3 +475,210 @@ async def test_replace_logs_one_line_naming_its_outcome(
 def test_onboarding_binding_readers_ignore_revoked_grants() -> None:
     for stmt in (onboarding._BOUND, onboarding._LATEST_BINDING):
         assert "AND can_view" in stmt.text
+
+
+# -- S9a: store hardening (#2648, design comment and rulings of 2026-10-16) --------------------
+
+
+def test_replace_share_locks_the_accounts_so_their_soft_delete_queues() -> None:
+    # An account soft delete updates no key column, so it takes `FOR NO KEY UPDATE`: only
+    # `FOR SHARE` or stronger conflicts with it (`FOR KEY SHARE` let a grant race the delete).
+    assert m._KNOWN_ACCOUNTS.text.endswith("AND deleted_at IS NULL ORDER BY id FOR SHARE")
+    assert m._LOCK_USER.text.endswith("AND deleted_at IS NULL FOR NO KEY UPDATE")
+    assert m._CURRENT.text.endswith("ORDER BY exchange_account_id FOR NO KEY UPDATE")
+
+
+async def test_replace_bounds_its_lock_waits_before_taking_a_lock() -> None:
+    rel = _Rel(rows=_LIVE_A)
+    await _replace(rel, _Audit(rel), {_A: "read"})
+    assert rel.ran()[:2] == [m._LOCK_TIMEOUT, m._LOCK_USER]
+    assert rel.params(m._LOCK_TIMEOUT) == {"timeout": "5000ms"}
+
+
+class _DriverError(Exception):
+    """asyncpg's error as SQLAlchemy adapts it: a SQLSTATE, and text that may hold row values."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__("DETAIL: Failing row contains (drawdown)")
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "stmt"),
+    [("55P03", m._LOCK_USER), ("55P03", m._KNOWN_ACCOUNTS), ("40P01", m._CURRENT)],
+    ids=["user-lock-timeout", "account-lock-timeout", "deadlock"],
+)
+async def test_replace_whose_lock_wait_fails_is_busy_and_changes_nothing(
+    sqlstate: str, stmt: object
+) -> None:
+    error = DBAPIError("SELECT", None, _DriverError(sqlstate))
+    rel = _Rel(rows=_LIVE_A, fail_on=stmt, error=error)
+    audit = _Audit(rel)
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccessBusyError) as err:
+        await _replace(rel, audit, {_B: "read"})
+    assert err.value.__cause__ is None and err.value.__suppress_context__  # no driver text
+    assert not audit.calls and not rel.committed
+    assert [(e["outcome"], e["log_level"]) for e in logs] == [("busy", "warning")]
+
+
+async def test_replace_whose_statement_fails_otherwise_raises_only_the_sqlstate() -> None:
+    error = DBAPIError("INSERT", None, _DriverError("23514"))
+    rel = _Rel(rows=_LIVE_A, fail_on=m._UPSERT, error=error)
+    with pytest.raises(StorageQueryFailed) as err:
+        await _replace(rel, _Audit(rel), {_B: "read"})
+    assert err.value.sqlstate == "23514" and "drawdown" not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+    assert not rel.committed
+
+
+async def _driver_commit_failure() -> None:
+    raise DBAPIError("COMMIT", None, _DriverError("08006"))
+
+
+@pytest.mark.parametrize(
+    ("rel", "sqlstate", "records", "outcome"),
+    [
+        ({"on_enter": DBAPIError("SET LOCAL", None, _DriverError("57P01"))}, "57P01", [], "error"),
+        (
+            {"rows": _LIVE_A, "on_commit": _driver_commit_failure},
+            "08006",
+            ["users.access_change", "users.access_change_failed"],
+            "commit_failed",
+        ),
+    ],
+    ids=["unit-of-work-setup", "commit"],
+)
+async def test_replace_whose_setup_or_commit_fails_in_the_driver_raises_only_the_sqlstate(
+    rel: dict[str, Any], sqlstate: str, records: list[str], outcome: str
+) -> None:
+    fake = _Rel(**rel)
+    audit = _Audit(fake)
+    with structlog.testing.capture_logs() as logs, pytest.raises(StorageQueryFailed) as err:
+        await _replace(fake, audit, {_B: "read"})
+    assert err.value.sqlstate == sqlstate and "drawdown" not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+    assert [action for action, _, _, _ in audit.calls] == records  # a failed commit is closed
+    assert [e["outcome"] for e in logs] == [outcome]
+
+
+async def test_replace_of_the_actors_own_grants_is_refused_before_any_statement() -> None:
+    rel = _Rel(rows=_LIVE_A)
+    audit = _Audit(rel)
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccessSelfTargetError):
+        await _store(rel, audit).replace_grants(_ACTOR, {}, actor_user_id=_ACTOR, removal=_KNOWN)
+    assert not rel.log and not audit.calls  # SR-055: the route refuses and audits it first
+    assert [(e["outcome"], e["log_level"]) for e in logs] == [("self_target", "warning")]
+
+
+@pytest.mark.parametrize(
+    ("rows", "donor"),
+    [
+        (((_A, True, False, True, _T1), (_B, True, True, True, _T2)), _B),
+        (((_A, True, False, True, _T2), (_B, True, True, True, _T2)), _A),
+        (((_A, False, False, True, _T1), (_B, True, False, True, _T1)), _A),
+        (((_A, False, False, True, _T1),), _A),
+        (((_A, True, False, True, _T1), (_B, False, False, False, None)), _A),
+        (((_A, True, False, True, _T1), (_B, True, False, False, None)), None),
+        (((_A, False, False, True, _T1), (_B, True, False, False, None)), None),
+        (((_A, True, False, False, None),), None),
+        ((), None),
+    ],
+    ids=[
+        "latest-freeze-donates",
+        "tie-goes-to-the-lowest-account",
+        "a-revoked-frozen-row-counts",
+        "every-grant-revoked-still-frozen",
+        "a-revoked-unfrozen-row-has-no-say",
+        "partial-freeze-is-not-frozen",
+        "a-live-unfrozen-row-is-not-frozen",
+        "never-frozen",
+        "no-rows",
+    ],
+)
+def test_frozen_manager_rule_names_the_donor_row(
+    rows: tuple[_FrozenRow, ...], donor: uuid.UUID | None
+) -> None:
+    # #2648 Q1: frozen = a frozen row, live or soft-revoked, and no live unfrozen row.
+    assert m._donor(rows) == donor
+
+
+async def test_replace_for_a_frozen_manager_freezes_each_row_it_inserts_or_revives() -> None:
+    # _A live frozen, widened; _B revoked frozen; _D revoked and never frozen, revived; _C new.
+    rows: tuple[_FrozenRow, ...] = (
+        (_A, True, False, True, _T2),
+        (_B, False, False, True, _T1),
+        (_D, False, False, False, None),
+    )
+    rel = _Rel(rows=rows)
+    await _replace(rel, _Audit(rel), {_A: "trade", _C: "read", _D: "read"})
+    assert rel.ran()[-3:] == [m._UPSERT, m._INHERIT, m._IMMEDIATE]
+    accounts = [str(_A), str(_C), str(_D)]  # `_INHERIT` leaves the already frozen _A alone
+    assert rel.params(m._INHERIT) == {"id": str(_USER), "accounts": accounts, "donor": str(_A)}
+
+
+async def test_replace_audit_record_flags_the_frozen_and_the_inherited_grants() -> None:
+    rel = _Rel(rows=((_A, True, False, True, _T1), (_B, False, False, True, _T1)))
+    audit = _Audit(rel)
+    change = await _replace(rel, audit, {_A: "read", _C: "trade"})
+    ((_, kwargs, _, _),) = audit.calls
+    assert kwargs["before_state"] == _grants((_A, "read"), frozen=frozenset({_A}))
+    after = _grants((_A, "read"), (_C, "trade"), frozen=frozenset({_A, _C}))
+    assert kwargs["after_state"] == after and change.frozen == {_A, _B, _C}
+
+
+async def test_replace_does_not_extend_a_partial_freeze() -> None:
+    rel = _Rel(rows=((_A, True, False, True, _T1), (_B, True, False)))
+    audit = _Audit(rel)
+    await _replace(rel, audit, {_A: "read", _B: "read", _C: "read"})
+    assert m._INHERIT not in rel.ran()
+    after = _grants((_A, "read"), (_B, "read"), (_C, "read"), frozen=frozenset({_A}))
+    assert audit.calls[0][1]["after_state"] == after
+
+
+def test_upsert_revives_a_row_writing_only_its_access_columns() -> None:
+    # #2648 Q1: no grant write lowers a freeze or writes the cap; a revival keeps both.
+    assignments = m._UPSERT.text.split("DO UPDATE SET ")[1].split(", ")
+    assert [a.split(" = ")[0] for a in assignments] == ["can_view", "can_trade", "granted_by"]
+
+
+def test_inherit_only_raises_a_freeze_and_never_copies_the_cap() -> None:
+    sql = m._INHERIT.text
+    assert (
+        "SET frozen = true, frozen_at = d.frozen_at, frozen_by = d.frozen_by, "
+        "frozen_reason = d.frozen_reason FROM " in sql
+    )
+    assert sql.endswith("AND NOT g.frozen")
+    assert "false" not in sql and "max_daily_loss_usd" not in sql and "delete" not in sql.lower()
+
+
+@pytest.mark.parametrize(
+    "removal",
+    [None, RemovalContext(None, 0), RemovalContext(0, None), RemovalContext(None, None)],
+    ids=["nothing-read", "positions-unknown", "orders-unknown", "both-unknown"],
+)
+async def test_replace_removing_any_live_grant_while_a_count_is_unknown_changes_nothing(
+    removal: RemovalContext | None,
+) -> None:
+    rel = _Rel(rows=_MIXED)  # _A and _B live: _A is not the last grant (#2648 Q2)
+    audit = _Audit(rel)
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccessPositionsUnknownError):
+        await _replace(rel, audit, {_B: "trade"}, removal)
+    assert rel.ran() == _LOCKED_READS and not audit.calls and not rel.committed
+    assert [(e["outcome"], e["log_level"]) for e in logs] == [("positions_unknown", "info")]
+
+
+async def test_replace_removing_a_grant_records_the_leave_decision_and_the_counts() -> None:
+    ack = RemovalContext(None, 3, acknowledged_unknown_positions=True)
+    rel = _Rel(rows=_MIXED)
+    audit = _Audit(rel)
+    await _replace(rel, audit, {_B: "trade"}, ack)
+    assert audit.calls[0][1]["after_state"] == _grants((_B, "trade")) | _leave(ack)
+    assert rel.committed
+
+
+async def test_replace_that_removes_no_grant_needs_no_acknowledgement() -> None:
+    rel = _Rel(rows=_MIXED)
+    audit = _Audit(rel)
+    await _replace(rel, audit, {_A: "trade", _B: "read", _C: "read"}, None)  # widen, narrow, add
+    assert audit.calls[0][1]["after_state"] == _grants((_A, "trade"), (_B, "read"), (_C, "read"))
+    assert rel.committed

@@ -485,6 +485,30 @@ CREATE INDEX ix_uaa_account ON user_account_access (exchange_account_id) WHERE c
 CREATE INDEX ix_uaa_frozen  ON user_account_access (exchange_account_id) WHERE frozen;
 ```
 
+**Lock order (every writer of this table; E42-T08 #2648, ruled 2026-10-16).** A transaction that
+writes `user_account_access` locks, in this order: (1) the `users` row, `FOR NO KEY UPDATE`, so a
+status change or soft delete of that user queues behind it; (2) the `exchange_accounts` rows it
+names, ascending `id`, `FOR SHARE` for a grant write, so an account soft delete (a non-key
+`UPDATE`) queues behind it or, if it committed first, leaves the account unknown; (3) the
+`user_account_access` rows, ascending `(user_id, exchange_account_id)`: every row of that user,
+live and soft-revoked. Only then does it write its audit record ahead and commit. The grant store
+(`storage/repositories/account_access_sqlalchemy.py`) follows this order, and so must the
+E42-T04 user disable and E39's `risk.freeze_manager` and `risk.unfreeze_manager` writers: the
+user row first, then every row of that user. A bulk writer per account locks its rows
+`ORDER BY user_id, exchange_account_id`; an account soft delete takes only (2). Each writer bounds
+its waits with `lock_timeout` (5 s in the grant store); SQLSTATE `55P03` or `40P01` refuses the
+change with nothing written (HTTP 409 `conflict`).
+
+**Grant writes never lower a freeze (#965 O4, #2648 Q1, C-12.5).** Removing a grant is a soft
+revoke (`can_view = can_trade = false`), never a `DELETE`, and no grant write lowers `frozen` or
+writes `max_daily_loss_usd`. A manager is frozen when one of their rows, live or soft-revoked, is
+frozen and no live row is unfrozen; for a frozen manager, a row a grant write inserts or revives
+copies `frozen_at`, `frozen_by` and `frozen_reason` from the frozen row with the latest
+`frozen_at` (not the cap). Unlike the rule engine's `owner_frozen` (`rules/scope_state.py`: a
+live grant exists and every live grant is frozen), the store also counts soft-revoked rows, so for
+a manager with no live grant it fails closed and revoking everything first cannot clear a freeze.
+Only `risk.unfreeze_manager` lowers a freeze.
+
 #### 3.1.4 `sessions` and `sessions_rotation`
 
 <!-- prettier-ignore -->
