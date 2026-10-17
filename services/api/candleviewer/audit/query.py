@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -199,8 +199,8 @@ class AuditQueryService:
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
     anyway). A page's chain check and verify's batches run on `hasher`, a
     bounded executor of its own; `close()` shuts it down. `clock` stamps
-    `checked_at`. `verify_slot` is verify's single-flight, shared with the scheduled
-    verify job."""
+    `checked_at`; `sleep` times a run's deadline. `verify_slot` is verify's single-flight,
+    shared with the scheduled verify job."""
 
     def __init__(
         self,
@@ -208,10 +208,12 @@ class AuditQueryService:
         hasher: ChainHasher | None = None,
         *,
         clock: Callable[[], datetime] = _utc_now,
+        sleep: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep,
     ) -> None:
         self._repository = repository
         self._hasher = hasher if hasher is not None else ChainHasher()
         self._clock = clock
+        self._sleep = sleep
         self.verify_slot = VerifySlot()
 
     def close(self) -> None:
@@ -340,17 +342,41 @@ class AuditQueryService:
         return VerifyPlan(from_id, hi, head, full_chain=from_id <= first and hi == head)
 
     async def run_verify(
-        self, plan: VerifyPlan, *, batch_size: int = VERIFY_BATCH_SIZE
+        self,
+        plan: VerifyPlan,
+        *,
+        batch_size: int = VERIFY_BATCH_SIZE,
+        deadline_s: float | None = None,
     ) -> VerifyResult:
+        """`deadline_s` bounds the whole run: past it the run is cancelled, its statements
+        and prefetch with it, and `TimeoutError` is raised. The cancel cannot interrupt a
+        batch already on the hasher's thread (`ChainHasher.run` waits for the thread): the
+        run ends once that one batch is hashed, so `TimeoutError` can come that much after
+        the deadline. A `batch_size` below 1 is a `ValueError`, never an empty "verified"
+        walk. See `_run_verify`."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        if deadline_s is None:
+            return await self._run_verify(plan, batch_size)
+        run = spawn(self._run_verify(plan, batch_size), name="audit.verify.run")
+        timer = spawn(self._sleep(deadline_s), name="audit.verify.deadline")
+        try:
+            await asyncio.wait({run, timer}, return_when=asyncio.FIRST_COMPLETED)
+        finally:  # the loser, or both when the caller itself is cancelled
+            for task in (timer, run):
+                if not task.done():
+                    await _discard(task)
+        if run.cancelled():
+            raise TimeoutError("audit verify exceeded its deadline")
+        return run.result()
+
+    async def _run_verify(self, plan: VerifyPlan, batch_size: int) -> VerifyResult:
         """Check the plan's range. The first entry is checked against the stored
         `entry_hash` of the greatest id below `from_id` (genesis when there is none): ids
         have gaps, so `from_id - 1` may not exist (design §1 gap 10). Keyset batches of
         `batch_size` rows, hashed off the event loop; the walk stops at the first divergence
         (`kind` says which check failed). A database failure, a read over its time budget
-        or a full hasher raises and returns nothing; a `batch_size` below 1 is a
-        `ValueError`, never an empty "verified" walk."""
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1")
+        or a full hasher raises and returns nothing."""
         stored = None
         if plan.from_id is not None:
             stored = await self._repository.fetch_anchor_hash(plan.from_id)
@@ -433,7 +459,11 @@ class AuditQueryService:
         checkpoints: Mapping[int, str] = _NO_CHECKPOINTS,
     ) -> _Walk:
         """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
-        is hashed, and batch n+2 only after batch n is done (at most two held)."""
+        is hashed, and batch n+2 only after batch n is done (at most two held). A batch may
+        stop short on the repository's byte budget, so only an empty batch ends the walk.
+        The statement renders every row it may return before it cuts, so the next batch asks
+        for at most twice the rows the last one held: after a cut the database renders at most
+        about twice what it returns, and full batches double back up to `batch_size`."""
         checked = passed = passed_id = 0
         pending: asyncio.Future[list[tuple[Any, ...]]] | None
         pending = spawn(self._fetch(after_id, last_id, batch_size), name=_PREFETCH)
@@ -443,8 +473,9 @@ class AuditQueryService:
                 pending = None
                 if not rows:
                     break
-                if len(rows) == batch_size and rows[-1][0] < last_id:
-                    pending = spawn(self._fetch(rows[-1][0], last_id, batch_size), name=_PREFETCH)
+                if rows[-1][0] < last_id:
+                    limit = min(batch_size, 2 * len(rows))
+                    pending = spawn(self._fetch(rows[-1][0], last_id, limit), name=_PREFETCH)
                 check = functools.partial(_walk_batch, expected, rows, checkpoints)
                 walk = await self._hasher.run(check)
                 checked, passed = checked + walk.checked, passed + walk.passed

@@ -79,7 +79,7 @@ from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
-from candleviewer.api.audit_limiter import AuditQueryLimiter
+from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
@@ -614,6 +614,7 @@ def _build_audit(settings: Settings) -> AuditHandle:
         SqlAlchemyAuditRepository(
             SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
             read_slots=settings.audit_query_global_max_concurrent,
+            verify_read_timeout_ms=settings.audit_verify_statement_timeout_ms,
         )
     )
 
@@ -1374,6 +1375,11 @@ def create_app(
             budget=audit_budget,
             query_timeout_ms=resolved.audit_query_timeout_ms,
             verify_max_span=resolved.audit_verify_max_span,
+            verify_limiter=AuditVerifyLimiter(
+                rate_per_hour=resolved.audit_verify_rate_per_hour,
+                tracked_users=resolved.audit_budget_tracked_users,
+            ),
+            verify_deadline_s=resolved.audit_verify_deadline_s,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))

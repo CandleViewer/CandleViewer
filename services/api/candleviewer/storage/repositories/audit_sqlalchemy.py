@@ -22,6 +22,7 @@ import structlog
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
 from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
+from candleviewer.settings import Settings
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -97,10 +98,13 @@ _CHECKPOINTS_SQL = sa.text(
     "SELECT c.head_id, c.head_hash, a.entry_hash FROM audit_checkpoints c "
     "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id <= :to_id ORDER BY c.head_id"
 )
-#: Per-statement budget for verify's reads (the head, the anchor, each batch), client-side
-#: and as `statement_timeout`: a backstop far above one keyset batch. An overrun is 503.
-VERIFY_READ_TIMEOUT_MS = 10_000
-_VERIFY_READ_TIMEOUT = {"v": f"{VERIFY_READ_TIMEOUT_MS}ms"}
+#: Rendered UTF-8 bytes per verify batch: a batch stops before a row once the rows before it
+#: reach this, so it holds at most the budget plus one entry (the first row always goes in).
+VERIFY_BATCH_MAX_BYTES = 8 * 1024 * 1024
+#: Default per-statement budget for verify's reads (the head, the anchor, each batch),
+#: client-side and as `statement_timeout`: the `audit_verify_statement_timeout_ms` default, a
+#: backstop far above one keyset batch. An overrun is 503.
+VERIFY_READ_TIMEOUT_MS: int = Settings.model_fields["audit_verify_statement_timeout_ms"].default
 
 #: Every hashed column is rendered to text *by Postgres*, with exactly the
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
@@ -158,7 +162,16 @@ def _sqlstate(exc: sa.exc.DBAPIError) -> str | None:
     return code if isinstance(code, str) else None
 
 
+#: A keyset batch of at most `:limit` rows, cut once the renderings before a row reach
+#: `:max_bytes` (UTF-8): the first row is always admitted, so the walk always moves on.
 _VERIFY_BATCH_SQL = sa.text(
+    "SELECT id, prev_hash, entry_hash, actor_user_id, actor_label, actor_ip, session_id, "
+    "action, object_kind, object_id, outcome, severity, reason, before_state, after_state, "
+    "request_id, env, event_ts FROM ("
+    "SELECT r.*, sum(r.n) OVER (ORDER BY r.id) - r.n AS before FROM ("
+    "SELECT q.*, octet_length(concat(actor_user_id, actor_label, actor_ip, session_id, "
+    "action, object_kind, object_id, outcome, severity, reason, before_state, after_state, "
+    "request_id, env, event_ts)) AS n FROM ("
     "SELECT id, prev_hash, entry_hash, actor_user_id::text AS actor_user_id, actor_label, "
     "actor_ip::text AS actor_ip, session_id::text AS session_id, action, object_kind, "
     "object_id, outcome::text AS outcome, severity::text AS severity, reason, "
@@ -166,6 +179,7 @@ _VERIFY_BATCH_SQL = sa.text(
     "request_id::text AS request_id, env::text AS env, "
     "to_char(event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF') AS event_ts "
     "FROM audit_log WHERE id > :after_id AND id <= :to_id ORDER BY id ASC LIMIT :limit"
+    ") q) r) w WHERE w.before < :max_bytes ORDER BY w.id"
 )
 
 #: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
@@ -285,11 +299,18 @@ class SqlAlchemyAuditRepository:
     """
 
     def __init__(
-        self, relational: SqlAlchemyRelationalRepository, *, read_slots: int = DEFAULT_READ_SLOTS
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        read_slots: int = DEFAULT_READ_SLOTS,
+        verify_read_timeout_ms: int = VERIFY_READ_TIMEOUT_MS,
+        verify_batch_max_bytes: int = VERIFY_BATCH_MAX_BYTES,
     ) -> None:
         if read_slots < 2:  # the Owner's slot, and at least one for everyone else
             raise ValueError("read_slots must be at least 2")
         self._relational = relational
+        self._verify_timeout_ms = verify_read_timeout_ms
+        self._batch_bytes = verify_batch_max_bytes
         self._read_slots = read_slots
         self._reads = 0
         self._shared_reads = 0  # reads that are not the Owner's
@@ -411,6 +432,7 @@ class SqlAlchemyAuditRepository:
         self, *, after_id: int, to_id: int, limit: int
     ) -> list[tuple[Any, ...]]:
         params = {"after_id": after_id, "to_id": to_id, "limit": limit}
+        params["max_bytes"] = self._batch_bytes
         return await self._bounded_read(_VERIFY_BATCH_SQL, params)
 
     async def read_head(self) -> tuple[int, str] | None:
@@ -432,15 +454,16 @@ class SqlAlchemyAuditRepository:
     async def _bounded_read(
         self, statement: sa.TextClause, params: dict[str, Any]
     ) -> list[tuple[Any, ...]]:
-        """One read under `VERIFY_READ_TIMEOUT_MS`, rows as plain tuples. Failures as in
+        """One read under the verify statement budget, rows as plain tuples. Failures as in
         `query_page`: the builtin `TimeoutError`, or `AuditReadFailed` with the SQLSTATE
         only, raised `from None` so no database error rides along (C-12.6)."""
-        budget = asyncio.timeout(VERIFY_READ_TIMEOUT_MS / 1000)
+        budget = asyncio.timeout(self._verify_timeout_ms / 1000)
         timed_out, error, state = False, "", None
         try:
             async with budget:
                 async with self._relational.unit_of_work() as uow:
-                    await uow.session.execute(_SET_TIMEOUT_SQL, _VERIFY_READ_TIMEOUT)
+                    limit = {"v": f"{int(self._verify_timeout_ms)}ms"}
+                    await uow.session.execute(_SET_TIMEOUT_SQL, limit)
                     return [tuple(row) for row in await uow.session.execute(statement, params)]
         except (TimeoutError, sa.exc.TimeoutError):
             timed_out = True
@@ -449,7 +472,7 @@ class SqlAlchemyAuditRepository:
             timed_out = state == _QUERY_CANCELED or budget.expired()
             error = type(exc).__name__
         if timed_out:
-            _log().warning("audit.verify_read.timeout", budget_ms=VERIFY_READ_TIMEOUT_MS)
+            _log().warning("audit.verify_read.timeout", budget_ms=self._verify_timeout_ms)
             raise TimeoutError("audit read exceeded its time budget") from None
         _log().warning("audit.verify_read.failed", error=error, sqlstate=state)
         raise AuditReadFailed(state) from None

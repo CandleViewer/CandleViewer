@@ -48,8 +48,13 @@ from candleviewer.api.audit_budget import (
     ReadReservation,
     filters_digest,
 )
-from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
+from candleviewer.api.audit_limiter import (
+    AuditQueryLimiter,
+    AuditQueryRefused,
+    AuditVerifyLimiter,
+)
 from candleviewer.api.audit_verify import (
+    VERIFY_DEADLINE_S,
     observe_stop,
     observe_verify,
     result_record,
@@ -72,6 +77,7 @@ from candleviewer.audit.models import (
     Severity,
 )
 from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
+from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
 from candleviewer.storage.errors import StorageTierUnavailable
 
@@ -130,7 +136,12 @@ class AuditQueryServiceLike(Protocol):
         self, *, from_id: int | None, to_id: int | None, max_span: int = ...
     ) -> VerifyPlan: ...
 
-    async def run_verify(self, plan: VerifyPlan, *, batch_size: int = ...) -> Any: ...
+    async def run_verify(
+        self, plan: VerifyPlan, *, batch_size: int = ..., deadline_s: float | None = ...
+    ) -> Any: ...
+
+    @property
+    def verify_slot(self) -> VerifySlot: ...
 
 
 class AuditWriterLike(_Emitter, Protocol):
@@ -318,6 +329,8 @@ def make_audit_router(
     budget: AuditRecordBudget | None = None,
     query_timeout_ms: int = 4000,
     verify_max_span: int = VERIFY_MAX_SPAN,
+    verify_limiter: AuditVerifyLimiter | None = None,
+    verify_deadline_s: float = VERIFY_DEADLINE_S,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -339,6 +352,7 @@ def make_audit_router(
     router = APIRouter(prefix="/admin/audit", tags=["admin"])
     query_limiter = limiter if limiter is not None else AuditQueryLimiter()
     record_budget = budget if budget is not None else AuditRecordBudget()
+    verify_limits = verify_limiter if verify_limiter is not None else AuditVerifyLimiter()
 
     class _HttpProblem(Exception):
         def __init__(self, response: JSONResponse) -> None:
@@ -595,7 +609,27 @@ def make_audit_router(
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
         except _VERIFY_STOP_ERRORS as exc:
             return _unavailable(_verify_stop(exc)[1])
-        return await _run_verify(service, principal, plan)
+        # Then the per-user limit (429) and single-flight (409). The head read (range
+        # defaulting, above) comes first, as the contract orders the checks; a caller who is
+        # not authorised never reaches it. A refusal writes no record: it is counted and
+        # carried by the user's next record (contract "Audit budget").
+        actor = _budget_actor(principal)
+        retry = verify_limits.retry_after(actor.key)
+        if retry is not None:
+            record_budget.count_suppressed(actor)
+            detail = "audit verify limit reached"
+            return _problem(
+                429, "Too many requests", detail, code="rate_limited", retry_after_s=retry
+            )
+        slot = service.query.verify_slot
+        if not slot.try_acquire():
+            record_budget.count_suppressed(actor)
+            detail = "a verification is already running"
+            return _problem(409, "Conflict", detail, code="conflict")
+        try:
+            return await _run_verify(service, principal, plan)
+        finally:
+            slot.release()  # also after a deadline overrun, which is 503
 
     async def _run_verify(
         service: AuditServiceLike, principal: AuditPrincipal, plan: VerifyPlan
@@ -612,8 +646,9 @@ def make_audit_router(
             emit, fields, outcome=_SUCCESS, severity=_INFO, reason="started", after_state=span
         ):
             return _unavailable()
+        verify_limits.record_start(str(principal.user_id))  # only a run that starts counts
         try:
-            result = await service.query.run_verify(plan)
+            result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except _VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
             reason, detail = _verify_stop(exc)
