@@ -8,7 +8,7 @@ name: xstate-nightly
 #               tools/statechart/nightly_gate.py, BENCH-6 p99 > 100 ms at 500
 #               busy machines, or a baseline PASS that is now skipped (lost
 #               coverage), turns the run red.
-#  * notify   - on a red or failed pinned run, comments on the one E50-C17 tracker issue
+#  * notify   - on a red, failed or cancelled pinned run, comments on the one E50-C17 tracker issue
 #               (repo variable CV_XSTATE_TRACKER_ISSUE, default 2472; named, never searched
 #               for). The only job that can write.
 #  * upstream - the same gate against the latest PyPI release. Informational:

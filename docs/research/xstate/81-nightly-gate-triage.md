@@ -14,7 +14,7 @@ tag `v0.9.1` (commit `801eacd`).
 
 ## 0. Answer
 
-**Why exit 1.** `tools/statechart/nightly_gate.py --mode pinned` exits 1 in only two cases:
+**Why exit 1.** `tools/statechart/nightly_gate.py --mode pinned` exited 1 in only two cases:
 
 - a blocking row (a non-`repro` FAIL, or any ERROR) is not a blocking failure in `result-v0.9.1.json`;
 - the dedicated BENCH-6 step reports p99 > 100 ms at 500 busy machines, or no p99 at all.
