@@ -91,9 +91,12 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   (audit-log export) and `backups` (backup restore, #2751); a request needs
   password **and** TOTP code (D-2); a wrong password also counts toward login lockout; 5 min grace,
   none for `live_enablement`, `killswitch` and `backups` (each action spends a fresh code; the spend
-  is a read-modify-write of the session row, so concurrent requests can still share one code:
-  #2798, to fix before the restore route mounts; B16 records no spend: #2799); 3 wrong password/code
-  attempts make the session read-only for 5 min.
+  is one conditional `UPDATE ... RETURNING` of the session row (`consume_single_use`, #2895), so
+  concurrent requests cannot share one code: of two, one spends it and the other is refused
+  `step_up_required` (#2798, proven on Postgres in #2919); the other step-up writes (challenge,
+  elevation, strike, downgrade lift) apply their change to the row as read `FOR NO KEY UPDATE` in
+  the same transaction (`update_step_up_state`), so none writes a spent code back; B16 records no
+  spend: #2799); 3 wrong password/code attempts make the session read-only for 5 min.
 - **Rotation points that exist**: refresh (new session row, old marked `rotated`, reuse revokes the
   whole family), and the session minted on MFA completion. **Not present**: rotation on role change
   and on step-up (#2101), and on password change (route missing, #2110). The decision text says
