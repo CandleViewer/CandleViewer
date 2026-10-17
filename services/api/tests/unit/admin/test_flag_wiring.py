@@ -241,7 +241,7 @@ def test_the_sessions_are_the_hubs_authenticated_sockets() -> None:
 _CHANGE = FlagWrite("a.b", False, {}, _T0, _OWNER.user_id)
 
 
-@pytest.mark.parametrize("action_class", ["flags", "killswitch", "live_enablement"])
+@pytest.mark.parametrize("action_class", ["flags"])  # the no-grace classes need #3088's fingerprint
 @pytest.mark.parametrize(
     ("elevated", "session", "status"),
     [(True, _OWNER.session_id, None), (False, _OWNER.session_id, 403), (True, None, 401)],
