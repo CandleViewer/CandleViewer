@@ -125,6 +125,7 @@ tests:
     - exp_labels:
         severity: page
         component: audit
+        resolves: window
       exp_annotations:
         summary: Audit chain verification failed
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed
@@ -348,6 +349,7 @@ tests:
     - exp_labels:
         severity: page
         component: auth_recovery
+        resolves: window
         env: live
       exp_annotations:
         summary: 'A recovery code was used: confirm it was the account holder'

@@ -25,6 +25,13 @@ route:
       group_wait: 0s
       group_interval: 1m
       repeat_interval: 5m
+    # Event page (`resolves: window`, #2931): the alert clears when its rate window moves on, not
+    # when anyone acts, so its receiver sends no [RESOLVED], which would read as handled. Same
+    # page channel, no mute (bypasses quiet hours) and repeat as the page route below. It must stay
+    # above that route: the first matching route wins and none sets `continue`.
+    - matchers: [severity = "page", resolves = "window"]
+      receiver: page_event
+      repeat_interval: 30m
     # Page: no mute_time_intervals -> bypasses quiet hours.
     - matchers: [severity = "page"]
       receiver: page
@@ -65,6 +72,13 @@ receivers:
     slack_configs:
       - api_url_file: /run/secrets/alert_page_webhook_url
         send_resolved: true
+        title: '{{ template "cv.title" . }}'
+        text: '{{ template "cv.body" . }}'
+  # The page channel and secret again, for event pages only: it never sends [RESOLVED] (#2931).
+  - name: page_event
+    slack_configs:
+      - api_url_file: /run/secrets/alert_page_webhook_url
+        send_resolved: false
         title: '{{ template "cv.title" . }}'
         text: '{{ template "cv.body" . }}'
   - name: ticket

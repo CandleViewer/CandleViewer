@@ -87,7 +87,10 @@ backfill heals. Reasons: `off_tick` (price not on the tick grid), `crossed` (bid
 
 **Meaning.** A trade tape gap (after a reconnect or frame loss) could not be filled by the REST
 recent-trades backfill (`trade_gaps_total{recovered="false"}`). Trades in that window are missing from
-the tape and the recording. Severity: Page.
+the tape and the recording. Severity: Page. No `[RESOLVED]` message follows: the alert clears 15
+minutes after the last unrecovered gap because the window moved on, not because the trades were
+filled in, so a resolved page would read as recovered (`resolves: window`, the `page_event`
+receiver). Work through the steps below whether or not the alert has cleared.
 
 1. Note the symbol and the alert start time; the gap window is published on `{env}.md.{symbol}.gap`
    and appears in the tape as a gap marker.

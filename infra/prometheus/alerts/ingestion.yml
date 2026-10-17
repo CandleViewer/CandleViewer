@@ -63,12 +63,17 @@ groups:
             Frames failing the ingest-boundary checks are dropped, never
             published, so the affected stream is missing data and books resync.
 
+      # #2931: an event page. Each unrecovered gap counts once and this clears 15 minutes later
+      # whether or not the trades were filled in since, so a [RESOLVED] would read as recovered:
+      # `resolves: window` routes it to the receiver that sends none
+      # (infra/alertmanager/alertmanager.yml).
       - alert: IngestionTradeGapUnrecovered
         expr: sum by (env, symbol) (increase(trade_gaps_total{recovered="false"}[15m])) > 0
         for: 0m
         labels:
           severity: page
           component: ingestion
+          resolves: window
         annotations:
           runbook_url: "docs/ops/ingestion.md#alert-ingestiontradegapunrecovered"
           summary: "A trade tape gap for {{ $labels.symbol }} could not be recovered by backfill."
