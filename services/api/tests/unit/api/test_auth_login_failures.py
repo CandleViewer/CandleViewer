@@ -33,7 +33,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.metrics import LOGIN_FAILURE_METHODS
-from candleviewer.auth.models import MfaVerifiedResult, UserStatus
+from candleviewer.auth.models import MfaRecoveryCheck, MfaVerifiedResult, UserRecord, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.api._fakes import (
     CSRF_CODEC,
@@ -50,6 +50,8 @@ _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _RIGHT_PW = "correct-horse-battery-staple"
 _VERIFY = {"mfa_token": "t" * 20, "method": "totp", "code": "000000"}
 _RECOVER = {"mfa_token": "t" * 20, "recovery_code": "zzzz-zzzz-zzzz"}
+_INERT_DIGEST = "unused"  # stored-hash placeholder: no password is ever verified here
+_CSRF = CsrfCodec(b"\x05" * 32)
 
 
 def _failures() -> dict[str, float]:
@@ -65,17 +67,23 @@ def _moved(before: dict[str, float]) -> dict[str, float]:
 
 
 class _Mfa:
-    """Raises *error* from verify/recover, or verifies when there is none."""
+    """Raises *error* from verify or the recovery check, or passes when there is none."""
 
     def __init__(self, error: Exception | None) -> None:
         self._error = error
 
-    async def _result(self, *_args: object) -> MfaVerifiedResult:
+    async def verify(self, *_args: object) -> MfaVerifiedResult:
         if self._error is not None:
             raise self._error
         return MfaVerifiedResult(user_id=uuid.uuid4())
 
-    verify = recover = _result
+    async def check_recovery(self, *_args: object) -> MfaRecoveryCheck:
+        if self._error is not None:
+            raise self._error
+        return MfaRecoveryCheck(user_id=uuid.uuid4(), challenge_id=uuid.uuid4(), code_id="c")
+
+    async def complete_recovery(self, check: MfaRecoveryCheck) -> None:
+        return None
 
 
 class _Auth:
@@ -89,6 +97,28 @@ class _Auth:
 def _client(login: LoginService | None, mfa: _Mfa, audit: AuditService | None) -> httpx.AsyncClient:
     app, auth = FastAPI(), _Auth(login, mfa)
     router = make_auth_router(cast(Any, auth), audit, csrf=CsrfCodec(b"\x05" * 32))
+    app.include_router(router)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+
+
+class _RecoveryAuth(_Auth):
+    """Every backend a recovery sign-in needs (#2344): it mints an enrolment-only session."""
+
+    sessions_is_active = True
+
+    def __init__(self, mfa: _Mfa) -> None:
+        super().__init__(None, mfa)
+        self.sessions = sessions()
+
+    async def find_user(self, user_id: str) -> UserRecord:
+        user = make_user(username="recovering", email="r@x.test", password_hash=_INERT_DIGEST)
+        return user.model_copy(update={"id": uuid.UUID(user_id)})  # `mfa_required` (C-12.2)
+
+
+def _second_factor_client(path: str, mfa: _Mfa, audit: AuditService) -> httpx.AsyncClient:
+    auth = _RecoveryAuth(mfa) if path == _R else _Auth(None, mfa)
+    router = make_auth_router(cast(Any, auth), audit, identity=Identity(), csrf=_CSRF)
+    app = FastAPI()
     app.include_router(router)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
@@ -167,7 +197,7 @@ async def test_each_failed_second_factor_counts_its_method_and_matches_its_audit
     path: str, body: dict[str, str], error: Exception, method: str, row: str
 ) -> None:
     audit, before = AuditService(), _failures()
-    async with _client(None, _Mfa(error), audit) as client:
+    async with _second_factor_client(path, _Mfa(error), audit) as client:
         assert (await client.post(path, json=body)).status_code == 401
     assert _moved(before) == {method: 1} and len(audit.writer.of(row)) == 1
 
@@ -179,7 +209,7 @@ async def test_a_second_factor_that_succeeds_does_not_count(
     path: str, body: dict[str, str]
 ) -> None:
     before = _failures()
-    async with _client(None, _Mfa(None), AuditService()) as client:
+    async with _second_factor_client(path, _Mfa(None), AuditService()) as client:
         assert (await client.post(path, json=body)).status_code == 200
     assert _moved(before) == {}
 

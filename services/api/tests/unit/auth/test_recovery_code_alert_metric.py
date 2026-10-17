@@ -1,15 +1,16 @@
 """SR-022 Owner alert on recovery-code use (#2496).
 
-`POST /auth/mfa/recovery` moves `auth_recovery_codes_used_total` once per accepted code,
-next to its `auth.recovery_code_used` audit row and before that write, so a failing audit
-sink cannot hide a use. The series is served on the scraped registry with `env`, where
-`AuthRecoveryCodeUsed` (`infra/prometheus/alerts/system_page.yml`) reads it and pages the
-Owner through Alertmanager. Refused attempts never move it, including a request that lost the
-race for its code or its challenge: the spend is one transaction (#2344), so that request
-spends nothing and is refused and audited as `auth.mfa_failed`. It has no label, so the alert
-cannot name the user; the audit row does.
+`POST /auth/mfa/recovery` moves `auth_recovery_codes_used_total` once per spent code. Its
+`auth.recovery_code_used` audit row is written ahead (#2344), so a failing audit sink stops the
+recovery before the code is spent and cannot hide a use. The series is served on the scraped
+registry with `env`, where `AuthRecoveryCodeUsed` (`infra/prometheus/alerts/system_page.yml`)
+reads it and pages the Owner through Alertmanager. Refused attempts never move it, including a
+request that lost the race for its code or its challenge: the spend is one transaction (#2344),
+so that request spends nothing and is refused and audited as `auth.mfa_failed`. It has no
+label, so the alert cannot name the user; the audit row does.
 
-The route runs over the real `MfaService` and the in-memory repository.
+The route runs over the real `MfaService` and the in-memory repository, with a session leg
+that mints the recovery's enrolment-only session (#2344).
 """
 
 from __future__ import annotations
@@ -23,16 +24,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY, generate_latest
 
-from candleviewer.api.auth import LoginServiceLike, SessionMinterLike, make_auth_router
+from candleviewer.api.auth import LoginServiceLike, make_auth_router
 from candleviewer.app import create_app
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
+from candleviewer.auth.models import UserRecord, UserStatus
 from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
+from tests.unit.api._fakes import Identity, sessions
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -43,22 +46,34 @@ _CODE = "2345-6789-ABCD-EFGH-JKMN-PQRS-TUVW"
 
 
 class _Auth:
-    """`AuthServiceLike` with the real MFA leg; the route never reaches login or sessions."""
+    """`AuthServiceLike` with the real MFA leg and the session leg; the route never reaches
+    login."""
 
     is_active = True
-    sessions_is_active = False
+    sessions_is_active = True
 
     def __init__(self, mfa: MfaService, *, mfa_active: bool = True) -> None:
         self.mfa = mfa
         self.mfa_is_active = mfa_active
+        self.sessions = sessions(now=_NOW)
 
     @property
     def login(self) -> LoginServiceLike:
         raise AssertionError("not reached by /auth/mfa/recovery")
 
-    @property
-    def sessions(self) -> SessionMinterLike:
-        raise AssertionError("not reached by /auth/mfa/recovery")
+    async def find_user(self, user_id: str) -> UserRecord:
+        """A user who must re-enrol: recovery fails closed without `mfa_required` (C-12.2)."""
+        return UserRecord(
+            id=uuid.UUID(user_id),
+            username="recovering",
+            email="recovering@example.test",
+            password_hash="unused",
+            password_algo_params={},
+            status=UserStatus.ACTIVE,
+            mfa_required=True,
+            failed_login_count=0,
+            locked_until=None,
+        )
 
 
 class _Writer:
@@ -131,7 +146,12 @@ def _client(repo: FakeMfaRepository, audit: _Audit, *, mfa_active: bool = True) 
     )
     app = FastAPI()
     app.include_router(
-        make_auth_router(_Auth(mfa, mfa_active=mfa_active), audit, csrf=CsrfCodec(b"\x05" * 32))
+        make_auth_router(
+            _Auth(mfa, mfa_active=mfa_active),
+            audit,
+            identity=Identity(),
+            csrf=CsrfCodec(b"\x05" * 32),
+        )
     )
     return TestClient(app, raise_server_exceptions=False)
 
@@ -150,7 +170,7 @@ async def test_recovery_route_accepted_code_counts_once_beside_its_audit_row() -
     assert _recover(_client(repo, audit), "t1", _CODE) == 200
 
     assert _used() == before + 1
-    assert audit.writer.actions == ["auth.recovery_code_used"]
+    assert audit.writer.actions == ["auth.recovery_code_used", "auth.session_created"]
 
 
 async def test_recovery_route_replayed_code_is_refused_and_not_counted_again() -> None:
@@ -186,20 +206,22 @@ async def test_recovery_route_without_an_mfa_backend_leaves_the_counter_unchange
     repo, _ = await _repo_with(_CODE)
     before = _used()
 
-    assert _recover(_client(repo, _Audit(), mfa_active=False), "t1", _CODE) == 503
+    # #2344: the operation's 401; nothing is checked or spent without every backend.
+    assert _recover(_client(repo, _Audit(), mfa_active=False), "t1", _CODE) == 401
 
     assert _used() == before
 
 
-async def test_recovery_route_counts_the_use_even_when_the_audit_write_fails() -> None:
-    repo, _ = await _repo_with(_CODE)
+async def test_recovery_route_spends_and_counts_nothing_when_the_audit_write_fails() -> None:
+    """#2344: the records are written ahead, so a failing audit sink stops the recovery before
+    the code is spent; there is no use to hide, and none is counted."""
+    repo, user_id = await _repo_with(_CODE)
     before = _used()
 
-    # The invariant is the count, not the status: today the unhandled AuditError answers 500,
-    # and a later fail-closed 401 or 503 must still leave the use counted.
-    assert _recover(_client(repo, _Audit(fail=True)), "t1", _CODE) != 200
+    assert _recover(_client(repo, _Audit(fail=True)), "t1", _CODE) == 401
 
-    assert _used() == before + 1
+    assert _used() == before
+    assert await repo.count_unused_recovery_codes(str(user_id)) == 1
 
 
 async def test_recovery_route_lost_consume_race_is_refused_and_not_counted() -> None:
@@ -210,7 +232,12 @@ async def test_recovery_route_lost_consume_race_is_refused_and_not_counted() -> 
     assert _recover(_client(repo, audit), "t1", _CODE) == 401
 
     assert _used() == before
-    assert audit.writer.actions == ["auth.mfa_failed"]
+    # The records written ahead, then the one that voids them (#2344).
+    assert audit.writer.actions == [
+        "auth.recovery_code_used",
+        "auth.session_created",
+        "auth.mfa_failed",
+    ]
 
 
 async def test_recovery_route_lost_challenge_race_spends_no_code_and_is_not_counted() -> None:
@@ -224,7 +251,12 @@ async def test_recovery_route_lost_challenge_race_spends_no_code_and_is_not_coun
     assert _recover(_client(repo, audit), "t1", _CODE) == 401
 
     assert _used() == before
-    assert audit.writer.actions == ["auth.mfa_failed"]
+    # The records written ahead, then the one that voids them (#2344).
+    assert audit.writer.actions == [
+        "auth.recovery_code_used",
+        "auth.session_created",
+        "auth.mfa_failed",
+    ]
     assert await repo.count_unused_recovery_codes(str(user_id)) == 1
 
 
