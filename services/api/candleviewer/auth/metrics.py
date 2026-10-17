@@ -139,9 +139,9 @@ ENROLMENT_REFUSAL_REASONS: tuple[str, ...] = (
     "enrolment_only",  # 403 / `bye mfa_enrollment_required` (audited)
     "expired",  # it would outlive its 15 minutes (Q7): 401 / a failed WS `auth`
     "unclassified",  # the session could not be read or classified: 503 / a failed WS `auth`
-    "audit_throttled",  # over the per-session budget or the in-flight cap: no write, on purpose
+    "audit_throttled",  # over the per-user budget or the in-flight cap: no write, on purpose
     "audit_slow",  # the request stopped waiting at the timeout; the write may still land
-    "audit_unavailable",  # the write failed
+    "audit_unavailable",  # the write failed: after the wait, or still running at shutdown
 )
 auth_enrolment_refused_total = Counter(
     "auth_enrolment_refused_total",

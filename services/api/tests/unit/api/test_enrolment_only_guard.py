@@ -1,4 +1,4 @@
-"""HTTP guard for the enrolment-only session (#2295 slice 2/3; contract "Enrolment-only session").
+"""HTTP guard for the enrolment-only session (#2295; contract "Enrolment-only session").
 
 The guard runs alone in front of stub handlers that record every hit, so each test proves the
 answer and that no handler logic ran. The composed app is covered by
@@ -42,7 +42,7 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 
 _NOW = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 _CODE = "mfa_enrollment_required"
-_OTHER = uuid.uuid4()
+_OTHER = uuid.UUID("00000000-0000-4000-8000-000000000a01")  # fixed: node ids are stable
 _SPEC = cast(dict[str, Any], load_openapi_spec())
 _OPERATIONS = frozenset(declared_operations(_SPEC))
 _SESSIONLESS = sessionless_operations(_SPEC)
@@ -52,7 +52,7 @@ _VERDICTS = {
     "full": SessionClass.FULL,
     "overlong": SessionClass.ENROLMENT_ONLY_EXPIRED,
 }
-_USERS = {who: uuid.uuid4() for who in _VERDICTS}
+_USERS = {who: uuid.uuid5(_OTHER, who) for who in _VERDICTS}
 _REVOKE_OTHER = f"/me/sessions/{uuid.uuid5(_OTHER, 'session')}"
 #: Outside the allow-list, and each needs a session: self-service, owner-only, dangerous,
 #: cross-user.
@@ -142,7 +142,7 @@ class _Audit:
 
 def _refusals(audit: _Audit, *, budget: int = 20, cap: int = 64) -> EnrolmentRefusals:
     throttle = PerIpLoginThrottle(max_attempts=budget, window_s=60.0)
-    return EnrolmentRefusals(audit, tracker=RefusalAuditTracker(cap), per_session=throttle)
+    return EnrolmentRefusals(audit, tracker=RefusalAuditTracker(cap), per_user=throttle)
 
 
 def _guard(auth: _Auth, refusals: EnrolmentRefusals) -> Any:
@@ -317,7 +317,7 @@ def test_guard_classifies_an_idle_locked_session_too(world: _World) -> None:
 
 
 def test_guard_is_inert_until_the_auth_module_can_classify(world: _World) -> None:
-    """No user store wired: nobody can sign in, so no enrolment-only session exists."""
+    """No session store wired: nothing authenticates, so no enrolment-only session exists."""
     world.auth.enrolment_gate_is_active = False
 
     assert world.call("GET", "/auth/sessions").status_code == 200

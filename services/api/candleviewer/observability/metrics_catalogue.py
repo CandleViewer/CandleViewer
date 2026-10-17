@@ -2542,7 +2542,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "refusals",
         ("channel", "reason"),
         "Enrolment-only session refusals (#2295) by channel (http/ws) and bounded reason.",
-        "none yet (detection rules: E09-X03); audited as auth.mfa_enrollment_required",
+        "none yet (#2746); audited as auth.mfa_enrollment_required",
         _L,
         "E09",
         max_series=12,
