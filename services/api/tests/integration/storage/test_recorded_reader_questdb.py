@@ -31,9 +31,10 @@ from candleviewer.storage.questdb.recorded_reader import QuestDbRecordedReader
 from candleviewer.storage.questdb.runner import run_migrations
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 from candleviewer.storage.repositories.recorded import RecordedEvent, event_from_row
-from candleviewer.storage.testing import StaticArchiveCoverage, StaticGapReader
+from candleviewer.storage.testing import StaticGapReader, StaticManifestCoverage
 from tests.integration.storage import test_questdb_hot_tier as hot_tier
 from tests.unit.recorder._writer_helpers import (
+    OPEN_GATE,
     T0,
     FakeClock,
     FakeEvents,
@@ -92,6 +93,7 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
             WriterConfig(wal_dir=tmp_path / "wal"),
             clock=clock,
             wall_clock_us=lambda: 0,
+            disk_gate=OPEN_GATE,
         )
         await writer.open()
         writer.seed(["BTCUSDT"])
@@ -155,7 +157,7 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
             }
         )
         tiers = ReplayTiers(
-            hot=reader, cold=reader, coverage=StaticArchiveCoverage(), gaps=StaticGapReader()
+            hot=reader, cold=reader, coverage=StaticManifestCoverage(), gaps=StaticGapReader()
         )
         async with ReplaySource(request, tiers) as source:
             replayed = [item async for item in source]

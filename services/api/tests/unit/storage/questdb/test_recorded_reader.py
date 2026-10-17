@@ -23,7 +23,6 @@ from candleviewer.storage.questdb.recorded_reader import (
     RANGE_SQL,
     HotReplayReadError,
     QuestDbRecordedReader,
-    RecordedQueryRejected,
     build_read_recorded,
     build_snapshot_anchor,
 )
@@ -33,6 +32,7 @@ from candleviewer.storage.repositories.recorded import (
     REPLAYABLE_STREAMS,
     RecordedBookSnapshot,
     RecordedEvent,
+    RecordedQueryRejected,
     RecordedStreamReader,
     RecordedTrade,
     event_from_row,

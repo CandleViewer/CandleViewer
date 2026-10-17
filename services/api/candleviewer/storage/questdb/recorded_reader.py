@@ -29,6 +29,7 @@ from candleviewer.storage.questdb.reader import QueryBuilder
 from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
     RecordedEvent,
+    RecordedQueryRejected,
     event_from_row,
     order_key,
 )
@@ -75,10 +76,6 @@ MAX_READ_ROWS: Final = 4_194_304
 #: Below the replay merge's 30 s storage deadline, so a slow query fails here, typed, first.
 DEFAULT_TIMEOUT_S: Final = 20.0
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{1,32}$")
-
-
-class RecordedQueryRejected(ValueError):
-    """A read was refused before reaching SQL: unknown stream, malformed symbol or bad limit."""
 
 
 class HotReplayReadError(StorageTierUnavailable):
