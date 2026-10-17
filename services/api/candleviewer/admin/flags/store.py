@@ -83,8 +83,8 @@ class UserDirectory(Protocol):
 #: Change hook: `(key, before, after)` with the locked and the committed rows (the `system` push).
 ChangeHook = Callable[[str, StoredFlag | None, StoredFlag], Awaitable[None]]
 #: Demands a fresh elevation of the class for the principal's session; raises to refuse (the
-#: route answers `403 step_up_required` and the auth module audits `auth.step_up_required`).
-StepUp = Callable[[AuditPrincipal, StepUpClass], Awaitable[None]]
+#: route answers `403 step_up_required` restating the change; auth audits `auth.step_up_required`).
+StepUp = Callable[[AuditPrincipal, StepUpClass, FlagWrite], Awaitable[None]]
 
 
 class AuditEmitter(Protocol):

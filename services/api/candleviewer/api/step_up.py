@@ -37,12 +37,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
+from candleviewer.admin.flags.store import FlagWrite
 from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
 )
 from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -365,17 +367,39 @@ async def require_elevation_for(
 
 
 async def require_session_elevation(
-    auth: _AuthLike, session_id: object | None, action_class: str
+    auth: _AuthLike, session_id: object | None, action_class: str, text: ChallengeText | None = None
 ) -> JSONResponse | None:
     """`require_elevation_for` for a handler that resolved its caller itself (#2304): with no
     session there is nothing to elevate and no challenge to issue (401), and sessions wired
     without step-up are a wiring fault (503, as on the path-gated routes), never a refusal no
-    client could answer."""
+    client could answer. A challenge restates `text`, as there."""
     if session_id is None:
         return _unauthenticated()
     if not auth.step_up_is_active:
         return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
-    return await require_elevation_for(auth, str(session_id), action_class)
+    return await require_elevation_for(auth, str(session_id), action_class, text=text)
+
+
+class StepUpRefused(Exception):
+    def __init__(self, response: JSONResponse) -> None:
+        super().__init__("step-up refused")
+        self.response = response  # the problem the route answers with
+
+
+def step_up_port(
+    auth: _AuthLike, restate: Callable[[FlagWrite], ChallengeText]
+) -> Callable[[AuditPrincipal, str, FlagWrite], Awaitable[None]]:
+    """`require_session_elevation` raising `StepUpRefused`, for a writer that picks the action
+    class itself under its lock (the feature-flag writer); a challenge restates the validated
+    change the writer gives, by the route's template `restate` (#2304)."""
+
+    async def demand(who: AuditPrincipal, action_class: str, change: FlagWrite) -> None:
+        text = restate(change)
+        refused = await require_session_elevation(auth, who.session_id, action_class, text)
+        if refused is not None:
+            raise StepUpRefused(refused)
+
+    return demand
 
 
 #: `is_dangerous` routes (permissions seeded `is_dangerous=true`) -> the
@@ -809,8 +833,10 @@ def make_step_up_router(
 
 
 __all__ = [
+    "StepUpRefused",
     "make_read_only_guard",
     "make_step_up_router",
     "require_elevation_for",
     "require_session_elevation",
+    "step_up_port",
 ]

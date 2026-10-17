@@ -51,9 +51,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
     supervisor = Supervisor(ctx)
     await supervisor.start_all()
+    feature_flags = getattr(app.state, "feature_flags", None)
     try:
         await audit_test_clock_boot(ctx)  # #2728: before serving; a failed write fails boot
         await account_fixture_record(fixture_boot, ctx.audit)  # #2893 S8: its record, likewise
+        if feature_flags is not None:  # E42-T03: a bad `flags.read_budget_ms` refuses boot
+            await feature_flags.start()
     except BaseException:
         await supervisor.stop_all(1.0)  # as `start_all` does: never leave modules running
         raise
@@ -149,6 +152,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         user_disable = getattr(app.state, "user_disable", None)
         if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
             await user_disable.drain()  # each ends by its own deadline
+        if feature_flags is not None:  # its maintenance poll, before the audit writer stops
+            await feature_flags.stop()
         if metrics_runtime is not None:
             await metrics_runtime.stop()
         if health_registry is not None:
