@@ -199,16 +199,16 @@ _SKIP_ALLOW = "# secrets-hygiene: allow"
 _RUN_KEY = re.compile(r"^(\s*(?:-\s+)?)run:(.*)$")
 _WORKDIR = re.compile(r"^\s*(?:-\s+)?working-directory:\s*[\"']?([\w./-]+)", re.MULTILINE)
 #: The repository root in CI, wherever a workflow or a script it runs names it.
-_WORKSPACE = re.compile(r"[\"']?\$(?:\{?GITHUB_WORKSPACE\}?|\{\{ *github\.workspace *\}\})[\"']?/")
-#: (interpreter, path) of a command in command position, past `VAR=x`, keywords and wrappers with
-#: their dash options and numeric arguments; `bash|sh -c` puts the string's first word in command
-#: position, where a path counts only as a direct script; `workflow_scripts` says which.
+_WORKSPACE = re.compile(r"([\"']?)\$(?:\{?GITHUB_WORKSPACE\}?|\{\{ *github\.workspace *\}\})\1/")
+#: (interpreter, path) of a command in command position, past `VAR=x`, keywords, wrappers with
+#: their dash options and numeric arguments, and `bash|sh -c` (the string is a command line, a path
+#: in it counting only as a direct script); `workflow_scripts` says which.
 _OPTS = r"--\S*\s+|[-+][abd-zA-Z]*o\s+\w+\s+|[-+][abd-zA-Z]+\s+"
 _INVOKES = re.compile(
     r"(?:^|[;&|(){`])\s*(?:(?:if|then|elif|else|do|while|until|!|exec|time|command"
     r"|(?:/usr/bin/)?env|sudo|nohup|nice|stdbuf|timeout|xvfb-run|uv\s+run)(?:\s+(?:-\S+|\d\S*))*\s+"
-    r"|\w+=\S*\s+)*"
-    r"(?:(?:/(?:usr/)?bin/)?(?:ba)?sh\s+(?:" + _OPTS + r")*-[a-zA-Z]*c[a-zA-Z]*\s+[\"']?)?"
+    r"|\w+=\S*\s+|(?:/(?:usr/)?bin/)?(?:ba)?sh\s+(?:" + _OPTS + r")*-[abd-zA-Z]*c[a-zA-Z]*\s+"
+    r"(?:--\s+)?[\"']?)*"
     r"(?:(?:/(?:usr/)?bin/)?(bash|sh|source|\.)\s+(?:" + _OPTS + r")*)?[\"']?([\w.][\w./-]*)"
 )
 _SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
@@ -320,11 +320,12 @@ def workflow_scripts(root: Path) -> dict[str, set[str]]:
     Python leak nor stay quiet on Python text quoting them. A ``#`` starting a word outside
     quotes ends a line. Paths are tried from the root and each ``working-directory:`` of the
     workflow, in nested scripts too (errs toward scanning), a ``$GITHUB_WORKSPACE/``,
-    ``${GITHUB_WORKSPACE}/`` or ``${{ github.workspace }}/`` prefix being the root; one resolving
+    ``${GITHUB_WORKSPACE}/``, ``"$GITHUB_WORKSPACE"/`` or ``${{ github.workspace }}/`` prefix
+    being the root, and a ``bash|sh -c`` string read as a command line; one resolving
     outside the root (``..``, a symlink, absolute) is refused, a missing one skipped, one that
     cannot be read (a loop) fails the scan. Not followed: ``make``/``pnpm`` targets, ``pnpm exec
     bash``, ``npx bash``, ``eval``, paths built from any other ``$VAR`` or ``$(...)``, a
-    non-script first word of a ``bash -c`` string (it counts as a direct command), ``cd <dir> &&
+    non-script command in a ``bash -c`` string (judged as a direct command), ``cd <dir> &&
     ./x.sh`` (not tried from ``<dir>``), stdin and pipes (``cat x | bash``, ``bash < x``,
     ``xargs bash x``), a wrapper option taking a word (``timeout -s KILL``), other interpreters.
     """

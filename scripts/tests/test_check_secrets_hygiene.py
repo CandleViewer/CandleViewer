@@ -206,6 +206,9 @@ def test_run_script_paths_outside_the_repo_are_refused(tmp_path: Path) -> None:
         'bash -c "./tools/x.sh"',
         "sh -ec 'tools/x.sh arg'",
         'timeout 300 bash -o pipefail -c "./tools/x.sh"',
+        'bash -c "exec ./tools/x.sh"',
+        'bash -c -- "CV_X=1 ./tools/x.sh"',
+        'bash "$GITHUB_WORKSPACE/tools/y.sh" "x #1"; ./tools/x.sh',
     ],
 )
 def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
