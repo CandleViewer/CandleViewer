@@ -60,7 +60,10 @@ export type ThemeAnalyticsEvent =
     };
 
 export interface ThemeStoreOptions {
-  /** Element carrying the root attributes. Defaults to `document.documentElement`. */
+  /**
+   * Element carrying the root attributes. Defaults to `document.documentElement`; without a DOM (SSR,
+   * Node) the store is inert: state and subscriptions work, nothing is written or dispatched.
+   */
   readonly root?: HTMLElement;
   /** Defaults to `window.localStorage` (persistence is skipped when it is unavailable). */
   readonly storage?: Pick<Storage, "getItem" | "setItem">;
@@ -69,13 +72,25 @@ export interface ThemeStoreOptions {
   readonly onAnalytics?: (event: ThemeAnalyticsEvent) => void;
 }
 
+/** What `apply` does besides updating the state; the defaults are those of a user action. */
+export interface ApplyOptions {
+  /** `false` skips the storage write (state that came from elsewhere, e.g. the server). */
+  readonly persist?: boolean;
+  /** `true` skips the analytics callback (a change the user did not make). */
+  readonly silent?: boolean;
+}
+
 export interface ThemeStore {
   getSnapshot(): ThemeSnapshot;
+  /** Every call registers independently (the same function twice runs twice); each disposer removes only its own. */
   subscribe(listener: () => void): () => void;
-  /** Writes the root attributes and follows OS media changes until the returned disposer runs. */
+  /**
+   * Writes the root attributes and follows OS media changes until the returned disposer runs. It fires
+   * the change event if the OS preference changed since the store was created.
+   */
   connect(): () => void;
-  /** Applies several preferences as ONE change (one write, one notification, one event). */
-  apply(patch: Partial<ThemePreferences>): void;
+  /** Applies several preferences as ONE change (one write, one notification, one event); invalid values fall back to their defaults. */
+  apply(patch: Partial<ThemePreferences>, options?: ApplyOptions): void;
   /** `high-contrast` turns the overlay on; `dark`/`light` pick that theme and leave match-system and HC. */
   setTheme(theme: ThemeName): void;
   /** Returns the new state of the high-contrast overlay. */
@@ -106,13 +121,9 @@ function attempt<T>(fn: () => T, fallback: T): T {
   }
 }
 
-/** Untrusted storage in, valid preferences out: any invalid leaf falls back to its default. */
-export function parsePreferences(raw: string | null | undefined): ThemePreferences {
-  const parsed = attempt<unknown>(() => JSON.parse(raw ?? "null"), null);
-  const o = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<
-    string,
-    unknown
-  >;
+/** Untrusted values in (storage, `apply`), valid preferences out: any invalid leaf falls back to its default. */
+function sanitize(input: unknown): ThemePreferences {
+  const o = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
   const d = DEFAULT_PREFERENCES;
   return {
     baseTheme: pick(["dark", "light"] as const, o["baseTheme"], d.baseTheme),
@@ -122,6 +133,11 @@ export function parsePreferences(raw: string | null | undefined): ThemePreferenc
     motionOverride: pick(MOTION_OVERRIDES, o["motionOverride"], d.motionOverride),
     textScale: pick(TEXT_SCALES, o["textScale"], d.textScale),
   };
+}
+
+/** Untrusted storage in, valid preferences out. */
+export function parsePreferences(raw: string | null | undefined): ThemePreferences {
+  return sanitize(attempt<unknown>(() => JSON.parse(raw ?? "null"), null));
 }
 
 interface Os {
@@ -139,15 +155,29 @@ function resolve(p: ThemePreferences, os: Os): ThemeSnapshot {
 const sameSnapshot = (a: ThemeSnapshot, b: ThemeSnapshot): boolean =>
   (Object.keys(a) as (keyof ThemeSnapshot)[]).every((k) => a[k] === b[k]);
 
+const detailOf = ({ theme, density, motion }: ThemeSnapshot): ThemeChangeDetail => ({
+  theme,
+  density,
+  motion,
+  themeUniforms: THEME_UNIFORMS_KEY,
+});
+
+const sameDetail = (a: ThemeChangeDetail, b: ThemeChangeDetail): boolean =>
+  a.theme === b.theme && a.density === b.density && a.motion === b.motion;
+
+/** Guarded like storage and `matchMedia`: there is no `document` in SSR or Node. */
+const defaultRoot = (): HTMLElement | undefined =>
+  typeof document === "undefined" ? undefined : document.documentElement;
+
 export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
-  const root = options.root ?? document.documentElement;
+  const root = options.root ?? defaultRoot();
   const storage = options.storage ?? attempt(() => window.localStorage, undefined);
   const mm =
     options.matchMedia ??
     (typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia.bind(window)
       : undefined);
-  const listeners = new Set<() => void>();
+  const entries = new Set<{ readonly run: () => void }>();
   const readOs = (): Os => ({
     dark: mm?.(DARK_QUERY).matches ?? true,
     reduceMotion: mm?.(REDUCE_QUERY).matches ?? false,
@@ -156,8 +186,11 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
   let os = readOs();
   let prefs = parsePreferences(attempt(() => storage?.getItem(THEME_STORAGE_KEY), null));
   let snapshot = resolve(prefs, os);
+  let announced = detailOf(snapshot);
+  let announcing = false;
 
   const writeRoot = (s: ThemeSnapshot): void => {
+    if (root === undefined) return;
     const values = {
       theme: s.theme,
       density: s.density,
@@ -188,41 +221,68 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
     if (p.textScale !== n.textScale) a11y("text_scale", String(n.textScale));
   };
 
-  /** The single mutation path: write once, notify once, dispatch the engine event once. */
-  const commit = (next: ThemePreferences, byUser: boolean): void => {
+  /**
+   * Dispatches the live state against the last announced one, so events stay oldest first with the
+   * last one matching the final state even when a handler re-enters `apply` (the running loop picks
+   * the nested change up once the current handlers are done).
+   */
+  const announce = (): void => {
+    if (announcing) return;
+    announcing = true;
+    try {
+      for (;;) {
+        const next = detailOf(snapshot);
+        if (sameDetail(announced, next)) break;
+        announced = next;
+        root?.ownerDocument.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: next }));
+      }
+    } finally {
+      announcing = false;
+    }
+  };
+  /** Walks a copy so subscribers may (un)subscribe; a throwing one is rethrown later and skips nobody. */
+  const notify = (): void => {
+    for (const entry of [...entries]) {
+      try {
+        entry.run();
+      } catch (error) {
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
+  };
+
+  /** The single mutation path: write once, announce the engine event once, notify once. */
+  const commit = (next: ThemePreferences, effects: { persist: boolean; track: boolean }): void => {
     const prev = snapshot;
     const resolved = resolve(next, os);
     if (sameSnapshot(prev, resolved)) return;
     prefs = next;
     snapshot = resolved;
     writeRoot(resolved);
-    if (byUser) {
+    if (effects.persist) {
       attempt(() => storage?.setItem(THEME_STORAGE_KEY, JSON.stringify(next)), undefined);
-      track(prev, resolved);
     }
-    listeners.forEach((listener) => listener());
-    const { theme, density, motion } = resolved;
-    if (prev.theme !== theme || prev.density !== density || prev.motion !== motion) {
-      const detail: ThemeChangeDetail = {
-        theme,
-        density,
-        motion,
-        themeUniforms: THEME_UNIFORMS_KEY,
-      };
-      root.ownerDocument.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail }));
-    }
+    if (effects.track) track(prev, resolved);
+    announce();
+    notify();
   };
   const syncOs = (): void => {
     os = readOs();
-    commit(prefs, false);
+    commit(prefs, { persist: false, track: false });
   };
-  const apply = (patch: Partial<ThemePreferences>): void => commit({ ...prefs, ...patch }, true);
+  const apply = (
+    patch: Partial<ThemePreferences>,
+    { persist = true, silent = false }: ApplyOptions = {},
+  ): void => commit(sanitize({ ...prefs, ...patch }), { persist, track: !silent });
 
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
+      const entry = { run: listener };
+      entries.add(entry);
+      return () => void entries.delete(entry);
     },
     connect: () => {
       const queries = mm ? [mm(DARK_QUERY), mm(REDUCE_QUERY)] : [];
@@ -246,4 +306,23 @@ export function createThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
     setMotionOverride: (motionOverride) => apply({ motionOverride }),
     setTextScale: (textScale) => apply({ textScale }),
   };
+}
+
+const shared = new WeakMap<HTMLElement, ThemeStore>();
+
+/**
+ * One store per root element: providers, stories and the app bootstrap that ask for the same root
+ * get the same store, so they agree instead of clobbering each other's attributes and storage.
+ * The first caller's `options` create it. Without a DOM nothing is shared (a fresh inert store per
+ * call), so server rendering never leaks state between requests.
+ */
+export function sharedThemeStore(options: ThemeStoreOptions = {}): ThemeStore {
+  const root = options.root ?? defaultRoot();
+  if (root === undefined) return createThemeStore(options);
+  let store = shared.get(root);
+  if (store === undefined) {
+    store = createThemeStore({ ...options, root });
+    shared.set(root, store);
+  }
+  return store;
 }

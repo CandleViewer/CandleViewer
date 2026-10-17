@@ -93,6 +93,10 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 - Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
 - Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
   `a11y-preferences` feature should call it rather than write the attributes themselves.
+- Store details: `sharedThemeStore()` returns one store per root element, so every provider, story and
+  bootstrap on a page agrees; without a DOM the store is inert (state and subscriptions only);
+  `apply(patch, { persist: false, silent: true })` is the hydration form, and invalid values fall back to
+  their defaults.
 
 ## Scripts
 

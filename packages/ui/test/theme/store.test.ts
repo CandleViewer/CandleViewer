@@ -1,18 +1,27 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PREFERENCES,
   DENSITIES,
   THEMES,
+  THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
   createThemeStore,
   parsePreferences,
+  sharedThemeStore,
+  type MotionOverride,
   type ThemeAnalyticsEvent,
   type ThemeStoreOptions,
 } from "../../src/theme/index.js";
 import { mediaStub, memoryStorage, themeChanges } from "./helpers.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
 
 function setup(os: { dark?: boolean; reduce?: boolean } = {}, extra: ThemeStoreOptions = {}) {
   const root = document.createElement("html");
@@ -39,21 +48,40 @@ describe("theme store attributes", () => {
     expect(store.getSnapshot().matchSystem).toBe(false);
   });
 
-  it("match-system follows the OS once per flip until an explicit theme is chosen", () => {
+  it("match-system follows each OS flip once", () => {
     const { root, media, store } = setup({ dark: true });
     const changes = themeChanges();
-    const disconnect = store.connect();
-    expect(media.listeners.size).toBe(1);
+    store.connect();
     store.apply({ matchSystem: true });
     media.set({ dark: false });
     expect(root.getAttribute("data-theme")).toBe("light");
-    store.setTheme("dark");
     media.set({ dark: true });
-    media.set({ dark: false });
     expect(root.getAttribute("data-theme")).toBe("dark");
     expect(changes.map((c) => c.theme)).toEqual(["light", "dark"]);
+  });
+
+  it("an explicit theme choice stops the store following the OS", () => {
+    const { root, media, store } = setup({ dark: true });
+    store.connect();
+    store.apply({ matchSystem: true });
+    store.setTheme("dark");
+    media.set({ dark: false });
+    expect(root.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("disconnect removes both the colour-scheme and the reduced-motion listener", () => {
+    const { media, store } = setup();
+    const disconnect = store.connect();
+    const sizes = () => [media.listeners.dark.size, media.listeners.reduce.size];
+    expect(sizes()).toEqual([1, 1]);
     disconnect();
-    expect(media.listeners.size).toBe(0);
+    expect(sizes()).toEqual([0, 0]);
+  });
+
+  it("writes to document.documentElement, not the body, when no root is given", () => {
+    createThemeStore({ storage: memoryStorage(), matchMedia: mediaStub().matchMedia }).connect();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(document.body.hasAttribute("data-theme")).toBe(false);
   });
 
   it("toggleHighContrast overlays high contrast and restores the previous base theme", () => {
@@ -115,6 +143,30 @@ describe("persistence", () => {
     expect(() => store.setDensity("comfortable")).not.toThrow();
     expect(store.getSnapshot().density).toBe("comfortable");
   });
+
+  it.each([
+    ["setTextScale", 130, "text-scale", "100"],
+    ["setDensity", "huge", "density", "compact"],
+    ["setTheme", "neon", "theme", "dark"],
+  ] as const)(
+    "%s(%j) falls back to the default instead of reaching the root or storage",
+    (setter, value, attribute, fallback) => {
+      const { root, storage, store } = setup();
+      store.apply({ baseTheme: "light", density: "comfortable", textScale: 125 });
+      (store[setter] as (value: unknown) => void)(value);
+      expect(root.getAttribute(`data-${attribute}`)).toBe(fallback);
+      expect(storage.data.get(THEME_STORAGE_KEY)).not.toContain(String(value));
+    },
+  );
+
+  it("apply can skip persistence and analytics independently (server hydration)", () => {
+    const events: ThemeAnalyticsEvent[] = [];
+    const { storage, store } = setup({}, { onAnalytics: (event) => void events.push(event) });
+    store.apply({ density: "comfortable" }, { persist: false });
+    expect([storage.data.size, events.length]).toEqual([0, 1]);
+    store.apply({ textScale: 125 }, { silent: true });
+    expect([storage.data.size, events.length]).toEqual([1, 1]);
+  });
 });
 
 describe("reduced motion", () => {
@@ -135,6 +187,30 @@ describe("reduced motion", () => {
       expect(store.getSnapshot().motion).toBe(expected);
     },
   );
+
+  it.each([
+    ["system", "reduce", "safe"],
+    ["on", "reduce", "reduce"],
+    ["off", "safe", "safe"],
+  ] as const)(
+    "a runtime OS flip with override %s gives %s when reduce turns on and %s when it turns off",
+    (override, whenOn, whenOff) => {
+      const { root, media, store } = setup();
+      store.setMotionOverride(override);
+      store.connect();
+      media.set({ reduce: true });
+      expect(root.getAttribute("data-motion")).toBe(whenOn);
+      media.set({ reduce: false });
+      expect(root.getAttribute("data-motion")).toBe(whenOff);
+    },
+  );
+
+  it("an invalid motion override follows the OS instead of failing open", () => {
+    const { store } = setup({ reduce: true });
+    store.setMotionOverride("off");
+    store.setMotionOverride("loud" as MotionOverride);
+    expect(store.getSnapshot()).toMatchObject({ motionOverride: "system", motion: "reduce" });
+  });
 });
 
 describe("notifications", () => {
@@ -154,7 +230,7 @@ describe("notifications", () => {
     ]);
   });
 
-  it("reports changes to the injectable analytics sink, and survives a throwing sink", () => {
+  it("reports changes to the injectable analytics sink", () => {
     const events: ThemeAnalyticsEvent[] = [];
     const { store } = setup({}, { onAnalytics: (event) => void events.push(event) });
     store.setTheme("light");
@@ -172,6 +248,9 @@ describe("notifications", () => {
       a11y("reduced_motion", "on"),
       a11y("text_scale", "112"),
     ]);
+  });
+
+  it("survives a throwing analytics sink", () => {
     const loud = setup(
       {},
       {
@@ -182,5 +261,132 @@ describe("notifications", () => {
     );
     expect(() => loud.store.setTheme("light")).not.toThrow();
     expect(loud.store.getSnapshot().theme).toBe("light");
+  });
+});
+
+describe("subscriptions and snapshots", () => {
+  it("notifies once per change and not at all for a no-op", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.setDensity("comfortable");
+    store.setDensity("comfortable");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops notifying once the disposer has run", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    unsubscribe();
+    store.setDensity("comfortable");
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("keeps one snapshot object until something changes, and writes nothing for a no-op", () => {
+    const { storage, store } = setup();
+    const before = store.getSnapshot();
+    store.setTheme("dark");
+    expect([store.getSnapshot() === before, storage.data.size]).toEqual([true, 0]);
+    store.setTheme("light");
+    expect(store.getSnapshot()).not.toBe(before);
+    expect(store.getSnapshot()).toBe(store.getSnapshot());
+  });
+
+  it("re-subscribing from inside a callback terminates, and the new subscription runs next time", () => {
+    const { store } = setup();
+    let calls = 0;
+    let unsubscribe = (): void => undefined;
+    const again = (): void => {
+      calls += 1;
+      unsubscribe();
+      unsubscribe = store.subscribe(again);
+    };
+    unsubscribe = store.subscribe(again);
+    store.setTheme("light");
+    expect(calls).toBe(1);
+    store.setTheme("dark");
+    expect(calls).toBe(2);
+  });
+
+  it("subscribing the same function twice gives two independent subscriptions", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    const first = store.subscribe(listener);
+    const second = store.subscribe(listener);
+    store.setTheme("light");
+    first();
+    store.setTheme("dark");
+    second();
+    store.setTheme("light");
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("failing and re-entrant subscribers", () => {
+  it("a throwing subscriber skips neither later subscribers nor the event, and is rethrown later", () => {
+    const boom = new Error("boom");
+    const rethrown: (() => void)[] = [];
+    vi.spyOn(globalThis, "queueMicrotask").mockImplementation((task) => void rethrown.push(task));
+    const { store } = setup();
+    const changes = themeChanges();
+    const later = vi.fn();
+    store.subscribe(() => {
+      throw boom;
+    });
+    store.subscribe(later);
+    store.setTheme("light");
+    expect([later.mock.calls.length, changes.length, rethrown.length]).toEqual([1, 1, 1]);
+    expect(rethrown[0]).toThrow(boom);
+  });
+
+  it("events stay oldest first when a subscriber re-enters apply", () => {
+    const { store } = setup();
+    const changes = themeChanges();
+    let first = true;
+    store.subscribe(() => {
+      if (!first) return;
+      first = false;
+      store.setTheme("light");
+    });
+    store.setTheme("high-contrast");
+    expect(changes.map((c) => c.theme)).toEqual(["high-contrast", "light"]);
+    expect(changes.at(-1)?.theme).toBe(store.getSnapshot().theme);
+  });
+
+  it("events stay oldest first when a themechange handler re-enters apply", () => {
+    const { store } = setup();
+    document.addEventListener(THEME_CHANGE_EVENT, () => store.setDensity("comfortable"), {
+      once: true,
+    });
+    const changes = themeChanges();
+    store.setTheme("high-contrast");
+    expect(changes.map((c) => [c.theme, c.density])).toEqual([
+      ["high-contrast", "compact"],
+      ["high-contrast", "comfortable"],
+    ]);
+  });
+});
+
+describe("browser defaults", () => {
+  it("reads the OS from window.matchMedia and persists to window.localStorage when none are injected", () => {
+    vi.stubGlobal("matchMedia", mediaStub({ dark: false, reduce: true }).matchMedia);
+    const store = createThemeStore({ root: document.createElement("html") });
+    expect(store.getSnapshot()).toMatchObject({ theme: "dark", motion: "reduce" });
+    store.setTheme("light");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toContain('"baseTheme":"light"');
+  });
+});
+
+describe("shared store per root", () => {
+  it("returns one store per root element", () => {
+    const root = document.createElement("html");
+    const first = sharedThemeStore({ root, storage: memoryStorage() });
+    expect(sharedThemeStore({ root })).toBe(first);
+    expect(sharedThemeStore({ root: document.createElement("html") })).not.toBe(first);
+  });
+
+  it("keys the default on document.documentElement", () => {
+    expect(sharedThemeStore()).toBe(sharedThemeStore({ root: document.documentElement }));
   });
 });

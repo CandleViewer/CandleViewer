@@ -52,11 +52,14 @@ describe("pre-paint snippet", () => {
     observer.disconnect();
   });
 
-  it("resolves exactly like the store for every persisted theme, motion, density, scale and hostile shape", () => {
+  const oses: (Os | undefined)[] = [
+    undefined,
+    ...[true, false].flatMap((dark) => [true, false].map((reduce) => ({ dark, reduce }))),
+  ];
+
+  // One test per OS state keeps each run far from vitest's default timeout (C-9.3 headroom).
+  it.each(oses)("resolves exactly like the store for every stored shape (OS %j)", (os) => {
     const raws: (string | null)[] = [null, "{bad", "5", '"x"', "[1]", '{"textScale":"125"}'];
-    const oses: Os[] = [true, false].flatMap((dark) =>
-      [true, false].map((reduce) => ({ dark, reduce })),
-    );
     for (const baseTheme of ["dark", "light", "neon"]) {
       for (const matchSystem of [true, false]) {
         for (const highContrast of [true, false]) {
@@ -99,11 +102,9 @@ describe("pre-paint snippet", () => {
       }
     }
     for (const raw of raws) {
-      for (const os of [undefined, ...oses]) {
-        const root = document.createElement("html");
-        runPrepaint(root, raw, os);
-        expect(attrs(root), `${raw} ${JSON.stringify(os)}`).toEqual(storeAttrs(raw, os));
-      }
+      const root = document.createElement("html");
+      runPrepaint(root, raw, os);
+      expect(attrs(root), String(raw)).toEqual(storeAttrs(raw, os));
     }
   });
 
