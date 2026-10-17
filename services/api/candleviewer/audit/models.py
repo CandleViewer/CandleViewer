@@ -159,7 +159,8 @@ class AuditEntry(BaseModel):
     user_agent: str | None = None
     request_id: str | None
     detail: dict[str, Any] = Field(default_factory=dict)
-    entry_hash: str
+    #: Null in a Manager's projection (contract #2392, `OWN_REDACTED_FIELDS`).
+    entry_hash: str | None
     prev_hash: str | None
 
 

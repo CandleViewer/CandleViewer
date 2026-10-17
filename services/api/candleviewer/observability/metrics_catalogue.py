@@ -111,6 +111,9 @@ STORAGE_BUCKETS: Final = (
 )
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
+#: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
+#: page (2 s p95) and the default per-call budget (4 s).
+AUDIT_QUERY_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 1.0, 2.0, 4.0)
 #: Statechart transition latency.
 TRANSITION_BUCKETS: Final = (
     0.00005,
@@ -2067,6 +2070,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "page on any",
         _P,
         "E43",
+    ),
+    # --- Audit read path (E42-T02) -------------------------------------------
+    _s(
+        "cv_audit_query_duration_seconds",
+        "histogram",
+        "seconds",
+        ("filter_class",),
+        "GET /admin/audit page time (SQL and chain check), by filter class (closed set).",
+        "p95 > 0.4 for 10m (SCR-135); filter_class=q tracks full-text cost (RSK-052)",
+        _L,
+        "E42",
+        AUDIT_QUERY_BUCKETS,
+        max_series=10,
+        exported=True,
+    ),
+    _s(
+        "cv_audit_query_timeouts_total",
+        "counter",
+        "reads",
+        ("cause",),
+        "Audit page reads over their time budget (cause: budget | pool | statement_timeout).",
+        "sustained = audit search answers 503; check the plans, the indexes and the pool",
+        _L,
+        "E42",
+        max_series=3,
+        exported=True,
     ),
     _s(
         "egress_ip_changes_total",

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,7 +26,6 @@ from candleviewer.audit.models import (
     AuditPage,
     AuditPageMeta,
     AuditQueryRequest,
-    ExportResult,
     VerifyResult,
 )
 from candleviewer.audit.repository import AuditRepository
@@ -257,12 +255,3 @@ class AuditQueryService:
             first_bad_id=first_bad_id,
             checked_at=datetime.now(UTC),
         )
-
-    async def schedule_export(self, *, from_ts: datetime, to_ts: datetime) -> ExportResult:
-        """Schedules an NDJSON export job (ticket: "produces a downloadable
-        NDJSON bundle with a detached signature ... for offline retention").
-        The actual export/signing worker is out of this ticket's critical
-        path for the API contract to exist and be audited; this returns a
-        job id immediately (`202`-shaped response) per the OpenAPI contract.
-        """
-        return ExportResult(job_id=uuid.uuid4(), download_url=None)

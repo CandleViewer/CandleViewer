@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -111,10 +112,13 @@ async def test_query_page_sets_the_statement_timeout_then_reads() -> None:
 async def test_query_page_overrun_raises_builtin_timeout_error(
     on_enter: Any, on_query: Any, cause: str
 ) -> None:
+    count = REGISTRY.get_sample_value("cv_audit_query_timeouts_total", {"cause": cause}) or 0
     with capture_logs() as logs, pytest.raises(TimeoutError) as err:
         await _page(_Rel(on_enter, on_query), timeout_ms=10)
     _assert_no_db_error_in_chain(err.value)
     assert [(e["event"], e["cause"]) for e in logs] == [("audit.read.timeout", cause)]
+    after = REGISTRY.get_sample_value("cv_audit_query_timeouts_total", {"cause": cause})
+    assert after == count + 1
 
 
 @pytest.mark.parametrize(

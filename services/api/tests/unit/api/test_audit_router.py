@@ -17,6 +17,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
 from candleviewer.api.audit import make_audit_router
@@ -36,11 +37,11 @@ from candleviewer.audit.models import (
     AuditPage,
     AuditPageMeta,
     AuditQueryRequest,
-    ExportResult,
     Severity,
     VerifyResult,
 )
 from candleviewer.audit.query import AuditQueryService
+from candleviewer.observability.audit_query_metrics import FILTER_CLASSES
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
@@ -51,7 +52,6 @@ class _FakeQuery:
     def __init__(self) -> None:
         self.query_calls: list[dict[str, Any]] = []
         self.verify_calls: list[dict[str, Any]] = []
-        self.export_calls: list[dict[str, Any]] = []
 
     async def query(self, **kwargs: Any) -> AuditPage:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
@@ -67,10 +67,6 @@ class _FakeQuery:
         return VerifyResult(
             verified=True, entries_checked=0, first_bad_id=None, checked_at=datetime.now(UTC)
         )
-
-    async def schedule_export(self, **kwargs: Any) -> ExportResult:
-        self.export_calls.append(kwargs)
-        return ExportResult(job_id=uuid.uuid4(), download_url=None)
 
 
 class _FakeWriter:
@@ -175,26 +171,117 @@ def test_verify_audit_chain_returns_200_for_authorized_caller() -> None:
     assert len(service.query_service.verify_calls) == 1
 
 
-def test_export_audit_log_returns_202_for_authorized_owner() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"},
+_EXPORT_BODY = {"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"}
+
+
+def _real_owner() -> AuditPrincipal:
+    return AuditPrincipal(
+        user_id=uuid.uuid4(),
+        username="owner",
+        permissions=frozenset({"audit:export"}),
+        is_owner=True,
     )
-    assert response.status_code == 202
-    assert "job_id" in response.json()
-    assert len(service.query_service.export_calls) == 1
 
 
-def test_export_audit_log_denied_for_read_only_viewer() -> None:
+def _non_owner_with_export() -> AuditPrincipal:
+    return AuditPrincipal(
+        user_id=uuid.uuid4(),
+        username="manager",
+        permissions=frozenset({"audit:read", "audit:export"}),
+        is_owner=False,
+    )
+
+
+_OWNER_SHAPES = pytest.mark.parametrize(
+    "principal", [_real_owner, _owner], ids=["is_owner_explicit_permission", "wildcard"]
+)
+
+
+@_OWNER_SHAPES
+def test_export_owner_gets_501_with_not_implemented_type(principal: Any) -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
+    assert response.json()["type"].endswith("/errors/not_implemented")
+
+
+@_OWNER_SHAPES
+def test_export_owner_501_body_has_no_job_id(principal: Any) -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
+    assert "job_id" not in response.text
+
+
+@_OWNER_SHAPES
+def test_export_owner_501_writes_no_audit_record(principal: Any) -> None:
     service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_viewer_no_export())))
+    response = TestClient(_app(service, _FakeResolver(principal()))).post(
+        "/admin/audit/export", json=_EXPORT_BODY
+    )
+    assert response.status_code == 501
+    assert service.writer_service.emitted == []
+
+
+@pytest.mark.parametrize(
+    "principal",
+    [_manager_with_read, _manager, _viewer_no_export, _non_owner_with_export],
+    ids=["read", "noread", "viewer", "non_owner_with_export"],
+)
+def test_export_non_owner_gets_403_with_one_denied_record(principal: Any) -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(principal())))
+    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 403
+    assert _actions(service) == ["admin.audit_denied"]
+
+
+def test_export_non_owner_holding_export_is_denied_as_owner_only() -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_non_owner_with_export())))
+    client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert service.writer_service.emitted[0][1]["reason"] == "owner_only"
+
+
+def test_export_non_owner_malformed_body_is_403_not_422() -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_manager_with_read())))
     response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"},
+        "/admin/audit/export", content=b"{not json", headers={"content-type": "application/json"}
     )
     assert response.status_code == 403
+    assert _actions(service) == ["admin.audit_denied"]
+
+
+def test_export_unauthenticated_gets_401() -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(None)))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert response.json()["type"].endswith("/errors/unauthenticated")
+
+
+def test_export_unauthenticated_with_malformed_body_still_401() -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(None)))
+    response = client.post(
+        "/admin/audit/export", content=b"{not json", headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 401
+
+
+def test_export_no_resolver_wired_gives_501_not_implemented_code() -> None:
+    client = TestClient(_app(_FakeAuditService(), None))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
+    assert response.json()["type"].endswith("/errors/not_implemented")
+
+
+def test_export_backend_not_wired_gives_503() -> None:
+    client = TestClient(_app(None, _FakeResolver(_owner())))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 503
+    assert response.json()["code"] == "store_unavailable"
+    assert response.json()["type"].endswith("/errors/store_unavailable")
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_inactive_audit_service_returns_503() -> None:
@@ -215,6 +302,9 @@ def test_no_audit_service_wired_returns_503() -> None:
     client = TestClient(_app(None, _FakeResolver(_owner())))
     response = client.get("/admin/audit")
     assert response.status_code == 503
+    assert response.json()["code"] == "store_unavailable"
+    assert response.json()["type"].endswith("/errors/store_unavailable")
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_resolver_returning_none_returns_401_unauthorized() -> None:
@@ -224,6 +314,8 @@ def test_resolver_returning_none_returns_401_unauthorized() -> None:
     client = TestClient(_app(service, _FakeResolver(None)))
     response = client.get("/admin/audit")
     assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert response.json()["type"].endswith("/errors/unauthenticated")
 
 
 def test_query_audit_log_passes_subject_type_through_to_query_service() -> None:
@@ -279,44 +371,6 @@ def test_verify_audit_chain_rejects_non_integer_from_id() -> None:
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
     response = client.post("/admin/audit/verify", json={"from_id": "not-an-id"})
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_malformed_timestamp_with_400_not_500() -> None:
-    """PR #1608 review finding 3: a bad `from`/`to` string used to reach
-    `_parse_ts` and raise an unhandled `ValueError` (500)."""
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export", json={"from": "not-a-timestamp", "to": "2026-01-02T00:00:00Z"}
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_naive_datetime() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00", "to": "2026-01-02T00:00:00"},
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_from_after_to() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-02T00:00:00Z", "to": "2026-01-01T00:00:00Z"},
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_missing_from() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post("/admin/audit/export", json={"to": "2026-01-02T00:00:00Z"})
     assert response.status_code == 400
 
 
@@ -417,6 +471,7 @@ def test_manager_query_sees_only_own_events_redacted() -> None:
     assert [i["id"] for i in items] == [1]
     assert items[0]["detail"] == {} and items[0]["ip"] is None
     assert items[0]["user_agent"] is None
+    assert items[0]["entry_hash"] is None and items[0]["prev_hash"] is None  # #2392
     [call] = service.query_service.query_calls
     assert call["actor_user_id"] == call["restrict_to_actor"] == str(me.user_id)
 
@@ -429,7 +484,19 @@ def test_owner_query_sees_all_events_raw() -> None:
     assert [i["id"] for i in items] == [1, 2]
     assert items[1]["detail"] == {"symbol": "BTCUSDT", "environment": "live"}
     assert items[1]["ip"] == "100.84.12.9"
+    assert items[1]["entry_hash"] == "h2"  # the Owner keeps both hashes
     assert service.query_service.query_calls[0]["restrict_to_actor"] is None
+
+
+@pytest.mark.parametrize("principal", [_owner, _manager_with_read], ids=["owner", "manager"])
+def test_query_audit_log_200_is_never_cached(principal: Any) -> None:
+    """The contract's `200` carries `Cache-Control: no-store` for every view of the page
+    (F6-2): a page holds IPs and payloads."""
+    caller = principal()
+    service = _service_with([_entry(1, caller.user_id)])
+    response = TestClient(_app(service, _FakeResolver(caller))).get("/admin/audit")
+    assert response.status_code == 200 and len(response.json()["items"]) == 1
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 # ---- #2392 "Limits": per-user limiter, time budget, store errors ---------------------------
@@ -662,6 +729,16 @@ def test_refusal_carries_retry_after_only_over_the_cap() -> None:
     clock.now += 3600
     client.get("/admin/audit")
     assert svc.writer_service.emitted[-1][1]["after_state"] == {"suppressed": 1}
+
+
+@pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
+def test_export_denial_record_that_cannot_be_written_is_503_not_403(cause: str) -> None:
+    svc = _FakeAuditService()
+    svc.writer_service.fail = cause == "writer"
+    budget = AuditRecordBudget(inflight_cap=0 if cause == "inflight_cap" else 64)
+    client, _ = _budgeted(_non_owner_with_export(), svc, budget=budget)
+    r = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
 
 
 @pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
@@ -1029,3 +1106,28 @@ async def test_the_users_slot_is_held_until_the_page_is_hashed() -> None:
     finally:
         release.set()
         hasher.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("principal", "params", "label"),
+    [
+        (_owner, {}, "none"),
+        (_owner, {"q": "x", "ip": "10.0.0.1"}, "q"),
+        (_owner, {"ip": "10.0.0.1", "outcome": "denied"}, "ip"),
+        (_owner, {"action": "orders.submit", "outcome": "denied"}, "action"),
+        (_owner, {"subject_id": "o-1"}, "object"),
+        (_owner, {"severity": "error", "outcome": "denied"}, "severity"),
+        (_owner, {"outcome": "denied"}, "outcome"),
+        (_owner, {"to": "2026-01-01T00:00:00Z"}, "range"),
+        (_manager_with_read, {}, "actor"),
+        (_manager_with_read, {"action": "orders.submit"}, "actor_action"),
+    ],
+)
+def test_served_page_time_is_observed_under_a_closed_filter_class(
+    principal: Any, params: dict[str, Any], label: str
+) -> None:
+    name, labels = "cv_audit_query_duration_seconds_count", {"filter_class": label}
+    before = REGISTRY.get_sample_value(name, labels) or 0
+    assert _budgeted(principal())[0].get("/admin/audit", params=params).status_code == 200
+    assert REGISTRY.get_sample_value(name, labels) == before + 1
+    assert label in FILTER_CLASSES

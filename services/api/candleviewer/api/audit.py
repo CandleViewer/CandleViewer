@@ -30,8 +30,9 @@ for a given request, that is a normal 401 per the resolver's own contract
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Query, Request
@@ -59,12 +60,12 @@ from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cu
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
-    AuditExportRequest,
     AuditOutcome,
     AuditQueryRequest,
     AuditVerifyRequest,
     Severity,
 )
+from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
 from candleviewer.storage.errors import StorageTierUnavailable
 
 
@@ -122,8 +123,6 @@ class AuditQueryServiceLike(Protocol):
         self, *, from_id: int | None = None, to_id: int | None = None, batch_size: int = 5_000
     ) -> Any: ...
 
-    async def schedule_export(self, *, from_ts: datetime, to_ts: datetime) -> Any: ...
-
 
 class AuditWriterLike(_Emitter, Protocol):
     """Only the `emit()` subset `authorize()` needs to record a denial."""
@@ -160,6 +159,8 @@ class PrincipalResolver(Protocol):
 _MAX_ERRORS = 10
 #: Contract parameter names where they differ from the `AuditQueryRequest` field names.
 _PARAM_NAMES = {"actions": "action", "from_ts": "from", "to_ts": "to"}
+#: Contract (`queryAuditLog`): a `200` page is never cached; it carries IPs and payloads.
+_NO_STORE: Final = {"Cache-Control": "no-store"}
 
 
 def _problem(
@@ -167,18 +168,17 @@ def _problem(
     title: str,
     detail: str,
     *,
-    code: str | None = None,
+    code: str,
     retry_after_s: int | None = None,
     errors: list[dict[str, str]] | None = None,
 ) -> JSONResponse:
     content: dict[str, Any] = {
-        "type": f"https://candleviewer.local/errors/{code}" if code else "about:blank",
+        "type": f"https://candleviewer.local/errors/{code}",
         "title": title,
         "status": status_code,
         "detail": detail,
+        "code": code,
     }
-    if code is not None:
-        content["code"] = code
     if errors is not None:
         content["errors"] = errors
     response = JSONResponse(
@@ -245,6 +245,28 @@ def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict
     return {_PARAM_NAMES.get(k, k): v for k, v in dumped.items()}
 
 
+def _filter_class(filters: dict[str, Any], restrict: str | None) -> str:
+    """The closed `filter_class` label (`FILTER_CLASSES`): which filters shaped the page,
+    never their values."""
+    if filters["q"] is not None or filters["ip"] is not None:
+        return "q" if filters["q"] is not None else "ip"
+    if restrict is not None or filters["actor_user_id"] is not None:
+        return "actor_action" if filters["actions"] else "actor"
+    for name, columns in _CLASS_COLUMNS:
+        if any(filters[c] is not None for c in columns):
+            return name
+    return "none"
+
+
+_CLASS_COLUMNS = (
+    ("action", ("actions",)),
+    ("object", ("subject_type", "subject_id")),
+    ("severity", ("severity",)),
+    ("outcome", ("outcome",)),
+    ("range", ("from_ts", "to_ts")),
+)
+
+
 def make_audit_router(
     audit_service: AuditServiceLike | None,
     principal_resolver: PrincipalResolver | None = None,
@@ -265,6 +287,10 @@ def make_audit_router(
     over the user's cap is counted instead, which makes a read `429` and leaves a
     refusal unchanged but for `Retry-After`; a due record that cannot be written makes
     the call `503` with nothing returned (C-2.9).
+
+    A Viewer holds no `audit:read` and gets `403` on every route here, as decided on
+    #2083. Whether C-12.4's "Viewer (read-only, including audit)" should change that is
+    the owner's decision on #2428 (design D7); nothing in this router grants it.
     """
     router = APIRouter(prefix="/admin/audit", tags=["admin"])
     query_limiter = limiter if limiter is not None else AuditQueryLimiter()
@@ -287,7 +313,7 @@ def make_audit_router(
         request: Request, operation: str
     ) -> tuple[AuditServiceLike, AuditPrincipal, AuditView]:
         if audit_service is None or not audit_service.is_active:
-            raise _HttpProblem(_problem(503, "Service unavailable", "audit backend is not wired"))
+            raise _HttpProblem(_unavailable("audit backend is not wired"))
         if principal_resolver is None:
             raise _HttpProblem(
                 _problem(
@@ -295,12 +321,18 @@ def make_audit_router(
                     "Not implemented",
                     "no principal resolver wired — session verification is out of this "
                     "ticket's scope",
+                    code="not_implemented",
                 )
             )
         principal = await principal_resolver.resolve(request)
         if principal is None:
             raise _HttpProblem(
-                _problem(401, "Unauthorized", "no verified session for this request")
+                _problem(
+                    401,
+                    "Unauthorized",
+                    "no verified session for this request",
+                    code="unauthenticated",
+                )
             )
         emitter = record_budget.emitter(audit_service.writer, _budget_actor(principal))
         try:
@@ -443,6 +475,7 @@ def make_audit_router(
             return _unavailable()
         # Fail closed: any view but the Owner's raw one is scoped to the caller's own entries.
         restrict = None if view is AuditView.RAW else key
+        started = time.perf_counter()
         try:
             page = await service.query.query(
                 **filters,
@@ -462,6 +495,8 @@ def make_audit_router(
             # The store error carries only its SQLSTATE (or that every read slot is in
             # use); it is logged where it is raised.
             return _unavailable("audit store unavailable")
+        elapsed = time.perf_counter() - started
+        cv_audit_query_duration_seconds.labels(_filter_class(filters, restrict)).observe(elapsed)
         if restrict is not None:
             if any(str(e.actor_user_id) != restrict for e in page.items):
                 # The scope is applied in the SQL; a row outside it is never served.
@@ -479,7 +514,7 @@ def make_audit_router(
             except BudgetWriteFailed:
                 return _unavailable()
         plan.commit()
-        return JSONResponse(status_code=200, content=_jsonable(page))
+        return JSONResponse(status_code=200, content=_jsonable(page), headers=_NO_STORE)
 
     @router.post("/verify")
     async def verify_audit_chain(
@@ -498,17 +533,19 @@ def make_audit_router(
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
-    async def export_audit_log(request: Request, body: dict[str, Any]) -> JSONResponse:
+    async def export_audit_log(request: Request) -> JSONResponse:
+        """Deliberate stub until owner decision D1 (export signing-key custody,
+        E42-T02 design §6.3, #889). Authorisation runs first (401/403), then
+        `501 not_implemented`. No body is parsed (no pre-auth 422), no job or
+        artefact is created and no `admin.audit_export` record is written, since
+        nothing is exported. The `202` job flow arrives with the export slice."""
         try:
-            service, _, _ = await _authorize_or_raise(request, "export")
+            await _authorize_or_raise(request, "export")
         except _HttpProblem as problem:
             return problem.response
-        try:
-            req = AuditExportRequest.model_validate(body)
-        except ValidationError as exc:
-            return _invalid(exc, AuditExportRequest, 400)
-        result = await service.query.schedule_export(from_ts=req.from_ts, to_ts=req.to_ts)
-        return JSONResponse(status_code=202, content=_jsonable(result))
+        return _problem(
+            501, "Not implemented", "Audit export is not available yet.", code="not_implemented"
+        )
 
     return router
 

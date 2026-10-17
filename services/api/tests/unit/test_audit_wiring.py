@@ -46,6 +46,7 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
     flush = app.state.audit_budget_flush
     assert flush._budget is bud and flush._interval_s == 19.0  # one budget, ticked by the task
+    assert app.state.audit_query_metrics is not None  # served on the scraped registry
 
 
 def test_real_audit_backend_caps_reads_with_the_global_setting() -> None:

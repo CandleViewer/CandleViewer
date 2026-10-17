@@ -21,6 +21,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
+from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -242,7 +243,9 @@ async def _attach_chain(session: Any, rows: list[dict[str, Any]]) -> None:
     for chunk in itertools.batched(sorted((r["id"] for r in rows), reverse=True), _CHAIN_CHUNK):
         if left < 0:
             break
-        params = {"ids": list(chunk), "n": CHAIN_FIELD_MAX_CHARS + 1}
+        # One character past what is allowed: a longer rendering leaves its row incomplete
+        # whatever its length, so near the page cap the chunk is not fetched at full width.
+        params = {"ids": list(chunk), "n": min(CHAIN_FIELD_MAX_CHARS, left) + 1}
         for found in await session.execute(_CHAIN_ROWS_SQL, params):
             chain = dict(found._mapping)
             texts = [v for k, v in chain.items() if k not in _CHAIN_KEYS and v is not None]
@@ -369,6 +372,7 @@ class SqlAlchemyAuditRepository:
         # lines carry the cause, or the class and SQLSTATE, only.
         if cause:
             _log().warning("audit.read.timeout", cause=cause, budget_ms=timeout_ms)
+            cv_audit_query_timeouts_total.labels(cause).inc()
             raise TimeoutError("audit read exceeded its time budget") from None
         _log().warning("audit.read.failed", error=error, sqlstate=state)
         raise AuditReadFailed(state) from None
