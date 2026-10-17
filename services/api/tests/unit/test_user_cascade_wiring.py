@@ -22,6 +22,7 @@ from candleviewer.rules.scope_state import ARM_LIVE, SnapshotScopeState
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.user_cascade_wiring import (
     RuleDisarmAdapter,
+    RuleNotOwned,
     RulesNotRunning,
     ScopeRefreshAdapter,
     disarm_key,
@@ -131,6 +132,29 @@ async def test_disarm_of_a_rule_the_chart_refuses_raises_and_leaves_it_armed() -
         *(rid, str(_A), "illegal_transition"),
     )
     assert line["log_level"] == "error" and line["error"] == "RuleError"
+
+
+@pytest.mark.parametrize("missing", [False, True])
+async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_armed(
+    missing: bool,
+) -> None:
+    """The adapter acts as the Owner, who sees every rule, so the id it is given is not trusted:
+    it disarms a rule only if its `owner_user_id` is the user being disabled. Another owner's
+    armed rule, or an id that names no rule, is refused with one error line that names it; the
+    rule stays armed and nothing is audited, and no one reaches the manager with it."""
+    e = _Engine()
+    theirs = await e.rule(_B, "b-one")
+    rid = "no-such-rule" if missing else theirs
+    with capture_logs() as logs, pytest.raises(RuleNotOwned):
+        await e.disarm(rid)
+    (line,) = [entry for entry in logs if entry["event"] == "users.disable.rule_not_disarmed"]
+    assert (line["rule_id"], line["target_user_id"], line["error"]) == (
+        *(rid, str(_A), "RuleNotOwned"),
+    )
+    assert line["log_level"] == "error"
+    assert await e.mode(theirs) == ("armed", None)
+    assert e.manager.lifecycle.leaf(theirs) == "armed"
+    assert e.disarmed() == []
 
 
 def test_idempotency_key_deterministic() -> None:

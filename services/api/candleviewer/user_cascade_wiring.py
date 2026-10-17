@@ -8,7 +8,9 @@ does, implements them over the rule engine's own interfaces.
   one per call by `RulesManager.set_mode(rule, "disabled", ...)`, the E35 disarm interface: B9
   `DISARM` goes through `RuleLifecycle` and the statechart gateway to a chart only
   `statechart.factory` builds, and the manager writes `rules.disarm` ahead of the row (C-2.9). A
-  rule the chart refuses is the manager's `RuleError`; the service goes on to the next rule.
+  rule the chart refuses is the manager's `RuleError`; the service goes on to the next rule. It
+  disarms one rule at a time (the manager has no per-rule lock) and only the user's own: it acts
+  as the Owner, who sees every rule, so a rule that is not the user's is refused.
 - `ScopeRefreshAdapter` refreshes the user's entry in the rule engine's scope snapshot at once; a
   refresh that fails drops the entry (no grant, no live arming) and re-raises.
 
@@ -39,6 +41,11 @@ DISARMED: Final = "disabled"
 
 class RulesNotRunning(RuntimeError):
     """The rules module is stopped (`RulesService.manager()` is `None`): nothing can be disarmed."""
+
+
+class RuleNotOwned(RuntimeError):
+    """The rule does not exist, or its `owner_user_id` is not the user being disabled: the adapter
+    disarms that user's rules and no one else's, whatever id it is given."""
 
 
 def _log() -> Any:
@@ -85,18 +92,26 @@ class RuleDisarmAdapter:
             sorted(r.id for r in rows if r.owner == owner and r.mode == ARMED and not r.deleted)
         )
 
+    async def _require_owned(self, rule_id: str, user_id: uuid.UUID) -> None:
+        """The acting Owner sees every rule, so the id is not trusted: `RuleNotOwned` unless the
+        row exists and is the user's, read from the store the listing reads (C-12.4)."""
+        row = await self._store.get(rule_id)
+        if row is None or row.owner != str(user_id):
+            raise RuleNotOwned(rule_id)
+
     async def disarm(
         self, rule_id: str, *, user_id: uuid.UUID, actor: uuid.UUID, disabled_at: datetime
     ) -> None:
-        """B9 DISARM for one rule, one at a time. A rule that is already disarmed is a no-op with no
-        record, also when two disarms of it overlap; any refusal or failure is raised after one
-        error line that names the rule."""
+        """B9 DISARM for one of `user_id`'s rules, one at a time. A rule that is already disarmed
+        is a no-op with no record, also when two disarms of it overlap; a rule that is not the
+        user's and any refusal or failure is raised after one error line that names the rule."""
         manager = self._manager()
         if manager is None:
             raise RulesNotRunning(rule_id)
         key = disarm_key(user_id, rule_id, disabled_at)
         try:
             async with self._lock:
+                await self._require_owned(rule_id, user_id)
                 await manager.set_mode(rule_id, DISARMED, _acting_owner(actor), key)
         except Exception as exc:
             _log().error(
