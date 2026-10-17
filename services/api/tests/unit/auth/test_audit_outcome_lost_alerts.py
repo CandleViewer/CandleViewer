@@ -3,8 +3,11 @@
 Any lost outcome record is a ticket (`system_ticket.yml`); more than 5 in 15 minutes is a page
 (`system_page.yml`, so the page policy tests of `infra/alertmanager/tests` apply to it), under a
 component of its own: the page-over-ticket inhibition matches on component and env, so a page under
-`auth` would hide the lockout, step-up and CSRF tickets while the sink fails. promtool runs in CI;
-here its cases are only checked to exist.
+`auth` would hide the lockout, step-up and CSRF tickets while the sink fails. The page is an event
+page (#2931, `resolves: window`): it clears when its 15-minute window moves on, which happens while
+a refusing sink is still down (every sign-out then fails at its write-ahead record, which no counter
+sees), so it must send no [RESOLVED] message. promtool runs in CI; here its cases are only checked
+to exist.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ def test_a_single_lost_record_is_a_ticket_and_more_than_five_in_the_window_a_pag
     ticket, page = _rules()[TICKET], _rules()[PAGE]
     assert ticket["expr"] == _EXPR.format(n=0) and page["expr"] == _EXPR.format(n=5)
     assert ticket["labels"] == {"severity": "ticket", "component": COMPONENT}
-    assert page["labels"] == {"severity": "page", "component": COMPONENT}
+    assert page["labels"] == {"severity": "page", "component": COMPONENT, "resolves": "window"}
     assert ticket["annotations"]["runbook_url"] == page["annotations"]["runbook_url"] == _RUNBOOK
     assert ticket["for"] == page["for"] == "0m"  # no hold time: a lost record is a gap now
 

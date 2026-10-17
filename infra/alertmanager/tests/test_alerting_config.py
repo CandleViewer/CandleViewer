@@ -451,6 +451,10 @@ def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> N
 #: message. Three read `increase(<counter>[window]) > 0`: an audit chain verification run failed
 #: (the break stands and is found again at the next start-up or nightly run); a recovery code was
 #: used; a trade gap went unrecovered (the trades stay missing from the tape and the recording).
+#: `AuthAuditOutcomesLostBurst` (#2914) reads `increase(<counter>[window]) > 5`: more than 5
+#: outcome audit records were lost in 15 minutes. The sink may still be refusing records when the
+#: window moves on, and every sign-out then fails at its write-ahead record, which no counter
+#: sees, so the counter stops rising and the page clears.
 #: `AuthBreakGlassUsed` (#2496 item 3) reads a gauge, but over a window that outlasts a restart or
 #: a scrape gap, so it also ends when cv-api has merely been down for that window, which a
 #: [RESOLVED] would report as handled while the event is unresolved. `AuthBreakGlassAttempted`
@@ -462,6 +466,7 @@ def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> N
 #: position is naked (a condition page). TODO(#932): decide there; add it here if it is the former.
 EVENT_TYPE_PAGES = {
     "AuditChainVerificationFailed",
+    "AuthAuditOutcomesLostBurst",
     "AuthBreakGlassAttempted",
     "AuthBreakGlassUsed",
     "AuthRecoveryCodeUsed",

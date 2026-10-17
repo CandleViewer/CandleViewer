@@ -107,6 +107,7 @@ jobs:
             "page severity=page" \
             "page_event severity=page resolves=window" \
             "page_event alertname=AuditChainVerificationFailed severity=page component=audit resolves=window" \
+            "page_event alertname=AuthAuditOutcomesLostBurst severity=page component=auth_audit resolves=window" \
             "page_event alertname=AuthBreakGlassAttempted severity=page component=auth_break_glass_attempt resolves=window" \
             "page_event alertname=AuthBreakGlassUsed severity=page component=auth_break_glass resolves=window" \
             "page_event alertname=AuthRecoveryCodeUsed severity=page component=auth_recovery resolves=window" \

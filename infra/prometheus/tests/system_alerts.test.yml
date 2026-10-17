@@ -524,6 +524,7 @@ tests:
     - exp_labels:
         severity: page
         component: auth_audit
+        resolves: window
         env: live
       exp_annotations:
         summary: 'More than 5 audit outcome records lost in 15 min: the audit sink
