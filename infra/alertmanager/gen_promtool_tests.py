@@ -126,6 +126,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
+    # #2496 review: the reader failed every minute for a quarter of an hour (15 failures).
+    "AuthBreakGlassStateReadFailing": (
+        'auth_break_glass_state_read_failures_total{env="live"}',
+        "0+1x15",
+        "0+0x20",
+        "15m",
+        {"env": "live"},
+    ),
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
@@ -171,6 +179,8 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("2+0x10 _x20 3+0x40", "55m", False),  # 15m on: the window has moved past the rise
         ("_x30 3+0x20", "35m", False),  # no sample from before the run to compare with
     ],
+    # #2496 review: a Postgres restart of two minutes is four failed statements, far under 10.
+    "AuthBreakGlassStateReadFailing": [("0+0x5 4+0x14", "15m", False)],
 }
 
 

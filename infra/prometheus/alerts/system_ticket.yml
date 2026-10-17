@@ -130,3 +130,20 @@ groups:
         annotations:
           summary: "Alertmanager failed to deliver notifications"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-alertmanagernotificationsfailed"
+      - alert: AuthBreakGlassStateReadFailing
+        # #2496 review (SR-125, detection health): cv-api could not read the break-glass state
+        # from Postgres. A failed read keeps the last value of auth_break_glass_unresolved_events
+        # and auth_break_glass_attempts (0 in a fresh process), so their pages stay silent and the
+        # absent() guards cannot see it: the series exist. Counted per statement, two a minute, so
+        # a Postgres restart of a couple of minutes (PostgresDown's page) stays below the threshold;
+        # 10 in 15 minutes is a reader that failed for five minutes, or one statement for ten. A
+        # ticket under the `alerting` component: a page for a component hides that component's
+        # tickets, and the two break-glass pages have components of their own.
+        expr: sum by (env) (increase(auth_break_glass_state_read_failures_total[15m])) >= 10
+        for: 0m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "The break-glass state cannot be read: its pages are blind"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing"

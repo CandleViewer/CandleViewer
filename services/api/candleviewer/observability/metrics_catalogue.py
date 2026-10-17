@@ -1991,6 +1991,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_break_glass_state_read_failures_total",
+        "counter",
+        "failures",
+        (),
+        "Failed reads of the break-glass state from Postgres (the gauges keep their last value).",
+        "AuthBreakGlassStateReadFailing (>= 10 in 15m, ticket)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_session_fixation_attempts_total",
         "counter",
         "attempts",
