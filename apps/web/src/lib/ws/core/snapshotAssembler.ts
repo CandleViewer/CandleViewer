@@ -80,7 +80,11 @@ export interface SnapshotAssembler {
    * lifts the refusal.
    */
   discard(key: string, id?: string | undefined): void;
-  /** The subscription ended or its state was voided (`unsub_ok`, `revoked`, `resnapshot`): no more chunks of it come. */
+  /**
+   * The stream is gone (released, ended by `unsub_ok` or `revoked`, or the socket replaced): nothing
+   * of it comes any more, so nothing is held or refused for it. A stream that goes on (`resnapshot`,
+   * a narrowed scope) is `discard`ed instead: the tail of its set still comes and must be refused.
+   */
   forget(key: string): void;
   /** A set of this stream is incomplete. */
   holds(key: string): boolean;

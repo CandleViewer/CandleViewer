@@ -103,6 +103,7 @@ describe("resync guard", () => {
     guard.cancel(BOOK);
     guard.cancel(BOOK); // nothing waits any more: a no-op
     expect(guard.waiting).toBe(0);
+    expect(vi.getTimerCount()).toBe(0); // stopped, not left to fire on nothing
     expect(guard.request(BOOK, vi.fn())).toBe("deferred"); // the five stamps still count
     advanceTo(REOPEN);
     expect(send).not.toHaveBeenCalled();
@@ -117,6 +118,7 @@ describe("resync guard", () => {
     guard.request(BOOK, send);
     guard.reset();
     expect(guard.waiting).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
     fill(guard); // a new connection starts from nothing: five more go at once, at the same instant
     advanceTo(REOPEN);
     expect(send).not.toHaveBeenCalled();
