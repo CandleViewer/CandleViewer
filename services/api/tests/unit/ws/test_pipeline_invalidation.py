@@ -203,6 +203,7 @@ async def _heatmap_ctl(monkeypatch: pytest.MonkeyPatch, *, replay: bool) -> list
             await sock.next(2)
         await _held(rig, sock)
         for i in range(2):
+            rig.clock.now += 1.0  # S3: past the 500 ms window, so each delta leaves at once
             rig.sequencing.publish(_HEATMAP, {"symbol": "BTCUSDT", "n": i})
             if replay:
                 rig.sequencing.publish(_HEATMAP, {"n": i}, replay_session_id=_RS)
@@ -270,7 +271,7 @@ async def _narrowed(
         await _held(rig, sock)
         for account in (ACC_A, ACC_B):
             rig.sequencing.publish("positions", {"positions": [_row(account)]}, account=account)
-        for at in (2, 3):  # the first leaves at once, queued too; the second waits in the window
+        for at in (2, 3):  # both join the window that B's row from the hub opened
             pacer.offer(sub, {"positions": [_row(ACC_B, at)]})
         assert pacer.pending_bytes > 0
         rig.grants = _grants(ACC_A)
@@ -327,18 +328,21 @@ async def test_a_narrowed_paused_topic_snaps_on_resume(monkeypatch: pytest.Monke
     assert (meta["reason"], meta["previous_seq"], rows) == ("reconfigure", 1, [_row(ACC_A)])
 
 
-async def test_a_snapshot_that_raises_after_a_narrowing_closes_only_its_own_connection(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(("family", "end"), [("positions", "snap"), ("orders", "bye")])
+async def test_a_snapshot_that_raises_after_a_narrowing_is_contained_to_its_topic(
+    family: str, end: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10.1, fail closed: a narrowed subscription's `reconfigure` snapshot that raises closes its
-    connection `internal_error` after `revoked`, and never reaches the registry's fan-out: the
-    user's other connection still gets the change."""
+    """§10.1 (S3): a narrowed subscription's `reconfigure` snapshot that raises never reaches the
+    registry's fan-out, so the user's other connection gets the change too. A droppable topic
+    drops to its `backpressure` snapshot (parked and retried on the drain cadence), built under
+    the new scope, the connection open; `orders`, never dropped, closes it `internal_error`."""
     rig, socks = _positions_rig(monkeypatch, ACC_A, ACC_B), [_Wire(), _Wire()]
+    build = rig.source.build
     async with asyncio.timeout(_DEADLINE_S):
         handlers = []
         for sock in socks:
             handlers.append((await rig.open(sock))[0])
-            await rig.sub(sock, "positions", exchange_account_ids=[str(ACC_A), str(ACC_B)])
+            await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
 
         def raises(sub: Subscription) -> SnapshotBody | None:
             raise RuntimeError(_MARK)
@@ -346,10 +350,22 @@ async def test_a_snapshot_that_raises_after_a_narrowing_closes_only_its_own_conn
         monkeypatch.setattr(rig.source, "build", raises)
         rig.grants = _grants(ACC_A)
         await rig.registry.grants_changed(USER)
-        ends = [[f["t"] for f in await sock.next(3)] for sock in socks]
+        monkeypatch.setattr(rig.source, "build", build)
+        rig.clock.now += 1.0  # the drain's retry pass is due, if it had parked the snapshot
+        ends = [await sock.next(3) for sock in socks]
+        for handler in handlers:
+            handler.cancel()
         await asyncio.wait(handlers)
-    assert ends == [["permission_change", "revoked", "bye"]] * 2
-    assert [sock.closed_with for sock in socks] == [1011, 1011]
+    assert [[f["t"] for f in frames] for frames in ends] == [
+        ["permission_change", "revoked", end]
+    ] * 2
+    if family == "orders":
+        assert [sock.closed_with for sock in socks] == [1011, 1011]
+    else:
+        snaps = [frames[2] for frames in ends]
+        assert [(f["meta"]["reason"], f["p"]["positions"]) for f in snaps] == [
+            ("backpressure", [_row(ACC_A)])
+        ] * 2
 
 
 async def test_an_on_settle_that_raises_evicts_only_its_socket(

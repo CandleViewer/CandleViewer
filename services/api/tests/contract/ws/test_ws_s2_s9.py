@@ -325,7 +325,9 @@ def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_442
     w = World(backpressure=backpressure)
     with connect(w) as c:
         all_private(c, "orders")
-        assert _flood(w, "orders", "orders", SPEC_QUEUE_FRAMES + 500) == SPEC_QUEUE_FRAMES + 500
+        # Flag on, nothing is taken after the close (WS-D01): the update over budget is the last.
+        taken = SPEC_QUEUE_FRAMES + (500 if backpressure is None else 1)
+        assert _flood(w, "orders", "orders", SPEC_QUEUE_FRAMES + 500) == taken
         deltas = 0
         while (f := c.recv())["t"] != "bye":
             deltas += f["t"] == "d"
@@ -342,7 +344,9 @@ def test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
     with connect(w) as c:
         c.sub({"ch": "trades.BTCUSDT"})
         c.drain(1)
-        n = SPEC_QUEUE_FRAMES + 500
+        from candleviewer.ws.coalescing import MAX_PENDING_ITEMS  # the bound this burst overflows
+
+        n = MAX_PENDING_ITEMS + 2
         body = delta_body("trades")
         w.call(lambda: [w.hub.publish("trades.BTCUSDT", body) for _ in range(n)])
         seen: list[dict[str, Any]] = []
@@ -365,8 +369,9 @@ def test_s6_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
         c.drain(1)
         body = delta_body("trades")
         w.call(lambda: [w.hub.publish("trades.BTCUSDT", body) for _ in range(SPEC_QUEUE_FRAMES)])
-        got = sum(c.recv(validate=False)["t"] == "d" for _ in range(SPEC_QUEUE_FRAMES))
-        assert got == SPEC_QUEUE_FRAMES
+        w.clock.now += 0.1  # paced (§8.1): the prints after the first leave as one batch
+        got = [len(c.recv(validate=False)["p"]["trades"]) for _ in range(2)]
+        assert got == [1, SPEC_QUEUE_FRAMES - 1]
 
 
 # -- S7 ----------------------------------------------------------------------------------------

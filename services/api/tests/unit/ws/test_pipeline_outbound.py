@@ -158,8 +158,10 @@ class _Rig:
         backpressure: BackpressureConfig | None = None,
         *,
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
+        tick_s: float = 0.005,
     ) -> None:
         self.clock = _Clock()
+        self.paced = backpressure is not None  # flag on, the hub's deltas are paced (S3)
         self.audit = _Audit()
         self.hub = _Hub()
         self.revocation = RevocationHub()
@@ -193,7 +195,7 @@ class _Rig:
             audit=self.audit,
             clock=self.clock,
             wall_ms=self.clock.wall_ms,
-            tick_s=0.005,
+            tick_s=tick_s,
             system_notices=system_notices,
             backpressure=backpressure,
         )
@@ -222,7 +224,9 @@ class _Rig:
         return await sock.next(2)
 
     def book_delta(self, i: int, **extra: Any) -> int:
+        """One book delta; flag on, 50 ms after the last, so it leaves at once (D12)."""
         body = {"symbol": "BTCUSDT", "depth": 50, "bids": [[f"{100 + i}.0", "1.000"]], "asks": []}
+        self.clock.now += 0.05 if self.paced else 0.0
         return self.sequencing.publish(_BOOK, body | extra)
 
 
