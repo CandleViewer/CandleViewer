@@ -4,12 +4,16 @@ A module that is built but never wired into `create_app()` / the lifespan /
 the statechart loader is invisible to its own unit tests. Everything here is
 discovered by scanning the package, so a NEW unwired module fails and names
 itself. Intentional exceptions live in `composition_allowlist.json` (reason +
-ticket per entry); stale entries fail too, so the list can only shrink.
+ticket per entry); stale entries fail too, so nothing lingers once it is wired.
 
-`openapi_pending` is a FROZEN baseline (147 ops; was 158 before E15-T01 served workspaces), ticket
-``E49-K01-F4-baseline``. It may only shrink: new entries must carry a real
-ticket (``#123`` or ``E12-S03``) and the total may never exceed the baseline,
-so to add an operation either serve it or file a ticket and fix the count.
+`openapi_pending` holds two kinds of entry. The FROZEN E49 baseline (ticket
+``E49-K01-F4-baseline``, 136 ops) may only shrink. Contract-first entries carry a real
+ticket (``#123`` or ``E12-S03``) and must be removed once served (the stale check fails
+until they are). The total cap is 148 = 136 frozen + 12 contract-first (#3048). Keep
+both caps tight: a contract PR that adds an operation raises ``PENDING_BASELINE`` by
+exactly its overflow, measured against current ``main`` with CI re-run there (two
+parallel raises merge cleanly yet both under-count); a PR that serves a frozen
+operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same amount.
 """
 
 from __future__ import annotations
@@ -37,7 +41,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 147
+PENDING_BASELINE = 148
+FROZEN_BASELINE = 136
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(
@@ -313,7 +318,7 @@ def test_openapi_pending_list_is_a_shrinking_baseline() -> None:
     pending = ALLOW["openapi_pending"]
     assert len(pending) <= PENDING_BASELINE, (
         f"openapi_pending grew to {len(pending)} (> {PENDING_BASELINE}): serve the operation "
-        "or file a ticket and justify; the baseline may only shrink"
+        "or raise the cap by exactly the overflow in the contract PR that adds it"
     )
     bad = sorted(
         k
@@ -322,4 +327,7 @@ def test_openapi_pending_list_is_a_shrinking_baseline() -> None:
     )
     assert not bad, f"new pending entries need a real ticket (#123 or E12-S03): {bad}"
     baseline = [k for k, m in pending.items() if m["ticket"] == BASELINE_TICKET]
-    assert len(baseline) <= PENDING_BASELINE
+    assert len(baseline) <= FROZEN_BASELINE, (
+        f"the frozen E49 baseline grew to {len(baseline)} (> {FROZEN_BASELINE}); it may only "
+        "shrink - new operations carry their own ticket"
+    )
