@@ -247,8 +247,8 @@ class _BarsMerge(_Merge):
 
 
 class _KeyedMerge(_Merge):
-    """One list of entities, last write wins per key (`ticker`, `metrics`, `wallet`); `newer(old,
-    new)` may discard a replacement."""
+    """One list of entities, last write wins per key (`ticker`, `metrics`, each `wallet` list);
+    `newer(old, new)` may discard a replacement."""
 
     def __init__(
         self,
@@ -302,6 +302,35 @@ def _not_older(old: Payload, new: Payload) -> bool:
     """§15: entities carry `updated_at_ms` so a late-arriving older frame is discarded; the field
     is mandatory, so an entity without it is refused (overflow) rather than guessed."""
     return int(new["updated_at_ms"]) >= int(old["updated_at_ms"])
+
+
+class _WalletMerge(_KeyedMerge):
+    """§8.2 `wallet` (E27-T04): two keyed lists. `balances` per (account, coin), where a late older
+    balance is discarded (§15 `updated_at_ms`), and `health` per account in arrival order: its
+    `changed_at_ms` follows the wall clock, which can step back, so it orders nothing. Health is
+    state, so a delta that only reports it (`balances` empty) is merged, never discarded, and the
+    merged frame keeps the latest entry of every account its window touched."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, "balances", _balance_key, newer=_not_older, extra=("health",))
+        self.health = _KeyedMerge(limit, "health", _account_key)
+
+    def merge(self, body: Payload) -> bool:
+        changed = super().merge(body)
+        before = self.health.bytes
+        changed = self.health.merge(body) or changed
+        self.bytes += self.health.bytes - before
+        return changed
+
+    def result(self) -> dict[str, Any]:
+        out = super().result()
+        if self.health.items:
+            out["health"] = list(self.health.items.values())
+        return out
+
+    def reset(self) -> None:
+        super().reset()
+        self.health.reset()
 
 
 class _PositionsMerge(_KeyedMerge):
@@ -513,6 +542,10 @@ def _balance_key(item: Payload) -> Hashable:
     return (str(item["exchange_account_id"]), str(item["coin"]))
 
 
+def _account_key(item: Payload) -> Hashable:
+    return str(item["exchange_account_id"])
+
+
 def _metric_key(item: Payload) -> Hashable:
     """Per series: the metric code and its `params` as canonical JSON (string keys, sorted; a
     Decimal as its decimal string, the wire form), so every schema-valid `params` has a key."""
@@ -537,7 +570,7 @@ _RULES: Final[Mapping[str, Callable[[int, int], _Merge]]] = {
     "heatmap": lambda keys, _: _HeatmapMerge(keys),
     "metrics": lambda keys, _: _KeyedMerge(keys, "series", _metric_key),
     "ticker": lambda keys, _: _KeyedMerge(keys, "tickers", _symbol_key),
-    "wallet": lambda keys, _: _KeyedMerge(keys, "balances", _balance_key, newer=_not_older),
+    "wallet": lambda keys, _: _WalletMerge(keys),
     "positions": lambda keys, _: _PositionsMerge(keys),
     "trades": lambda _, items: _AppendMerge(items, "trades", ("dropped",)),
     "liquidations": lambda _, items: _AppendMerge(items, "liquidations"),

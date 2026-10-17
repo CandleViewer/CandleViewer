@@ -3671,6 +3671,16 @@
                 "default": false,
                 "type": "boolean"
               },
+              "stale_since_ms": {
+                "oneOf": [
+                  {
+                    "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "unrealised_pnl": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
@@ -3698,6 +3708,55 @@
         "coalesced_count": {
           "minimum": 1,
           "type": "integer"
+        },
+        "health": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "changed_at_ms": {
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+              },
+              "exchange_account_id": {
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+              },
+              "heartbeat_age_ms": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reason": {
+                "enum": [
+                  "ws_heartbeat",
+                  "rest_only",
+                  "ws_silent",
+                  "no_success",
+                  "never_connected"
+                ]
+              },
+              "rest_only": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "healthy",
+                  "degraded",
+                  "down"
+                ]
+              }
+            },
+            "required": [
+              "exchange_account_id",
+              "state",
+              "reason",
+              "heartbeat_age_ms",
+              "rest_only",
+              "changed_at_ms"
+            ],
+            "type": "object"
+          },
+          "type": "array"
         }
       },
       "required": [

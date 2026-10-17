@@ -1638,10 +1638,22 @@ export interface Wallet {
      */
     is_paper?: boolean;
     stale?: boolean;
+    stale_since_ms?: number | null;
     /**
      * Epoch milliseconds, UTC.
      */
     updated_at_ms: number;
+  }[];
+  health?: {
+    exchange_account_id: string;
+    state: "healthy" | "degraded" | "down";
+    reason: "ws_heartbeat" | "rest_only" | "ws_silent" | "no_success" | "never_connected";
+    heartbeat_age_ms: number | null;
+    rest_only: boolean;
+    /**
+     * Epoch milliseconds, UTC.
+     */
+    changed_at_ms: number;
   }[];
   coalesced?: boolean;
   coalesced_count?: number;

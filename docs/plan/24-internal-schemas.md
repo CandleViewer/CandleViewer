@@ -1458,6 +1458,35 @@ sequenceDiagram
 
 The synchronous REST response is an **accept acknowledgement, not a fill confirmation** — the private WS `order`/`execution` streams are the source of truth (research 06 §5, §19).
 
+**8.4.1 Account checks of the order-entry gate (E27-T04, decision Q5 on #837).** Submit routes
+ask one composed synchronous gate before any OMS work (C-2.21). Its kernel is
+`candleviewer.domain.order_entry` (E42-T03, #964). The E42-T03 gate section, §8.10 once #964 adds
+it, owns the gate's scope and the closed `reason` set of its `403 trading_disabled` problem; this
+section owns only the account side. `AccountHealthCheck` (`candleviewer.accounts.order_gate`)
+fills an account slot of `OrderEntryGate(maintenance, *account_checks)`, after the global
+maintenance check. It reads only in-memory state, never an interpreter or the network, and
+refuses with the first of:
+
+1. `account_disabled_by_policy`: the key verifier (E27-T03) disabled the account, for a closed
+   `DisabledReason`;
+2. `no_active_key`: the account has no verified active key, or its standing is unknown;
+3. `account_unhealthy`: the account is `down` or unmonitored, derived from its evidence on every
+   read.
+
+Each reason has one fixed `detail` sentence. It never names an id, a secret, exchange-supplied
+text or the key-policy rule that failed: the 403 also reaches callers without `keys:read`, so that
+cause is shown only where `keys:read` is checked. Each refusal is audited write-ahead, before the
+403 is returned (C-2.9). The submit route that consults the gate owns that write, because it holds
+the actor, role and request context: one `account.disabled_by_policy` record with actor, role,
+account, `reason` and traceId. That obligation, with `test_a_refused_order_is_audited_before_the_403`
+and a forbidden-role and a cross-account case that RBAC refuses first, disclosing no gate `reason`,
+is #2780 in the E29-T04 lane.
+
+Key age never refuses (US-ACCT-005). A stale wallet does not refuse an order either: risk-based
+sizing reads `AccountHealthCheck.risk_sizing_available(account_id)` before any wallet figure (§9.3
+step 4), and a stale or missing snapshot answers `false`, which makes risk-based sizing unavailable
+for that account (US-ACCT-008).
+
 ### 8.5 Reconciliation algorithm
 
 > **Statechart contract:** [`28-statechart-catalogue.md` §B19](28-statechart-catalogue.md#b19--reconciliation-job) — the fetch → diff → remediate → report pipeline, plus `stale_lockout`. The contract is normative for the _behaviour_; this section remains the owner of the algorithm, the Bybit endpoints used and the divergence taxonomy (`CONSTITUTION.md` §16.5). Governed by [`27-adrs/ADR-0016-statechart-runtime.md`](27-adrs/ADR-0016-statechart-runtime.md).
@@ -3855,7 +3884,8 @@ class ExchangeConfig(BaseModel):
     recv_window_ms: int = 5000
     clock_check_interval_s: int = 60
     clock_block_threshold_ms: int = 2000
-    ws_ping_interval_s: int = 20
+    ws_ping_interval_s: int = 20          # public streams; a private stream pings every
+                                          # CV_ACCOUNT_HEARTBEAT_S / 2 (5 s) for E27-T04 health
     ws_reconnect_base_ms: int = 500
     ws_reconnect_max_ms: int = 30000
     max_topics_per_subscribe: int = 10

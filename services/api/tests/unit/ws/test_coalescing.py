@@ -27,7 +27,7 @@ Body = dict[str, Any]
 State = dict[str, Any]
 _LISTS = frozenset(
     {"bids", "asks", "bars", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
-    | {"series", "tickers", "balances", "positions", "removed", "columns"}
+    | {"series", "tickers", "balances", "health", "positions", "removed", "columns"}
 )
 
 # -- reference clients: every payload, coalesced or not, is applied the same way (§8.2) --------
@@ -87,6 +87,13 @@ def _keyed(field: str, key: Callable[[Body], Any], *, newer: bool = False) -> Ca
             items.pop(pid, None)
 
     return apply
+
+
+def _apply_wallet(state: State, body: Mapping[str, Any]) -> None:
+    _keyed("balances", lambda b: (b["exchange_account_id"], b["coin"]), newer=True)(state, body)
+    health = state.setdefault("health", {})
+    for entry in body.get("health", ()):
+        health[entry["exchange_account_id"]] = entry  # arrival order (§8.2, E27-T04)
 
 
 def _append(field: str) -> Callable[..., None]:
@@ -198,16 +205,29 @@ _ticker = st.builds(
     st.sampled_from(["BTCUSDT", "ETHUSDT"]),
     _DEC,
 )
-_wallet = st.builds(
+_balance = st.builds(
     lambda acc, coin, equity, at: {
-        "balances": [
-            {"exchange_account_id": acc, "coin": coin, "equity": equity, "updated_at_ms": at}
-        ]
+        "exchange_account_id": acc,
+        "coin": coin,
+        "equity": equity,
+        "updated_at_ms": at,
     },
     st.sampled_from(["a1", "a2"]),
     st.sampled_from(["USDT", "BTC"]),
     _DEC,
     st.integers(0, 5),
+)
+_account_health = st.builds(
+    lambda acc, state, at: {"exchange_account_id": acc, "state": state, "changed_at_ms": at},
+    st.sampled_from(["a1", "a2"]),
+    st.sampled_from(["healthy", "degraded", "down"]),
+    st.integers(0, 5),
+)
+#: E27-T04: a delta may carry balances, health entries, both, or health only (§8.2).
+_wallet = st.builds(
+    lambda balances, health: {"balances": balances, **({"health": health} if health else {})},
+    st.lists(_balance, max_size=1),
+    st.lists(_account_health, max_size=2),
 )
 _position = st.builds(
     lambda pid, size, at: {
@@ -258,11 +278,7 @@ FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
         _keyed("series", lambda m: (m["metric"], json.dumps(m.get("params") or {}))),
     ),
     ("ticker", st.lists(_ticker, max_size=25), _keyed("tickers", lambda t: t["symbol"])),
-    (
-        "wallet",
-        st.lists(_wallet, max_size=25),
-        _keyed("balances", lambda b: (b["exchange_account_id"], b["coin"]), newer=True),
-    ),
+    ("wallet", st.lists(_wallet, max_size=25), _apply_wallet),
     (
         "positions",
         st.lists(_positions, max_size=25),
@@ -499,6 +515,11 @@ def test_coalescer_book_level_bound_refuses_until_cleared() -> None:
         ("ticker", {"tickers": [{"symbol": "A"}]}, {"tickers": [{"symbol": "B"}]}),
         ("positions", {"positions": [], "removed": ["p1"]}, {"positions": [], "removed": ["p2"]}),
         ("trades", {"trades": [{"id": "1"}]}, {"trades": [{"id": "2"}]}),
+        (
+            "wallet",
+            {"balances": [], "health": [{"exchange_account_id": "a1"}]},
+            {"balances": [], "health": [{"exchange_account_id": "a2"}]},
+        ),
     ],
 )
 def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown: Body) -> None:
@@ -517,6 +538,7 @@ def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown
         ("bars", {"bars": [{"index": 0, "confirm": False}]}),
         ("footprint", {"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "x"}]}]}),
         ("wallet", {"balances": [{"coin": "USDT"}]}),
+        ("wallet", {"balances": [], "health": [{"state": "down"}]}),
         ("trades", {"trades": 7}),
     ],
 )
@@ -646,6 +668,68 @@ def test_coalescer_wallet_older_balance_is_discarded() -> None:
     [frame] = queue.take()
     assert frame.coalesced_count == 1
     assert frame.body == {"balances": [new]}
+
+
+def _health(account: str, state: str, changed_at_ms: int) -> Body:
+    return {
+        "exchange_account_id": account,
+        "state": state,
+        "reason": "no_success" if state == "down" else "ws_heartbeat",
+        "heartbeat_age_ms": None,
+        "rest_only": False,
+        "changed_at_ms": changed_at_ms,
+    }
+
+
+def test_coalescer_wallet_health_only_delta_is_emitted() -> None:
+    """§8.2 (E27-T04): health is state, so a delta with no balance is never discarded."""
+    queue = CoalescingQueue("wallet")
+    down = {"balances": [], "health": [_health("a1", "down", 5)]}
+    assert queue.offer(down) and queue.pending
+    [frame] = queue.take()
+    assert (frame.body, frame.coalesced_count) == (down, 1)
+
+
+def test_coalescer_wallet_window_keeps_the_latest_health_of_every_account() -> None:
+    queue = CoalescingQueue("wallet")
+    balance = {"exchange_account_id": "a1", "coin": "USDT", "equity": "2", "updated_at_ms": 9}
+    entries = [_health("a1", "down", 5), _health("a2", "healthy", 6), _health("a1", "healthy", 7)]
+    queue.offer({"balances": [balance]})
+    for entry in entries:
+        queue.offer({"balances": [], "health": [entry]})
+    [frame] = queue.take()
+    assert frame.coalesced_count == 4
+    assert frame.body == {"balances": [balance], "health": entries[1:]}
+
+
+def test_coalescer_wallet_balance_only_window_carries_no_health_list() -> None:
+    """Additive (C-6.3): a window with no health entry keeps the frame shape it always had."""
+    queue = CoalescingQueue("wallet")
+    usdt = {"exchange_account_id": "a1", "coin": "USDT", "equity": "2", "updated_at_ms": 9}
+    btc = usdt | {"coin": "BTC"}
+    for balance in (usdt, btc):
+        queue.offer({"balances": [balance]})
+    [frame] = queue.take()
+    assert (frame.body, frame.coalesced_count) == ({"balances": [usdt, btc]}, 2)
+
+
+def test_coalescer_wallet_later_health_entry_wins_even_when_dated_earlier() -> None:
+    """`changed_at_ms` follows the wall clock, which can step back: arrival order decides."""
+    queue = CoalescingQueue("wallet")
+    for entry in (_health("a1", "healthy", 9_000), _health("a1", "down", 1_000)):
+        queue.offer({"balances": [], "health": [entry]})
+    [frame] = queue.take()
+    assert frame.body["health"] == [_health("a1", "down", 1_000)]
+
+
+def test_coalescer_wallet_pending_bytes_count_health_entries() -> None:
+    queue = CoalescingQueue("wallet")
+    queue.offer({"balances": [], "health": [_health("a1", "down", 1)]})
+    one = queue.pending_bytes
+    queue.offer({"balances": [], "health": [_health("a2", "down", 1)]})
+    assert 0 < one < queue.pending_bytes
+    queue.take()
+    assert queue.pending_bytes == 0
 
 
 def test_coalescer_metrics_params_keep_series_apart() -> None:

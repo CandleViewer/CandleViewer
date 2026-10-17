@@ -858,6 +858,10 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |
+| `CV_ACCOUNT_HEARTBEAT_S`         | float  | `10`                      | process | max heartbeat age for `healthy` (auth reply, pong or topic message); ping every half; ≤ 10, < `CV_ACCOUNT_DOWN_S`   |
+| `CV_ACCOUNT_DOWN_S`              | float  | `30`                      | process | no WS or REST success this long = `down`: orders refused, dead-man's switch called; ≤ 30, US-ACCT-010; > heartbeat  |
+| `CV_KEY_ROTATION_POLICY_DAYS`    | int    | `90`                      | process | key age from registration past which `rotation_state` is `overdue`; 2 to 365, never disables a key (E27-T04)        |
+| `CV_KEY_ROTATION_WARN_DAYS`      | int    | `14`                      | process | `warn` window before `rotation_due_at`; at least 1 day and shorter than the policy                                  |
 | `CV_FEATURE_FLAGS`               | json   | `{}`                      | runtime | admin-editable                                                                                                      |
 | `CV_IMPORT_MAX_CONCURRENCY`      | int    | `2`                       | process | archive import downloads in flight (E16-T10)                                                                        |
 | `CV_IMPORT_MAX_MBPS`             | float  | `50`                      | process | archive import bandwidth cap, megabits/s                                                                            |
