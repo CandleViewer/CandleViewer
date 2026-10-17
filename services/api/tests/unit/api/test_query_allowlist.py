@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.api import alerts, onboarding, sessions
+from candleviewer.api import alerts, me, onboarding, sessions
 from candleviewer.api.contract_conformance import load_openapi_spec
 
 
@@ -37,6 +37,9 @@ def _declared_query(spec: dict[str, Any], path: str, method: str) -> frozenset[s
         ("get", "/alerts", alerts.LIST_ALERTS_QUERY),
         ("get", "/alerts/{alertId}", alerts.GET_ALERT_QUERY),
         ("get", "/onboarding/checklist", onboarding.CHECKLIST_QUERY),
+        ("get", "/me", me.GET_ME_QUERY),
+        ("get", "/me/preferences", me.GET_MY_PREFERENCES_QUERY),
+        ("get", "/me/keymap", me.GET_MY_KEYMAP_QUERY),
     ],
 )
 def test_self_service_allow_list_is_the_operations_declared_query(

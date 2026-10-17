@@ -120,7 +120,13 @@ class _Identity:
 
     async def user(self, user_id: str) -> dict[str, Any]:
         a = self._actor(user_id)
-        return {"id": user_id, "username": a, "roles": [ROLE_OF[a]], "status": "active"}
+        return {
+            "id": user_id,
+            "username": a,
+            "email": f"{a}@example.com",
+            "roles": [ROLE_OF[a]],
+            "status": "active",
+        }
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         a = self._actor(user_id)
@@ -128,6 +134,16 @@ class _Identity:
             "permissions": sorted(actor_permissions(a, self._spec)),
             "account_scope": [str(g) for g in actor_grants(a)],
         }
+
+    async def accounts(self, user_id: str) -> list[dict[str, Any]]:
+        """`GET /me` accounts: an owner reaches every account, a manager its grants (`trade`)."""
+        a = self._actor(user_id)
+        ids = (GRANTED, FOREIGN) if ROLE_OF[a] == "owner" else actor_grants(a)
+        return [
+            {"exchange_account_id": str(i), "label": f"acct-{i.hex[-1]}", "environment": "demo",
+             "mode": "trade"}
+            for i in ids
+        ]  # fmt: skip
 
 
 class _Sessions:

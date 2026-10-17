@@ -9,18 +9,21 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.auth.errors import SessionReadOnly
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, decide
 from tests.contract.rbac.rbac_harness import (
     ACTORS,
     FOREIGN,
     GRANTED,
+    ROLE_OF,
     World,
     bearer,
     fill_path,
@@ -293,12 +296,69 @@ def test_self_service_reads_are_always_about_the_caller(world: World) -> None:
     assert mgr.json()["user"]["id"] == str(user_id_of("manager_with_grant"))
 
 
+#: The accounts each seeded actor may reach (`GET /me`): an owner every account, a manager its
+#: grants, a viewer or an ungranted manager none.
+_ME_ACCOUNTS = {
+    "owner": {str(GRANTED), str(FOREIGN)},
+    "manager_with_grant": {str(GRANTED)},
+    "manager_without_grant": set(),
+    "viewer": set(),
+}
+
+
+@pytest.mark.parametrize("actor", ACTORS[:4])
+def test_me_is_always_about_the_caller_with_their_own_role_and_accounts(
+    world: World, actor: str
+) -> None:
+    """The shell bootstrap (#2713): the identity, role and account scope come from the verified
+    session alone, so each actor reads exactly their own and never another user's."""
+    resp = world.client.get("/me", headers=bearer(actor))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["user"]["id"] == str(user_id_of(actor))
+    assert body["role"] == ROLE_OF[actor]
+    assert {a["exchange_account_id"] for a in body["accounts"]} == _ME_ACCOUNTS[actor]
+    assert body["session"]["session_id"] == str(uuid.uuid5(user_id_of(actor), "session"))
+    assert body["session"]["environment"] == world.app.state.app_context.settings.environment.value
+
+
+@pytest.mark.parametrize("actor", ACTORS[:4])
+def test_me_preferences_and_keymap_serve_the_contract_defaults_to_every_role(
+    world: World, actor: str
+) -> None:
+    """Every role holds `settings:read`; nothing is stored yet, so each gets the empty answer."""
+    prefs = world.client.get("/me/preferences", headers=bearer(actor))
+    keymap = world.client.get("/me/keymap", headers=bearer(actor))
+    assert (prefs.status_code, prefs.json()) == (200, {"_meta": {"overridden": []}})
+    assert (keymap.status_code, keymap.json()) == (200, {"bindings": []})
+
+
+def test_a_session_in_the_read_only_downgrade_still_reads_the_bootstrap(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`403 session_read_only` is a refusal of writes; the bootstrap reads stay served."""
+
+    async def read_only(_session_id: str) -> None:
+        raise SessionReadOnly(datetime.now(UTC) + timedelta(minutes=5))
+
+    monkeypatch.setattr(world.step_up, "assert_writable", read_only)
+    write = world.client.put(
+        f"/users/{user_id_of('viewer')}/roles", json={"roles": ["viewer"]}, headers=bearer("owner")
+    )
+    assert write.status_code == 403 and write.json()["code"] == "session_read_only"
+    for path in ("/me", "/me/preferences", "/me/keymap"):
+        assert world.client.get(path, headers=bearer("owner")).status_code == 200, path
+
+
 #: The executed self-service routes (x-rbac `scope: self`), which take no target-user parameter.
 #: `GET /onboarding/checklist` is `not_executable` in this pack (501 in the CI app), so it is not
 #: listed; its refusal is asserted in tests/unit/api/test_onboarding_checklist.py.
 _SELF_SERVICE_QUERY_ROUTES = [
     ("GET", "/auth/session"),
     ("GET", "/auth/sessions"),
+    ("GET", "/me"),
+    ("GET", "/me/preferences"),
+    ("GET", "/me/keymap"),
     ("POST", "/auth/logout"),
     ("DELETE", "/me/sessions/{sessionId}"),
     ("GET", "/alerts"),
