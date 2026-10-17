@@ -110,14 +110,17 @@ const isUuid = (v: unknown): v is string => isStr(v) && v.length === 36 && UUID.
 const SPAN = /^(?!0{16}$)[0-9a-f]{16}$/; // W3C span id: 16 hex digits, never all zeros
 const isSpan = (v: unknown): v is string => isStr(v) && v.length === 16 && SPAN.test(v);
 /** 13.1 `error.message` and `bye.message`: `maxLength 1000`. They reach the log (`errorHandler`), so the bound is checked. */
-const isText = (v: unknown): v is string => isStr(v) && v.length <= 1000;
+const MAX_TEXT = 1000;
+const isText = (v: unknown): v is string => isStr(v) && v.length <= MAX_TEXT;
+/** `bye.reason` is `maxLength 64`, and `revoked.reason` is an enum of names well under that: a short tag, logged and compared. */
+const isTag = (v: unknown): v is string => isStr(v) && v.length <= 64;
 /** RFC 6455 close codes; the server's own set (`bye.code`) may grow, so the range is checked, not the list. */
 const isCloseCode = (v: unknown): boolean =>
   typeof v === "number" && Number.isInteger(v) && v >= 1000 && v <= 4999;
 
 /** 13.1 `snapMeta`: the documented fields, each checked. `reason` is an open set (C18), so any short string is kept. */
 const META_FIELDS: Readonly<Record<string, (v: unknown) => boolean>> = {
-  reason: (v) => isStr(v) && v.length <= 64,
+  reason: isTag,
   source: (v) => v === "live" || v === "replay",
   previous_seq: isSeq,
   include_delta: (v) => typeof v === "boolean",
@@ -153,9 +156,9 @@ const REQUIRED: Readonly<Record<ControlType, string>> = {
   sub_ok: "results:array",
   unsub_ok: "results:array",
   ctl_ok: "effective:object",
-  revoked: "reason:text message:text",
+  revoked: "reason:tag message:string",
   err: "code:text message:text",
-  bye: "code:number reason:text message:text",
+  bye: "code:number reason:tag message:text",
 };
 
 const isControl = (t: unknown): t is ControlType => isStr(t) && Object.hasOwn(REQUIRED, t);
@@ -167,6 +170,7 @@ function hasFields(spec: string, p: unknown): boolean {
     if (kind === "array") return Array.isArray(v);
     if (kind === "object") return isObj(v);
     if (kind === "text") return isText(v);
+    if (kind === "tag") return isTag(v);
     return typeof v === kind && (kind !== "number" || Number.isFinite(v));
   });
 }
@@ -211,6 +215,15 @@ function readHead(o: Record<string, unknown>): Head | undefined {
 }
 
 /**
+ * `revoked.message` has no `maxLength` in the schema, and the revocation must still end the stream,
+ * so a long one is cut for the log (C-12.6), not refused as an over-long `err` or `bye` one is.
+ */
+function cutMessage(p: Record<string, unknown>): Record<string, unknown> {
+  // Cast: `payloadOk` verified that `message` is a string.
+  return { ...p, message: (p["message"] as string).slice(0, MAX_TEXT) };
+}
+
+/**
  * Decodes one `cv.v1.json` message (D3). Unknown fields are ignored (2.3); anything else wrong is
  * `frame_malformed`. `e: "b64"` becomes an owned `ArrayBuffer`: validate it with `validateCvwb`.
  */
@@ -233,8 +246,9 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
 
   if (t === "ping" || t === "pong" || isControl(t)) {
     const ok = t === "ping" || t === "pong" ? optional(p, isObj) : payloadOk(t, p);
+    const body = ok && t === "revoked" && isObj(p) ? cutMessage(p) : p;
     // Cast: the fields the client reads were verified above; the rest of `p` is carried through.
-    return ok ? ({ ...head, t, p } as Inbound) : fail(`${t} payload is malformed`, "payload");
+    return ok ? ({ ...head, t, p: body } as Inbound) : fail(`${t} payload is malformed`, "payload");
   }
   if (t !== "snap" && t !== "d") return fail("unknown or client-only frame type");
 
@@ -248,14 +262,6 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
   // `b` is the MessagePack form of a binary body; on `cv.v1.json` it must be `b64`.
   if (e !== "j" && bytes === undefined) return fail("payload is not a valid j or b64 body");
   const body: DataBody = bytes === undefined ? { e: "j", p } : { e: "b64", bytes };
-  return {
-    ...head,
-    t,
-    ch,
-    s,
-    ts,
-    meta: isObj(meta) ? readMeta(meta) : undefined,
-    body,
-    size: data.length,
-  };
+  const kept = isObj(meta) ? readMeta(meta) : undefined; // only the documented fields survive
+  return { ...head, t, ch, s, ts, meta: kept, body, size: data.length };
 }

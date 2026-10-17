@@ -32,9 +32,13 @@ const AUTH_OK = {
 const RS = "bb000000-0000-4000-8000-000000000001";
 const KILL = { engaged: true, scope: "accounts", exchange_account_ids: ["a1"] };
 const authOkWith = (kill_switch: unknown) => wire({ t: "auth_ok", p: { ...AUTH_OK, kill_switch } });
-const bye = (code: number, message = "x") => wire({ t: "bye", p: { code, reason: "x", message } });
+const bye = (code: number, message = "x", reason = "x") =>
+  wire({ t: "bye", p: { code, reason, message } });
 const LONG = "m".repeat(1001); // one over the 1000 of `error.message` and `bye.message` (13.1)
 const FULL = "m".repeat(1000);
+const TAG = "r".repeat(64); // the `maxLength` of `bye.reason` (13.1); `revoked.reason` is an enum
+const welcome = (p: object) => wire({ t: "welcome", p });
+const revoked = (p: object) => wire({ t: "revoked", ch: "orders", p });
 const sub_ok_with = (ch: string) => wire({ t: "sub_ok", p: { results: [{ ch, ok: true }] } });
 const without = (p: Record<string, unknown>, key: string) =>
   Object.fromEntries(Object.entries(p).filter(([k]) => k !== key));
@@ -98,31 +102,26 @@ describe("decodeFrame", () => {
     ["a ch that is not a topic name", wire({ ...DELTA, ch: "Book BTC" })],
     ["a 121-character ch", wire({ ...DELTA, ch: `book.${"A".repeat(116)}` })],
     ["a replay session id that is not a UUID", wire({ ...DELTA, rs: "bb000000" })],
-    [
-      "a 36-character rs that is not a UUID",
-      wire({ ...DELTA, rs: "zz000000-0000-4000-8000-000000000001" }),
-    ],
+    ["a 36-character rs that is not a UUID", wire({ ...DELTA, rs: RS.replace("bb", "zz") })],
     ["a span id of the wrong shape", wire({ ...DELTA, sp: "0123456789ABCDEF" })],
     ["an all-zero span id", wire({ ...DELTA, sp: "0".repeat(16) })],
     ["a meta that is an array", wire({ ...DELTA, meta: [] })],
     ["a heartbeat payload that is an array", wire({ t: "pong", p: [] })],
     ["a sub_ok result whose ch is not a topic", sub_ok_with("x y")],
     // S1 lens C: fields S4 reads, now verified rather than only typed.
-    [
-      "a welcome without server_time_ms",
-      wire({ t: "welcome", p: without(WELCOME, "server_time_ms") }),
-    ],
+    ["a welcome without server_time_ms", welcome(without(WELCOME, "server_time_ms"))],
+    ["a welcome with a null heartbeat", welcome({ ...WELCOME, heartbeat: null })],
+    ["a ctl_ok whose effective is not an object", wire({ t: "ctl_ok", p: { effective: [] } })],
     ["an auth_ok without session_id", wire({ t: "auth_ok", p: without(AUTH_OK, "session_id") })],
     ["an auth_ok without permissions", wire({ t: "auth_ok", p: without(AUTH_OK, "permissions") })],
     ["an err without a message", wire({ t: "err", p: { code: "internal_error" } })],
-    ["a revoked without a message", wire({ t: "revoked", ch: "orders", p: { reason: "x" } })],
+    ["a revoked without a message", revoked({ reason: "x" })],
     ["an err message over 1000 characters", wire({ t: "err", p: { code: "x", message: LONG } })],
     ["an err code over 1000 characters", wire({ t: "err", p: { code: LONG, message: "m" } })],
-    [
-      "a revoked message over 1000 characters",
-      wire({ t: "revoked", ch: "orders", p: { reason: "x", message: LONG } }),
-    ],
+    ["a revoked message that is not text", revoked({ reason: "x", message: 5 })],
+    ["a revoked reason over 64 characters", revoked({ reason: `${TAG}r`, message: "m" })],
     ["a bye message over 1000 characters", bye(4403, LONG)],
+    ["a bye reason over 64 characters", bye(4403, "x", `${TAG}r`)],
     ["a bye without a message", wire({ t: "bye", p: { code: 4403, reason: "x" } })],
     ["a bye code below 1000", bye(999)],
     ["a bye code above 4999", bye(5000)],
@@ -153,9 +152,16 @@ describe("decodeFrame", () => {
     expect(decodeFrame(wire({ t: "sub_ok", p: results }))).toMatchObject({ t: "sub_ok" });
     const err = { t: "err", p: { code: "internal_error", message: FULL } };
     expect(decodeFrame(wire(err))).toMatchObject({ t: "err" });
-    const revoked = { t: "revoked", ch: "orders", p: { reason: "session_revoked", message: FULL } };
-    expect(decodeFrame(wire(revoked))).toMatchObject({ t: "revoked" });
-    expect(decodeFrame(bye(4403, FULL))).toMatchObject({ t: "bye" });
+    expect(decodeFrame(revoked({ reason: TAG, message: FULL }))).toMatchObject({ t: "revoked" });
+    expect(decodeFrame(bye(4403, FULL, TAG))).toMatchObject({ t: "bye" });
+  });
+
+  it("cuts a revoked message to 1000 characters instead of refusing the revocation", () => {
+    const p = { reason: "session_revoked", message: "m".repeat(5000), resubscribe_allowed: false };
+    expect(decodeFrame(revoked(p))).toMatchObject({
+      t: "revoked",
+      p: { ...p, message: FULL }, // cut; the rest is carried through
+    });
   });
 
   it("keeps only the documented meta fields, each of its own type (13.1)", () => {
