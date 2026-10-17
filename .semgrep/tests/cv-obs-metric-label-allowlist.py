@@ -14,6 +14,7 @@ def ok_trigger_mode(reg: object) -> None:
 
 
 def ok_bounded_2453(reg: object) -> None:
+    reg.counter("cv_i_total", "help", ("action",))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_a_total", "help", ("bucket", "resource"))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_b_total", "help", ("cause",))  # ok: cv-obs-metric-label-allowlist
     reg.histogram("cv_h_s", "help", ("filter_class",))  # ok: cv-obs-metric-label-allowlist

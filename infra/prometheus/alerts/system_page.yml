@@ -171,6 +171,26 @@ groups:
         annotations:
           summary: "A break-glass run was recorded on this host: review the audit log"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassattempted"
+      - alert: AuthAuditOutcomesLostBurst
+        # #2914 (04-security-program.md section 8.3 rule 2): more than 5 outcome audit records lost
+        # in 15 minutes, so the audit sink is failing while sessions are still being revoked. Its
+        # own component, shared only with the ticket `AuthAuditOutcomeLost`: a page inhibits the
+        # tickets of its own component, and under `auth` it would hide the lockout, step-up and
+        # CSRF tickets while the sink fails (a test pins it).
+        # #2931: an event page. It clears when that window moves on, not when the sink is repaired:
+        # a sink that still refuses records fails every sign-out at its write-ahead record, which
+        # no counter sees, so the count stops rising and the page clears with the sink down. A
+        # [RESOLVED] would read as recovered: `resolves: window` routes it to the receiver that
+        # sends none (infra/alertmanager/alertmanager.yml).
+        expr: sum by (env) (increase(auth_audit_outcome_lost_total[15m])) > 5
+        for: 0m
+        labels:
+          severity: page
+          component: auth_audit
+          resolves: window
+        annotations:
+          summary: "More than 5 audit outcome records lost in 15 min: the audit sink is failing (C-2.9)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authauditoutcomelost"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m

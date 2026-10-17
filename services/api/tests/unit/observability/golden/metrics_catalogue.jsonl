@@ -1,4 +1,5 @@
 ["audit_chain_verification_failures_total", "counter", [], "planned", "E43"]
+["auth_audit_outcome_lost_total", "counter", ["action"], "live", "E09"]
 ["auth_break_glass_attempts", "gauge", [], "live", "E09"]
 ["auth_break_glass_state_read_failures_total", "counter", [], "live", "E09"]
 ["auth_break_glass_unresolved_events", "gauge", [], "live", "E09"]

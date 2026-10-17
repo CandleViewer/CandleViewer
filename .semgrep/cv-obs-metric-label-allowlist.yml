@@ -22,6 +22,7 @@ rules:
       # needs the same bound, stated in review.
       # #2453: each name below has a closed value set in code and a `max_series` cap in the
       # catalogue; none carries an identifier (user, account, order id, raw path, free text).
+      # action (#2914): audit action of a lost outcome record, closed set + `other`; max_series=4.
       # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.
       # cause (E42-T02): audit read over budget {budget, pool, statement_timeout}; max_series=3.
       # entity_kind (E17-T08): the closed 23 §6.4 machine kinds (`ws/topics.MACHINE_KINDS`, 13);
@@ -43,7 +44,7 @@ rules:
       #   string_too_long}; with `flag`, max_series=256.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

@@ -492,6 +492,54 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthAuditOutcomeLost
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: auth_audit
+        env: live
+      exp_annotations:
+        summary: An audit outcome record was lost after the action was taken (C-2.9)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authauditoutcomelost
+- interval: 1m
+  input_series:
+  - series: auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthAuditOutcomeLost
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}
+    values: 0+0x10 8+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthAuditOutcomesLostBurst
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_audit
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'More than 5 audit outcome records lost in 15 min: the audit sink
+          is failing (C-2.9)'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authauditoutcomelost
+- interval: 1m
+  input_series:
+  - series: auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}
+    values: 0+0x10 4+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthAuditOutcomesLostBurst
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: credential_verification_failures_total
     values: 0+0x10 1+0x10
   alert_rule_test:

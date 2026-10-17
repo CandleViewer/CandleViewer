@@ -94,6 +94,17 @@ groups:
         annotations:
           summary: "Permission-check failure spike"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authzdeniedspike"
+      - alert: AuthAuditOutcomeLost
+        # #2914: any outcome audit record lost after the action was taken. Component `auth_audit`,
+        # shared only with the page `AuthAuditOutcomesLostBurst`, not `auth` (see that rule).
+        expr: sum by (env) (increase(auth_audit_outcome_lost_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: auth_audit
+        annotations:
+          summary: "An audit outcome record was lost after the action was taken (C-2.9)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authauditoutcomelost"
       - alert: CredentialVerificationFailures
         expr: increase(credential_verification_failures_total[1h]) > 0
         for: 0m

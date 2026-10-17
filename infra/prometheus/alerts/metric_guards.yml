@@ -119,6 +119,16 @@ groups:
         annotations:
           summary: "Expected metric audit_chain_verification_failures_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2914: read by the AuthAuditOutcomesLostBurst page; bound at import, so always present.
+      - alert: ExpectedMetricMissingAuthAuditOutcomeLostTotal
+        expr: absent(auth_audit_outcome_lost_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric auth_audit_outcome_lost_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingWsConnectionState
         expr: absent(ws_connection_state)
         for: 15m
