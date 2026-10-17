@@ -533,7 +533,7 @@ def tape_time_bar_reader(reader: BarReader, *, timeout_s: float) -> TapeTimeBars
                     symbol, spec, rng.start_us, rng.end_us, min(limit or MAX_LIMIT, MAX_LIMIT)
                 )
         except Exception as exc:  # broad on purpose: see the S2/A2 note in the docstring
-            bars_tape_read_degraded_total.labels(reason=_degrade_reason(exc)).inc()
+            bars_tape_read_degraded_total.labels(reason=degrade_reason(exc)).inc()
             _log().warning("bars_tape_read_degraded", error=type(exc).__name__)
             return []
         return [b for b in map(stored_bar, page.rows) if b.tape_built]
@@ -541,7 +541,8 @@ def tape_time_bar_reader(reader: BarReader, *, timeout_s: float) -> TapeTimeBars
     return read
 
 
-def _degrade_reason(exc: Exception) -> str:
+def degrade_reason(exc: Exception) -> str:
+    """A failed tape read's bounded `reason` label (also the WS series store's)."""
     if isinstance(exc, TimeoutError):
         return "timeout"
     if isinstance(exc, (OSError, ConnectionError)):

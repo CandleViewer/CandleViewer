@@ -92,6 +92,22 @@ bar_emit_sink_errors_total = Counter(
     " ws_binary_refused).",
     labelnames=("reason",),
 )
+#: The WS series store (E12-T06 D3): failed reads, by the tape tier's degrade reasons
+#: (`reader.degrade_reason`); live closes past a gap; series resets, by cause.
+bars_series_hydrate_failed_total = Counter(
+    "bars_series_hydrate_failed_total",
+    "WS series store tail reads that failed (reason: timeout, connection, query_error).",
+    labelnames=("reason",),
+)
+bars_series_gaps_total = Counter(
+    "bars_series_gaps_total",
+    "Live closes that skipped indexes past a held WS series' newest bar (re-read next).",
+)
+bars_series_resets_total = Counter(
+    "bars_series_resets_total",
+    "Held WS series reset (reason: restart = index back in one generation, generation_swap).",
+    labelnames=("reason",),
+)
 
 # --- E12-T05 (#398) `/market/klines` + `/market/bars` endpoint series -----------------------
 #: Allow-listed label values (bounded cardinality; never client text).
@@ -158,6 +174,9 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bar_builder_cold_start_seconds",
         "bars_spec_cap_rejected_total",
         "bar_emit_sink_errors_total",
+        "bars_series_hydrate_failed_total",  # the WS series store (E12-T06 D3)
+        "bars_series_gaps_total",
+        "bars_series_resets_total",
         "bar_builder_quarantined_total",
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)
