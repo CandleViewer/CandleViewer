@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 from cryptography.exceptions import InvalidTag
 
+from candleviewer.observability.context import spawn
 from candleviewer.observability.tracing import span
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _metrics as m
@@ -144,6 +145,10 @@ class CredentialBroker:
         self._cache = _DekCache(dek_cache_ttl_s, clock)
         self._clock, self._timeout = clock, io_timeout_s
         self._last_touch: dict[UUID, float] = {}
+        #: In-flight `last_used_at` writes, at most one per key (#2776), so their number is
+        #: bounded by the number of keys (C-2.18). Owned here: `destroy` and `aclose` cancel them.
+        self._touches: dict[UUID, asyncio.Task[None]] = {}
+        self._touch_closed = False
         self._destroyed: set[UUID] = set()
         self._env = env_name
 
@@ -273,19 +278,59 @@ class CredentialBroker:
         self._cache.put(row.id, dek)
         return dek
 
-    async def _touch(self, key_id: UUID) -> None:
-        """Best-effort `last_used_at` (debounced 60 s). Never blocks signing on a metadata
-        write: failures are counted, not raised."""
+    def _touch(self, key_id: UUID) -> None:
+        """Best-effort `last_used_at` (21 §3.2.2) that never delays a signing (#2776): the write
+        runs in a task this broker owns and is never awaited here. At most one attempt per key per
+        `_TOUCH_INTERVAL_S`: the window is stamped *before* the write, so a failed or stalled
+        attempt is debounced exactly like a successful one. At most one write per key is in
+        flight; a signing that finds one starts none. After `aclose` no write starts."""
+        if self._touch_closed or key_id in self._touches:
+            return
         now = self._clock()
         prev = self._last_touch.get(key_id)
         if prev is not None and now - prev < _TOUCH_INTERVAL_S:
             return
+        self._last_touch[key_id] = now
+        # The write is handed over as a bound method: this debouncer stays the only code that
+        # names it (#2580), and no store coroutine exists unless the task really starts.
+        write = self._write_touch(self._store.touch_last_used, key_id, self._timeout)
+        task = spawn(write, name="secrets-credential-touch")
+        touches = self._touches
+        touches[key_id] = task
+
+        def forget(done: asyncio.Task[None]) -> None:
+            if touches.get(key_id) is done:  # by identity: never drops another write's entry
+                del touches[key_id]
+
+        task.add_done_callback(forget)
+
+    @staticmethod
+    async def _write_touch(
+        write: Callable[[UUID], Awaitable[None]], key_id: UUID, timeout_s: float
+    ) -> None:
+        """Body of a `_touch` task: one write, bounded by `io_timeout_s`. A failure or timeout is
+        counted, never raised (nothing awaits it); cancellation (`destroy`, `aclose`) is not a
+        failure and propagates. Static, so the task holds the store's write, the key id and the
+        bound, and never the broker: no KEK, no DEK, no plaintext."""
         try:
-            async with asyncio.timeout(self._timeout):
-                await self._store.touch_last_used(key_id)
-            self._last_touch[key_id] = now
+            async with asyncio.timeout(timeout_s):
+                await write(key_id)
         except Exception:
             m.credential_touch_failures_total.inc()
+
+    async def aclose(self) -> None:
+        """Shutdown of the broker's own tasks; its owner calls this on stop (`SecretsService.stop`,
+        after `drop_kek`). No `last_used_at` write starts from now on. Every in-flight one is
+        cancelled and awaited, so none is left pending. Each wait is bounded by `io_timeout_s`;
+        a write still running then (its cleanup stalled again, e.g. a rollback and then a close
+        on a wedged connection) is cancelled again, until every write has ended.
+        Idempotent; signing is not affected."""
+        self._touch_closed = True
+        pending = set(self._touches.values())
+        while pending:
+            for write in pending:
+                write.cancel()
+            _, pending = await asyncio.wait(pending, timeout=self._timeout)
 
     def _check_row(self, row: CredentialRow | None, key_id: UUID, purpose: str) -> CredentialRow:
         if row is None or row.revoked or key_id in self._destroyed or row.env != self._env:
@@ -333,8 +378,8 @@ class CredentialBroker:
             fields = self._fields(row, actor=actor, **extra)
             await self._audit("security.credential_borrowed", fields)
             audited = row
-            await self._touch(key_id)
-            row = self._check_row(row, key_id, purpose)  # fence: destroyed during the awaits?
+            row = self._check_row(row, key_id, purpose)  # fence: destroyed during the audit?
+            self._touch(key_id)  # started, never awaited: metadata never delays a signing
             attrs = {k: fields[k] for k in ("key_id", "env", "kek_version")}
             started = time.perf_counter()
             key = secret = dek = None
@@ -407,15 +452,19 @@ class CredentialBroker:
         return await self._borrow(key_id, mac, caller_module, purpose, digest=message_sha256(parts))
 
     async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
-        """Fence first (in-flight borrows refuse at their post-audit re-check), then audit,
-        flush and revoke. A failure keeps the key fenced for this process (fail closed) and
-        appends `security.credential_destroy_failed`; the original error is always re-raised."""
+        """Fence first (in-flight borrows refuse at their post-audit re-check, and the key's
+        pending `last_used_at` write is cancelled), then audit, flush and revoke. A failure keeps
+        the key fenced for this process (fail closed) and appends
+        `security.credential_destroy_failed`; the original error is always re-raised."""
         row = await self._load(key_id)
         if row is None:
             self._cache.flush(key_id)
             raise CredentialUnavailable("credential_unavailable")
         self._destroyed.add(key_id)
         self._cache.flush(key_id)
+        write = self._touches.get(key_id)
+        if write is not None:  # #2776: drop its pending write (one already committed stays)
+            write.cancel()
         try:
             await self._audit("security.credential_destroyed", self._fields(row, actor=actor))
             await self._io(self._store.mark_revoked(key_id), "store_unavailable")

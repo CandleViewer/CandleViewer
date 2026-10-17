@@ -7,6 +7,7 @@ only; no network beyond the local testcontainer. Not run locally (no docker); CI
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -229,9 +230,13 @@ async def _seal(dsn: str, store: SqlAlchemyCredentialStore, acct: UUID, api_key:
 
 
 async def _api_key(b: CredentialBroker, key_id: UUID) -> str:
-    """The key id M2 decrypts, read the way the exchange adapter signs (#2339)."""
+    """The key id M2 decrypts, read the way the exchange adapter signs (#2339). The signing only
+    starts its `last_used_at` write (#2776), so await it here: it lands before the next statement
+    (a `destroy` would cancel it), and no write outlives the test or races `rel.dispose()`."""
     handle = b.borrow_handle("exchange_adapter")
-    return (await handle.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")).api_key.reveal()
+    out = await handle.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")
+    await asyncio.gather(*b._touches.values())
+    return out.api_key.reveal()
 
 
 @pytest.mark.parametrize("column", sorted(PROTECTED_COLUMNS))
@@ -317,7 +322,7 @@ async def test_m10_rewrap_touch_and_revoke_still_succeed(pg: str) -> None:
         assert await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2)
         assert not await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2)
         rewrapped = _broker(store, kek(KEK_V2, 2))
-        assert await _api_key(rewrapped, key_id) == _NEW_KEY  # touches last_used_at
+        assert await _api_key(rewrapped, key_id) == _NEW_KEY  # awaits its last_used_at write
         await rewrapped.destroy(key_id)  # mark_revoked
         assert _sealed(pg, key_id) == {**before, "dek_ref": ref, "kek_version": 2}
         assert _exec(

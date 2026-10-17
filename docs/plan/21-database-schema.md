@@ -705,7 +705,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `ip_whitelist_verified_at`  | timestamptz | yes  | NULL            | Last time we compared to Bybit's reported list              |
 | `status`                    | key_status  | no   | `'pending'`     |                                                             |
 | `expires_at`                | timestamptz | yes  | NULL            | Bybit key expiry if set                                     |
-| `last_used_at`              | timestamptz | yes  | NULL            | At most 1/min per key; only writer: M2 broker `_touch`      |
+| `last_used_at`              | timestamptz | yes  | NULL            | ≤1 attempt/min/key, async; only writer: M2 broker `_touch`  |
 | `last_error_code`           | text        | yes  | NULL            | e.g. `10003`, `10018`, `10002`                              |
 | `last_error_at`             | timestamptz | yes  | NULL            |                                                             |
 | `rotation_due_at`           | timestamptz | yes  | NULL            | Policy: 90 days                                             |

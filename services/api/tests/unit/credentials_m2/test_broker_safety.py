@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import types
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
 from candleviewer.secrets import KEY_ID_SLOT
+from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import (
@@ -33,6 +35,36 @@ from tests.unit.credentials_m2._vectors import (
     FakeClock,
     kek,
 )
+
+#: The name the broker gives its `last_used_at` write tasks (#2776).
+_TOUCH_TASK = "secrets-credential-touch"
+
+
+def _touch_tasks() -> list[asyncio.Task[Any]]:
+    """The `last_used_at` write tasks in flight in this test's loop, whether or not the broker
+    still tracks them (#2776)."""
+    return [t for t in asyncio.all_tasks() if t.get_name() == _TOUCH_TASK]
+
+
+async def _drain_touches() -> None:
+    """Await, never cancel, every in-flight `last_used_at` write of this test's loop (#2776), so
+    a write that should not have started still lands before the assertions run."""
+    await asyncio.gather(*_touch_tasks(), return_exceptions=True)
+
+
+def _stalling_touch(clock: FakeClock) -> tuple[list[float], asyncio.Event, Any]:
+    """A `touch_last_used` whose first write stalls until cancelled; any later one returns at
+    once, so a broker that starts a second write is caught at once instead of waiting it out."""
+    writes: list[float] = []
+    stalled = asyncio.Event()
+
+    async def touch(key_id: UUID) -> None:
+        writes.append(clock.t)
+        if len(writes) == 1:
+            stalled.set()
+            await asyncio.Event().wait()
+
+    return writes, stalled, touch
 
 
 async def test_broker_audit_timeout_fails_closed(store: Any) -> None:
@@ -71,6 +103,7 @@ async def test_last_used_touch_is_debounced(store: Any, audit: AuditLog, clock: 
     for t in (0, 59, 61):
         clock.t = t
         await _borrow(b, meta.key_id)
+        await _drain_touches()
     assert len(touched) == 2
 
 
@@ -89,7 +122,8 @@ async def test_last_used_touch_debounce_boundary_is_per_key(
     one, two = uuid4(), uuid4()
     for t, key in ((0.0, one), (0.0, two), (59.999999, one), (60.0, one), (60.0, two)):
         clock.t = t
-        await b._touch(key)
+        b._touch(key)
+        await _drain_touches()
     assert touched == [(0.0, one), (0.0, two), (60.0, one), (60.0, two)]
 
 
@@ -108,8 +142,90 @@ async def test_last_used_touch_rearms_each_window(
     key = uuid4()
     for second in range(181):
         clock.t = float(second)
-        await b._touch(key)
+        b._touch(key)
+        await _drain_touches()
     assert touched == [0.0, 60.0, 120.0, 180.0]
+
+
+async def test_borrow_with_a_stalled_touch_returns_while_the_write_is_in_flight(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: a signing never waits on `last_used_at`. The write stalls and its bound is long
+    (60 s), yet the borrow has already returned when the write starts, and the write is still in
+    flight."""
+    entered = asyncio.Event()
+
+    async def stall(key_id: UUID) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    store.touch_last_used = stall
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    meta = await _store(b)
+    borrow = asyncio.create_task(_borrow(b, meta.key_id))
+    await entered.wait()
+    assert borrow.done() and borrow.result()[0] == API_KEY
+    (write,) = b._touches.values()
+    assert not write.done()
+    await b.aclose()
+
+
+async def test_touch_stalled_second_signing_in_window_starts_no_second_write(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: while one write for the key stalls, a signing inside its window starts no other."""
+    writes, stalled, touch = _stalling_touch(clock)
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    meta = await _store(b)
+    first = asyncio.create_task(_borrow(b, meta.key_id))
+    await stalled.wait()
+    clock.t = 30.0
+    await _borrow(b, meta.key_id)
+    assert writes == [0.0] and len(_touch_tasks()) == 1
+    await b.aclose()
+    assert (await first)[0] == API_KEY
+
+
+async def test_touch_stalled_past_its_window_keeps_one_write_per_key_in_flight(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 (C-2.18): a write that outlives its 60 s window still bounds the key to one write in
+    flight, so a signing in the next window starts none while it runs."""
+    writes, stalled, touch = _stalling_touch(clock)
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=600.0)
+    meta = await _store(b)
+    first = asyncio.create_task(_borrow(b, meta.key_id))
+    await stalled.wait()
+    clock.t = 61.0
+    await _borrow(b, meta.key_id)
+    assert writes == [0.0] and len(_touch_tasks()) == 1
+    await b.aclose()
+    assert (await first)[0] == API_KEY
+
+
+async def test_touch_failure_is_debounced_like_a_success_and_retried_next_window(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: the window is stamped before the write, so a failed write is not retried by the
+    next signing: none at 59 s, one at 60 s, none at 61 s. Each failure is counted once."""
+    writes: list[float] = []
+
+    async def fail(key_id: UUID) -> None:
+        writes.append(clock.t)
+        raise RuntimeError("db down")
+
+    store.touch_last_used = fail
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock)
+    meta = await _store(b)
+    before = m.credential_touch_failures_total._value.get()
+    for t in (0.0, 59.0, 60.0, 61.0):
+        clock.t = t
+        assert (await _borrow(b, meta.key_id))[0] == API_KEY
+        await _drain_touches()
+    assert writes == [0.0, 60.0]
+    assert m.credential_touch_failures_total._value.get() == before + 2
 
 
 @pytest.mark.parametrize("status", ["pending", "invalid", "expired", "revoked"])
@@ -302,8 +418,6 @@ async def test_plaintext_zeroed_on_fn_cancel(monkeypatch: pytest.MonkeyPatch, st
 
 
 async def test_touch_failure_is_best_effort_and_counted(store: Any, clock: FakeClock) -> None:
-    from candleviewer.secrets import _metrics as m
-
     async def stall(key_id: Any) -> None:
         await asyncio.Event().wait()
 
@@ -312,7 +426,209 @@ async def test_touch_failure_is_best_effort_and_counted(store: Any, clock: FakeC
     meta = await _store(b)
     before = m.credential_touch_failures_total._value.get()
     assert (await _borrow(b, meta.key_id))[0] == API_KEY  # signing never blocked by metadata
+    await _drain_touches()  # the write times out at io_timeout_s, off the signing path
     assert m.credential_touch_failures_total._value.get() == before + 1
+
+
+async def test_broker_aclose_cancels_a_stalled_touch_without_counting_a_failure(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: shutdown cancels and awaits the in-flight write. Cancellation is not a failure, and
+    no task is left pending."""
+    entered, unwound = asyncio.Event(), asyncio.Event()
+
+    async def stall(key_id: UUID) -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            unwound.set()
+
+    store.touch_last_used = stall
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    meta = await _store(b)
+    before = m.credential_touch_failures_total._value.get()
+    await _borrow(b, meta.key_id)
+    await entered.wait()
+    (write,) = b._touches.values()
+    await b.aclose()
+    assert write.cancelled() and unwound.is_set() and not b._touches
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+    assert m.credential_touch_failures_total._value.get() == before
+
+
+async def test_broker_aclose_before_a_touch_starts_cancels_it_cleanly(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: a write cancelled before its first step never reaches the store, and leaves no
+    never-awaited coroutine behind (the suite runs with `-W error`)."""
+    writes: list[UUID] = []
+
+    async def touch(key_id: UUID) -> None:
+        writes.append(key_id)
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock)
+    b._touch(uuid4())
+    (write,) = b._touches.values()
+    await b.aclose()
+    assert write.cancelled() and writes == [] and not b._touches
+
+
+async def test_broker_aclose_is_idempotent_and_later_signings_start_no_touch(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776: a closed broker still signs, but starts no write a later shutdown could miss."""
+    writes: list[float] = []
+
+    async def touch(key_id: UUID) -> None:
+        writes.append(clock.t)
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock)
+    meta = await _store(b)
+    await b.aclose()
+    await b.aclose()
+    assert (await _borrow(b, meta.key_id))[0] == API_KEY
+    await _drain_touches()
+    assert writes == [] and not b._touches
+
+
+async def test_broker_aclose_with_a_wedged_write_cleanup_recancels_until_it_ends(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: a cancelled write whose cleanup stalls again and again (the UPDATE, then a
+    rollback, then a close, on a connection that never answers) cannot hold shutdown forever:
+    `aclose` cancels what still runs every `io_timeout_s`, so each stalled step ends, the write
+    ends, nothing is left pending, and cancellation is still not counted as a failure."""
+    entered = asyncio.Event()
+    steps: list[str] = []
+
+    async def wedged(step: str) -> None:
+        steps.append(step)
+        await asyncio.Event().wait()  # never answers: only a cancellation ends this step
+
+    async def write(key_id: UUID) -> None:
+        entered.set()
+        try:
+            try:
+                await wedged("update")
+            finally:
+                await wedged("rollback")
+        finally:
+            await wedged("close")
+
+    store.touch_last_used = write
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=0.01)
+    meta = await _store(b)
+    before = m.credential_touch_failures_total._value.get()
+    await _borrow(b, meta.key_id)
+    await entered.wait()
+    (task,) = b._touches.values()
+    await b.aclose()
+    assert task.cancelled() and steps == ["update", "rollback", "close"] and not b._touches
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+    assert m.credential_touch_failures_total._value.get() == before
+
+
+async def test_touch_done_callback_with_a_newer_entry_for_the_key_keeps_it(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: an ending write removes its own entry only (by identity), never a newer
+    write's, so the one-write-per-key bound cannot silently reopen."""
+    writes, stalled, touch = _stalling_touch(clock)
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    key = uuid4()
+    b._touch(key)
+    old = b._touches[key]
+    await stalled.wait()
+
+    async def later_write() -> None:
+        await asyncio.Event().wait()
+
+    newer = asyncio.create_task(later_write(), name=_TOUCH_TASK)
+    b._touches[key] = newer  # stands in for a later write of the same key
+    old.cancel()
+    await asyncio.gather(old, return_exceptions=True)
+    assert old.cancelled() and b._touches == {key: newer} and writes == [0.0]
+    await b.aclose()
+    assert newer.cancelled()
+
+
+async def test_touch_task_with_a_stalled_write_holds_no_broker(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: the write task's frame holds the store's write, the key id and the bound,
+    never the broker, so its KEK and DEK cache are not reachable from the task."""
+    entered = asyncio.Event()
+
+    async def stall(key_id: UUID) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    store.touch_last_used = stall
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    key = uuid4()
+    b._touch(key)
+    await entered.wait()
+    (task,) = b._touches.values()
+    coro = task.get_coro()
+    assert isinstance(coro, types.CoroutineType) and coro.cr_frame is not None
+    assert dict(coro.cr_frame.f_locals) == {"write": stall, "key_id": key, "timeout_s": 60.0}
+    await b.aclose()
+
+
+async def test_destroy_cancels_only_that_keys_in_flight_touch(store: Any, clock: FakeClock) -> None:
+    """#2776: `destroy` fences the key, then cancels its pending `last_used_at` write; another
+    key's write is untouched."""
+    entered: dict[UUID, asyncio.Event] = {}
+
+    async def stall(key_id: UUID) -> None:
+        entered[key_id].set()
+        await asyncio.Event().wait()
+
+    store.touch_last_used = stall
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    doomed, kept = (await _store(b)).key_id, (await _store(b)).key_id
+    entered.update({doomed: asyncio.Event(), kept: asyncio.Event()})
+    for key in (doomed, kept):
+        await _borrow(b, key)
+    for key in (doomed, kept):
+        await entered[key].wait()
+    doomed_write, kept_write = b._touches[doomed], b._touches[kept]
+    await b.destroy(doomed)
+    await asyncio.gather(doomed_write, return_exceptions=True)
+    assert doomed_write.cancelled() and not kept_write.done()
+    assert list(b._touches) == [kept]
+    await b.aclose()
+
+
+async def test_borrow_fenced_by_destroy_starts_no_touch(store: Any) -> None:
+    """#2776: the write starts only once the post-audit fence re-check passes, so a key destroyed
+    while its borrow awaited the write-ahead audit is never touched after its fence."""
+    gate, release = asyncio.Event(), asyncio.Event()
+    writes: list[UUID] = []
+
+    async def audit(action: str, fields: dict[str, str]) -> None:
+        if action == "security.credential_borrowed":
+            gate.set()
+            await release.wait()
+
+    async def touch(key_id: UUID) -> None:
+        writes.append(key_id)
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, audit, kek())
+    meta = await _store(b)
+    borrow = asyncio.create_task(_borrow(b, meta.key_id))
+    await gate.wait()
+    await b.destroy(meta.key_id)
+    release.set()
+    with pytest.raises(CredentialUnavailable):
+        await borrow
+    await _drain_touches()
+    assert writes == [] and not b._touches
 
 
 async def test_store_load_timeout_is_typed(store: Any) -> None:
