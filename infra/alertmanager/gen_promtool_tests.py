@@ -180,7 +180,14 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("_x30 3+0x20", "35m", False),  # no sample from before the run to compare with
     ],
     # #2496 review: a Postgres restart of two minutes is four failed statements, far under 10.
-    "AuthBreakGlassStateReadFailing": [("0+0x5 4+0x14", "15m", False)],
+    # #3215: the threshold from both sides, 9 failures in the window (silent) and 10 (fires). Each
+    # is a step up from a flat 0, so the 15m `increase` is the step itself and nothing is
+    # extrapolated, whether or not Prometheus counts the window's first sample.
+    "AuthBreakGlassStateReadFailing": [
+        ("0+0x5 4+0x14", "15m", False),
+        ("0+0x5 9+0x14", "15m", False),
+        ("0+0x5 10+0x14", "15m", True),
+    ],
 }
 
 
