@@ -19,7 +19,7 @@ from candleviewer.storage.repositories.audit_sqlalchemy import FTS_DOCUMENT_SQL,
 
 _ME, _OTHER = uuid.UUID(int=1), uuid.UUID(int=2)
 _T0, _T1 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)
-_ORDER = "ORDER BY audit_log.id DESC LIMIT"
+_ORDER = "ORDER BY audit_log.event_ts DESC, audit_log.id DESC LIMIT"
 _TZ = "TIMESTAMP WITH TIME ZONE"
 _UNSET = dict.fromkeys(set(inspect.signature(_page_statement).parameters) - {"limit"})
 
@@ -30,7 +30,7 @@ def _compile(**kw: Any) -> tuple[str, list[Any]]:
     return " ".join(str(compiled).split()), list(compiled.params.values())
 
 
-def test_unfiltered_page_is_newest_first() -> None:
+def test_unfiltered_page_orders_by_time_then_id() -> None:
     sql, params = _compile()
     assert "WHERE" not in sql and sql.endswith(f"{_ORDER} $1::INTEGER")
     assert params == [101]
@@ -80,10 +80,11 @@ def test_restricted_scope_replaces_the_requested_actor() -> None:
     assert _compile(restrict_to_actor=str(_ME))[1] == [_ME, 101]
 
 
-def test_cursor_resumes_below_the_last_id() -> None:
-    sql, params = _compile(cursor=42)
-    assert f"WHERE audit_log.id < $1::BIGINT {_ORDER} $2::INTEGER" in sql
-    assert params == [42, 101]
+def test_keyset_resumes_strictly_after_the_cursor_position() -> None:
+    sql, params = _compile(after=(_T0, 42))
+    keyset = f"audit_log.event_ts <= $1::{_TZ} AND (audit_log.event_ts < $2::{_TZ} OR "
+    assert f"WHERE {keyset}audit_log.id < $3::BIGINT) {_ORDER} $4::INTEGER" in sql
+    assert params == [_T0, _T0, 42, 101]
 
 
 def test_full_text_document_is_the_index_expression() -> None:
