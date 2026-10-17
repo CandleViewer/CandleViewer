@@ -171,7 +171,7 @@ _RULES = {
     "synchronous": "entry synchronously, never through an awaited lookup",
     "self_kinds_include_owner": "stays self-scoped for every role, Owner included",
     "role_change": "Every RBAC change (§9.5) re-applies the whole row",
-    "audit_reason_column": "one internal reason, in the `reason` column only",
+    "audit_reason_column": "reason, which goes only where the non-Owner projection drops it",
     "audit_fields_identical": "`outcome` and `severity` are identical for every reason",
     "audit_server_side": "The reason stays server-side; the client sees only the codes above.",
     "audit_no_tombstones": "so no tombstone of a removed entity is kept",

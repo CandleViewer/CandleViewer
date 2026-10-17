@@ -45,6 +45,7 @@ from candleviewer.ws.limits import (
     FANOUT_AUDIT_TIMEOUT_S,
     FANOUT_SEND_TIMEOUT_S,
     MAX_BARS_SUBSCRIPTIONS,
+    MAX_DENIALS_LISTED,
     MAX_SUBSCRIPTIONS,
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
@@ -1009,8 +1010,11 @@ Send = Any  # async (frame: dict) -> None
 def sub_shape_error(body: Any) -> TopicError | None:
     """#2396, #2399: what breaks a `sub` frame's §13.5 shape, refused whole (orchestrator
     decision, 2026-10-15): a payload that is not an object or has an unknown key, `topics` that
-    is not a non-empty array, an entry that is neither an object nor a string, or a `ch` that is
-    not a topic name. `field` is built here and never echoes client input."""
+    is not a non-empty array of at most `MAX_TOPICS_PER_SUB` entries (`too_many_topics`, SR-192,
+    #2292), an entry that is neither an object nor a string, or a `ch` that is not a topic name.
+    The first that applies, in that order (entry by entry for the last two), names the code and
+    the `field`, which is built here and never echoes client input. The length is checked before
+    any entry is read, so that check costs the same however long the array is."""
     if not isinstance(body, dict):
         return TopicError("invalid_options", "sub needs an object payload.", "p")
     if not set(body) <= SUB_KEYS:
@@ -1018,6 +1022,9 @@ def sub_shape_error(body: Any) -> TopicError | None:
     topics = body.get("topics")
     if not isinstance(topics, list) or not topics:
         return TopicError("invalid_options", "topics must be a non-empty array.", "topics")
+    if len(topics) > MAX_TOPICS_PER_SUB:
+        message = f"At most {MAX_TOPICS_PER_SUB} topics in one sub; split the request."
+        return TopicError("too_many_topics", message, "topics")
     for i, entry in enumerate(topics):
         if isinstance(entry, str):
             if not is_topic_name(entry):
@@ -1063,7 +1070,9 @@ async def handle_sub(
 ) -> None:
     """Gateway hook for a `sub` frame: exactly one result per topic, in request order (S1);
     one bad topic never fails the batch (§5.2). A frame whose shape breaks §13.5 is refused
-    whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399).
+    whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399), a
+    `topics` array over `MAX_TOPICS_PER_SUB` included (`too_many_topics`, SR-192, #2292). The
+    refusals the audit keeps are written as ONE record for the frame (`_audit_denials`).
 
     #2831: the new subscriptions are announced only once the `sub_ok` is queued, so no hub
     flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
@@ -1078,24 +1087,26 @@ async def handle_sub(
         return
     results: list[dict[str, Any]] = []
     admitted: list[Subscription] = []
+    denials: list[tuple[str, str, str]] = []  # (object_id, code, reason) of each kept refusal
     snapshot = body.get("snapshot", True)
     replay = body.get("replay_session_id")
-    for index, entry in enumerate(body["topics"]):
-        ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by the shape
-        why: str | None = None  # a refused `machines` entity's internal reason, for the audit
-        if index >= MAX_TOPICS_PER_SUB:
-            result = _fail(ch, "too_many_topics", "More than 50 topics in one sub.")
-        else:
+    try:
+        for entry in body["topics"]:  # at most `MAX_TOPICS_PER_SUB`, by the shape
+            ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by shape
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
-            why = authz.refusal_reason  # read before any await
+            why = authz.refusal_reason  # a refused entity's internal reason; read before any await
             if sub is not None:
                 result = await authz.subscribe_upstream(sub) or result
                 if result["ok"]:
                     admitted.append(sub)
-        results.append(result)
-        _observe(ch, result)
-        if not result["ok"]:
-            await _audit_denial(authz, ch, result["error"]["code"], why)
+            results.append(result)
+            _observe(ch, result)
+            if not result["ok"]:
+                code = result["error"]["code"]
+                if _audited(ch, code):
+                    denials.append(_denial(ch, code, why))
+    finally:  # a raise or a cancellation mid-loop still records the refusals before it (C-2.9)
+        await _audit_denials(authz, denials)
     cv_ws_client_topics_depth.observe(len(authz.by_id))
     out: dict[str, Any] = {"t": "sub_ok", "p": {"results": results}}
     if fid is not None:
@@ -1166,28 +1177,56 @@ def _observe(ch: str, result: Mapping[str, Any]) -> None:
 _AUDITED_DENIALS: Final = frozenset({"forbidden", "account_scope_denied"})
 
 
-async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str, why: str | None) -> None:
-    """`ws.subscribe.denied`: every authorisation denial, plus any rejected private-topic
-    attempt on a well-formed topic name (confidential; a malformed `sub` is refused whole before
-    any topic is read, #2396). A `machines` row names the full `ch` (a topic name, at most 120
-    characters) and, when its entity was refused, the internal §6.4 reason `why` in `reason`
-    only, which the non-Owner projection drops (SR-067); every other field is the same for every
-    reason. Best effort: the reply is never held hostage to the audit sink."""
-    audit = authz.services.audit
+def _audited(ch: str, code: str) -> bool:
+    """A refusal `ws.subscribe.denied` keeps: every authorisation denial, plus any rejected
+    private-topic attempt on a well-formed topic name (confidential; a malformed `sub` is refused
+    whole before any topic is read, #2396)."""
+    fam = FAMILIES.get(topic_family(ch))
+    return code in _AUDITED_DENIALS or (fam is not None and fam.private)
+
+
+def _denial(ch: str, code: str, why: str | None) -> tuple[str, str, str]:
+    """The `object_id`, code and `reason` of one kept refusal (§6.4): a `machines` row names the
+    full `ch` (a topic name, at most 120 characters) and, when its entity was refused, puts the
+    internal reason `why` in `reason`; any other row names the family, never the name the client
+    sent, and gives its code."""
     family = topic_family(ch)
-    fam = FAMILIES.get(family)
-    if audit is None or not (code in _AUDITED_DENIALS or (fam is not None and fam.private)):
+    return (ch if family == "machines" else family[:40]), code, why or code
+
+
+async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, str]]) -> None:
+    """`ws.subscribe.denied`: ONE record for the refusals `_audited` keeps in a `sub` frame,
+    never one per entry (SR-192, #2292), written in `handle_sub`'s `finally`, so a frame that
+    raises or is cancelled part way still records those before the fault. Its `object_id` and
+    `reason` are the first one's, so a frame with one writes the row that refusal writes alone.
+    With more, `after_state` holds the `count` of them all, every code among them (`codes`,
+    sorted) and the `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order
+    (`refusals`). An internal reason goes only in `reason` and `after_state`, which the non-Owner
+    projection drops (SR-067), so no other field varies with it (the non-Owner projection is
+    being narrowed by E42-T02 F9). Best effort: the reply is never held hostage to the audit
+    sink, and only `Exception` is caught, so a cancellation is never swallowed."""
+    audit = authz.services.audit
+    if audit is None or not denials:
         return
+    object_id, _, reason = denials[0]
+    detail: dict[str, Any] = {}
+    if len(denials) > 1:
+        detail["after_state"] = {
+            "count": len(denials),
+            "codes": sorted({c for _, c, _ in denials}),
+            "refusals": [[o, r] for o, _, r in denials[:MAX_DENIALS_LISTED]],
+        }
     try:
         await audit.emit(
             "ws.subscribe.denied",
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
             object_kind="ws_topic",
-            object_id=ch if family == "machines" else family[:40],
+            object_id=object_id,
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING,
-            reason=why or code,
+            reason=reason,
+            **detail,
         )
     except Exception:
         _log().warning("ws subscribe-denied audit not written", exc_info=True)

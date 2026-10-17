@@ -330,14 +330,6 @@ def test_sub_symbol_limit_40_per_connection() -> None:
     assert r["error"]["code"] == "subscription_limit"
 
 
-def test_sub_more_than_50_topics_rejects_the_excess() -> None:
-    conn = ConnectionAuthz(_mgr(A), _services())
-    # footprint, not bars: bars.* stops at its own 16-per-connection cap first (§6.1)
-    res = _sub(conn, *[f"footprint.BTCUSDT.tick.{i}" for i in range(1, 53)])
-    assert all(r["ok"] for r in res[:50])
-    assert [r["error"]["code"] for r in res[50:]] == ["too_many_topics"] * 2
-
-
 def test_sub_encoding_unsupported() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     (r,) = _sub(conn, {"ch": "ticker.BTCUSDT", "opts": {"encoding": "binary"}})
@@ -944,10 +936,16 @@ def test_denials_are_audited_and_audit_failure_is_not_fatal() -> None:
     audit = _Audit()
     conn = ConnectionAuthz(_mgr(A), _services(audit=audit))
     _sub(conn, {"ch": "positions", "opts": _acc(B)}, "book.ETHUSD.50", {"ch": "orders", "opts": 1})
-    assert [(r["action"], r["reason"]) for r in audit.records] == [
-        ("ws.subscribe.denied", "account_scope_denied"),
-        ("ws.subscribe.denied", "invalid_options"),
+    # SR-192 (#2292): one record for the frame, never one per refusal (`test_sub_entry_cap.py`)
+    ((action, reason, detail),) = [
+        (r["action"], r["reason"], r["after_state"]) for r in audit.records
     ]
+    assert (action, reason) == ("ws.subscribe.denied", "account_scope_denied")
+    assert detail == {
+        "count": 2,
+        "codes": ["account_scope_denied", "invalid_options"],
+        "refusals": [["positions", "account_scope_denied"], ["orders", "invalid_options"]],
+    }
 
     class _Broken:
         async def emit(self, action: str, **kw: Any) -> None:

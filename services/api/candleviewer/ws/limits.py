@@ -9,8 +9,10 @@ Single home for every bound the gateway enforces. Overflow policy:
   budget `ws/codec.py` sets for that window -> `frame_malformed`.
 - JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
   protocol violation); it is never depth-scanned or decoded.
-- `sub` with > `MAX_TOPICS_PER_SUB` topics -> the excess topics are rejected
-  per-topic with `too_many_topics`; the rest are processed.
+- `sub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
+  `too_many_topics` (`field: topics`) before any entry is read; nothing is subscribed (SR-192).
+- The refusals of one `sub` that `ws.subscribe.denied` records -> ONE record for the frame, which
+  counts them all and lists the first `MAX_DENIALS_LISTED` (SR-192, #2292).
 - `unsub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
   `invalid_options` (`field: topics`) before any entry is read; nothing is unsubscribed (#2875).
 - A subscription that would grow a connection past `MAX_SUBSCRIPTIONS` ->
@@ -51,6 +53,9 @@ MAX_PREAUTH_FRAME_BYTES = 8 * 1024
 MAX_JSON_CONTAINERS = 1024
 #: §13.5 `maxItems` of `sub.topics` and `unsub.topics`, and `welcome.limits.max_topics_per_request`.
 MAX_TOPICS_PER_SUB = 50
+#: SR-192: the one `ws.subscribe.denied` record of a `sub` frame lists the `object_id` and
+#: `reason` of at most this many of its refusals, in request order; its `count` holds them all.
+MAX_DENIALS_LISTED = 10
 MAX_SUBSCRIPTIONS = 200
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.
 MAX_SYMBOLS_PER_CONNECTION = 40
