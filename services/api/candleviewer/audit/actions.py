@@ -41,6 +41,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
         # another user's, presented to the session routes or carried into the MFA step.
         "auth.session_fixation_attempt",
+        # #2269 (SR-042/SR-183): a WS upgrade refused by the Origin check (`ws/origin_audit.py`).
+        "auth.ws_origin_refused",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

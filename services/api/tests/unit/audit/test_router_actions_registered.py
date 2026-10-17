@@ -20,7 +20,7 @@ from candleviewer.audit.actions import AUDIT_ACTIONS
 _ROOT = Path(candleviewer.__file__).parent
 _MODULES = sorted(
     [p.relative_to(_ROOT).as_posix() for p in (_ROOT / "api").glob("*.py")]
-    + ["ws/gateway.py", "ws/permissions.py"]
+    + ["ws/gateway.py", "ws/origin_audit.py", "ws/permissions.py"]
 )
 _EMITTERS = frozenset({"emit", "_audit", "_audit_owner"})
 _ACTION = re.compile(r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")
@@ -53,10 +53,12 @@ def test_the_scan_still_finds_the_actions_it_guards() -> None:
         | _emitted("api/sessions.py")
         | _emitted("api/invites.py")
         | _emitted("api/onboarding.py")
+        | _emitted("ws/origin_audit.py")
     )
     assert {
         "auth.login",
         "auth.session_fixation_attempt",
         "users.invite_refused",
         "onboarding.checklist_tamper_rejected",
+        "auth.ws_origin_refused",
     } <= found
