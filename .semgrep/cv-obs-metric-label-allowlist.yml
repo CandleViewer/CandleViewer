@@ -35,9 +35,11 @@ rules:
       # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
       # flag (E42-T03): only feature-flag registry keys, a closed code-reviewed set (about 16);
       #   unknown keys are refused before any series is touched; max_series=32.
+      # table (E29-T01, #845): the five tables the OMS repositories write {orders, order_events,
+      #   executions, positions, position_snapshots}, a `Literal` in code; max_series=5.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(bucket|cause|endpoint_group|engine|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(bucket|cause|endpoint_group|engine|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|table|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

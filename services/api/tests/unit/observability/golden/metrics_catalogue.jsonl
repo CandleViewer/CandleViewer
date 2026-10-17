@@ -118,6 +118,7 @@
 ["kline_hot_boundary_fallback_total", "counter", ["reason"], "live", "E12"]
 ["naked_position_alerts_total", "counter", [], "planned", "E32"]
 ["net_binding_safe", "gauge", [], "live", "E09"]
+["oms_db_write_seconds", "histogram", ["table"], "planned", "E29"]
 ["oms_rate_reject_total", "counter", [], "live", "E04"]
 ["oms_unknown_orders", "gauge", [], "planned", "E45"]
 ["order_submit_seconds", "histogram", ["transport"], "planned", "E29"]

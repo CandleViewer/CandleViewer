@@ -75,13 +75,10 @@ UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
 MAX_EVENT_PAGE: Final = 500
 
-_SCALE: Final = 18
-_INTEGER_DIGITS: Final = 20  # numeric(38,18): 38 digits, 18 of them after the point
 
-
-def require_money(column: str, value: Decimal) -> None:
-    """Refuse what numeric(38,18) would not hold exactly; the error names the column only (the
-    value is P1, 21 Sec.12)."""
+def require_money(column: str, value: Decimal, precision: int = 38, scale: int = 18) -> None:
+    """Refuse what numeric(precision, scale), numeric(38,18) unless given, would not hold exactly;
+    the error names the column only (the value is P1, 21 Sec.12)."""
     if not isinstance(value, Decimal):
         raise TypeError(f"{column} must be a Decimal")
     if not value.is_finite():
@@ -93,8 +90,8 @@ def require_money(column: str, value: Decimal) -> None:
     while digits[significant - 1] == 0:  # non-zero, so a non-zero digit stops this
         significant -= 1
     lowest = int(exponent) + len(digits) - significant  # power of ten of the last non-zero digit
-    if lowest < -_SCALE or significant + lowest > _INTEGER_DIGITS:
-        raise ValueError(f"{column} does not fit numeric(38,18) without rounding")
+    if lowest < -scale or significant + lowest > precision - scale:
+        raise ValueError(f"{column} does not fit numeric({precision},{scale}) without rounding")
 
 
 def require_aware(column: str, value: datetime) -> None:
@@ -102,11 +99,15 @@ def require_aware(column: str, value: datetime) -> None:
         raise ValueError(f"{column} must be a timezone-aware datetime")
 
 
-def _check(row: object, money: tuple[str, ...], stamps: tuple[str, ...]) -> None:
-    for name in money:
+def check_fields(
+    row: object, money: Mapping[str, tuple[int, int]], stamps: tuple[str, ...]
+) -> None:
+    """`require_money` on each set field of `money` (name to precision and scale), and
+    `require_aware` on each set field of `stamps`."""
+    for name, (precision, scale) in money.items():
         value = getattr(row, name)
         if value is not None:
-            require_money(name, value)
+            require_money(name, value, precision, scale)
     for name in stamps:
         value = getattr(row, name)
         if value is not None:
@@ -152,17 +153,17 @@ class NewOrder:
     is_paper: bool = False
 
     def __post_init__(self) -> None:
-        _check(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
+        check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
 
 
-def _annotated(cls: type[NewOrder], kind: type) -> tuple[str, ...]:
+def typed_fields(cls: type, kind: type) -> tuple[str, ...]:
     """The fields annotated `kind` or `kind | None`, read off the class, so none is missed."""
     hints = get_type_hints(cls)
     return tuple(name for name, hint in hints.items() if kind in (hint, *get_args(hint)))
 
 
-_NEW_ORDER_MONEY: Final = _annotated(NewOrder, Decimal)
-_NEW_ORDER_STAMPS: Final = _annotated(NewOrder, datetime)
+_NEW_ORDER_MONEY: Final = dict.fromkeys(typed_fields(NewOrder, Decimal), (38, 18))
+_NEW_ORDER_STAMPS: Final = typed_fields(NewOrder, datetime)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

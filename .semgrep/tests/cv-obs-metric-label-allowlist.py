@@ -29,3 +29,7 @@ def bad_raw_path(reg: object) -> None:
 
 def ok_flag(reg: object) -> None:
     reg.counter("cv_w_total", "help", ("flag", "result"))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_table(reg: object) -> None:
+    reg.histogram("cv_t_seconds", "help", ("table",))  # ok: cv-obs-metric-label-allowlist

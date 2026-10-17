@@ -210,8 +210,9 @@ def _constraints() -> Iterator[None]:
         raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
 
 
-class SqlAlchemyOrderStore:
-    """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
+class CappedStore:
+    """Base of the OMS stores over one relational repository (asyncpg): each unit of work caps its
+    statements and maps its failures as the module docstring says."""
 
     def __init__(
         self,
@@ -237,6 +238,10 @@ class SqlAlchemyOrderStore:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_SET_TIMEOUT, {"timeout": self._timeout})
                 yield uow
+
+
+class SqlAlchemyOrderStore(CappedStore):
+    """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         stmt = create_statement(order, first_event)
@@ -291,7 +296,7 @@ class SqlAlchemyOrderStore:
 
 
 __all__ = [
-    "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED",
+    "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
     "SqlAlchemyOrderStore", "append_statement", "create_statement", "get_by_link_statement",
     "get_statement", "link_taken_statement", "list_events_statement", "list_open_statement",
     "lock_statement",
