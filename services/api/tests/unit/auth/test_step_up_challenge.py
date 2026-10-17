@@ -14,11 +14,11 @@ from candleviewer.auth.errors import (
     StepUpChallengeRefused,
     UnknownActionClass,
 )
-from candleviewer.auth.step_up import CHALLENGE_WINDOW
+from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from tests.conftest import RecordingAuditSink
 
 from .session_fakes import FakeSessionRepository
-from .test_step_up import PASSWORD, _code, _noop, _sample, _session, _setup
+from .test_step_up import _T0, PASSWORD, _code, _noop, _sample, _session, _setup
 
 
 def _keys(sessions: FakeSessionRepository, alias: str = "s1") -> list[str]:
@@ -185,3 +185,36 @@ async def test_challenge_audits_name_the_challenge_never_a_factor(
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)  # no challenge
     assert b16_audit.calls[-1]["object_id"] is None
     assert PASSWORD not in repr(b16_audit.calls) and f"'{code}'" not in repr(b16_audit.calls)
+
+
+async def test_challenge_fingerprint_must_be_a_hex_sha256() -> None:
+    svc, *_, sessions = await _setup()
+    with pytest.raises(ValueError, match="hex SHA-256"):
+        await svc.record_pending("s1", "keys", fingerprint="not-a-sha256")
+    assert sessions.sessions["s1"].step_up_elevations == {}
+
+
+_ID, _SHA = uuid.UUID(int=2), "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("key", "prefix", "parsed"),
+    [
+        (f"once:killswitch:{_ID}:{_SHA}", "once:", ("killswitch", _SHA)),
+        (f"once:killswitch:{_ID}", "once:", None),  # a grant always names its request
+        (f"once:keys:{_ID}:{_SHA}", "once:", None),  # a grace class has a window, no grant
+        (f"once:killswitch:{_ID}:{'A' * 64}", "once:", None),  # lower-case hex only
+        (f"pending:keys:{_ID}", "pending:", ("keys", None)),
+        (f"pending:killswitch:{_ID}:{_SHA}", "pending:", ("killswitch", _SHA)),
+        (f"pending:bogus:{_ID}", "pending:", None),
+        (f"pending:keys:{_ID}", "once:", None),
+    ],
+)
+def test_stored_entry_is_parsed_by_its_key_grammar(
+    key: str, prefix: str, parsed: tuple[str, str | None] | None
+) -> None:
+    until = _T0 + CHALLENGE_WINDOW
+    entry = StepUpChallenge.parse(key, until, prefix)
+    got = None if entry is None else (entry.action_class, entry.fingerprint)
+    assert got == parsed
+    assert entry is None or (entry.challenge_id, entry.key(prefix)) == (_ID, key)

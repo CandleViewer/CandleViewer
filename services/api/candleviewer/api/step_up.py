@@ -68,6 +68,13 @@ STEP_UP_REQUIRED_TITLE = "A dangerous action needs a live step-up elevation for 
 STEP_UP_REQUIRED_DETAIL = (
     "Re-enter your password and authenticator code (POST /auth/step-up) to continue."
 )
+#: `403 session_read_only`'s title and detail wherever a read-only session is refused (#2304): the
+#: write guard (`readonly_problem`) and `api.rules_actor`, which refuses a session that turned
+#: read-only inside its own request.
+SESSION_READ_ONLY_TITLE = "Session is read-only"
+SESSION_READ_ONLY_DETAIL = (
+    "Too many invalid step-up codes; this session is read-only for 5 minutes."
+)
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
     "challenge_expired": "The step-up challenge cannot be answered.",
@@ -156,8 +163,8 @@ def readonly_problem(exc: SessionReadOnly) -> JSONResponse:
     return _problem(
         403,
         "session_read_only",
-        "Session is read-only",
-        "Too many invalid step-up codes; this session is read-only for 5 minutes.",
+        SESSION_READ_ONLY_TITLE,
+        SESSION_READ_ONLY_DETAIL,
         readonly_until=until,
     )
 
