@@ -5,9 +5,15 @@
 # CONSTITUTION.md §3 — see that file's header for the drift-prevention
 # contract between the three). This wires C-3.1 (one-way dependencies, no
 # cycles), C-3.2 (secrets), C-3.3 (audit) and §9 #18 (architecture gate).
+#
+# `cvdev` (#2893, ADR-0036) is the dev-only sibling package, never packaged
+# and not an M-module, so it has no manifest entry. It is a root only so that
+# the protected-secrets and protected-audit contracts below see its imports.
 
 [importlinter]
-root_package = candleviewer
+root_packages =
+    candleviewer
+    cvdev
 include_external_packages = True
 exclude_type_checking_imports = True
 
