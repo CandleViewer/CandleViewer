@@ -115,7 +115,8 @@ async def _set(
 ) -> StoredFlag:
     """A write by `who` (default user A) with reason `rollout`, read at `T0` unless `extra` says."""
     request: dict[str, Any] = {"reason": "rollout", "expected_updated_at": T0, **extra}
-    return await writer.set(key, who or _who(), value=value, **request)
+    async with asyncio.timeout(5):  # a removed await bound fails here instead of hanging CI
+        return await writer.set(key, who or _who(), value=value, **request)
 
 
 def _changes(key: str, result: str) -> float:
@@ -135,7 +136,7 @@ async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() 
         "evidence_url": None,
     }
     assert intent["after_state"] == {**asked, "phase": "intent"}
-    assert intent["before_state"] == {"value": True, "overrides": {}}
+    assert intent["before_state"] == outcome["before_state"] == {"value": True, "overrides": {}}
     assert outcome["after_state"] == {
         "value": False,
         "overrides": {str(_B): True},
@@ -281,6 +282,7 @@ async def test_invalid_writes_are_refused_before_the_gate_and_audited(
         ("https://[::1/x?token=secret", REDACTED_UNPARSEABLE),
         ("https://u\uff20h.example/x#token=secret", REDACTED_UNPARSEABLE),
         ("https://github.com/x?access_token=secret", REDACTED_CREDENTIAL),
+        ("https:user:secret@github.com/x", REDACTED_CREDENTIAL),  # userinfo without a netloc
     ],
 )
 async def test_a_refused_evidence_url_never_reaches_the_record_raw(url: str, audited: str) -> None:
@@ -299,6 +301,12 @@ async def test_an_unknown_flag_is_audited_but_never_reaches_a_series_or_the_gate
     assert [(a, r["reason"]) for a, r in audit.records] == [("flags.change", "not_found")]
     samples = [s for m in flag_changes_total.collect() for s in m.samples]
     assert step_up.demanded == [] and all(s.labels["flag"] != "ui.nonexistent" for s in samples)
+
+
+async def test_a_stalled_record_of_an_unknown_flag_is_a_bounded_503() -> None:
+    writer, _, _ = await _writer(audit=_Audit(stall_from=0), timeout_s=0.1)
+    with pytest.raises(StoreUnavailableError):  # mapped as a stall under the row lock is
+        await _set(writer, "ui.nonexistent", True)
 
 
 @pytest.mark.parametrize(
@@ -356,6 +364,18 @@ async def test_a_write_drops_the_cached_row_whatever_its_outcome(
     assert await service.value(key) is False  # read again, well inside the 30 s TTL
 
 
+async def test_a_cancel_in_the_outage_record_still_drops_the_cache() -> None:
+    (service, store), audit, key = await _service(), _Audit(stall_from=1), "rules.form_editor"
+    writer = FlagWriter(service, audit, FakeStepUp(), FakeUsers())
+    assert await service.value(key) is True  # cached
+    store.rows[key], store.fail_write = replace(store.rows[key], value=False), True
+    task = asyncio.create_task(_set(writer, key, False))
+    await audit.stalled.wait()  # the intent passed and the write failed: the outcome stalls
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert await service.value(key) is False  # dropped before the outcome record (decision 2)
+
+
 async def test_maintenance_toggles_add_their_own_audit_actions() -> None:
     writer, store, audit = await _writer(_Hook())
     steps = [(MAINTENANCE_MODE, True), (MAINTENANCE_MODE, True), (MAINTENANCE_MODE, False)]
@@ -399,8 +419,8 @@ async def test_the_hook_gets_the_committed_rows_before_a_stalled_outcome_record(
 async def test_a_failed_or_hung_record_after_the_commit_is_logged_and_the_write_stands(
     key: str, audit: dict[str, int], event: str
 ) -> None:
-    hook = _Hook()
-    writer, store, _ = await _writer(hook, _Audit(**audit), timeout_s=0.1)
+    hook, bound = _Hook(), 0.1 if "stall_from" in audit else WRITE_AWAIT_TIMEOUT_S
+    writer, store, _ = await _writer(hook, _Audit(**audit), timeout_s=bound)
     value = store.rows[key].value is not True  # a change, so maintenance.mode transitions
     with capture_logs() as logs:
         await _set(writer, key, value)

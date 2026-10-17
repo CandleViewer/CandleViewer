@@ -17,7 +17,7 @@ a 422, else a write-ahead intent (unrecorded, nothing is written) and its outcom
 audits a step-up challenge. A store outage before the row is read is logged and counted instead
 (SR-125); once the row was read, the outcome `store_unavailable` is also recorded, best effort.
 An unreadable row is recorded as `unreadable`. A real transition of the stored `maintenance.mode`
-adds `maintenance.enabled|disabled`. Every external await is bounded (`WRITE_AWAIT_TIMEOUT_S`).
+adds `maintenance.enabled|disabled`. The writer's own awaits are bounded (`WRITE_AWAIT_TIMEOUT_S`).
 A committed write drops the cache, runs the change hook with the locked and committed rows, then
 records its outcome; neither a hook nor an audit failure undoes it. `readable`,
 `stored_transition`, `AuditEmitter` and `ChangeHook` are re-exported for the push and the gate.
@@ -56,9 +56,9 @@ from candleviewer.admin.flags.store import (
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 
-#: The bound on a write's external awaits: under the row lock, the user lookup, the step-up and
-#: the audit records together (past it nothing commits: `503 store_unavailable`); after the
-#: commit, the change hook and each audit record (past it, logged).
+#: The bound on the writer's own awaits (the store adapter bounds `store.write`): under the row
+#: lock, the user lookup, the step-up and the audit records together, and an unknown key's record
+#: (past it, `503 store_unavailable`); after the commit, the hook and each record (past it, logged).
 WRITE_AWAIT_TIMEOUT_S: Final = 2.0
 
 
@@ -135,7 +135,10 @@ class FlagWriter:
         spec = self._service.registry.get(key)
         audit = _Audit(self._audit, key, principal, request, spec, self._timeout)
         if spec is None:
-            await audit.refused(None, "not_found", counted=False)
+            try:
+                await audit.refused(None, "not_found", counted=False)
+            except TimeoutError:  # a stalled record is a 503, as one under the row lock is
+                raise StoreUnavailableError("a write await timed out") from None
             raise UnknownFlagError(key)
         url_rule: str | None = evidence
         if spec.requires_evidence and value is True and not evidence_url:

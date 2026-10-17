@@ -159,8 +159,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # outcome of a `retention.purge` intent (the day stays retained, never "dropped").
         "rolloff.drop_unconfirmed",
         "flags.change",
-        # E42-T03: emitted on a stored transition of `maintenance.mode` (D1c; boot included),
-        # alongside the `flags.change` entry when the transition came from a `PUT`.
+        # E42-T03: emitted on a stored transition of `maintenance.mode`, boot included
+        # (`setFeatureFlag`), alongside the `flags.change` entry when it came from a `PUT`.
         "maintenance.enabled",
         "maintenance.disabled",
         "settings.change",
