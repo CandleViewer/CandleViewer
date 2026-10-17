@@ -724,7 +724,8 @@ have no series of their own, so count the lines to bound the probes with no row.
   minted as one): 401, or a failed WS `auth`, and no audit row (log `auth.enrolment_only.expired`).
 - `unclassified`: the session or its user could not be read, or a session store is wired without
   the user store: `503 store_unavailable`, or a failed WS `auth`. The error line
-  `auth.enrolment_only.unclassified` names the exception type; check the auth database first.
+  `auth.enrolment_only.unclassified` names the exception type, and the `session_id` and `user_id`
+  when the session was read but its user's state was not; check the auth database first.
 - `audit_throttled`, `audit_slow`, `audit_unavailable`: an `enrolment_only` refusal whose row was
   skipped on purpose (the per-user budget or the in-flight cap; log
   `auth.enrolment_only.refused_unaudited`), was still running after the 2-second wait (it may

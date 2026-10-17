@@ -588,6 +588,8 @@ def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -
         "OSError",
         "/auth/sessions",
     )
+    session = uuid.uuid5(_USERS["full"], "session")  # read, then not classified: named (C-12.6)
+    assert (line["session_id"], line["user_id"]) == (str(session), str(_USERS["full"]))
 
 
 async def test_refusal_audit_budget_is_shared_by_every_session_of_a_user() -> None:

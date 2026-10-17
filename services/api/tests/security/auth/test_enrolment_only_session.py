@@ -414,6 +414,7 @@ def test_ws_auth_fails_closed_when_the_session_cannot_be_classified(
     assert _refusals(stack, "ws", "unclassified") == before + 1
     (line,) = [e for e in logs if e["event"] == "auth.enrolment_only.unclassified"]
     assert (line["log_level"], line["channel"], line["error"]) == ("error", "ws", "OSError")
+    assert (line["session_id"], line["user_id"]) == (str(minted.session_id), str(uid))
     assert "unreachable" not in f"{reply}{logs}"  # the failure text reaches no one
 
 

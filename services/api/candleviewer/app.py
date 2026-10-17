@@ -933,7 +933,7 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
         try:
             verdict = await ctx.auth.classify(record)
         except Exception as exc:
-            refusals.unclassified(exc, channel="ws", method="GET", path="/ws")
+            refusals.unclassified(exc, channel="ws", method="GET", path="/ws", record=record)
             raise
         if verdict is SessionClass.FULL:
             return

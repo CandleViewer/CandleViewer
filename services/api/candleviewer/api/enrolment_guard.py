@@ -219,15 +219,28 @@ class EnrolmentRefusals:
     def _count(channel: Channel, reason: str) -> None:
         auth_enrolment_refused_total.labels(transport=channel, reason=reason).inc()
 
-    def unclassified(self, exc: Exception, *, channel: Channel, method: str, path: str) -> None:
-        """The session could not be looked up or classified: refused, and an error to page."""
+    def unclassified(
+        self,
+        exc: Exception,
+        *,
+        channel: Channel,
+        method: str,
+        path: str,
+        record: SessionRecord | None = None,
+    ) -> None:
+        """The session could not be looked up or classified: refused, and an error to page.
+        *record* is the session when it was read but not classified: the line names it."""
         self._count(channel, "unclassified")
+        ids: dict[str, str] = {}
+        if record is not None:
+            ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
         _log().error(
             "auth.enrolment_only.unclassified",
             channel=channel,
             method=method,
             path=path,
             error=type(exc).__name__,
+            **ids,
         )
 
     def expired(self, record: SessionRecord, *, channel: Channel, method: str, path: str) -> None:
@@ -345,7 +358,7 @@ def make_enrolment_only_guard(
         try:
             verdict = await auth.classify(record)
         except Exception as exc:  # fail closed: an unclassified session reaches no handler
-            refusals.unclassified(exc, channel="http", method=method, path=template)
+            refusals.unclassified(exc, channel="http", method=method, path=template, record=record)
             return _unavailable()
         operation = (request.method, path)
         if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
