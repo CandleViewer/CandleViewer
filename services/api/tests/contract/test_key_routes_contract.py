@@ -1,10 +1,13 @@
-"""Contract (#836, E27-T03 slice 2b1b): how `createApiKey` fails, declared before 2b4 mounts it
-(C-6.1). The slice changes: the `verification` of a rejected import, with the not-read shape of
-a key the exchange refused before its rights were read; `key_expired` as step 6's refusal; the
-import without a verdict (`503` no answer, `502` error answer) and the exchange-text-free
-problem it uses; and the statuses the route answers that were undeclared. It adds no operation,
-so the composition guard's caps stand. Every new sentence of the prose is quoted in `_PINNED`,
-so deleting one fails a test."""
+"""Contract (#836, E27-T03 slice 2b1): `createApiKey` and `testApiKey` declare what they answer
+before 2b4 and 2b6 mount them (C-6.1). The slice changes: `KeyVerification.egress_ip` and the
+bounds on the names it shows; the `201`, which is always the stored key with the verification
+that passed; the `verification` of a rejected import, with the not-read shape of a key the
+exchange refused before its rights were read; `key_expired` as step 6's refusal; the import
+without a verdict (`503` no answer, `502` error answer) and the exchange-text-free problem both
+use; the statuses the routes answer that were undeclared; the `test` throttle and private-WS
+budget (SR-E27-05); and what a test enforces and audits. It adds no operation, so the
+composition guard's caps stand. Every new sentence of the prose is quoted in `_PINNED`, so
+deleting one fails a test."""
 
 from __future__ import annotations
 
@@ -16,12 +19,14 @@ import pytest
 from jsonschema import ValidationError as SchemaError
 from pydantic import ValidationError
 
+from candleviewer.accounts import selfcheck
 from candleviewer.accounts.verification import Rule
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.ws._generated.error_codes import ErrorCode
 from tests.contract._admin_support import ROOT, SPEC, example_cases, text, validate_example
 
 _KEYS = "/exchange-accounts/{accountId}/keys"
+_TEST = f"{_KEYS}/{{keyId}}/test"
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 _RESPONSES: dict[str, Any] = SPEC["components"]["responses"]
 _REGISTRY: dict[str, dict[str, Any]] = {entry["code"]: entry for entry in SPEC["x-error-codes"]}
@@ -31,9 +36,13 @@ _EXCHANGE = {"$ref": "#/components/schemas/KeyExchangeProblem"}
 _REJECTED_AT = "/components/schemas/KeyRejectedProblem"
 _VERIFICATION = "/components/schemas/KeyVerification"
 _NOT_READ = "/components/schemas/KeyVerificationNotRead"
+_TEST_RESULT = "/components/schemas/KeyTestResult"
 
 #: The statuses each operation declares, exactly (C-6.1; C-6.3: declaring one is additive), with
-#: the shared response each reuses; `None` is written inline because no shared one fits.
+#: the shared response each reuses; `None` is written inline because no shared one fits: a test
+#: refuses a key that is not signable with a 409, a body that fails its schema with a 422 and
+#: nothing it could probe with a 503 that has no audit code, and its failures are `200`s. A test
+#: has no `502`: an exchange failure is reported inside its `200`.
 _DECLARED: dict[str, dict[int, str | None]] = {
     "createApiKey": {
         201: None,
@@ -45,10 +54,21 @@ _DECLARED: dict[str, dict[int, str | None]] = {
         502: "KeyExchangeError",
         503: "KeyServiceUnavailable",
     },
+    "testApiKey": {
+        200: None,
+        403: "Forbidden",
+        404: "NotFound",
+        409: None,
+        422: None,
+        429: "KeyTestThrottled",
+        503: None,
+    },
 }
 _FAILURES = [(op, s) for op, responses in _DECLARED.items() for s in responses if s >= 400]
 #: Members no key response may carry (SR-E27-08, C-2.7); `exchange` may hold `ret_code` only.
 _FORBIDDEN = {"ret_msg", "endpoint", "request_id", "api_key", "api_secret", "secret"}
+#: Only an `active` or `rotating` key is signed with (`KeyStatus`).
+_SIGNABLE = {"active", "rotating"}
 _EGRESS = "203.0.113.10"
 
 #: Where each new sentence is written, with a core phrase of every one: a deletion check.
@@ -84,6 +104,35 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
         "`store_unavailable` when the relational store is unavailable",
         "A KEK that is unavailable is refused with `403 kek_unavailable` instead",
     ),
+    ("paths", _TEST, "post"): (
+        "Re-runs the verification pipeline against a stored key: diagnostics that change nothing",
+        "The REST verdict is enforced as the hourly self-check enforces its own",
+        "a pass refreshes the key's `last_verified_at`",
+        "latches the process read-only and force-disables trading on the account",
+        "a withdrawal right found on demand never waits for the next scheduled check (C-2.8)",
+        "changes nothing and carries no `verification`: an outage never reads as a pass",
+        "The WebSocket half is diagnostic only",
+        "Without `include_ws` that half does not run: `websocket` is omitted, never `ok: true`",
+        "**Audit.** A verdict writes `account.tested` ahead of the key-row writes it covers",
+        "(`last_error_*`, the refreshed columns), with the acting Owner as actor",
+        "the rule codes and the verified permission facts",
+        "never the egress IP, the whitelist or an exchange UID",
+        "a verdict that disarms the account also writes `account.disabled_by_policy`, once the",
+        "disarm is made",
+        "The audit sink is no gate on enforcement (C-2.8 before C-2.9)",
+        "a failing verdict latches the process gate first and disables the account whatever",
+        "the sink does, and the record of the disable is re-sent",
+        "a pass whose record is refused refreshes nothing",
+        "**Throttle.** One test per key per minute (E27-T03, #836)",
+        "a second inside the minute is `429 rate_limited` with `Retry-After`",
+        "at most 10 throwaway private WS connections per 5 minutes in all",
+        "the scheduled self-check opens none (SR-E27-05)",
+        "`websocket` `{ ok: false, error: rate_limited }`, and no connection is opened",
+        "**Not signable.** Only an `active` or `rotating` key is signed with (`KeyStatus`)",
+        "is refused with `409 conflict`, and nothing is probed",
+        "An exchange failure never fails the request",
+        "A KEK that is unavailable is refused with `403 kek_unavailable`",
+    ),
     ("components", "responses", "Forbidden"): (
         "`createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key",
         "(KEK) is unavailable (ADR-0009 Amendment 1)",
@@ -104,6 +153,16 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
         "An import that could not be made or recorded, so nothing was stored (`createApiKey`)",
         "`exchange` holds `ret_code` only (`KeyExchangeProblem`)",
         "`audit_unavailable` is the import's alone: a test never fails on its audit record",
+    ),
+    ("paths", _TEST, "post", "responses", "503"): (
+        "Nothing could be probed: signing is unavailable (`exchange_unavailable`)",
+        "or the relational store is (`store_unavailable`)",
+        "An exchange failure is never this status: it is reported inside the `200`",
+        "a test never fails on its audit record",
+    ),
+    ("components", "responses", "KeyTestThrottled"): (
+        "a second inside the minute is refused and nothing is probed",
+        "An exchange rate limit is reported inside the `200`, never as this `429`",
     ),
     ("components", "schemas", "KeyRejectedProblem"): (
         "The `422` problem of a key operation (`createApiKey`; `rotateApiKey` can reuse it)",
@@ -153,6 +212,21 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
     ),
     ("components", "schemas", "KeyVerification", "properties", "ip_whitelist"): (
         "At most 20 entries, each an address, a range or `*`",
+    ),
+    ("components", "schemas", "KeyProbeError"): (
+        "in `KeyTestResult.websocket` it is also the deployment's own budget of private WS",
+        "connections opened for tests being spent (SR-E27-05)",
+    ),
+    ("components", "schemas", "KeyTestResult", "properties", "passed"): (
+        "True only when the verification passed, the REST probe succeeded and, with",
+    ),
+    ("components", "schemas", "KeyTestResult", "properties", "websocket"): (
+        "Omitted when `include_ws` is false: that half did not run",
+    ),
+    ("components", "schemas", "KeyTestResult", "properties", "verification"): (
+        "The verification as far as the pipeline got",
+        "Omitted when the REST half reached no verdict",
+        "an earlier check's standing result is never shown in its place",
     ),
 }
 
@@ -214,6 +288,11 @@ def _without(value: dict[str, Any], *names: str) -> dict[str, Any]:
     return {k: v for k, v in value.items() if k not in names}
 
 
+def _schema_at(response: str) -> str:
+    """The JSON pointer of the schema of a shared response's problem body."""
+    return f"/components/responses/{response}/content/application~1problem+json/schema"
+
+
 _REJECTIONS = _by_name("createApiKey", 422)
 _PIPELINE = _REJECTIONS["ipWhitelistMismatch"]
 #: The pipeline refusals that `KeyRejected` shows, with the rule each names.
@@ -260,7 +339,7 @@ def test_an_accepted_verification_names_its_whitelist_host() -> None:
         for _, _, v in _examples(op)
         if isinstance(v, dict) and v.get("verification", {}).get("passed") is True
     ]
-    assert len(accepted) >= 3  # the 201, the rotation 200 and the test 200
+    assert len(accepted) >= 4  # the 201, the rotation 200 and both test 200s
     assert all(v["ip_whitelist"] == [v["egress_ip"]] for v in accepted)
 
 
@@ -367,14 +446,24 @@ def test_the_not_read_verification_refuses_a_pass_and_every_check_fact(
     ("schema", "body"),
     [
         (_REJECTED_AT, {**_PIPELINE, "verification": {"passed": False, "uid": "10234567"}}),
+        (_TEST_RESULT, {"passed": False, "verification": {"passed": False, "uid": "10234567"}}),
     ],
-    ids=["rejected import"],
+    ids=["rejected import", "test result"],
 )
 def test_check_facts_without_withdraw_enabled_are_refused_where_a_verification_is_served(
     schema: str, body: dict[str, Any]
 ) -> None:
     with pytest.raises(SchemaError):  # a check that did not run is never sent as a half-result
         validate_example(schema, body)
+
+
+def test_a_test_result_may_carry_the_verification_of_a_key_refused_unread() -> None:
+    refused = {"passed": False, "rest": {"ok": False, "error": "ip_not_allowed", "ret_code": 10010}}
+    body = {**refused, "verification": {"passed": False, "egress_ip": _EGRESS}}
+    validate_example(_TEST_RESULT, body)
+    assert isinstance(
+        api.KeyTestResult.model_validate(body).verification, api.KeyVerificationNotRead
+    )
 
 
 # --- key_expired is step 6's refusal ----------------------------------------------------------
@@ -410,7 +499,7 @@ def test_key_failure_reuses_its_shared_response_or_is_an_inline_problem(
     assert any(m in (_PROBLEM, _REJECTED, _EXCHANGE) for m in members)
 
 
-_CASES = example_cases([(_KEYS, "post")])
+_CASES = example_cases([(_KEYS, "post"), (_TEST, "post")])
 
 
 def _at(pointer: str) -> Any:
@@ -453,6 +542,7 @@ def test_every_declared_failure_has_examples_of_registered_codes(
         ("exchange_unavailable", 503, True),
         ("audit_unavailable", 503, True),
         ("store_unavailable", 503, True),
+        ("rate_limited", 429, True),
         ("idempotency_key_reuse", 409, False),
         ("idempotency_in_flight", 409, True),
         ("conflict", 409, False),
@@ -520,8 +610,8 @@ def test_the_exchange_facing_failures_are_the_exchange_text_free_problem(
     assert body["schema"] == _EXCHANGE
 
 
-def test_the_exchange_text_free_problem_answers_the_import() -> None:
-    assert {case.split(" ")[1] for case, _, _ in _EXCHANGE_ANSWERS} == {_KEYS}
+def test_the_exchange_text_free_problem_answers_the_import_and_the_test() -> None:
+    assert {case.split(" ")[1] for case, _, _ in _EXCHANGE_ANSWERS} == {_KEYS, _TEST}
 
 
 def test_a_502_example_holds_the_return_code_alone() -> None:
@@ -558,6 +648,113 @@ def test_the_generated_class_admits_the_exchange_text_its_schema_refuses(leak: s
     except ValidationError:
         pytest.fail("the generated class refuses exchange text: drop the limit from the schema")
     assert decoded.exchange is not None and getattr(decoded.exchange, leak) == _LEAKING
+
+
+# --- The test throttle and the private-WS budget (SR-E27-05) ----------------------------------
+
+
+def test_the_throttle_and_the_ws_budget_are_the_threat_models_numbers() -> None:
+    model = text((ROOT / "docs/security/threat-models/E27-accounts.md").read_text("utf-8"))
+    assert "`test` throttled to 1 per minute per key" in model
+    assert (
+        "at most 10 private-WS opens per 5 minutes from `test`, none from scheduled checks" in model
+    )
+
+
+def test_a_throttled_test_is_rate_limited_with_its_wait_and_names_no_exchange_uid() -> None:
+    (value,) = _by_name("testApiKey", 429).values()
+    assert (value["code"], value["status"]) == ("rate_limited", 429)
+    assert value["retry_after_seconds"] > 0
+    assert not re.search(r"\d{6,}", value["detail"])  # an exchange UID is 8 digits
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [{"code": "exchange_rate_limited"}, {"retry_after_seconds": None}],
+    ids=["code", "wait"],
+)
+def test_a_throttle_that_is_not_rate_limited_with_its_wait_fails_the_schema(
+    broken: dict[str, Any],
+) -> None:
+    value = next(iter(_by_name("testApiKey", 429).values()))
+    body = {k: v for k, v in {**value, **broken}.items() if v is not None}
+    with pytest.raises(SchemaError):
+        validate_example(_schema_at("KeyTestThrottled"), body)
+
+
+def test_a_spent_ws_budget_is_a_200_that_fails_with_rate_limited_in_websocket_error() -> None:
+    spent = _by_name("testApiKey", 200)["wsBudgetSpent"]
+    assert spent["websocket"] == {"ok": False, "latency_ms": None, "error": "rate_limited"}
+    assert (spent["passed"], spent["rest"]["ok"], spent["verification"]["passed"]) == (
+        False,
+        True,
+        True,
+    )
+
+
+def test_the_generated_test_result_decodes_a_spent_ws_budget() -> None:
+    decoded = api.KeyTestResult.model_validate(_by_name("testApiKey", 200)["wsBudgetSpent"])
+    assert decoded.websocket is not None and decoded.websocket.error == "rate_limited"
+
+
+# --- What a test enforces and audits, in the order of the hourly job (C-2.8 before C-2.9) -----
+
+
+def test_the_hourly_job_latches_first_and_audits_ahead_of_the_key_row_writes() -> None:
+    job = text(selfcheck.__doc__ or "")
+    assert "failure: the process read-only gate latches first" in job
+    assert "A write-ahead `account.tested` covers `last_error_*`" in job
+    assert "The account is force-disabled whatever the audit sink does" in job
+    assert "then the verified `api_keys` columns are refreshed" in job
+
+
+def test_a_test_audits_ahead_of_the_key_row_writes_it_covers_not_ahead_of_its_effects() -> None:
+    audit = _description("paths", _TEST, "post").split("**Audit.**", 1)[1].split("**Throttle.**")[0]
+    assert "ahead of the key-row writes it covers (`last_error_*`, the refreshed columns)" in audit
+    assert "ahead of its effects" not in audit  # the latch and the disable do not wait for it
+
+
+def test_a_test_latches_before_it_asks_the_audit_sink_and_never_waits_for_it() -> None:
+    audit = _description("paths", _TEST, "post").split("**Audit.**", 1)[1].split("**Throttle.**")[0]
+    assert "a failing verdict latches the process gate first and disables the account" in audit
+    assert audit.index("latches the process gate first") < audit.index("whatever the sink does")
+
+
+# --- What a test answers when the key cannot be probed ----------------------------------------
+
+
+def test_every_key_status_that_is_not_signable_is_named_and_refused_with_a_409() -> None:
+    unsignable = [s for s in _SCHEMAS["KeyStatus"]["enum"] if s not in _SIGNABLE]
+    description = _description("paths", _TEST, "post")
+    assert [s for s in unsignable if f"`{s}`" not in description] == []
+    (conflict,) = _by_name("testApiKey", 409).values()
+    assert (conflict["code"], conflict["status"]) == ("conflict", 409)
+
+
+def _failure_codes(operation_id: str) -> set[str]:
+    return {value["code"] for status, _, value in _examples(operation_id) if status >= 400}
+
+
+def test_the_audit_unavailable_answer_is_the_imports_alone() -> None:
+    assert "audit_unavailable" in _failure_codes("createApiKey")
+    assert "audit_unavailable" not in _failure_codes("testApiKey")  # a test never fails on it
+
+
+def test_the_503_of_a_test_is_a_signing_outage_that_names_no_exchange_silence() -> None:
+    (outage,) = _by_name("testApiKey", 503).values()
+    assert (outage["code"], outage["status"]) == ("exchange_unavailable", 503)
+    assert "exchange" not in outage  # nothing was probed, so no exchange answered or kept quiet
+    assert "gave no answer" not in outage["detail"]  # that is a `200` with `rest.error: timeout`
+
+
+def test_a_test_with_no_verdict_and_no_ws_carries_neither_verification_nor_websocket() -> None:
+    timeout = _by_name("testApiKey", 200)["restTimeout"]
+    assert {"verification", "websocket"}.isdisjoint(timeout)
+    assert (timeout["passed"], timeout["rest"]["ok"], timeout["rest"]["error"]) == (
+        False,
+        False,
+        "timeout",
+    )
 
 
 # --- A 201 is the stored key and its verification that passed (AC 1) ---------------------------
@@ -640,3 +837,7 @@ def test_every_new_sentence_of_the_key_routes_is_quoted_by_a_test(
 ) -> None:
     description = _description(*keys)
     assert [phrase for phrase in phrases if phrase not in description] == []
+
+
+def test_the_test_route_is_no_longer_described_as_read_only_diagnostics() -> None:
+    assert "Read-only diagnostics" not in _description("paths", _TEST, "post")

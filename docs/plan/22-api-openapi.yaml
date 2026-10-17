@@ -2686,13 +2686,49 @@ paths:
       operationId: testApiKey
       summary: Re-run the verification pipeline against a stored key
       description: |
-        Read-only diagnostics used by the Admin - Accounts screen "Test connection" button and
-        by the start-up and hourly self-check (C-12.2). Runs signed probes for REST
-        (`wallet-balance`, `query-api`) and, if `include_ws` is set, opens a throwaway private WS
-        connection and asserts `auth` succeeds.
+        Re-runs the verification pipeline against a stored key: diagnostics that change nothing at
+        the exchange, used by the Admin - Accounts screen "Test connection" button and by the
+        start-up and hourly self-check (C-12.2). Runs signed probes for REST (`wallet-balance`,
+        `query-api`) and, if `include_ws` is set, opens a throwaway private WS connection and
+        asserts `auth` succeeds.
         Never places orders. A failed probe reports a `KeyProbeError` code and the verification
         reports `KeyVerificationWarning` codes: no exchange error text, header, URL or request
         fragment is ever echoed (SR-E27-08).
+
+        **Enforcement.** The REST verdict is enforced as the hourly self-check enforces its own: a
+        pass refreshes the key's `last_verified_at`, and a verdict that fails the key gate (a rule
+        of `createApiKey`) latches the process read-only and force-disables trading on the
+        account, so a withdrawal right found on demand never waits for the next scheduled check
+        (C-2.8). A probe that gives no verdict (`createApiKey`, **No verdict**) changes nothing
+        and carries no `verification`: an outage never reads as a pass (SR-E27-18). The WebSocket
+        half is diagnostic only: its failure sets `passed: false` and never disables anything.
+        Without `include_ws` that half does not run: `websocket` is omitted, never `ok: true`.
+
+        **Audit.** A verdict writes `account.tested` ahead of the key-row writes it covers
+        (`last_error_*`, the refreshed columns), with the acting Owner as actor, the rule codes
+        and the verified permission facts, never the egress IP, the whitelist or an exchange UID
+        (Viewers read the audit log, C-12.4); a verdict that disarms the account also writes
+        `account.disabled_by_policy`, once the disarm is made. The audit sink is no gate on
+        enforcement (C-2.8 before C-2.9): a failing verdict latches the process gate first and
+        disables the account whatever the sink does, and the record of the disable is re-sent;
+        a pass whose record is refused refreshes nothing. The answer is the test's result either
+        way.
+
+        **Throttle.** One test per key per minute (E27-T03, #836): a second inside the minute is
+        `429 rate_limited` with `Retry-After`, and nothing is probed. With `include_ws` the
+        deployment opens at most 10 throwaway private WS connections per 5 minutes in all, and
+        the scheduled self-check opens none (SR-E27-05): once that budget is spent the test
+        answers `200` with `websocket` `{ ok: false, error: rate_limited }`, and no connection is
+        opened.
+
+        **Not signable.** Only an `active` or `rotating` key is signed with (`KeyStatus`): one
+        that is `pending`, `revoked`, `invalid` or `expired` is refused with `409 conflict`, and
+        nothing is probed.
+
+        An exchange failure never fails the request: it is reported in `rest.error` or
+        `websocket.error` of a `200`. A `503` means nothing could be probed: `exchange_unavailable`
+        when signing is unavailable, `store_unavailable` when the relational store is. A KEK that
+        is unavailable is refused with `403 kek_unavailable` (ADR-0009 Amendment 1).
       x-rbac: { permissions: [keys:read], scope: granted_accounts }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -2733,8 +2769,86 @@ paths:
                         permissions: { ContractTrade: [Order, Position] },
                         warnings: [key_expiring_soon],
                       }
+                wsBudgetSpent:
+                  summary: The deployment's budget of private WS connections for tests is spent (SR-E27-05); none was opened
+                  value:
+                    passed: false
+                    checked_at: "2026-09-14T10:43:40Z"
+                    rest: { ok: true, latency_ms: 121, ret_code: 0 }
+                    websocket: { ok: false, latency_ms: null, error: rate_limited }
+                    verification:
+                      {
+                        passed: true,
+                        uid: "10234567",
+                        uta: true,
+                        read_only: false,
+                        withdraw_enabled: false,
+                        ip_whitelist: ["203.0.113.10"],
+                        ip_whitelist_matches_egress: true,
+                        egress_ip: "203.0.113.10",
+                        clock_offset_ms: 5,
+                        probe_ret_code: 0,
+                        permissions: { ContractTrade: [Order, Position] },
+                        warnings: [],
+                      }
+                restTimeout:
+                  summary: Without `include_ws` the REST probe got no answer, so there is no verdict, no `verification` and no `websocket`
+                  value:
+                    passed: false
+                    checked_at: "2026-09-14T10:44:30Z"
+                    rest: { ok: false, latency_ms: 5000, ret_code: null, error: timeout }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "The key is not signable (`pending`, `revoked`, `invalid` or `expired`): `conflict`, and nothing is probed."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                notSignable:
+                  value:
+                    type: "https://candleviewer.local/errors/conflict"
+                    title: "Concurrent modification or state conflict"
+                    status: 409
+                    detail: "The key is revoked, so it cannot be tested."
+                    instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d07"
+                    code: conflict
+        "422":
+          description: "The body fails its schema (`validation_failed`). A test that fails is a `200`, never this."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                requestInvalid:
+                  value:
+                    type: "https://candleviewer.local/errors/validation_failed"
+                    title: "Request body or parameters failed schema validation"
+                    status: 422
+                    detail: "1 field failed validation."
+                    instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d08"
+                    code: validation_failed
+                    errors:
+                      - field: body.include_ws
+                        rule: bool_parsing
+                        message: "Input should be a valid boolean"
+        "429": { $ref: "#/components/responses/KeyTestThrottled" }
+        "503":
+          description: "Nothing could be probed: signing is unavailable (`exchange_unavailable`) or the relational store is (`store_unavailable`). An exchange failure is never this status: it is reported inside the `200`, and a test never fails on its audit record."
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/KeyExchangeProblem" }
+              examples:
+                signingUnavailable:
+                  value:
+                    type: "https://candleviewer.local/errors/exchange_unavailable"
+                    title: "Exchange connectivity lost (WS down and REST failing)"
+                    status: 503
+                    detail: "Signing is unavailable, so the key could not be tested; nothing was probed."
+                    instance: "urn:cv:req:0193f2ba-1f45-7c3e-9a11-2f8e4b1c9d09"
+                    code: exchange_unavailable
+                    retry_after_seconds: 5
 
   /exchange-accounts/{accountId}/profiles:
     parameters: [{ $ref: "#/components/parameters/AccountId" }]
@@ -12716,6 +12830,32 @@ components:
                 instance: "urn:cv:req:0193f2bb-d002"
                 code: audit_unavailable
                 retry_after_seconds: 5
+    KeyTestThrottled:
+      description: >
+        One test per key per minute: a second inside the minute is refused and nothing is
+        probed (`testApiKey`). An exchange rate limit is reported inside the `200`, never as
+        this `429`.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - { $ref: "#/components/schemas/Problem" }
+              - type: object
+                required: [retry_after_seconds]
+                properties:
+                  { code: { const: rate_limited }, retry_after_seconds: { type: integer } }
+          examples:
+            throttled:
+              value:
+                type: "https://candleviewer.local/errors/rate_limited"
+                title: "Per-user API rate limit exceeded"
+                status: 429
+                detail: "One test per key per minute; retry in 41 s."
+                instance: "urn:cv:req:0193f2bb-a001"
+                code: rate_limited
+                retry_after_seconds: 41
     PreconditionFailed:
       description: ETag precondition failed.
       content:
@@ -14115,7 +14255,9 @@ components:
         taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused
         (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`.
         `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`,
-        `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx.
+        `10018`, `10429` or HTTP 429; in `KeyTestResult.websocket` it is also the deployment's own
+        budget of private WS connections opened for tests being spent (SR-E27-05), when no
+        connection is opened at all. `service_unavailable`: `10016`, `10019` or HTTP 5xx.
         `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's
         `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other
         non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own
@@ -14212,7 +14354,11 @@ components:
     KeyTestResult:
       type: object
       properties:
-        passed: { type: boolean }
+        passed:
+          type: boolean
+          description: >
+            True only when the verification passed, the REST probe succeeded and, with
+            `include_ws`, the private WS `auth` succeeded.
         checked_at: { type: string, format: date-time }
         rest:
           type: object
@@ -14223,11 +14369,23 @@ components:
             error: { oneOf: [{ $ref: "#/components/schemas/KeyProbeError" }, { type: "null" }] }
         websocket:
           type: object
+          description: >
+            Omitted when `include_ws` is false: that half did not run, and no `ok: true` is sent
+            for it.
           properties:
             ok: { type: boolean }
             latency_ms: { type: ["integer", "null"] }
             error: { oneOf: [{ $ref: "#/components/schemas/KeyProbeError" }, { type: "null" }] }
-        verification: { $ref: "#/components/schemas/KeyVerification" }
+        verification:
+          description: >
+            The verification as far as the pipeline got. Omitted when the REST half reached no
+            verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window`
+            or a rate limit): an earlier check's standing result is never shown in its place,
+            because an outage must not read as a pass (SR-E27-18). A key the exchange refused
+            before its rights were read is `KeyVerificationNotRead`.
+          oneOf:
+            - { $ref: "#/components/schemas/KeyVerification" }
+            - { $ref: "#/components/schemas/KeyVerificationNotRead" }
     Offset:
       type: object
       description: A distance expressed in one of several units; resolved server-side to a price.
