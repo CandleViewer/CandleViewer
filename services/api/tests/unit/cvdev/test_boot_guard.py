@@ -1,7 +1,9 @@
 """#2893 S8: the boot guard refuses a stored key the fixture must never answer for (FX-S01).
 
 Fakes stand in for the store and the audit sink; `test_account_fixture_boot_guard_pg.py` runs the
-read on Postgres. A refusal names counts and environments, never a key character.
+read on Postgres, and `tests/unit/test_main_lifespan.py` the lifespan wiring (kept out of this
+module: importing `candleviewer.main` configures logging, #2519). A refusal names counts and
+environments, never a key character.
 """
 
 from __future__ import annotations
@@ -19,11 +21,9 @@ from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
-from fastapi import FastAPI
 from structlog.testing import capture_logs
 
 from candleviewer.account_fixture_wiring import (
-    ACCOUNT_FIXTURE_AUDIT_ACTION,
     NO_FIXTURE_TRANSPORT,
     AccountFixtureRefused,
     account_fixture_guard,
@@ -31,14 +31,11 @@ from candleviewer.account_fixture_wiring import (
 )
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditEmission, Severity
-from candleviewer.audit.service import AuditService
-from candleviewer.main import _lifespan
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import boot
 from cvdev.account_fixture.boot import MAX_STORED_KEYS, StoredKey
 from cvdev.account_fixture.pack import Pack
-from tests._account_fixtures import PACK, PACK_ROOT
-from tests.unit.test_main_lifespan import _fake_ctx, _FakeAudit, _FakeModule
+from tests._account_fixtures import PACK
 
 _T0: Final = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 _FOREIGN: Final = "Zq9X"  # no pack key id ends with it
@@ -144,89 +141,6 @@ async def test_boot_writes_audit_and_warning(tmp_path: Path) -> None:
     assert action in AUDIT_ACTIONS and emission.severity is Severity.WARNING
 
 
-def _fixture_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit: object
-) -> tuple[FastAPI, SimpleNamespace]:
-    """`test_main_lifespan.py`'s harness with the fixture on and the checkout's pack."""
-    monkeypatch.setattr(boot, "PACK_ROOT", PACK_ROOT)
-    app, ctx = FastAPI(), _fake_ctx()
-    ctx.settings, ctx.audit = _dev(tmp_path, metrics_enabled=False), audit
-    app.state.app_context = ctx
-    return app, ctx
-
-
-def _modules(ctx: SimpleNamespace) -> list[_FakeModule]:
-    return [m for m in vars(ctx).values() if isinstance(m, _FakeModule)]
-
-
-class _AuditAfterStart(_FakeAudit):
-    async def emit(self, action: str, **fields: object) -> None:
-        assert self.started, "the boot record was written before the audit module started"
-        await super().emit(action, **fields)
-
-
-async def test_a_refused_boot_starts_no_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _a_live_key(settings: Settings) -> Sequence[StoredKey]:
-        return [_key("live", "Ab12")]
-
-    monkeypatch.setattr(boot, "read_stored_keys", _a_live_key)
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit())
-
-    with pytest.raises(AccountFixtureRefused, match=re.escape("1 outside demo (live 1)")):
-        await _lifespan(app).__aenter__()
-
-    assert not [m for m in _modules(ctx) if m.started]
-    assert (ctx.mesh_self_check.run_once_calls, ctx.audit.actions) == (0, [])
-
-
-async def test_the_lifespan_decides_before_any_module_starts_and_records_after(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With an audit writer, as on the real backend (the read is faked): the guard reads before
-    any module starts, and its record is written once they run, before serving."""
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _AuditAfterStart())
-    started_at_read: list[bool] = []
-
-    async def _read(settings: Settings) -> Sequence[StoredKey]:
-        started_at_read.append(any(m.started for m in _modules(ctx)))
-        return [_key("demo", "0001")]
-
-    monkeypatch.setattr(boot, "read_stored_keys", _read)
-
-    async with _lifespan(app):
-        assert (started_at_read, ctx.audit.actions) == ([False], [ACCOUNT_FIXTURE_AUDIT_ACTION])
-
-
-async def test_on_the_fake_backend_the_warning_is_the_only_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The real fake-backend path: no key is stored and `AuditService` has no writer (`is_active`
-    is False and `writer` raises), so the guard passes with its warning and nothing is written."""
-    app, ctx = _fixture_app(tmp_path, monkeypatch, AuditService())
-
-    with capture_logs() as logs:
-        async with _lifespan(app):
-            assert ctx.audit.is_active is False
-
-    passed = [e for e in logs if e["event"] == "exchange.account_fixture_boot_guard_passed"]
-    assert [(e["log_level"], e["storage_backend"], e["fixture_keys"]) for e in passed] == [
-        ("warning", "fake", 0)
-    ]
-
-
-async def test_a_failed_boot_record_stops_every_module_and_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit(failure=RuntimeError("audit down")))
-
-    with pytest.raises(RuntimeError, match="audit down"):
-        await _lifespan(app).__aenter__()
-
-    assert not [m for m in _modules(ctx) if not m.stopped]
-
-
 def _forget_the_dev_package(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in [n for n in sys.modules if n == "cvdev" or n.startswith("cvdev.")]:
         monkeypatch.delitem(sys.modules, name)
@@ -234,12 +148,12 @@ def _forget_the_dev_package(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_unset_does_nothing_and_imports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     _forget_the_dev_package(monkeypatch)
-    audit = _FakeAudit()
+    audit = _Audit()
 
     passed = await account_fixture_guard(Settings())
     await account_fixture_record(passed, audit)
 
-    assert (passed, audit.actions) == (None, [])
+    assert (passed, audit.records) == (None, [])
     assert not [n for n in sys.modules if n == "cvdev" or n.startswith("cvdev.")]
 
 
@@ -277,20 +191,14 @@ async def test_a_pack_without_a_fixture_key_id_refuses_boot(tmp_path: Path, key_
 async def test_more_stored_keys_than_the_guard_reads_refuses_boot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(boot, "MAX_STORED_KEYS", 1)
+    """Exactly `MAX_STORED_KEYS` keys pass; one more refuses."""
     keys = _Keys(_key("demo", "0001"), _key("demo", "0002"))
+    monkeypatch.setattr(boot, "MAX_STORED_KEYS", 2)
+    await boot.run(_dev(tmp_path), keys=keys, pack=PACK)
 
+    monkeypatch.setattr(boot, "MAX_STORED_KEYS", 1)
     with pytest.raises(AccountFixtureRefused, match="more than 1 unrevoked exchange keys"):
         await boot.run(_dev(tmp_path), keys=keys, pack=PACK)
-
-
-async def test_exactly_max_stored_keys_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(boot, "MAX_STORED_KEYS", 2)
-    keys = _Keys(_key("demo", "0001"), _key("demo", "0002"))
-
-    await boot.run(_dev(tmp_path), keys=keys, pack=PACK)
 
 
 class _Session:
