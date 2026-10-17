@@ -16,6 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
 from candleviewer.api import me
@@ -197,6 +198,32 @@ async def test_get_for_a_user_the_identity_store_no_longer_has_is_401(env: _Env,
     user_id, headers, _ = await env.sign_in()
     del env.identity.users[user_id]
     _assert_problem(env.client.get(path, headers=headers), 401, "unauthenticated")
+
+
+@pytest.mark.parametrize("permissions", [None, []], ids=["default_permissions", "no_permissions"])
+@pytest.mark.parametrize("roles", [["auditor"], ["viewer", "auditor"], ["owner", "superuser"]])
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_get_for_a_user_holding_a_role_outside_the_closed_set_is_the_same_401(
+    env: _Env, path: str, roles: list[str], permissions: list[str] | None
+) -> None:
+    """The snapshot and rules-actor resolvers build a `PrincipalSnapshot`, which refuses a role
+    outside the closed set, and answer no principal (401). One unknown role refuses the whole
+    principal, whatever else it holds: the answer must not depend on which roles come with it,
+    and it must be the anonymous body. The refusal also comes before the permission check: with no
+    permission at all (the default set holds `settings:read`) the two settings routes still answer
+    the 401, not the `403 forbidden` that names what the caller lacks."""
+    _, headers, _ = await env.sign_in(roles=roles, permissions=permissions)
+    refused = _assert_problem(env.client.get(path, headers=headers), 401, "unauthenticated")
+    assert refused == env.client.get(path).json()
+
+
+@pytest.mark.parametrize("role", _SPEC["components"]["schemas"]["RoleName"]["enum"])
+async def test_every_role_the_contract_names_is_served(env: _Env, role: str) -> None:
+    """The closed set the gate admits is the contract's `RoleName`: a role added there must be
+    served here, not refused as unknown."""
+    _, headers, _ = await env.sign_in(roles=[role])
+    resp = env.client.get(_ME, headers=headers)
+    assert resp.status_code == 200 and resp.json()["role"] == role
 
 
 async def test_a_request_is_activity_that_extends_the_idle_deadline(env: _Env) -> None:
@@ -474,6 +501,74 @@ async def test_routes_answer_503_while_the_session_backend_is_not_active(
     _, headers, _ = await env.sign_in()
     env.auth.sessions_is_active = False
     _assert_problem(env.client.get(path, headers=headers), 503, "store_unavailable")
+
+
+#: The text of the failure a stopping session store raises. It must never reach a client, and the
+#: log gives it no field of its own.
+_STORE_FAILURE = "session store stopped"
+
+
+def _fail_the_session_store(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, failure: type[Exception] = RuntimeError
+) -> None:
+    """The store fails with `failure` while `authenticate_access_token` is awaited: the router has
+    already taken `sessions_is_active` and `sessions` (nothing awaits between those reads, so that
+    is the shape a stopping backend reaches it in; `AuthService.sessions` itself cannot raise
+    there)."""
+
+    async def _stopped(*_args: Any, **_kwargs: Any) -> Any:
+        raise failure(_STORE_FAILURE)
+
+    monkeypatch.setattr(env.svc, "authenticate_access_token", _stopped)
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_routes_answer_503_when_the_session_store_fails_under_the_call(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same answer as an inactive backend, not an unhandled `RuntimeError` (a 500): the audit
+    and snapshot resolvers catch it as well. The failure's text is not echoed."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch)
+    resp = env.client.get(path, headers=headers)
+    failed = _assert_problem(resp, 503, "store_unavailable")
+    assert _STORE_FAILURE not in resp.text
+    env.auth.sessions_is_active = False
+    assert env.client.get(path, headers=headers).json() == failed
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_a_session_store_failure_is_logged_with_its_class_and_a_traceback(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broad catch must not hide a defect: one error line names the class and carries the
+    exception, which the processor chain renders as a traceback and then redacts. The message has
+    no field of its own, so only that traceback can carry it."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch)
+    with capture_logs() as logs:
+        env.client.get(path, headers=headers)
+    (entry,) = logs
+    assert (entry["event"], entry["log_level"], entry["error"]) == (
+        "auth.me.session_backend_error",
+        "error",
+        "RuntimeError",
+    )
+    assert isinstance(entry["exc_info"], RuntimeError)
+    assert _STORE_FAILURE not in repr({k: v for k, v in entry.items() if k != "exc_info"})
+
+
+@pytest.mark.parametrize("path", _ROUTES)
+async def test_a_session_store_failure_that_is_not_a_runtime_error_is_not_answered_503(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The contract's `503` names `RuntimeError` and nothing wider. A store that fails another way
+    (a refused connection, say) is not described by it and is not hidden behind it: the exception
+    reaches the boundary handler, as any defect does."""
+    _, headers, _ = await env.sign_in()
+    _fail_the_session_store(env, monkeypatch, ConnectionError)
+    with pytest.raises(ConnectionError, match=_STORE_FAILURE):
+        env.client.get(path, headers=headers)
 
 
 @pytest.mark.parametrize("path", _ROUTES)
