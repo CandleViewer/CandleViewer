@@ -16,12 +16,12 @@ expired flush (§4.3). Before `auth_ok` there is no topic: over budget is step 3
 
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
-`SAMPLE_EVERY`) the encode is timed with `perf_counter` and sized at its wire length, once, under
-the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`, as the flag-off writer
-does before its send. Any other frame reads no timer, and an encode that fails is not observed.
-The encode happens at push, so a stamped frame that a close or a ladder drop removes before the
-send is in these series but not in `cv_ws_fanout_seconds`, which the writer observes once the
-socket has the frame.
+`SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
+length, once, under the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`, as
+the flag-off writer does before its send. Any other frame reads no timer, and an encode that fails
+is not observed. The encode happens at push, so a stamped frame that a close or a ladder drop
+removes before the send is in these series but not in `cv_ws_fanout_seconds`, which the writer
+observes once the socket has the frame.
 
 A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
 marker are the only items admitted past the budget, one small frame, so the bound holds to within
@@ -188,6 +188,10 @@ class ConnectionPipeline:
         self._dumps: FrameEncoder = (
             msgpack_payload if encoding == SUBPROTOCOL_MSGPACK else json_payload
         )
+        #: E17-T06: `_dumps` timed, bound once, so a stamped frame's encode seconds are its
+        #: serialiser's alone (`_encode_s`) and no frame allocates a wrapper.
+        self._timed_dumps: FrameEncoder = self._timed
+        self._encode_s = 0.0
         #: E17-T06: the frame cost pair (encode seconds, frame bytes) of this connection's codec.
         self._cost = (
             (MSGPACK_ENCODE_SECONDS, MSGPACK_FRAME_BYTES)
@@ -223,16 +227,17 @@ class ConnectionPipeline:
         stamped (`received`) has its encode timed and sized here, once (module docstring)."""
         if self.terminal is not None or self.released:
             return
-        began = perf_counter() if received is not None else 0.0
         try:
-            item = encode(frame, self._dumps, received=received)
+            item = encode(
+                frame, self._dumps if received is None else self._timed_dumps, received=received
+            )
         except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
             _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
             self._close("internal_error")
             return
         if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
             seconds, size = self._cost
-            seconds.observe(perf_counter() - began, SAMPLE_EVERY)
+            seconds.observe(self._encode_s, SAMPLE_EVERY)
             size.observe(item.size, SAMPLE_EVERY)
         if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused
             _log().warning(
@@ -303,6 +308,12 @@ class ConnectionPipeline:
             state.setdefault("trigger", FLUSH_DEADLINE_TRIGGER)
             state["flush_abandoned"] = True
         return state or None
+
+    def _timed(self, frame: Mapping[str, Any]) -> str | bytes:
+        began = perf_counter()
+        payload = self._dumps(frame)
+        self._encode_s = perf_counter() - began
+        return payload
 
     def close(self, bye: dict[str, Any], code: int, *, flush: bool) -> int:
         """Take the terminal slot (`_Connection.close_with`; a later call changes nothing) and

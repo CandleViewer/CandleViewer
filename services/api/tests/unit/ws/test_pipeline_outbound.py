@@ -1095,17 +1095,26 @@ def test_a_stamped_frame_is_observed_once_per_series_at_push(
     encoding: str, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2921 with the flag on: the pipeline encodes a frame once, at push, so that is where a
-    frame the hub stamped (`received`) is timed, by a `perf_counter` pair around the encode, and
-    sized at its wire length: one observation in each series of its codec's pair, weight
-    `SAMPLE_EVERY`, and none anywhere else. An unstamped frame reads no timer and observes
-    nothing; a stamped frame whose encode is refused observes nothing and closes instead."""
+    frame the hub stamped (`received`) is timed, by a `perf_counter` pair around its serialiser
+    alone (#3061's fourth review round), and sized at its wire length: one observation in each
+    series of its codec's pair, weight `SAMPLE_EVERY`, and none anywhere else. An unstamped frame
+    reads no timer and observes nothing; a stamped frame whose encode is refused observes nothing
+    and closes instead."""
     ticks = _Ticks(0.25)  # each timer read is 0.25 s after the one before
     real = outbound.encode
 
     def slow_encode(frame: Any, dumps: Any, *, received: float | None = None) -> Queued:
-        ticks.now += 5.0  # an encode takes 5 s on the stand-in clock: it is inside the pair
+        ticks.now += 7.0  # the lanes and the `Queued` take 7 s: outside the pair
         return real(frame, dumps, received=received)
 
+    for name in ("json_payload", "msgpack_payload"):
+        serialise = getattr(pipeline, name)
+
+        def slow(frame: Any, serialise: Any = serialise) -> Any:
+            ticks.now += 5.0  # the serialiser takes 5 s on the stand-in clock: inside the pair
+            return serialise(frame)
+
+        monkeypatch.setattr(pipeline, name, slow)
     monkeypatch.setattr(pipeline, "perf_counter", ticks)
     monkeypatch.setattr(pipeline, "encode", slow_encode)
     seen: list[tuple[str, float, int]] = []
