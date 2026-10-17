@@ -893,8 +893,16 @@ def test_a_window_ending_on_new_year_does_not_name_the_next_year() -> None:
     assert keys == [{"y": "2026"}]
 
 
-def test_an_empty_window_names_no_partition() -> None:
-    assert recorded_reader._time_keys(("symbol", "dt", "hour"), H0, H0) == []
+@pytest.mark.parametrize(
+    "template",
+    [("symbol", "dt", "hour"), ("symbol", "dt"), ("symbol", "ym"), ("symbol", "y")],
+    ids=["hours", "days", "months", "years"],
+)
+def test_an_empty_window_names_no_partition(template: tuple[str, ...]) -> None:
+    """Mid-period on purpose: the window's last instant (`hi - 1`) then precedes its first."""
+    mid_month = H0 + 5 * 24 * HOUR + 30 * MINUTE
+
+    assert recorded_reader._time_keys(template, mid_month, mid_month) == []
 
 
 @pytest.mark.parametrize(
