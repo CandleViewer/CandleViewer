@@ -2,19 +2,28 @@
 (C-6.3): nothing pre-existing changes and nothing new is required; `connection_state` keeps its
 enum (decision Q2 on #837); the documented example round-trips; `wallet` frames validate, with
 health reported per account apart from balances, and every reason set is closed; the server's
-`wallet` merge keeps the latest health of every account and still validates.
+`wallet` merge keeps the latest health of every account and still validates. The code that
+serves these shapes agrees with them.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
+from candleviewer.accounts.health import (
+    CONNECTION_STATE,
+    AccountHealth,
+    AccountHealthMonitor,
+    HealthReason,
+    HealthState,
+)
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.ws.coalescing import CoalescingQueue
 from tests.contract.ws._harness import SCHEMAS, check_schema
+from tests.unit.accounts._fakes import ACC, FakeClock
 
 _SPEC: dict[str, Any] = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -123,3 +132,48 @@ def test_a_merged_wallet_window_keeps_every_account_health_and_validates() -> No
     assert merged.body == {"balances": [_FULL], "health": [_ENTRY, other]}
     disclosed = merged.body | {"coalesced": True, "coalesced_count": merged.coalesced_count}
     check_schema(_WALLET, disclosed, "wallet")
+
+
+@pytest.mark.parametrize(
+    ("state", "wire"),
+    [
+        (HealthState.HEALTHY, "connected"),
+        (HealthState.DEGRADED, "degraded"),
+        (HealthState.DOWN, "disconnected"),
+    ],
+)
+def test_each_health_state_maps_to_its_documented_connection_state(
+    state: HealthState, wire: str
+) -> None:
+    enum = _SCHEMAS["ExchangeAccount"]["properties"]["connection_state"]["enum"]
+    assert CONNECTION_STATE[state] == wire and wire in enum
+
+
+def _degraded_view() -> AccountHealth:
+    """The monitor's view of an account that REST polling alone keeps up."""
+    monitor = AccountHealthMonitor(FakeClock())
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    view = monitor.view(ACC)
+    assert view is not None
+    return view
+
+
+def test_the_monitor_view_has_exactly_the_contract_fields_and_states() -> None:
+    schema = _SCHEMAS["AccountHealth"]["properties"]
+    assert set(_degraded_view().model_dump(mode="json")) == set(schema)
+    assert [s.value for s in HealthState] == schema["state"]["enum"]
+
+
+def test_the_monitor_reasons_are_the_closed_contract_set() -> None:
+    reasons = _SCHEMAS["AccountHealth"]["properties"]["reason"]["enum"]
+    assert list(get_args(HealthReason)) == reasons == _WS_ENTRY["properties"]["reason"]["enum"]
+
+
+def test_the_monitor_view_validates_against_the_generated_rest_model() -> None:
+    rest = _degraded_view().model_dump(mode="json")
+    assert api.AccountHealth.model_validate(rest).state == "degraded"
+
+
+def test_the_monitor_ws_entry_validates_against_the_wallet_schema() -> None:
+    check_schema(_WALLET, {"balances": [], "health": [_degraded_view().ws_entry(ACC)]}, "wallet")

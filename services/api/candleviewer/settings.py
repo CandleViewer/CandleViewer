@@ -32,6 +32,11 @@ _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
 #: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
 QUESTDB_PG_DEFAULT_PORT = 8812
+#: US-ACCT-010's caps on `account_heartbeat_s` and `account_down_s`, which are also their defaults.
+#: Written once, here: M1 may not import `accounts`, and `accounts/health.py` imports them, so the
+#: bounds below and `HealthThresholds` share one value.
+ACCOUNT_HEARTBEAT_MAX_S: Final = 10.0
+ACCOUNT_DOWN_MAX_S: Final = 30.0
 
 # #2565: timings of the planned shutdown that are code constants, not settings. They live in M1
 # because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
@@ -496,6 +501,17 @@ class Settings(BaseSettings):
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30
+    # E27-T04: account health windows, configurable as the ticket's Technical notes name them
+    # (`CV_ACCOUNT_DOWN_S`, `CV_ACCOUNT_HEARTBEAT_S`). A heartbeat is the private WS's successful
+    # auth reply, then any pong or topic message on that socket; the client pings every
+    # account_heartbeat_s / 2 (5 s), not at the exchange's suggested 20 s.
+    # The caps are US-ACCT-010's NFRs, not tuning room: a heartbeat older than 10 s must not show
+    # healthy, and order entry must close within 30 s of the last WS or REST success. No value
+    # switches either check off (C-4.14).
+    account_heartbeat_s: float = Field(
+        default=ACCOUNT_HEARTBEAT_MAX_S, gt=0.0, le=ACCOUNT_HEARTBEAT_MAX_S
+    )
+    account_down_s: float = Field(default=ACCOUNT_DOWN_MAX_S, gt=0.0, le=ACCOUNT_DOWN_MAX_S)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"
@@ -764,6 +780,22 @@ class Settings(BaseSettings):
                 "with the api service's stop_grace_period (infra/compose)"
             )
         return drain_s
+
+    @field_validator("account_down_s")
+    @classmethod
+    def _refuse_unordered_account_windows(cls, down_s: float, info: ValidationInfo) -> float:
+        """E27-T04: the heartbeat window must end inside the down window, as `HealthThresholds`
+        requires. A bad pair refuses startup here rather than failing wherever the wiring first
+        builds one.
+
+        A field validator on the second window, not a model one (#2728, #2565): a refusal's
+        `errors()` and `json()` carry only this field's input, never every setting,
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the heartbeat window, declared
+        first; one whose own check failed is absent, and its error is the one to report."""
+        heartbeat_s = info.data.get("account_heartbeat_s")
+        if heartbeat_s is not None and not heartbeat_s < down_s:
+            raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
+        return down_s
 
     @field_validator("bind_host")
     @classmethod
