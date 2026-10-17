@@ -9,6 +9,7 @@ from datetime import timedelta
 import pytest
 
 from candleviewer.auth.errors import (
+    SelfResetRefused,
     SessionRevoked,
     StepUpChallengeRefused,
     UnknownActionClass,
@@ -17,7 +18,7 @@ from candleviewer.auth.step_up import CHALLENGE_WINDOW
 from tests.conftest import RecordingAuditSink
 
 from .session_fakes import FakeSessionRepository
-from .test_step_up import PASSWORD, _code, _sample, _session, _setup
+from .test_step_up import PASSWORD, _code, _noop, _sample, _session, _setup
 
 
 def _keys(sessions: FakeSessionRepository, alias: str = "s1") -> list[str]:
@@ -127,6 +128,14 @@ async def test_revoked_session_is_refused_as_revoked_never_challenged() -> None:
         await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
 
 
+async def test_owner_self_reset_is_refused_before_the_elevation_check() -> None:
+    svc, _clock, _seed, owner, _ = await _setup()
+    with pytest.raises(SelfResetRefused):  # no elevation held: still not a challenge
+        await svc.reset_totp(
+            actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(owner), audit=_noop
+        )
+
+
 async def test_challenge_written_before_challenge_ids_is_not_live() -> None:
     svc, clock, _seed, user, sessions = await _setup()
     sessions.sessions["s1"] = sessions.sessions["s1"].model_copy(
@@ -135,6 +144,26 @@ async def test_challenge_written_before_challenge_ids_is_not_live() -> None:
     assert await svc.live_challenge("s1") is None
     with pytest.raises(StepUpChallengeRefused):
         await svc.step_up(str(user), "s1", None, "000000", PASSWORD)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "pending:keys:not-a-uuid",
+        f"pending:bogus:{uuid.UUID(int=7)}",
+        f"pending:keys:{uuid.UUID(int=7)}:extra",
+    ],
+    ids=["malformed-id", "unregistered-class", "extra-part"],
+)
+async def test_malformed_challenge_key_is_not_live_and_never_raises(key: str) -> None:
+    svc, clock, _seed, user, sessions = await _setup()
+    sessions.sessions["s1"] = sessions.sessions["s1"].model_copy(
+        update={"step_up_elevations": {key: clock.now + timedelta(minutes=1)}}
+    )
+    assert await svc.live_challenge("s1") is None
+    with pytest.raises(StepUpChallengeRefused) as refused:  # nothing to answer, no class named
+        await svc.step_up(str(user), "s1", None, "000000", PASSWORD)
+    assert (refused.value.field, refused.value.rule) == ("action_class", "required")
 
 
 async def test_challenge_audits_name_the_challenge_never_a_factor(

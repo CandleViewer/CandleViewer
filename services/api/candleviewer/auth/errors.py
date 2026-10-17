@@ -200,6 +200,11 @@ class StepUpChallengeRefused(AuthError):
         self.rule = rule
 
 
+class SelfResetRefused(AuthError):
+    """The owner targeted their own TOTP reset. No step-up can cure it, so the
+    HTTP edge answers a plain `403 forbidden`, never a challenge (#2304)."""
+
+
 class InviteRejected(AuthError):
     """An invite token that cannot be used (E09-S05). `reason` is one of
     `unknown | expired | redeemed | revoked | enrollment_invalid` and is for

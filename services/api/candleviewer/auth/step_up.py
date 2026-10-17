@@ -21,10 +21,12 @@ class and 5-minute expiry; `step_up()` answers the live one.
 
 Writes (#2304, #2798): a no-grace class's one-shot grant is used by one
 conditional write (`consume_step_up_key`), and every other write of the
-step-up columns is a pure change applied to the row as it is under its lock
+step-up columns is a change applied to the row as it is under its lock
 (`update_step_up_state`), never to a copy read before it: of two requests
 racing to use a grant one does, and a grant used while another request of
-the session is in flight stays used.
+the session is in flight stays used. A change is a function of the columns it
+is given and of the values it was built with, with no I/O and no await; the
+strike also notes on itself whether it started a downgrade.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from candleviewer.auth.errors import (
+    SelfResetRefused,
     SessionReadOnly,
     SessionRevoked,
     StepUpChallengeRefused,
@@ -198,9 +201,11 @@ def _answered(
     return resolved, live
 
 
-# Every write of the step-up columns is one of these pure changes, applied by
+# Every write of the step-up columns is one of these changes, applied by
 # `SessionRepository.update_step_up_state` to the row as it is under its lock (#2304), never
 # to the copy a request read before: a grant used meanwhile stays used, a downgrade stands.
+# Each is a function of the columns it is given and of the values it was built with, with no I/O
+# and no await; `_Strike` alone is an object, as it also notes whether it started a downgrade.
 
 
 def _unexpired(elevations: dict[str, datetime], now: datetime) -> dict[str, datetime]:
@@ -238,17 +243,26 @@ def _elevate(action_class: str, grant_key: str, until: datetime, now: datetime) 
     return change
 
 
-def _strike(now: datetime) -> StepUpChange:
+class _Strike:
     """One more invalid step-up, counted on the row: the third downgrades the session to
-    read-only for 5 minutes and ends every elevation."""
+    read-only for 5 minutes and ends every elevation. A downgrade that landed during the factor
+    check stands as it was set: the row is left alone, so it is neither renewed nor counted
+    twice. `downgraded` tells whether this write started the downgrade; the repository calls the
+    change once, under the row lock, and each call sets it afresh."""
 
-    def change(state: StepUpState) -> StepUpState:
-        elevations, failures, _readonly_until = state
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+        self.downgraded = False
+
+    def __call__(self, state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        self.downgraded = False
+        if readonly_until is not None and self._now < readonly_until:
+            return state
         if failures + 1 >= FAILURE_CAP:
-            return {}, FAILURE_CAP, now + READONLY_WINDOW
-        return _unexpired(elevations, now), failures + 1, None
-
-    return change
+            self.downgraded = True
+            return {}, FAILURE_CAP, self._now + READONLY_WINDOW
+        return _unexpired(elevations, self._now), failures + 1, None
 
 
 def _lift(now: datetime) -> StepUpChange:
@@ -396,12 +410,14 @@ class StepUpService:
         action_class, challenge = _answered(record, now, action_class, challenge_id)
         if not await self._verify_both(user_id, code, password, now):
             auth_stepup_failures_total.inc()  # SR-125; the audit row names the action class
-            struck = await self._update(session_id, _strike(now))
+            strike = _Strike(now)
+            struck = await self._update(session_id, strike)
             await self._record(
                 record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
             )
             if struck.readonly_until is not None:
-                auth_readonly_downgrades_total.inc()
+                if strike.downgraded:  # one that landed meanwhile was counted when it began
+                    auth_readonly_downgrades_total.inc()
                 raise SessionReadOnly(struck.readonly_until)
             raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
         until = now + GRACE_WINDOW
@@ -567,11 +583,12 @@ class StepUpService:
         """Owner reset: revoke the target's methods and all their sessions
         (which ends their elevations too), nothing else. Requires a live
         `users` elevation; touches no OMS surface and returns no secret.
-        Self-reset is refused. It cannot be undone, so `audit` is written
-        ahead of the first revoke (C-2.9): if it raises, nothing changes."""
-        await self.require_elevation(actor_session_id, "users")
+        Self-reset is refused, before the elevation check: no step-up can cure it.
+        It cannot be undone, so `audit` is written ahead of the first revoke
+        (C-2.9): if it raises, nothing changes."""
         if actor_user_id == target_user_id:
-            raise StepUpRequired("users")
+            raise SelfResetRefused("the owner cannot reset their own TOTP")
+        await self.require_elevation(actor_session_id, "users")
         now = self._clock()
         methods = await self._mfa.find_active_methods(target_user_id)
         live = await self._sessions.find_live_by_user(target_user_id)

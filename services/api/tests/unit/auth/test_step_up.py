@@ -10,6 +10,7 @@ import pytest
 
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
+    SelfResetRefused,
     SessionReadOnly,
     SessionRevoked,
     StepUpCodeInvalid,
@@ -216,7 +217,7 @@ async def test_owner_reset_revokes_sessions_without_oms_effects_or_secret() -> N
 async def test_owner_cannot_reset_self() -> None:
     svc, clock, seed, owner, _ = await _setup()
     await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
-    with pytest.raises(StepUpRequired):
+    with pytest.raises(SelfResetRefused):  # #2304: no step-up cures it, so not a challenge
         await svc.reset_totp(
             actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(owner), audit=_noop
         )
