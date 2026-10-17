@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -125,3 +126,75 @@ class FakeClock:
     def __call__(self) -> datetime:
         self.now += timedelta(microseconds=1)
         return self.now
+
+
+class PgTextRefusedError(Exception):
+    """What asyncpg raises for text Postgres 16 cannot store: U+0000 is SQLSTATE 22021 in a
+    `text` column and 22P05 in `jsonb`; a lone surrogate is 22000 in `text` (refused before
+    it is sent) and 22P02 in `jsonb`. `jsonb` also refuses NaN and the infinities (22P02).
+    `model_dump_json` refuses a lone surrogate and writes a non-finite number as `null`, so
+    only a stored frame can carry either this far."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(f"SQLSTATE {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+def _texts(value: Any) -> list[str]:
+    """Every string in a record value: itself, or dict keys, values and items at any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for pair in value.items() for part in pair for text in _texts(part)]
+    if isinstance(value, list):
+        return [text for item in value for text in _texts(item)]
+    return []
+
+
+def _non_finite(value: Any) -> bool:
+    """True if a JSON value holds NaN or an infinity, at any depth."""
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_non_finite(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_non_finite(item) for item in value)
+    return False
+
+
+def _refusal(text: str, *, jsonb: bool) -> str | None:
+    if "\x00" in text:
+        return "22P05" if jsonb else "22021"
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return "22P02" if jsonb else "22000"
+    return None
+
+
+class PgTextAuditRepository(FakeAuditRepository):
+    """`FakeAuditRepository` that refuses, as Postgres does, a record holding text it cannot
+    store or, in `jsonb`, a non-finite number; `refused` lists the SQLSTATE of each refusal."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refused: list[str] = []
+
+    async def retry_sleep(self, _delay: float) -> None:
+        """A short real pause before each retry, so a record that stays refused is retried at
+        a bounded rate instead of in a busy loop."""
+        await asyncio.sleep(0.01)
+        await super().retry_sleep(_delay)
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        for column, value in record.items():
+            jsonb = column in ("before_state", "after_state")
+            for text in _texts(value):
+                sqlstate = _refusal(text, jsonb=jsonb)
+                if sqlstate is not None:
+                    self.refused.append(sqlstate)
+                    raise PgTextRefusedError(sqlstate)
+            if jsonb and _non_finite(value):
+                self.refused.append("22P02")
+                raise PgTextRefusedError("22P02")
+        await super().insert(record)

@@ -2492,6 +2492,8 @@ The writer's local WAL (buffer during a Postgres outage) stores self-validating 
 <crc32-hex8>
 `; a torn final frame is truncated before the next append, while a bad frame in the middle raises `AuditWalCorrupt` and the writer fails closed.
 
+Text and numbers that Postgres cannot store (U+0000, lone surrogates, NaN and infinities) are normalised before insert, in every text field and in `before_state` / `after_state` keys and values: U+0000 becomes U+FFFD, a lone surrogate becomes `?` and a non-finite number becomes `null`.
+
 Inserts into `audit_log` are **serialised** by an advisory lock (`pg_advisory_xact_lock(hashtext('audit_log'))`) taken by the writer _and_ inside `audit_chain()` itself, so concurrent appends cannot fork the chain. The verifier job (`cv-audit-verify`) walks the chain nightly and raises a `critical` system event on any mismatch.
 
 Actions that MUST be audited (non-exhaustive, enforced by a Semgrep rule on the service layer):

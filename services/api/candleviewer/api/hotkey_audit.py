@@ -11,9 +11,10 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from candleviewer.audit.errors import AuditError
+from candleviewer.domain.text import refuse_unstorable_text
 
 ACTION = "hotkey.trading_binding_changed"
 _ID = r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$"
@@ -25,6 +26,11 @@ class HotkeyBindingAuditInput(BaseModel):
     before: str = Field(max_length=64)
     after: str = Field(max_length=64)
     acknowledged_unsafe: bool
+
+    @field_validator("before", "after")
+    @classmethod
+    def _storable_binding(cls, value: str) -> str:
+        return refuse_unstorable_text(value)
 
 
 class _Emitter(Protocol):

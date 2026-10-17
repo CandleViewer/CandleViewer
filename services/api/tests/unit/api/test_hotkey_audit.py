@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -92,6 +93,20 @@ def test_record_rejects_extra_and_bad_fields_with_422() -> None:
     )
     bad = {**BODY, "command_id": "NOT VALID"}
     assert c.post("/settings/hotkey-audit", json=bad, headers=H).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["before", "after"])
+def test_record_refuses_nul_in_a_binding_with_the_same_422_unaudited(field: str) -> None:
+    em = _Emitter()
+    r = _client(em).post("/settings/hotkey-audit", json={**BODY, field: "Ctrl+\x00"}, headers=H)
+    assert r.status_code == 422
+    assert r.json() == {
+        "type": "about:blank",
+        "title": "Unprocessable",
+        "status": 422,
+        "detail": "invalid hotkey audit payload",
+    }
+    assert em.calls == []
 
 
 def test_record_audit_failure_is_503() -> None:

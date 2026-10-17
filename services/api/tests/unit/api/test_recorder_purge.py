@@ -222,6 +222,14 @@ async def test_purge_bad_reason_is_422() -> None:
     assert env.backend.runs == 0
 
 
+async def test_purge_reason_with_nul_is_the_same_422_and_nothing_runs() -> None:
+    env = _Env()
+    r = await env.post(BODY | {"reason": "free\x00disk"})
+    assert r.status_code == 422
+    assert r.json() == (await env.post(BODY | {"reason": "no"})).json()  # no echo, same shape
+    assert env.backend.runs == 0 and env.audit.calls == []
+
+
 async def test_purge_confirm_mismatch_is_422_and_nothing_deleted() -> None:
     env = _Env()
     r = await env.post(BODY | {"confirm_symbol": "BTCUSD"})
