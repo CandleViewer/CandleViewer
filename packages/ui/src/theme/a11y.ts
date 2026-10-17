@@ -2,11 +2,11 @@ import type { ThemeStore } from "./store.js";
 
 /**
  * Shortcut contract for the high-contrast toggle (`05-accessibility-standard.md` §3.2). The E10 hotkey
- * registry registers a command from it (fields named as in `KeymapCommand`, binding in its canonical
- * `Ctrl+Alt+Shift+Key` form) and calls `toggleHighContrastAnnounced`. It must not run the handler for a
- * key auto-repeat (`ignoreRepeat`; its `KeyEventLike` has no `repeat` field yet), and the handler ignores a
- * repeat too (`{ repeat: event.repeat }`), so holding the keys cannot flap the theme. This package never
- * listens for keys.
+ * registry registers a command from it and calls `toggleHighContrastAnnounced`. `id`, `label` and
+ * `defaultBinding` (canonical `Ctrl+Alt+Shift+Key` form) are fields of today's `KeymapCommand`;
+ * `ignoreRepeat`, and a `repeat` field on `KeyEventLike`, are to be added by #305. The registry must not
+ * run the handler for a key auto-repeat, and the handler ignores a repeat too (`{ repeat: event.repeat }`),
+ * so holding the keys cannot flap the theme. This package never listens for keys.
  */
 export const HIGH_CONTRAST_SHORTCUT = {
   id: "global.toggle_high_contrast",

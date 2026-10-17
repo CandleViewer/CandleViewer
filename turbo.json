@@ -36,7 +36,7 @@
     },
     "build": {
       "dependsOn": ["^build", "generate"],
-      "inputs": ["src/**", "!**/*.md"],
+      "inputs": ["src/**", "tokens/**", "scripts/**", "tsup.config.ts", "!**/*.md"],
       "outputs": ["dist/**"]
     },
     "size": {

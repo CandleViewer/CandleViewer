@@ -264,8 +264,9 @@ describe("TextScaleReflow story", () => {
   afterEach(() => vi.restoreAllMocks());
 
   // jsdom has no layout, so the two widths the play function compares are stubbed the way a browser
-  // reports them: the text overflows its box (480 > 320) in the one leg the test names.
-  async function playWithOverflowAt(leg?: string): Promise<void> {
+  // reports them: the text overflows its box (480 > 320) in the one leg the test names. `pageCss` is the
+  // stylesheet the page loaded: without theme.css the text never grows, so an overflow check alone passes.
+  async function playWithOverflowAt(leg?: string, pageCss = themeCss): Promise<void> {
     const legNow = (el: Element): string | undefined =>
       el instanceof HTMLElement && el.style.fontSize === "200%" ? "200" : rootData["textScale"];
     vi.spyOn(Element.prototype, "clientWidth", "get").mockReturnValue(320);
@@ -273,7 +274,7 @@ describe("TextScaleReflow story", () => {
       return legNow(this) === leg ? 480 : 320;
     });
     const css = document.head.appendChild(document.createElement("style"));
-    css.textContent = themeCss;
+    css.textContent = pageCss;
     try {
       const host = await mount(
         <ThemeProvider store={newStore()}>
@@ -296,6 +297,10 @@ describe("TextScaleReflow story", () => {
       await expect(playWithOverflowAt(leg)).rejects.toThrow(/less than or equal to 320/);
     },
   );
+
+  it("fails when theme.css is not loaded, instead of passing with text that never grows", async () => {
+    await expect(playWithOverflowAt(undefined, "")).rejects.toThrow(/expected '' to be '1'/);
+  });
 });
 
 describe("preview decorator", () => {

@@ -92,11 +92,13 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 - `theme.css` — density pointers (any element with `data-density` re-points its subtree), the text-scale
   rules (root font size and `--cv-text-scale`), the `--cv-motion-scale` hook (the motion recipes are
   `TODO(#3174, blocked by #162)`) and the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks.
-  Apps import the token CSS and then `theme.css` through the package exports (built files, so run
-  `pnpm --filter @candleviewer/ui build` first): `import "@candleviewer/ui/tokens.dark.css"` (likewise
-  `tokens.light.css` and `tokens.high-contrast.css`), then `import "@candleviewer/ui/theme.css"`. A bundler
-  alias for `@candleviewer/ui` must match the entry exactly (`/^@candleviewer\/ui$/`); a prefix alias turns
-  these subpaths into `src/index.ts/theme.css`.
+  Apps import the token CSS and then `theme.css` through the package exports:
+  `import "@candleviewer/ui/tokens.dark.css"` (likewise `tokens.light.css` and `tokens.high-contrast.css`),
+  then `import "@candleviewer/ui/theme.css"`. They are built files in `dist/`, so a build comes first:
+  `pnpm --filter @candleviewer/ui build`, or `node scripts/build-tokens.mjs && node scripts/copy-css.mjs`
+  in `packages/ui` (the copy fails when a token CSS file is missing; the `apps/web` resolve test runs both
+  itself when `dist/` lacks them). A bundler alias for `@candleviewer/ui` must match the entry exactly
+  (`/^@candleviewer\/ui$/`); a prefix alias turns these subpaths into `src/index.ts/theme.css`.
 - Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
 - Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
   `a11y-preferences` feature should call it rather than write the attributes themselves.
