@@ -35,6 +35,9 @@ _HANDOFF_MAX = 256
 #: systemd `LoadCredential*=` directory; a live regular-file KEK must live here *and* on RAM fs.
 LIVE_FILE_PREFIX = "/run/credentials/"
 _PR_SET_DUMPABLE, _PR_GET_DUMPABLE = 4, 3
+#: `auth_keys.dek_ref` (#2152): the prefix, then nonce(12) || ciphertext(32) || tag(16) in hex.
+AUTH_WRAP_PREFIX = "ak1:"
+_AUTH_WRAP_RE = re.compile(r"[0-9a-f]{120}")
 
 
 class LoadedKek:
@@ -87,6 +90,23 @@ class LoadedKek:
         if prefix != "v2":
             raise ValueError("unsupported dek_ref")
         aad = env.dek_aad(self.env_name, credential_id, self.version)
+        return env.open_(self._live_key(), bytes.fromhex(body), aad)
+
+    def wrap_auth_key(self, key: bytearray, *, key_id: UUID, purpose: str) -> str:
+        """`auth_keys.dek_ref` (#2152, 21 §3.1.5a): ``ak1:`` + hex of the 32-byte auth key sealed
+        under this KEK, bound to its environment, `purpose`, row id and version."""
+        if len(key) != env.KEY_LEN:
+            raise ValueError("auth key length")
+        aad = env.akey_aad(self.env_name, purpose, key_id, self.version)
+        return AUTH_WRAP_PREFIX + env.seal(self._live_key(), key, aad).hex()
+
+    def unwrap_auth_key(self, dek_ref: str, *, key_id: UUID, purpose: str) -> bytearray:
+        """`InvalidTag` on wrong KEK / environment / purpose / row / version; `ValueError` on
+        shape, including an `api_keys` wrap (`v2:`)."""
+        body = dek_ref.removeprefix(AUTH_WRAP_PREFIX)
+        if body == dek_ref or not _AUTH_WRAP_RE.fullmatch(body):
+            raise ValueError("unsupported auth key wrap")
+        aad = env.akey_aad(self.env_name, purpose, key_id, self.version)
         return env.open_(self._live_key(), bytes.fromhex(body), aad)
 
     def close(self) -> None:

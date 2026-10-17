@@ -47,3 +47,27 @@ class SnapshotInvalid(WithdrawPermissionRejected):
     Still refuses the key (fail closed), but with its own code so operators see the cause."""
 
     code = "snapshot_invalid"
+
+
+class AuthKeyringUnavailable(SecretsError):
+    """MFA fails closed (`503 auth_unavailable`, ADR-0009 Amendment 4). `reason` is one of
+    `auth_keyring_missing`, `auth_keyring_mismatch`, `auth_keyring_stranded`, `auth_keyring_closed`
+    and `auth_key_not_held` (a seal under a key not held here, never "no method")."""
+
+    code = "auth_keyring_unavailable"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class AuthKeyEnvForbidden(SecretsError):
+    """An old env auth key setting in `live` (D3: import on `demo` and `testnet` only): fatal."""
+
+    code = "auth_key_env_forbidden"
+
+
+class AuthSealInvalid(SecretsError):
+    """A seal under a held key failed authentication (moved or tampered): a wrong code (AC9)."""
+
+    code = "auth_seal_invalid"

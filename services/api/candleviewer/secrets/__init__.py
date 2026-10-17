@@ -6,7 +6,7 @@ caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wir
 `mint_borrower`): it sends a message with `KEY_ID_SLOT` where the key id goes and gets back a
 `RequestSignature` (hex MAC + key id), never the secret. `admin` alone may call the offline
 break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols a KEK. `_kek`,
-`_envelope`, `_source`, `_metrics` and `broker` are internal.
+`_envelope`, `_auth_keyring`, `_source`, `_metrics` and `broker` are internal.
 """
 
 from __future__ import annotations

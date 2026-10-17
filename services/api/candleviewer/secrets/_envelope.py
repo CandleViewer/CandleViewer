@@ -8,6 +8,8 @@ concatenation is ambiguous:
 - wrap layer (#2338): ``cv-dek-v2 | environment | credential_id | kek_version``; the environment
   is the one the KEK was loaded for, so a KEK never opens another environment's wrap. The
   environment-free ``cv-dek-v1`` wrap is refused, never opened.
+- auth keyring (#2152, ADR-0009 Amendment 4): wrap ``cv-akey-v1``, TOTP seal ``cv-totp-v1`` and
+  the ``cv-rc-v2`` recovery-code digest preimage (`21-database-schema.md` §3.1.5a).
 
 SR-003 `key_version`: there is no separate key-version column — every exchange key rotation
 inserts a new `api_keys` row (`api_key_rotations` links old→new), so `credential_id` already
@@ -54,6 +56,33 @@ def dek_aad(env: str, credential_id: UUID, kek_version: int) -> bytes:
     if env not in ENVIRONMENTS:
         raise ValueError("unknown environment")
     return aad(b"cv-dek-v2", env.encode(), credential_id.bytes, str(kek_version).encode())
+
+
+#: `auth_keys.purpose` (#2152, `21-database-schema.md` §3.1.5a): the auth keyring's two keys.
+AUTH_PURPOSES = ("totp_seal", "recovery_hmac")
+
+
+def akey_aad(env: str, purpose: str, key_id: UUID, kek_version: int) -> bytes:
+    """Auth key wrap (#2152): ``cv-akey-v1 | environment | purpose | id | kek_version``."""
+    if env not in ENVIRONMENTS or purpose not in AUTH_PURPOSES:
+        raise ValueError("unknown environment or auth key purpose")
+    if type(kek_version) is not int or kek_version < 1:
+        raise ValueError("kek_version must be a positive int")
+    return aad(
+        b"cv-akey-v1", env.encode(), purpose.encode(), key_id.bytes, str(kek_version).encode()
+    )
+
+
+def totp_aad(env: str, user_id: UUID) -> bytes:
+    """TOTP seed seal (#2152): ``cv-totp-v1 | environment | user_id``."""
+    if env not in ENVIRONMENTS:
+        raise ValueError("unknown environment")
+    return aad(b"cv-totp-v1", env.encode(), user_id.bytes)
+
+
+def rc_preimage(user_id: UUID, normalised: bytes) -> bytes:
+    """Recovery-code digest preimage (#2152): ``cv-rc-v2 | user_id | normalised code``."""
+    return aad(b"cv-rc-v2", user_id.bytes, normalised)
 
 
 def seal(key: bytes | bytearray, plaintext: bytes | bytearray, aad_: bytes) -> bytes:
