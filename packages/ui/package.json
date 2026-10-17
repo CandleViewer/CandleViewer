@@ -11,7 +11,9 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./theme.css": "./dist/theme.css",
+    "./tokens.*.css": "./dist/tokens.*.css"
   },
   "scripts": {
     "lint": "eslint . --max-warnings=0",

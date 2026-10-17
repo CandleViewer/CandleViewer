@@ -74,7 +74,7 @@ source files themselves are exempt).
 ## Theme runtime (E05-T02)
 
 `src/theme/` owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root attributes
-(the token CSS and `theme.css` key off the first three). They are written on `document.documentElement` only
+that the token CSS and `src/theme/theme.css` key off. They are written on `document.documentElement` only
 (never a React-owned wrapper), so a switch is a CSS custom-property swap with no remount. Contract and
 event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-system-brief.md).
 
@@ -86,10 +86,17 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   embeds it byte-for-byte as its only inline script and allows it by hash (a `'sha256-…'` source in
   `script-src`), never `'unsafe-inline'`.
 - `HIGH_CONTRAST_SHORTCUT` (`Ctrl+Shift+H`) and `toggleHighContrastAnnounced` — the shortcut contract the
-  E10 hotkey registry calls; each toggle is announced through one polite live region that the provider
-  pre-renders (bootstraps without the provider, like the E10 registry, call `mountLiveRegion()` at startup).
-- `theme.css` — density pointers, the `--cv-motion-scale` hook (the motion recipes are `TODO(#3174)`) and
-  the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks. Import it next to the token CSS.
+  E10 hotkey registry calls (it must ignore key auto-repeat: `ignoreRepeat`, the `repeat` option); each
+  toggle is announced through one polite live region that the provider pre-renders (bootstraps without
+  the provider, like the E10 registry, call `mountLiveRegion()` at startup).
+- `theme.css` — density pointers (any element with `data-density` re-points its subtree), the text-scale
+  rules (root font size and `--cv-text-scale`), the `--cv-motion-scale` hook (the motion recipes are
+  `TODO(#3174, blocked by #162)`) and the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks.
+  Apps import the token CSS and then `theme.css` through the package exports (built files, so run
+  `pnpm --filter @candleviewer/ui build` first): `import "@candleviewer/ui/tokens.dark.css"` (likewise
+  `tokens.light.css` and `tokens.high-contrast.css`), then `import "@candleviewer/ui/theme.css"`. A bundler
+  alias for `@candleviewer/ui` must match the entry exactly (`/^@candleviewer\/ui$/`); a prefix alias turns
+  these subpaths into `src/index.ts/theme.css`.
 - Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
 - Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
   `a11y-preferences` feature should call it rather than write the attributes themselves.

@@ -6,17 +6,22 @@ import { vitestPreset } from "@candleviewer/config/vitest";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@candleviewer/ui": resolve(import.meta.dirname, "../../packages/ui/src/index.ts"),
-      "@candleviewer/chart-engine": resolve(
-        import.meta.dirname,
-        "../../packages/chart-engine/src/index.ts",
-      ),
-      "@candleviewer/protocol": resolve(
-        import.meta.dirname,
-        "../../packages/protocol/src/index.ts",
-      ),
-    },
+    alias: [
+      // Exact match for the entry only: `@candleviewer/ui/theme.css` and the token CSS must resolve through
+      // the package `exports` (built files), not turn into `src/index.ts/theme.css`.
+      {
+        find: /^@candleviewer\/ui$/,
+        replacement: resolve(import.meta.dirname, "../../packages/ui/src/index.ts"),
+      },
+      {
+        find: "@candleviewer/chart-engine",
+        replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/index.ts"),
+      },
+      {
+        find: "@candleviewer/protocol",
+        replacement: resolve(import.meta.dirname, "../../packages/protocol/src/index.ts"),
+      },
+    ],
   },
   test: {
     ...vitestPreset.test,
