@@ -192,6 +192,8 @@ async def test_a_source_starts_one_producer_however_often_it_is_asked_for_items(
     with pytest.raises(StopAsyncIteration):
         await pull(source)
     await source.aclose()
+    with pytest.raises(StopAsyncIteration):  # closed: asking again must start nothing
+        await pull(source)
     async with source:
         pass
 
