@@ -25,7 +25,13 @@ from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
 from candleviewer.bars.limits import MAX_TAIL as MAX_TAIL  # end of life: #2787 D2-M1
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, row_checksum
+from candleviewer.bars.rows import (
+    BUILD_VERSIONS,
+    BarPersistError,
+    bar_param_for,
+    check_generation,
+    row_checksum,
+)
 from candleviewer.domain.sql_names import column_identifier, ts_param, ts_us_from_row
 from candleviewer.observability.metrics import Counter
 
@@ -325,7 +331,8 @@ class BarReader:
         """The newest `limit` closed, tape-built bars of a series inside `tail_window_us`, oldest
         first (WS `bars` snapshot hydration, #2195): one `build_tail_query` read, reversed.
         Untrusted rows are dropped and counted as in `read_bars`; stale `build_version` rows are
-        served as-is. A malformed row is skipped, never fatal to the whole tail.
+        served as-is. A malformed row is skipped, never fatal to the whole tail: one whose
+        generation is outside the writer's bound (`check_generation`) too.
 
         Callers skip a `history` of 0 (a `limit` below 1 raises) and bound every read with a
         timeout, degrading when it expires (SR-E12-01). `BarTail` says what `since_us` and
@@ -349,7 +356,7 @@ class BarReader:
             try:
                 got = _tail_bar(row, spec)
                 built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
-            except (ArithmeticError, ValueError, TypeError) as exc:
+            except (ArithmeticError, ValueError, TypeError, BarPersistError) as exc:
                 malformed, error = malformed + 1, error or type(exc).__name__
                 continue
             if got is None:
@@ -425,6 +432,7 @@ def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
     s = stored_bar(row)
     if not (s.tape_built and s.confirmed) or s.index is None or s.generation is None:
         return None
+    check_generation(s.generation, source=s.source)  # 0..MAX_GENERATION, as written
     bar = Bar.model_construct(
         spec_hash=spec.spec_hash, symbol=str(row["symbol"]), index=s.index, open_time=s.ts_us,
         close_time=ts_us_from_row(row["close_ts"]), open=Decimal(s.open), high=Decimal(s.high),

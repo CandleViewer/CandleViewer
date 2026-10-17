@@ -15,7 +15,7 @@ from candleviewer.bars.kline_rows import KLINE_SOURCE, ORDERFLOW_NULL_COLUMNS
 from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import BarReader, BarTail, build_tail_query, tail_window_us
-from candleviewer.bars.rows import BUILD_VERSIONS, bar_row, row_checksum
+from candleviewer.bars.rows import BUILD_VERSIONS, MAX_GENERATION, bar_row, row_checksum
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.domain.sql_names import ts_param
 from candleviewer.ws.topics import FAMILIES
@@ -288,6 +288,19 @@ async def test_read_tail_skips_a_malformed_row_instead_of_failing_the_tail(
 ) -> None:
     tail = await _read([_row(1, change), _row(0)])
     assert (_indexes(tail), tail.skipped, tail.dropped) == ([0], 1, 0)
+
+
+@pytest.mark.parametrize(
+    ("generation", "kept"), [(-1, False), (MAX_GENERATION, True), (MAX_GENERATION + 1, False)]
+)
+async def test_read_tail_skips_a_row_whose_generation_the_writer_would_refuse(
+    generation: int, kept: bool
+) -> None:
+    """`check_generation`'s bound on read too: a row outside it is malformed, never folded."""
+    with capture_logs() as logs:
+        tail = await _read([_row(1, {"generation": generation}), _row(0)])
+    assert (_indexes(tail), tail.skipped) == (([0, 1], 0) if kept else ([0], 1))
+    assert [e["error_type"] for e in logs] == ([] if kept else ["BarPersistError"])
 
 
 async def test_read_tail_warns_once_per_read_however_many_rows_are_malformed() -> None:

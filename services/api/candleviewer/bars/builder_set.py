@@ -608,6 +608,9 @@ class BarBuilderSet:
                         continue
                     await self._emit(e, ups)
         for symbol, h in self._leases.expired(now):
+            if symbol not in self._lanes:  # its lane died (`_on_lane_death`): no builder to save
+                bar_builder_specs_in_use.labels(symbol=symbol).set(0)  # none in use now
+                continue
             lane = self._lanes[symbol]
             async with lane.lock:
                 if (symbol, h) in self._leases:

@@ -323,6 +323,71 @@ async def test_a_released_hold_is_not_released_again_when_collected(
     assert store.latest(SYM, H, 1) is None
 
 
+async def test_the_grace_counts_from_the_latest_release_not_an_earlier_lost_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One hold is collected unreleased, the other released 50 s later: however late the queue
+    is applied, the series keeps the whole grace from that later release (BR-38)."""
+    monkeypatch.setattr(series_store, "MAX_SERIES", 1)
+    clock = Clock()
+    store = SeriesStore(clock=clock)
+    lost, kept = await store.ensure(SYM, SPEC), await store.ensure(SYM, SPEC)
+    del lost
+    gc.collect()
+    clock.t += 50
+    kept.release()
+    clock.t += RELEASE_GRACE_S - 0.5
+    with pytest.raises(SpecCapExceeded):  # applies the queued release: still in the grace
+        await store.ensure("ETHUSDT", SPEC)
+    clock.t += 0.5
+    await store.ensure("ETHUSDT", SPEC)
+    assert store.latest(SYM, H, 1) is None
+
+
+async def test_a_hold_released_without_grace_frees_its_slot_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hold that never reached its lease starts no grace: unheld, its series frees its slot at
+    once, or when an earlier release's grace ends, which it neither extends nor shortens."""
+    monkeypatch.setattr(series_store, "MAX_SERIES", 1)
+    clock = Clock()
+    store = SeriesStore(clock=clock)
+    (await store.ensure(SYM, SPEC)).release(grace=False)
+    (await store.ensure("ETHUSDT", SPEC)).release()  # at the same instant: the slot was free
+    clock.t += 10
+    (await store.ensure("ETHUSDT", SPEC)).release(grace=False)  # inside ETH's grace
+    clock.t += RELEASE_GRACE_S - 10 - 0.5
+    with pytest.raises(SpecCapExceeded):
+        await store.ensure(SYM, SPEC)
+    clock.t += 0.5  # the first release's grace ends
+    await store.ensure(SYM, SPEC)
+    assert store.latest("ETHUSDT", H, 1) is None
+
+
+async def test_a_hold_released_without_grace_never_touches_another_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other holder keeps the series unexpiring; its own release then runs the whole grace."""
+    monkeypatch.setattr(series_store, "MAX_SERIES", 1)
+    clock = Clock()
+    store = SeriesStore(clock=clock)
+    refused, theirs = await store.ensure(SYM, SPEC), await store.ensure(SYM, SPEC)
+    refused.release(grace=False)
+    s = store._series[(SYM, H)]
+    assert (s.refs, s.expires_at) == (1, None)  # white-box: still held, nothing armed
+    clock.t += RELEASE_GRACE_S
+    with pytest.raises(SpecCapExceeded):  # no slot for another series: still held
+        await store.ensure("ETHUSDT", SPEC)
+    assert store.latest(SYM, H, 1) is not None
+    theirs.release()
+    clock.t += RELEASE_GRACE_S - 0.5
+    with pytest.raises(SpecCapExceeded):  # the full grace counts from this release
+        await store.ensure("ETHUSDT", SPEC)
+    clock.t += 0.5
+    await store.ensure("ETHUSDT", SPEC)
+    assert store.latest(SYM, H, 1) is None
+
+
 async def test_a_new_hold_starts_from_the_last_16_closes_seen_before_it() -> None:
     """Live bars only: the closes the sink saw while nobody held the series. No ring holds the
     forming bar; the sink keeps the series current from there."""
@@ -346,12 +411,15 @@ async def test_a_re_close_takes_its_bars_slot_in_the_ring_not_a_new_one() -> Non
 
 
 async def test_a_new_hold_replays_its_recent_closes_by_the_sink_rules() -> None:
-    """A builder restart among the closes seen before the hold drops the older run, as live."""
+    """A builder restart among the closes seen before the hold drops the older run, as live;
+    the replay counts no reset (the sink counted none: nobody held the series)."""
     store = SeriesStore()
     await emit(store, *(up("close", i, shift=-30) for i in range(4)))
     await emit(store, *(up("close", i) for i in range(2)))  # the new run reuses indexes 0 and 1
+    before = counted("bars_series_resets_total", "restart")
     await store.ensure(SYM, SPEC)
     assert view(store) == ([0, 1], None)
+    assert counted("bars_series_resets_total", "restart") == before
 
 
 async def test_only_the_newest_generations_recent_closes_start_a_hold() -> None:
@@ -360,8 +428,10 @@ async def test_only_the_newest_generations_recent_closes_start_a_hold() -> None:
     store = SeriesStore()
     await emit(store, up("close", 0), up("close", 1))
     await emit(store, up("close", 0), generation=1)
+    before = counted("bars_series_resets_total", "generation_swap")
     await store.ensure(SYM, SPEC)
     assert generation(store) == 1 and view(store) == ([0], None)
+    assert counted("bars_series_resets_total", "generation_swap") == before  # a replay counts none
 
 
 async def test_recent_closes_are_kept_for_max_series_least_recently_closed_dropped_first(
@@ -498,6 +568,24 @@ async def test_a_cancelled_first_ensure_hands_its_read_to_a_waiter() -> None:
     assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0, 1], None)
     hold.release()  # the last hold: the cancelled ensure took none with it
     clock.t += RELEASE_GRACE_S
+    await store.ensure("ETHUSDT", SPEC)
+    assert store.latest(SYM, H, 1) is None
+
+
+async def test_a_cancelled_ensure_starts_no_grace_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hold that never reached its lease frees its slot at once: the series an `ensure` created
+    and was cancelled mid-read on is gone for the next series, at the same instant."""
+    monkeypatch.setattr(series_store, "MAX_SERIES", 1)
+    tail = Tail()  # its read waits on the gate
+    store = SeriesStore(tail, clock=Clock())
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    tail.gate.set()  # the next series reads freely
     await store.ensure("ETHUSDT", SPEC)
     assert store.latest(SYM, H, 1) is None
 
@@ -643,9 +731,11 @@ async def test_a_jump_past_the_recent_closes_flags_a_gap_that_the_next_read_heal
     tail = Tail(rows(*range(10)), now=True)
     store = SeriesStore(tail, clock=clock)
     await emit(store, *(up("close", i) for i in range(10, 14 + RECENT_CLOSES)))
+    before = counted("bars_series_gaps_total")
     with capture_logs() as logs:
         await store.ensure(SYM, SPEC)
     assert store.gapped(SYM, H) and view(store)[0] == [*range(10), *range(14, 30)]
+    assert counted("bars_series_gaps_total") == before  # a read's fold: no live close skipped
     assert events(logs, "bars_series_gap") == [{
         "event": "bars_series_gap", "log_level": "warning", "spec_hash": H, "symbol": SYM,
         "from_index": 10, "to_index": 13,
@@ -684,25 +774,19 @@ async def test_a_re_read_keeps_a_live_amendment_the_ring_has_rolled_out() -> Non
     assert tail.calls == 2 and closes(store)[2] == (2, "102")
 
 
-async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
-    """Nothing seen live and the newest row is another generation's: no old bar stays."""
+@pytest.mark.parametrize("other", [7, 3], ids=["higher", "lower"])
+async def test_a_re_read_never_replaces_the_generation_a_series_names(other: int) -> None:
+    """Only an emission swaps a kept series' generation, so the publisher sees every swap: a
+    re-read keeps the one an earlier read named, and skips the newer rows of another one."""
     tail = Tail(now=True)
-    tail.tail = BarTail(rows(0, 1), dropped=1)  # degraded: the next ensure reads again
+    tail.tail = BarTail(rows(0, 1, gen=5), dropped=1)  # degraded: the next ensure reads again
     store = SeriesStore(tail, retry_after_s=0.0)
     await store.ensure(SYM, SPEC)
-    tail.tail = BarTail([*rows(0, 1), (7, bar(0, shift=1))])  # a twin at bar 1's open time
+    tail.tail = BarTail([*rows(0, 1, gen=5), (other, bar(0, shift=2))])  # the newest row
     await store.ensure(SYM, SPEC)
-    assert (generation(store), view(store)) == (7, ([0], None))
-
-
-async def test_a_re_read_that_adopts_the_rows_generation_stays_hydrated() -> None:
-    tail = Tail(now=True)
-    tail.tail = BarTail(rows(0), dropped=1)  # degraded: the next ensure reads again
-    store = SeriesStore(tail, retry_after_s=0.0)
-    await store.ensure(SYM, SPEC)
-    tail.tail = BarTail(rows(0, gen=7))  # nothing seen live: adopting 7 is not a live swap
-    await store.ensure(SYM, SPEC)
-    assert store.hydrated(SYM, H)
+    assert (generation(store), view(store), store.hydrated(SYM, H)) == (5, ([0, 1], None), True)
+    await emit(store, up("open", 1, shift=2), generation=other)  # its builder's next emission
+    assert (generation(store), view(store), store.hydrated(SYM, H)) == (other, ([], 1), False)
 
 
 async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
@@ -718,8 +802,10 @@ async def test_a_restarted_run_outranks_the_old_run_still_stored_by_open_time() 
     so the old run's rows (index 0..9) must not outrank it."""
     store = SeriesStore(Tail(rows(*range(10)), now=True))
     await emit(store, up("close", 0, shift=20), up("close", 1, shift=20))
+    before = counted("bars_series_resets_total", "restart")
     await store.ensure(SYM, SPEC)
     assert view(store) == ([0, 1], None) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
+    assert counted("bars_series_resets_total", "restart") == before  # the fold counts no reset
 
 
 async def test_the_first_emission_after_an_empty_read_is_not_a_swap() -> None:

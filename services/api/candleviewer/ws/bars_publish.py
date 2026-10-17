@@ -19,7 +19,8 @@
   the subscription's `sub_ok` is queued (#2831); only a `d` for a §7.6 continuity attach, which is
   settled at admit, can still go out before it (#2909).
   Swaps are counted; over `SWAP_STORM` per `SWAP_WINDOW_S` on a channel warns once per window with
-  the real count, as one live builder per series (E12-S12) never swaps that often. Residual: a
+  the real count, as one live builder per series (E12-S12) never swaps that often. A swap from the
+  mixed mark (`note_generation`) logs `mixed` and no `previous` generation. Residual: a
   series with no baseline (not seen or seeded since start, or evicted) adopts the first
   generation, missing an earlier swap; a refused emission waits for the series' next snapshot.
 
@@ -64,7 +65,9 @@ MAX_SERIES: Final = 2 * CAP_GLOBAL
 #: Pending reasons that belong to another flow (the subscribe flow, E17's backpressure hold),
 #: so a swap may not use one: the publisher only ever flushes what its own swap left pending.
 _FOREIGN_REASONS: Final = frozenset({"initial", "backpressure"})
-_MIXED: Final = -1  # a baseline no emission carries (generations are epoch ms): its next one swaps
+#: A baseline no emission carries (a generation is 0..`MAX_GENERATION`: `check_generation` on
+#: write and on read, `_sendable` on the wire), so the next emission swaps.
+_MIXED: Final = -1
 #: More swaps than `SWAP_STORM` within `SWAP_WINDOW_S` on a channel warn, once per window; the
 #: warning counts up to `SWAP_COUNT_CAP` of them.
 SWAP_STORM: Final = 3
@@ -163,8 +166,9 @@ class BarsPublisher:
         """Seed the baseline of a series not seen yet with the generation a snapshot of it was
         built at: its first emission takes it. Seeds sit apart from the series map, so they never
         age a live series out. A baseline or seed in another generation becomes `_MIXED`, as two
-        clients may now hold two: the next emission re-snapshots every one (§7.1 guarantee 3)."""
-        key = (symbol, spec.spec_hash)
+        clients may now hold two: the next emission re-snapshots every one (§7.1 guarantee 3).
+        A negative generation (none is valid) is the mark itself."""
+        key, generation = (symbol, spec.spec_hash), max(generation, _MIXED)
         if (series := self._series.get(key)) is not None:
             series.generation = generation if series.generation == generation else _MIXED
         elif self._seeds.get(key, generation) != generation:
@@ -226,7 +230,9 @@ class BarsPublisher:
             window.popleft()
         window.append(now)
         bar_emit_sink_errors_total.labels(reason="ws_generation_swap").inc()
-        fields = {"ch": series.ch, "previous": last, "generation": generation}
+        mixed = last == _MIXED  # snapshots in two generations: no one previous generation
+        previous = None if mixed else last
+        fields = {"ch": series.ch, "previous": previous, "mixed": mixed, "generation": generation}
         if len(window) <= SWAP_STORM:
             _log().info("ws_bars_generation_swap", **fields)
         elif series.stormed is None or now - series.stormed >= SWAP_WINDOW_S:
