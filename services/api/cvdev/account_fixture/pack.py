@@ -1,7 +1,9 @@
-"""E27 accounts fault-injection pack: the test-side loader (E27-Q01, #833).
+"""E27 accounts fault-injection pack: its resolver (E27-Q01, #833; dev-only since #2893 S5).
 
-The pack lives in `packages/fixtures/accounts/` (its README is the user guide). This module turns
-one scenario into concrete data, the same way for every test:
+A pack is a directory of scenario manifests (`packages/fixtures/accounts/` in a checkout; its
+README is the user guide). `Pack(root)` reads the pack at `root`, so a running stack can mount it
+anywhere, and turns one scenario into concrete data the same way for every test and for #2893's
+stub:
 
 - REST: `Scenario.reply(method, path, at_ms=...)` follows the manifest's lookup rule (the
   scenario's own answers along its `extends` chain, then the overlays named with it, then the
@@ -15,12 +17,15 @@ one scenario into concrete data, the same way for every test:
   `isMaster`/`parentUid` from that account's kind; `Scenario.egress_ip` is what the IP echo
   check answers.
 - Private WS: `Scenario.ws` is the script as data (reactions, frames after auth, timeline).
-- Runtime switch: `load(..., switched=True)` answers as the scenario's `switch_to` target while
-  keeping its own key id and account (test plan section 9.3; the switch on a stack is #2893's).
+- Runtime switch: `Pack.load(..., switched=True)` answers as the scenario's `switch_to` target
+  while keeping its own key id and account (test plan section 9.3; the switch on a stack is
+  #2893's).
 
-It serves nothing and opens no socket. A transport that serves a scenario to a running stack
-(`CV_ACCOUNT_FIXTURE=<scenario>`) is #2893; tests drive the adapter's own client through an
-`httpx.MockTransport` built on `Scenario.reply`.
+It serves nothing and opens no socket: #2893's stub serves a scenario to a running stack
+(`CV_ACCOUNT_FIXTURE=<scenario>`), and tests drive the adapter's own client through an
+`httpx.MockTransport` built on `Scenario.reply` (`tests/_account_fixtures.py` binds the checkout's
+pack). A scenario name is never a path, and a payload never comes from outside the pack's parent
+directory. Nothing here imports `candleviewer`, so neither `secrets` nor `audit` (ADR-0036).
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -35,10 +41,11 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Final
 
-PACK_ROOT: Final = Path(__file__).resolve().parents[4] / "packages" / "fixtures" / "accounts"
-SCHEMA_PATH: Final = PACK_ROOT / "manifest.schema.json"
-#: Payloads come from the fixtures package only: the pack and the shared corpus beside it.
-_PAYLOAD_ROOT: Final = PACK_ROOT.parent.resolve()
+#: The manifest schema, in the pack root.
+_SCHEMA: Final = "manifest.schema.json"
+#: A scenario name, as the schema's `scenarioName` defines it: never a path, so a name looked up
+#: (given, `extends`, `switch_to`, an overlay or a rotation key) cannot leave the pack root.
+_SCENARIO_NAME: Final = re.compile(r"[a-z][a-z0-9_]*")
 #: Test plan section 9.2: the accounts a key is stored on, by UID, each with the main account it
 #: belongs to (`None` for a main account).
 ACCOUNT_PARENTS: Final[Mapping[str, str | None]] = {
@@ -147,45 +154,30 @@ def _read(path: Path) -> Any:
 
 
 @cache
-def _payload(ref: str) -> Any:
-    """A payload file, relative to the pack root; callers get a deep copy. A path that leaves the
-    fixtures package is refused even if the schema's path pattern were loosened."""
-    path = (PACK_ROOT / ref).resolve()
-    if not path.is_relative_to(_PAYLOAD_ROOT):
+def _payload(root: Path, ref: str) -> Any:
+    """Payload `ref` of the pack at `root` (resolved, as `Pack` keeps it), read once per root and
+    ref (`Pack.payload` hands out copies). A path that leaves the fixtures package, the pack's
+    parent (the pack and the shared corpus beside it), is refused even if the schema's path
+    pattern were loosened."""
+    path = (root / ref).resolve()
+    if not path.is_relative_to(root.parent):
         raise ValueError(f"payload {ref} is outside the fixtures package")
     return _read(path)
-
-
-def schema() -> dict[str, Any]:
-    body: dict[str, Any] = _read(SCHEMA_PATH)
-    return body
-
-
-def scenario_names() -> list[str]:
-    return sorted(p.parent.name for p in PACK_ROOT.glob("*/manifest.json"))
-
-
-def manifest(name: str) -> dict[str, Any]:
-    path = PACK_ROOT / name / "manifest.json"
-    if not path.is_file():
-        raise KeyError(f"no such scenario: {name}")
-    body: dict[str, Any] = _read(path)
-    return body
 
 
 def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _frame(entry: Mapping[str, Any]) -> Any:
-    body = copy.deepcopy(_payload(str(entry["payload"])))
+def _frame(pack: Pack, entry: Mapping[str, Any]) -> Any:
+    body = pack.payload(str(entry["payload"]))
     if "merge_patch" in entry:
         body = merge_patch(body, entry["merge_patch"])
     return body
 
 
-def _reaction(entry: Mapping[str, Any]) -> WsReaction:
-    return WsReaction(str(entry["do"]), _frame(entry) if "payload" in entry else None)
+def _reaction(pack: Pack, entry: Mapping[str, Any]) -> WsReaction:
+    return WsReaction(str(entry["do"]), _frame(pack, entry) if "payload" in entry else None)
 
 
 def _active(stub: Mapping[str, Any], at_ms: int) -> bool:
@@ -194,6 +186,8 @@ def _active(stub: Mapping[str, Any], at_ms: int) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Scenario:
+    #: The pack it was loaded from, which its payloads come from.
+    pack: Pack
     name: str
     #: The named manifest: its key id, account and expected outcome.
     own: Mapping[str, Any]
@@ -238,7 +232,7 @@ class Scenario:
         raise UnstubbedCall(f"{self.name}: nothing answers {call} at {at_ms} ms")
 
     def _render(self, call: str, stub: Mapping[str, Any]) -> Reply:
-        body = copy.deepcopy(_payload(str(stub["payload"])))
+        body = self.pack.payload(str(stub["payload"]))
         self._anchor(call, body)
         if "merge_patch" in stub:
             body = merge_patch(body, stub["merge_patch"])
@@ -290,18 +284,6 @@ class RotationPair:
     expected: Mapping[str, Any]
 
 
-def _chain(name: str) -> tuple[dict[str, Any], ...]:
-    chain: list[dict[str, Any]] = []
-    current: str | None = name
-    while current is not None:
-        if any(m["scenario"] == current for m in chain):
-            raise ValueError(f"{name}: extends cycle through {current}")
-        entry = manifest(current)
-        chain.append(entry)
-        current = entry.get("extends")
-    return tuple(chain)
-
-
 def _merged(
     chain: tuple[dict[str, Any], ...], field: str, inner: str | None = None
 ) -> dict[str, Any]:
@@ -312,94 +294,138 @@ def _merged(
     return out
 
 
-def _overlay(name: str) -> dict[str, Any]:
-    body = manifest(name)
-    if body.get("origin") != OVERLAY:
-        raise ValueError(f"{name} is not an overlay")
-    return body
+@dataclass(frozen=True, slots=True)
+class Pack:
+    """The pack at `root`, resolved: a directory per scenario, each with its `manifest.json`.
+    Payloads come from the pack and the shared corpus beside it, never from outside its parent."""
 
+    root: Path
 
-def load(
-    name: str,
-    *,
-    now: datetime,
-    account_uid: str | None = None,
-    overlays: Iterable[str] = (),
-    switched: bool = False,
-) -> Scenario:
-    """Resolve key scenario `name` with every time anchored on `now` (tz-aware).
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", self.root.resolve())
 
-    `now` is the scenario start, which `Scenario.reply(..., at_ms=...)` and the WS timeline count
-    from: when the scenario is loaded or, for one a stored key is switched to at runtime, the
-    switch (test plan section 9.3; TC-411's T0). `account_uid` is the account the key is attached
-    to (default: the manifest's), one of the section 9.2 accounts in `ACCOUNT_PARENTS`; key info
-    reports it unless the scenario's merge patch pins another UID (`uid_mismatch`). `overlays`
-    names overlays to combine with it, in order. `switched` answers as the scenario's `switch_to`
-    target, after the runtime switch, with this scenario's key id and account
-    (`stored_key_rejected`)."""
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise ValueError("now must be timezone-aware")
-    own = manifest(name)
-    if own.get("origin") == OVERLAY:
-        raise ValueError(f"{name} is an overlay: name it in overlays")
-    if "rotation" in own:
-        raise ValueError(f"{name} is a rotation pair: use load_rotation")
-    answering = own.get("switch_to") if switched else name
-    if answering is None:
-        raise ValueError(f"{name} has no runtime switch")
-    chain = _chain(str(answering))
-    uid = account_uid or str(own["tester_inputs"]["account_uid"])
-    if uid not in ACCOUNT_PARENTS:
-        raise ValueError(f"{uid} is not a section 9.2 account that holds a key")
-    clock = _merged(chain, "clock")
-    ws = _merged(chain, "ws", "private")
-    egress = next((str(m["egress_ip"]) for m in chain if "egress_ip" in m), None)
-    missing = [f for f in _CLOCK_FIELDS if f not in clock] + [f for f in _WS_FIELDS if f not in ws]
-    if egress is None:
-        missing.append("egress_ip")
-    if missing:
-        raise ValueError(f"{name}: unresolved {', '.join(missing)}")
-    return Scenario(
-        name=name,
-        own=own,
-        chain=chain,
-        clock=Clock(
-            now=now,
-            server_offset_ms=int(clock["server_offset_ms"]),
-            key_created_offset_ms=int(clock["key_created_offset_ms"]),
-            key_expires_offset_ms=clock["key_expires_offset_ms"],
-        ),
-        account_uid=uid,
-        key_id=str(own["tester_inputs"]["key_id"]),
-        egress_ip=str(egress),
-        ws=PrivateWs(
-            on_connect=str(ws["on_connect"]),
-            on_auth=_reaction(ws["on_auth"]),
-            on_subscribe=_reaction(ws["on_subscribe"]),
-            on_ping=_reaction(ws["on_ping"]),
-            after_auth=tuple(
-                WsSend(int(s["after_ms"]), _frame(s), s.get("every_ms"), s.get("label"))
-                for s in ws["after_auth"]
+    def payload(self, ref: str) -> Any:
+        """A copy of payload `ref`, relative to the pack root (see `_payload`)."""
+        return copy.deepcopy(_payload(self.root, ref))
+
+    def schema(self) -> dict[str, Any]:
+        body: dict[str, Any] = _read(self.root / _SCHEMA)
+        return body
+
+    def scenario_names(self) -> list[str]:
+        return sorted(p.parent.name for p in self.root.glob("*/manifest.json"))
+
+    def manifest(self, name: str) -> dict[str, Any]:
+        if _SCENARIO_NAME.fullmatch(name) is None:
+            raise ValueError(f"not a scenario name: {name!r}")
+        path = self.root / name / "manifest.json"
+        if not path.is_file():
+            raise KeyError(f"no such scenario: {name}")
+        body: dict[str, Any] = _read(path)
+        return body
+
+    def _chain(self, name: str) -> tuple[dict[str, Any], ...]:
+        chain: list[dict[str, Any]] = []
+        current: str | None = name
+        while current is not None:
+            if any(m["scenario"] == current for m in chain):
+                raise ValueError(f"{name}: extends cycle through {current}")
+            entry = self.manifest(current)
+            chain.append(entry)
+            current = entry.get("extends")
+        return tuple(chain)
+
+    def _overlay(self, name: str) -> dict[str, Any]:
+        body = self.manifest(name)
+        if body.get("origin") != OVERLAY:
+            raise ValueError(f"{name} is not an overlay")
+        return body
+
+    def load(
+        self,
+        name: str,
+        *,
+        now: datetime,
+        account_uid: str | None = None,
+        overlays: Iterable[str] = (),
+        switched: bool = False,
+    ) -> Scenario:
+        """Resolve key scenario `name` with every time anchored on `now` (tz-aware).
+
+        `now` is the scenario start, which `Scenario.reply(..., at_ms=...)` and the WS timeline
+        count from: when the scenario is loaded or, for one a stored key is switched to at
+        runtime, the switch (test plan section 9.3; TC-411's T0). `account_uid` is the account the
+        key is attached to (default: the manifest's), one of the section 9.2 accounts in
+        `ACCOUNT_PARENTS`; key info reports it unless the scenario's merge patch pins another UID
+        (`uid_mismatch`). `overlays` names overlays to combine with it, in order. `switched`
+        answers as the scenario's `switch_to` target, after the runtime switch, with this
+        scenario's key id and account (`stored_key_rejected`)."""
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        own = self.manifest(name)
+        if own.get("origin") == OVERLAY:
+            raise ValueError(f"{name} is an overlay: name it in overlays")
+        if "rotation" in own:
+            raise ValueError(f"{name} is a rotation pair: use load_rotation")
+        answering = own.get("switch_to") if switched else name
+        if answering is None:
+            raise ValueError(f"{name} has no runtime switch")
+        chain = self._chain(str(answering))
+        uid = account_uid or str(own["tester_inputs"]["account_uid"])
+        if uid not in ACCOUNT_PARENTS:
+            raise ValueError(f"{uid} is not a section 9.2 account that holds a key")
+        clock = _merged(chain, "clock")
+        ws = _merged(chain, "ws", "private")
+        egress = next((str(m["egress_ip"]) for m in chain if "egress_ip" in m), None)
+        missing = [f for f in _CLOCK_FIELDS if f not in clock]
+        missing += [f for f in _WS_FIELDS if f not in ws]
+        if egress is None:
+            missing.append("egress_ip")
+        if missing:
+            raise ValueError(f"{name}: unresolved {', '.join(missing)}")
+        return Scenario(
+            pack=self,
+            name=name,
+            own=own,
+            chain=chain,
+            clock=Clock(
+                now=now,
+                server_offset_ms=int(clock["server_offset_ms"]),
+                key_created_offset_ms=int(clock["key_created_offset_ms"]),
+                key_expires_offset_ms=clock["key_expires_offset_ms"],
             ),
-            timeline=tuple(
-                WsStep(int(s["at_ms"]), str(s["do"]), s.get("label")) for s in ws["timeline"]
+            account_uid=uid,
+            key_id=str(own["tester_inputs"]["key_id"]),
+            egress_ip=str(egress),
+            ws=PrivateWs(
+                on_connect=str(ws["on_connect"]),
+                on_auth=_reaction(self, ws["on_auth"]),
+                on_subscribe=_reaction(self, ws["on_subscribe"]),
+                on_ping=_reaction(self, ws["on_ping"]),
+                after_auth=tuple(
+                    WsSend(int(s["after_ms"]), _frame(self, s), s.get("every_ms"), s.get("label"))
+                    for s in ws["after_auth"]
+                ),
+                timeline=tuple(
+                    WsStep(int(s["at_ms"]), str(s["do"]), s.get("label")) for s in ws["timeline"]
+                ),
             ),
-        ),
-        overlays=tuple(_overlay(o) for o in overlays),
-    )
+            overlays=tuple(self._overlay(o) for o in overlays),
+        )
 
-
-def load_rotation(name: str, *, now: datetime, overlays: Iterable[str] = ()) -> RotationPair:
-    """Resolve a rotation pair; both keys belong to the pair's account and see its overlays."""
-    own = manifest(name)
-    pair = own.get("rotation")
-    if pair is None:
-        raise ValueError(f"{name} is not a rotation pair")
-    uid = str(own["tester_inputs"]["account_uid"])
-    named = tuple(overlays)
-    return RotationPair(
-        name=name,
-        old=load(str(pair["old_key"]), now=now, account_uid=uid, overlays=named),
-        new=load(str(pair["new_key"]), now=now, account_uid=uid, overlays=named),
-        expected=own["expected"],
-    )
+    def load_rotation(
+        self, name: str, *, now: datetime, overlays: Iterable[str] = ()
+    ) -> RotationPair:
+        """Resolve a rotation pair; both keys belong to the pair's account and see its overlays."""
+        own = self.manifest(name)
+        pair = own.get("rotation")
+        if pair is None:
+            raise ValueError(f"{name} is not a rotation pair")
+        uid = str(own["tester_inputs"]["account_uid"])
+        named = tuple(overlays)
+        return RotationPair(
+            name=name,
+            old=self.load(str(pair["old_key"]), now=now, account_uid=uid, overlays=named),
+            new=self.load(str(pair["new_key"]), now=now, account_uid=uid, overlays=named),
+            expected=own["expected"],
+        )
