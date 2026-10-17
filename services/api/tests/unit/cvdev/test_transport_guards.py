@@ -228,7 +228,13 @@ async def test_a_trip_keeps_the_gates_existing_latch(rig: Rig) -> None:
     assert rig.transport.latched and rig.gate.latched_reason_code == "secrets.kek_unavailable"
 
 
-async def test_a_trip_refuses_through_every_transport_on_the_gate(rig: Rig) -> None:
+@pytest.mark.parametrize("held", [None, "secrets.kek_unavailable"])
+async def test_a_trip_refuses_through_every_transport_in_the_process(
+    rig: Rig, held: str | None
+) -> None:
+    """Whatever latch the gate holds already, which the trip keeps (ADR-0036 decision 4)."""
+    if held:
+        rig.gate.latch(reason_code=held, reason_text="kek")
     seam = _Seam(PACK, log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK)
     other = replace(rig, transport=seam)
 
@@ -242,6 +248,7 @@ async def test_a_trip_refuses_through_every_transport_on_the_gate(rig: Rig) -> N
     assert [_of(e, "log_level", "latched") for e in events] == [("error", True)]
     assert seam.latched and seam.body == b"{}"  # only the order in flight reached _serve
     assert [line["outcome"] for line in rig.lines()] == ["refused_key"] * 3
+    assert rig.gate.latched_reason_code == (held or GUARD_REASON_CODE)
 
 
 async def test_another_latch_on_the_gate_leaves_the_transport_answering(rig: Rig) -> None:
