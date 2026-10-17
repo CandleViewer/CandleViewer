@@ -69,6 +69,18 @@ async def test_a_flag_without_a_row_is_a_store_outage() -> None:
         await FakeFlagStore().write(_KEY, _prepare)
 
 
+async def test_an_exception_from_prepare_reaches_the_caller_unchanged_and_writes_nothing() -> None:
+    store, refusal = _store(), LookupError("refused under the lock")
+
+    async def refuse(row: StoredFlag) -> FlagWrite:
+        raise refusal
+
+    with pytest.raises(LookupError) as raised:
+        await store.write(_KEY, refuse)
+    assert raised.value is refusal and store.writes == [] and store.rows[_KEY].updated_at == T0
+    assert await store.write(_KEY, _prepare)  # rolled back: the row lock is free again
+
+
 async def test_the_row_lock_serialises_two_writes_so_the_second_is_stale() -> None:
     store = _store()
     done = await asyncio.gather(

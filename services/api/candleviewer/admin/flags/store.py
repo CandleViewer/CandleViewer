@@ -63,7 +63,9 @@ class FlagStore(Protocol):
 
         Raises `StaleWriteError` carrying the locked row on a mismatch, and
         `StoreUnavailableError` when the row cannot be locked and read within the read budget,
-        when the flag has no row (its start-up `ensure` failed) or when the write fails. The
+        when the flag has no row (its start-up `ensure` failed) or when the write fails. An
+        exception `prepare` raises reaches the caller unchanged after the rollback, never
+        wrapped, so a 422, a refused step-up or the writer's own 503 keeps its meaning. The
         read budget bounds the lock and the read; the writer bounds the awaits inside `prepare`.
         `updated_at` is compared at microsecond precision, the precision `isoformat()`
         serialises, so a value read back through `GET /admin/feature-flags` matches its row."""
