@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """#3076: ten gates are steps of one `gates` job, each judged under its old `ci-required` lane
 (#2988 semantics); `architecture` mirrors `py` from pr.yml; PRs skip `xstate-sync-parity`."""
 
