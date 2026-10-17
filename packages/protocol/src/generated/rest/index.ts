@@ -4288,22 +4288,23 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** Get a user */
+    /**
+     * Get a user
+     * @description `ETag` versions the whole representation, roles included; send it as `If-Match` on `PATCH`.
+     */
     get: operations["getUser"];
     put?: never;
     post?: never;
     /**
      * Disable a user (soft delete)
-     * @description Sets `status=disabled`, revokes all sessions and all account grants. Rows are never
-     *     hard-deleted — the audit log and journal reference them. Passing `?purge=true`
-     *     additionally anonymises PII after the 90-day retention window.
+     * @description Requires step-up `users`. Sets `status=disabled` and, within 5 seconds, every session of the user is invalid (REST answers `401 unauthenticated`; sockets get `bye` with `user_disabled` and close `4403`, 23-ws-protocol.md section 9.5). Every account grant is soft-revoked (freeze state and risk caps are kept), the user's rules are disarmed and an open invite is revoked. Rows are never hard-deleted — the audit log and journal reference them. Positions and orders are never flattened or cancelled: the audit record carries `positions_decision: leave` and the open-position count, and while that count is unavailable the request must carry `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's own account is refused (`403 forbidden`) and so is the last active owner (`409 conflict`). Audited write-ahead as `users.disable` with one `auth.session_revoked` per session; when the audit record cannot be written nothing changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no new audit record. A call refused for a forbidden role or a self-target is audited too. Passing `?purge=true` additionally anonymises PII after the 90-day retention window.
      */
     delete: operations["deleteUser"];
     options?: never;
     head?: never;
     /**
      * Update a user (status, roles, MFA requirement, display name)
-     * @description The owner cannot demote or disable their own account — the last `owner` is protected (`conflict`).
+     * @description Requires step-up `users`. A change to the caller's own roles or status is refused (`403 forbidden`), and the last active `owner` is protected (`409 conflict`). `status` moves only between `active` and `disabled`. Setting `disabled` runs the same cascade as `DELETE /users/{userId}`: within 5 seconds every session of the user is invalid (REST answers `401 unauthenticated`; sockets get `bye` with `user_disabled` and close `4403`, 23-ws-protocol.md section 9.5), every account grant is soft-revoked, the user's rules are disarmed and an open invite is revoked. Positions and orders are never flattened or cancelled, and the change is audited as `users.disable` with `positions_decision: leave`; while the user's open-position state is unavailable a disable must carry `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. Enabling never restores grants or sessions and cancels a pending purge. `mfa_required: false` is refused (`400 validation_failed`, C-12.2). A stale `If-Match` is `412 version_conflict`. Audited write-ahead; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a self-target is audited too.
      */
     patch: operations["updateUser"];
     trace?: never;
@@ -4321,7 +4322,7 @@ export interface paths {
     get: operations["listUserAccountAccess"];
     /**
      * Replace a user's account-access grants
-     * @description This is the isolation boundary between managers. Changes take effect on the next request; existing WS subscriptions for revoked accounts are force-closed with an `unsubscribed` frame (see 23-ws-protocol.md §9).
+     * @description This is the isolation boundary between managers. Requires step-up `users`. Changes take effect on the next request. A removed account is soft-revoked, so its freeze state and risk caps survive a later re-grant. Within 2 seconds every live WS subscription that depended on a removed account ends with a `revoked` frame (`reason: account_scope_changed`, 23-ws-protocol.md section 9.5), and resubscribing is refused with `account_scope_denied`. Removing an account never flattens positions or cancels orders. While the user's open-position state is unavailable, every request that removes a live grant (omits an account the user holds today), not only the last one, must carry `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`. Audited write-ahead as `users.access_change`; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a self-target is audited too.
      */
     put: operations["setUserAccountAccess"];
     post?: never;
@@ -4402,10 +4403,58 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace a user's role set */
+    /**
+     * Replace a user's role set
+     * @description Requires step-up `users`. The caller's own roles cannot be changed (`403 forbidden`), and the last active `owner` cannot be demoted (`409 conflict`, re-checked under a lock on the owner rows). Audited as `roles.grant` / `roles.revoke`; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a self-target is audited too. Live sockets of the user are re-evaluated (23-ws-protocol.md section 9.5).
+     */
     put: operations["setUserRoles"];
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/users/{userId}/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        userId: components["parameters"]["UserId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * List a user's active sessions (the owner's view of `/me/sessions`)
+     * @description Same items as `listMySessions`; no token material is ever returned. Read-only: unlike revoking a session, listing needs no step-up (04-security-program.md section 7.2.2, row 40a).
+     */
+    get: operations["listUserSessions"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/users/{userId}/sessions/{sessionId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        sessionId: string;
+        userId: components["parameters"]["UserId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Revoke one of a user's sessions
+     * @description Requires step-up `users`. Only an active session of `userId` is addressable; an unknown or ended session, or another user's session, is `404 not_found`. Audited write-ahead as `auth.session_revoked`; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role is audited too. Within 5 seconds a REST call on the session answers `401 unauthenticated` and its sockets close `4401` (23-ws-protocol.md section 9.5).
+     */
+    delete: operations["revokeUserSession"];
     options?: never;
     head?: never;
     patch?: never;
@@ -4666,13 +4715,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    AccountAccessGrant: components["schemas"]["AccountAccessGrantInput"] & {
+    AccountAccessGrant: {
       account_label?: string;
       environment?: components["schemas"]["Environment"];
+      /** Format: uuid */
+      exchange_account_id: string;
       /** Format: date-time */
       granted_at?: string;
       /** Format: uuid */
       granted_by?: string;
+      /**
+       * @description `trade` implies `read`.
+       * @enum {string}
+       */
+      level: "read" | "trade";
     };
     AccountAccessGrantInput: {
       /** Format: uuid */
@@ -8624,9 +8680,17 @@ export interface components {
     };
     UpdateUserRequest: {
       display_name?: string | null;
-      mfa_required?: boolean;
+      /**
+       * @description TOTP is mandatory for every user (C-12.2); `false` is `400 validation_failed`.
+       * @enum {boolean}
+       */
+      mfa_required?: true;
       roles?: components["schemas"]["RoleName"][];
-      status?: components["schemas"]["UserStatus"];
+      /**
+       * @description `invited` and `locked` are not settable (`400 validation_failed`).
+       * @enum {string}
+       */
+      status?: "active" | "disabled";
     };
     User: {
       /** Format: date-time */
@@ -8989,6 +9053,8 @@ export interface components {
     AccountId: string;
     /** @description Restrict to these accounts. Omit for every account in the caller's scope. */
     AccountIdsQuery: string[];
+    /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
+    AcknowledgeUnknownPositions: boolean;
     AlertId: string;
     BackupId: string;
     /** @description Maximum number of bars returned in one page. */
@@ -16467,12 +16533,14 @@ export interface operations {
       /** @description User. */
       200: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["User"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
     };
@@ -16480,6 +16548,8 @@ export interface operations {
   deleteUser: {
     parameters: {
       query?: {
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
+        acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
         purge?: boolean;
       };
       header: {
@@ -16506,14 +16576,20 @@ export interface operations {
         };
         content?: never;
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateUser: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
+        acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
+      };
       header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
@@ -16547,10 +16623,13 @@ export interface operations {
           "application/json": components["schemas"]["User"];
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listUserAccountAccess: {
@@ -16575,12 +16654,17 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
     };
   };
   setUserAccountAccess: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
+        acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
+      };
       header: {
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16615,8 +16699,12 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   reissueInvite: {
@@ -16788,17 +16876,86 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Roles replaced. */
+      /** @description Roles replaced; the body carries only the user id and the new role set. */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["User"];
+          "application/json": {
+            /** Format: uuid */
+            id: string;
+            roles: components["schemas"]["RoleName"][];
+          };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  listUserSessions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        userId: components["parameters"]["UserId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Active sessions of the user. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            items: components["schemas"]["UserSession"][];
+          };
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+    };
+  };
+  revokeUserSession: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        sessionId: string;
+        userId: components["parameters"]["UserId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Revoked. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listPendingInvites: {
