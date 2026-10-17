@@ -9,6 +9,9 @@ Only the composition root sees the bus, the storage tier and the bars module tog
   queue is bounded (`BarWriter(max_buffered)`, lane `maxsize`).
 * Shutdown order: **set first, then writer** - the set's final closes/blobs are submitted to the
   writer, which is then drained.
+* Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
+  the WS publisher, then the writer. Neither WS sink awaits, so the store's generation reset and the
+  publisher's baseline check are atomic: an `await` in either is a protocol change (§7.4).
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
@@ -28,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Final
 import structlog
 
 from candleviewer.bars.builder_set import BarBuilderSet, production_factory
-from candleviewer.bars.emit import EmitRouter, WriterSink
+from candleviewer.bars.emit import BarSink, EmitRouter, WriterSink
 from candleviewer.bars.kline_rows import PrecedenceHealth
 from candleviewer.bars.state_store import StateStore
 from candleviewer.bars.writer import BarWriter, RowSink, default_is_permanent
@@ -194,8 +197,11 @@ def wire_bars(
     sink_stop: Callable[[], Awaitable[None]] | None = None,
     sink_degraded: Callable[[], bool] | None = None,
     tick_size: Callable[[str], Decimal | None] = lambda _s: None,
+    series: BarSink | None = None,
+    publisher: BarSink | None = None,
 ) -> BarsRuntime:
-    """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner."""
+    """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`
+    and `publisher` (the WS sinks) are emitted to before the writer (module docstring)."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -206,7 +212,7 @@ def wire_bars(
     builder_set = BarBuilderSet(
         ctx.bus.bus,
         ctx.settings.environment.value,
-        EmitRouter([WriterSink(writer)]),
+        EmitRouter([*(s for s in (series, publisher) if s is not None), WriterSink(writer)]),
         StateStore(root),
         tape=StorageTape(ctx, now_us, tick_size),
         now_us=now_us,

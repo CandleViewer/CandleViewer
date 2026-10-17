@@ -8,8 +8,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter: `book` is the book module's (#2196, `book_snapshot_source`). Until bars
-  (#2195) and order-flow (#2197) land, their families map to `PendingSnapshotSource`, which
+  module's adapter: `book_snapshot_source` (#2196) and `BarsSnapshotSource` (#2195). Until
+  order-flow (#2197) lands, its families map to `PendingSnapshotSource`, which
   raises `NotImplementedError`; the router turns that into `None`, so the subscription reports
   `snapshot_pending` and no `d` is ever emitted.
 * **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and
@@ -66,7 +66,6 @@ PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
-    "bars": "#2195",
     "footprint": "#2197",
     "heatmap": "#2197",
     "profile": "#2197",
@@ -111,11 +110,11 @@ class IngestionUpstreamSink:
 
 def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
     """Family -> the ingestion stream that owns its upstream demand (resolved per call: the
-    streams are attached by `wire_public_ws` only when its flag is on)."""
+    streams are attached by `wire_public_ws` only when its flag is on); `bars` needs trades."""
 
     def resolve(family: str) -> _Demand | None:
         ing = ctx.ingestion
-        if family == "trades":
+        if family in ("trades", "bars"):
             return ing.trades
         if family == "book":
             return ing.books

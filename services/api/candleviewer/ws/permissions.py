@@ -36,6 +36,7 @@ from candleviewer.bars.errors import (
     SpecCapExceeded,
 )
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
@@ -123,11 +124,19 @@ def _log() -> Any:
 class BarLeases(Protocol):
     """`BarBuilderSet` lease surface (E12-T03). `user` is ALWAYS the authenticated principal."""
 
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None: ...
+
     async def register(
         self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
     ) -> None: ...
 
     def release(self, spec_hash: str, symbol: str, consumer: str) -> None: ...
+
+
+class SeriesHolds(Protocol):
+    """`SeriesStore.ensure` (E12-T06): a live `bars.*` subscription holds its series."""
+
+    async def ensure(self, symbol: str, spec: BarSpec) -> Hold: ...
 
 
 class AuditSink(Protocol):
@@ -147,6 +156,7 @@ class SubscriptionServices:
 
     upstream: UpstreamRefs = field(default_factory=UpstreamRefs)
     bars: BarLeases | None = None
+    series: SeriesHolds | None = None  # E12-T06: the `bars` snapshot store; None: no hold
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
@@ -222,6 +232,7 @@ class Subscription:
     snapshot_pending: bool = True
     upstream: tuple[UpstreamKey, ...] = ()
     bar_lease: tuple[str, str] | None = None  # (spec_hash, symbol)
+    series_hold: Hold | None = None  # a live `bars.*` one's series in the snapshot store
     #: §7.4 reason the pending `snap` will carry (E17-S03).
     pending_reason: SnapReason = "initial"
     #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
@@ -492,9 +503,14 @@ class ConnectionAuthz:
         return f"{self.connection_id}/{sub.sub_id}"
 
     async def subscribe_upstream(self, sub: Subscription) -> dict[str, Any] | None:
-        """Take the shared upstream refs (live public topics) and, for live bars/footprint, the
-        `BarBuilderSet` lease with `user=` the authenticated principal id - never a client
-        value. Returns a failure result (and drops the subscription) on refusal."""
+        """Take what a subscription needs upstream, or refuse it (drop it, return the failure). A
+        `bars.*` one first passes `_bars_refusal`; a `bars.*` or `footprint.*` spec is bounded
+        (`_bar_spec`, SR-E12-03) wherever a builder could serve it, live or replay. Only a live
+        public one takes anything, in order: for `bars.*`, once the set's `check` passes, a hold on
+        its series (`ensure`: a restoring builder's closes reach it); the `BarBuilderSet` lease
+        (`register` checks again; `user=` the authenticated principal id, never a client value);
+        the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
+        refusal, an `unsub`, a revocation (one during these awaits: #2896) or the socket's end."""
         family = sub.topic.family.family
         spec: BarSpec | None = None
         if family in {"bars", "footprint"}:
@@ -513,6 +529,9 @@ class ConnectionAuthz:
             bars = self.services.bars
             if spec is not None and bars is not None:
                 symbol = sub.topic.symbol or ""
+                if family == "bars" and self.services.series is not None:
+                    bars.check(spec, symbol, user=str(self.principal.user_id))
+                    sub.series_hold = await self.services.series.ensure(symbol, spec)
                 await bars.register(spec, symbol, consumer, user=str(self.principal.user_id))
                 sub.bar_lease = (spec.spec_hash, symbol)
             keys = _upstream_keys(sub)
@@ -570,6 +589,9 @@ class ConnectionAuthz:
                 del self._by_topic[sub.ch]
         consumer = self._consumer(sub)
         now = self.services.clock()
+        hold, sub.series_hold = sub.series_hold, None
+        if hold is not None:  # first: a lease release below can raise (#2735)
+            hold.release()
         for key in sub.upstream:
             self.services.upstream.release(key, consumer, now)
         if sub.bar_lease is not None and self.services.bars is not None:
@@ -577,7 +599,7 @@ class ConnectionAuthz:
         sub.upstream, sub.bar_lease = (), None
 
     def release_all(self) -> None:
-        """Connection closed: release every upstream ref / bar lease (the 30 s grace applies).
+        """Connection closed: release every upstream ref, bar lease and series hold (grace applies).
         Each subscription is released under its own guard: one whose release raises (`BarsError`,
         for a lease another connection's failed `register` dropped) is logged and the
         subscriptions after it are still released, not left holding their leases for good."""

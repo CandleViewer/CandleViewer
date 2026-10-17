@@ -358,6 +358,15 @@ class BarBuilderSet:
                 _log().error("bars_tick_failed", error_type=type(exc).__name__)
 
     # -- leases ----------------------------------------------------------------------------
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None:
+        """Raise what `register` would refuse now (stopping, a cap, a new series' kind); change no
+        lease or series state."""
+        if self._stopping:
+            raise BarServiceStopping("The bar service is shutting down.")
+        self._leases.check((symbol, spec.spec_hash), user)
+        if (symbol, spec.spec_hash) not in self._leases:
+            self._factory(spec, symbol)
+
     async def register(
         self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
     ) -> None:

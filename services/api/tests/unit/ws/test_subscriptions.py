@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
@@ -14,7 +15,10 @@ from structlog.testing import capture_logs
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError, SpecCapExceeded
+from candleviewer.bars.leases import SpecCaps
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.reader import BarTail
+from candleviewer.bars.series_store import Hold, SeriesStore
 from candleviewer.ws import limits
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
@@ -29,6 +33,7 @@ from candleviewer.ws.permissions import (
 )
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED
 from candleviewer.ws.upstream import UpstreamRefs
+from tests.unit.bars._set_harness import make_set
 
 A = uuid.UUID(int=0xA)
 B = uuid.UUID(int=0xB)
@@ -83,6 +88,8 @@ class _Bars:
         self.registered: list[tuple[str, str, str, str | None]] = []
         self.released: list[tuple[str, str, str]] = []
         self.fail = fail
+
+    def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None: ...
 
     async def register(
         self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
@@ -1048,3 +1055,123 @@ def test_bars_volume_param_above_its_ceiling_is_refused() -> None:
     conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
     (r,) = _sub(conn, "bars.BTCUSDT.volume.1000000000001")
     assert r["error"]["message"].endswith("must be between 1 and 1000000000000.")
+
+
+# -- #399 slice D2: the bars series hold (`SeriesStore.ensure`), and the #2709 r2 carries -------
+
+
+class _Store:  # `SeriesHolds` fake: `ensure` writes to the shared `log`; a `Hold` records release
+    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+        self.log, self.fail = log, fail
+        self.released: list[str] = []
+
+    async def ensure(self, symbol: str, spec: BarSpec) -> Hold:
+        if self.fail is not None:
+            raise self.fail
+        self.log.append("ensure")
+        return Hold(symbol, spec.spec_hash, lambda: self.released.append(symbol))
+
+
+class _LoggedBars(_Bars):
+    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+        super().__init__(fail)
+        self.log = log
+
+    async def register(
+        self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
+    ) -> None:
+        self.log.append("register")
+        await super().register(spec, symbol, consumer, user)
+
+
+def _holding(
+    bars: _LoggedBars | None = None, store_fail: Exception | None = None
+) -> tuple[ConnectionAuthz, _Store, _LoggedBars]:
+    bars = bars or _LoggedBars([])
+    store = _Store(bars.log, store_fail)  # one log: the order of `ensure` and `register`
+    return ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), store, bars
+
+
+def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it() -> None:
+    conn, store, _ = _holding()  # the hold first: a restoring builder's closes reach it
+    assert all(r["ok"] for r in _sub(conn, "bars.BTCUSDT.time.5", "footprint.BTCUSDT.time.5"))
+    assert _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS)[0]["ok"]
+    assert store.log == ["ensure", "register", "register"]  # footprint and replay hold nothing
+    conn.unsubscribe("bars.BTCUSDT.time.5")
+    assert store.released == ["BTCUSDT"]
+
+
+@pytest.mark.parametrize(
+    ("fail", "ch", "code"),
+    [(SpecCapExceeded("per-user", 8, 8), "bars.BTCUSDT.time.5", "subscription_limit"),
+     (BarServiceStopping("stopping"), "bars.BTCUSDT.time.5", "internal_error"),
+     # #2709-1: wire-valid, so only the bar set refuses it (renko off): the `except BarsError` arm
+     (BarSpecError("renko off"), "bars.BTCUSDT.renko.10", "invalid_topic_format")],
+)  # fmt: skip
+def test_a_refused_lease_releases_the_series_hold(fail: Exception, ch: str, code: str) -> None:
+    conn, store, _ = _holding(_LoggedBars([], fail))  # `check` passes: refused after the hold
+    (r,) = _sub(conn, ch)
+    assert (r["ok"], r["error"]["code"], conn.by_id) == (False, code, {})
+    assert store.released == ["BTCUSDT"]
+
+
+def test_a_full_series_store_is_a_subscription_limit_and_takes_no_lease() -> None:
+    conn, _, bars = _holding(store_fail=SpecCapExceeded("process-wide", 512, 512))
+    (r,) = _sub(conn, "bars.BTCUSDT.time.5")
+    assert (r["error"]["code"], bars.registered, conn.by_id) == ("subscription_limit", [], {})
+
+
+@pytest.mark.parametrize(
+    ("caps", "ch", "code"),
+    [(SpecCaps(per_user=1), "bars.BTCUSDT.time.5", "subscription_limit"),
+     (SpecCaps(per_symbol=1), "bars.BTCUSDT.time.5", "subscription_limit"),
+     (SpecCaps(global_=1), "bars.BTCUSDT.time.5", "subscription_limit"),
+     (SpecCaps(), "bars.BTCUSDT.renko.10", "invalid_topic_format"),
+     (None, "bars.BTCUSDT.time.5", "internal_error")],
+    ids=["per-user", "per-symbol", "process-wide", "unbuildable-kind", "stopping"])  # fmt: skip
+def test_a_spec_the_bar_set_refuses_takes_no_series_hold(
+    tmp_path: Path, caps: SpecCaps | None, ch: str, code: str
+) -> None:
+    """The set's own checks run before `ensure`: the store keeps no series and reads nothing."""
+    bars, store = make_set(tmp_path, caps=caps or SpecCaps()), SeriesStore()
+    bars._stopping = caps is None  # `stop()` has begun
+    bars._leases.acquire(("BTCUSDT", "x"), "x", str(MGR_ID))  # the user's other series
+    (r,) = _sub(ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), ch)
+    assert (r["error"]["code"], store.series_count()) == (code, 0)
+
+
+def test_a_cap_met_during_ensure_is_still_refused_and_the_hold_freed(tmp_path: Path) -> None:
+    """The user's other series lands during `ensure`'s read: after `check`, before `register`."""
+
+    async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        bars._leases.acquire(("ETHUSDT", "x"), "x", str(MGR_ID))
+        return BarTail([])
+
+    bars, store = make_set(tmp_path, caps=SpecCaps(per_user=1)), SeriesStore(tail)
+    (r,) = _sub(ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), "bars.BTCUSDT.time.5")
+    assert (r["error"]["code"], bars._leases.keys()) == ("subscription_limit", (("ETHUSDT", "x"),))
+    assert [s.refs for s in store._series.values()] == [0]  # released: in its grace
+
+
+def test_release_all_releases_every_series_hold_even_when_a_lease_release_raises() -> None:
+    """#2735's raising release must not strand the hold of its own subscription either."""
+
+    class _FirstReleaseRaises(_LoggedBars):
+        def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
+            super().release(spec_hash, symbol, consumer)
+            if len(self.released) == 1:
+                raise BarsError("the series was dropped")
+
+    conn, store, _ = _holding(_FirstReleaseRaises([]))
+    _sub(conn, "bars.BTCUSDT.time.5", "bars.ETHUSDT.time.5")
+    conn.release_all()
+    assert store.released == ["BTCUSDT", "ETHUSDT"] and conn.by_id == {}
+
+
+def test_replay_footprint_param_is_bounded_with_no_bar_service_and_replay_bars_is_unknown() -> None:
+    """#2709-2: the replay half of `served`, with no bar service and the feature off."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars_off=True))
+    fp, bars = _sub(conn, "footprint.BTCUSDT.tick.1", "bars.BTCUSDT.time.5", replay_session_id=RS)
+    assert (fp["error"]["code"], bars["error"]["code"]) == ("invalid_topic_format", "unknown_topic")
+    assert fp["error"]["message"].endswith("must be between 100 and 1000000.")
+    assert conn.by_id == {}
