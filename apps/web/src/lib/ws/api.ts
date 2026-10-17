@@ -49,6 +49,8 @@ export interface SnapFrame extends Stamped {
 
 export interface DeltaFrame extends Stamped {
   readonly kind: "d";
+  /** A `bars` delta carries `include_delta`, which says whether a kind-4 `delta` of 0 is real (6.1, C13). */
+  readonly meta: SnapMeta | undefined;
   readonly body: DataBody;
 }
 
