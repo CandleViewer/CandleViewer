@@ -184,6 +184,13 @@ class FlagRegistry(Mapping[str, FlagSpec]):
     def __len__(self) -> int:
         return len(self._specs)
 
+    def visible_to(self, key: str, roles: frozenset[str]) -> bool:
+        """Whether a principal with `roles` may learn flag `key`: its spec's `visibility`, and no
+        one for a key no spec defines (deny by default). The composition root hands this to the
+        WS `system` filter (`23-ws-protocol.md` 15.9)."""
+        spec = self._specs.get(key)
+        return spec is not None and spec.visible_to(roles)
+
     def log_startup(self) -> None:
         """Log every definition with its declared gates, so an auditor sees what flags touch."""
         structlog.get_logger(__name__).info(

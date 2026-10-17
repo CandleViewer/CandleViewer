@@ -1,7 +1,8 @@
 """SR-188 (#2175): the gateway queues each `system` frame as the socket's principal may see it at
 that moment (`23-ws-protocol.md` §15.9, S3), on all three paths: a hub broadcast, the notices
 after the first `auth_ok`, and the §9.4 planned shutdown. The kill-switch state in `auth_ok` is
-cut the same way, on a first `auth` and on a re-`auth` (§4.3).
+cut the same way, on a first `auth` and on a re-`auth` (§4.3). Flag keys are cut by the registry's
+`visibility` through the predicate the router is given (E42-T03), and by nothing without one.
 
 The real `/ws` router runs on the test's loop behind a fake socket: no threads, no sleeps. A client
 `ping` is the barrier: one FIFO queue (flag off), so its `pong` follows every frame queued before
@@ -18,10 +19,12 @@ from typing import Any
 import pytest
 from fastapi.routing import APIWebSocketRoute
 
+from candleviewer.admin.flags import default_registry
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
+from candleviewer.ws.system_filter import FlagVisible
 from tests.unit.ws.test_system_filter import ACC_A, SAMPLES
 
 _DEADLINE_S = 5.0
@@ -68,7 +71,9 @@ class _Socket:
 class _Rig:
     """The real router. `principals[user]` is what the registry loads for `user`, now."""
 
-    def __init__(self, notices: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self, notices: list[dict[str, Any]] | None = None, flag_visible: FlagVisible | None = None
+    ) -> None:
         self.hub = GatewayHub()
         self.principals: dict[uuid.UUID, PrincipalSnapshot] = {}
         self.handlers: list[tuple[_Socket, asyncio.Task[None]]] = []
@@ -91,6 +96,7 @@ class _Rig:
             tick_s=0.005,
             system_notices=None if notices is None else lambda: list(notices),
             kill_switch=lambda: STATE,
+            flag_visible=flag_visible,
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)
@@ -131,6 +137,36 @@ async def test_one_broadcast_reaches_each_role_as_its_own_view() -> None:
         rig.hub.broadcast_system(KILL)
         assert [await _system(s) for s in socks] == [[(1, KILL)], *[[(1, KILL_NEUTRAL)]] * 2]
         assert await _system(nobody) == []
+        await rig.close()
+
+
+async def test_a_manager_learns_an_all_roles_flag_and_never_an_owner_only_one() -> None:
+    """E42-T03 with the registry's own predicate: `trading.one_click` is `all_roles`,
+    `storage.cold_tier` and `killswitch.ingestion` are `owner_only`, `test.undefined` is no flag.
+    A frame a socket gets none of takes no `s` there (S3)."""
+    rig = _Rig(flag_visible=default_registry().visible_to)
+    mixed = {"trading.one_click": True, "storage.cold_tier": False, "test.undefined": True}
+    flags = {"kind": "feature_flags", "feature_flags": mixed}
+    hidden = {"kind": "feature_flags", "feature_flags": {"killswitch.ingestion": True}}
+    later = {"kind": "feature_flags", "feature_flags": {"maintenance.mode": False}}
+    cut = {"kind": "feature_flags", "feature_flags": {"trading.one_click": True}}
+    async with asyncio.timeout(_DEADLINE_S):
+        socks = [await rig.connect(_as(uuid.uuid4(), r)) for r in ("owner", "manager", "viewer")]
+        nobody = await rig.connect(_as(uuid.uuid4()))
+        for body in (flags, hidden, later):
+            rig.hub.broadcast_system(body)
+        assert await _system(socks[0]) == [(1, flags), (2, hidden), (3, later)]
+        assert [await _system(s) for s in socks[1:]] == [[(1, cut), (2, later)]] * 2
+        assert await _system(nobody) == []
+        await rig.close()
+
+
+async def test_without_a_flag_predicate_a_flag_frame_reaches_only_the_owner() -> None:
+    rig, flags = _Rig(), {"kind": "feature_flags", "feature_flags": {"trading.one_click": True}}
+    async with asyncio.timeout(_DEADLINE_S):
+        owner, manager = [await rig.connect(_as(uuid.uuid4(), r)) for r in ("owner", "manager")]
+        rig.hub.broadcast_system(flags)
+        assert [await _system(owner), await _system(manager)] == [[(1, flags)], []]
         await rig.close()
 
 

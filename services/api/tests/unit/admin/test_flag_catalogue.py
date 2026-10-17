@@ -1,7 +1,10 @@
-"""E42-T03: the shipped flag definitions are `21-database-schema.md` 10.7 row for row, and every
-flag's outage value is its default but for the two engaged order-entry switches."""
+"""E42-T03: the shipped flag definitions are `21-database-schema.md` 10.7 row for row, every
+flag's outage value is its default but for the two engaged order-entry switches, and each key is
+visible to a role as its 10.7 visibility says (the predicate the WS `system` filter is given)."""
 
 from __future__ import annotations
+
+import pytest
 
 from candleviewer.admin.flags import default_registry
 
@@ -43,3 +46,27 @@ def test_every_flag_fails_closed_to_its_default_but_two_engaged_switches() -> No
     assert fail_closed == {k: s.default for k, s in r.items()} | engaged
     assert all(s.overridable != (s.is_killswitch or s.requires_evidence) for s in r.values())
     assert [k for k, s in r.items() if s.requires_evidence] == ["trading.live_enabled"]
+
+
+_ROLES = ("owner", "manager", "viewer")
+
+
+@pytest.mark.parametrize("role", _ROLES)
+@pytest.mark.parametrize("row", sorted(_SECTION_10_7), ids=lambda row: row[0])
+def test_each_key_is_visible_to_a_role_as_its_10_7_visibility_says(
+    row: tuple[str, str, bool, bool, str], role: str
+) -> None:
+    key, visibility = row[0], row[4]
+    seen = default_registry().visible_to(key, frozenset({role}))
+    assert seen is (visibility == _ALL or role == "owner")
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["engine.fallback_lightweight_charts", "trading.unknown", "TRADING.ONE_CLICK", "", "algo"],
+)
+def test_a_key_no_flag_defines_is_visible_to_no_one_not_even_the_owner(key: str) -> None:
+    """Deny by default: the WS filter hands the Owner a flag frame whole, so it never asks."""
+    registry = default_registry()
+    for roles in (*({role} for role in _ROLES), set(_ROLES), set()):
+        assert registry.visible_to(key, frozenset(roles)) is False

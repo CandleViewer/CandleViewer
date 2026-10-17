@@ -1848,7 +1848,8 @@ topics:
 # `system` content per role (SR-188, 23-ws-protocol.md §15.9; #2175): one row per §15.9 `kind`,
 # and `unknown` for any other. A cell is what the actor receives of one frame of that kind, which
 # carries the kind's Owner-only fields where it has any: whole = the frame as emitted; neutral = its
-# role-neutral fields only (kill-switch accounts cut to the actor's view grants); none = no frame.
+# role-neutral fields only (kill-switch accounts cut to the actor's view grants, flag keys to those
+# whose registry `visibility` admits the actor's role, E42-T03); none = no frame.
 system_kinds:
   clock_drift: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
     viewer: whole, unauthenticated: none}
@@ -1858,8 +1859,8 @@ system_kinds:
     viewer: whole, unauthenticated: none}
   exchange_state: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
     viewer: whole, unauthenticated: none}
-  feature_flags: {owner: whole, manager_with_grant: none, manager_without_grant: none,
-    viewer: none, unauthenticated: none}
+  feature_flags: {owner: whole, manager_with_grant: neutral, manager_without_grant: neutral,
+    viewer: neutral, unauthenticated: none}
   health: {owner: whole, manager_with_grant: neutral, manager_without_grant: neutral,
     viewer: neutral, unauthenticated: none}
   kill_switch: {owner: whole, manager_with_grant: neutral, manager_without_grant: neutral,

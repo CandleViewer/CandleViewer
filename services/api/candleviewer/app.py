@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.account_fixture_wiring import build_account_fixture
 from candleviewer.accounts.service import AccountsService
+from candleviewer.admin.flags import default_registry
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
@@ -1276,6 +1277,9 @@ def create_app(
             kill_switch=kill_switch.snapshot,
             # After a first `auth_ok`: the read-only gate, then an unresolved break-glass (O4).
             system_notices=lambda: _gate_notices(ctx) + ctx.auth.break_glass_notice.notices(),
+            # §15.9 (E42-T03): a Manager or Viewer learns a flag key only as the registry's
+            # `visibility` admits; a key the registry does not define reaches the Owner alone.
+            flag_visible=default_registry().visible_to,
             backpressure=ws_backpressure,
         )
     )
