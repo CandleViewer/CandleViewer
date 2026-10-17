@@ -172,13 +172,11 @@ async def test_s1b_real_postgres_restart_fails_closed_then_recovers() -> None:
     svc = _service(repo)
     sid = str((await svc.mint(str(uuid.uuid4()))).session_id)
     assert (await svc.require_active(sid)).id is not None
-    await st.compose("stop", "postgres")
-    try:
+    # `stopped` waits until Postgres answers again and re-issues `compose start` if it did nothing
+    # (GH-3087: the same helper left S2's Postgres down), so no separate recovery wait is needed.
+    async with st.stopped("postgres", _pg_reachable):
         with pytest.raises((OSError, asyncpg.PostgresError, TimeoutError)):
             await svc.require_active(sid)  # fail closed while Postgres is down
-    finally:
-        await st.compose("start", "postgres")
-    await st.until(_pg_reachable, "postgres recovery", 120)
     assert (await svc.require_active(sid)).id is not None  # recovered, no manual step
 
 

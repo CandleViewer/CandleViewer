@@ -120,16 +120,32 @@ jobs:
           cd services/api
           CV_PG_DSN=postgresql+asyncpg://cv:cv-chaos-ci@127.0.0.1:5432/candleviewer uv run alembic upgrade head
 
-      # S2, S3b and S8 are quarantined (C-9.3, GH-3087): marked `flaky`, they run
-      # in no lane until #3087's fix removes the markers.
-      - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky")
+      - name: Storage chaos scenarios (pytest -m "chaos and integration")
         working-directory: services/api
         env:
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
           CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
-        run: uv run pytest tests/chaos -m "chaos and integration and not flaky" --no-cov -v -p no:randomly
+        run: uv run pytest tests/chaos -m "chaos and integration" --no-cov -v -p no:randomly
+
+      # GH-3087 regression check. S2 stops Postgres and starts it again; S3b and S8 then need it up.
+      # `docker compose start` once exited 0 without starting it (S2 timed out, S3b and S8 got
+      # connection refused), a race that hit one attempt in two. Repeating the three scenarios
+      # makes a recurrence likely to show on the PR that causes it, not on an unrelated one.
+      - name: Storage chaos S2, S3b and S8 repeated x5 (GH-3087 regression check)
+        working-directory: services/api
+        env:
+          POSTGRES_PASSWORD: cv-chaos-ci
+          GF_SECURITY_ADMIN_PASSWORD: unused-ci
+          MINIO_ROOT_PASSWORD: unused-ci
+          CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
+        run: |
+          for n in 1 2 3 4 5; do
+            echo "== S2 -> S3b -> S8, pass ${n} of 5 =="
+            uv run pytest tests/chaos/storage/test_stack_scenarios.py -m "chaos and integration" \
+              -k "test_s2_ or test_s3b_ or test_s8_" --no-cov -v -p no:randomly
+          done
 
       - name: Storage chaos stack down
         if: always()
@@ -138,6 +154,7 @@ jobs:
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
         run: |
+          docker compose -f infra/compose/docker-compose.yml ps -a || true
           docker compose -f infra/compose/docker-compose.yml logs --tail 50 postgres questdb || true
           docker compose -f infra/compose/docker-compose.yml down -v || true
           sudo umount /mnt/cv-chaos-cold || true
