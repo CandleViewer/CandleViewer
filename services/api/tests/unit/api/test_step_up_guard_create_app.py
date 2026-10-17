@@ -30,6 +30,7 @@ from tests.unit.api.test_invites_create_app_e2e import (
     _login,
     _World,
 )
+from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -80,12 +81,12 @@ async def test_invite_create_fails_closed_when_sessions_are_wired_without_step_u
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     w = await _world(monkeypatch, with_user_repository=False)
+    w.auth._repository = FullUsers()  # #2295: after `start`, so only the guard reads it
     assert w.auth.sessions_is_active and w.auth.invites_is_active
     assert not w.auth.step_up_is_active  # the wiring fault
     owner = await _login(w, "owner", _OWNER_PERMS)
     r = w.client.post("/users", headers=_h(owner), json=_BODY)
-    # #2295 (C-12.4): without the user store no session can be classified, so the
-    # enrolment-only guard, outside the step-up guard, refuses every session first.
-    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
+    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
     assert not w.invites.rows and not w.audit.of("users.invited")
-    assert w.client.get("/users/invites", headers=_h(owner)).status_code == 503
+    # Not an outage: the owner's non-dangerous read is served as before.
+    assert w.client.get("/users/invites", headers=_h(owner)).status_code == 200
