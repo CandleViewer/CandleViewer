@@ -71,6 +71,10 @@ def _lose_every_method(stack: Stack, user: UserRecord) -> None:
     stack.users.add(user.model_copy(update={"mfa_methods": ()}))  # e.g. a recovery sign-in
 
 
+def _session_row(stack: Stack, minted: MintedSession) -> Any:
+    return stack.auth._session_repository.sessions[str(minted.session_id)]
+
+
 def _refusals(stack: Stack, transport: str, reason: str) -> float:
     """`auth_enrolment_refused_total` as the scraped app registry serves it (SR-125)."""
     return stack.scraped("auth_enrolment_refused_total", transport=transport, reason=reason)
@@ -263,13 +267,16 @@ def _dead_successor(stack: Stack) -> tuple[MintedSession, dict[str, str]]:
 def test_a_dead_enrolment_only_session_is_refused_as_expired_not_as_enrolment_only(
     stack: Stack,
 ) -> None:
-    _, headers = _dead_successor(stack)
+    successor, headers = _dead_successor(stack)
     before = _refusals(stack, "http", "expired")
 
     resp = stack.client.get("/auth/sessions", headers=headers)
 
-    assert (resp.status_code, resp.json()["code"]) == (401, "unauthenticated")
-    assert _refusals(stack, "http", "expired") == before + 1
+    # #3183 (gap J): the guard's lookup refuses a session past its absolute expiry, so the route
+    # answers 401 and revokes it as `expired`; it is never classified, so nothing counts here.
+    assert resp.status_code == 401
+    assert _session_row(stack, successor).revoked_reason == "expired"
+    assert _refusals(stack, "http", "expired") == before
     assert stack.audit.of(REFUSAL_ACTION) == []  # a dead session, not an authorisation denial
 
 
