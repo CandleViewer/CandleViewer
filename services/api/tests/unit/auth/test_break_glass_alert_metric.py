@@ -63,6 +63,9 @@ class _Events:
             raise self.answer
         return self.answer
 
+    async def break_glass_attempt_count(self) -> int:
+        return 0  # the attempts series has its own tests: test_break_glass_attempts_metric.py
+
 
 @pytest.fixture(autouse=True)
 def _clean_gauge() -> Iterator[None]:

@@ -1,8 +1,9 @@
 """`SqlAlchemyBreakGlassRepository`: Postgres side of the
 `candleviewer.auth.break_glass.BreakGlassResetStore` port (E09-S11 #2119, decision R4).
 `SqlAlchemyBreakGlassEvents` is the read-only side of
-`candleviewer.auth.break_glass_notice.BreakGlassEvents` (slice 6, decision O4): cv-api
-constructs only that one, so the running server holds no object that can reset.
+`candleviewer.auth.break_glass_notice.BreakGlassEvents` (slice 6, decision O4; two counts, one
+statement each): cv-api constructs only that one, so the running server holds no object that
+can reset.
 
 Every other repository call commits its own unit of work, so chaining
 `revoke_method`, `revoke_all_for_user` and an event write could leave a half
@@ -57,6 +58,9 @@ _UNRESOLVED = sa.text(
     "SELECT count(*) FROM system_events WHERE component = 'auth' "
     "AND kind = 'break_glass_used' AND resolved_at IS NULL"
 )
+#: One `auth.break_glass_attempt` row per CLI run (its write-ahead first record), whatever the
+#: run's outcome. `audit_log` is append-only, so the count only rises. Served by `ix_audit_action`.
+_ATTEMPTS = sa.text("SELECT count(*) FROM audit_log WHERE action = 'auth.break_glass_attempt'")
 
 #: The port's refusal channel (`auth.break_glass.BreakGlassStoreRefusal`), typed here
 #: as a `Literal` because `storage` may not import the `auth` enum.
@@ -126,3 +130,8 @@ class SqlAlchemyBreakGlassEvents:
         """How many `auth`/`break_glass_used` events are still unresolved: one count."""
         async with self._relational.unit_of_work() as uow:
             return int((await uow.session.execute(_UNRESOLVED)).scalar_one())
+
+    async def break_glass_attempt_count(self) -> int:
+        """How many CLI runs `audit_log` has a record of: its `auth.break_glass_attempt` rows."""
+        async with self._relational.unit_of_work() as uow:
+            return int((await uow.session.execute(_ATTEMPTS)).scalar_one())

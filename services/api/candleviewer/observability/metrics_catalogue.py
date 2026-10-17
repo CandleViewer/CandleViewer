@@ -1977,6 +1977,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_break_glass_attempts",
+        "gauge",
+        "attempts",
+        (),
+        "Break-glass CLI runs on record in audit_log (auth.break_glass_attempt rows); only rises.",
+        "AuthBreakGlassAttempted (a rise within 15m, page)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_session_fixation_attempts_total",
         "counter",
         "attempts",

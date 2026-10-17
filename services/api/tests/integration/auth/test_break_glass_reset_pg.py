@@ -4,7 +4,8 @@ The plan's named tests drive `SqlAlchemyBreakGlassRepository` through its
 `BreakGlassResetStore` port: S1 one transaction, S10 a failed reset changes zero rows,
 S5 refusals for non-Owners (forbidden role) and the cross-Owner (IDOR) case. S6: under
 the live recovery-code rule of `BreakGlassResetService`, concurrent runs consume one
-code once. Slice 6 (S9): the notice port sees only unresolved break-glass events.
+code once. Slice 6 (S9): the notice port counts only unresolved break-glass events, and
+(#2496) the CLI's `auth.break_glass_attempt` rows in `audit_log`.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -98,6 +99,10 @@ _RESOLVE_ALL = sa.text(
 _OTHER_AUTH_EVENT = sa.text(  # open, but not a break-glass event
     "INSERT INTO system_events (component, kind, severity, message) "
     "VALUES ('auth', 'totp_clock_skew', 'warning', 'not break-glass')"
+)
+_RUN_RECORD = sa.text(  # an audit row as the CLI writes it: critical, `system:breakglass`
+    "INSERT INTO audit_log (record_id, actor_label, action, outcome, severity) "
+    "VALUES (gen_random_uuid(), 'system:breakglass', :action, 'denied', 'critical')"
 )
 _EVENT = sa.text(
     "SELECT component, kind, CAST(severity AS text), resolved_at, CAST(details AS text), "
@@ -277,6 +282,32 @@ async def test_notice_port_counts_only_unresolved_break_glass(pg_dsn: str) -> No
         async with engine.begin() as conn:  # the Owner resolves them
             await conn.execute(_RESOLVE_ALL)
         assert await events.unresolved_break_glass_count() == 0
+    finally:
+        await rel.dispose()
+        await engine.dispose()
+
+
+async def test_notice_port_counts_only_the_cli_attempt_rows(pg_dsn: str) -> None:
+    """#2496 review: one `auth.break_glass_attempt` row per CLI run, whatever its outcome; the
+    closing rows of a run and other audit rows are not counted, and the count only rises."""
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-attempts")
+    events: BreakGlassEvents = SqlAlchemyBreakGlassEvents(rel)  # mypy checks the port
+    engine = create_async_engine(pg_dsn)
+    try:
+        before = await events.break_glass_attempt_count()
+        async with engine.begin() as conn:
+            for action in (
+                "auth.break_glass_attempt",  # a run that was refused ...
+                "auth.break_glass_refused",
+                "auth.break_glass_attempt",  # ... and one that reset
+                "auth.break_glass_reset",
+                "auth.mfa_reset_by_owner",  # not the CLI's
+            ):
+                await conn.execute(_RUN_RECORD, {"action": action})
+        assert await events.break_glass_attempt_count() == before + 2
+        async with engine.begin() as conn:
+            await conn.execute(_RUN_RECORD, {"action": "auth.break_glass_attempt"})
+        assert await events.break_glass_attempt_count() == before + 3
     finally:
         await rel.dispose()
         await engine.dispose()

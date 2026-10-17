@@ -16,7 +16,10 @@ read-only by `SqlAlchemyBreakGlassEvents` in `storage/repositories/break_glass_s
 
 Every successful read also sets `auth_break_glass_unresolved_events` (how many are unresolved,
 0 when none), the series `AuthBreakGlassUsed` pages the Owner on (#2496). A failed read leaves it
-as it was.
+as it was. The same refresh reads how many CLI runs `audit_log` holds a record of into
+`auth_break_glass_attempts`, which `AuthBreakGlassAttempted` pages on: a run that changed nothing
+leaves audit rows and no unresolved event. The two are separate statements with separate
+failures, so a broken attempts read cannot silence the unresolved-events page or the notice.
 """
 
 from __future__ import annotations
@@ -27,7 +30,10 @@ from typing import Any, Final, Protocol
 
 import structlog
 
-from candleviewer.auth.metrics import auth_break_glass_unresolved_events
+from candleviewer.auth.metrics import (
+    auth_break_glass_attempts,
+    auth_break_glass_unresolved_events,
+)
 from candleviewer.observability.context import spawn
 
 #: §15.9 `notice` reason of the break-glass notice (decision R3).
@@ -45,6 +51,10 @@ def _log() -> Any:
 class BreakGlassEvents(Protocol):
     async def unresolved_break_glass_count(self) -> int:
         """How many `auth`/`break_glass_used` system events are still unresolved."""
+        ...
+
+    async def break_glass_attempt_count(self) -> int:
+        """How many CLI runs `audit_log` has a record of (`auth.break_glass_attempt` rows)."""
         ...
 
 
@@ -77,22 +87,31 @@ class BreakGlassNotice:
         return self._read_failures
 
     async def refresh(self) -> None:
-        """Read the port once, bounded; never raises except on cancellation."""
+        """Read each count once, bounded; never raises except on cancellation."""
         if self._events is None:
             return
+        unresolved = await self._read("unresolved", self._events.unresolved_break_glass_count)
+        if unresolved is not None:
+            self._unresolved = unresolved > 0
+            auth_break_glass_unresolved_events.set(unresolved)
+        attempts = await self._read("attempts", self._events.break_glass_attempt_count)
+        if attempts is not None:
+            auth_break_glass_attempts.set(attempts)
+
+    async def _read(self, series: str, count: Callable[[], Awaitable[int]]) -> int | None:
+        """One bounded read: its count, or `None` after counting and logging the failure."""
         try:
             async with asyncio.timeout(self._timeout_s):
-                unresolved = await self._events.unresolved_break_glass_count()
+                return await count()
         except Exception as exc:  # TimeoutError included; CancelledError propagates
             self._read_failures += 1
             _log().error(
                 "auth.break_glass_state_read_failed",
+                series=series,
                 error=type(exc).__name__,
                 failures=self._read_failures,
             )
-            return
-        self._unresolved = unresolved > 0
-        auth_break_glass_unresolved_events.set(unresolved)
+            return None
 
     def notices(self) -> list[dict[str, object]]:
         """The gateway's first-`auth_ok` hook: one notice while unresolved. No I/O."""

@@ -144,6 +144,33 @@ groups:
         annotations:
           summary: "Break-glass recovery was used on this host: review the audit log"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassused"
+      - alert: AuthBreakGlassAttempted
+        # #2496 review (SR-023; the E09 threat model routes "alert on any break-glass invocation"
+        # to E09-X03): a CLI run that changed nothing (refused: not an Owner, no KEK proof, no
+        # terminal, cv-api running, a wrong phrase) or was cut short leaves audit rows and no
+        # `break_glass_used` event, so AuthBreakGlassUsed never sees it. The gauge counts the
+        # `auth.break_glass_attempt` rows, one per run whatever its outcome, and only rises. A
+        # completed reset raises it too, so it pages together with AuthBreakGlassUsed.
+        # Read as a rise against what Prometheus held before the last 15 minutes, not as an
+        # increase(): the CLI runs only while cv-api is stopped, so the first scrape after the
+        # restart already holds the new count and an increase() window has nothing before it.
+        # The page ends 15 minutes after the first scrape that shows the rise (that scrape is
+        # then in the right-hand window), so one run is one page, and runs less than 15 minutes
+        # apart share it. It needs a sample from before the run: with no sample in the 7 days
+        # before the last 15 minutes (a Prometheus with no history of the series, or a refused
+        # run after cv-api was stopped for more than a week) it sees no rise, which is also why
+        # it never pages on old runs at rollout. No user label (the audit rows say who and when);
+        # a component of its own.
+        # #2931: an event page, so no [RESOLVED] message follows the window.
+        expr: max by (env) (max_over_time(auth_break_glass_attempts[15m])) > max by (env) (max_over_time(auth_break_glass_attempts[7d] offset 15m))
+        for: 0m
+        labels:
+          severity: page
+          component: auth_break_glass_attempt
+          resolves: window
+        annotations:
+          summary: "A break-glass run was recorded on this host: review the audit log"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassattempted"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m

@@ -93,6 +93,7 @@ def test_required_rules_present() -> None:
         "AuthRecoveryCodeUsed",  # #2496 SR-022
         "NetBindingUnsafe",  # #2496 E09-T04
         "AuthBreakGlassUsed",  # #2496 SR-023
+        "AuthBreakGlassAttempted",  # #2496 SR-023, a run that changed nothing
     }
     assert required <= names
 
@@ -387,6 +388,34 @@ def test_break_glass_alert_pages_the_owner_while_a_reset_is_unresolved() -> None
     ]
 
 
+def test_break_glass_attempt_alert_pages_on_a_rise_of_the_run_count() -> None:
+    """#2496 review (SR-023): a CLI run that was refused or cut short leaves audit rows and no
+    `break_glass_used` event, so `AuthBreakGlassUsed` never sees it. This page reads the gauge of
+    `auth.break_glass_attempt` rows, which only rises, as a rise over the maximum before the last
+    15 minutes: the first scrape after the restart that follows a run has no earlier sample in an
+    `increase()` window. No hold time and a page, so quiet hours never mute it; its own component,
+    so it neither inhibits nor is inhibited by the `AuthBreakGlassUsed` page."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuthBreakGlassAttempted"]
+    assert rule["expr"] == (
+        "max by (env) (max_over_time(auth_break_glass_attempts[15m])) "
+        "> max by (env) (max_over_time(auth_break_glass_attempts[7d] offset 15m))"
+    )
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {
+        "severity": "page",
+        "component": "auth_break_glass_attempt",
+        "resolves": "window",
+    }
+    route = _route_for(_alert_labels(rule))
+    assert route["receiver"] == "page_event" and "mute_time_intervals" not in route
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-authbreakglassattempted"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_break_glass_attempt"] == [
+        "AuthBreakGlassAttempted"
+    ]
+
+
 #: #2931: pages whose resolution only means "the window elapsed", not "someone acted". A
 #: [RESOLVED] on the page channel reads as handled although the event still needs the Owner's
 #: review, so each carries `resolves: window` and takes the receiver that sends no resolved
@@ -395,13 +424,16 @@ def test_break_glass_alert_pages_the_owner_while_a_reset_is_unresolved() -> None
 #: used; a trade gap went unrecovered (the trades stay missing from the tape and the recording).
 #: `AuthBreakGlassUsed` (#2496 item 3) reads a gauge, but over a window that outlasts a restart or
 #: a scrape gap, so it also ends when cv-api has merely been down for that window, which a
-#: [RESOLVED] would report as handled while the event is unresolved.
+#: [RESOLVED] would report as handled while the event is unresolved. `AuthBreakGlassAttempted`
+#: reads a rise of a gauge that only ever rises, over the same window, so it also ends when the
+#: window moves on.
 #: Not classified yet: `NakedPositionDetected`. Whether its [RESOLVED] means "protected again"
 #: or only "the window moved on" depends on how the E32 watchdog counts
 #: `naked_position_alerts_total`: once per detection (an event page), or on every scan while a
 #: position is naked (a condition page). TODO(#932): decide there; add it here if it is the former.
 EVENT_TYPE_PAGES = {
     "AuditChainVerificationFailed",
+    "AuthBreakGlassAttempted",
     "AuthBreakGlassUsed",
     "AuthRecoveryCodeUsed",
     "IngestionTradeGapUnrecovered",
