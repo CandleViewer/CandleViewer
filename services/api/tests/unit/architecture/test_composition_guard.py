@@ -4,16 +4,16 @@ A module that is built but never wired into `create_app()` / the lifespan /
 the statechart loader is invisible to its own unit tests. Everything here is
 discovered by scanning the package, so a NEW unwired module fails and names
 itself. Intentional exceptions live in `composition_allowlist.json` (reason +
-ticket per entry); stale entries fail too, so the list can only shrink.
+ticket per entry); stale entries fail too, so nothing lingers once it is wired.
 
 `openapi_pending` holds two kinds of entry. The FROZEN E49 baseline (ticket
-``E49-K01-F4-baseline``, 136 ops; was 158 before E15-T01 served workspaces) may only
-shrink. Contract-first entries carry a real ticket (``#123`` or ``E12-S03``) and must
-be removed once served (the stale check fails until they are). The total cap is
-148 = 136 frozen + 12 contract-first (#3048). Keep both caps tight: a contract PR
-that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, in that
-PR; a PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and
-``PENDING_BASELINE`` by the same amount, in that PR.
+``E49-K01-F4-baseline``, 136 ops) may only shrink. Contract-first entries carry a real
+ticket (``#123`` or ``E12-S03``) and must be removed once served (the stale check fails
+until they are). The total cap is 148 = 136 frozen + 12 contract-first (#3048). Keep
+both caps tight: a contract PR that adds an operation raises ``PENDING_BASELINE`` by
+exactly its overflow, measured against current ``main`` with CI re-run there (two
+parallel raises merge cleanly yet both under-count); a PR that serves a frozen
+operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same amount.
 """
 
 from __future__ import annotations
