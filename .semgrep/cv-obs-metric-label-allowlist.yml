@@ -42,9 +42,14 @@ rules:
       #   conflict, store_unavailable, required, kind_mismatch, unknown_user,
       #   overrides_not_allowed, gate_evidence_required, https_required, credential_in_url,
       #   string_too_long}; with `flag`, max_series=256.
+      # table (E12, #1998): a bars table name, `bars_{kind}` for the six bar kinds {time, tick,
+      #   volume, range, renko, delta} (`bars/rows.RETENTION`); max_series=6, or 12 with `reason`.
+      # from_source, to_source (E12, SR-E12-10, #1998): bar sources from `bars/rows.SOURCE_RANK`
+      #   {tape, parquet, kline}; a refusal needs a lower rank, so only kline -> tape|parquet;
+      #   max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"
