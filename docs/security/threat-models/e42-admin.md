@@ -1040,8 +1040,10 @@ closes by documentation alone.
 - **#3196** (AD-F08, AD-F23, Medium): change capture for the admin security tables, `cv_ro` narrowed, and no
   append-only table inheriting mutation rights (SR-E42-06, AD-I15, AD-E13); RSK-075.
 
-The three Highs are due inside R3, before the routes they guard mount. Not filed, both Low: AD-F24 and AD-F25 are
-requests on E42-T09 and E09, and on E42-T04 (§12); UL-F8's E40 follow-up is still unfiled.
+Schedule of the three Highs: #3083 is done. #3084 and #3085 carry no milestone yet; each gates an R3 ticket, E42-T05
+(#966) and E42-S03 (#1134), so each is to be set to R3, and neither route mounts before it lands (D7, D6). Not
+filed, both Low: AD-F24 and AD-F25 are requests on E42-T09 and #2304, and on E42-T04 (§12, §12.3); UL-F8's E40
+follow-up is still unfiled.
 
 ### 12.3 Existing follow-up issues this model relies on
 
@@ -1049,7 +1051,7 @@ requests on E42-T09 and E09, and on E42-T04 (§12); UL-F8's E40 follow-up is sti
 | Issue | Scope | Rows |
 | --- | --- | --- |
 | #2101 | SR-013: rotate the session on role change and step-up (E09) | AD-S03, AD-E06, AD-F11 |
-| #2304 | Bind the step-up challenge to the refused request (merged in part by #3088 and #3144) | AD-S08, AD-I12 |
+| #2304 | Bind the step-up challenge to the refused request (merged in part by #3088 and #3144). Required by this model: the router's 401 code | AD-S08, AD-I12, AD-F24 |
 | #2799 | B16 records the spend of a one-shot grant | AD-R10 |
 | #2763 | The actor's type and role at the time on every audit row (SR-062) | AD-R03, AD-S10, AD-F12 |
 | #2836 | The admin guard's denial budget and write timeout | AD-D06, AD-F13 |
@@ -1065,16 +1067,20 @@ requests on E42-T09 and E09, and on E42-T04 (§12); UL-F8's E40 follow-up is sti
 | #966 | E42-T05: health, incidents, backups and the restore | AD-D08, AD-T05, AD-S11, AD-I04, AD-R01 |
 | #1085 | E42-T06: the admin re-auth ADR (D8) | AD-E01, AD-E12 |
 | #1026 | E42-X03: the abuse-case suite and the Semgrep rules | §9.2, AD-E03, AD-F22 |
+| #2850 | Reconcile `04-security-program.md` §7.2.2 with the contract's `x-rbac` and the RBAC matrix. Required by this model: the 18 admin operations | AD-F18 |
 | #956 | E39-S03: the kill-switch engine, the producer of kill-switch frames | AD-I06, AC-ADM-35 |
 
 ## 13. Findings, residual risks, review and sign-off
 
 ### 13.1 Findings register
 
-Risk is the inherent L x I of the rows the finding concerns (§1.4, OE as there); dispositions are §1.4's T, M and A.
-AD-F01 to AD-F22 were reserved by the design pass, and AD-F23 to AD-F25 come from S3's reviews. The three High
-findings have tickets due inside R3, whose gate allows no open Critical or High (`30-release-roadmap.md` §7.4,
-2027-02-04), and the epic (#63) cannot close until they are Done.
+Risk is the inherent L x I of the rows whose gap the finding is (§1.4, OE as there). A finding marked contract,
+detection or traceability leaves its rows' controls standing and is rated on its own L x I (AD-F18, AD-F21, AD-F24,
+AD-F25). `04-security-program.md` §5.15 rates threats, not findings: AD4 is High from AD-S05, while AD-F06 is the
+gap in AD-E01. Dispositions are §1.4's T, M and A. AD-F01 to AD-F22 were reserved by the design pass, and AD-F23 to
+AD-F25 come from S3's reviews. The three High findings have remediation tickets: #3083 is done, and #3084 and #3085
+are to be scheduled in R3 (§12.2), whose gate allows no open Critical or High (`30-release-roadmap.md` §7.4,
+2027-02-04). The epic (#63) cannot close until they are Done.
 
 <!-- prettier-ignore -->
 | Id | Finding | STRIDE | Rows | L x I, risk | Disp. | Owner | Remediation and state |
@@ -1084,7 +1090,7 @@ findings have tickets due inside R3, whose gate allows no open Critical or High 
 | AD-F03 | View-as has no contract and no server owner, so "read-only" and "audited" are client properties | E, I | AD-E04, AD-I05 | M x H, High OE | T | Security engineer | #3085, open, with contract PR #3164; before E42-S03's view-as PR (RSK-073) |
 | AD-F04 | On-demand verify lacks the contract's slot, span cap, rate, deadline and records | D, R | AD-R07, AD-D04 | M x M, Medium | M | Backend lead | E42-T02 (#889), SR-E42-08; the read records (#2433) and the page check (#2443) are merged |
 | AD-F05 | The export stub answered 202 with a job that did not exist | R | AD-R09 | M x L, Low | M | Backend lead | Done by #2444 (501 as contracted) |
-| AD-F06 | SCR-149's 15-minute admin window is not enforced on the server | E, I | AD-E01, AD-S05 | M x M, Medium OE | M | Owner/PO (D8) | E42-T06 (#1085), E42-S01; SR-E42-12 (RSK-074) |
+| AD-F06 | SCR-149's 15-minute admin window is not enforced on the server | E, I | AD-E01 | M x M, Medium OE | M | Owner/PO (D8) | E42-T06 (#1085), E42-S01; SR-E42-12 (RSK-074) |
 | AD-F07 | Backup integrity rests on mutable columns and on encryption that does not show who made the artefact | T, S | AD-T05, AD-S11 | L x H, Medium OE | M | Backend lead | E42-T05 (#966), SR-E42-05 |
 | AD-F08 | Out-of-band writes to roles, grants, flags or backup rows leave no record and raise no signal, and a new append-only table inherits mutation rights | T, R | AD-T03, AD-T06, AD-R08, AD-E13 | L x H, Medium OE | T | Security engineer | #3196, open; SR-E42-06 (RSK-075) |
 | AD-F09 | The flag registry trusts each definition's declared categories, and its boot refusal is not composed into the app | E | AD-E03 | L x H, Medium | M | Security engineer | E42-T03 (#964), E42-X03 (#1026); SR-E42-07 |
@@ -1096,39 +1102,44 @@ findings have tickets due inside R3, whose gate allows no open Critical or High 
 | AD-F15 | A chain link can diverge from id order on an insert path that does not lock first | R | AD-R04, AD-D12 | L x M, Low | M | Backend lead | E42-T02 (#889) or #1238; SR-E42-10 |
 | AD-F16 | `system` frames were role-blind; flag frames still need per-key visibility | I | AD-I06, AD-D11 | M x L, Low | M | Backend lead | Per role since #3136; per key E42-T03 (#964), SR-E42-14 |
 | AD-F17 | The E42 audit vocabulary is not registered: `maintenance.*`, `backup.verified`, `.deleted`, `.downloaded`, `incident.acknowledged`, `admin.view_as_*`, `admin.session_elevated`, `users.enable`, `.delete`, `.anonymise` | R | AD-R02 | M x L, Low | M | Backend lead | SR-E42-11: E42-T03, E42-T05, E42-T09, E42-T10, #3085 |
-| AD-F18 | `04-security-program.md` §7.2.2 has no capability row for 18 permission-bearing admin operations | — (traceability) | §1.3 | M x L, Low | M | Security engineer | Amendment note 3 (§13.3) |
+| AD-F18 | `04-security-program.md` §7.2.2 has no capability row for 18 permission-bearing admin operations | — (traceability) | §1.3 | M x L, Low | M | Security engineer | Amendment note 3 (§13.3), required by this model on #2850 |
 | AD-F19 | Admin route existence and permission names reach non-owners | I | AD-I01 | M x L, Low | A | Owner/PO | Accepted as E09 U25 (§13.2) |
 | AD-F20 | Owner-only operations are declared with `audit:read`, which Managers hold | E | AD-E08 | L x M, Low | M | Security engineer | E43-S02; `test_route_matrix.py:240` once the summary mounts |
 | AD-F21 | Detection-signal and code names in the tickets do not exist under those names | R (detection) | §10 | H x L, Low | M | Security engineer | Amendment note 1 (§13.3) |
 | AD-F22 | Two admin routes with their own guard deny without a record or a count | R | AD-R01 | M x L, Low | M | Backend lead | E42-T05 (#966), E42-X03 (#1026); SR-E42-09 |
 | AD-F23 | The analytics role reads every identity and audit column (from S3) | I | AD-I15 | L x M, Low | T | Security engineer | #3196, open |
-| AD-F24 | The users and step-up routers answer 401 `unauthorized`, a code the registry lacks; its 401 is `unauthenticated` (C-6.5; from S3) | — (contract) | AD-S06 | M x L, Low | M | Backend lead | Not filed: E42-T09 (#2649) for `api/users.py`, E09 for `api/step_up.py`, E42-X03 pins the code; amendment note 6 |
+| AD-F24 | The users and step-up routers answer 401 `unauthorized`, a code the registry lacks; its 401 is `unauthenticated` (C-6.5; from S3) | — (contract) | AD-S06 | M x L, Low | M | Backend lead | Not filed: required by this model on E42-T09 (#2649) for `api/users.py` and on #2304 for `api/step_up.py`; E42-X03 (#1026) pins the code; amendment note 6 |
 | AD-F25 | A failed post-commit step of the disable cascade is counted but not alerted, although the annex's R7 says it is (from S3) | T, I (detection) | UL1-T1, UL2-I1 | M x L, Low | M | Backend lead | Not filed: E42-T04 (#965) |
 
-The annex's findings keep their ids and routes (annex §5). Their state at `b37d1c9d`:
+States are as read at `b37d1c9d`. Two E42 changes merged after it, during S4, and are not re-read here: #3199
+(E42-T05) serves `GET /admin/health` behind the audited guard, half of AD-F22, and #2449 (E42-T02) anchors verify on
+the stored predecessor and hashes its batches off the loop, which bears on AD-F04. E42-X02 (#1220) re-reads both.
+
+The annex's findings keep their ids and routes (annex §5). STRIDE and L x I are those of the annex rows they cite
+(annex §3); UL-F8 cites a §6 residual, out of the annex's STRIDE scope. Their state at `b37d1c9d`:
 
 <!-- prettier-ignore -->
-| Id | Rows, risk | Disp. | Owner | State |
-| --- | --- | --- | --- | --- |
-| UL-F1 | UL1-I1, Low | M | E42-T04 (#965) | Met for the disable (`test_lifecycle_audit_has_no_pii`, #3096); each later slice repeats it |
-| UL-F2 | UL2-T2, High | M | E42-X03 (#1026) | Open |
-| UL-F3 | UL3-T2, High | M | E42-T09 (#2649) | Open; SR-016's admin unlock still has no owning ticket (#2710) |
-| UL-F4 | UL4-S1, Low | A, M | E42-T02 (#889), E42-S04 | Open; the residual awaits the Owner (annex §6) |
-| UL-F5 | UL4-T2, Medium | M | E42-T10 (#2650) | Open |
-| UL-F6 | UL4-D1, Medium | M | E42-T10 (#2650) | Open |
-| UL-F7 | UL4-T1, UL4-I1, High | M | E42-T10 (#2650) | Open |
-| UL-F8 | O7 (annex §6), Medium | M | E40 follow-up | Not filed (main-orchestrator) |
-| UL-F9 | UL1-R2, UL2-D1, Medium | M | E42-T04 (#965), E42-T08 (#2648) | Met for the disable (`test_open_orders_left_and_counted`, #3096); E42-T08 S9 owes the unbind |
-| UL-F10 | UL3-R1, UL3-S2, Medium | M | E42-T09 (#2649) | Open |
-| UL-F11 | UL3-E3, High | M | E42-T09 (#2649) | Open |
-| UL-F12 | UL2-T2, High | M | E42-T08 (#2648) | Met: `test_onboarding_ignores_revoked` covers both readers (#2843) |
-| UL-F13 | UL1-D1, UL3-R1, Medium | M | E42-T04 (#965), E42-T09 (#2649) | Met for the store (`test_concurrent_demote_and_disable_keep_owner`, #3062); E42-T04 S6 and E42-T09 S11 owe the route cases |
+| Id | STRIDE | Rows | L x I, risk | Disp. | Owner | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| UL-F1 | I | UL1-I1 | L x M, Low | M | E42-T04 (#965) | Met for the disable (`test_lifecycle_audit_has_no_pii`, #3096); each later slice repeats it |
+| UL-F2 | T | UL2-T2 | M x H, High | M | E42-X03 (#1026) | Open |
+| UL-F3 | T | UL3-T2 | M x H, High | M | E42-T09 (#2649) | Open; SR-016's admin unlock still has no owning ticket (#2710) |
+| UL-F4 | S | UL4-S1 | L x M, Low | A, M | E42-T02 (#889), E42-S04 | Open; the residual awaits the Owner (annex §6) |
+| UL-F5 | T | UL4-T2 | L x H, Medium | M | E42-T10 (#2650) | Open |
+| UL-F6 | D | UL4-D1 | M x M, Medium | M | E42-T10 (#2650) | Open |
+| UL-F7 | T, I | UL4-T1, UL4-I1 | M x H and H x M, High | M | E42-T10 (#2650) | Open |
+| UL-F8 | — (residual O7) | O7 (annex §6) | Medium (the §6 level) | M | E40 follow-up | Not filed (main-orchestrator) |
+| UL-F9 | R, D | UL1-R2, UL2-D1 | M x M, Medium | M | E42-T04 (#965), E42-T08 (#2648) | Met for the disable (`test_open_orders_left_and_counted`, #3096); E42-T08 S9 owes the unbind |
+| UL-F10 | R, S | UL3-R1, UL3-S2 | M x M and L x H, Medium | M | E42-T09 (#2649) | Open |
+| UL-F11 | E | UL3-E3 | M x H, High | M | E42-T09 (#2649) | Open |
+| UL-F12 | T | UL2-T2 | M x H, High | M | E42-T08 (#2648) | Met: `test_onboarding_ignores_revoked` covers both readers (#2843) |
+| UL-F13 | D, R | UL1-D1, UL3-R1 | L x H and M x M, Medium | M | E42-T04 (#965), E42-T09 (#2649) | Met for the store (`test_concurrent_demote_and_disable_keep_owner`, #3062); E42-T04 S6 and E42-T09 S11 owe the route cases |
 
 ### 13.2 Accepted residual risks
 
 Owner acceptance pending, queued on #2701 (agent-delivery adaptation). Each has an owner and a review date; an expired
 acceptance is re-decided, not extended (`32-risk-register.md` §1.3). The rows below and the annex's §6 residuals are
-recorded as RR-16 in `04-security-program.md` §16.1.
+recorded as RR-17 in `04-security-program.md` §16.1 (RR-16 is ADR-0037's sink-refusal residual, from #2914).
 
 <!-- prettier-ignore -->
 | Row | Residual | Level | Owner | Review by |
@@ -1164,19 +1175,23 @@ AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
    `listUserAccountAccess`, `listRoles`, `listPermissions`, `listPendingInvites`, `reissueInvite`, `revokeInvite`,
    `previewMfaReset`, `resetUserMfa`, `setLogLevelOverride`, `createSupportBundle`, `getSupportBundle`, `getJob`,
    `setSubaccountTier`, `listFeatureFlags`, `listBackups` or `getBackup`. The five public operations and
-   `getBuildInfo` need none, and #3164 adds row 40b for view-as.
+   `getBuildInfo` need none, and #3164 adds row 40b for view-as. The rows are required by this model on #2850, the
+   open reconciliation of §7.2.2 with the contract.
 4. **`CreateUserRequest` (#3086).** `mfa_required` becomes `enum: [true]`, and `createUser`, `reissueInvite` and
    `revokeInvite` declare the `users` step-up and its 403, contract-first (C-6.1).
 5. **Stale comments.** `pg_bootstrap.sql:106-108` names `0012_governance` as the revision that creates `audit_log`
    (`0003` does), and `0003_audit_log.py:164-165` says the bootstrap's REVOKE "re-asserts this the moment both exist",
    although a fresh install runs the bootstrap before `0003` (§3.1). `0003` is immutable (C-5.4), so this note is its
-   correction; the bootstrap comment is fixed under security review.
+   correction. The bootstrap comment is required by this model on #3196, which edits the same file under security
+   review (AD-I15, AD-E13).
 6. **The 401 code (AD-F24).** `api/users.py:239` and `api/step_up.py:563`, :567 and :678 answer `unauthorized`,
    pinned by `test_users_router.py:392`, while the registry's code for a missing session is `unauthenticated`
    (yaml:322-325; C-6.5). The code follows the registry, or the registry gains the code contract-first (C-6.1).
+   Owners as AD-F24 (§13.1): E42-T09 (#2649), #2304 and E42-X03 (#1026).
 7. **`validation_failed`.** The registry gives it status 400 (yaml:298-299), while verify, export and flag writes
    specify `422 validation_failed` (yaml:8121-8122, :8286, :8874) and the `UnprocessableEntity` example carries it
-   (yaml:12233-12238). E42-X03 needs one rule (C-6.5); the seeds follow each operation's text.
+   (yaml:12233-12238). Required by this model on E42-X03 (#1026): one rule, settled contract-first (C-6.1, C-6.5);
+   until then the seeds follow each operation's text.
 
 ### Review log
 
@@ -1186,10 +1201,11 @@ AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
 | 2026-10-17 | author (agent, S1; PR #3124) | §1 to §3 at 27d7abc8 |
 | 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3124 | Round 1 at 27d7abc8: APPROVE x2, five MINORs (a drifted WS citation, the TB-6 decrypt wording, the contract's missing step-up declarations, the overstated bootstrap backstop, the independence sentence), fixed at dd701d79; round 2 at dd701d79: APPROVE x2, NITs only. Merged as 752a6a49 |
 | 2026-10-17 | author (agent, S2; PR #3178) | §4 to §7 at 50b02ebf |
-| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3178 | Round 1 at 50b02ebf: APPROVE x2 (MINORs: the read-at anchors and drifted yaml citations, two rows naming no test), fixed at 84fee557; round 2 at 84fee557: APPROVE x2, its NITs carried to S3. Merged as c19a8e98 |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3178 | Round 1 at 50b02ebf: APPROVE x2 (MINORs: the read-at anchors and drifted yaml citations, two rows naming no test), fixed at 84fee557; round 2 at 84fee557: APPROVE x2, two MINORs (#3136 landing after the anchor, recorded under the PR's Deviations and re-read in S3; the why-not-split note, in the PR body) and three NITs carried to S3. Merged as c19a8e98 |
 | 2026-10-17 | author (agent, S3; PR #3195) | §8 to §11 at 37448846, on `main` b37d1c9d |
-| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3195 | Round 1 at 37448846: APPROVE x2, five MINORs and six NITs, all carried to S4 and closed there: the grace-window signal, #3196 as owner, AC-ADM-02, -12, -21, -25 and -35, the 401 and 422 notes, the cascade alert, the annex's Method bullet |
-| 2026-10-17 | author (agent, S4) | §12 and §13; RSK-072 to RSK-075 and three refinements; `04-security-program.md` §5.15 and RR-16 |
-| Pending | security-reviewer and code-reviewer, independent; S4 | Recorded when they report |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3195 | Round 1 at 37448846: APPROVE x2, five MINORs and six NITs. The model's items were carried to S4 and closed there: the grace-window signal, #3196 as owner, AC-ADM-02, -12, -21, -25 and -35, the 401 and 422 notes, the cascade alert, the annex's Method bullet. The size MINOR and NIT and the gitleaks NIT were PR-process items, handled in #3195's body. Merged as 9be04b43 |
+| 2026-10-17 | author (agent, S4) | §12 and §13; RSK-072 to RSK-075 and three refinements; `04-security-program.md` §5.15 and RR-17, at 77085426 |
+| 2026-10-17 | security-reviewer and code-reviewer, independent; S4 | Round 1 at 77085426: security APPROVE, code REQUEST_CHANGES. One MAJOR: RR-16 is ADR-0037's residual, so this model's row is RR-17. MINORs: the rating rule against AD-F06 and AD-F24 (AD-F25 too), the R3 schedule of #3084 and #3085, STRIDE and L x I in the UL-F rows, fixed in a second commit after S4 was rebased onto `main` 9a9daa29 (77085426 became 3f40e033); the §5.11 overlap with #3213 and the C-4.8 note are PR-process items. NITs fixed: the heat-map rule, the review-log rows, owners for notes 3, 5 to 7 |
+| Pending | security-reviewer and code-reviewer, independent; S4 round 2 | Recorded when they report |
 | Pending | Security engineer and Architect (human) | Review comments and sign-off on #890 and #63, with the H\* band-raise question (§1.4, D2) |
-| Pending | Owner (human) | D7 (#3084), D8 (E42-T06, #1085) and the §13.2 residuals (RR-16), queued on #2701 |
+| Pending | Owner (human) | D7 (#3084), D8 (E42-T06, #1085) and the §13.2 residuals (RR-17), queued on #2701 |

@@ -62,7 +62,7 @@ These are the project-board `Risk` field values, reused verbatim across tickets 
 
 ## 2. Risk heat map (current scores)
 
-Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10; the Medium RSK-074 and RSK-075 are not plotted. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
+Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10. The chart plots a selection, not the whole register (§10 lists every entry by band): RSK-074 and RSK-075 (Medium, 8), like RSK-065 to RSK-071, are left to §10. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
 
 ```mermaid
 quadrantChart

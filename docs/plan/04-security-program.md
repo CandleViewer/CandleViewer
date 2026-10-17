@@ -586,7 +586,7 @@ analysis: the elevation boundary (per-class step-up, the SCR-149 window, view-as
 the API) and the restore path, which can roll back security state. Controls SR-E42-01..SR-E42-14 (model §11) are
 traced to the E42 tickets in model §12; abuse cases AC-ADM-01..AC-ADM-35 go to E42-X03 (see RSK-072 to RSK-075).
 Status Draft (2026-10-17; independent reviews per slice: fable security, opus code); the model's Owner decisions D7
-(restore) and D8 (admin re-auth) and acceptance of its §13.2 residuals (RR-16) are pending, queued on #2701.
+(restore) and D8 (admin re-auth) and acceptance of its §13.2 residuals (RR-17) are pending, queued on #2701.
 
 | T    | STRIDE                 | Threat                                                                                                                                                | L   | I   | Risk     | Mitigations                                                                                                                     | Residual                                      |
 | ---- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -631,7 +631,7 @@ The E29 OMS rows (E29-X01, OM-S01..OM-E06) are rated Low contingent on the E29 t
 (`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (E29 model §12.2).
 AD1 to AD3, AD5 and AD7 to AD9 (E42-X01) are rated Low contingent on the tickets that build their controls
 (`docs/security/threat-models/e42-admin.md` §13.1), and the routes of AD2 and AD3 cannot mount before #3085 and #3084;
-AD4 stays Medium until the model's D8 and #3085, and AD6 and AD10 are Medium residuals awaiting Owner acceptance (RR-16).
+AD4 stays Medium until the model's D8 and #3085, and AD6 and AD10 are Medium residuals awaiting Owner acceptance (RR-17).
 
 ---
 
