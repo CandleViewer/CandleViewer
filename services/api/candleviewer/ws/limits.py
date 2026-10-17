@@ -66,7 +66,7 @@ FANOUT_SEND_TIMEOUT_S = 2.0
 #: Bound on each audit row of that fan-out, like `CLOSE_AUDIT_TIMEOUT_S` on a close's row.
 FANOUT_AUDIT_TIMEOUT_S = 2.0
 #: ...and on its rows as a whole: once this many rows in a row have raised or timed out, the rest
-#: are abandoned, even by a writer that is only slow, so a stalled WAL costs 3 bounds, not 1 600.
+#: are abandoned, even when the writer is only slow: a stalled WAL costs 3 bounds, not one per row.
 FANOUT_AUDIT_MAX_FAILURES = 3
 
 CLOSE_TOO_BIG = 1009

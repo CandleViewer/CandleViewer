@@ -861,8 +861,8 @@ class ConnectionRegistry:
         # Every socket's subscriptions are dropped/narrowed synchronously here, before any I/O.
         swapped = [self._swap_or_evict(e[0], snap, rows) for e in entries]
         for (_authz, _send, close), frames in zip(entries, swapped, strict=True):
-            if frames is None:  # its swap raised and it is already out of the registry
-                await self._close_evicted(close)  # before any send, so it is closed on every exit
+            if frames is None:  # evicted at its swap: closed before any send, so on every exit,
+                await self._close_evicted(close)  # as `close` (`_Connection.evict`) never suspends
         for (authz, send, close), frames in zip(entries, swapped, strict=True):
             if frames is None:
                 continue

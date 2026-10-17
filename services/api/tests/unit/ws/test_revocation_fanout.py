@@ -114,9 +114,7 @@ class _DroppedSeries:
         self.released: list[str] = []
         self.every = every
 
-    async def register(
-        self, spec: Any, symbol: str, consumer: str, user: str | None = None
-    ) -> None:
+    async def register(self, *_args: Any, **_kw: Any) -> None:
         return None
 
     def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
@@ -146,9 +144,8 @@ async def _poisoned(world: _World, every: bool = False) -> tuple[ConnectionAuthz
 
 
 class _World:
-    """A registry over one `_Sink`: the principal each user resolves to, every socket's frames and
-    the sockets closed (by index). `hold`, when set, parks the next read after it captured its
-    principal."""
+    """A registry over one `_Sink`: each user's principal, each socket's frames, the closed sockets
+    (by index), and `hold`, which when set parks the next read after it captured its principal."""
 
     def __init__(self, sink: _Sink) -> None:
         self.sink = sink
@@ -318,14 +315,20 @@ async def test_a_failed_or_hung_audit_row_never_stops_the_other_rows_or_the_fan_
     ]
 
 
-async def test_cancelling_the_change_mid_audit_is_never_swallowed_and_logs_the_lost_rows() -> None:
+@pytest.mark.parametrize("kill", [False, True], ids=["roles_changed", "kill_switch_changed"])
+async def test_cancelling_the_change_mid_audit_is_never_swallowed_and_logs_the_lost_rows(
+    kill: bool,
+) -> None:
     world = _World(_Sink(hang=frozenset({2})))
+    peer = PEER if kill else USER  # the kill switch over two users, or one user's two sockets
     sockets = []
-    for uid in (USER, PEER):
+    for uid in (USER, peer):
         world.principals[uid] = _principal(uid, READ)
         sockets.append(world.connect(uid, _topics(3)))
         world.principals[uid] = _principal(uid, NONE)
-    change = asyncio.create_task(world.registry.kill_switch_changed())
+    change = asyncio.create_task(
+        world.registry.kill_switch_changed() if kill else world.registry.roles_changed(USER)
+    )
     async with asyncio.timeout(5):
         await world.sink.hung.wait()  # rows 0 and 1 are written; row 2 is in flight
     with capture_logs() as logs:
@@ -336,13 +339,10 @@ async def test_cancelling_the_change_mid_audit_is_never_swallowed_and_logs_the_l
     assert [len(s.by_id) for s in sockets] == [0, 0] and len(world.sink.rows) == 2
     # Rows 3-5 never reached the writer; row 2 was in flight (it lands if it held the WAL lock).
     (lost,) = [e for e in logs if e["event"] == "ws audit rows abandoned"]
-    assert (lost["log_level"], lost["rows"], lost["cause"], lost["in_flight"]) == (
-        "warning",
-        3,
-        "cancelled",
-        "footprint.BTCUSDT.tick.3",
-    )
-    assert (lost["actor_user_ids"], lost["users"]) == ([USER, PEER], 2)  # row 2's user, then 3-5's
+    assert (lost["log_level"], lost["rows"], lost["cause"]) == ("warning", 3, "cancelled")
+    assert lost["in_flight"] == "footprint.BTCUSDT.tick.3"
+    named = [USER, PEER] if kill else [USER]  # row 2's user, then rows 3-5's
+    assert (lost["actor_user_ids"], lost["users"]) == (named, len(named))
 
 
 async def test_after_3_failed_audit_rows_in_a_row_the_rest_are_abandoned_and_counted(

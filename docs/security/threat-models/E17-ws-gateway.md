@@ -538,14 +538,14 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
   `ws audit rows abandoned`, with a count and the users). A socket whose re-evaluation raises is evicted like a
   stalled one: it gets no `revoked` frame and the revocations it had made get no row; its `ws.connection.closed` row
   reads `slow_consumer`, and only the error log `ws permission swap failed; socket evicted` names the cause. The
-  revocations themselves never wait for a row. The alerting metric SR-E17-04 asks for is E17-T06 (#571).
+  revocations themselves never wait for a row. The alerting metric SR-E17-04 asks for is owed by E17-T06 (#571).
 - **Residual High (open, not accepted; release blocker until #2292 merges):** WS-D15 (audit-store flooding). Inherent
   High (L M x I H scores High in the `04-security-program.md` §5 template) and, with SR-192 unbuilt, the residual is
   High. Recorded as RR-08 in `04-security-program.md` §16.1 under the §5.11 release-blocker rule: mitigation ticket
   #2292, review date 2026-11-15, owner sign-off pending (queued on #2701; orchestrator interim record under the
   2026-10-12 delegation). It is re-scored when #2292 merges and AC-29 passes.
-  Since #2824 such a flood can also make a revocation fan-out abandon the rest of its `ws.subscription.revoked` rows
-  (WS-R04 as built, above), where it used to delay the revocations themselves; #2292 and #571 (SR-E17-04) cover it.
+  Since #2824 such a flood can make a revocation fan-out abandon the rest of its audit rows (WS-R04 as built), where it
+  used to delay revocations; a WS audit-failure counter and alert are owed by E17-T06 (#571, a follow-up listed there).
 - **Residual Medium (not eliminated):**
   - WS-S03 / WS-D07: pre-auth slot exhaustion by a tailnet device until #2155 adds a global cap and auth-await
     timeouts. Low once merged. Tracked as **RSK-063**'s first trigger.
@@ -577,5 +577,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |
 | 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag, floors and S11 flush deadline (§6), close fields and fail-closed close (§8), row (§9)   |
 | 2026-10-16 | author (agent; PR for #412 S2a-0)                 | Pre-auth inbound frame limits, #412 S2a-0: §4, §6, WS-T02, WS-T08, WS-D05 and WS-D06 state them                                              |
-| 2026-10-16 | author (agent; PR for #2824)                      | WS-R04 as built (#2824): fan-out revocation rows after the frames, 2 s each, 3 failed in a row end them (§6, §10)                            |
 | 2026-10-16 | author (agent; PR for #2824)                      | WS-R04 as built (#2824): fan-out rows after the frames, 2 s each, 3 failed in a row end them; swap eviction; D15 (§6, §10)                   |
