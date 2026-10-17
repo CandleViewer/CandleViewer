@@ -18,6 +18,8 @@ const ROWS = Array.from({ length: 500 }, (_, i) => i);
 const PAGE = {
   background: "var(--color-surface-app)",
   color: "var(--color-text-primary)",
+  fontFamily: "var(--font-family-ui), system-ui, sans-serif",
+  minHeight: "100vh",
   padding: "var(--space-inset-md)",
 };
 
