@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -243,21 +243,30 @@ codes: nothing supported. Do not hand-edit `users`, `mfa_methods` or `recovery_c
 touch audit rows. Escalate to the repository owner, who decides on direct database repair under the
 security process. Record the incident.
 
-**The audit volume (#2615).** In compose, cv-api and the CLI share one audit directory: the named
-volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`, with `CV_AUDIT_WAL_PATH` fixed at
-`/var/lib/candleviewer/audit/audit.wal` in `infra/compose/docker-compose.yml`. It holds the audit WAL
-and its commit cursor (`audit.wal`, `audit.wal.committed`) and the break-glass journal and run lock
-(`breakglass/journal.wal`, `breakglass/instance.lock`), so a container restart keeps them and the CLI
-takes its lock where cv-api looks. The image creates the directory owned by uid 10001, mode `0700`,
-and Docker copies that owner into an empty volume: run everything that touches it as the image's user.
+**The audit volume (#2615).** In compose, cv-api and the break-glass CLI (once #2119 ships it) share
+one audit directory: the named volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`,
+with `CV_AUDIT_WAL_PATH` fixed at `/var/lib/candleviewer/audit/audit.wal` in
+`infra/compose/docker-compose.yml`. It holds the audit WAL and its commit cursor (`audit.wal`,
+`audit.wal.committed`) and the break-glass journal and run lock (`breakglass/journal.wal`,
+`breakglass/instance.lock`), so a container restart keeps them and the CLI takes its lock where
+cv-api looks. The image creates the directory owned by uid 10001, mode `0700`, and Docker copies
+that owner into an empty volume: run everything that touches it as the image's user.
 
 - **Backup.** Back it up with Postgres: in the same run, encrypted with the backup key (SR-091),
   with the same retention and off-host copy, and restore the two together with owners and modes
   intact. It holds audit records that cv-api has accepted and Postgres may not have yet, and the
-  journal until the next cv-api boot folds it in.
-- **Do not delete it.** `docker compose down -v` and `make reset` remove it; a plain `down` keeps it.
-- **Check it** (read-only). Expected: `drwx------`, owner and group `10001`. `api` has a fixed
-  address, so a second container of it, such as `run`, starts only while cv-api is stopped:
+  journal until the next cv-api boot folds it in. Copy the volume first, and start the Postgres dump
+  only once the copy ends: the commit cursor (`audit.wal.committed`) marks the records Postgres
+  already has, so a copy newer than the dump would skip, on restore, the records committed in
+  between; an older copy only replays rows the insert ignores, since `record_id` is unique.
+- **Do not delete it.** `docker compose down -v`, `make reset` and, with the stack
+  down, `docker volume prune --all` remove it; a plain `down` keeps it.
+- **Check it** (read-only). Expected: `drwx------`, owner and group `10001`; another owner, such as
+  root for a volume the dev stack created first (its image runs as root), is one cv-api cannot
+  write. Use the compose files (`-f`) or project (`-p`) of the running stack, as `docker compose ls`
+  lists them: the volume belongs to one project, and a `run` in another can mount a new, empty
+  volume that looks healthy. `api` has a fixed address, so a second container of it, such as `run`,
+  starts only while cv-api is stopped:
 
   ```bash
   # cv-api running

@@ -43,7 +43,7 @@ stack, so manual QA, the E27-Q02 specs and the plan's §11 dry run cannot reach 
   never on a stored key, though plan §9.5 says "while an exchange key is stored"
   (`qa/plans/e27-accounts-test-plan.md:606`).
 - **The image fence is structural only.** The image copies `candleviewer/` and the synthetic sample alone
-  (`infra/images/Dockerfile.api:22`, `:55`, `:59-60`); the wheel packages `candleviewer` alone
+  (`infra/images/Dockerfile.api:22`, `:65`, `:69-70`); the wheel packages `candleviewer` alone
   (`services/api/pyproject.toml:66-67`). Nothing asserts a dev-only module is absent, and staging runs that
   image (`.github/workflows/main.yml:172-174`; `deploy-staging.yml:104-105`).
 
@@ -226,7 +226,7 @@ behind the E29 OMS lane.
   `services/api/candleviewer/**` (such as `.semgrep/cv-no-debug-probe-in-prod.yml:53-55`) are extended in S3
   or the gap is recorded. The repo-wide withdrawal rule needs nothing (Enforcement).
 - Risk: the image fence holds for the image as built. Its venv's editable `.pth` names `/build`
-  (`_job-security.yml:495-496`) and it runs from `/app` (`infra/images/Dockerfile.api:53`), so a bind mount of
+  (`_job-security.yml:495-496`) and it runs from `/app` (`infra/images/Dockerfile.api:63`), so a bind mount of
   `cvdev` there or a `PYTHONPATH` entry would make the stub importable again. S14's compose tests keep the
   documented path on the builder stage, and the boot and per-request guards still refuse a real key.
 - Risk: a guard trip latches the process read-only until the offending key row is revoked and the stack

@@ -49,7 +49,7 @@ Nothing on `main` can hold these records durably while the sink refuses:
 - The Postgres `outbox` is down whenever Postgres is, and writing it would bypass `ingest()`.
 - An in-memory queue is lost on restart, and a dead flusher recovers only through a restart.
 - In compose, the `api` root filesystem is read-only with only `/tmp` writable
-  (`infra/compose/docker-compose.yml:117-119`), and `CV_AUDIT_WAL_PATH` is relative (`settings.py:347`). Until
+  (`infra/compose/docker-compose.yml:125-127`), and `CV_AUDIT_WAL_PATH` is relative (`settings.py:347`). Until
   #2615 gives the audit WAL a durable volume, nothing on disk survives a container restart there.
 
 ## Decision drivers
@@ -166,7 +166,7 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
 9. **Placement and access.** `<dir of CV_AUDIT_WAL_PATH>/lane/`, beside `breakglass/`, on #2615's durable
    audit volume. The path is absolute and free of `..` and symlinks (the `anchored_journal_dir` rule,
    `audit/journal.py:50-60`); the directory is `0700` and its files `0600`, owned by the cv-api user (uid
-   10001, `infra/images/Dockerfile.api:66`); every open uses `O_NOFOLLOW`. The running cv-api holds `lane.lock`
+   10001, `infra/images/Dockerfile.api:76`); every open uses `O_NOFOLLOW`. The running cv-api holds `lane.lock`
    exclusively, so a second process on the same volume refuses to boot. No route or WS topic opens the lane, and
    the only CLI that does is S2c's release command, in `admin/`; the break-glass CLI keeps its own journal (R3).
 10. **Module boundaries.** Two new files inside M19, `audit/lane_journal.py` (S1a, S1b) and `audit/lane.py`
