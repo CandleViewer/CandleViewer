@@ -66,6 +66,11 @@ default-groups = ["dev", "test"]
 [tool.hatch.build.targets.wheel]
 packages = ["candleviewer"]
 
+# #2893 (ADR-0036): the dev-only `cvdev` package ships in no artefact. The wheel above names only
+# `candleviewer`; the sdist leaves `cvdev` out as well, so no distribution carries it.
+[tool.hatch.build.targets.sdist]
+exclude = ["/cvdev"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -156,12 +161,14 @@ markers = [
   "fuzz: E08-X02 long Hypothesis parser-fuzz session — nightly only, deselected from the PR lane",
   "e09_regression: E09 auth/RBAC regression pack (qa/plans/e09-regression-pack.md, #2148), tagged by path in tests/_e09_regression_pack.py, never on perf/fuzz/harness items — run with pytest -m e09_regression",
 ]
-addopts = "-m \"not fuzz and not perf and not harness\" --strict-markers --cov=candleviewer --cov-branch --cov-fail-under=85"
+addopts = "-m \"not fuzz and not perf and not harness\" --strict-markers --cov=candleviewer --cov=cvdev --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["candleviewer"]
+# #2893 (ADR-0036): the dev-only `cvdev` package is measured too; it never ships, but its guards
+# keep fixture traffic away from real keys and hosts, so they are held to the same floor.
+source = ["candleviewer", "cvdev"]
 # #2424: the `py` CI job combines the data of parallel test lanes; relative paths keep that
 # combine independent of where each lane's job checked the repository out.
 relative_files = true

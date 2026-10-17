@@ -726,6 +726,7 @@ CandleViewer/
 │     │  ├─ storage/              # questdb.py, postgres.py (SQLAlchemy 2.0), parquet.py, duckdb.py
 │     │  ├─ observability/        # logging, metrics, tracing, health
 │     │  └─ migrations/           # alembic
+│     ├─ cvdev/                   # dev-only fixture transport (#2893): in no wheel, sdist or image
 │     ├─ tests/                   # unit/, contract/, integration/, load/
 │     └─ pyproject.toml
 ├─ infra/
@@ -866,6 +867,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_UVICORN_DRAIN_TIMEOUT_S`     | int    | `5`                       | process | bound on uvicorn's drain of open connections, 4-30 s; 4 s is one close's flush plus its audit write (#2565)         |
 | `CV_TEST_CLOCK`                  | bool   | `false`                   | process | auth server test clock (#2086), no HTTP route; refused unless testnet with no exchange key (E16-FR-11)              |
 | `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset in signed decimal seconds, read per auth decision; absolute, no `..`, no symlink in it; own DB (see below)   |
+| `CV_ACCOUNT_FIXTURE`             | str    | unset                     | process | dev-only fixture scenario token (#2893); refused unless demo, synthetic feed, no key var, no test clock             |
+| `CV_ACCOUNT_FIXTURE_DIR`         | path   | unset                     | process | optional fixture state dir; needs `CV_ACCOUNT_FIXTURE`; absolute, no `..`, no symlink in it                         |
 
 The two test-clock keys are set together. The stack that sets them owns its Postgres database and
 QuestDB namespace and never shares them with a demo or live process (C-2.11): rows written under a
@@ -873,6 +876,13 @@ far-future offset (sessions, lockouts, invites) would outlive the run (#2728). S
 symlink anywhere in the `CV_TEST_CLOCK_FILE` path at load. Each read opens the file non-blocking,
 fails on a symlink as its last component (`O_NOFOLLOW`; a directory swapped for a symlink after
 boot is not caught), and refuses anything but a regular file of at most 32 bytes.
+
+`CV_ACCOUNT_FIXTURE` is a test-only switch like the test clock, never a feature flag (#2893).
+Settings refuses it at load unless `CV_ENVIRONMENT=demo`, `CV_FEED=synthetic`, no `CV_BYBIT_API_*`
+variable is set (any one refuses, declared or not) and the test clock is off; an empty
+`CV_ACCOUNT_FIXTURE_DIR` alone counts as unset. Its code is the dev-only `services/api/cvdev`
+package, which no wheel, sdist or image carries, so a release image with the switch set refuses
+boot ("this build carries no fixture transport") instead of ignoring it.
 
 ### 7.3 Environment parity for developers
 
