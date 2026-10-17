@@ -43,14 +43,20 @@ SCANS = {
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
 OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
-NODE_TOOL = re.compile(r"(?:^|[\s;&|(])(?:pnpm|npm|npx|yarn|corepack)(?=\s|$)")
-# Every node package-manager command line in the workflow. Any other one (an install under another
-# spelling or with options before the verb, `pnpm rebuild`, a bare `yarn`, `npx`) fails the pin.
+# A node package-manager word anywhere in a line: quoted, path-qualified, in `sh -c`, backticks or
+# `$(...)`, or before `)` or `;`; not part of a longer name such as `pnpm-lock.yaml` or `npm-audit`.
+NODE_TOOL = re.compile(r"(?<![\w.-])(?:pnpm|pnpx|npm|npx|yarn|yarnpkg|corepack)(?![\w.-])")
+PNPM = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["packageManager"]
+# Job -> the node command lines it may run; every other job runs none. Any other line (an install
+# under another spelling or with options before the verb, `pnpm rebuild`, a bare `yarn`, `npx`, a
+# wrapper) fails the pin (C-12.3).
 NODE_COMMANDS = {
-    "corepack enable && corepack prepare pnpm@12.5.1 --activate",
-    "pnpm install --frozen-lockfile --ignore-scripts",
-    "pnpm audit --json > npm-audit.json || true",
-    "pnpm licenses list --json --prod > pnpm-licenses.json",
+    "read-only-scans": {
+        f"corepack enable && corepack prepare {PNPM.split('+')[0]} --activate",
+        "pnpm install --frozen-lockfile --ignore-scripts",
+        "pnpm audit --json > npm-audit.json || true",
+        "pnpm licenses list --json --prod > pnpm-licenses.json",
+    },
 }
 # Job -> the actions it uses (SHA pins aside), so no install action joins a job unnoticed.
 BASE_ACTIONS = {"actions/checkout", "actions/setup-python"}
@@ -137,20 +143,22 @@ def test_verdict_runs_last_and_no_folded_step_uses_failure(job: str) -> None:
     assert "failure()" not in json.dumps(JOBS[job])
 
 
-def test_the_shared_pnpm_install_never_runs_lifecycle_scripts() -> None:
-    # read-only-scans installs once for four scans, so no package script may run there (C-12.3):
-    # every node command line is a known one, and no job gains an action that could install.
+def test_every_node_command_line_is_a_known_one() -> None:
+    # read-only-scans installs once for four scans, so no package script may run there (C-12.3).
     lines = {
-        line.strip()
+        (job, line.strip())
         for job in JOBS
         for step in _steps(job)
         for line in step.get("run", "").splitlines()
         if NODE_TOOL.search(line) and not line.strip().startswith("#")
     }
-    assert lines == NODE_COMMANDS
-    assert {job: {s["uses"].split("@")[0] for s in _steps(job) if "uses" in s} for job in JOBS} == (
-        ACTIONS
-    )
+    assert lines == {(job, line) for job, known in NODE_COMMANDS.items() for line in known}
+
+
+def test_each_security_job_uses_only_its_pinned_actions() -> None:
+    # No install action, or any other, joins a job unnoticed; SHA bumps don't change the set.
+    uses = {job: {s["uses"].split("@")[0] for s in _steps(job) if "uses" in s} for job in JOBS}
+    assert uses == ACTIONS
 
 
 def test_freeze_proposal_upload_keys_on_the_freeze_step_outcome() -> None:
