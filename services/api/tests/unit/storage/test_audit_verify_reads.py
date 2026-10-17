@@ -188,6 +188,7 @@ async def test_page_read_that_fails_before_its_try_takes_no_slot() -> None:
     )
     # A budget that cannot be built (`timeout_ms` not a number): it fails before the `try`.
     kw |= {"q": None, "from_ts": None, "to_ts": None, "after": None, "timeout_ms": "soon"}
-    with pytest.raises(TypeError):
-        await repo.query_page(restrict_to_actor=None, limit=1, **kw)
+    # The budget's own error: a missing argument would be a `TypeError` too, before any slot.
+    with pytest.raises(TypeError, match="unsupported operand"):
+        await repo.query_page(restrict_to_actor=None, raw=False, limit=1, **kw)
     assert (repo._reads, repo._shared_reads) == (0, 0)

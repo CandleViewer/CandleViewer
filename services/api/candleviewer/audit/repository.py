@@ -33,6 +33,7 @@ class AuditRepository(Protocol):
         self,
         *,
         restrict_to_actor: str | None,
+        raw: bool,
         actor_user_id: str | None,
         actions: list[str] | None,
         subject_type: str | None,
@@ -57,6 +58,13 @@ class AuditRepository(Protocol):
         `restrict_to_actor` has no default, so no caller can forget it: when set, only that
         actor's rows are returned and `actor_user_id` is ignored (narrowed, never widened).
         It is `None` only for the Owner's view.
+
+        `raw` has no default either: it is the Owner's raw view, stated by the caller and
+        never inferred from the scope or from `owner`. Every row carries `id`, `event_ts`,
+        `actor_user_id`, `actor_label`, `action`, `object_kind`, `object_id`, `outcome`,
+        `severity`, `request_id`, `entry_hash` and `prev_hash`; only a `raw` row also carries
+        `actor_ip`, `session_id`, `object_label`, `reason`, `env`, `before_state_is_null` and
+        `after_state_is_null`. No row carries a state (`before_state`, `after_state`).
 
         Each row also carries `chain`, the material for the page's chain check: the
         renderings `_canonical_hash` reads and `chain_prev_hash` (the `entry_hash` of the row

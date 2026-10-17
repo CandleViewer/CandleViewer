@@ -188,3 +188,66 @@ async def test_page_chain_check_agrees_with_the_trigger(
         assert newer.chain_verified  # the rows above the altered one still check out
     finally:
         svc.close()
+
+
+#: A page row's keys for every view, then those the Owner's raw view adds. No state.
+_PAGE_KEYS = {
+    "id", "event_ts", "actor_user_id", "actor_label", "action", "object_kind", "object_id",
+    "outcome", "severity", "request_id", "entry_hash", "prev_hash", "chain",
+}  # fmt: skip
+_RAW_KEYS = {
+    "actor_ip", "session_id", "object_label", "reason", "env", "before_state_is_null",
+    "after_state_is_null",
+}  # fmt: skip
+
+
+async def test_page_rows_carry_their_views_columns_and_no_state(
+    repo: SqlAlchemyAuditRepository,
+) -> None:
+    """#2445: the Owner's raw select adds the Owner-only columns, typed, and whether each
+    state is null; a Manager's select (scoped, not raw) runs and carries none of them. No
+    select returns a state."""
+    session = uuid.uuid4()
+    owner_only = {"session_id": session, "reason": "owner_only", "env": "demo"}
+    await repo.insert(_row("it_cols", 1, before_state={"q": 1}, **owner_only))
+    await repo.insert(_row("it_cols", 3, after_state=None))
+    rows = {r["object_id"]: r for r in await _page(repo, "it_cols", raw=True)}
+    one = rows["obj-1"]
+    assert set(one) == _PAGE_KEYS | _RAW_KEYS
+    assert one["session_id"] == session and one["reason"] == "owner_only"
+    assert one["env"] == "demo" and one["object_label"] == "label 1"
+    assert str(one["actor_ip"]) == "192.0.2.2"
+    flags = [(r["before_state_is_null"], r["after_state_is_null"]) for r in (one, rows["obj-3"])]
+    assert flags == [(False, False), (True, True)]
+    manager = await _page(repo, "it_cols", raw=False, restrict_to_actor=str(_MANAGER))
+    assert len(manager) == 2 and all(set(r) == _PAGE_KEYS for r in manager)
+
+
+async def test_owner_detail_is_parsed_or_withheld_past_the_field_cap(
+    repo: SqlAlchemyAuditRepository,
+) -> None:
+    """Through the real `left(...)` cap: a normal row's states are parsed. A row with an
+    `after_state` rendering longer than `CHAIN_FIELD_MAX_CHARS` has no complete canonical
+    form, so each of its non-null states is withheld and listed in `elided`; a stored null
+    never is. A Manager's `detail` stays `{}`."""
+    blob = {"blob": "x" * CHAIN_FIELD_MAX_CHARS}  # renders past the cap
+    await repo.insert(_row("it_detail", 1, before_state={"qty": "1"}))
+    await repo.insert(_row("it_detail", 2, before_state={"qty": "1"}, after_state=blob))
+    await repo.insert(_row("it_detail", 3, after_state=blob))
+    svc = AuditQueryService(repo)
+    try:
+        page = await svc.query(restrict_to_actor=None, raw=True, subject_type="it_detail")
+        normal = await svc.query(
+            restrict_to_actor=None, raw=True, subject_type="it_detail", subject_id="obj-1"
+        )
+        mine = await svc.query(restrict_to_actor=str(_MANAGER), subject_type="it_detail")
+    finally:
+        svc.close()
+    detail = {e.subject_id: e.detail for e in page.items}
+    assert detail["obj-1"] == {"before": {"qty": "1"}, "after": {"symbol": "BTCUSDT", "n": 1}}
+    assert detail["obj-2"] == {"before": None, "after": None, "elided": ["before", "after"]}
+    assert detail["obj-3"] == {"before": None, "after": None, "elided": ["after"]}
+    assert not page.chain_verified  # the capped rows are unverified, never verified
+    assert normal.chain_verified and normal.items[0].detail == detail["obj-1"]
+    assert {e.subject_id for e in mine.items} == {"obj-1", "obj-3"}
+    assert all(e.detail == {} and e.ip is None and e.reason is None for e in mine.items)

@@ -74,6 +74,7 @@ async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
     repo = SqlAlchemyAuditRepository(rel)  # type: ignore[arg-type]  # structural fake
     return await repo.query_page(
         restrict_to_actor=None,
+        raw=False,
         actor_user_id=None,
         actions=None,
         subject_type=None,

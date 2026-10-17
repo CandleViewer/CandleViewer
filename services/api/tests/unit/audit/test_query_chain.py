@@ -3,6 +3,7 @@ dedicated hashing executor, and never true for a row that was not fetched in ful
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
@@ -51,8 +52,24 @@ async def test_an_altered_row_is_not_verified(
     repo: FakeAuditRepository, clock: FakeClock, field: str
 ) -> None:
     await _seed(repo, 4, clock)
-    repo.rows[1][field] = (repo.rows[1][field] or "") + "x"  # out-of-band edit of id 2
+    row = repo.rows[1]  # id 2, edited out of band
+    if field == "after_state":  # a value a jsonb column can hold: valid JSON, one value changed
+        row[field] = json.dumps({**json.loads(row[field]), "i": -1}, sort_keys=True)
+    else:
+        row[field] = (row[field] or "") + "x"
     assert not await _verified(repo, actions=["orders.submit"])
+
+
+async def test_the_fake_refuses_state_text_no_jsonb_column_holds(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """The fake is as strict as Postgres: a state tampered into text that is not JSON is
+    refused instead of being passed on, so no test can rely on a state Postgres never
+    returns."""
+    await _seed(repo, 2, clock)
+    repo.rows[1]["after_state"] += "x"
+    with pytest.raises(ValueError, match="after_state of id 2 is not jsonb text"):
+        await _verified(repo)
 
 
 async def test_a_removed_predecessor_breaks_the_link_even_off_the_page(
