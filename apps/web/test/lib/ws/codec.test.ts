@@ -41,11 +41,11 @@ describe("decodeFrame", () => {
     expect(validateCvwb(frame.body.bytes)).toMatchObject({ ok: true, header: { bodyKind: 2 } });
   });
 
-  it("decodes structured frames, keeping a chunk's null seq and the replay fields", () => {
+  it("decodes structured frames (C15), keeping a null chunk seq, replay fields and an unknown reason (C18)", () => {
     const chunk = { t: "snap", id: "snap-3", ch: "trades.BTCUSDT", s: null, ts: 1, p: { x: 1 } };
     expect(decodeFrame(wire(chunk))).toMatchObject({ id: "snap-3", s: null, body: { e: "j" } });
-    const replay = { ...chunk, s: 7, rs: "bb", meta: { source: "replay" } };
-    expect(decodeFrame(wire(replay))).toMatchObject({ s: 7, rs: "bb", meta: { source: "replay" } });
+    const next = { ...chunk, s: 7, rs: "bb", meta: { reason: "from_the_future" } };
+    expect(decodeFrame(wire(next))).toMatchObject({ s: 7, rs: "bb", meta: next.meta });
   });
 
   it("decodes the handshake frames, kill switch included", () => {
