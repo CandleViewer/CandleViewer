@@ -26,6 +26,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
+from candleviewer.ws.limits import MACHINE_ENTRIES_MAX
 from tests.contract.rbac import rbac_harness as rbac
 
 _MATRIX: dict[str, Any] = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))
@@ -158,6 +159,39 @@ def test_granted_manager_is_refused_an_account_it_holds_no_grant_for(
 def test_owner_sees_an_account_no_grant_row_lists(deployed: SimpleNamespace, family: str) -> None:
     sample = _TOPICS[family]["sample"]
     assert _subscribe_once(deployed.app, "owner", sample, UNLISTED) == "sub_ok"
+
+
+def test_deployed_app_caps_the_machine_registry(deployed: SimpleNamespace) -> None:
+    assert deployed.app.state.ws_registry.services.machines.max_entries == MACHINE_ENTRIES_MAX
+
+
+def test_deployed_app_snaps_a_machine_from_the_registry_sub_reads(
+    deployed: SimpleNamespace,
+) -> None:
+    """The snapshot router serves the registry `sub` was authorised against (§6.4)."""
+    row = _TOPICS["machines.kill_switch"]
+    rbac.seed_machine(deployed.app, row, "owner")
+    with _client(deployed.app).websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        _open(ws, "owner")
+        assert _sub(ws, row["sample"], None) == "sub_ok"
+        snap = _recv(ws)
+    assert (snap["t"], snap["p"]) == ("snap", {"state": "seeded"})
+
+
+def test_deployed_app_wakes_a_pending_machine_subscription(deployed: SimpleNamespace) -> None:
+    """A registry publish reaches the socket through the hub the gateway registered it with."""
+    row = _TOPICS["machines.kill_switch"]
+    deployed.app.state.ws_registry.services.machines._entries.clear()
+    with (
+        _client(deployed.app) as client,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws,
+    ):
+        _open(ws, "owner")
+        assert _sub(ws, row["sample"], None) == "sub_ok"
+        assert client.portal is not None  # set while the client context is open
+        client.portal.call(rbac.seed_machine, deployed.app, row, "owner")
+        snap = _recv(ws)
+    assert (snap["t"], snap["meta"]["reason"]) == ("snap", "initial")
 
 
 def test_auth_ok_carries_the_principal_read_from_the_store(deployed: SimpleNamespace) -> None:
