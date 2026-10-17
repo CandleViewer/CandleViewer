@@ -32,12 +32,15 @@ _USER_SQL = sa.text("""
     FROM users u
     WHERE u.id = CAST(:id AS uuid) AND u.deleted_at IS NULL
     """)
+# O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission (the
+# same predicate as `scope_sqlalchemy._PERMS`), so a disable takes effect at the next read.
 _PERMS_SQL = sa.text("""
     SELECT DISTINCT p.code FROM users u
     JOIN user_roles ur ON ur.user_id = u.id AND (ur.expires_at IS NULL OR ur.expires_at > now())
     JOIN role_permissions rp ON rp.role_id = ur.role_id
     JOIN permissions p ON p.id = rp.permission_id
-    WHERE u.id = CAST(:id AS uuid) ORDER BY p.code
+    WHERE u.id = CAST(:id AS uuid) AND u.status = 'active' AND u.deleted_at IS NULL
+    ORDER BY p.code
     """)
 _SCOPE_SQL = sa.text(
     "SELECT exchange_account_id::text FROM user_account_access "
