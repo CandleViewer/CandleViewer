@@ -3,7 +3,8 @@
 - In `candleviewer/`, only `account_fixture_wiring.py` names `cvdev`, and never in an import
   statement: it holds the module it imports lazily and the package name its refusal matches, as
   strings. No other module imports it or holds an import string for it
-  (`importlib.import_module`, `__import__`, `find_spec`, a constant passed to one). A release
+  (`importlib.import_module`, `__import__`, `find_spec`, a constant passed to one, or an entry
+  point such as `pkgutil.resolve_name("cvdev.mod:attr")`). A release
   image has no `cvdev`, so any other reference either breaks boot or opens a second way in.
 - `cvdev` never imports `candleviewer.secrets` (C-3.2) or `candleviewer.audit` (C-3.3), directly
   or by an import string. With `cvdev` a root package of `services/api/.importlinter`, the
@@ -49,12 +50,15 @@ def _imported_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
 
 
 def _named_modules(tree: ast.AST) -> Iterator[tuple[int, str]]:
-    """(line, dotted name) for each absolute import and each string that reads as a module path."""
+    """(line, dotted name) for each absolute import and each string that reads as a module path,
+    an entry point's (`pkgutil.resolve_name("pkg.mod:attr")` imports `pkg.mod`) included."""
     yield from _imported_modules(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if all(part.isidentifier() for part in node.value.split(".")):
-                yield node.lineno, node.value
+            module, _, attribute = node.value.partition(":")
+            dotted = module.split(".") + (attribute.split(".") if attribute else [])
+            if all(part.isidentifier() for part in dotted):
+                yield node.lineno, module
 
 
 def _parse(source: str) -> ast.AST:
@@ -85,6 +89,8 @@ def _references(source: str, modules: tuple[str, ...], *, imports_only: bool = F
         ("__import__('cvdev')", DEV),
         ("importlib.util.find_spec('cvdev')", DEV),
         ("_DOOR = 'cvdev.account_fixture'", DEV),
+        ("pkgutil.resolve_name('cvdev.account_fixture.wiring:build')", DEV),
+        ("pkgutil.resolve_name('cvdev:')", DEV),
         ("from candleviewer import secrets", PROTECTED),
         ("import candleviewer.secrets.broker", PROTECTED),
         ("from candleviewer.audit.writer import AuditWriter", PROTECTED),
@@ -101,6 +107,8 @@ def test_a_reference_is_found(source: str, modules: tuple[str, ...]) -> None:
         ("import cvdevtools", DEV),
         ("from candleviewer.account_fixture_wiring import build_account_fixture", DEV),
         ("'''The cvdev package is dev-only.'''", DEV),
+        ("pkgutil.resolve_name('candleviewer.app:create_app')", DEV),
+        ("_NOTE = 'cvdev: dev-only'", DEV),
         ("from candleviewer import settings", PROTECTED),
         ("import candleviewer.secretsmanager", PROTECTED),
         ("from . import secrets", PROTECTED),

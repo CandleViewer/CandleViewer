@@ -1,6 +1,7 @@
 """Fixtures for cv-dev-module-confined (#2893 S3)."""
 import importlib
 import importlib.util
+import pkgutil
 import sys
 
 import cvdev  # ruleid: cv-dev-module-confined
@@ -23,4 +24,6 @@ def lookups() -> object:
     __import__("cvdev")  # ruleid: cv-dev-module-confined
     importlib.util.find_spec("cvdev")  # ruleid: cv-dev-module-confined
     sys.modules.get("cvdev.account_fixture")  # ruleid: cv-dev-module-confined
+    pkgutil.resolve_name("cvdev.account_fixture.wiring:build")  # ruleid: cv-dev-module-confined
+    pkgutil.resolve_name("candleviewer.app:create_app")  # ok: cv-dev-module-confined
     return importlib.import_module("candleviewer.settings")  # ok: cv-dev-module-confined
