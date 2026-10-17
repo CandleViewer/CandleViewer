@@ -587,7 +587,7 @@ def test_the_byte_budget_alone_closes_slow_consumer(encoding: str) -> None:
         pipe.push(frame)
     assert (asked, pipe.queue.bytes) == ([], pipe.queue.max_bytes)
     pipe.push(frame)
-    assert asked == [("slow_consumer", slow_consumer_bye(BASE_MS))]
+    assert asked == [("slow_consumer", slow_consumer_bye(BASE_MS, ()))]
     assert len(pipe.queue) == 6 and pipe.queue.max_frames == BackpressureConfig().max_frames
 
 
@@ -668,7 +668,7 @@ async def test_frames_are_encoded_once_and_counted_at_wire_length(
 
 
 async def test_over_budget_closes_slow_consumer_4429() -> None:
-    """§8.4 step 3 (S2a: no drop step yet): the push that leaves the budget closes the connection
+    """§8.4 step 3 (nothing to drop): the push that leaves the budget closes the connection
     `slow_consumer`; both lanes are cleared, so the `bye` is next, with `retry_after_ms` and the
     generic message. Counted twice over (closes, `close_budget`) and audited at `warning`; the
     `bye` went out, so no flush expired."""
@@ -677,9 +677,8 @@ async def test_over_budget_closes_slow_consumer_4429() -> None:
     expired = _overflow("close_flush_deadline")
     async with asyncio.timeout(_DEADLINE_S):
         handler, _ = await rig.open(sock)
-        await rig.sub(sock)
         for i in range(9):
-            rig.book_delta(i)  # in one turn: the ninth is one frame over
+            rig.hub.broadcast_system({"kind": "tick", "n": i})  # in one turn: one over
         (bye,) = await sock.next()
         await handler
     assert bye["p"] == {
@@ -688,11 +687,13 @@ async def test_over_budget_closes_slow_consumer_4429() -> None:
         "message": SLOW_CONSUMER_MESSAGE,
         "reconnect": True,
         "retry_after_ms": 3000,
+        "hint": {"most_expensive_topics": []},
     }
     assert sock.closed_with == 4429 and sock.sent.empty()
     assert _closes("slow_consumer") == closes + 1
     assert (_overflow("close_budget"), _overflow("close_flush_deadline")) == (budget + 1, expired)
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
+    assert rig.audit.records[0]["after_state"] == {"trigger": "budget"}
 
 
 @pytest.mark.parametrize("family", ["orders", "system"])
@@ -733,7 +734,7 @@ async def test_the_default_8_mib_byte_budget_alone_closes_slow_consumer(encoding
         assert conn.closing
         (bye,) = await sock.next()
         await handler
-    assert (bye["t"], bye["p"]) == ("bye", slow_consumer_bye(BASE_MS)["p"])
+    assert (bye["t"], bye["p"]) == ("bye", slow_consumer_bye(BASE_MS, ())["p"])
     assert sock.closed_with == 4429 and sock.sent.empty()
 
 
@@ -773,7 +774,7 @@ async def test_shutdown_notice_precedes_bye_1001_under_the_flag() -> None:
         await handler
     assert (notice["ch"], notice["p"]["kind"]) == ("system", "shutdown_notice")
     assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "shutdown", 1001)
-    assert sock.sent.empty()
+    assert sock.sent.empty() and "after_state" not in rig.audit.records[0]  # no trigger, no expiry
 
 
 async def test_an_eviction_sends_the_step_3_bye_under_the_flag() -> None:
@@ -900,6 +901,8 @@ async def test_a_parked_send_is_torn_down_within_the_close_deadline() -> None:
             await handler
     assert len(sock.raw) == sent and sock.closed_with is None and conn.close_code is None
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
+    after = {"trigger": "flush_deadline", "flush_abandoned": True}  # §4.3: no step 3 trigger
+    assert rig.audit.records[0]["after_state"] == after
     assert (_overflow("close_flush_deadline"), _overflow("close_budget")) == (expired + 1, budget)
     (passed,) = [e for e in logs if e["event"] == "ws close deadline passed"]
     assert (passed["reason"], passed["queued"]) == ("slow_consumer", 0)
@@ -924,6 +927,8 @@ async def test_a_step_3_close_whose_flush_expires_counts_under_both_reasons() ->
     assert _overflow("close_budget") == budget + 1
     assert _overflow("close_flush_deadline") == expired + 1
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
+    after = {"trigger": "budget", "flush_abandoned": True}  # §4.3: the trigger stays step 3's
+    assert rig.audit.records[0]["after_state"] == after
 
 
 async def test_a_fault_flush_during_a_close_gets_what_is_left_of_its_deadline() -> None:
@@ -1090,17 +1095,26 @@ def test_a_stamped_frame_is_observed_once_per_series_at_push(
     encoding: str, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2921 with the flag on: the pipeline encodes a frame once, at push, so that is where a
-    frame the hub stamped (`received`) is timed, by a `perf_counter` pair around the encode, and
-    sized at its wire length: one observation in each series of its codec's pair, weight
-    `SAMPLE_EVERY`, and none anywhere else. An unstamped frame reads no timer and observes
-    nothing; a stamped frame whose encode is refused observes nothing and closes instead."""
+    frame the hub stamped (`received`) is timed, by a `perf_counter` pair around its serialiser
+    alone (#3061's fourth review round), and sized at its wire length: one observation in each
+    series of its codec's pair, weight `SAMPLE_EVERY`, and none anywhere else. An unstamped frame
+    reads no timer and observes nothing; a stamped frame whose encode is refused observes nothing
+    and closes instead."""
     ticks = _Ticks(0.25)  # each timer read is 0.25 s after the one before
     real = outbound.encode
 
     def slow_encode(frame: Any, dumps: Any, *, received: float | None = None) -> Queued:
-        ticks.now += 5.0  # an encode takes 5 s on the stand-in clock: it is inside the pair
+        ticks.now += 7.0  # the lanes and the `Queued` take 7 s: outside the pair
         return real(frame, dumps, received=received)
 
+    for name in ("json_payload", "msgpack_payload"):
+        serialise = getattr(pipeline, name)
+
+        def slow(frame: Any, serialise: Any = serialise) -> Any:
+            ticks.now += 5.0  # the serialiser takes 5 s on the stand-in clock: inside the pair
+            return serialise(frame)
+
+        monkeypatch.setattr(pipeline, name, slow)
     monkeypatch.setattr(pipeline, "perf_counter", ticks)
     monkeypatch.setattr(pipeline, "encode", slow_encode)
     seen: list[tuple[str, float, int]] = []

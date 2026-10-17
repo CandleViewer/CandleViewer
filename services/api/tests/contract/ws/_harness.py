@@ -32,6 +32,7 @@ from referencing import Registry, Resource
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
@@ -252,9 +253,15 @@ def publish(
 
 
 class World:
-    """Production wiring of the gateway with fake time, identity and snapshot source."""
+    """Production wiring of the gateway with fake time, identity and snapshot source; with
+    `backpressure`, the gateway runs with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4)."""
 
-    def __init__(self, *, system_notices: Callable[[], list[dict[str, Any]]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        system_notices: Callable[[], list[dict[str, Any]]] | None = None,
+        backpressure: BackpressureConfig | None = None,
+    ) -> None:
         self.clock = Clock()
         self.source = Source()
         book = Book(SYM)
@@ -293,6 +300,7 @@ class World:
                 server_version="1.0.0",
                 git_sha="conformance",
                 system_notices=system_notices,
+                backpressure=backpressure,
             )
         )
         self.app = app

@@ -315,10 +315,11 @@ class Pacer:
         self.resnapshot_required[sub.sub_id] = sub
 
     def shed(self, sub: Subscription) -> None:
-        """Discard the window of `sub` while it awaits a `snap` another sender queued: what the
-        window holds predates that snapshot, so it must not count against the budget (§8.4)."""
+        """Discard the window of `sub` while its deltas are held: it awaits a `snap` another
+        sender queued (what the window holds predates it), or it is paused (D16: its resume
+        re-snapshots it), so the window must not count against the budget (§8.4)."""
         lane = self.lanes.get(sub.sub_id)
-        if lane is not None and sub.snapshot_pending and lane.queue.pending_bytes:
+        if lane is not None and _held(sub) and lane.queue.pending_bytes:
             self._restart(lane)
 
     def forget(self, sub_id: str) -> None:

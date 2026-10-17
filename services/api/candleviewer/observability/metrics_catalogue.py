@@ -79,8 +79,8 @@ FRAME_ENCODE_HELP: Final = (
 )
 FRAME_BYTES_HELP: Final = (
     "Encoded frame size. kind: a CVWB body kind (header plus body) or json / msgpack (a data "
-    "frame as sent, before any permessage-deflate; the same frame counts under both, so do not "
-    "sum kinds); sampled 1 in 32 (weighted) as the encode time."
+    "frame as encoded for the send, before any permessage-deflate; the same frame counts under "
+    "both, so do not sum kinds); sampled 1 in 32 (weighted) as the encode time."
 )
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (

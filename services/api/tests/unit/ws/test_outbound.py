@@ -352,20 +352,31 @@ def test_backpressure_drain_waits_until_the_queue_is_below_half() -> None:
 
 
 def test_backpressure_slow_consumer_stays_within_the_budget() -> None:
-    """#412: a client that never reads; after every update the ladder keeps the queue and the
-    pending state within budget, with no close while `orders` is not backed up."""
+    """#412: a client that reads one frame in four updates; after every update the ladder keeps
+    the queue and the pending state within budget, with no close while `orders` is not backed up.
+    Every dropped topic recovers through the writer's `drain` after a send (#2998), never by hand,
+    and once the client catches up both are live again."""
     conn, pacer, queue, _ = _setup(max_bytes=3_000, max_frames=20)
     subs = [_sub(conn, queue, "book.BTCUSDT.50"), _sub(conn, queue, "book.ETHUSDT.50")]
     ladder = Backpressure(queue, pacer)
+    events: list[LadderEvent] = []
     for i in range(400):
         conn.clock.now += 0.02
         sub = subs[i % 2]
-        if sub.snapshot_pending:
-            sub.snapshot_pending = False  # as if the backpressure snap had gone out
         pacer.offer(sub, _bid(sub.ch.split(".")[1], str(100 + i % 37)))
         pacer.tick(conn.clock.now)
-        assert all(e.action != "close" for e in ladder.check(subs))
+        events += ladder.check(subs)
         assert not ladder.over_budget()
+        if i % 4 == 0:  # the writer's turn: it sends a frame if one is queued, then drains
+            queue.pop()
+            events += ladder.drain()
+    for _ in range(100):  # the client catches up, the writer draining after each send
+        if queue.pop() is None and not pacer.resnapshot_required:
+            break
+        events += ladder.drain()
+    actions = {e.action for e in events}
+    assert actions == {"drop", "resnapshot"}  # it was dropped and it recovered; it never closed
+    assert not any(sub.snapshot_pending for sub in subs) and pacer.resnapshot_required == {}
 
 
 def test_backpressure_drain_keeps_a_topic_whose_snapshot_is_not_ready() -> None:
@@ -374,8 +385,14 @@ def test_backpressure_drain_keeps_a_topic_whose_snapshot_is_not_ready() -> None:
     pacer.drop(book)
     source.unavailable.add("BTCUSDT")
     source.gen += 1  # the cached render is stale: the snapshot must be rebuilt, and cannot be
-    assert Backpressure(queue, pacer).drain() == []
+    ladder = Backpressure(queue, pacer)
+    assert ladder.drain() == []
     assert pacer.resnapshot_required == {book.sub_id: book}
+    builds = source.builds
+    assert ladder.drain() == [] and source.builds == builds  # parked: no retry per drain
+    source.unavailable.clear()
+    assert not ladder.unpark(["another"]) and ladder.unpark([book.sub_id])
+    assert ladder.drain() == [LadderEvent("resnapshot", ("book.BTCUSDT.50",))]
 
 
 def test_outbound_budget_allows_exactly_its_bytes_and_frames() -> None:
@@ -620,3 +637,86 @@ def test_backpressure_records_each_step_with_the_close_trigger_as_its_reason() -
     assert ladder.drain() == ladder.check([book]) == []  # the close fired: nothing more
     assert [_overflow(r) - b for r, b in zip(reasons, before, strict=True)] == [3, 3, 0, 1]
     assert [LadderEvent("close", (), t).reason for t in ("budget", "redrop")] == list(reasons[2:])
+
+
+def test_backpressure_sheds_a_paused_topic_without_marking_it() -> None:
+    """D16 (§8.4 step 1): over budget, a paused topic's queued frames and throttle window are
+    shed without the `backpressure` mark, uncounted: its resume re-snapshots it."""
+    conn, pacer, queue, _ = _setup(max_frames=3)
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    for i in range(3):
+        conn.clock.now += 1.0  # each update leaves at once: three queued frames
+        pacer.offer(book, _bid("BTCUSDT", str(100 + i)))
+    pacer.offer(book, _bid("BTCUSDT", "200"))  # and one in its window
+    assert pacer.pending_bytes > 0
+    book.effective["paused"] = True  # as `ctl {paused: true}` leaves it
+    queue.push(encode(_frame("err")))  # one over the budget
+    drops = _overflow("drop")
+    assert Backpressure(queue, pacer).check([book]) == []
+    assert (book.snapshot_pending, pacer.resnapshot_required) == (False, {})
+    assert _overflow("drop") == drops
+    assert queue.key_bytes() == {} and pacer.pending_bytes == 0 and len(queue) == 1
+
+
+def test_backpressure_drain_deletes_an_entry_no_longer_pending_or_subscribed_unsent() -> None:
+    """`drain` sends a `backpressure` snapshot only for a subscription still marked for it and,
+    given the connection's subscriptions, still one of them: an entry another path resnapshotted,
+    or one whose topic was unsubscribed (WS-E02), is deleted unsent."""
+    conn, pacer, queue, _ = _setup()
+    book, other = _sub(conn, queue, "book.BTCUSDT.50"), _sub(conn, queue, "book.ETHUSDT.50")
+    pacer.drop(book)
+    pacer.drop(other)
+    conn.emitter.snapshot(book, "reconfigure")  # another path sent the book its snapshot
+    assert conn.authz.unsubscribe("book.ETHUSDT.50")
+    _drain(queue)
+    assert Backpressure(queue, pacer).drain(conn.authz.by_id) == []
+    assert pacer.resnapshot_required == {} and _drain(queue) == []
+
+
+def test_backpressure_drain_from_a_snapshot_push_is_a_no_op() -> None:
+    """#2998: a `drain` run from a push of the snapshot `drain` is queuing returns nothing and
+    queues nothing, so one call queues one snapshot and never nests."""
+    conn, pacer, queue, _ = _setup()
+    book, other = _sub(conn, queue, "book.BTCUSDT.50"), _sub(conn, queue, "book.ETHUSDT.50")
+    ladder = Backpressure(queue, pacer)
+    pushed, inner = conn.emitter.push, []
+
+    def push(frame: dict[str, Any]) -> None:
+        pushed(frame)
+        inner.append(ladder.drain())
+
+    conn.emitter.push = push
+    pacer.drop(book)
+    pacer.drop(other)
+    assert ladder.drain() == [LadderEvent("resnapshot", ("book.BTCUSDT.50",))]
+    assert inner == [[]] and [frame["ch"] for frame in _drain(queue)] == ["book.BTCUSDT.50"]
+    assert list(pacer.resnapshot_required) == [other.sub_id]
+
+
+def test_backpressure_a_snapshot_that_raises_leaves_no_held_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2998: a push that raises mid-snapshot ends `drain` without its held check and leaves
+    none behind, so the next `drain` (its snapshot not ready) runs no stale check."""
+    conn, pacer, queue, source = _setup()
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    ladder = Backpressure(queue, pacer)
+    pushed = conn.emitter.push
+
+    def push(frame: dict[str, Any]) -> None:
+        pushed(frame)
+        ladder.check([book])  # held: `drain` is queuing a snapshot
+        raise RuntimeError("push failed")
+
+    conn.emitter.push = push
+    pacer.drop(book)
+    with pytest.raises(RuntimeError):
+        ladder.drain()
+    assert ladder._deferred is None
+    conn.emitter.push = pushed
+    checks: list[object] = []
+    monkeypatch.setattr(ladder, "check", checks.append)
+    source.unavailable.add("BTCUSDT")
+    source.gen += 1
+    pacer.drop(book)
+    assert ladder.drain() == [] and checks == []
