@@ -278,6 +278,8 @@ tags:
     description: User settings and hotkey profiles.
   - name: admin
     description: Audit log query, health, feature flags, backups (owner-gated).
+  - name: perf
+    description: Perf instrumentation for the k6 load profiles (#2097). Mounted only while `CV_AUTH_PERF_ENABLED` is on, which `Settings` refuses unless the environment is testnet with no exchange key; never in live or demo.
 
 # -----------------------------------------------------------------------------
 # x-error-codes — the closed catalogue of `type` slugs used in problem+json.
@@ -833,6 +835,9 @@ paths:
             Set-Cookie:
               description: "`cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`."
               schema: { type: string }
+            Server-Timing:
+              description: "#2097 (SR-011 measurement): `argon2;dur=<ms>`, the wall time of this login's one Argon2id verification in milliseconds with one decimal. Present only when `status=mfa_required` and `CV_AUTH_PERF_ENABLED` is on (keyless testnet, never live or demo). No refusal ever carries it, so it cannot tell an unknown user from a wrong password (SR-014)."
+              schema: { type: string, pattern: "^argon2;dur=[0-9]+\\.[0-9]$" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LoginResponse" }
@@ -1527,6 +1532,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
+  /auth/_perf/argon2-params:
+    get:
+      tags: [perf]
+      operationId: authGetArgon2Params
+      summary: Active Argon2id parameters (perf instrumentation, keyless testnet only)
+      description: |
+        #2097 (E09-Q05): the Argon2id parameters that new password hashes and rehash-on-login
+        use, so the k6 auth profile can assert the SR-011 floor (`m` ≥ 65536 KiB, `t` ≥ 3,
+        `p` ≥ 4). Mounted only while `CV_AUTH_PERF_ENABLED` is on; `Settings` refuses that switch
+        unless `CV_ENVIRONMENT=testnet` with no exchange key configured, so live and demo never
+        serve this route. Read-only, so it writes no audit record. The parameters are not
+        secret: every stored hash embeds them.
+      x-rbac: { permissions: [admin:read], scope: none }
+      responses:
+        "200":
+          description: The active parameters.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Argon2Params" }
+              examples:
+                default:
+                  value: { m: 65536, t: 3, p: 4 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: "`CV_AUTH_PERF_ENABLED` is off (always so in live and demo): the route is not mounted."
 
   # ===========================================================================
   # USERS & ROLES  (owner-gated admin screens inside the web app)
@@ -12625,6 +12657,15 @@ components:
       additionalProperties: false
       properties:
         refresh_token: { type: string, description: "Only for clients that cannot use cookies." }
+    Argon2Params:
+      type: object
+      additionalProperties: false
+      required: [m, t, p]
+      description: "#2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them."
+      properties:
+        m: { type: integer, minimum: 1, description: "Memory cost in KiB (65536 = 64 MiB)." }
+        t: { type: integer, minimum: 1, description: "Time cost (passes over memory)." }
+        p: { type: integer, minimum: 1, description: "Parallelism (lanes)." }
     ChangePasswordRequest:
       type: object
       additionalProperties: false

@@ -1,5 +1,10 @@
 {
-  "routers": {},
+  "routers": {
+    "candleviewer.api.auth_perf": {
+      "reason": "perf instrumentation: create_app() includes it only while CV_AUTH_PERF_ENABLED is on (keyless testnet); the default app runs with it off",
+      "ticket": "#2097"
+    }
+  },
   "context_modules": {},
   "state_tasks": {
     "app.state.support_bundle": {
@@ -108,6 +113,10 @@
     "GET /alerts/deliveries": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "GET /auth/_perf/argon2-params": {
+      "reason": "perf instrumentation: mounted only while CV_AUTH_PERF_ENABLED is on (keyless testnet); the default app runs with it off",
+      "ticket": "#2097"
     },
     "GET /chart-templates": {
       "reason": "contract-first operation; implementation lands with its owning epic",

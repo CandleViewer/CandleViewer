@@ -293,6 +293,14 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  GET /auth/_perf/argon2-params:
+    permissions: ['admin:read']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: 'perf instrumentation (#2097): mounted only with CV_AUTH_PERF_ENABLED on a keyless testnet, and the CI app
+      runs with it off; every cell is asserted with it on by test_auth_perf_matrix.py'
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /auth/login:
     permissions: []
     scope: none
