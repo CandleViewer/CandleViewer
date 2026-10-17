@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import json
+import posixpath
 import subprocess
 import sys
 import warnings
@@ -112,8 +113,10 @@ def _copy_sources(dockerfile: str) -> list[str]:
 def _carries_a_dev_only_tree(source: str) -> bool:
     """Whether the source names a dev-only tree (`cvdev` anywhere, such as `/build/cvdev` from
     another stage) or is a directory or glob covering one (`services/api`, `.`, `services/*`,
-    `/build`)."""
-    path = source.removeprefix("./").rstrip("/") or "."
+    `/build`). Dot segments and repeated slashes resolve first (`services/api/.` is
+    `services/api`), and a relative source cannot climb above the context root."""
+    rooted = posixpath.normpath("/" + source.lstrip("/"))
+    path = rooted if source.startswith("/") else rooted.removeprefix("/") or "."
     if "cvdev" in PurePosixPath(path).parts or "fixtures/accounts" in path:
         return True
     return any(
@@ -139,10 +142,32 @@ def _carries_a_dev_only_tree(source: str) -> bool:
         "COPY services/api/README.md \\\n    services/api/cvdev ./",
         "COPY\tservices/api ./api",
         "COPY --from=builder /build /app",
+        # Spellings with dot segments or repeated slashes, which the build resolves.
+        "COPY ./services/api/ /app/",
+        "COPY services/api/cvdev/. /app/cvdev",
+        "COPY services/api/. ./",
+        "COPY --from=builder /build/. /app/",
+        "COPY services/./api /app",
+        "COPY services/api/../api/cvdev /app/cvdev",
+        "COPY --from=builder //build /app",
+        "COPY .. /app",
     ],
 )
 def test_a_copy_of_a_dev_only_tree_is_found(instruction: str) -> None:
     assert [s for s in _copy_sources(instruction) if _carries_a_dev_only_tree(s)] != []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "./services/api/candleviewer/",
+        "services/api/cvdev/../candleviewer",
+        "/build/./.venv",
+        "packages/fixtures/raw/synthetic_sample.jsonl",
+    ],
+)
+def test_a_copy_of_product_files_is_allowed(source: str) -> None:
+    assert not _carries_a_dev_only_tree(source)
 
 
 def test_the_image_copies_no_dev_only_package() -> None:
