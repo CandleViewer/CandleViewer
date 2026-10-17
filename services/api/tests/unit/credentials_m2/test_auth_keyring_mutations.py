@@ -24,6 +24,8 @@ _SWAP = core.test_wrap_opens_only_under_its_own_binding
 _MOVED = core.test_totp_seal_moved_to_another_user_is_refused
 _TAMPER = core.test_load_fails_closed_on_a_tampered_row
 _STRANDED = core.test_rows_at_an_older_kek_version_without_its_kek_are_stranded
+_FRAMES = core.test_keyring_failure_leaves_no_key_seed_or_code_in_its_frames
+_OPEN, _ALL_ENVS = ak.LoadedAuthKeyring.open_totp_seed, frozenset({"demo", "testnet", "live"})
 
 
 def _always_imported(self: ak.LoadedAuthKeyring, env_name: str, **kw: Any) -> None:
@@ -32,6 +34,11 @@ def _always_imported(self: ak.LoadedAuthKeyring, env_name: str, **kw: Any) -> No
 
 def _close_flag_only(self: ak.LoadedAuthKeyring) -> None:
     self._ak_closed = True
+
+
+def _aliased_open(self: ak.LoadedAuthKeyring, blob: bytes, ref: str, user: UUID) -> bytearray:
+    key = self._totp_key  # the alias the #2152 review removed: a live key in a raising frame
+    return _OPEN(self, blob, ref, user) if key else bytearray()
 
 
 #: name -> (target, attribute, mutant, oracle): the #2152 test plan's mutants of the core.
@@ -49,8 +56,11 @@ MUTANTS: dict[str, tuple[object, str, object, Callable[[], None]]] = {
     "no_version_check": (ak, "_holder", lambda v, k, p: k,
                          partial(_TAMPER, "kek_version_relabelled")),
     "no_version_check_stranded": (ak, "_holder", lambda v, k, p: k, _STRANDED),
-    "import_in_live": (ak, "IMPORT_ENVIRONMENTS", frozenset({"demo", "testnet", "live"}),
-                       core.test_import_is_refused_in_live),
+    "import_in_live": (ak, "IMPORT_ENVIRONMENTS", _ALL_ENVS, core.test_import_is_refused_in_live),
+    "load_imported_in_live": (ak, "IMPORT_ENVIRONMENTS", _ALL_ENVS,
+                              partial(_TAMPER, "imported_in_live")),
+    "key_alias_in_frame": (ak.LoadedAuthKeyring, "open_totp_seed", _aliased_open,
+                           partial(_FRAMES, "moved_seal")),
     "close_no_zero": (ak.LoadedAuthKeyring, "close", _close_flag_only,
                       partial(core.test_close_zeroes_both_keys_and_later_calls_refuse, "digests")),
     "old_formats_generated": (ak.LoadedAuthKeyring, "__init__", _always_imported,

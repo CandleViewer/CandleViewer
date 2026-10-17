@@ -1,10 +1,11 @@
-"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; nothing uses it until S5b.
+"""Auth keyring core (#2152, ADR-0009 Amendment 4). Private to M2; unused until S4 and S5b.
 
 The keyring is two 256-bit keys per environment, `totp_seal` (AES-256-GCM over TOTP seeds) and
 `recovery_hmac` (HMAC-SHA256 over recovery codes), plaintext only here and at rest only as
 `auth_keys` rows wrapped under the environment's KEK (`21-database-schema.md` §3.1.5a). Callers
 get seals, seeds and digests, never a key. New seals and digests bind the user; the env keys' old
-formats are read only on an imported keyring (D3). Errors carry reason codes only (C-12.6).
+formats are read only on an imported keyring (D3). Errors carry reason codes only (C-12.6), and
+a failure leaves no key, seed or code in a frame's locals and chains nothing (`scrub_frames`).
 SR-009 residual: `AESGCM` and `hmac` hold immutable key copies `zero()` cannot wipe.
 """
 
@@ -23,6 +24,7 @@ from candleviewer.secrets import _envelope as env
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets.broker import _m2_only
 from candleviewer.secrets.errors import AuthKeyEnvForbidden, AuthKeyringUnavailable, AuthSealInvalid
+from candleviewer.secrets.signing import scrub_frames
 
 TOTP, RECOVERY = env.AUTH_PURPOSES
 GENERATED, IMPORTED = "generated", "imported_env"
@@ -30,7 +32,9 @@ GENERATED, IMPORTED = "generated", "imported_env"
 IMPORT_ENVIRONMENTS = frozenset({"demo", "testnet"})
 #: `secret_key_ref` of a seal under the old env key, with no AAD (imported keyrings only).
 LEGACY_TOTP_REF = "local-dev-v1"
-_CODE_MAX = 256  # bytes of a normalised code; the REST body allows 64 characters
+#: Bytes of a normalised code. The contract's 64 characters normalise to at most 384, since
+#: `upper()` can make one character 6 bytes (U+0390); only a longer code is refused.
+_CODE_MAX = 512
 _ORIGIN_SETS = ({GENERATED}, {IMPORTED})  # a mixed keyring is a tampered one
 Records = list[dict[str, Any]]
 
@@ -67,22 +71,27 @@ class LoadedAuthKeyring:
     def available(self) -> bool:
         return not self._ak_closed
 
-    def _usable(self, key: bytearray) -> bytearray:
+    def _require_open(self) -> None:
         if self._ak_closed:
             raise AuthKeyringUnavailable("auth_keyring_closed")
-        return key
 
     def seal_totp_seed(self, seed: bytes | bytearray, user_id: UUID) -> tuple[bytes, str]:
         """`(secret_enc, secret_key_ref)` of a new seal, bound to the environment and user."""
-        key = self._usable(self._totp_key)
         if not seed:
             raise ValueError("empty TOTP seed")
-        return env.seal(key, seed, env.totp_aad(self._ak_env, user_id)), self._totp_ref
+        try:
+            self._require_open()
+            aad = env.totp_aad(self._ak_env, user_id)
+            return env.seal(self._totp_key, seed, aad), self._totp_ref
+        except BaseException as exc:
+            scrub_frames(exc)  # `env.seal`'s frame holds the key
+            del seed  # and this one the seed
+            raise
 
     def open_totp_seed(self, blob: bytes, key_ref: str, user_id: UUID) -> bytearray:
         """The seed, as a `bytearray` the caller zeroes. `AuthSealInvalid` when a seal under a
         key held here fails authentication (a wrong code); `auth_key_not_held` for any other."""
-        key = self._usable(self._totp_key)
+        self._require_open()
         if key_ref == self._totp_ref:
             aad = env.totp_aad(self._ak_env, user_id)
         elif key_ref == LEGACY_TOTP_REF and self._ak_imported:
@@ -90,18 +99,28 @@ class LoadedAuthKeyring:
         else:
             raise AuthKeyringUnavailable("auth_key_not_held")
         try:
-            return env.open_(key, blob, aad)
-        except (InvalidTag, ValueError):
-            raise AuthSealInvalid("auth_seal_invalid") from None
+            return env.open_(self._totp_key, blob, aad)
+        except BaseException as exc:
+            scrub_frames(exc)  # `env.open_`'s frame holds the key
+            if not isinstance(exc, InvalidTag | ValueError):
+                raise
+        raise AuthSealInvalid("auth_seal_invalid")  # after the handler: nothing chained
 
     def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
         """Hex digests of `code` for `user_id`: the one to store (bound to the user), then, on an
-        imported keyring only, the env key's old digest, which a lookup also accepts."""
-        key = self._usable(self._rc_key)
-        norm = normalise_code(code)
-        out = [hmac.new(key, env.rc_preimage(user_id, norm), sha256).hexdigest()]
+        imported keyring only, the env key's old digest, which a lookup also accepts. A code over
+        `_CODE_MAX` (no contract body reaches it) raises `ValueError`, which S5's adapter counts as
+        a wrong code, never a 500."""
+        try:
+            self._require_open()
+            norm = normalise_code(code)
+        except BaseException as exc:
+            scrub_frames(exc)  # `normalise_code`'s frame holds the code
+            del code  # and so does this one
+            raise
+        out = [hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()]
         if self._ak_imported:
-            out.append(hmac.new(key, norm, sha256).hexdigest())
+            out.append(hmac.new(self._rc_key, norm, sha256).hexdigest())
         return tuple(out)
 
     def close(self) -> None:
@@ -188,10 +207,14 @@ def load_keyring(
 ) -> LoadedAuthKeyring:
     """Unwrap the environment's two rows (`prev`: the previous KEK at a rotation boot). Fails
     closed, never regenerates: `auth_keyring_stranded` for a row at a KEK version this process
-    does not hold, else `auth_keyring_mismatch` (a missing, extra, moved or tampered row)."""
+    does not hold, else `auth_keyring_mismatch` (a missing, extra, moved or tampered row, or an
+    imported keyring outside `IMPORT_ENVIRONMENTS`: D3, the old formats are never read in live)."""
     by_purpose = {r["purpose"]: r for r in rows}
     origins = {r["origin"] for r in rows}
+    imported = origins == {IMPORTED}
     if len(rows) != 2 or set(by_purpose) != {TOTP, RECOVERY} or origins not in _ORIGIN_SETS:
+        raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    if imported and kek.env_name not in IMPORT_ENVIRONMENTS:
         raise AuthKeyringUnavailable("auth_keyring_mismatch")
     totp = _unwrap(by_purpose[TOTP], kek, prev)
     try:
@@ -199,7 +222,7 @@ def load_keyring(
     except BaseException:
         env.zero(totp)
         raise
-    totp_id, imported = by_purpose[TOTP]["id"], origins == {IMPORTED}
+    totp_id = by_purpose[TOTP]["id"]
     return LoadedAuthKeyring(
         kek.env_name, imported=imported, totp_id=totp_id, totp=totp, recovery=recovery
     )
@@ -220,5 +243,8 @@ def _unwrap(row: Mapping[str, Any], kek: LoadedKek, prev: LoadedKek | None) -> b
         raise AuthKeyringUnavailable("auth_keyring_mismatch")
     try:
         return holder.unwrap_auth_key(row["dek_ref"], key_id=row["id"], purpose=row["purpose"])
-    except (InvalidTag, ValueError):
-        raise AuthKeyringUnavailable("auth_keyring_mismatch") from None
+    except BaseException as exc:
+        scrub_frames(exc)  # `env.open_`'s frame holds the KEK
+        if not isinstance(exc, InvalidTag | ValueError):
+            raise
+    raise AuthKeyringUnavailable("auth_keyring_mismatch")  # after the handler: nothing chained

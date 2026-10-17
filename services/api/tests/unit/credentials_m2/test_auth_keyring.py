@@ -20,9 +20,12 @@ from uuid import UUID
 import pytest
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
+from candleviewer.auth.recovery_codes import hash_recovery_code, normalize_recovery_code
 from candleviewer.secrets import _auth_keyring as ak
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets._kek import LoadedKek
@@ -33,14 +36,16 @@ from candleviewer.secrets.errors import (
     KekUnavailable,
     SecretsError,
 )
-from candleviewer.secrets.store import InMemoryAuthKeyStore
+from candleviewer.secrets.store import AuthKeyStore, InMemoryAuthKeyStore
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, kek
 
 AK_T, AK_R = bytes(range(140, 172)), bytes(range(172, 204))  # the two auth keys under test
 SEED = bytes(range(1, 21))  # a 20-byte TOTP seed
 CODE, NORM = "-".join(["7K3M"] * 7), b"7K3M" * 7  # grouped like a generated recovery code
 RID, OTHER, ALICE, BOB = (UUID(int=n) for n in (0xA1, 0xA2, 0xA11CE, 0xB0B))
+IOTA = "\N{GREEK SMALL LETTER IOTA WITH DIALYTIKA AND TONOS}"  # upper() makes it 6 UTF-8 bytes
 Rows = list[dict[str, Any]]
+Call = Callable[[ak.LoadedAuthKeyring, bytes, str], object]
 
 
 def use_known_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,7 +101,7 @@ def test_auth_formats_golden() -> None:
         _unwrap("ak1:" + "AB" * 60),
         _unwrap("ak1:" + "ab" * 59),
         _unwrap("ak1:" + "ab" * 60 + "\n"),
-        lambda: generated().recovery_code_digests("A" * 257, ALICE),
+        lambda: generated().recovery_code_digests("A" * 513, ALICE),  # one byte over the cap
         lambda: generated().seal_totp_seed(b"", ALICE),
         lambda: ak.import_keyring(kek(), SecretStr(AK_T.hex()[2:]), SecretStr(AK_R.hex())),
         lambda: ak.import_keyring(kek(), SecretStr(AK_T.hex()), SecretStr("zz")),
@@ -167,6 +172,34 @@ def test_generated_keyring_digest_is_the_bound_v2_golden() -> None:
     preimage = b"\x00\x08cv-rc-v2\x00\x10" + ALICE.bytes + b"\x00\x1c" + NORM
     golden = hmac.new(AK_R, preimage, sha256).hexdigest()
     assert generated().recovery_code_digests(f" {CODE.lower()} ", ALICE) == (golden,)
+
+
+@pytest.mark.parametrize("code", [IOTA * 64, "A" * 512], ids=["contract_max_384_bytes", "cap"])
+def test_longest_contract_code_and_the_cap_itself_are_digested(code: str) -> None:
+    assert len(generated().recovery_code_digests(code, ALICE)) == 1
+
+
+#: Presented code -> normalised bytes (21 §3.1.5a: strip, upper-case, drop `-` and spaces, UTF-8).
+NORMALISED = {
+    " 7k3m 7k3m-7k3m\n": b"7K3M7K3M7K3M",  # outer whitespace, an interior space and dash
+    "7K3M\t7K3M": b"7K3M\t7K3M",  # an interior tab stays
+    "\xa07K3M\xa07K3M\xa0": b"7K3M\xc2\xa07K3M",  # NBSP: stripped at the ends only
+    "stra\N{LATIN SMALL LETTER SHARP S}e \N{LATIN SMALL LIGATURE FI}": b"STRASSEFI",
+    IOTA: b"\xce\x99\xcc\x88\xcc\x81",
+}
+
+
+@pytest.mark.parametrize("code", sorted(NORMALISED))
+def test_normalised_code_is_golden_and_the_legacy_form(code: str) -> None:
+    assert ak.normalise_code(code) == NORMALISED[code] == normalize_recovery_code(code).encode()
+
+
+@settings(max_examples=150, deadline=None)
+@given(code=st.text(max_size=64))
+def test_imported_keyring_old_digest_is_the_legacy_hash(code: str) -> None:
+    """AC3: an unused code made under the env key still matches after the import."""
+    assert ak.normalise_code(code) == normalize_recovery_code(code).encode()
+    assert imported().recovery_code_digests(code, ALICE)[1] == hash_recovery_code(code, key=AK_R)
 
 
 def test_same_code_for_two_users_gives_different_digests() -> None:
@@ -276,8 +309,9 @@ def test_rows_at_an_older_kek_version_without_its_kek_are_stranded() -> None:
 
 
 def _v2(row: dict[str, Any]) -> str:
-    """An `api_keys` wrap of the same row id, relabelled as an auth key wrap."""
-    return "ak1:" + kek().wrap_dek(bytearray(32), credential_id=row["id"]).removeprefix("v2:")
+    """An `api_keys` wrap of the same row id under the same KEK, relabelled as an auth key wrap."""
+    v2 = kek(env=row["env"]).wrap_dek(bytearray(32), credential_id=row["id"])
+    return "ak1:" + v2.removeprefix("v2:")
 
 
 def _flip(ref: str) -> str:
@@ -285,7 +319,7 @@ def _flip(ref: str) -> str:
     return f"{ref[:-2]}{int(ref[-2:], 16) ^ 1:02x}"
 
 
-#: Each fails closed as `auth_keyring_mismatch`, and nothing is regenerated over it (AC8).
+#: Each fails closed in `live` as `auth_keyring_mismatch`; nothing is regenerated over it (AC8).
 TAMPERED: dict[str, Callable[[Rows], Rows]] = {
     "missing_row": lambda r: r[:1],
     "extra_row": lambda r: [*r, {**r[0], "id": OTHER, "key_version": 2}],
@@ -293,6 +327,7 @@ TAMPERED: dict[str, Callable[[Rows], Rows]] = {
     "moved_to_another_id": lambda r: [{**r[0], "id": OTHER}, r[1]],
     "another_environment": lambda r: [{**r[0], "env": "testnet"}, r[1]],
     "mixed_origins": lambda r: [{**r[0], "origin": "imported_env"}, r[1]],
+    "imported_in_live": lambda r: [{**row, "origin": "imported_env"} for row in r],  # D3
     "api_keys_wrap": lambda r: [{**r[0], "dek_ref": _v2(r[0])}, r[1]],
     "tampered_tag": lambda r: [{**r[0], "dek_ref": _flip(r[0]["dek_ref"])}, r[1]],
     "kek_version_relabelled": lambda r: [{**r[0], "kek_version": 2}, r[1]],
@@ -301,9 +336,9 @@ TAMPERED: dict[str, Callable[[Rows], Rows]] = {
 
 @pytest.mark.parametrize("case", sorted(TAMPERED))
 def test_load_fails_closed_on_a_tampered_row(case: str) -> None:
-    rows = TAMPERED[case](ak.generate_keyring(kek())[0])
+    rows = TAMPERED[case](ak.generate_keyring(kek(env="live"))[0])
     with pytest.raises(AuthKeyringUnavailable, match=r"^auth_keyring_mismatch$"):
-        ak.load_keyring(kek(), rows)
+        ak.load_keyring(kek(env="live"), rows)
 
 
 def test_failed_load_zeroes_the_key_it_had_opened(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,13 +355,25 @@ def test_failed_load_zeroes_the_key_it_had_opened(monkeypatch: pytest.MonkeyPatc
     assert len(opened) == 1 and not any(opened[0])
 
 
-async def test_store_fake_inserts_all_or_nothing_reads_by_env_and_rewraps_by_cas() -> None:
-    store, first = InMemoryAuthKeyStore(mfa_material=2), ak.generate_keyring(kek())[0]
+async def test_store_fake_inserts_a_keyring_once_and_reads_it_by_env() -> None:
+    store: AuthKeyStore = InMemoryAuthKeyStore(mfa_material=2)  # the fake satisfies the port
+    first = ak.generate_keyring(kek())[0]
     assert await store.insert_keyring(first)
     assert not await store.insert_keyring(ak.generate_keyring(kek())[0])
     assert [r["id"] for r in await store.rows_for("demo")] == [r["id"] for r in first]
     assert await store.rows_for("live") == [] and await store.count_mfa_material() == 2
-    row = first[0]
+
+
+@pytest.mark.parametrize("column", ["id", "purpose"])  # the primary key; (env, purpose, version)
+async def test_store_fake_refuses_a_batch_that_repeats_a_key(column: str) -> None:
+    store, rows = InMemoryAuthKeyStore(), ak.generate_keyring(kek())[0]
+    assert not await store.insert_keyring([rows[0], {**rows[1], column: rows[0][column]}])
+    assert store.rows == {}
+
+
+async def test_store_fake_rewrap_is_a_compare_and_set_on_kek_version() -> None:
+    store, row = InMemoryAuthKeyStore(), ak.generate_keyring(kek())[0][0]
+    await store.insert_keyring([row])
     move: dict[str, Any] = {"from_version": 1, "dek_ref": "ak1:new", "kek_version": 2}
     assert not await store.rewrap(row["id"], env="live", **move)
     assert await store.rewrap(row["id"], env="demo", **move)
@@ -340,6 +387,52 @@ def _raised(call: Callable[[], object]) -> BaseException:
     except (SecretsError, ValueError) as exc:
         return exc
     raise AssertionError("did not raise")
+
+
+def _with_locals(exc: BaseException) -> str:
+    """As a locals-capturing renderer shows it (structlog `dict_tracebacks`, a crash reporter)."""
+    return "".join(traceback.TracebackException.from_exception(exc, capture_locals=True).format())
+
+
+_FORMS: tuple[Callable[[bytes], str], ...] = (
+    lambda b: b.decode("latin-1"), repr, bytes.hex, lambda b: b.hex().upper(),
+    lambda b: b64encode(b).decode(), lambda b: b32encode(b).decode(),
+)  # fmt: skip
+#: The KEK, both auth keys, the seed and the normalised code in every form, and the code as typed.
+SENTINELS = [f(raw) for raw in (KEK_V1, AK_T, AK_R, SEED, NORM) for f in _FORMS] + [
+    CODE, CODE.lower(), NORM.decode().lower()
+]  # fmt: skip
+
+
+_OPEN, _CLOSE = ak.LoadedAuthKeyring.available, ak.LoadedAuthKeyring.close
+#: Each keyring failure, on a ring that sealed SEED for ALICE as `(b, f)`: (prepare, the call).
+FAILURES: dict[str, tuple[Callable[[ak.LoadedAuthKeyring], object], Call]] = {
+    "not_held": (_OPEN, lambda r, b, f: r.open_totp_seed(b, f"akey:{OTHER}", ALICE)),
+    "moved_seal": (_OPEN, lambda r, b, f: r.open_totp_seed(b, f, BOB)),
+    "short_seal": (_OPEN, lambda r, b, f: r.open_totp_seed(b[:27], f, ALICE)),
+    "empty_seed": (_OPEN, lambda r, b, f: r.seal_totp_seed(b"", ALICE)),
+    "over_long_code": (_OPEN, lambda r, b, f: r.recovery_code_digests(CODE * 19, ALICE)),
+    "closed_seal": (_CLOSE, lambda r, b, f: r.seal_totp_seed(SEED, ALICE)),
+    "closed_open": (_CLOSE, lambda r, b, f: r.open_totp_seed(b, f, ALICE)),
+    "closed_digests": (_CLOSE, lambda r, b, f: r.recovery_code_digests(CODE, ALICE)),
+}
+_METHODS = {"seal_totp_seed", "open_totp_seed", "recovery_code_digests"}
+
+
+@pytest.mark.parametrize("case", sorted(FAILURES))
+def test_keyring_failure_leaves_no_key_seed_or_code_in_its_frames(case: str) -> None:
+    """C-12.6 (#2152 review): the raising frames bind no key, nothing is chained, and a
+    locals-capturing traceback shows no key, seed or code (as `test_broker_safety` does for M2)."""
+    prepare, call = FAILURES[case]
+    ring = imported()
+    blob, ref = ring.seal_totp_seed(SEED, ALICE)
+    prepare(ring)
+    exc = _raised(lambda: call(ring, blob, ref))
+    held = {id(ring._totp_key), id(ring._rc_key)}
+    frames = [f for f, _ in traceback.walk_tb(exc.__traceback__)]
+    keys = [n for f in frames for n, v in f.f_locals.items() if id(v) in held]
+    assert {f.f_code.co_name for f in frames} & _METHODS and not keys and exc.__context__ is None
+    assert not [s for s in SENTINELS if s in _with_locals(exc)]
 
 
 def test_no_kek_auth_key_seed_or_code_reaches_a_repr_exception_or_log(
@@ -362,9 +455,8 @@ def test_no_kek_auth_key_seed_or_code_reaches_a_repr_exception_or_log(
             lambda: ak.import_keyring(kek(), SecretStr(AK_T.hex()), SecretStr(AK_R.hex()[2:])),
             lambda: closed.recovery_code_digests(CODE, ALICE),
         ]
-        shown += ["".join(traceback.format_exception(_raised(f))) for f in failures]
-    text = "\n".join([*shown, *(r.getMessage() for r in caplog.records), repr(logs)])
-    for raw in (KEK_V1, AK_T, AK_R, SEED, NORM):
-        forms = (raw.hex(), raw.hex().upper(), b64encode(raw).decode(), b32encode(raw).decode())
-        assert not [f for f in (*forms, repr(raw)) if f in text]
-    assert CODE not in text
+        raised = [_raised(f) for f in failures]
+    logged = [r.getMessage() for r in caplog.records]
+    text = "\n".join([*shown, *map(_with_locals, raised), *logged, repr(logs)])
+    assert not [s for s in SENTINELS if s in text]
+    assert not [e for e in raised if e.__context__ is not None]  # nothing chained, nothing hidden

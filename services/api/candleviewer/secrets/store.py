@@ -142,9 +142,10 @@ class InMemoryAuthKeyStore:
         return [dict(r) for r in self.rows.values() if r["env"] == env]
 
     async def insert_keyring(self, records: list[dict[str, Any]]) -> bool:
-        taken = {(r["env"], r["purpose"], r["key_version"]) for r in self.rows.values()}
-        if any(r["id"] in self.rows or (r["env"], r["purpose"], r["key_version"]) in taken
-               for r in records):  # fmt: skip
+        rows = [*self.rows.values(), *records]  # the table and the batch, as one transaction sees
+        ids = {r["id"] for r in rows}
+        keys = {(r["env"], r["purpose"], r["key_version"]) for r in rows}
+        if not len(ids) == len(keys) == len(rows):
             return False  # the primary key and ak_env_purpose_key_version: all or nothing
         self.rows.update((r["id"], dict(r)) for r in records)
         return True
