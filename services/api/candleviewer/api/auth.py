@@ -34,6 +34,12 @@ header: they resolve the user from the `mfa_token` challenge alone,
 exactly like `/auth/login` needs no prior session — so those three stay
 enabled.
 
+**Enrolment-only sign-in (#2295):** `/auth/login` answers a user with
+`mfa_required` and no confirmed method with an enrolment-only session
+(`22-api-openapi.yaml` "Enrolment-only session"); `api/enrolment_guard.py`
+confines it to five operations. A session credential carried into that
+sign-in is audited as at the MFA step.
+
 **Deviation 2 (PR #1618 review finding 2 — acceptance criterion):** the
 ticket's "Valid code creates a session" scenario is not fully met by this
 PR: `/auth/mfa/verify` and the recovery-code login path in
@@ -69,6 +75,7 @@ from candleviewer.api.sessions import (
     _bearer,
     _set_refresh_cookie,
     _tokens,
+    refresh_lifetime_s,
 )
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -86,10 +93,13 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.hashing import last_verify_ms
+from candleviewer.auth.login_service import EnrolmentOnlyLogin
 from candleviewer.auth.metrics import (
+    auth_enrolment_only_sessions_total,
     auth_login_failures_total,
     auth_recovery_codes_used_total,
     auth_session_fixation_attempts_total,
+    normalise_role,
 )
 from candleviewer.auth.models import (
     LoginRequest,
@@ -111,7 +121,9 @@ class LoginServiceLike(Protocol):
     (no import edge needed beyond the one `auth.models`/`auth.errors`
     already require for the request/response/error shapes)."""
 
-    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult: ...
+    async def login(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin: ...
 
 
 class MfaServiceLike(Protocol):
@@ -132,7 +144,21 @@ class MfaServiceLike(Protocol):
 
 class SessionMinterLike(Protocol):
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> MintedSession: ...
+
+    async def mint_enrolment_only(
+        self,
+        user_id: str,
+        *,
+        session_id: uuid.UUID,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> MintedSession: ...
 
     async def peek_refresh(self, raw_refresh_token: str) -> SessionRecord | None: ...
@@ -262,10 +288,12 @@ def make_auth_router(
     (SR-014)."""
     router = APIRouter(tags=["auth"])
 
-    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> bool:
-        """U6/SR-013 (E09-X02 AC2): a session credential carried into the MFA step is never
-        adopted (`mint` always issues a new id). One that is not this user's own session,
-        i.e. never issued here or another user's, is counted and audited as an attempt.
+    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID, *, stage: str) -> bool:
+        """U6/SR-013 (E09-X02 AC2): a session credential carried into the step that mints a
+        session (*stage*: the MFA step, or the password sign-in of an enrolment-only session,
+        #2295) is never adopted (`mint` always issues a new id). One that is not this user's
+        own session, i.e. never issued here or another user's, is counted and audited as an
+        attempt.
 
         Fail closed (C-2.9 write-ahead): `False` when that record cannot be written, so
         the caller refuses and mints nothing."""
@@ -287,7 +315,7 @@ def make_auth_router(
             auth_session_fixation_attempts_total.labels(reason=reason).inc()
             if audit_service is None or not audit_service.is_active:
                 continue
-            after: dict[str, Any] = {"vector": vector, "stage": "mfa_verify"}
+            after: dict[str, Any] = {"vector": vector, "stage": stage}
             if record is not None:
                 after["presented_session_id"] = str(record.id)
             try:
@@ -326,6 +354,80 @@ def make_auth_router(
             )
         except AuditError as exc:
             _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
+
+    def _enrolment_ready(*, mfa: bool) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
+        """The audit writer and the identity provider when every backend an enrolment-only
+        sign-in (*mfa* False) or an enrolment step (*mfa* True) needs is wired, else a 503:
+        nothing here is minted or changed without its write-ahead audit record (C-2.9)."""
+        wired = auth_service.is_active and auth_service.sessions_is_active
+        if identity is None or not wired or (mfa and not auth_service.mfa_is_active):
+            return _problem(503, "Service unavailable", "enrolment backend is not wired")
+        if audit_service is None or not audit_service.is_active:
+            return _problem(503, "Service unavailable", "audit sink not active")
+        return audit_service.writer, identity
+
+    def _signed_in(
+        minted: MintedSession, user: dict[str, Any], *, lifetime_s: int, **extra: Any
+    ) -> JSONResponse:
+        """`AuthenticatedResponse` (plus *extra*) with the `cv_refresh` and SR-041 cookies of
+        the session just minted, each living *lifetime_s* seconds."""
+        tokens = _tokens(minted, include_refresh=False, refresh_expires_in=lifetime_s)
+        response = JSONResponse(
+            status_code=200,
+            content={"status": "authenticated", "tokens": tokens, "user": user, **extra},
+        )
+        _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime_s)
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime_s)
+        return response
+
+    async def _enrolment_only_sign_in(
+        request: Request, identifier: str, user_id: uuid.UUID
+    ) -> JSONResponse:
+        """#2295 (Q6, Q7): the session of a user who must enrol TOTP is enrolment-only: minted
+        on the password alone for 15 minutes. A session credential carried into this sign-in
+        is audited as at the MFA step (U6/SR-013). Write-ahead (C-2.9): that record,
+        `auth.login` and `auth.session_created` (`enrolment_only: true`) precede the session,
+        and a failed write mints none (503). The user is read before anything is written."""
+        ready = _enrolment_ready(mfa=False)
+        if isinstance(ready, JSONResponse):
+            return ready
+        writer, ident = ready
+        unaudited = _problem(503, "Service unavailable", "audit sink not active")
+        if not await _audit_carried_sessions(request, user_id, stage="login"):
+            return unaudited
+        user = await ident.user(str(user_id))
+        ip, session_id, only = _client_ip(request), uuid.uuid4(), {"enrolment_only": True}
+        try:
+            await writer.emit(
+                "auth.login", actor_label=identifier, actor_user_id=user_id, actor_ip=ip
+            )
+            await writer.emit(
+                "auth.session_created",
+                actor_label=str(user_id),
+                actor_user_id=user_id,
+                actor_ip=ip,
+                session_id=session_id,
+                after_state={**only, "mfa_satisfied": False},
+            )
+        except AuditError:
+            return unaudited
+        try:
+            minted = await auth_service.sessions.mint_enrolment_only(
+                str(user_id),
+                session_id=session_id,
+                ip=ip,
+                user_agent=request.headers.get("user-agent"),
+            )
+        except UserDisabled:
+            # #2911: disabled (or deleted) since the password check; nothing was minted. The
+            # records written ahead are followed by the refusal, audited like login's refusal of
+            # a disabled account, then login's 403 for it: never a 500.
+            await _audit_refusal(request, user_id)
+            return _problem(403, "Account disabled", "Account disabled - contact the owner")
+        # U34 (RR-15): an Owner's password-only session is the series an alert pages on.
+        role = normalise_role(user.get("roles") or ())
+        auth_enrolment_only_sessions_total.labels(role=role).inc()
+        return _signed_in(minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True))
 
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> JSONResponse:
@@ -378,6 +480,8 @@ def make_auth_router(
             # generic detail is all a caller needs.
             return _problem(501, "Not implemented", "this login path is not yet available")
 
+        if isinstance(result, EnrolmentOnlyLogin):
+            return await _enrolment_only_sign_in(request, body.identifier, result.user_id)
         await _audit(
             audit_service,
             "auth.login",
@@ -437,7 +541,7 @@ def make_auth_router(
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
-        if not await _audit_carried_sessions(request, result.user_id):
+        if not await _audit_carried_sessions(request, result.user_id, stage="mfa_verify"):
             # Fail closed (C-2.9 write-ahead): the attempt could not be recorded, so nothing is
             # minted. 401 is this operation's documented refusal (no 503 in its contract).
             return _problem(401, "MFA verification failed", "audit sink not active")

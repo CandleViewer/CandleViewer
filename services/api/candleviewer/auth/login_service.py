@@ -4,6 +4,8 @@
 
 - successful credentials on an MFA-enrolled user -> `MfaChallengeResult`
   (never a session; E09-S02 completes the second leg);
+- successful credentials on a user who must enrol TOTP first ->
+  `EnrolmentOnlyLogin` (#2295; the router mints the enrolment-only session);
 - wrong password / unknown identifier -> `InvalidCredentials`, same message,
   same code path, same timing (dummy-hash verification on the unknown-user
   path — see `hashing.Hasher.verify_dummy`);
@@ -27,9 +29,12 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
@@ -51,6 +56,16 @@ LOCKOUT_DURATION = timedelta(minutes=15)
 MFA_CHALLENGE_TTL = timedelta(minutes=5)
 
 Clock = Callable[[], datetime]
+
+
+class EnrolmentOnlyLogin(BaseModel):
+    """#2295 (Q6): the password of a user with `mfa_required` and no confirmed MFA method
+    verified. No challenge is issued; the router mints an enrolment-only session
+    (`22-api-openapi.yaml` "Enrolment-only session")."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    user_id: uuid.UUID
 
 
 def _hash_mfa_token(token: str) -> str:
@@ -82,14 +97,15 @@ class LoginService:
         self._mfa_token_factory = mfa_token_factory
         self._mfa_repository = mfa_repository
 
-    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult:
-        """Verify credentials and return the MFA challenge for step 2.
+    async def login(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin:
+        """Verify credentials and return the MFA challenge for step 2, or, for a user
+        with `mfa_required` and no confirmed method, `EnrolmentOnlyLogin` (#2295, Q6).
 
-        Raises `InvalidCredentials`, `AccountDisabled`, or `AccountLocked`.
-        A full (non-MFA) `TokenBundle` path is out of this ticket's scope
-        (E09-S03 owns session/token minting) — a user with no enrolled MFA
-        method still raises `InvalidCredentials` is wrong; instead see the
-        `NotImplementedError` note below for that one uncovered branch.
+        Raises `InvalidCredentials`, `AccountDisabled`, or `AccountLocked`, all
+        before either outcome. A user without `mfa_required` and without a method
+        still raises `NotImplementedError` (see the note at that branch).
         """
         if self._per_ip_throttle.is_blocked(source_ip):
             # Per-IP throttle failures are indistinguishable from a wrong
@@ -137,19 +153,18 @@ class LoginService:
 
         await self._repository.record_login_success(str(user.id))
 
-        if not user.mfa_required or not user.mfa_methods:
-            # This story's scope is exactly the two-legged path (ticket
-            # References: "POST /auth/login returns an mfa_required
-            # challenge ... POST /auth/mfa/verify (E09-S02) completes it").
-            # A non-MFA full-session response is schema-valid
-            # (`AuthenticatedResponse`) but minting a real session/JWT is
-            # E09-S03 scope ("Out of scope: Session lifetime ... "); raising
-            # here rather than fabricating an unsigned token keeps this
-            # service from inventing a security-critical shape ahead of its
-            # owning ticket.
+        if user.mfa_required and not user.mfa_methods:
+            # #2295 (Q6): TOTP is mandatory (C-12.2), so the password alone opens
+            # only an enrolment-only session (never enrolled, or after an owner
+            # reset or a recovery sign-in). The router mints it; no challenge row.
+            return EnrolmentOnlyLogin(user_id=user.id)
+        if not user.mfa_required:
+            # A password-only full session is undecided (#2295 Q6), and C-12.2
+            # forbids such a user (#965 refuses `mfa_required: false`). Fail
+            # closed: never fabricate a session shape for it.
             raise NotImplementedError(
-                "non-MFA session issuance is E09-S03 scope; this user has no "
-                "enrolled MFA method — see the ticket's Out of scope section"
+                "password-only sign-in is not specified; this user is not required "
+                "to use MFA (C-12.2 forbids that state)"
             )
 
         mfa_token = self._mfa_token_factory()

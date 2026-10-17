@@ -2827,6 +2827,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_enrolment_only_sessions_total",
+        "counter",
+        "sessions",
+        ("role",),
+        "Enrolment-only sessions minted on the password alone (#2295), by the user's role.",
+        'role="owner" increase > 0: page (rule: E09-X03; U34, RR-15); audited as '
+        "auth.session_created with enrolment_only",
+        _L,
+        "E09",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
         "auth_totp_clock_skew_total",
         "counter",
         "rejections",
