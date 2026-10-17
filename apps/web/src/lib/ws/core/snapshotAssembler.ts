@@ -5,22 +5,27 @@
 import type { DataBody } from "../protocol/codec";
 
 /** What the assembler may hold across every set at once (charged as below); a chunk that would pass it drops its set. */
-export const MAX_HELD_BYTES = 64 * 1024 * 1024;
-/** What one set may hold, so a set that never completes cannot starve the other streams. */
-export const MAX_SET_BYTES = 32 * 1024 * 1024;
+export const MAX_HELD_BYTES = 128 * 1024 * 1024;
+/**
+ * What one set may hold, so a set that never completes cannot starve the other streams. A structured
+ * snapshot is split only when its JSON passes the 4 MiB frame limit (3.6), into chunks of nearly that
+ * size each, so a real set is several full chunks: the budget has to sit well above the chunk size.
+ * At `JSON_HEAP_FACTOR` this holds four of them, about 16 MiB of structured text.
+ */
+export const MAX_SET_BYTES = 64 * 1024 * 1024;
 /** Chunks one set may have: far above any snapshot (3.6 splits at 4 MiB) and far below what tiny chunks reach under the byte caps. */
 export const MAX_SET_CHUNKS = 4096;
 /** Charged per chunk on top of its size, so a flood of tiny chunks is bounded by bytes as well. */
 export const FRAME_OVERHEAD_BYTES = 256;
 /**
- * A structured chunk is held as a parsed value, which takes several times its JSON text (`[[],[],...]`
- * parses to about 8 times), so it is charged that much; a binary chunk is charged its message length,
- * which is above the bytes it keeps. One set can then hold about 4 MiB of structured text at most
- * (`MAX_SET_BYTES` over this). The snapshots that reach megabytes are binary (book, trades, bars, footprint
- * and heatmap, 3.4 and 6.1), so a structured set that large is not expected; one that comes is dropped
- * and asked for again (guard-bounded).
+ * A structured chunk is held as a parsed value. That takes about its own text for a realistic payload
+ * and ten to thirty times as much for a degenerate one (runs of empty arrays), so no factor is an upper
+ * bound: 4 is a middle charge. What bounds the heap is the per-set cap and the size of one message,
+ * which the engine is to check against the 4 MiB frame limit before it parses (S4). A binary chunk is
+ * charged its message length, which is above the bytes it keeps. A structured set above what the caps
+ * allow is dropped and asked for again (the registry stops asking when it comes back the same).
  */
-export const JSON_HEAP_FACTOR = 8;
+export const JSON_HEAP_FACTOR = 4;
 
 export interface Chunk {
   /** The set's shared id (3.6); a single-frame `snap` has none. */
@@ -68,10 +73,11 @@ export interface SnapshotAssembler {
   /** Takes one `snap` frame of stream `key`. */
   push(key: string, chunk: Chunk): Assembly;
   /**
-   * Drops the held set and refuses the rest of a set: the server does not know it was dropped and
-   * keeps sending its chunks, and the last one alone must not pass for a snapshot. `id` names the
-   * set whose chunk failed (a new set replaces the held one, 7.2); without it the held set is the
-   * one refused. The next `snap` with another id (or none) lifts the refusal.
+   * Drops the held set and refuses the rest of it and of the set `id` names: the server does not
+   * know they were dropped and keeps sending their chunks, and the last one alone must not pass for
+   * a snapshot. `id` is the set whose chunk failed; a new set replaces the held one (7.2), and
+   * either might still be coming, so both are refused. The next `snap` with another id (or none)
+   * lifts the refusal.
    */
   discard(key: string, id?: string | undefined): void;
   /** The subscription ended or its state was voided (`unsub_ok`, `revoked`, `resnapshot`): no more chunks of it come. */
@@ -91,7 +97,7 @@ export function createSnapshotAssembler(
   const cap = options.maxHeldBytes ?? MAX_HELD_BYTES;
   const setCap = options.maxSetBytes ?? MAX_SET_BYTES;
   const sets = new Map<string, Held>();
-  const refused = new Map<string, string>(); // stream key -> id of the dropped set
+  const refused = new Map<string, readonly string[]>(); // stream key -> ids of the sets dropped
   let heldBytes = 0;
 
   function drop(key: string): Held | undefined {
@@ -118,7 +124,7 @@ export function createSnapshotAssembler(
         const { size, decodeMs } = chunk;
         return { kind: "complete", seq: s, bodies: [body], size, decodeMs };
       }
-      if (refused.get(key) === id) return { kind: "ignored" };
+      if (refused.get(key)?.includes(id)) return { kind: "ignored" };
       const held = sets.get(key);
       if (s !== null && held?.id !== id) return { kind: "malformed" }; // the last chunk completes the set it names
       refused.delete(key);
@@ -132,7 +138,7 @@ export function createSnapshotAssembler(
         heldBytes + cost > cap
       ) {
         drop(key);
-        refused.set(key, id);
+        refused.set(key, replaced ? [id, held.id] : [id]);
         return { kind: "overflow" };
       }
       if (set === undefined) {
@@ -150,8 +156,8 @@ export function createSnapshotAssembler(
     },
     discard(key, id) {
       const held = drop(key);
-      const refuse = id ?? held?.id;
-      if (refuse !== undefined) refused.set(key, refuse);
+      const ids = [held?.id, id].filter((v): v is string => v !== undefined);
+      if (ids.length > 0) refused.set(key, [...new Set(ids)]);
     },
     forget(key) {
       drop(key);

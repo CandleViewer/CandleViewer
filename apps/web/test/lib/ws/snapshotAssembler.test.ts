@@ -7,7 +7,6 @@ import {
   createSnapshotAssembler,
   FRAME_OVERHEAD_BYTES,
   JSON_HEAP_FACTOR,
-  MAX_SET_CHUNKS,
   type Chunk,
 } from "../../../src/lib/ws/core/snapshotAssembler";
 
@@ -128,12 +127,12 @@ describe("snapshot assembler", () => {
       ...chunk("a", tag),
       body: { e: "b64", bytes: new ArrayBuffer(1) },
     });
-    const asm = createSnapshotAssembler({ maxHeldBytes: 2 * COST });
+    const asm = createSnapshotAssembler({ maxHeldBytes: 5 * (100 + FRAME_OVERHEAD_BYTES) });
     for (const tag of ["1", "2", "3", "4", "5"]) asm.push(KEY, binary(tag)); // 5 x (100 + 256) fits
     expect(asm.heldBytes).toBe(5 * (100 + FRAME_OVERHEAD_BYTES));
     asm.forget(KEY);
     asm.push(KEY, chunk("a", "A1"));
-    asm.push(KEY, chunk("a", "A2"));
+    asm.push(KEY, chunk("a", "A2")); // 2 x COST fits
     expect(asm.push(KEY, chunk("a", "A3"))).toEqual({ kind: "overflow" }); // 3 x COST does not
   });
 
@@ -161,9 +160,12 @@ describe("snapshot assembler", () => {
     expect(asm.push(KEY, chunk("c", "C2"))).toMatchObject({ kind: "pending" }); // a single-frame snap lifted it
     asm.forget(KEY);
     asm.push(KEY, chunk("d", "D1"));
-    asm.discard(KEY, "e"); // set e's first chunk failed: it replaced d, and it is e that is refused
+    asm.discard(KEY, "e"); // set e's first chunk failed: it replaced d, and either might still be coming
     expect(asm.heldBytes).toBe(0);
     expect(asm.push(KEY, chunk("e", "E2", 20))).toEqual({ kind: "ignored" });
+    expect(asm.push(KEY, chunk("d", "D2", 21))).toEqual({ kind: "ignored" }); // so both are refused
+    expect(asm.push(KEY, chunk("f", "F1"))).toMatchObject({ kind: "pending" }); // a third set lifts both
+    expect(asm.push(KEY, chunk("e", "E3"))).toMatchObject({ kind: "pending" });
   });
 
   it("forget drops the held set without refusing anything (the subscription ended)", () => {
@@ -221,12 +223,66 @@ describe("snapshot assembler", () => {
     expect(asm.heldBytes).toBe(4 * COST);
   });
 
+  it("a set that is dropped for its size refuses the one it replaced too", () => {
+    const asm = createSnapshotAssembler({ maxHeldBytes: 3 * COST });
+    const other = "trades.BTCUSDT#live";
+    asm.push(other, chunk("t", "T1"));
+    asm.push(other, chunk("t", "T2"));
+    asm.push(KEY, chunk("a", "A1")); // three chunks held: at the cap
+    const big: Chunk = { ...chunk("b", "B1"), size: 200 };
+    expect(asm.push(KEY, big)).toEqual({ kind: "overflow" }); // b replaces a, and does not fit
+    expect(asm.push(KEY, chunk("a", "A2", 4))).toEqual({ kind: "ignored" }); // a goes with it
+    expect(asm.push(KEY, chunk("b", "B2", 5))).toEqual({ kind: "ignored" });
+  });
+
   it("judges a set that replaces another on its own size, not on the one it replaced", () => {
     const asm = createSnapshotAssembler({ maxHeldBytes: 4 * COST, maxSetBytes: 2 * COST });
     asm.push(KEY, chunk("a", "A1"));
     asm.push(KEY, chunk("a", "A2")); // set a is at its cap
     expect(asm.push(KEY, chunk("b", "B1"))).toEqual({ kind: "pending" });
     expect(asm.push(KEY, chunk("b", "B2", 5))).toMatchObject({ kind: "complete", seq: 5 });
+  });
+});
+
+describe("snapshot assembler: structured sets at the sizes the gateway sends (3.6)", () => {
+  // The gateway splits a structured snapshot only past 4 MiB of JSON, into chunks of nearly 4 MiB.
+  const MiB = 1024 * 1024;
+  const sized = (size: number, s: number | null = null): Chunk => ({ ...chunk("a", "x", s), size });
+
+  it("a structured set just over 4 MiB assembles", () => {
+    const asm = createSnapshotAssembler();
+    expect(asm.push(KEY, sized(2.5 * MiB))).toEqual({ kind: "pending" });
+    expect(asm.push(KEY, sized(2 * MiB, 7))).toMatchObject({ kind: "complete", seq: 7 });
+    expect(asm.heldBytes).toBe(0);
+  });
+
+  it("holds four chunks of the frame limit, 16 MiB of text, and drops the set at a fifth", () => {
+    const asm = createSnapshotAssembler();
+    const full = (s: number | null = null) => sized(4 * MiB - 1024, s);
+    for (let i = 0; i < 3; i += 1) expect(asm.push(KEY, full())).toEqual({ kind: "pending" });
+    expect(asm.push(KEY, full(9))).toMatchObject({ kind: "complete", seq: 9 });
+    for (let i = 0; i < 4; i += 1) asm.push(KEY, full());
+    expect(asm.push(KEY, full(10))).toEqual({ kind: "overflow" });
+    expect(asm.push(KEY, full(11))).toEqual({ kind: "ignored" });
+  });
+
+  it("pins the defaults to the byte: 64 MiB a set, 128 MiB across streams, a factor of 4 and 256 a chunk", () => {
+    const edge = 16 * MiB - 64; // x 4 + 256 is exactly 64 MiB
+    expect(createSnapshotAssembler().push(KEY, sized(edge))).toEqual({ kind: "pending" });
+    expect(createSnapshotAssembler().push(KEY, sized(edge + 1))).toEqual({ kind: "overflow" });
+    const asm = createSnapshotAssembler();
+    expect(asm.push(KEY, sized(edge))).toEqual({ kind: "pending" });
+    expect(asm.push("trades.BTCUSDT#live", sized(edge))).toEqual({ kind: "pending" });
+    expect(asm.heldBytes).toBe(128 * MiB); // exactly the cap: it fits
+    expect(asm.push("profile.BTCUSDT.volume#live", sized(1))).toEqual({ kind: "overflow" });
+  });
+
+  it("shares 128 MiB between the streams: two sets of 63 MiB fit, a third does not", () => {
+    const asm = createSnapshotAssembler();
+    const first = (key: string) => asm.push(key, sized(15.75 * MiB)); // 63 MiB charged at 4x
+    expect(first(KEY)).toEqual({ kind: "pending" });
+    expect(first("trades.BTCUSDT#live")).toEqual({ kind: "pending" });
+    expect(first("profile.BTCUSDT.volume#live")).toEqual({ kind: "overflow" });
   });
 });
 
@@ -237,18 +293,18 @@ describe("snapshot assembler: the chunk count of one set", () => {
     for (let i = 0; i < count; i += 1) asm.push(KEY, tiny(id));
   };
 
-  it("holds a set of exactly MAX_SET_CHUNKS chunks and hands it over", () => {
+  it("holds a set of exactly 4 096 chunks and hands it over", () => {
     const asm = createSnapshotAssembler();
-    fill(asm, "a", MAX_SET_CHUNKS - 1);
+    fill(asm, "a", 4096 - 1);
     const done = asm.push(KEY, tiny("a", 7));
     expect(done).toMatchObject({ kind: "complete", seq: 7 });
-    expect(done.kind === "complete" && done.bodies.length).toBe(MAX_SET_CHUNKS);
+    expect(done.kind === "complete" && done.bodies.length).toBe(4096);
   });
 
   it("drops a set that would pass it, and refuses its tail", () => {
     const asm = createSnapshotAssembler();
-    fill(asm, "a", MAX_SET_CHUNKS);
-    expect(asm.heldBytes).toBe(MAX_SET_CHUNKS * (JSON_HEAP_FACTOR + FRAME_OVERHEAD_BYTES));
+    fill(asm, "a", 4096);
+    expect(asm.heldBytes).toBe(4096 * (JSON_HEAP_FACTOR + FRAME_OVERHEAD_BYTES));
     expect(asm.push(KEY, tiny("a", 8))).toEqual({ kind: "overflow" }); // the last chunk would be the 4 097th
     expect(asm.heldBytes).toBe(0);
     expect(asm.push(KEY, tiny("a", 9))).toEqual({ kind: "ignored" });
@@ -256,7 +312,7 @@ describe("snapshot assembler: the chunk count of one set", () => {
 
   it("counts a replacing set from its own first chunk", () => {
     const asm = createSnapshotAssembler();
-    fill(asm, "a", MAX_SET_CHUNKS);
+    fill(asm, "a", 4096);
     expect(asm.push(KEY, tiny("b"))).toEqual({ kind: "pending" });
     expect(asm.heldBytes).toBe(JSON_HEAP_FACTOR + FRAME_OVERHEAD_BYTES);
   });
