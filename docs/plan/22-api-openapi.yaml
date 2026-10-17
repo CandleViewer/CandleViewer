@@ -1999,9 +1999,9 @@ paths:
 
         An account whose exposure is unknown is never deleted: it is not known to be flat.
         Whatever `open_exposure` the request carries, the answer is `409 exposure_unknown` and
-        nothing changes; `components.parameters.OpenExposure` says when the account can be
-        disabled instead (`updateExchangeAccount` with `enabled: false`), and what a failed
-        read is answered with.
+        nothing changes; its `remedy` says whether the account can be disabled instead
+        (`updateExchangeAccount` with `enabled: false`) or a key is to be fixed first, and
+        `components.parameters.OpenExposure` defines both, and what a failed read is answered with.
       x-rbac: { permissions: [accounts:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -11369,7 +11369,7 @@ components:
         The explicit choice SR-E27-07 requires before revoking an account's last active key or
         disabling the account while it holds open positions, working orders or running emulated
         algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
-        exposure and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
+        exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
         `deleteExchangeAccount` point here and add only what is specific to them.
 
         `leave_positions`: act now; positions and orders stay on the exchange untouched, each
@@ -11391,52 +11391,58 @@ components:
         **Unknown exposure.** The exposure is read from the exchange for each request with the
         account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
         whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
-        `revoked` key is never used to read it. An account with no signable key cannot read its
-        exposure: it is unknown and counts as dead (disabled with `leave_positions`, never
-        deleted). While a signable key can read it, the choices work as above. When the exchange
+        `revoked` key is never used to read it (`KeyStatus`). An account with no signable key
+        cannot read its exposure: it is unknown and counts as dead (disabled with
+        `leave_positions`, never deleted). An account that never had a key is disable-only on
+        purpose: nothing can show that it holds no exposure, and "no key" is never taken for "no
+        exposure". While a signable key can read it, the choices work as above. When the exchange
         refuses every signable key of the account (`auth_error`, `ip_not_allowed` or
         `permission_denied` in `KeyProbeError`), its positions and orders cannot be read and
         nothing can be flattened, so its exposure is unknown, not none. Whether the Owner can fix
-        the refusal decides the answer:
+        the refusal decides the answer, and the `409 exposure_unknown` says which in `remedy`
+        (`ExposureRemedy`, a closed set, always present on it and on no other problem):
 
         - **Dead.** Only a credential the exchange no longer accepts (`auth_error`) makes a key
           dead, and an account is dead when every one of its signable keys is dead, or when it has
-          none. `flatten_first`, or no choice, is then `409 exposure_unknown` and nothing changes.
-          `leave_positions` is carried out: it is how a dead account is disabled or its last key
-          revoked, and the stop-loss refusal is lifted only for a dead account, because no stop
-          can be re-asserted there and `flatten_first` cannot run. The audit record of that
-          disable or revoke (`accounts.disable` or `api_key.revoke`, written ahead of the change,
-          C-2.9) carries the code `exposure_unknown`, the `KeyProbeError` of each signable key
-          (none for an account without one) and that the stop-loss refusal was lifted. A dead
-          account is disabled, never deleted.
+          none. `flatten_first`, or no choice, is then `409 exposure_unknown` with
+          `remedy: leave_positions`, and nothing changes. `leave_positions` is carried out: it is
+          how a dead account is disabled or its last key revoked, and the stop-loss refusal is
+          lifted only for a dead account, because no stop can be re-asserted there and
+          `flatten_first` cannot run. The audit record of that disable or revoke
+          (`account.disabled` or `api_key.revoke`, written ahead of the change, C-2.9) carries the
+          code `exposure_unknown`, the `KeyProbeError` of each signable key (none for an account
+          without one) and that the stop-loss refusal was lifted. A dead account is disabled,
+          never deleted.
         - **Fixable.** `ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033)
           and `permission_denied` are put right at the Bybit dashboard, so such a key is not
           dead. While every signable key is refused and any answers one of them, revoke,
-          disable and delete answer `409 exposure_unknown` for every `open_exposure` choice,
-          `leave_positions` included, and nothing changes: fix the key first, then the OMS
-          re-asserts the stop and `flatten_first` can run.
+          disable and delete answer `409 exposure_unknown` with `remedy: fix_key` for every
+          `open_exposure` choice, `leave_positions` included, and nothing changes: fix the key
+          first, then the OMS re-asserts the stop and `flatten_first` can run.
 
         `deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers
-        `409 exposure_unknown`, whatever it carries.
+        `409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means
+        disabling the account instead (`updateExchangeAccount` with `enabled: false`).
 
         `exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose
         remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no
         acknowledge parameter and delete never proceeds, so that remedy does not exist here.
 
         **A failed read.** A transient failure to read the exposure is never "no exposure" and
-        never "dead". Every other `KeyProbeError` (`clock_drift`, `rate_limited`,
-        `service_unavailable`, `transport_error`, `timeout` or `exchange_unknown`) is a failed
-        read: it says nothing about the key, so an account is not dead while any of its signable
-        keys answers one of them. Such an answer is not a refusal, so while any signable key
-        gives one neither the dead nor the fixable rule applies. When no signable key reads the
-        exposure, the request fails closed: it is refused with its own retryable error,
-        `503 exchange_unavailable` with `Retry-After` when the exchange gave no answer
-        (`timeout`, `transport_error`) and `502 exchange_error` when it answered with an error
-        (`clock_drift`, `rate_limited`, `service_unavailable`, `exchange_unknown`), and nothing
-        is revoked, disabled or deleted. Keys that fail both ways give the `503`. Neither echoes
-        exchange text: `Problem.exchange` holds `ret_code` only (omitted when the exchange sent
-        none), never `ret_msg`, `endpoint`, `request_id` or any other exchange text, header, URL
-        or request fragment (SR-E27-08). The caller retries.
+        never "dead". Every other `KeyProbeError` is a failed read: it says nothing about the
+        key, so an account is not dead while any of its signable keys answers one of them. Such
+        an answer is not a refusal, so while any signable key gives one neither the dead nor the
+        fixable rule applies. When no signable key reads the exposure, the request fails closed:
+        nothing is revoked, disabled or deleted, and the answer is a retryable error of its own,
+        decided by the error of the key. `timeout` and `transport_error`, where the exchange gave
+        no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
+        here, not the registry's `504 timeout`, because these operations declare `502` and `503`
+        only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
+        it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
+        `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+        (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
+        other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
+        `remedy`: the caller retries.
 
         **Order.** When the signable keys of one request answer differently, the first of these
         decides: (1) a signable key reads the exposure, and the choices work as above, whatever
@@ -11447,8 +11453,9 @@ components:
         The `Idempotency-Key` replay fingerprint covers this value as well as the method, path
         and body, so the same key with another choice, or with none, is
         `409 idempotency_key_reuse`. A `502` or `503` of a failed read is never stored for
-        replay: the same `Idempotency-Key` retries the read. A query parameter because `DELETE`
-        carries no body.
+        replay: the identical request re-sent with the same `Idempotency-Key` is a first
+        submission, which reads the exposure again and is not answered from the idempotency
+        store (no `Idempotency-Replayed`).
       schema: { $ref: "#/components/schemas/OpenExposureChoice" }
     ProfileId:
       name: profileId
@@ -11785,8 +11792,8 @@ components:
         a position has no native stop-loss; it always carries `consequences`, the summary the
         caller shows before it resends with an `open_exposure` choice. `exposure_unknown`: the
         exposure cannot be read because the exchange refuses every signable key of the account,
-        or the account has none (`components.parameters.OpenExposure`); it carries no
-        `consequences`.
+        or the account has none (`components.parameters.OpenExposure`); it always carries
+        `remedy` and no `consequences`.
         `deleteExchangeAccount` answers it whatever the request carries.
         `updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries
         `flatten_first` or no choice, and for `leave_positions` too while a key can still be
@@ -11853,15 +11860,26 @@ components:
                       }
                   armed_rules:
                     - { rule_id: "91000000-0000-4000-8000-000000000003", name: "BTC breakout long" }
-            exposureUnknown:
-              summary: deleteExchangeAccount, updateExchangeAccount and revokeApiKey - the exchange refuses every key, no consequence summary
+            exposureUnknownDead:
+              summary: deleteExchangeAccount, updateExchangeAccount and revokeApiKey - no signable key can read the exposure, remedy leave_positions
               value:
                 type: "https://candleviewer.local/errors/exposure_unknown"
                 title: "The account's open exposure cannot be read because none of its keys can be used to read it"
                 status: 409
-                detail: "The exchange rejects every key of this account, so its positions and orders cannot be read or flattened."
+                detail: "The account has no signable key, so its positions and orders cannot be read or flattened."
                 instance: "urn:cv:req:0193f2bb-5858"
                 code: exposure_unknown
+                remedy: leave_positions
+            exposureUnknownFixable:
+              summary: deleteExchangeAccount, updateExchangeAccount and revokeApiKey - the exchange refuses a key that can be put right, remedy fix_key
+              value:
+                type: "https://candleviewer.local/errors/exposure_unknown"
+                title: "The account's open exposure cannot be read because none of its keys can be used to read it"
+                status: 409
+                detail: "The exchange refuses the key of this account, so its positions and orders cannot be read or flattened until the key is put right."
+                instance: "urn:cv:req:0193f2bb-5959"
+                code: exposure_unknown
+                remedy: fix_key
     PreconditionFailed:
       description: ETag precondition failed.
       content:
@@ -12388,11 +12406,13 @@ components:
       { type: string, enum: [totp, webauthn, recovery_code], x-db-enum: mfa_method_kind }
     AccountKind: { type: string, enum: [main, sub], x-db-enum: account_kind }
     KeyStatus:
-      {
-        type: string,
-        enum: [pending, active, rotating, revoked, expired, invalid],
-        x-db-enum: key_status,
-      }
+      type: string
+      enum: [pending, active, rotating, revoked, expired, invalid]
+      x-db-enum: key_status
+      description: >
+        Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a).
+        `invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), which
+        `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.
     SizingMode:
       type: string
       enum: [fixed_qty, fixed_notional, pct_equity, risk_based, pct_position, profile]
@@ -13014,13 +13034,35 @@ components:
             properties:
               rule_id: { type: string, format: uuid }
               name: { type: string }
+    ExposureRemedy:
+      type: string
+      enum: [leave_positions, fix_key]
+      description: >
+        What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure`
+        says which applies. `leave_positions`: send the disable or the revoke again with
+        `open_exposure=leave_positions`; a delete is not sent again, the account is disabled
+        instead (`updateExchangeAccount` with `enabled: false`) and never deleted. `fix_key`: put
+        the key right at the exchange, then send the request again; until then no choice
+        proceeds. It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a
+        client never sends it on its own. Closed: a new value is a breaking change (C-6.3).
     OpenExposureProblem:
-      description: "The `409` problem of the revoke, disable and delete operations. `consequences` is present exactly when `code` is `open_exposure`; an `exposure_unknown` problem carries none, because the exposure cannot be read."
+      description: >
+        The `409` problem of the revoke, disable and delete operations. `consequences` is present
+        exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is
+        `exposure_unknown`, which carries no `consequences` because the exposure cannot be read.
       allOf:
         - $ref: "#/components/schemas/Problem"
         - type: object
           properties:
             consequences: { $ref: "#/components/schemas/AccountConsequenceSummary" }
+            remedy: { $ref: "#/components/schemas/ExposureRemedy" }
+          allOf:
+            - if: { required: [code], properties: { code: { const: open_exposure } } }
+              then: { required: [consequences] }
+              else: { not: { required: [consequences] } }
+            - if: { required: [code], properties: { code: { const: exposure_unknown } } }
+              then: { required: [remedy] }
+              else: { not: { required: [remedy] } }
     ApiKey:
       type: object
       required: [id, exchange_account_id, key_id_masked, status]

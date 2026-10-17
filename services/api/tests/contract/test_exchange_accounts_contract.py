@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
 
 from candleviewer.accounts._permissions import reject_withdraw as m13_reject_withdraw
 from candleviewer.accounts.errors import WithdrawPermissionError
@@ -44,6 +47,8 @@ _KEY = f"{_KEYS}/{{keyId}}"
 #: Revoke, disable and delete: the three actions SR-E27-07 gates on open exposure.
 _EXPOSURE_OPS = [(_KEY, "delete"), (_ACCOUNT, "patch"), (_ACCOUNT, "delete")]
 _CHOICES = ("leave_positions", "flatten_first")
+_REMEDIES = ("leave_positions", "fix_key")
+_BASE = "urn:cv:openapi"
 _MIGRATION_0017 = (
     _REPO_ROOT / "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py"
 )
@@ -60,8 +65,13 @@ _LEAVE_OPS = [(_KEY, "delete"), (_ACCOUNT, "patch")]
 _ANSWERED_BY = {
     "openExposure": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
     "leavePositionsRefused": ("updateExchangeAccount", "revokeApiKey"),
-    "exposureUnknown": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
+    "exposureUnknownDead": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
+    "exposureUnknownFixable": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
 }
+#: D3 of #2417: what each class of unknown exposure tells the client to do (`ExposureRemedy`): a
+#: dead account is disabled (`leave_positions`), a fixable one waits for its key (`fix_key`).
+_REMEDY = {"**Dead.**": "leave_positions", "**Fixable.**": "fix_key"}
+_REMEDY_EXAMPLE = {"exposureUnknownDead": "leave_positions", "exposureUnknownFixable": "fix_key"}
 #: SR-E27-03: a key id is shown as `...` plus its last 4 characters, nothing more.
 _MASK = r"^\.\.\.[A-Za-z0-9]{4}$"
 
@@ -190,6 +200,11 @@ def _steps(description: str) -> dict[int, str]:
     }
 
 
+def _and(errors: tuple[str, ...]) -> str:
+    """`errors` as the contract lists them: "`a`, `b` and `c`"."""
+    return ", ".join(f"`{error}`" for error in errors[:-1]) + f" and `{errors[-1]}`"
+
+
 def _sentence(text: str, code: str) -> str:
     """The one sentence of `text` that names `code`."""
     [sentence] = [part for part in re.split(r"(?<=\.) (?=[A-Z])", text) if f"`{code}`" in part]
@@ -289,6 +304,135 @@ def _values(node: object, key: str) -> Iterator[Any]:
 
 def _all(key: str) -> list[Any]:
     return [value for example in _examples() for value in _values(example, key)]
+
+
+def _described(*keys: str | int) -> str:
+    """The folded `description` found by walking `keys` down from the spec root."""
+    node: Any = _SPEC
+    for key in keys:
+        node = node[key]
+    return _fold(node["description"])
+
+
+_SCHEMA = ("components", "schemas")
+_SUMMARY = (*_SCHEMA, "AccountConsequenceSummary")
+#: Where each rule sentence is written, with a core phrase of every one that no other test quotes,
+#: joined by "|": a deletion check, one sentence at a time over every prose string this change adds
+#: or edits, found each of them unpinned (deleting it left every other test green).
+_DESCRIBED = (
+    (
+        ("paths", _ACCOUNT, "patch"),
+        "must carry an `open_exposure` choice (SR-E27-07)|never to a mode change",
+    ),
+    (
+        ("paths", _ACCOUNT, "delete"),
+        "never deleted while it holds open positions, working orders or running emulated algos"
+        "|and deleted only once it is flat",
+    ),
+    (
+        ("paths", _ACCOUNT, "delete", "parameters", 1),
+        "deletion never leaves exposure behind, so `leave_positions` is not accepted here",
+    ),
+    (
+        ("paths", _KEYS, "post"),
+        "only persisted if every check passes"
+        "|The same key gate (SR-E27-04) applies to `rotateApiKey`"
+        "|never retried on another environment's host"
+        "|**Permission allow-list** (C-2.8, SR-030a, #2270)"
+        "|must report `readOnly: 0` and hold"
+        "|mandatory in every environment (C-2.8, owner decision #5)"
+        "|Expiry, if set, must be at least 14 days away",
+    ),
+    (
+        ("paths", _KEY, "delete"),
+        "When no other `active` key remains and the account holds open positions",
+    ),
+    (
+        ("paths", f"{_KEY}/rotate", "post"),
+        "The overlap is one fixed value, the `api_key_rotations.grace_seconds` of the rotation row"
+        "|and no request can change it",
+    ),
+    (("paths", f"{_KEY}/test", "post"), "request fragment is ever echoed (SR-E27-08)"),
+    (
+        ("components", "parameters", "OpenExposure"),
+        "The explicit choice SR-E27-07 requires before revoking an account's last active key"
+        "|close its positions reduce-only), then act; if the account is still not flat, the "
+        "action is not carried out"
+        "|Without the parameter such a request is `409 open_exposure`"
+        "|Ignored when the account holds no exposure"
+        "|While a signable key can read it, the choices work as above"
+        "|Whether the Owner can fix the refusal decides the answer, and the `409 exposure_unknown` "
+        "says which in `remedy` (`ExposureRemedy`, a closed set, always present on it and on no "
+        "other problem):",
+    ),
+    (
+        ("components", "responses", "OpenExposureConflict"),
+        "so the revoke, disable or delete was not carried out"
+        "|it always carries `consequences`, the summary the caller shows",
+    ),
+    (
+        (*_SCHEMA, "UpdateExchangeAccountRequest", "properties", "enabled"),
+        "with open exposure it needs the `open_exposure` query choice",
+    ),
+    ((*_SCHEMA, "OpenExposureChoice"), "see `components.parameters.OpenExposure`"),
+    (
+        _SUMMARY,
+        "so no partial picture is shown|Confidential: served only under the operation's own "
+        "permission and scope",
+    ),
+    ((*_SUMMARY, "properties", "open_positions"), "with its native stop-loss state"),
+    ((*_SUMMARY, "properties", "working_orders"), "Orders working on the exchange"),
+    ((*_SUMMARY, "properties", "assigned_users"), "through `user_account_access`"),
+    ((*_SUMMARY, "properties", "armed_rules"), "the action disarms them"),
+    (
+        (*_SCHEMA, "ExposureRemedy"),
+        "What the client does after `409 exposure_unknown`"
+        "|`components.parameters.OpenExposure` says which applies"
+        "|send the disable or the revoke again with `open_exposure=leave_positions`"
+        "|a delete is not sent again, the account is disabled instead"
+        "|`fix_key`: put the key right at the exchange, then send the request again"
+        "|It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07)",
+    ),
+    (
+        (*_SCHEMA, "ApiKey", "properties", "key_id_masked"),
+        "At most the last 4 characters of the key id|`...` plus `key_id_last4` (SR-E27-03)"
+        "|The rest is never stored in clear.",
+    ),
+    (
+        (*_SCHEMA, "SecuritySummary", "properties", "keys", "items", "properties", "key_id_masked"),
+        "as `ApiKey.key_id_masked`",
+    ),
+    (
+        (*_SCHEMA, "KeyVerification", "properties", "uta"),
+        "the deprecated `unified` field is never read",
+    ),
+    ((*_SCHEMA, "KeyVerification", "properties", "read_only"), "which alone decides write access"),
+    (
+        (*_SCHEMA, "KeyVerification", "properties", "permissions"),
+        "Every right must be on the `createApiKey` allow-list (step 2)",
+    ),
+    (
+        (*_SCHEMA, "KeyVerification", "properties", "ip_whitelist_matches_egress"),
+        "every entry is the configured egress IP itself (no wildcard, no range)",
+    ),
+    (
+        (*_SCHEMA, "KeyVerificationWarning"),
+        "Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days",
+    ),
+    (
+        (*_SCHEMA, "KeyProbeError"),
+        "Closed vocabulary for a failed probe (SR-E27-08)"
+        "|`ip_not_allowed`: `10010` or HTTP 403"
+        "|`rate_limited`: `10006`, `10018`, `10429` or HTTP 429"
+        "|`service_unavailable`: `10016`, `10019` or HTTP 5xx"
+        "|`exchange_unknown`: any other non-zero `retCode` (the code itself is in `ret_code`)"
+        "|No exchange error text, header, URL or request fragment is echoed.",
+    ),
+    (
+        (*_SCHEMA, "RotateApiKeyRequest"),
+        "No overlap field: the rotation overlap is one fixed value (`rotateApiKey`, SR-E27-10)",
+    ),
+)
 
 
 # --- Key gate (SR-E27-04) -----------------------------------------------------------------------
@@ -520,6 +664,27 @@ def test_each_open_exposure_example_names_the_operations_that_can_return_it() ->
             assert named <= _accepted(*operations[operation]), (name, operation)
 
 
+@pytest.mark.parametrize(
+    ("keys", "phrases"),
+    [pytest.param(keys, phrases, id="/".join(map(str, keys[-2:]))) for keys, phrases in _DESCRIBED],
+)
+def test_every_rule_sentence_of_the_contract_is_quoted_by_a_test(
+    keys: tuple[str | int, ...], phrases: str
+) -> None:
+    text = _described(*keys)
+    for phrase in phrases.split("|"):
+        assert phrase in text, (keys, phrase)
+
+
+def test_the_open_exposure_example_counts_what_its_summary_lists() -> None:
+    example = _conflict_examples()["openExposure"]["value"]
+    summary = example["consequences"]
+    assert example["detail"] == (
+        f"{len(summary['open_positions'])} open position, {summary['working_orders']} working "
+        f"orders and {summary['running_algos']} running algo; resend with an open_exposure choice."
+    )
+
+
 # --- Unknown exposure and a failed read (D3 of #2417, round 2) ----------------------------------
 
 
@@ -528,7 +693,8 @@ def _restating_texts() -> dict[str, str]:
     texts = {f"{method} {path}": _text(path, method) for path, method in _EXPOSURE_OPS}
     texts["OpenExposureConflict"] = _conflict()
     texts["exposure_unknown title"] = _registered()["exposure_unknown"]["title"]
-    texts["OpenExposureProblem"] = _fold(_SCHEMAS["OpenExposureProblem"]["description"])
+    for schema in ("OpenExposureProblem", "ExposureRemedy", "KeyStatus"):
+        texts[schema] = _fold(_SCHEMAS[schema]["description"])
     for name, example in _conflict_examples().items():
         value = example["value"]
         texts[f"example {name}"] = _fold(f"{example['summary']} {value['title']} {value['detail']}")
@@ -537,8 +703,9 @@ def _restating_texts() -> dict[str, str]:
 
 def test_open_exposure_is_the_one_definition_and_the_operations_point_at_it() -> None:
     assert (
-        "This is the one definition of the choice, of the stop-loss refusal, of unknown exposure "
-        "and of a failed read"
+        "This is the one definition of the choice, of the stop-loss refusal, of unknown exposure, "
+        "of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and "
+        "`deleteExchangeAccount` point here and add only what is specific to them."
     ) in _open_exposure()
     for path, method in _EXPOSURE_OPS:
         assert "`components.parameters.OpenExposure`" in _text(path, method)
@@ -590,6 +757,10 @@ def test_an_account_with_no_signable_key_has_unknown_exposure_and_counts_as_dead
         "An account with no signable key cannot read its exposure: it is unknown and counts as "
         "dead (disabled with `leave_positions`, never deleted)"
     ) in unknown
+    assert (
+        "An account that never had a key is disable-only on purpose: nothing can show that it "
+        'holds no exposure, and "no key" is never taken for "no exposure"'
+    ) in unknown
     assert "missing" in _SCHEMAS["ExchangeAccount"]["properties"]["key_status"]["enum"]
     assert "A dead account is disabled, never deleted" in _section("**Dead.**")
 
@@ -604,8 +775,8 @@ def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
     # "every signable key is refused", not "no key can read it": a failed read is not a refusal.
     assert "While every signable key is refused and any answers one of them" in fixable
     assert (
-        "revoke, disable and delete answer `409 exposure_unknown` for every `open_exposure` "
-        "choice, `leave_positions` included"
+        "revoke, disable and delete answer `409 exposure_unknown` with `remedy: fix_key` for every "
+        "`open_exposure` choice, `leave_positions` included"
     ) in fixable
     assert (
         "fix the key first, then the OMS re-asserts the stop and `flatten_first` can run"
@@ -616,8 +787,9 @@ def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
 def test_the_stop_loss_refusal_is_lifted_only_for_a_dead_account() -> None:
     dead = _section("**Dead.**")
     assert (
-        "`flatten_first`, or no choice, is then `409 exposure_unknown` and nothing changes" in dead
-    )
+        "`flatten_first`, or no choice, is then `409 exposure_unknown` with "
+        "`remedy: leave_positions`, and nothing changes"
+    ) in dead
     assert (
         "`leave_positions` is carried out: it is how a dead account is disabled or its last key "
         "revoked"
@@ -633,14 +805,19 @@ def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
     # It is the only path that lifts a C-2.6 refusal, so its audit record says why (C-2.9).
     dead = _section("**Dead.**")
     assert (
-        "The audit record of that disable or revoke (`accounts.disable` or `api_key.revoke`, "
+        "The audit record of that disable or revoke (`account.disabled` or `api_key.revoke`, "
         "written ahead of the change, C-2.9) carries the code `exposure_unknown`, the "
         "`KeyProbeError` of each signable key (none for an account without one) and that the "
         "stop-loss refusal was lifted"
     ) in dead
-    # The registry's own spelling: `api_key.revoke` is registered; `accounts.disable` follows
-    # `users.disable` and `accounts.create`, and the ticket that mounts the route registers it.
-    assert {"api_key.revoke", "accounts.create", "users.disable"} <= AUDIT_ACTIONS
+    # Both names are registered: `api_key.revoke` in the code registry, `account.disabled` in the
+    # closed vocabulary of 24-internal-schemas.md §15.5 (the threat model gives its registration
+    # to E27-S04, the ticket that mounts the route). The spelling `accounts.disable` is neither.
+    doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
+    vocabulary = doc[doc.index("### 15.5 Audited action vocabulary") : doc.index("## 16.")]
+    assert "`account.disabled`" in vocabulary
+    assert "api_key.revoke" in AUDIT_ACTIONS
+    assert "accounts.disable" not in OPENAPI_SPEC_PATH.read_text(encoding="utf-8")
 
 
 def test_every_probe_error_is_named_in_exactly_one_of_dead_fixable_or_failed_read() -> None:
@@ -670,12 +847,10 @@ def test_a_transient_read_failure_is_never_no_exposure_and_never_dead() -> None:
         "nor the fixable rule applies"
     ) in failed
     assert (
-        "When no signable key reads the exposure, the request fails closed: it is refused with "
-        "its own retryable error"
+        "When no signable key reads the exposure, the request fails closed: nothing is revoked, "
+        "disabled or deleted, and the answer is a retryable error of its own, decided by the "
+        "error of the key"
     ) in failed
-    assert "`503 exchange_unavailable`" in failed
-    assert "`502 exchange_error`" in failed
-    assert "nothing is revoked, disabled or deleted" in failed
 
 
 def test_the_rules_apply_in_one_stated_order_a_successful_read_first_dead_last() -> None:
@@ -699,11 +874,19 @@ def test_a_failed_read_names_the_answer_each_probe_error_gets_and_echoes_no_exch
     assert set(_FAILED_READ_UNAVAILABLE) | set(_FAILED_READ_BAD_GATEWAY) == set(_FAILED_READ_ERRORS)
     assert not set(_FAILED_READ_UNAVAILABLE) & set(_FAILED_READ_BAD_GATEWAY)
     assert (
-        "`503 exchange_unavailable` with `Retry-After` when the exchange gave no answer "
-        "(`timeout`, `transport_error`) and `502 exchange_error` when it answered with an error "
-        "(`clock_drift`, `rate_limited`, `service_unavailable`, `exchange_unknown`)"
+        f"{_and(_FAILED_READ_UNAVAILABLE)}, where the exchange gave no answer, give "
+        "`503 exchange_unavailable` with `Retry-After`"
+    ) in failed
+    assert (
+        f"{_and(_FAILED_READ_BAD_GATEWAY)}, where it answered with an error, give "
+        "`502 exchange_error`"
     ) in failed
     assert "Keys that fail both ways give the `503`" in failed
+    # A `timeout` is a 503, not the registry's 504: these operations declare no 504.
+    assert "a `timeout` is a `503` here, not the registry's `504 timeout`" in failed
+    assert _registered()["timeout"]["status"] == 504
+    assert all("504" not in _op(path, method)["responses"] for path, method in _EXPOSURE_OPS)
+    assert "A failed read has no `remedy`: the caller retries." in failed
     # "No answer" is what the probe vocabulary says of exactly these two errors.
     probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
     assert "`transport_error`: the connection failed or was reset" in probe
@@ -712,7 +895,8 @@ def test_a_failed_read_names_the_answer_each_probe_error_gets_and_echoes_no_exch
     exchange = _SCHEMAS["Problem"]["properties"]["exchange"]["properties"]
     assert set(exchange) == {"ret_code", "ret_msg", "endpoint", "request_id"}
     assert (
-        "`Problem.exchange` holds `ret_code` only (omitted when the exchange sent none), never "
+        "Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only (omitted "
+        "when the exchange sent none), never "
         "`ret_msg`, `endpoint`, `request_id` or any other exchange text, header, URL or request "
         "fragment (SR-E27-08)"
     ) in failed
@@ -736,8 +920,9 @@ def test_a_failed_read_is_never_stored_for_replay_so_the_same_key_retries_the_re
     choice = _fold(_choice(path, method)["description"])
     assert "A `502` or `503` of a failed read is never stored for replay" in choice
     assert (
-        "A `502` or `503` of a failed read is never stored for replay: the same `Idempotency-Key` "
-        "retries the read"
+        "A `502` or `503` of a failed read is never stored for replay: the identical request "
+        "re-sent with the same `Idempotency-Key` is a first submission, which reads the exposure "
+        "again and is not answered from the idempotency store (no `Idempotency-Replayed`)"
     ) in _open_exposure()
 
 
@@ -763,7 +948,8 @@ def test_delete_answers_exposure_unknown_whatever_open_exposure_is_sent() -> Non
     assert _accepted(_ACCOUNT, "delete") == {"flatten_first"}  # no choice gets past it
     assert _section("`deleteExchangeAccount` takes only `flatten_first`") == (
         "`deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers "
-        "`409 exposure_unknown`, whatever it carries."
+        "`409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means "
+        "disabling the account instead (`updateExchangeAccount` with `enabled: false`)."
     )
 
 
@@ -774,8 +960,9 @@ def test_an_account_with_unknown_exposure_is_never_deleted() -> None:
         in delete
     )
     assert (
-        "`components.parameters.OpenExposure` says when the account can be disabled instead "
-        "(`updateExchangeAccount` with `enabled: false`)"
+        "its `remedy` says whether the account can be disabled instead (`updateExchangeAccount` "
+        "with `enabled: false`) or a key is to be fixed first, and "
+        "`components.parameters.OpenExposure` defines both, and what a failed read is answered with"
     ) in delete
     assert "A dead account is disabled, never deleted" in _section("**Dead.**")
 
@@ -787,7 +974,7 @@ def test_conflict_answers_exposure_unknown_for_flatten_first_or_no_choice() -> N
         "`updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries "
         "`flatten_first` or no choice, and for `leave_positions` too while a key can still be fixed"
     ) in conflict
-    assert "it carries no `consequences`" in conflict
+    assert "it always carries `remedy` and no `consequences`" in conflict
 
 
 def test_revoke_counts_a_rotating_key_and_a_usable_one_means_the_account_is_not_dead() -> None:
@@ -826,25 +1013,100 @@ def test_exposure_unknown_is_not_positions_unknown_and_the_contract_says_why() -
     )
 
 
-def test_exposure_unknown_is_a_registered_409_with_an_example_and_no_summary() -> None:
-    registered = {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
-    entry = registered["exposure_unknown"]
+def test_exposure_unknown_is_a_registered_409_with_an_example_per_class_and_no_summary() -> None:
+    entry = _registered()["exposure_unknown"]
     assert (entry["status"], entry["retryable"]) == (409, False)
     assert ErrorCode.EXPOSURE_UNKNOWN.value == "exposure_unknown"
-    example = _conflict_examples()["exposureUnknown"]["value"]
-    problem = api.OpenExposureProblem.model_validate(example)
-    assert (problem.code, problem.status) == ("exposure_unknown", 409)
-    assert example["type"].endswith("/errors/exposure_unknown")
-    assert example["title"] == entry["title"]
     # The title holds for every way the exposure cannot be read: the exchange refuses each
     # signable key, or the account has none (a key that is not signable is never probed).
     assert "none of its keys can be used to read it" in entry["title"]
     assert "the exchange refuses" not in entry["title"]
-    assert problem.consequences is None
-    assert "consequences" not in example
+    for name, remedy in _REMEDY_EXAMPLE.items():
+        example = _conflict_examples()[name]["value"]
+        problem = api.OpenExposureProblem.model_validate(example)
+        assert (problem.code, problem.status, problem.remedy) == ("exposure_unknown", 409, remedy)
+        assert example["type"].endswith("/errors/exposure_unknown")
+        assert example["title"] == entry["title"]
+        assert problem.consequences is None
+        assert "consequences" not in example
+    # Each detail says why the exposure cannot be read: no signable key, or a key to put right.
+    details = {name: _conflict_examples()[name]["value"]["detail"] for name in _REMEDY_EXAMPLE}
+    assert "has no signable key" in details["exposureUnknownDead"]
+    assert "until the key is put right" in details["exposureUnknownFixable"]
     schema = _fold(_SCHEMAS["OpenExposureProblem"]["description"])
-    assert "`consequences` is present exactly when `code` is `open_exposure`" in schema
-    assert "an `exposure_unknown` problem carries none" in schema
+    assert (
+        "The `409` problem of the revoke, disable and delete operations. `consequences` is "
+        "present exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is "
+        "`exposure_unknown`, which carries no `consequences` because the exposure cannot be read"
+    ) in schema
+
+
+def _problem_validator() -> Draft202012Validator:
+    """A validator for `OpenExposureProblem` with the whole spec as its `$ref` registry."""
+    resource = Resource.from_contents(_SPEC, default_specification=DRAFT202012)
+    return Draft202012Validator(
+        {"$ref": f"{_BASE}#/components/schemas/OpenExposureProblem"},
+        registry=Registry().with_resource(_BASE, resource),
+        format_checker=Draft202012Validator.FORMAT_CHECKER,
+    )
+
+
+def test_exposure_unknown_carries_a_required_closed_remedy_and_no_other_problem_does() -> None:
+    remedy = _SCHEMAS["ExposureRemedy"]
+    assert (remedy["type"], remedy["enum"]) == ("string", list(_REMEDIES))
+    assert set(_REMEDIES) & set(_CHOICES) == {"leave_positions"}  # the contract's own vocabulary
+    assert "Closed: a new value is a breaking change (C-6.3)" in _fold(remedy["description"])
+    examples = {name: example["value"] for name, example in _conflict_examples().items()}
+    validator = _problem_validator()
+    assert all(validator.is_valid(value) for value in examples.values())
+    summary = examples["openExposure"]["consequences"]
+    for name in _REMEDY_EXAMPLE:
+        value = examples[name]
+        assert not validator.is_valid({k: v for k, v in value.items() if k != "remedy"})
+        assert not validator.is_valid({**value, "consequences": summary})
+        for outside in ("wait", "flatten_first"):  # closed: not even a choice is a remedy
+            assert not validator.is_valid({**value, "remedy": outside}), outside
+    for name in ("openExposure", "leavePositionsRefused"):
+        value = examples[name]
+        assert not validator.is_valid({k: v for k, v in value.items() if k != "consequences"})
+        assert not validator.is_valid({**value, "remedy": "fix_key"})
+    other = {"type": "https://candleviewer.local/errors/conflict", "title": "t", "status": 409}
+    assert validator.is_valid({**other, "code": "conflict"})
+    assert not validator.is_valid({**other, "code": "conflict", "remedy": "fix_key"})
+    assert not validator.is_valid({**other, "code": "conflict", "consequences": summary})
+
+
+def test_the_remedy_follows_the_class_of_the_account_in_the_text_and_in_the_examples() -> None:
+    for lead, remedy in _REMEDY.items():
+        assert re.findall(r"`remedy: (\w+)`", _section(lead)) == [remedy], lead
+    assert set(_REMEDY.values()) == set(_REMEDIES)  # every remedy is some class's, and no more
+    for name, remedy in _REMEDY_EXAMPLE.items():
+        assert _conflict_examples()[name]["value"]["remedy"] == remedy
+    # A failed read has none: it is the 502 or 503 problem, whose shape has no such member.
+    assert "remedy" not in _SCHEMAS["Problem"]["properties"]
+    assert "A failed read has no `remedy`" in _section("**A failed read.**")
+
+
+def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
+    status = _fold(_SCHEMAS["KeyStatus"]["description"])
+    assert "Only `active` and `rotating` keys are signable" in status
+    assert (
+        "`invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), "
+        "which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not "
+        "signable"
+    ) in status
+    assert "invalid" in _SCHEMAS["KeyStatus"]["enum"]
+    assert "invalid" not in _SIGNABLE_STATUSES
+    # §8.6 marks a key `invalid` on the two credential refusals that the probe calls `auth_error`.
+    doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
+    table = doc[doc.index("| Bybit retCode") :]
+    rows = {code: _fold(row) for code, row in re.findall(r"^\| `(\d+)` *\|(.*)$", table, re.M)}
+    assert "`AUTH_ERROR`" in rows["10003"]
+    assert "Mark key `invalid`" in rows["10003"]
+    assert "`AUTH_ERROR`" in rows["10004"]
+    assert rows["10004"].endswith("| Same |")
+    probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
+    assert "`auth_error`: key or signature refused (`10003`, `10004`)" in probe
 
 
 def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:
@@ -853,7 +1115,8 @@ def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> Non
         assert f"`{operation}`" in conflict
     assert (
         "`exposure_unknown`: the exposure cannot be read because the exchange refuses every "
-        "signable key of the account, or the account has none"
+        "signable key of the account, or the account has none (`components.parameters."
+        "OpenExposure`); it always carries `remedy` and no `consequences`"
     ) in conflict
     others = [
         operation.get("description", "")
@@ -873,7 +1136,10 @@ def test_consequence_summary_names_the_ticket_that_adds_its_up_front_read() -> N
     assert ref not in json.dumps(_SPEC["paths"], default=str)
     summary = _fold(_SCHEMAS["AccountConsequenceSummary"]["description"])
     assert "only in the `409 open_exposure` answer" in summary
-    assert "E27-S04 (#898) adds that operation in its own interface-first PR (C-6.1)" in summary
+    assert (
+        "SCR-129 fetches it before the dialog renders, which needs a side-effect-free read: "
+        "E27-S04 (#898) adds that operation in its own interface-first PR (C-6.1)"
+    ) in summary
 
 
 def test_consequence_summary_lists_positions_orders_algos_users_and_rules() -> None:
@@ -970,9 +1236,23 @@ def test_keys_are_rechecked_at_start_up_and_hourly_never_nightly() -> None:
     assert "by the start-up and hourly self-check (C-12.2)" in _text(f"{_KEY}/test", "post")
 
 
-def test_internal_key_rules_match_the_cadence_and_the_expiry_warning() -> None:
+def test_internal_key_rules_match_the_mask_the_key_gate_the_cadence_and_the_expiry_warning() -> (
+    None
+):
     doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
     rules = _fold(doc[doc.index("### 15.3 API key handling") : doc.index("### 15.4")])
+    assert '# "...WxYz" — "..." + the last 4 only (SR-E27-03)' in rules
+    assert (
+        "On registration the adapter calls `GET /v5/user/query-api` and **refuses** any key that "
+        "holds a right outside the permission allow-list (withdrawal, transfer and the fiat, pay "
+        "and card groups included) or whose IP whitelist is empty, a wildcard or anything other "
+        "than the deployment egress IP (`createApiKey` steps 2 and 5 in `22-api-openapi.yaml`, "
+        "C-2.8)."
+    ) in rules
+    assert (
+        "Bybit made allowlist configuration browser-only in Feb 2026, so the operator sets it in "
+        "the dashboard and CandleViewer only reads and compares it."
+    ) in rules
     assert "every 24 h" not in rules
     assert "7 days" not in rules
     assert "re-verified at start-up, hourly (C-12.2) and on every auth failure" in rules
@@ -1044,13 +1324,13 @@ def test_adr_0009_amendment_supersedes_the_24_h_soak_with_the_contract_overlap()
     [amendment] = re.findall(
         r"^## Amendment \d+ \(2026-10-16, #2417;[^\n]*\n(.*?)(?=^## |\Z)", adr, flags=re.M | re.S
     )
-    text = _fold(amendment)
-    assert "Supersedes Design §5's" in text
-    assert "soak for 24 h" in text
-    assert f"one fixed {grace} s" in text
-    assert "US-ACCT-004" in text
-    assert "`rotateApiKey`" in text
-    assert "E27-T05" in text
+    assert _fold(amendment) == (
+        'Supersedes Design §5\'s "soak for 24 h". The rotation overlap is one fixed '
+        f"{grace} s: the `api_key_rotations.grace_seconds` default and US-ACCT-004's 15-minute "
+        "drain window (`rotateApiKey` in `docs/plan/22-api-openapi.yaml`). The rest of §5 (keys "
+        'are created in the Bybit dashboard, not "via the Bybit API"; the old key is revoked '
+        "locally only) stays with E27-T05."
+    )
 
 
 # --- No reveal path (SR-E27-11) -----------------------------------------------------------------

@@ -610,7 +610,12 @@ class ApiKey(BaseModel):
         ),
     ]
     label: Annotated[str | None, Field(max_length=80)] = None
-    status: Literal["pending", "active", "rotating", "revoked", "expired", "invalid"]
+    status: Annotated[
+        Literal["pending", "active", "rotating", "revoked", "expired", "invalid"],
+        Field(
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+        ),
+    ]
     read_only: bool | None = None
     expires_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
@@ -5656,7 +5661,12 @@ class Key(BaseModel):
             pattern="^\\.\\.\\.[A-Za-z0-9]{4}$",
         ),
     ] = None
-    status: Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None = None
+    status: Annotated[
+        Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None,
+        Field(
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (retCode `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+        ),
+    ] = None
     age_days: int | None = None
     expires_at: AwareDatetime | None = None
     withdrawal_permission_present: Annotated[
@@ -5828,6 +5838,12 @@ class AccountConsequenceSummary(BaseModel):
 
 class OpenExposureProblem(Problem):
     consequences: AccountConsequenceSummary | None = None
+    remedy: Annotated[
+        Literal["leave_positions", "fix_key"] | None,
+        Field(
+            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
+        ),
+    ] = None
 
 
 class KeyVerification(BaseModel):
