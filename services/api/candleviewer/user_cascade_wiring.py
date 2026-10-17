@@ -80,7 +80,8 @@ class RuleDisarmAdapter:
         # both pass its `can()` pre-check while the chart is armed and both send DISARM: the second
         # is parked by `onUnhandled: defer` (CV-C06) and `rule.disarmed` is written twice. Held, the
         # second finds the rule disarmed and takes `set_mode`'s state-based no-op. Disarms are rare
-        # and a few writes each, so one lock does; a lock per rule would need cleaning up.
+        # and a few writes each, so one lock does; a lock per rule would need cleaning up. The lock
+        # is the instance's: build one adapter per process.
         self._lock = asyncio.Lock()
 
     async def armed_rule_ids(self, user_id: uuid.UUID) -> tuple[str, ...]:

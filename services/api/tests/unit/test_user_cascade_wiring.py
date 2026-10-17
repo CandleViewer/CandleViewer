@@ -141,9 +141,10 @@ async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_a
     """The adapter acts as the Owner, who sees every rule, so the id it is given is not trusted:
     it disarms a rule only if its `owner_user_id` is the user being disabled. Another owner's
     armed rule, or an id that names no rule, is refused with one error line that names it; the
-    rule stays armed and nothing is audited, and no one reaches the manager with it."""
+    rule stays armed and nothing is audited, as the manager is never asked to change it."""
     e = _Engine()
     theirs = await e.rule(_B, "b-one")
+    audited = list(e.audits)
     rid = "no-such-rule" if missing else theirs
     with capture_logs() as logs, pytest.raises(RuleNotOwned):
         await e.disarm(rid)
@@ -154,7 +155,7 @@ async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_a
     assert line["log_level"] == "error"
     assert await e.mode(theirs) == ("armed", None)
     assert e.manager.lifecycle.leaf(theirs) == "armed"
-    assert e.disarmed() == []
+    assert e.audits == audited
 
 
 def test_idempotency_key_deterministic() -> None:
@@ -204,7 +205,7 @@ async def test_overlapping_disarms_of_one_rule_write_one_record_and_park_nothing
     rule arms again the first time it is asked to."""
     e = _Engine()
     rid = await e.rule(_A, "a-one")
-    later = _T0 + timedelta(milliseconds=3)  # a different key: only the lock can stop the second
+    later = _T0 + timedelta(milliseconds=3)  # another key: no replay of a seen key saves it
     await asyncio.gather(e.disarm(rid), e.disarm(rid, at=later))
     assert e.disarmed() == [(rid, str(_OWNER), "DISARM")]
     assert e.manager.lifecycle._charts[rid].deferred_count == 0
