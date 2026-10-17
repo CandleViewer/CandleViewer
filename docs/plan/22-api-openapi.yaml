@@ -1281,6 +1281,8 @@ paths:
                       email: "alice@example.com"
                       roles: [manager]
                       status: active
+                      mfa_enabled: true
+                      mfa_required: true
                     permissions: [accounts:read, marketdata:read, orders:write, killswitch:write]
                     account_scope: ["a1000000-0000-4000-8000-000000000002"]
                     server_time: "2026-09-14T10:52:40.002Z"
@@ -1396,6 +1398,8 @@ paths:
                       email: "alice@example.com"
                       roles: [manager]
                       status: active
+                      mfa_enabled: true
+                      mfa_required: true
                     permissions: [accounts:read, marketdata:read, orders:write, killswitch:write]
                     account_scope: ["a1000000-0000-4000-8000-000000000002"]
                     server_time: "2026-09-14T10:53:10.418Z"
