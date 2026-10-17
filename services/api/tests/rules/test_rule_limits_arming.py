@@ -24,25 +24,12 @@ from candleviewer.rules import manager as rules_manager
 from candleviewer.rules.arming import ArmingFacts, Refusal, check_arming
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.limits import BUDGET_FIELDS, LIMIT_CAPS, LIMIT_DEFAULTS
-from candleviewer.rules.manager import (
-    Actor,
-    InMemoryRuleStore,
-    RuleError,
-    RuleRow,
-    RulesManager,
-)
+from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RuleRow, RulesManager
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules.test_rule_limits import DAY, HOUR, MANAGER, ON_A, ON_B, OWNER, Audits
+from tests.rules.test_rules_manager import _facts
 from tests.rules.test_rules_routes import _Env, _ir
-
-ACC_A = "00000000-0000-4000-8000-0000000000a1"
-ACC_B = "00000000-0000-4000-8000-0000000000b2"
-ON_A = {"level": "account", "account_ids": [ACC_A]}
-ON_B = {"level": "account", "account_ids": [ACC_B]}
-OWNER = Actor("u-owner", "s-owner", is_owner=True)
-MANAGER = Actor("u-mgr", "s-mgr", frozenset({"rules:write"}), frozenset({ACC_A}))
-HOUR, DAY = BUDGET_FIELDS
-Audits = list[tuple[str, dict[str, Any]]]
 
 
 class _Recorder:
@@ -124,32 +111,28 @@ async def _seed(
     return rid
 
 
-def _facts(**kw: Any) -> ArmingFacts:
-    base: dict[str, Any] = {
-        "has_valid_active_version": True,
-        "validation_errors": 0,
-        "open_safety_warnings": 0,
-        "simulated_on_ir_hash": True,
-        "simulation_fires": 5,
-        "simulation_hours": 0.0,
-        "environments": ("demo",),
-        "sends_orders": False,
-        "has_flatten_all": False,
-    }
-    return ArmingFacts(**{**base, **kw})
+def _facts_raised(**kw: Any) -> ArmingFacts:
+    """Arming facts of a version whose daily budget is above its default."""
+    return _facts(limits_above_default=(DAY,), **kw)
 
 
-def test_check_arming_refuses_a_raised_budget_after_the_promotion_gate_unless_owner() -> None:
-    raised = {"limits_above_default": (DAY,)}
-    gate = check_arming(_facts(simulation_fires=0, **raised))
+def test_check_arming_runs_the_promotion_gate_before_the_raised_budget() -> None:
+    gate = check_arming(_facts_raised(simulation_fires=0))
     assert gate is not None and gate.code == "promotion_gate"
-    assert check_arming(_facts(sends_orders=True, **raised)) == Refusal(
+
+
+def test_check_arming_refuses_a_non_owner_a_raised_budget_naming_its_fields() -> None:
+    """Ahead of the `orders:write` check, which this rule would also fail."""
+    assert check_arming(_facts_raised(sends_orders=True)) == Refusal(
         "forbidden",
         403,
         "Only the Owner can arm a rule whose action budget is above the default.",
         (DAY,),
     )
-    assert check_arming(_facts(is_owner=True, **raised)) is None
+
+
+def test_check_arming_lets_the_owner_arm_a_raised_budget() -> None:
+    assert check_arming(_facts_raised(is_owner=True)) is None
 
 
 async def test_arm_manager_above_default_version_is_403_audited_and_chart_untouched() -> None:
@@ -236,21 +219,26 @@ async def test_arming_past_a_boundary_is_refused(
     assert refused.value.code == code
 
 
-async def test_rearm_after_a_kill_holds_the_version_to_the_budget() -> None:
-    """HUMAN_REARM runs the same check: a refused re-arm spends no step-up and stays killed."""
+async def test_rearm_after_a_kill_refuses_a_manager_a_raised_budget_and_spends_no_step_up() -> None:
+    """HUMAN_REARM runs the same check, before the chart: the refused re-arm stays killed."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR], mode="disabled", reason="kill_switched")
-    mine, owners = _StepUps(), _StepUps()
+    mine = _StepUps()
     manager = Actor("u-mgr", "s-mgr", MANAGER.perms, MANAGER.granted_accounts, consume_step_up=mine)
     with pytest.raises(RuleError) as refused:
-        await m.set_mode(rid, "armed", manager, "rearm-1")
+        await m.set_mode(rid, "armed", manager, "rearm")
     assert (refused.value.status, refused.value.code) == (403, "forbidden")
     assert mine.used == 0 and m.lifecycle.leaf(rid) == "kill_switched"
+
+
+async def test_rearm_after_a_kill_lets_the_owner_arm_a_raised_budget_with_one_step_up() -> None:
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR], mode="disabled", reason="kill_switched")
+    owners = _StepUps()
     owner = Actor("u-owner", "s-owner", is_owner=True, consume_step_up=owners)
-    await m.set_mode(rid, "armed", owner, "rearm-2")
+    await m.set_mode(rid, "armed", owner, "rearm")
     assert owners.used == 1 and m.lifecycle.leaf(rid) == "armed"
-    assert [a for a, _ in rec.audits] == ["rule.mode_refused", "rule.armed"]
-    armed = rec.audits[-1][1]
+    (armed,) = [p for a, p in rec.audits if a == "rule.armed"]
     assert armed["b9_event"] == "HUMAN_REARM"
     assert armed["limits_above_default"] == {
         HOUR: {"default": LIMIT_DEFAULTS[HOUR], "value": LIMIT_CAPS[HOUR]}

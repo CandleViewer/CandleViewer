@@ -373,3 +373,16 @@ def test_ac_o_manager_cannot_arm_a_raised_action_budget() -> None:
     assert low.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
     assert [p["code"] for a, p in owner.audits if a == "rule.mode_refused"] == ["forbidden"]
     assert "rule.armed" not in _audit_actions(owner)
+
+
+def test_ac_o_a_rule_armed_above_the_cap_before_the_caps_is_disarmed_when_read() -> None:
+    """Abuse case o, a rule armed above a hard cap before the caps existed (#3232, decision 9):
+    never clamped; reading it disarms it, audited with the reason `limits_above_cap`."""
+    day = "max_fires_per_day"
+    e = _Env()
+    rid = e.create()
+    row = e.mgr._s._rows[rid]  # type: ignore[attr-defined]  # stored before the caps existed
+    row.versions[0].ir["limits"][day] = LIMIT_CAPS[day] + 1
+    row.mode = "armed"
+    assert e.c.get(f"/rules/{rid}").json()["mode"] == "disabled"
+    assert [p["reason"] for a, p in e.audits if a == "rule.disarmed"] == ["limits_above_cap"]
