@@ -13,13 +13,16 @@ a WS snapshot source reads `latest` and `version`.
   so its generation is never stale (§8.2 generation swap). Generations are opaque epochs: none is
   assumed, and a series has none until an emission or a read names one. Naming the first is not a
   swap; a change of generation is, and leaves the series not `hydrated`, so the new generation's
-  rows are read (ADR-0033). Resets are counted by cause (`bars_series_resets_total`), gaps (below)
-  in `bars_series_gaps_total`. A re-close of a bar the ring holds takes that bar's slot there.
+  rows are read (ADR-0033). The sink counts resets by cause (`bars_series_resets_total`) and gaps
+  (below, `bars_series_gaps_total`); a hold's ring replay and a read's fold count neither. A
+  re-close of a bar the ring holds takes that bar's slot there.
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
   bars it held (those newer than the rows, or replacing a bar they hold, each with its build
   mark), the closes seen just before and during the read that re-close a bar now held, and the
-  forming bar. It keeps one generation: the live one, else the newest row's, else none yet. One
+  forming bar. It keeps one generation: the one the series names (an emission's or an earlier
+  read's), else the newest row's, else none yet. A read never replaces a named one: only an
+  emission swaps it, so the WS publisher sees every generation swap the store makes. One
   read at a time per series: a concurrent `ensure` waits for it, and takes it over if its reader
   was cancelled. A failed read (`bars_series_hydrate_failed_total`) leaves the series as it was;
   a degraded one (SR-E12-11: served, never final) or a live swap leaves it not `hydrated`. An
@@ -27,11 +30,14 @@ a WS snapshot source reads `latest` and `version`.
   `retry_after_s` after the last read; nothing else starts a read. Without a reader, a series
   keeps only what the store has seen live.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. A hold collected
-  unreleased (its consumer vanished) is released as of its collection: its finalizer only queues
-  it, and the next `ensure` applies the queue before its sweep. The last release keeps the
-  series `release_grace_s` (the builder's grace, US-MKT-005), so a quick resubscribe finds it
-  as the sink kept it and, while it is `hydrated` and not `gapped`, reads nothing (BR-38); the
-  next `ensure` sweeps the expired. At most `MAX_HISTORY` closed bars per series and `MAX_SERIES`
+  unreleased is released as of its collection: its finalizer only queues it, and the next
+  `ensure` applies the queue before its sweep. An unheld series is kept `release_grace_s` (the
+  builder's grace, US-MKT-005) from its latest release, explicit or queued, so a quick
+  resubscribe finds it as the sink kept it and, while it is `hydrated` and not `gapped`, reads
+  nothing (BR-38); the next `ensure` sweeps the expired. A hold that never reached its lease
+  (refused, or its `ensure` failed or was cancelled) is released with no grace of its own
+  (`release(grace=False)`): it frees its slot at once, or when an earlier release's grace ends.
+  At most `MAX_HISTORY` closed bars per series and `MAX_SERIES`
   series kept, held or in grace (the process-wide spec cap); rings for at most `MAX_SERIES`
   series, the least recently closed dropped first; at most `MAX_HISTORY` closes kept for a read
   in flight, the oldest shed first. The sink keeps an expired series current until that sweep.
@@ -114,8 +120,8 @@ class Latest(NamedTuple):
 class Hold:
     """One `ensure`'s claim on a series. `release` drops it once: a second call is a no-op, so a
     double release never drops another caller's hold. A hold collected unreleased runs `lost`
-    (default: `drop`) once instead (`weakref.finalize`, which `release` detaches), so a consumer
-    that vanished without a release cannot pin its series."""
+    once instead (`weakref.finalize`, which `release` detaches). `lost` is required: a collection
+    may run on any thread, so the store's only queues the release for its loop."""
 
     __slots__ = ("__weakref__", "_drop", "_finalizer", "spec_hash", "symbol")
 
@@ -123,18 +129,19 @@ class Hold:
         self,
         symbol: str,
         spec_hash: str,
-        drop: Callable[[], None],
-        lost: Callable[[], None] | None = None,
+        drop: Callable[[bool], None],
+        lost: Callable[[], None],
     ) -> None:
         self.symbol, self.spec_hash = symbol, spec_hash
-        self._drop: Callable[[], None] | None = drop
-        self._finalizer = weakref.finalize(self, lost or drop)
+        self._drop: Callable[[bool], None] | None = drop
+        self._finalizer = weakref.finalize(self, lost)
 
-    def release(self) -> None:
+    def release(self, *, grace: bool = True) -> None:
+        """`grace=False`: the hold never reached its lease, so it starts no grace of its own."""
         self._finalizer.detach()
         drop, self._drop = self._drop, None
         if drop is not None:
-            drop()
+            drop(grace)
 
 
 def _log() -> Any:
@@ -160,6 +167,8 @@ class _Series:
     gapped: bool = False
     #: Store-clock time a released series is freed at (None while held).
     expires_at: float | None = None
+    #: Store-clock time of its latest release, explicit or queued: its grace counts from it.
+    released_at: float = float("-inf")
     #: index -> `build_version` of the held bars built below the running code: a read sets its
     #: rows', a re-read carries each held bar's own, and a live re-close, the bar leaving the
     #: window or a reset drops one. Its indexes are always among `closed`'s.
@@ -182,15 +191,17 @@ def _holds(s: _Series, bar: Bar) -> bool:
     return held is not None and held.open_time == bar.open_time
 
 
-def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
+def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) -> bool:
     """Fold one emission of `s.generation` into `s` (module docstring); False when it changes
-    nothing. With `gaps`, a close that skips indexes past the newest one marks `s` gapped."""
+    nothing. With `gaps`, a close that skips indexes past the newest one marks `s` gapped. Only
+    the sink passes `count`: a hold's ring replay and a read's fold count no reset or gap."""
     bar, i = u.bar, u.bar.index
     last = next(reversed(s.closed), -1)
     if u.kind != "close":
         if i <= last:
             _clear(s)  # a bar at or below the newest close re-opened: restarted
-            bars_series_resets_total.labels(reason="restart").inc()
+            if count:
+                bars_series_resets_total.labels(reason="restart").inc()
         s.forming = bar
         return True
     if _holds(s, bar):
@@ -201,10 +212,12 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
         if u.amended:
             return False  # an amended close of a bar this window does not hold
         _clear(s)  # another bar at or below the newest index: the builder restarted
-        bars_series_resets_total.labels(reason="restart").inc()
+        if count:
+            bars_series_resets_total.labels(reason="restart").inc()
     elif gaps and s.closed and i > last + 1:
         s.gapped = True  # emitted before the hold and not stored yet, or lost: re-read
-        bars_series_gaps_total.inc()
+        if count:
+            bars_series_gaps_total.inc()
         _log().warning(
             "bars_series_gap", spec_hash=bar.spec_hash, symbol=bar.symbol,
             from_index=last + 1, to_index=i - 1,
@@ -217,18 +230,20 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
     return True
 
 
-def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
-    """A sink emission. One live builder per series: any other generation, lower or higher, is
-    the series' new one (§8.2 generation swap), and the first emission names it."""
+def _live(s: _Series, u: BarUpdate, generation: int, *, count: bool = False) -> bool:
+    """An emission (`count`: the sink's, not a hold's ring replay). One live builder per series:
+    any other generation, lower or higher, is the series' new one (§8.2 generation swap), and the
+    first emission names it."""
     if generation != s.generation:
         if s.generation is not None:  # naming the first one is not a swap (23 §8.2)
             s.hydrated = False  # the new generation's rows are read again (ADR-0033)
-            bars_series_resets_total.labels(reason="generation_swap").inc()
+            if count:
+                bars_series_resets_total.labels(reason="generation_swap").inc()
         _clear(s)
         s.generation = generation
-        _apply(s, u)
+        _apply(s, u, count=count)
         return True  # the reset changed the series, even if the emission itself is ignored
-    return _apply(s, u)
+    return _apply(s, u, count=count)
 
 
 def _update(kind: str, bar: Bar) -> BarUpdate:
@@ -288,7 +303,7 @@ class SeriesStore:
                 self._remember(key, (u, gen))
                 if s is not None and s.replay is not None:
                     s.replay.append((u, gen))
-            if s is not None and _live(s, u, gen):
+            if s is not None and _live(s, u, gen, count=True):
                 s.version = next(self._versions)
 
     def _remember(self, key: Key, close: Close) -> None:
@@ -306,14 +321,14 @@ class SeriesStore:
     async def ensure(self, symbol: str, spec: BarSpec) -> Hold:
         """Keep the series and bring it up to date (module docstring); release the `Hold` when
         done with it. Raises `SpecCapExceeded` (counted, nothing held) when `MAX_SERIES` series
-        are kept; a cancelled `ensure` holds nothing either."""
+        are kept; a failed or cancelled `ensure` holds nothing either and starts no grace."""
         s = self._keep((symbol, spec.spec_hash))
-        hold = Hold(symbol, spec.spec_hash, functools.partial(self._release, s),
+        hold = Hold(symbol, spec.spec_hash, functools.partial(self._release, s, None),
                     functools.partial(self._lose, s))  # fmt: skip
         try:
             await self._settle(s, symbol, spec)
         except BaseException:
-            hold.release()
+            hold.release(grace=False)  # never returned: no lease can follow, so no grace
             raise
         return hold
 
@@ -338,10 +353,14 @@ class SeriesStore:
         s.expires_at = None
         return s
 
-    def _release(self, s: _Series, at: float | None = None) -> None:
+    def _release(self, s: _Series, at: float | None = None, grace: bool = True) -> None:
+        """Drop one hold, released at `at` (None: now). Unheld, `s` is kept `release_grace_s`
+        from its latest release; `grace=False` (a lease never reached) is no release of its own."""
+        if grace:
+            s.released_at = max(s.released_at, self._clock() if at is None else at)
         s.refs -= 1
         if not s.refs:
-            s.expires_at = (self._clock() if at is None else at) + self._grace_s
+            s.expires_at = s.released_at + self._grace_s
 
     def _lose(self, s: _Series) -> None:
         """A `Hold`'s finalizer: O(1), never awaits. A collection can run on any thread, so it
@@ -433,21 +452,20 @@ class SeriesStore:
         s.retry_at = self._clock() + self._retry_after_s  # a completed read, not a cancelled one
 
     def _fold(self, s: _Series, tail: BarTail) -> None:
-        """Rebuild `s` in one generation: the live one (`s.generation`, when the sink saw a forming
-        bar or a recent close), else the newest row's (the highest at the newest `ts`, until
-        ADR-0033's pointer decides), else unchanged: the rows, the bars `s` held that are newer by
+        """Rebuild `s` in one generation: the one it names (an emission's or an earlier read's: a
+        read never replaces it), else the newest row's (the highest at the newest `ts`, until
+        ADR-0033's pointer decides), else none: the rows, the bars `s` held that are newer by
         key or re-close a row, the replayed re-closes of bars now held, then the forming bar."""
         replay: Sequence[Close] = s.replay or ()
-        forming = s.forming
-        gen = s.generation  # the live one: whatever the sink saw named it (none: nothing seen)
-        if forming is None and not replay and tail.bars:
-            gen = tail.bars[-1][0]  # nothing seen live: the newest row's
-        held, prior = (list(s.closed.values()), dict(s.stale)) if gen == s.generation else ([], {})
+        forming, held, prior = s.forming, list(s.closed.values()), dict(s.stale)
+        gen = s.generation  # only an emission swaps a named one: the publisher sees each swap
+        if gen is None and tail.bars:
+            gen = tail.bars[-1][0]  # none named yet: the newest row's
         _clear(s)
         s.generation, s.gapped = gen, False
         for g, bar in tail.bars:
             if g != gen:
-                continue  # another epoch, or an unflipped ADR-0033 rebuild: the live one wins
+                continue  # another epoch, or an unflipped ADR-0033 rebuild: the named one wins
             _apply(s, _update("close", bar), gaps=False)
             built = tail.builds.get((g, bar.index, bar.open_time))
             if built is not None:

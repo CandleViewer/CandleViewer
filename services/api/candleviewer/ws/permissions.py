@@ -614,7 +614,8 @@ class ConnectionAuthz:
         now = self.services.clock()
         hold, sub.series_hold = sub.series_hold, None
         if hold is not None:  # first: a lease release below can raise (#2735)
-            hold.release()
+            # A lease never taken (refused, or the connection ended mid-subscribe): no grace.
+            hold.release(grace=sub.bar_lease is not None)
         for key in sub.upstream:
             self.services.upstream.release(key, consumer, now)
         if sub.bar_lease is not None and self.services.bars is not None:
@@ -622,7 +623,7 @@ class ConnectionAuthz:
         sub.upstream, sub.bar_lease = (), None
 
     def release_all(self) -> None:
-        """Connection closed: release every upstream ref, bar lease and series hold (grace applies).
+        """Connection closed: release every upstream ref, bar lease and series hold, as in `_drop`.
         Each subscription is released under its own guard: one whose release raises (`BarsError`,
         for a lease another connection's failed `register` dropped) is logged and the
         subscriptions after it are still released, not left holding their leases for good."""

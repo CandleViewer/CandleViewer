@@ -1061,13 +1061,14 @@ def test_bars_volume_param_above_its_ceiling_is_refused() -> None:
 class _Store:  # `SeriesHolds` fake: `ensure` writes to the shared `log`; a `Hold` records release
     def __init__(self, log: list[str], fail: Exception | None = None) -> None:
         self.log, self.fail = log, fail
-        self.released: list[str] = []
+        self.released: list[tuple[str, bool]] = []  # (symbol, grace)
 
     async def ensure(self, symbol: str, spec: BarSpec) -> Hold:
         if self.fail is not None:
             raise self.fail
         self.log.append("ensure")
-        return Hold(symbol, spec.spec_hash, lambda: self.released.append(symbol), lambda: None)
+        released = self.released
+        return Hold(symbol, spec.spec_hash, lambda g: released.append((symbol, g)), lambda: None)
 
 
 class _LoggedBars(_Bars):
@@ -1096,7 +1097,7 @@ def test_a_live_bars_sub_holds_its_series_before_its_lease_and_unsub_releases_it
     assert _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS)[0]["ok"]
     assert store.log == ["ensure", "register", "register"]  # footprint and replay hold nothing
     conn.unsubscribe("bars.BTCUSDT.time.5")
-    assert store.released == ["BTCUSDT"]
+    assert store.released == [("BTCUSDT", True)]  # leased: the store's grace applies
 
 
 @pytest.mark.parametrize(
@@ -1110,7 +1111,7 @@ def test_a_refused_lease_releases_the_series_hold(fail: Exception, ch: str, code
     conn, store, _ = _holding(_LoggedBars([], fail))  # `check` passes: refused after the hold
     (r,) = _sub(conn, ch)
     assert (r["ok"], r["error"]["code"], conn.by_id) == (False, code, {})
-    assert store.released == ["BTCUSDT"]
+    assert store.released == [("BTCUSDT", False)]  # its lease refused: it frees its slot at once
 
 
 def test_a_full_series_store_is_a_subscription_limit_and_takes_no_lease() -> None:
@@ -1148,7 +1149,7 @@ def test_a_cap_met_during_ensure_is_still_refused_and_the_hold_freed(tmp_path: P
     bars, store = make_set(tmp_path, caps=SpecCaps(per_user=1)), SeriesStore(tail)
     (r,) = _sub(ConnectionAuthz(_mgr(A), _services(bars=bars, series=store)), "bars.BTCUSDT.time.5")
     assert (r["error"]["code"], bars._leases.keys()) == ("subscription_limit", (("ETHUSDT", "x"),))
-    assert [s.refs for s in store._series.values()] == [0]  # released: in its grace
+    assert [(s.refs, s.expires_at) for s in store._series.values()] == [(0, float("-inf"))]
 
 
 def test_release_all_releases_every_series_hold_even_when_a_lease_release_raises() -> None:
@@ -1163,7 +1164,7 @@ def test_release_all_releases_every_series_hold_even_when_a_lease_release_raises
     conn, store, _ = _holding(_FirstReleaseRaises([]))
     _sub(conn, "bars.BTCUSDT.time.5", "bars.ETHUSDT.time.5")
     conn.release_all()
-    assert store.released == ["BTCUSDT", "ETHUSDT"] and conn.by_id == {}
+    assert store.released == [("BTCUSDT", True), ("ETHUSDT", True)] and conn.by_id == {}
 
 
 def test_replay_footprint_param_is_bounded_with_no_bar_service_and_replay_bars_is_unknown() -> None:
