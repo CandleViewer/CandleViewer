@@ -185,19 +185,3 @@ class Conn:
     def take(self) -> list[dict[str, Any]]:
         out, self.out = self.out, []
         return out
-
-
-#: The owner `snapMeta` keys #2595 adds, which this base's schema does not know yet.
-OWNER_META_KEYS = frozenset({"spec_hash", "build_version", "include_delta"})
-
-
-class OwnerMetaConn(Conn):
-    """`Conn` that schema-checks every frame with the owner keys left out of `meta`, so the
-    server's own keys stay validated."""
-
-    def push(self, frame: dict[str, Any]) -> None:
-        # TODO(#399): drop once the A2 contract slice (widened snapMeta) merges.
-        checked = {k: v for k, v in frame.items() if k != "meta"}
-        server = {k: v for k, v in frame.get("meta", {}).items() if k not in OWNER_META_KEYS}
-        validate({**checked, "meta": server} if server else checked)
-        self.out.append(frame)

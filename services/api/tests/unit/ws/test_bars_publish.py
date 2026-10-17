@@ -1,5 +1,4 @@
-"""E12-T06 slice D1b (#399): the bars delta publisher, `ws/bars_publish.py`. Frames are
-schema-checked without the owner keys (this `snapMeta` predates #2595), asserted directly."""
+"""E12-T06 slice D1b (#399): the bars delta publisher, `ws/bars_publish.py`."""
 
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ from candleviewer.ws.binary import decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription, handle_sub
 from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody
-from tests.unit.ws._seq_support import Clock, OwnerMetaConn, Source
+from tests.unit.ws._seq_support import Clock, Conn, Source
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
 CH = "bars.BTCUSDT.time.5"
@@ -62,13 +61,13 @@ def _em(*updates: BarUpdate, generation: int = 0, spec: BarSpec = SPEC) -> BarEm
 
 def _world(
     *opts: Any, scales: tuple[int, int] | None = (1, 3), src: Source | None = None, **kw: Any
-) -> tuple[SequencingHub, BarsPublisher, list[tuple[OwnerMetaConn, Subscription]]]:
+) -> tuple[SequencingHub, BarsPublisher, list[tuple[Conn, Subscription]]]:
     """One connection per `opts`, each subscribed to `CH` and past its snapshot."""
     src = src or Source()
     src.bodies["bars"] = SnapshotBody(EMPTY)
     hub, subs = SequencingHub(), []
     for o in opts:
-        conn = OwnerMetaConn(src)
+        conn = Conn(src)
         hub.register(conn.authz, conn.emitter)
         subs.append((conn, conn.sub({"ch": CH, "opts": o})[1]))
         conn.take()
@@ -325,7 +324,7 @@ async def test_a_swap_the_store_cannot_snapshot_yet_is_flushed_on_a_later_emissi
 async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> None:
     src = Source()
     hub, pub, _ = _world(src=src)
-    conn = OwnerMetaConn(src)
+    conn = Conn(src)
     hub.register(conn.authz, conn.emitter)
 
     class Leases:  # the builder replays its tape through the router while `sub` is in flight
