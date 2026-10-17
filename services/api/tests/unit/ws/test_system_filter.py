@@ -20,6 +20,7 @@ from candleviewer.ws.system_filter import (
     NEUTRAL_COMPONENT,
     NEUTRAL_FIELDS,
     NEUTRAL_KILL_SWITCH,
+    kill_switch_view,
     system_view,
 )
 from tests.unit.ws._seq_support import validate
@@ -126,6 +127,13 @@ def test_kill_switch_accounts_are_cut_to_the_connections_account_scope(
         {"kind": "kill_switch", "kill_switch": state}, principal("viewer", grants=grants)
     )
     assert view == {"kind": "kill_switch", "kill_switch": state | {"exchange_account_ids": kept}}
+
+
+@pytest.mark.parametrize("who", [OWNER, MANAGER, VIEWER, DENY_ALL])
+def test_kill_switch_view_equals_the_system_frames_kill_switch(who: PrincipalSnapshot) -> None:
+    state = SAMPLES["kill_switch"][0]["kill_switch"]  # what `auth_ok` carries is the same cut
+    frame = system_view({"kind": "kill_switch", "kill_switch": state}, who)
+    assert kill_switch_view(state, who) == (None if frame is None else frame["kill_switch"])
 
 
 @pytest.mark.parametrize(

@@ -163,7 +163,7 @@ from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
-from candleviewer.ws.system_filter import system_view
+from candleviewer.ws.system_filter import kill_switch_view, system_view
 
 WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
@@ -996,11 +996,13 @@ def make_ws_router(
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
                 conn.pipeline.attach(conn.authz, conn.emitter)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
+        principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
+        view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
         payload = auth_ok_payload(
-            conn.authz.principal,  # the applied snapshot: the newest, never the stale read
+            principal,
             session_id=session_id,
             token_expires_at_ms=expires_ms,
-            kill_switch=killed(),
+            **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
         # E27-T02: current degraded/read-only state, so a client connecting after the

@@ -9,6 +9,7 @@ Viewer only the fields `NEUTRAL_FIELDS` lists for its `kind`, health components 
 (`04-security-program.md` §7.2.2 row 48) and a kill switch without who engaged it or why, its
 accounts cut to the socket's `account_scope`. A body with nothing to leave out is passed on as
 is (no copy); nothing here is audited or counted, as a left-out field is the contract.
+`kill_switch_view` is that kill-switch cut on its own, for `auth_ok.kill_switch` (§4.3).
 """
 
 from __future__ import annotations
@@ -66,6 +67,19 @@ def system_view(body: object, principal: PrincipalSnapshot | None) -> Mapping[st
         if key not in fields or not _is_neutral(key, body[key]):
             return _project(body, fields, principal)
     return body
+
+
+def kill_switch_view(
+    state: Mapping[str, Any], principal: PrincipalSnapshot
+) -> Mapping[str, Any] | None:
+    """What `principal` receives of the kill-switch `state`, in `auth_ok` (§4.3) as in a `system`
+    frame: `state` itself for the Owner, a copy with only its role-neutral fields and its own
+    accounts for a Manager or Viewer, `None` (nothing) for a principal with no role."""
+    if principal.is_owner:
+        return state
+    if principal.roles.isdisjoint(SCOPED_ROLES):
+        return None
+    return _kill_switch_view(state, principal)
 
 
 def _is_neutral(key: str, value: object) -> bool:

@@ -21,8 +21,7 @@ from tests.unit.ws._seq_support import USER, validate
 pytestmark = pytest.mark.chaos
 
 BOUND_S = 1.0  # WS-E04 / AC-26
-STATE = {"engaged": True, "scope": "global", "reason": "chaos"}  # as the producer engages it
-VIEW = {"engaged": True, "scope": "global"}  # what a manager's `system` frame carries (§15.9)
+VIEW = {"engaged": True, "scope": "global"}  # `flip`'s state less its `reason` (§15.9)
 
 
 async def flip(stack: Stack) -> float:
@@ -94,7 +93,7 @@ async def test_s7b_kill_switch_flipped_mid_auth_is_in_the_auth_ok(stack: Stack) 
     release.set()
     await r.until(lambda: r.sessions == 2 and r.synced, "resubscribed")
     auth_oks = [f["p"]["kill_switch"] for f in r.frames if f["t"] == "auth_ok"]
-    assert auth_oks == [{"engaged": False, "scope": "global"}, STATE]  # the live state, not stale
+    assert auth_oks == [{"engaged": False, "scope": "global"}, VIEW]  # live, not stale
     assert not seen(r) and not r.order_entry  # the broadcast missed R; its `auth_ok` carried it
     assert all(c.gaps == [] and c.closes == [] for c in healthy) and r.gaps == []
     assert r.closes == [1006] and len(stack.gateway) == 3

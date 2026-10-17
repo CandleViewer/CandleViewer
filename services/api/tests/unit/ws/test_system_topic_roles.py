@@ -1,6 +1,7 @@
 """SR-188 (#2175): the gateway queues each `system` frame as the socket's principal may see it at
 that moment (`23-ws-protocol.md` §15.9, S3), on all three paths: a hub broadcast, the notices
-after the first `auth_ok`, and the §9.4 planned shutdown.
+after the first `auth_ok`, and the §9.4 planned shutdown. The kill-switch state in `auth_ok` is
+cut the same way, on a first `auth` and on a re-`auth` (§4.3).
 
 The real `/ws` router runs on the test's loop behind a fake socket: no threads, no sleeps. A client
 `ping` is the barrier: one FIFO queue (flag off), so its `pong` follows every frame queued before
@@ -28,6 +29,8 @@ BASE_MS = 1_789_132_262_000
 ORIGIN = "http://testserver"
 KILL, KILL_NEUTRAL = SAMPLES["kill_switch"]
 NOTICE, _ = SAMPLES["notice"]
+assert KILL_NEUTRAL is not None
+STATE, VIEW, GONE = KILL["kill_switch"], KILL_NEUTRAL["kill_switch"], "no kill_switch"
 
 
 def _as(user: uuid.UUID, *roles: str) -> PrincipalSnapshot:
@@ -46,6 +49,7 @@ class _Socket:
         self.scope = {"headers": [(b"origin", ORIGIN.encode())], "subprotocols": ["cv.v1.json"]}
         self.inbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.sent: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.auth_ok: dict[str, Any] = {}  # the first `auth_ok`, as `_Rig.connect` read it
 
     async def accept(self, subprotocol: str | None = None) -> None: ...
 
@@ -86,6 +90,7 @@ class _Rig:
             wall_ms=lambda: BASE_MS,
             tick_s=0.005,
             system_notices=None if notices is None else lambda: list(notices),
+            kill_switch=lambda: STATE,
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)
@@ -99,7 +104,8 @@ class _Rig:
         sock.feed({"t": "hello", "id": "h"})
         assert (await sock.sent.get())["t"] == "welcome"
         sock.feed({"t": "auth", "id": "a", "p": {"access_token": str(principal.user_id)}})
-        assert (await sock.sent.get())["t"] == "auth_ok"
+        sock.auth_ok = await sock.sent.get()
+        assert sock.auth_ok["t"] == "auth_ok"
         return sock
 
     async def close(self) -> None:
@@ -171,4 +177,30 @@ async def test_the_planned_shutdown_notice_goes_through_the_same_filter(
             assert (frame["ch"], frame["p"]["kind"]) == ("system", "shutdown_notice")
             frame = await sock.sent.get()
         assert (frame["t"], frame["p"]["reason"]) == ("bye", "shutdown")
+        await rig.close()
+
+
+@pytest.mark.parametrize(
+    ("first", "then", "want"),
+    [
+        (("owner",), ("manager",), [STATE, VIEW]),
+        (("manager",), ("viewer",), [VIEW, VIEW]),
+        (("viewer",), (), [VIEW, GONE]),
+        ((), ("owner",), [GONE, STATE]),
+    ],
+    ids=["owner-manager", "manager-viewer", "viewer-no-role", "no-role-owner"],
+)
+async def test_auth_ok_carries_the_kill_switch_cut_as_the_system_topic_cuts_it(
+    first: tuple[str, ...], then: tuple[str, ...], want: list[Any]
+) -> None:
+    """The first `auth`, then an in-place re-`auth` under another principal (§4.3): the Owner's
+    is whole, a Manager's and a Viewer's is cut to their own accounts, no role gets none."""
+    rig, user = _Rig(), uuid.uuid4()
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(user, *first))
+        rig.principals[user] = _as(user, *then)
+        sock.feed({"t": "auth", "id": "re", "p": {"access_token": str(user)}})
+        oks = [sock.auth_ok, await sock.sent.get()]
+        assert [ok["t"] for ok in oks] == ["auth_ok"] * 2
+        assert [ok["p"].get("kill_switch", GONE) for ok in oks] == want
         await rig.close()
