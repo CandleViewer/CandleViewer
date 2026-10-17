@@ -356,3 +356,20 @@ def test_ac_o_manager_cannot_raise_a_rules_action_budget() -> None:
     capped = {"ir": _ir(name="capped", limits={hour: LIMIT_CAPS[hour] + 1})}
     assert owner.c.post("/rules", json=capped).status_code == 422
     assert [r["name"] for r in _rules(owner)] == ["form0"]
+
+
+def test_ac_o_manager_cannot_arm_a_raised_action_budget() -> None:
+    """Abuse case o at arming (#3232 slice B): a Manager arming a version the Owner saved above a
+    default is refused and audited, whoever saved it, and the rule stays where it was."""
+    day = "max_fires_per_day"
+    owner = _Env()
+    low = _Env(
+        {"rules:read", "rules:write"}, owner=False, granted=frozenset({str(A)}), mgr=owner.mgr
+    )
+    rid = owner.create(limits={day: LIMIT_DEFAULTS[day] + 1})
+    owner.ready(rid)
+    r = low.mode(rid, "armed", "a")
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert low.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
+    assert [p["code"] for a, p in owner.audits if a == "rule.mode_refused"] == ["forbidden"]
+    assert "rule.armed" not in _audit_actions(owner)

@@ -25,7 +25,13 @@ from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
-from candleviewer.rules.limits import LIMIT_DEFAULTS, above_default, owner_message
+from candleviewer.rules.limits import (
+    LIMIT_CAPS,
+    LIMIT_DEFAULTS,
+    above_cap,
+    above_default,
+    owner_only_errors,
+)
 from candleviewer.rules.validator import validate_rule
 from candleviewer.rules.vocabulary import MetricRegistry
 
@@ -35,6 +41,9 @@ IDEM_CACHE_MAX = 4096
 #: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
 #: which `rules` may not import (a test pins them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
+#: How long a runner tick waits to disarm a rule above a hard cap (#3232, decision 9). Past it
+#: the miss is logged and the next tick tries again, so a stalled writer cannot hold the runner.
+TICK_DISARM_TIMEOUT_S: Final = 2.0
 _ORDER_ACTIONS = frozenset(
     {
         "place_order",
@@ -212,6 +221,15 @@ def _raised_limits(rule: Rule) -> dict[str, Any]:
     return {"limits_above_default": by_field}
 
 
+def _capped_limits(rule: Rule) -> dict[str, Any]:
+    """Audit member for a version whose action budget is above a hard cap (#3232, decision 9):
+    each such field, with its cap and its value; empty when none is."""
+    over = above_cap(rule.limits)
+    if not over:
+        return {}
+    return {"limits_above_cap": {f: {"cap": LIMIT_CAPS[f], "value": v} for f, v in over.items()}}
+
+
 class RulesManager:
     def __init__(
         self,
@@ -298,19 +316,11 @@ class RulesManager:
         if actor.is_owner or not raised:
             return
         await self._refuse_scope(rule_id, op, "limits_owner_only", actor)
-        errors = [
-            {
-                "field": f"limits.{f}",
-                "rule": "owner_only_above_default",
-                "message": owner_message(f),
-            }
-            for f in raised
-        ]
         raise RuleError(
             403,
             "forbidden",
             "Only the Owner can raise a rule's action budget above the default.",
-            errors=errors,
+            errors=owner_only_errors(raised),
         )
 
     async def _guard_system(self, row: RuleRow, actor: Actor, op: str) -> None:
@@ -404,16 +414,25 @@ class RulesManager:
         return out
 
     async def _present(self, row: RuleRow) -> dict[str, Any]:
-        """`_view` + a quarantine force-disarm recorded through the B9 chart (`DISARM`), so
-        a corrupt rule is never left armed in the store or the engine."""
+        """`_view` + a force-disarm recorded through the B9 chart (`DISARM`) of an armed rule
+        the engine must not run, so it is never left armed in the store or the engine: a corrupt
+        one, or one above a hard cap (#3232, decision 9: disarmed, never clamped)."""
         active = next((v for v in row.versions if v.id == row.active_version_id), None)
-        if row.mode == "armed" and active is not None and quarantine_path(active.ir):
-            leaf = await self._leaf(row)
-            payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
-            payload |= {"b9_from": leaf, "b9_event": "DISARM", "reason": "quarantined"}
-            if await self._record_b9(row, "DISARM", "rule.disarmed", payload, reason="quarantined"):
-                await self._bc({"topic": "rules", **payload})
+        if row.mode == "armed" and active is not None:
+            if quarantine_path(active.ir):
+                await self._force_disarm(row, "quarantined", {})
+            elif capped := _capped_limits(Rule.model_validate(active.ir)):
+                await self._force_disarm(row, "limits_above_cap", capped)
         return self._view(row)
+
+    async def _force_disarm(self, row: RuleRow, reason: str, detail: dict[str, Any]) -> None:
+        """B9 `DISARM` of an armed rule, audited as `rule.disarmed` with `reason` and `detail`
+        (no actor: the server does it); the `rules` broadcast carries the reason only."""
+        leaf = await self._leaf(row)
+        payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
+        payload |= {"b9_from": leaf, "b9_event": "DISARM", "reason": reason}
+        if await self._record_b9(row, "DISARM", "rule.disarmed", payload | detail, reason=reason):
+            await self._bc({"topic": "rules", **payload})
 
     @staticmethod
     def _version_view(v: VersionRow, full: bool = False) -> dict[str, Any]:
@@ -656,7 +675,8 @@ class RulesManager:
 
     async def evaluable_rules(self, modes: tuple[str, ...] = ("simulate", "armed")) -> list[Rule]:
         """Active-version IR of every non-deleted rule in `simulate` or `armed` mode (the
-        evaluator runner's work list). Unreadable (quarantined) versions are skipped."""
+        evaluator runner's work list). Unreadable (quarantined) versions are skipped, and so is
+        an armed one above a hard cap, which is disarmed on the way (#3232, decision 9)."""
         out: list[Rule] = []
         for row in await self._s.all():
             if row.deleted or row.mode not in modes:
@@ -665,12 +685,24 @@ class RulesManager:
             if v is None or quarantine_path(v.ir):
                 continue
             try:
-                out.append(
-                    Rule.model_validate({**v.ir, **_owner_field(row.owner), "rule_id": row.id})
-                )
+                rule = Rule.model_validate({**v.ir, **_owner_field(row.owner), "rule_id": row.id})
             except ValidationError:
                 continue
+            if row.mode == "armed" and (capped := _capped_limits(rule)):
+                await self._disarm_on_tick(row, capped)
+                continue
+            out.append(rule)
         return out
+
+    async def _disarm_on_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
+        """The runner skips the rule either way. A disarm that fails or outlasts
+        `TICK_DISARM_TIMEOUT_S` leaves it armed, is logged and is tried again on the next tick,
+        so it never holds or stops the other rules."""
+        try:
+            async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
+                await self._force_disarm(row, "limits_above_cap", capped)
+        except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
+            _log().error("rules.limits_disarm_failed", rule_id=row.id, error=type(lost).__name__)
 
     async def consume_evaluation(self, result: EvaluationResult) -> bool:
         """Evaluator result sink (E35-S02 -> S01). Only rules in `simulate` mode are recorded;
@@ -828,8 +860,11 @@ class RulesManager:
                 "This rule cannot be read by the engine. Export it and repair it first.",
             )
         ev_payload: dict[str, Any] = {"actor": actor.user_id}
+        raised: dict[str, Any] = {}
         if target == "armed" and v is not None:
             ev_payload |= await self._check_arming(row, v, actor, flatten_ack, override_reason)
+            # The armed record, not the `rules` frame, lists a raised budget (04 §8.3 rule 4).
+            raised = _raised_limits(Rule.model_validate(v.ir))
         event = await self.lifecycle.handled_event(
             row.id, row.mode, row.disabled_reason, target, **ev_payload
         )
@@ -857,7 +892,7 @@ class RulesManager:
             payload["override_reason"] = override_reason
         action = {"armed": "rule.armed", "disabled": "rule.disarmed"}.get(target, "rule.simulated")
         if not await self._record_b9(
-            row, event, action, payload, session=actor.session_id, **ev_payload
+            row, event, action, payload | raised, session=actor.session_id, **ev_payload
         ):
             raise RuleError(422, "illegal_transition", _illegal(leaf, target))
         self._metric("rule_mode_transitions_total", {"from": prev, "to": row.mode, "result": "ok"})
@@ -881,9 +916,11 @@ class RulesManager:
         override_reason: str | None,
     ) -> dict[str, Any]:
         """Synchronous arming decision (C-2.21). Raises on refusal; on success returns the
-        server-computed facts the B9 guards read (`permitted` + simulation evidence)."""
+        server-computed facts the B9 guards read (`permitted` + simulation evidence). The
+        version is held to its action budget again (#3232): a hard cap is a validation error
+        for every role, and a raise above a default needs this actor to be the Owner."""
         rule = Rule.model_validate(v.ir)
-        res = validate_rule(rule, self._reg, actor.perms)
+        res = validate_rule(rule, self._reg, actor.perms, limit_caps=True)
         types = {a.type for a in rule.actions}
         sims = v.ir_hash in row.simulated_hashes
         facts = ArmingFacts(
@@ -906,10 +943,13 @@ class RulesManager:
             flatten_all_acknowledged=flatten_ack,
             owner_override_reason=override_reason,
             is_owner=actor.is_owner,
+            limits_above_default=tuple(above_default(rule.limits)),
         )
         refusal = check_arming(facts)
         if refusal:
-            raise RuleError(refusal.status, refusal.code, refusal.message)
+            named = refusal.raised_limits
+            extra = {"errors": owner_only_errors(named)} if named else {}
+            raise RuleError(refusal.status, refusal.code, refusal.message, **extra)
         out: dict[str, Any] = {
             "permitted": True,
             "elevated": True,
