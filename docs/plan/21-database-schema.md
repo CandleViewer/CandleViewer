@@ -629,17 +629,17 @@ CREATE INDEX ix_recovery_unused ON recovery_codes (user_id) WHERE used_at IS NUL
 
 Policy: 10 single-use recovery codes per enrollment; regeneration hard-deletes unused codes and writes `auth.recovery_codes_regenerated`. Expired `mfa_challenges` are deleted nightly (retention 24 h).
 
-#### 3.1.5a `auth_keys` (#2152, migration `00NN_auth_keys`)
+#### 3.1.5a `auth_keys` (#2152, migration `0030_auth_keys`)
 
 The auth keyring of each environment (ADR-0009 Amendment 4): the TOTP sealing key (`totp_seal`)
 and the recovery-code HMAC key (`recovery_hmac`), each 256-bit. M2 generates them, or imports them
 once from the old env settings on `demo` and `testnet` (`origin = 'imported_env'`). A row holds only
 the key wrapped under the KEK of `(env, kek_version)`, so nothing in it opens without the KEK. Data
 class: S for `dek_ref`, Internal for the other columns. Status: designed in #2152 S1; the migration
-lands in S2 and M2 writes the rows from S5b.
+landed in S2 as `0030_auth_keys`; M2 writes the rows from S5b.
 
 ```sql
--- 00NN_auth_keys: the next free slot after 0029 in the single-head queue (re-parent on rebase, C-5.3)
+-- 0030_auth_keys: the next slot after 0029_oms_core in the single-head queue (C-5.3)
 CREATE TABLE auth_keys (
   id          uuid PRIMARY KEY,
   env         exchange_env NOT NULL,       -- no default: the process environment (as kek_versions.env)
@@ -654,6 +654,7 @@ CREATE TABLE auth_keys (
   CONSTRAINT ak_origin      CHECK (origin IN ('generated','imported_env')),
   CONSTRAINT ak_key_version CHECK (key_version >= 1),
   CONSTRAINT ak_kek_version CHECK (kek_version >= 1),
+  CONSTRAINT ak_dek_ref     CHECK (dek_ref ~ '^ak1:[0-9a-f]{120}$'),
   CONSTRAINT ak_env_purpose_key_version UNIQUE (env, purpose, key_version)
 );
 CREATE INDEX ix_auth_keys_env_kek ON auth_keys (env, kek_version);
@@ -675,6 +676,7 @@ CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
   AAD `cv-akey-v1 ‖ environment ‖ purpose ‖ id ‖ kek_version`, where `id` is the row's own id. A
   wrap moved to another row, purpose, environment or `kek_version` fails authentication, and so does
   an `api_keys` `v2:` wrap.
+  `ak_dek_ref` stores nothing else, so a plaintext key cannot be written even by a buggy caller; Postgres still echoes the refused row in its error `DETAIL` and server log, which the store drops (C-12.6).
 - **TOTP seeds** (`mfa_methods.secret_enc`, §3.1.5). A new seal is `nonce(12) ‖ ciphertext ‖ tag(16)`
   of the raw seed (20 bytes today) under the environment's `totp_seal` key, with AAD
   `cv-totp-v1 ‖ environment ‖ user_id`, where `user_id` is the method row's `user_id`. It stores
@@ -702,6 +704,7 @@ CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
   runtime path deletes an auth key, because that strands every seed and digest made under it. The
   owner role and superusers can still bypass both; such a change leaves MFA unavailable, never open,
   because nothing is generated over existing material.
+  The refusal reads `trg_auth_keys_write_once: auth_keys.<column> is write-once; store a new row (ADR-0009 Amendment 4)`.
 - **KEK rotation.** The rotation boot re-wraps both rows of the environment to the new
   `kek_version`, each new wrap verified before a compare-and-set on `kek_version`; the KCV check's
   trial unwrap (§3.2.3a) covers these rows too. `mfa_methods.secret_enc` and
@@ -3389,7 +3392,7 @@ NAMING_CONVENTION = {
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
 | `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
-| `00NN_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, the next free slot after `0029`; the downgrade refuses while any row exists                                                                  |
+| `0030_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                     |
 
 ---
 
