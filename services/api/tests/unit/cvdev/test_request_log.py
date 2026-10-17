@@ -14,7 +14,7 @@ import json
 import os
 import stat
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -137,6 +137,8 @@ _SLOTS: dict[str, Callable[[str], dict[str, Any]]] = {
     "overlays": lambda value: {"overlays": (value,)},
     "order_link_id": lambda value: {"path": ORDER_CREATE, "order": _order(order_link_id=value)},
     "symbol": lambda value: {"path": ORDER_CREATE, "order": _order(symbol=value)},
+    "host_env": lambda value: {"host_env": value},  # a choice refusal echoes no value either
+    "overlays_text": lambda value: {"overlays": value},
 }
 
 
@@ -218,7 +220,7 @@ def test_field_names_avoid_the_redaction_deny_list(log: RequestLog, log_dir: Pat
         {"outcome": "signature_mismatch"},
         {"transport": None},
         {"key_class": None, "signing_key_id": None, "verified": None},
-        {"order": REFERENCE_ORDER},
+        {"order": _order(symbol="BTCUSDT", stop_loss=Decimal("56769.0"))},  # on query-api
         {"path": TRADING_STOP, "order": REFERENCE_ORDER},
     ],
 )
@@ -239,6 +241,7 @@ def test_line_no_guard_may_produce_is_refused(
         {"method": "POST", "path": "/v5/asset/transfer", "outcome": "refused_fund_path"},
         {"transport": None, "method": None, "path": None, "host": None, "outcome": "switch"},
         {"transport": "ws", "method": "AUTH", "path": "/v5/private", "status": None},
+        {"overlays": ["working_orders_2"] * 16},
     ],
 )
 def test_each_guard_outcome_is_logged(
@@ -263,6 +266,12 @@ def test_each_guard_outcome_is_logged(
         {"path": ORDER_CREATE, "order": {"stopLoss": "56769.0"}},
         {"path": ORDER_CREATE, "order": _order(qty=0.001)},
         {"path": ORDER_CREATE, "order": _order(qty=Decimal("1E+40"))},
+        {"path": ORDER_CREATE, "order": _order(qty=Decimal("-0.001"))},
+        {"path": ORDER_CREATE, "order": _order(price=Decimal("Infinity"))},
+        {"path": ORDER_CREATE, "order": _order(stop_loss=Decimal("NaN"))},
+        {"path": ORDER_CREATE, "order": _order(reduce_only="false")},
+        {"code_unconfirmed": "false"},
+        {"overlays": ("working_orders_2",) * 17},
     ],
 )
 def test_field_outside_its_rule_is_refused(
@@ -291,6 +300,12 @@ def test_ts_comes_from_the_injected_clock(log_dir: Path) -> None:
             _served(log)
     stamps = [line["ts"] for line in _lines(log_dir)]
     assert stamps == ["2026-10-16T09:00:00.000Z", "2026-10-16T09:00:01.500Z"]
+
+
+def test_ts_is_utc_whatever_the_clock_offset(log_dir: Path) -> None:
+    with _open(log_dir, clock=lambda: NOW.astimezone(timezone(timedelta(hours=2)))) as log:
+        _served(log)
+    assert _lines(log_dir)[0]["ts"] == "2026-10-16T09:00:00.000Z"  # not 11:00:00.000+02:00
 
 
 def test_log_file_is_created_0600_and_an_existing_one_narrowed(log_dir: Path) -> None:
