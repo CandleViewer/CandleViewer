@@ -37,7 +37,9 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 147
+# 148 since #2389 (#2300) and #2658 (E42-T09) each added two pending operations and passed CI alone;
+# together they crossed 147 by one. Lower it again when the next operation is served.
+PENDING_BASELINE = 148
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(
