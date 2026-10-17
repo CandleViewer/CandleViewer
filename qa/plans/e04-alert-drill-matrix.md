@@ -43,6 +43,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | WsOriginRefusalsHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh` | synthetic | | | | | | pending |
 | AuthRecoveryCodeUsed | page | 0m | `docs/plan/07-release-and-prr.md#alert-authrecoverycodeused` | synthetic | | | | | | pending |
 | NetBindingUnsafe | page | 0m | `docs/plan/07-release-and-prr.md#alert-netbindingunsafe` | synthetic | | | | | | pending |
+| AuthBreakGlassUsed | page | 0m | `docs/plan/07-release-and-prr.md#alert-authbreakglassused` | synthetic | | | | | | pending |
 | IngestionTopicStale | ticket | 1m | `docs/ops/ingestion.md#alert-ingestiontopicstale` | synthetic | | | | | | pending |
 | IngestionBookResyncRateHigh | ticket | 5m | `docs/ops/ingestion.md#alert-ingestionbookresyncratehigh` | synthetic | | | | | | pending |
 | BookResyncStorm | page | 5m | `docs/ops/ingestion.md#alert-bookresyncstorm` | synthetic | | | | | | pending |
