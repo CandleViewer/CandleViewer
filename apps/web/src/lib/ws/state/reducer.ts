@@ -54,7 +54,7 @@ function qualityOf(wireClass: unknown): Quality | undefined {
 
 const isScope = (v: unknown): v is KillSwitchPayload["scope"] => v === "global" || v === "accounts";
 const isStringArray = (v: unknown): v is string[] =>
-  Array.isArray(v) && v.every((x) => typeof x === "string");
+  Array.isArray(v) && [...v].every((x) => typeof x === "string"); // holes become undefined
 
 /**
  * Strict, as the codec is for `auth_ok` (C12): only a well-formed payload is a known state, and
@@ -100,10 +100,10 @@ function patchFor(prev: WsState, e: EngineEvent): Patch {
       if (typeof e.connectionId !== "string") return {};
       return { diagnostics: { ...prev.diagnostics, connectionId: e.connectionId } };
     case "auth_ok":
-      // On a live socket `auth_ok` is an in-place re-auth (23 4.1): the same connection, so a pending
-      // shutdown, the quality class and the `system` stream carry over, and no kill switch keeps the
-      // last fact. Only a socket announced by `connecting` starts afresh; after `reconnecting` or
-      // `offline` the engine broke its promise and the event is ignored.
+      // On a live socket `auth_ok` is an in-place re-auth (23 4.1): the same connection, so a
+      // pending shutdown, the quality class and the `system` stream carry over, and no kill switch
+      // keeps the last fact. Only a socket announced by `connecting` starts afresh; after
+      // `reconnecting` or `offline` the engine broke its promise and the event is ignored.
       if (prev.link.kind === "up") {
         return e.killSwitch === undefined ? {} : { killSwitch: viewOf(e.killSwitch) };
       }

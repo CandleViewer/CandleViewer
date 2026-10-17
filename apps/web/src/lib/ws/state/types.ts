@@ -63,12 +63,14 @@ export interface WsState {
 }
 
 /**
- * What the connection engine (S4) tells the reducer. Its two promises: every new socket is announced
- * by `connecting` before its `auth_ok` (so an `auth_ok` on an `up` link is an in-place re-auth, 23
- * 4.1, and one after `reconnecting` or `offline` is ignored); and after a resync of the `system`
- * stream it reports `live` before the update of the snapshot that ended it (a kill-switch fact that
- * arrives sooner is dropped, WS-E06). `assertEngineOrder` (test support) checks both. The reducer
- * vets every wire value it reads and keeps only the vetted.
+ * What the connection engine (S4) tells the reducer. Its promises: (1) every new socket is
+ * announced by `connecting` before its `auth_ok`, so an `auth_ok` after `reconnecting` or `offline`
+ * is ignored; (2) `connecting` announces only a new socket, so an `auth_ok` on an `up` link is an
+ * in-place re-auth (23 4.1) and a re-auth emits no `connecting`, `reconnecting` or `offline`; (3)
+ * after a resync of the `system` stream it reports `live` before the update of the snapshot that
+ * ended it (a kill-switch fact that arrives sooner is dropped, WS-E06). `assertEngineOrder` (test
+ * support) checks (1) and (3); (2) is S4's own test obligation, as events alone cannot tell a
+ * re-auth from a new socket. The reducer vets every wire value it reads and keeps only the vetted.
  */
 export type EngineEvent =
   | { readonly type: "connecting" }

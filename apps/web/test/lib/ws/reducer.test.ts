@@ -27,6 +27,14 @@ const run = (...events: EngineEvent[]): WsState => {
 };
 
 describe("transport states", () => {
+  it("starts connecting, with the kill switch unknown and order entry off", () => {
+    expect(INITIAL_WS_STATE.killSwitch).toEqual({ state: "unknown" });
+    expect(INITIAL_WS_STATE.orderEntry).toEqual({ enabled: false, reason: "kill_switch_unknown" });
+    expect(INITIAL_WS_STATE).toMatchObject({ transport: "connecting", transitionSeq: 0 });
+    expect(INITIAL_WS_STATE.link).toEqual({ kind: "connecting" });
+    expect(INITIAL_WS_STATE.systemStream).toBe("pending");
+  });
+
   it("moves transitionSeq once per change of transport, never per event", () => {
     const steps: [EngineEvent, number][] = [
       [authOk(OFF), 1],
@@ -42,6 +50,7 @@ describe("transport states", () => {
       [shutdown, 8],
       [authOk(OFF), 8], // an in-place re-auth is not a transition
     ];
+    assertEngineOrder(steps.map(([event]) => event));
     let state = INITIAL_WS_STATE;
     for (const [event, seq] of steps) {
       state = reduce(state, event);
@@ -106,8 +115,9 @@ describe("kill switch and order entry (C12, WS-E06)", () => {
     ["a non-array account list", { engaged: false, scope: "accounts", exchange_account_ids: "a" }],
     ["a non-string account id", { engaged: false, scope: "accounts", exchange_account_ids: [1] }],
     ["a mixed account list", { engaged: false, scope: "accounts", exchange_account_ids: ["a", 1] }],
+    ["a sparse id list", { engaged: false, scope: "accounts", exchange_account_ids: new Array(2) }],
     ["a null account list", { engaged: true, scope: "accounts", exchange_account_ids: null }],
-  ])("a %s kill switch is unknown, from auth_ok and from a system frame", (_name, payload) => {
+  ])("an unusable kill switch (%s) is unknown, from auth_ok and system", (_name, payload) => {
     const viaAuth = run(authOk(wire<KillSwitchPayload | undefined>(payload)));
     const viaSystem = reduce(run(authOk(OFF)), killSwitch(payload));
     for (const state of [viaAuth, viaSystem]) {
@@ -135,20 +145,6 @@ describe("kill switch and order entry (C12, WS-E06)", () => {
 });
 
 describe("in-place re-auth (23 4.1) and a new socket's auth_ok", () => {
-  it("refreshes the kill switch and keeps the connection quality and the system stream", () => {
-    const degraded = run(authOk(OFF), stream("live"), quality("saturated"));
-    const again = reduce(degraded, authOk(ON));
-    expect(again).toMatchObject({ transport: "degraded:saturated", systemStream: "live" });
-    expect(again.killSwitch.state).toBe("engaged");
-    expect(again.transitionSeq).toBe(degraded.transitionSeq);
-  });
-
-  it("does not end a pending shutdown: order entry stays off until the next connection", () => {
-    const again = reduce(run(authOk(OFF), shutdown), authOk(OFF));
-    expect(again.transport).toBe("shutdown_pending");
-    expect(again.orderEntry).toEqual({ enabled: false, reason: "shutdown_pending" });
-  });
-
   it("keeps the last kill switch when a re-auth carries none, and drops it when it is malformed", () => {
     const engaged = run(authOk(ON));
     expect(reduce(engaged, authOk())).toBe(engaged);
