@@ -33,6 +33,7 @@ from candleviewer.ws.permissions import (
     SubscriptionServices,
     cv_ws_permission_snapshots_refused_total,
 )
+from tests.unit.ws.test_ws_audit_trail import _delta, _failures
 
 USER = uuid.UUID(int=0x2824)
 PEER = uuid.UUID(int=0x2825)
@@ -305,11 +306,13 @@ async def test_a_failed_or_hung_audit_row_never_stops_the_other_rows_or_the_fan_
     for _ in range(2):
         world.connect(USER, _topics(3))
     world.principals[USER] = _principal(USER, NONE)
+    before = _failures()
     with capture_logs() as logs:
         async with asyncio.timeout(5):  # fail fast, not hang, if the per-row bound regresses
             await world.registry.roles_changed(USER)  # never raises into the fan-out
     assert [len(frames) for frames in world.revoked()] == [3, 3]
     assert world.sink.calls == 6  # every row was attempted
+    assert _delta(before) == {"error": 1, "timeout": 1}  # SR-E17-04 (#2174)
     tick = [f"footprint.BTCUSDT.tick.{n}" for n in (1, 3, 2, 3)]  # rows 1 and 3 are lost
     assert [r["object_id"] for r in world.sink.rows] == tick
     lost = [e for e in logs if e["event"] == "ws audit not confirmed"]
@@ -335,10 +338,12 @@ async def test_cancelling_the_change_mid_audit_is_never_swallowed_and_logs_the_l
     )
     async with asyncio.timeout(5):
         await world.sink.hung.wait()  # rows 0 and 1 are written; row 2 is in flight
+    before = _failures()
     with capture_logs() as logs:
         change.cancel()
         with pytest.raises(asyncio.CancelledError):
             await change
+    assert _delta(before) == {"cancelled": 4}  # rows 3-5 and the in-flight row 2 (#2174)
     assert [len(frames) for frames in world.revoked()] == [3, 3]
     assert [len(s.by_id) for s in sockets] == [0, 0] and len(world.sink.rows) == 2
     # Rows 3-5 never reached the writer; row 2 was in flight (it lands if it held the WAL lock).
@@ -360,10 +365,12 @@ async def test_after_3_failed_audit_rows_in_a_row_the_rest_are_abandoned_and_cou
         world.principals[uid] = _principal(uid, READ)
         world.connect(uid, _topics(n))
         world.principals[uid] = _principal(uid, NONE)
+    before = _failures()
     with capture_logs() as logs:
         async with asyncio.timeout(5):  # fail fast, not hang, if the bound regresses
             await world.registry.kill_switch_changed()
     assert world.sink.calls == 5 and [r["object_id"] for r in world.sink.rows] == _topics(2)[1:]
+    assert _delta(before) == {"error": 2, "timeout": 2, "abandoned": 3}  # SR-E17-04 (#2174)
     lost = [e for e in logs if e["event"] == "ws audit not confirmed"]
     assert [e["object_id"] for e in lost] == [_topics(4)[n] for n in (0, 2, 3)] + _topics(1)
     assert [e["actor_user_id"] for e in lost] == [USER] * 3 + [PEER]  # whose row each one was

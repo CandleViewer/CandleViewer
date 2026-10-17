@@ -615,7 +615,11 @@ class TopicEmitter:
 
     # -- client resync (§7.5) --
 
-    def client_resync(self, authz: ConnectionAuthz, frame: Mapping[str, Any]) -> None:
+    def client_resync(
+        self, authz: ConnectionAuthz, frame: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """One client `resync` (§7.5). Returns the `revoked` frame when the rate limit revoked the
+        subscription, which the caller audits (SR-187, #2174), else `None`."""
         fid = frame.get("id")
         rid = fid if isinstance(fid, str) else None
         ch = frame.get("ch")
@@ -626,21 +630,21 @@ class TopicEmitter:
                 "invalid_options", id=rid, message="ch must be a topic name.", field="ch"
             )
             self.push(err)
-            return
+            return None
         if not isinstance(ch, str) or not isinstance(body, dict):
             self.push(build_ws_error("frame_malformed", id=rid))
-            return
+            return None
         reason = body.get("reason")
         last_seq = body.get("last_seq")
         if reason not in CLIENT_RESYNC_REASONS or not (
             last_seq is None or (isinstance(last_seq, int) and not isinstance(last_seq, bool))
         ):
             self.push(build_ws_error("frame_malformed", id=rid, ch=ch))
-            return
+            return None
         sub = authz.find(ch) or next(iter(authz.subscriptions_named(ch)), None)
         if sub is None:
             self.push(build_ws_error("not_subscribed", id=rid, ch=ch))
-            return
+            return None
         if reason == "sequence_gap":
             cv_ws_sequence_gaps_detected_total.inc()
         # What the client says beside what the server numbered: a gap is one side's bug.
@@ -671,13 +675,15 @@ class TopicEmitter:
                 window_s=RESYNC_WINDOW_S,
             )
             self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))
-            self.push(authz.revoke(sub, "resync_rate_limited", self.wall_ms()))
-            return
+            revoked = authz.revoke(sub, "resync_rate_limited", self.wall_ms())
+            self.push(revoked)
+            return revoked
         window.append(now)
         if _held(sub):
-            return  # counted in the window above; the ladder's `drain` sends that `snap`
+            return None  # counted in the window above; the ladder's `drain` sends that `snap`
         sub.snapshot_pending, sub.pending_reason = True, "client_resync"
         self.snapshot(sub, "client_resync")
+        return None
 
     def flush_pending(self, subs: Iterable[Subscription]) -> int:
         """Snapshot every pending subscription with its recorded reason, except one held for its

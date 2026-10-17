@@ -79,6 +79,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.break_glass_reset",
         "auth.password_change",
         "ws.subscribe.denied",
+        # SR-186 (#2174): the private-topic subscriptions one WS `sub` frame made, one record.
+        "ws.subscribe.granted",
         "ws.subscription.revoked",
         # E17-S01 (#2486): an authenticated WS connection ended (`ws/gateway.py`).
         "ws.connection.closed",

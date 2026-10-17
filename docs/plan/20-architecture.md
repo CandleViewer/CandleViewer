@@ -1365,6 +1365,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Gateway | `cv_ws_connections_in_use` / `cv_ws_handshake_seconds` / `cv_ws_auth_failures_total{reason}` / `cv_ws_closes_total{reason}` / `cv_ws_clock_skew_ms` / `cv_ws_subscribe_total{topic,result}` / `cv_ws_client_topics_depth` / `cv_ws_revoked_total{reason}` / `cv_ws_upstream_consumers_in_use{symbol,topic}` / `cv_ws_resync_total{reason}` / `cv_ws_snapshot_bytes{topic}` / `cv_ws_snapshot_build_seconds{topic}` / `cv_ws_sequence_gaps_detected_total` / `cv_ws_stale_topics_in_use` | gauge / histogram / counter | client WS gateway lifecycle, subscriptions and sequencing (E17-S01..S03, #377); module-level series re-exported on the app registry with `env` |
 | Gateway | `cv_ws_connect_rate_limited_total` | counter | client WS sockets refused by the per-user connect rate (`bye client_rate_limited` after a valid `auth`, #2558, 23 §4.3); unlabelled, re-exported on the app registry with `env`; sustained = a stolen token or a client with no backoff (RSK-063's trigger) |
 | Gateway | `cv_ws_system_frames_withheld_total{reason}` | counter | `system` frames left out of a socket's queue for a reason other than the field cut a role's view applies (SR-188, #3125, 23 §15.9): `reason` = `unknown_kind` (a `kind` outside §15.9: nobody receives it), `invalid_body` (a `kill_switch` frame without its state: only the Owner receives it), `no_principal` or `no_role`; a deny-all socket (the fake backend, or after a failed principal load) counts every other frame under `no_role`; the series are bound at start, carry no frame content, and any `unknown_kind` or `invalid_body` is a producer bug; module-level, re-exported with `env` |
+| Gateway | `cv_ws_audit_failures_total{reason}` | counter | WS audit rows not confirmed written (SR-186, SR-E17-04, #2174), `reason` = `error` (the sink raised: lost) / `timeout` (its 2 s bound expired: it may still land) / `cancelled` (the wait was cancelled: lost unless its append had begun) / `abandoned` (a fan-out gave up its rest after 3 failed rows in a row); bound at import, re-exported with `env`; any increase is a gap in the WS audit trail: `WsAuditWriteFailed` (ticket) |
 | Gateway | `cv_ws_permission_snapshots_refused_total{event}` | counter | older WS permission snapshots refused for a newer one, `event` = `reauth` / `grant_change` / `handshake` (SR-189, #2172); any increase means a grant change raced a re-auth or handshake |
 | Gateway | `cv_ws_fanout_seconds` | histogram | budget #6 (06 §2), gateway segment: subscription's hub turn (not bus receipt) to the writer handing the `snap`/`d` to the socket, **p95** ≤ 20 ms (E17-T06; replaces ws_fanout_latency_seconds); sampled 1 in 32 (weighted); see the note below the table |
 | Gateway | `cv_ws_frame_encode_seconds{kind}` / `cv_ws_frame_bytes{kind}` | histogram | frame encode time and size (E17-T06): `kind` = a CVWB body kind (hub-stamped deltas; every snapshot chunk) or `json` / `msgpack` (a hub-stamped data frame, in its connection's codec); sampled 1 in 32 (weighted); see the note below (do not sum kinds) |
@@ -1457,15 +1458,16 @@ WS gateway set (E17-T06, `infra/prometheus/alerts/ws_gateway.yml`, `component: g
 Ticket (warning): `WsFanoutP95OverBudget` (p95 of `cv_ws_fanout_seconds` over 20 ms for 5 min, judged
 only with at least 40 sampled frames in the window), `WsUpstreamDesyncHigh` (more than 5
 `upstream_desync` re-snapshots in an hour: the 23 §16.3 hard-fail line, as a gateway-wide total because
-the counter has no topic label), `WsSlowConsumerClosed` (any `slow_consumer` close in 15 min) and
-`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min). The E17-T06 text calls the
-last one critical, but its counter moves on a client's `resync` frame, which the server does not verify,
-and a page would also hold back the other three (the page-over-ticket inhibit rule matches on component
-and env, and all four share component `gateway`); a server-side continuity count, which does not exist,
-is what could earn it a page. Alertmanager mutes tickets 22:00-07:00 UTC and never sends one that fires
-and resolves inside that time, so the two any-event tickets carry `keep_firing_for: 9h30m`: one raised
-at night is still firing, and is sent, at 07:00, and while held it is re-sent every 4 h. Each series is
-bound at import so `increase()` sees the first event.
+the counter has no topic label), `WsSlowConsumerClosed` (any `slow_consumer` close in 15 min),
+`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min) and `WsAuditWriteFailed`
+(any WS audit row not confirmed written in 15 min, `cv_ws_audit_failures_total`; SR-186, #2174). The
+E17-T06 text calls the gap alert critical, but its counter moves on a client's `resync` frame, which the
+server does not verify, and a page would also hold back the others (the page-over-ticket inhibit rule
+matches on component and env, and every one shares component `gateway`); a server-side continuity
+count, which does not exist, is what could earn it a page. Alertmanager mutes tickets 22:00-07:00 UTC
+and never sends one that fires and resolves inside that time, so the any-event tickets carry
+`keep_firing_for: 9h30m`: one raised at night is still firing, and is sent, at 07:00, and while held it
+is re-sent every 4 h. Each series is bound at import so `increase()` sees the first event.
 The Market data dashboard (12.4) has a WS gateway row: open connections, fan-out p95 against the 20 ms
 line, resyncs by reason against the 1 and 5 an hour lines (23 §16.3) and closes by reason. Connection
 class, queue depth and bandwidth per connection are added when their series land; overflow actions

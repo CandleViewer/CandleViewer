@@ -1385,6 +1385,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_audit_failures_total",
+        "counter",
+        "rows",
+        ("reason",),
+        "WS audit rows not confirmed written (SR-186, #2174): error/timeout/cancelled/abandoned.",
+        "WsAuditWriteFailed: any in 15m (ticket)",
+        _L,
+        "E17",
+        max_series=8,
+        exported=True,
+    ),
+    _s(
         "cv_ws_clock_skew_ms",
         "histogram",
         "ms",

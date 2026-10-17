@@ -423,7 +423,7 @@ Rules:
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
 
 - `account_scope` lists the caller's granted accounts for a Manager or Viewer; for an Owner it is `[]`, meaning **all** accounts (the example above is an Owner). The same rule applies to the `permission_change` frame (§9.5).
-- Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written.
+- Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written. It carries the source address (`actor_ip`, the `source_ip` of `ws auth failed`) and E04's `request_id`, so failures aggregate per source before any identity is known, and the close waits at most 2 s for it (SR-187, #2174).
 - A failed `auth` also logs `ws auth failed` (`warning`; E17-T06, #571) with `connection_id`, `reason` (the `cv_ws_auth_failures_total` set), `attempt`, `reauth` and `source_ip`, and the upgrade's `request_id`. It never carries the token, the exception text or a traceback.
 - A failed re-`auth` keeps the prior identity until its token expires. A re-`auth` that resolves to a different user is refused.
 - Each call an `auth` or re-`auth` makes is bounded (#2155): the session service's token check, the principal read and, on a first `auth`, its SR-189 re-read get 6 s apiece (`AUTH_CALL_TIMEOUT_S`). A call still pending at its bound is a server fault, not a failed `auth`: the socket closes with `bye internal_error` + `1011`, a re-`auth`'s too (ending the prior identity), as for an authenticator that reports no expiry (below). It is no strike, writes no `auth.login_failed` row and is not counted in `cv_ws_auth_failures_total`; the registrations the `auth` made (the revocation hub's, the registry's) are dropped as a failure's are, and it logs `ws auth call timed out` (`warning`) with the call's name. A call that fails within its bound, with its own `TimeoutError` included, is a failed `auth` as before. 6 s is longer than the principal store's own 5 s bound, so a slow store still yields its deny-all principal first, and shorter than the default 10 s auth window.
@@ -447,6 +447,8 @@ Rules:
   - it is best effort, bounded at 2 s, and a write that has not started is abandoned if the handler is cancelled while waiting for it (E17 threat model WS-R04).
 
   An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
+
+- Every WS audit row that is not confirmed written (this close row, `auth.login_failed`, `auth.ws_origin_refused`, `ws.subscribe.granted`, `ws.subscribe.denied`, `ws.subscription.revoked` and `ws.permission_snapshot.refused`) counts once in `cv_ws_audit_failures_total{reason}` when its wait ends (SR-186, #2174): `error` (the sink raised: lost), `timeout` (its 2 s bound expired: it may still land), `cancelled` (a cancellation ended the wait) or `abandoned` (a §9.5 change's writer gave up its remaining rows after 3 failed in a row). One row differs: a refused upgrade's write runs on when its wait is cancelled, so it counts `error` only if it then fails. The `ws.subscribe.denied` record, written before its frame's `sub_ok`, is bounded at 2 s like the rest, so the reply waits at most that long for it. Any increase raises `WsAuditWriteFailed` (a ticket; runbook in `07-release-and-prr.md`).
 
 - Gateway metrics as built: connections in use are `cv_ws_connections_in_use` (the ticket's `cv_ws_clients`), and `cv_ws_closes_total` is labelled by `reason` alone, because each reason has one close code (#2486).
 
@@ -618,6 +620,8 @@ When more than one applies, the first in this list names the code and the `field
 ```
 
 `effective` echoes the options **after** clamping, so a client that asked for `throttle_ms: 5` sees it became 50 and can stop expecting 200 fps.
+
+**Audit of the private subscriptions (SR-186, #2174).** The private-topic subscriptions one `sub` makes (§6.2, and `machines`, §6.4) are one `ws.subscribe.granted` record for the frame, written once its `sub_ok` is queued: `object_kind` `ws_connection`, `object_id` the connection id that `welcome` gives, and in `after_state` their `count` and, for the first 10 in request order, each `ch` with its granted `exchange_account_ids` (`subscriptions`). A public topic writes none. It is one record however many topics the frame holds, and it is best effort, bounded at 2 s (E17 threat model WS-R04).
 
 ### 5.3 `unsub`
 
@@ -1072,7 +1076,7 @@ A `bars.*` subscription gets the `instrument_revision` snap too: the server re-s
 }
 ```
 
-The server replies with a `snap` on that topic (correlated by `ch`, not by `id`). Rate limit: **5 resyncs per topic per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer.
+The server replies with a `snap` on that topic (correlated by `ch`, not by `id`). Rate limit: **5 resyncs per topic per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer. That revocation writes one `ws.subscription.revoked` row (reason `resync_rate_limited`) through the bounded writer of a §9.5 change, and counts in `cv_ws_revoked_total{reason="resync_rate_limited"}` (SR-187, #2174).
 
 The envelope `ch` follows the `ctl` rule (§5.4): a `ch` that is present and not `null`, but is not a topic name, gets `err` `invalid_options` (`field`: `ch`) with no `ch` (#2572). That takes no snapshot, spends none of the limit above and does not revoke the subscription.
 

@@ -148,6 +148,7 @@ from candleviewer.ws.metrics import (
     MSGPACK_ENCODE_SECONDS,
     MSGPACK_FRAME_BYTES,
     SAMPLE_EVERY,
+    count_audit_failure,
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
     cv_ws_closes_total,
@@ -850,23 +851,36 @@ def make_ws_router(
             )
 
     async def audit_auth_failure(conn: _Connection) -> None:
-        """`warning` audit entry for the 3rd failed `auth` (§4.3). Never
-        carries the token. Best effort: the close is not held hostage."""
+        """`warning` audit entry for the 3rd failed `auth` (§4.3), with the source address so that
+        failures aggregate per source as well as per identity (SR-187). Never carries the token.
+        Best effort, bounded at `CLOSE_AUDIT_TIMEOUT_S`: the close is not held hostage, and a row
+        not confirmed is logged and counted, a cancelled one counted (SR-E17-04)."""
         if audit is None:
             return
         try:
-            await audit.emit(
-                "auth.login_failed",
-                actor_label="ws",
-                actor_user_id=conn.user_id,
-                object_kind="ws_connection",
-                object_id=conn.connection_id,
-                outcome=AuditOutcome.FAILURE,
-                severity=Severity.WARNING,
-                reason="ws_auth_failed",
-            )
+            async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
+                await audit.emit(
+                    "auth.login_failed",
+                    actor_label="ws",
+                    actor_user_id=conn.user_id,
+                    actor_ip=_source_ip(conn.ws.scope),
+                    object_kind="ws_connection",
+                    object_id=conn.connection_id,
+                    outcome=AuditOutcome.FAILURE,
+                    severity=Severity.WARNING,
+                    reason="ws_auth_failed",
+                    request_id=current_request_id(),
+                )
+        except asyncio.CancelledError:
+            count_audit_failure()
+            raise
         except Exception:
-            _log().warning("ws auth-failure audit not written", exc_info=True)
+            count_audit_failure()
+            _log().warning(
+                "ws auth-failure audit not confirmed",
+                connection_id=conn.connection_id,
+                exc_info=True,
+            )
 
     async def audit_close(conn: _Connection, fault: BaseException | None) -> None:
         """`ws.connection.closed` for a socket that authenticated (E17-S01, #2486): `warning`
@@ -877,7 +891,8 @@ def make_ws_router(
         included, is logged and never raised. One loss it cannot avoid: a cancellation of the
         handler that lands inside the emit (the host's graceful-timeout cancel, or a second one
         such as the loop's own teardown) is honoured and abandons a write that has not started;
-        `AuditWriter.emit` finishes one that has."""
+        `AuditWriter.emit` finishes one that has. Every row not confirmed, a cancelled one too,
+        counts in `cv_ws_audit_failures_total` (SR-E17-04)."""
         if audit is None or conn.user_id is None:
             return
         try:
@@ -900,10 +915,14 @@ def make_ws_router(
                     **({} if state is None else {"after_state": state}),
                 )
         except Exception:
+            count_audit_failure()  # SR-E17-04: `timeout` or `error`, before a logger can fail
             # Not "not written": a write that timed out may still land (the writer shields it).
             _log().warning(
                 "ws close audit not confirmed", connection_id=conn.connection_id, exc_info=True
             )
+        except asyncio.CancelledError:
+            count_audit_failure()  # the loss above, counted; the cancellation still propagates
+            raise
 
     def refuse_connect(conn: _Connection, user_id: uuid.UUID, retry_after_ms: int) -> None:
         """§4.3 (#2558): the user's connect budget is spent. `bye client_rate_limited` + `4429`
@@ -1240,7 +1259,8 @@ def make_ws_router(
             conn.push(handle_ctl(conn.authz, frame, conn.wall_ms()))
             flush(conn, pending(conn.authz) - held)  # `ctl_ok { resnapshot }`, then its snap
         elif kind == "resync" and conn.authz is not None and conn.emitter is not None:
-            conn.emitter.client_resync(conn.authz, frame)
+            if (revoked := conn.emitter.client_resync(conn.authz, frame)) is not None:
+                await registry.audit_revoked(conn.authz, [revoked])  # SR-187: its row
         else:
             conn.violation(fid)
 

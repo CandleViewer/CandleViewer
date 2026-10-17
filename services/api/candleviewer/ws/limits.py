@@ -79,7 +79,8 @@ AUTH_CALL_TIMEOUT_S = 6.0
 #: over loopback or the tailnet (C-12.9). The next socket gets `bye server_shedding_load` + `1013`.
 MAX_UNAUTHENTICATED_SOCKETS = 64
 FANOUT_SEND_TIMEOUT_S = 2.0
-#: Bound on each audit row of that fan-out, like `CLOSE_AUDIT_TIMEOUT_S` on a close's row.
+#: Bound on each audit row of that fan-out, like `CLOSE_AUDIT_TIMEOUT_S` on a close's row, and on
+#: each record of a `sub` frame, `ws.subscribe.denied` and `ws.subscribe.granted` (#2174).
 FANOUT_AUDIT_TIMEOUT_S = 2.0
 #: ...and on its rows as a whole: once this many rows in a row have raised or timed out, the rest
 #: are abandoned, even when the writer is only slow: a stalled WAL costs 3 bounds, not one per row.
