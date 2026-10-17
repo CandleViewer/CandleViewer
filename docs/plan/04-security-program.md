@@ -1138,7 +1138,7 @@ Each row names the permission(s) and the operation(s) in `22-api-openapi.yaml` t
 4. `before`/`after` diffs are structured, field-level, and omit unchanged fields.
 5. Every denial (`authz.denied`, `ratelimit.rejected`) is logged with the attempted capability and object reference.
 
-Rule 2's durable retry will be the journal-first audit lane (ADR-0037, proposed; slices S1a to S4): a record whose action has a row in the lane registry will be written to the lane first, and one the lane accepted will count as written for rules 1 and 2.
+Rule 2's durable retry will be the journal-first audit lane (ADR-0037, proposed; slices S1a to S4b): a record whose action has a row in the lane registry will be written to the lane first, and one the lane accepted will count as written for rules 1 and 2.
 
 ---
 
