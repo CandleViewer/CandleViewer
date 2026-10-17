@@ -11,8 +11,9 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
   copies it to (`TOPIC = SYSTEM_TOPIC`, at any scope) and `getattr(m, "SYSTEM_TOPIC")`;
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
   `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`) and
-  `FlagPush.flag_changed` (E42-T03: a flag change is resolved for each session's user, so there
-  is no one body to broadcast; `push_system` still filters it, the path B3's review asked for).
+  `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
+  resolve each session's frame, so there is no one body to broadcast; `push_system` still
+  filters it, the path B3's review asked for). A new caller of `_send` is an RBAC change too.
   The string "push_system" counts as a name (`getattr(conn, "push_system")`).
 
 A new producer calls `GatewayHub.broadcast_system`. Any other reference fails here and must be
@@ -41,7 +42,7 @@ SENDERS = {
     ("ws/gateway.py", "GatewayHub.broadcast_system"),
     ("ws/gateway.py", "GatewayHub.shutdown"),
     ("ws/gateway.py", "run_auth"),
-    ("admin/flags/push.py", "FlagPush.flag_changed"),
+    ("admin/flags/push.py", "_send"),
 }
 #: A `sub_ok` result row has no `t` and one of these.
 RESULT_ROW = frozenset({"ok", "sub_id"})
