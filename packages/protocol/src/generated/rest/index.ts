@@ -3797,6 +3797,14 @@ export interface paths {
      *     saved version reaches an order only when `setRuleMode` arms the rule, and the step-up
      *     comes at that arm when the rule's scope includes `live` (`rules:arm_live` and a fresh
      *     one-shot live-enablement step-up bound to that request).
+     *
+     *     **Action budget (SR-104; 04 §7.2.2 row 26).** A `limits.max_fires_per_hour` or
+     *     `limits.max_fires_per_day` above its `RuleLimits` default needs the Owner role: anyone
+     *     else gets `403 forbidden`, whose `errors` name each such `limits.<field>` with `rule:
+     *     owner_only_above_default`, and the refusal is audited (`rules.scope_denied`). A value
+     *     above its hard cap, in `x-cv-limit-caps` on `RuleIr`, is refused for every role with
+     *     `422 rule_ir_invalid` (issue code `schema_error`, class `safety`). Each value is compared
+     *     with its default and its cap, never with an earlier version.
      */
     post: operations["createRule"];
     delete?: never;
@@ -3826,7 +3834,8 @@ export interface paths {
      *     when the rule's scope includes `live` (`rules:arm_live` and a fresh one-shot
      *     live-enablement step-up bound to that request). Activating a different version of an
      *     armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
-     *     the live step-up where the scope includes `live`.
+     *     the live step-up where the scope includes `live`. Every save is held to the action budget
+     *     of `createRule`, also a save that matches an existing version.
      */
     put: operations["updateRule"];
     post?: never;
@@ -3850,7 +3859,13 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Activate (or roll back to) a specific rule version */
+    /**
+     * Activate (or roll back to) a specific rule version
+     * @description Activating a version is held to the Owner-only part of the action budget of `createRule`:
+     *     a version whose `limits.max_fires_per_hour` or `limits.max_fires_per_day` is above its
+     *     `RuleLimits` default needs the Owner role, and anyone else gets the same audited
+     *     `403 forbidden`.
+     */
     put: operations["setActiveRuleVersion"];
     post?: never;
     delete?: never;
@@ -4054,8 +4069,9 @@ export interface paths {
      * Validate an IR without saving it
      * @description Static analysis used by both editors on every keystroke-debounce. Checks schema
      *     conformance, variable existence, type compatibility, action-parameter completeness,
-     *     unreachable branches, missing guards, and the `require_native_stop` invariant. Returns
-     *     errors **and** warnings; warnings do not block saving but do block arming.
+     *     unreachable branches, missing guards, the action-budget hard caps (`x-cv-limit-caps` on
+     *     `RuleIr`), and the `require_native_stop` invariant. Returns errors **and** warnings;
+     *     warnings do not block saving but do block arming.
      */
     post: operations["validateRule"];
     delete?: never;
@@ -8071,6 +8087,11 @@ export interface components {
      *     (`id`, `name`, `mode`, `scope`, `editor`, `version`) live on `Rule` / `RuleInput`
      *     and in the `rules` table - they are deliberately not duplicated here, so an IR can
      *     be validated, hashed and compared without carrying database identity.
+     *
+     *     `x-cv-limit-caps` names the hard cap of each capped `limits` field (SR-104); a rule
+     *     saved above one is refused (`createRule`). The server takes the caps from
+     *     `candleviewer.rules.limits`, and a contract test keeps this member equal to them. Alerts
+     *     reuse `RuleLimits` without the caps.
      */
     RuleIr: {
       actions: components["schemas"]["RuleAction"][];
@@ -16162,7 +16183,7 @@ export interface operations {
           "application/json": components["schemas"]["RuleDetail"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["RuleIrInvalid"];
     };
@@ -16235,7 +16256,7 @@ export interface operations {
           "application/json": components["schemas"]["RuleDetail"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
     };
   };
