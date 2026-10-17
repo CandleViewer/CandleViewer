@@ -1,4 +1,4 @@
-"""Driver-free execution store surface (E29-T01 #845 slice 3/3, `0029_oms_core`).
+"""Driver-free execution store surface (E29-T01 #845, `0029_oms_core`).
 
 `executions` keeps the fills the exchange reports, append-only (21 Sec.3.3.6); every source of a
 fill inserts it and `ux_exec_id` keeps one row, so a repeated `exec_id` never counts twice

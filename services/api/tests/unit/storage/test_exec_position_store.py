@@ -1,4 +1,4 @@
-"""Execution and position stores, without a database (E29-T01 #845 slice 3/3).
+"""Execution and position stores, without a database (E29-T01 #845).
 
 The ports are pinned to `0029_oms_core` (columns, CHECK vocabularies, numeric scales), the
 statements are compiled and inspected (account scoping, dedupe, upsert, stops of 0, the partial
@@ -132,6 +132,7 @@ _STATEMENTS: dict[Any, dict[str, Any]] = {
     },
     pos: {
         "upsert_statement": pos.upsert_statement(_state()),
+        "stored_statement": pos.stored_statement(_state()),
         "list_open_statement": pos.list_open_statement(ACCOUNT),
         "list_unprotected_statement": pos.list_unprotected_statement(ACCOUNT),
         "append_statement": pos.append_statement(_snap()),
@@ -166,7 +167,15 @@ def test_a_position_upsert_takes_every_state_column_and_stamps_now() -> None:
     assert "VALUES (gen_random_uuid(), $1::UUID, " in head
     state = [f"{f.name} = excluded.{f.name}" for f in fields(PositionState) if f.name not in key]
     stamps = ["recv_ts = now()", "updated_at = now()"]
-    assert set(update.split(" RETURNING ")[0].split(", ")) == {*state, *stamps}
+    assert set(update.split(" WHERE ")[0].split(", ")) == {*state, *stamps}
+
+
+def test_a_position_upsert_skips_a_stale_write() -> None:
+    """A snapshot older than the stored row updates nothing, so a newer push without a stop-loss
+    stays in `list_unprotected` (C-2.6); equal times and a NULL time on either side apply."""
+    guard = _sql(_STATEMENTS[pos]["upsert_statement"]).split(" WHERE ")[1].split(" RETURNING ")[0]
+    stored, given = "positions.exchange_updated_ts", "excluded.exchange_updated_ts"
+    assert guard == f"{stored} IS NULL OR {given} IS NULL OR {stored} <= {given}"
 
 
 @pytest.mark.parametrize(
@@ -207,19 +216,13 @@ async def test_an_insert_reports_stored_or_duplicate_and_refuses_another_account
     assert (await store.insert(_fill()), rel.commits) == (True, 2)
 
 
-async def test_the_reads_and_writes_map_their_rows() -> None:
-    executions = ex.SqlAlchemyExecutionStore(cast(Any, _Rel(_Result([_EXEC_ROW]), _Result())))
-    assert await executions.get(ACCOUNT, "E1") == ExecutionRow(**_EXEC_ROW)
-    assert await executions.get(ACCOUNT, "E2") is None
-    rel = _Rel(
-        _Result([_POSITION_ROW]), _Result([_POSITION_ROW] * 2), _Result(), _Result([_SNAPSHOT_ROW])
-    )
-    positions = pos.SqlAlchemyPositionStore(cast(Any, rel))
-    assert await positions.upsert(_state()) == PositionRow(**_POSITION_ROW)
-    assert len(await positions.list_open(ACCOUNT)) == 2
-    assert await positions.list_unprotected(ACCOUNT) == ()
-    assert await positions.append(_snap()) == PositionSnapshotRow(**_SNAPSHOT_ROW)
-    assert rel.commits == 2
+async def test_a_skipped_stale_upsert_returns_the_stored_row_from_a_scoped_read() -> None:
+    newer = _POSITION_ROW | {"size": Decimal(2), "exchange_updated_ts": T0}
+    rel = _Rel(_Result(), _Result([newer]))  # the guard skipped the update: nothing returned
+    stale = _state(exchange_updated_ts=T0.replace(hour=11))
+    assert await pos.SqlAlchemyPositionStore(cast(Any, rel)).upsert(stale) == PositionRow(**newer)
+    assert _sql(rel.statements[1]) == _sql(pos.stored_statement(stale))
+    assert rel.commits == 1
 
 
 _EXEC, _POS = ex.SqlAlchemyExecutionStore, pos.SqlAlchemyPositionStore
@@ -245,3 +248,28 @@ async def test_every_call_is_one_capped_unit_of_work_whose_refusal_is_named(call
     with pytest.raises(OrderConstraintError, match="ex_qty"):
         await run(store(cast(Any, failing)))
     assert failing.commits == 0
+
+
+_EXEC_OUT, _POS_OUT = ExecutionRow(**_EXEC_ROW), PositionRow(**_POSITION_ROW)
+_SNAP_OUT = PositionSnapshotRow(**_SNAPSHOT_ROW)
+_MAPPED: dict[str, tuple[type[Any], Callable[[Any], Awaitable[object]], _Result, object]] = {
+    "get": (_EXEC, lambda s: s.get(ACCOUNT, "E1"), _Result([_EXEC_ROW]), _EXEC_OUT),
+    "get_absent": (_EXEC, lambda s: s.get(ACCOUNT, "E2"), _Result(), None),
+    "upsert": (_POS, lambda s: s.upsert(_state()), _Result([_POSITION_ROW]), _POS_OUT),
+    "list_open": (
+        _POS,
+        lambda s: s.list_open(ACCOUNT),
+        _Result([_POSITION_ROW] * 2),
+        (_POS_OUT,) * 2,
+    ),
+    "list_unprotected": (_POS, lambda s: s.list_unprotected(ACCOUNT), _Result(), ()),
+    "append": (_POS, lambda s: s.append(_snap()), _Result([_SNAPSHOT_ROW]), _SNAP_OUT),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_MAPPED))
+async def test_each_read_and_write_maps_its_rows(call: str) -> None:
+    store, run, result, expected = _MAPPED[call]
+    rel = _Rel(result)
+    assert await run(store(cast(Any, rel))) == expected
+    assert rel.commits == (1 if call in {"upsert", "append"} else 0)

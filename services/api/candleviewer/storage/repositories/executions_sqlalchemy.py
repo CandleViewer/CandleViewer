@@ -1,4 +1,4 @@
-"""Postgres execution store (E29-T01 #845 slice 3/3, migration `0029_oms_core`).
+"""Postgres execution store (E29-T01 #845, migration `0029_oms_core`).
 
 Core statements and the `CappedStore` cap and error mapping, as in `orders_sqlalchemy.py`. `insert`
 is `INSERT ... ON CONFLICT (exchange_account_id, exec_id) DO NOTHING` (21 Sec.3.3.6) and says

@@ -1,4 +1,4 @@
-"""Driver-free position and position-snapshot store surface (E29-T01 #845 slice 3/3).
+"""Driver-free position and position-snapshot store surface (E29-T01 #845).
 
 `positions` keeps the exchange's latest state per account, symbol and `position_idx`, and
 `position_snapshots` its history (21 Sec.3.3.7); `positions_sqlalchemy.py` is the Postgres side.
@@ -103,9 +103,11 @@ class PositionStore(Protocol):
     """Upsert and account-scoped reads of `positions`."""
 
     async def upsert(self, state: PositionState) -> PositionRow:
-        """The row becomes `state` (the last write wins: the OMS must write an account's updates
-        in exchange order, 24 Sec.8.2 S5); a TP, SL or trailing stop of 0 or less is stored as
-        NULL, since the exchange's 0 means none."""
+        """The row becomes `state`, unless the stored row has a later `exchange_updated_ts`: then
+        nothing changes and the stored row is returned, so a stale snapshot never overwrites a
+        newer push (C-2.6). With either time NULL the write applies, so the OMS still owes exchange
+        order for an account's updates (24 Sec.8.2 S5). A TP, SL or trailing stop of 0 or less
+        is stored as NULL, since the exchange's 0 means none."""
         ...
 
     async def list_open(self, account_id: UUID) -> tuple[PositionRow, ...]:
