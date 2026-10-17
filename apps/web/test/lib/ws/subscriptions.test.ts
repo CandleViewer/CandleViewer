@@ -344,10 +344,14 @@ describe("options (C4) and server strings", () => {
     expect(host.subscribe).toHaveBeenCalledWith(spec({ opts: { throttle_ms: 5 } }), undefined);
     registry.onSubOk(subOk("not an object", BOOK, { sub_id: "s".repeat(65) }), LIVE); // neither is used
     expect([handle.effective, handle.subId]).toEqual([{}, undefined]);
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "" }), LIVE); // 1 to 64 characters: no id either
+    expect(handle.subId).toBeUndefined();
     registry.onSubOk(subOk({}, BOOK, { sub_id: "s".repeat(64) }), LIVE); // the longest one kept
     expect(handle.subId).toBe("s".repeat(64));
     registry.onSubOk(subOk({ throttle_ms: 50, encoding: "binary" }), LIVE);
     expect(handle.effective).toEqual({ throttle_ms: 50, encoding: "binary" });
+    expect(handle.subId).toBe("s_01");
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "" }), LIVE); // nor does it replace the one kept
     expect(handle.subId).toBe("s_01");
     registry.onCtlOk(control("ctl_ok", { effective: { throttle_ms: 1 } }), LIVE); // names no topic: ignored
     registry.onCtlOk(ctlOk({ throttle_ms: 200 }), LIVE);

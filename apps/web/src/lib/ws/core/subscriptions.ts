@@ -15,6 +15,9 @@ import { createSequencer, topicKey } from "./sequencer";
 import { createSnapshotAssembler } from "./snapshotAssembler";
 
 const MAX_SUB_ID_LENGTH = 64;
+/** A `sub_id` is 1 to 64 characters (23 7.5, `subId`): any other string is no id, and no pin the server accepts. */
+const isSubId = (v: unknown): v is string =>
+  typeof v === "string" && v.length > 0 && v.length <= MAX_SUB_ID_LENGTH;
 /** `effective` is a few small options, lists and maps of them: more levels or more values than these is not options. */
 const MAX_OPTIONS_DEPTH = 8;
 const MAX_OPTIONS_NODES = 1024;
@@ -369,9 +372,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
             end(rec); // refused (the error goes to the error handler): nothing will be delivered
             continue;
           }
-          if (typeof result.sub_id === "string" && result.sub_id.length <= MAX_SUB_ID_LENGTH) {
-            rec.subId = result.sub_id;
-          }
+          if (isSubId(result.sub_id)) rec.subId = result.sub_id;
           // C4: what the server clamped the options to, never what was asked for.
           const options = result.effective;
           if (isRecord(options) && !beyondOptions(options)) {
