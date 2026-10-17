@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,11 @@ NOW: Final = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 #: The shared corpus beside the pack, relative to the pack's parent.
 CORPUS: Final = Path("bybit") / "2026-10-05" / "rest"
 SERVER_TIME: Final = "../bybit/2026-10-05/rest/server_time.json"
+#: A module the resolver may not import: one of `candleviewer`, where ADR-0036's two banned modules
+#: live, or of `cvdev`, whose other modules import `candleviewer` (`wiring` does).
+BANNED_MODULE: Final = re.compile(r"(candleviewer|cvdev)(\.\w+)*")
+#: The calls that import a module named at run time.
+DYNAMIC_IMPORTS: Final = frozenset({"__import__", "import_module"})
 
 
 def _copy_pack(fixtures: Path, *scenarios: str) -> Path:
@@ -45,6 +51,29 @@ def _copy_pack(fixtures: Path, *scenarios: str) -> Path:
 def _edit(path: Path, **fields: Any) -> None:
     body = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(json.dumps(body | fields), encoding="utf-8")
+
+
+def _routes_to_candleviewer(source: str) -> list[str]:
+    """What in `source` could import `candleviewer` or `cvdev`: an import statement naming either,
+    any relative import, any `__import__` or `import_module` call (its target may be computed) and
+    any string naming a module of either, as such a call would take it."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found += [alias.name for alias in node.names if BANNED_MODULE.fullmatch(alias.name)]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level or BANNED_MODULE.fullmatch(module):
+                found.append("." * node.level + module)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            callee = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if callee in DYNAMIC_IMPORTS:
+                found.append(ast.unparse(node))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if BANNED_MODULE.fullmatch(node.value):
+                found.append(node.value)
+    return found
 
 
 def test_pack_root_is_configurable(tmp_path: Path) -> None:
@@ -171,10 +200,30 @@ def test_exact_call_answers_before_the_wildcard() -> None:
 
 
 def test_resolver_imports_nothing_from_candleviewer() -> None:
-    """ADR-0036 bans `candleviewer.secrets` and `candleviewer.audit` from `cvdev`: the resolver
-    imports no `candleviewer` module and no sibling, so it reaches neither, even indirectly."""
-    nodes = list(ast.walk(ast.parse(Path(resolver.__file__).read_text(encoding="utf-8"))))
-    names = [alias.name for n in nodes if isinstance(n, ast.Import) for alias in n.names]
-    names += ["." * n.level + (n.module or "") for n in nodes if isinstance(n, ast.ImportFrom)]
+    """ADR-0036 bans `candleviewer.secrets` and `candleviewer.audit` from `cvdev`. The resolver
+    imports no `candleviewer` module and no other `cvdev` one, neither by an import statement nor
+    through `__import__` or `importlib`, so nothing it imports reaches either."""
+    source = Path(resolver.__file__).read_text(encoding="utf-8")
 
-    assert [n for n in names if n.startswith(".") or n.partition(".")[0] == "candleviewer"] == []
+    assert _routes_to_candleviewer(source) == []
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        pytest.param("from cvdev.account_fixture import wiring", id="sibling"),
+        pytest.param("import cvdev.account_fixture.wiring", id="cvdev"),
+        pytest.param("from .wiring import build", id="relative"),
+        pytest.param("from candleviewer import settings", id="candleviewer"),
+        pytest.param("importlib.import_module('cvdev.account_fixture.wiring')", id="importlib"),
+        pytest.param("__import__('candleviewer.settings')", id="dunder"),
+        pytest.param("importlib.import_module(f'{__package__}.wiring')", id="computed"),
+        pytest.param("getattr(importlib, 'import_module')('candleviewer.settings')", id="string"),
+    ],
+)
+def test_import_check_flags_each_route_to_candleviewer(added: str) -> None:
+    """The check above, run on the resolver with one import added. The first, an absolute import of
+    `wiring`, which imports `candleviewer`, once passed it."""
+    source = Path(resolver.__file__).read_text(encoding="utf-8")
+
+    assert _routes_to_candleviewer(f"{source}\n{added}\n") != []
