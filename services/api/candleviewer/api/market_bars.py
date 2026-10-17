@@ -15,10 +15,11 @@ Order of refusal (each before any storage read except where noted):
    and the client cannot fix it by paginating (22-api precedence rule).
 5. Hard window caps only (SR-E12-02, 22-api paging rule): time bars <= 400 d and <= 250 000
    estimated bars (window / interval), non-time bars <= 31 d and then <= 250 000 bars estimated
-   from the window's stored prints (`bars.estimate`, #2093: one bounded count, the only read
-   before the bars; it fails closed with 503) -> 422 `bar_window_too_large`. Anything narrower
-   is paged by rows: an uncursored request is the first page, every read asks for `limit + 1`
-   rows (bounded work), and a server-issued `next_cursor` is returned whenever more rows remain.
+   from the window's stored prints (`bars.estimate`, #2093: one count of the window's trades
+   under `QUERY_TIMEOUT_S`, after the recording-start read and before the bar read; it fails
+   closed with 503) -> 422 `bar_window_too_large`. Anything narrower is paged by rows: an
+   uncursored request is the first page, every read asks for `limit + 1` rows (bounded work),
+   and a server-issued `next_cursor` is returned whenever more rows remain.
 
 The cursor is bound to `(bars, symbol, bar_type:param)` (`api.market_response`), so a klines
 cursor or one for another series is `invalid_cursor`. Time bars order by `ts` with a `ts`
@@ -198,8 +199,10 @@ def make_market_bars_router(
         symbol: str, spec: BarSpec, bar_type: str, rng: TimeRange
     ) -> JSONResponse | None:
         """SR-E12-02 for non-time bars (#2093): None when the bars estimated from `rng`'s stored
-        prints fit `MAX_WINDOW_BARS`, else the 422. Fails closed, like the read: no count source,
-        or a count that fails or outlives `QUERY_TIMEOUT_S`, is 503. Never a skipped check (a
+        prints fit `MAX_WINDOW_BARS`, else the 422, worded per kind (`bars.estimate`): tick and
+        volume hold about the estimate, delta and range at most it, renko's is an estimate.
+        Fails closed, like the read: no count source, or a count that fails or outlives
+        `QUERY_TIMEOUT_S`, is 503 (logged with class names only). Never a skipped check (a
         slow store is when the extra load costs most) and never a 422, which is final
         (`retryable: false`) and would state a size nobody measured."""
         if trade_totals is None:
@@ -208,15 +211,20 @@ def make_market_bars_router(
         try:
             async with asyncio.timeout(QUERY_TIMEOUT_S):
                 totals = await trade_totals(symbol, rng)
-        except (TimeoutError, OSError, ConnectionError, StorageTierUnavailable):
-            detail = "Trade storage did not answer in time; retry shortly or narrow from/to."
+        except (TimeoutError, OSError, ConnectionError, StorageTierUnavailable) as exc:
+            cause = None if exc.__cause__ is None else type(exc.__cause__).__name__
+            _log().warning("market_bars_estimate_failed", error=type(exc).__name__, cause=cause)
+            detail = "Trade storage is unavailable; retry shortly or narrow from/to."
             return problem(503, "store_unavailable", "Service unavailable", detail)
         if estimate_non_time_bars(spec, totals.prints, totals.qty) <= MAX_WINDOW_BARS:
             return None
-        return _window_too_large(
-            f"The window holds more than {MAX_WINDOW_BARS:,} {bar_type} bars, estimated from "
-            "recorded trades; narrow from/to."
-        )
+        cap = f"{MAX_WINDOW_BARS:,}"
+        if spec.kind in ("tick", "volume"):  # near-exact: a closed bar holds N prints or V qty
+            size = f"holds more than {cap} {bar_type} bars, estimated from recorded trades"
+        else:  # delta and range: a bound; renko: an estimate (one print can make many bricks)
+            per = "estimated at" if spec.kind == "renko" else "at most"
+            size = f"may hold more than {cap} {bar_type} bars ({per} one per recorded print)"
+        return _window_too_large(f"The window {size}; narrow from/to.")
 
     @router.get("/market/bars")
     async def get_bars(
@@ -350,4 +358,10 @@ def make_market_bars_router(
     return router
 
 
-__all__ = ["BarReaderLike", "RecordingStart", "make_market_bars_router", "parse_bar_request"]
+__all__ = [
+    "BarReaderLike",
+    "RecordingStart",
+    "TradeTotalsSource",
+    "make_market_bars_router",
+    "parse_bar_request",
+]

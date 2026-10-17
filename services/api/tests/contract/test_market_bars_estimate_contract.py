@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
+import asyncpg
 import httpx
 import pytest
 from fastapi import FastAPI
+from structlog.testing import capture_logs
 
 from candleviewer.api import market_bars
 from candleviewer.api.market_bars import TradeTotalsSource
 from candleviewer.bars.limits import MAX_WINDOW_BARS as CAP
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TimeRange
+from candleviewer.storage.questdb.ilp_writer import IlpWriter
+from candleviewer.storage.questdb.reader import QuestDbReader
+from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository
 from candleviewer.storage.repositories.rows import TradeTotals
 from tests.contract.test_market_bars_contract import _P, _STORE, _T0, _client, _Fetch, _problem
 
@@ -29,6 +34,15 @@ def _fixed(prints: int, qty: Decimal, calls: list[TimeRange] | None = None) -> T
         return TradeTotals(prints, qty)
 
     return totals
+
+
+_SAYS = {  # tick and volume: about the estimate; delta and range: a bound; renko: an estimate
+    "tick": "holds more than 250,000 tick bars, estimated from recorded trades",
+    "volume": "holds more than 250,000 volume bars, estimated from recorded trades",
+    "delta": "may hold more than 250,000 delta bars (at most one per recorded print)",
+    "range": "may hold more than 250,000 range bars (at most one per recorded print)",
+    "renko": "may hold more than 250,000 renko bars (estimated at one per recorded print)",
+}
 
 
 @pytest.mark.parametrize(
@@ -50,7 +64,26 @@ def test_at_the_cap_is_served_and_one_bar_over_is_refused_before_any_read(
     fetch = _Fetch()
     resp = _client(totals=_fixed(*over), fetch=fetch).get("/market/bars", params=q)
     body = _problem(resp, 422, "bar_window_too_large")
-    assert f"250,000 {bar_type} bars" in body["detail"] and fetch.calls == 0
+    assert body["detail"] == f"The window {_SAYS[bar_type]}; narrow from/to." and fetch.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("kw", "params", "status", "code"),
+    [
+        ({"perms": None}, _TICK, 401, "unauthenticated"),
+        ({"perms": frozenset({"orders:read"})}, _TICK, 403, "forbidden"),
+        ({}, {**_TICK, "symbol": "NOPEUSDT"}, 422, "validation_failed"),
+        ({}, {**_TICK, "cursor": "nope"}, 400, "invalid_cursor"),
+    ],
+    ids=["401", "403", "unlisted-symbol", "invalid-cursor"],
+)
+def test_a_request_refused_before_the_estimate_takes_no_count(
+    kw: dict[str, Any], params: dict[str, Any], status: int, code: str
+) -> None:
+    calls: list[TimeRange] = []
+    client = _client(totals=_fixed(10**12, Decimal(10**12), calls), **kw)
+    _problem(client.get("/market/bars", params=params), status, code)
+    assert calls == []
 
 
 def test_no_count_for_a_pre_recording_or_over_31_day_window_or_for_time_bars() -> None:
@@ -78,19 +111,45 @@ def test_the_count_covers_the_window_the_read_pages_through() -> None:
     assert calls == [TimeRange(start_us=start, end_us=end), TimeRange(start_us=second, end_us=end)]
 
 
-@pytest.mark.parametrize(
-    "error",
-    [TimeoutError(), OSError("down"), StorageTierUnavailable()],
-    ids=["timeout", "os", "tier"],
-)
-def test_a_count_that_fails_is_503_and_nothing_is_read(error: Exception) -> None:
+def _raising(error: Exception) -> TradeTotalsSource:
     async def failing(symbol: str, rng: TimeRange) -> TradeTotals:
         raise error
 
+    return failing
+
+
+class _DriverDown:
+    """A pg-wire connection whose query dies in asyncpg, under the real reader and repository."""
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+
+
+_DOWN = QuestDbMarketDataRepository(cast(IlpWriter, None), QuestDbReader(_DriverDown()))
+
+
+@pytest.mark.parametrize(
+    ("source", "error", "cause"),
+    [
+        (_raising(TimeoutError()), "TimeoutError", None),
+        (_raising(OSError("down")), "OSError", None),
+        (_raising(StorageTierUnavailable()), "StorageTierUnavailable", None),
+        (_DOWN.trade_totals, "StorageTierUnavailable", "ConnectionDoesNotExistError"),
+    ],
+    ids=["timeout", "os", "tier", "asyncpg"],
+)
+def test_a_count_that_fails_is_503_logged_by_type_and_nothing_is_read(
+    source: TradeTotalsSource, error: str, cause: str | None
+) -> None:
     fetch = _Fetch()
-    resp = _client(totals=failing, fetch=fetch).get("/market/bars", params=_TICK)
-    assert "retry shortly" in _problem(resp, 503, "store_unavailable")["detail"]
+    with capture_logs() as logs:
+        resp = _client(totals=source, fetch=fetch).get("/market/bars", params=_TICK)
+    detail = _problem(resp, 503, "store_unavailable")["detail"]
+    assert detail == "Trade storage is unavailable; retry shortly or narrow from/to."
     assert fetch.calls == 0
+    entry = {"event": "market_bars_estimate_failed", "log_level": "warning", "error": error,
+             "cause": cause}  # fmt: skip
+    assert [e for e in logs if e["event"].startswith("market_bars")] == [entry]  # type only
 
 
 def test_no_count_source_fails_closed_for_non_time_bars_only() -> None:
@@ -115,5 +174,8 @@ async def test_a_count_that_outlives_the_query_timeout_is_503(
 
     app = cast(FastAPI, _client(totals=stalled).app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        resp = await asyncio.wait_for(c.get("/market/bars", params=_TICK), 30)
+        with capture_logs() as logs:
+            resp = await asyncio.wait_for(c.get("/market/bars", params=_TICK), 30)
     _problem(resp, 503, "store_unavailable")
+    errors = [e.get("error") for e in logs if e["event"].startswith("market_bars")]
+    assert errors == ["TimeoutError"]

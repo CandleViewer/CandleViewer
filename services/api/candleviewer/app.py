@@ -94,7 +94,7 @@ from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
-from candleviewer.api.market_bars import make_market_bars_router
+from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
 from candleviewer.api.me import make_me_router
 from candleviewer.api.onboarding import make_onboarding_router
@@ -283,6 +283,7 @@ from candleviewer.storage.repositories.rows import (
     KlineRow,
     TickerRow,
     TradeRow,
+    TradeTotals,
 )
 from candleviewer.storage.repositories.rules_sqlalchemy import SqlAlchemyRulesRepository
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
@@ -1645,7 +1646,7 @@ def create_app(
         make_market_bars_router(
             lambda: bars_reader,
             recording_started_at_us=recording_started_at_us(ctx),
-            trade_totals=lambda sym, rng: ctx.storage.market_data.trade_totals(sym, rng),
+            trade_totals=trade_totals_source(ctx),
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             now_us=lambda: time.time_ns() // 1000,
@@ -2360,6 +2361,16 @@ def recording_started_at_us(ctx: AppContext) -> RecordingStart:
         return min(known) if known else None
 
     return first
+
+
+def trade_totals_source(ctx: AppContext) -> TradeTotalsSource:
+    """SR-E12-02 (#2093): the stored-print count behind `/market/bars`'s non-time estimate, read
+    from `ctx.storage.market_data` on each call (storage starts after the routes are built)."""
+
+    async def totals(symbol: str, rng: TimeRange) -> TradeTotals:
+        return await ctx.storage.market_data.trade_totals(symbol, rng)
+
+    return totals
 
 
 def wire_clock_offset(ctx: AppContext, fetch_server_time: ServerTimeFetcher) -> ClockGuard:

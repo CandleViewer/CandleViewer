@@ -16,7 +16,8 @@ and `Fraction` arithmetic; every stored print has qty > 0, the #1898 print rejec
   complete up to `MAX_BRICKS_PER_TRADE` bricks (SR-E12-15).
 
 A bar the window serves opens on a print the window counts, so the bars cut by a window edge stay
-inside these ceilings.
+inside these ceilings. One builder generation is assumed: each cold start in the window (#2704)
+can add one partial bar.
 """
 
 from __future__ import annotations
