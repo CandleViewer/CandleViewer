@@ -130,9 +130,9 @@ def test_backups_never_has_a_grace_window_while_audit_does() -> None:
 
 
 #: Classes the `authStepUp` contract declares before the service accepts them (C-6.1,
-#: contract first). `flags` is E42-T03's (#964, contract in #2592): its service slice adds it
-#: to `ACTION_CLASSES` and removes it from here.
-_CONTRACT_AHEAD = frozenset({"flags"})
+#: contract first). Empty: `flags` (E42-T03's, contract in #2592) landed with #3083, ahead of
+#: the flag write path (#964).
+_CONTRACT_AHEAD: frozenset[str] = frozenset()
 
 
 def test_contract_step_up_classes_match_the_service() -> None:
