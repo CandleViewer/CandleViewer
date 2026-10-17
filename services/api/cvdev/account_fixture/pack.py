@@ -223,6 +223,11 @@ def fixture_key_ids(pack: Pack) -> frozenset[str]:
     return frozenset(i for i in named if isinstance(i, str) and _FIXTURE_KEY_ID.fullmatch(i))
 
 
+def derived_secret(name: str) -> str:
+    """The secret of the key stored under scenario `name` (README rule; derived, never stored)."""
+    return f"fixture-{name}-secret-not-real"
+
+
 def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -285,7 +290,7 @@ class Scenario:
 
     def typed_secret(self) -> str:
         """The secret a tester types for this scenario's key (README rule; never stored)."""
-        return f"fixture-{self.name}-secret-not-real"
+        return derived_secret(self.name)
 
     def _answering(self) -> tuple[Mapping[str, Any], ...]:
         """The README lookup order: the scenario's own answers (a fault), then the overlays
