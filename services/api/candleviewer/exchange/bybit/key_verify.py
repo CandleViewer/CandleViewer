@@ -7,8 +7,11 @@ No call is retried, as the next run is the retry; the one repeat is the client's
 clock-drift refusal (10002, E08-S07). Each call is bounded at `CALL_TIMEOUT_S`. Both draw from the
 account-reads class of the key's per-UID budget, the `poll` share (`20-architecture.md` §4.3),
 never the order or position classes that hold the stop, cancel and SL reserve (C-12.7,
-SR-E27-05), on a governor that caps every verification call at `VERIFY_CALLS_PER_5S`. Replies are
-parsed by `key_info`; errors leave in the M3 taxonomy.
+SR-E27-05), on a governor that caps every verification call at `VERIFY_CALLS_PER_5S`. While that
+governor holds the IP (a 10018 holds every caller for 10 minutes or more, 24 §8.6) for longer
+than one call's bound, a call is refused at once, never sent: waiting would only end at the bound,
+so a pass under the hold costs no wait per key. Replies are parsed by `key_info`; errors leave in
+the M3 taxonomy.
 
 Clock: given the clock guard's measured offset, a request is stamped on the exchange's clock
 (E08-S07 fixes the clock, never the window), so a skewed host still gets a verdict; without one a
@@ -23,6 +26,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
+from candleviewer.exchange.base.errors import RateLimitError
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -61,12 +65,26 @@ def verification_governor() -> TokenBucketGovernor:
 
 
 class KeyVerificationCalls:
-    """The two signed calls for one stored key, on the host its client was built for."""
+    """The two signed calls for one stored key, on the host its client was built for, under the
+    governor that client draws from."""
 
-    def __init__(self, client: BybitRestClient, wall_ms: Callable[[], int] = _wall_ms) -> None:
-        self._client, self._now_ms = client, wall_ms
+    def __init__(
+        self,
+        client: BybitRestClient,
+        governor: TokenBucketGovernor,
+        wall_ms: Callable[[], int] = _wall_ms,
+    ) -> None:
+        self._client, self._governor, self._now_ms = client, governor, wall_ms
+
+    def _refuse_under_ip_hold(self) -> None:
+        """A hold longer than one call's bound would only end at that bound: refused, never
+        sent (no budget drawn, no request signed)."""
+        held = self._governor.ip_hold_remaining_s()
+        if held > CALL_TIMEOUT_S:
+            raise RateLimitError("an IP-level hold is in force", retry_after_s=held)
 
     async def key_info(self) -> ApiKeyFacts:
+        self._refuse_under_ip_hold()
         body = await self._client.signed_request("GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS)
         return parse_key_info(body)
 
@@ -74,6 +92,7 @@ class KeyVerificationCalls:
         """The send and receive times bracket the whole call, its budget wait and M2's signing
         included: a slow wait reads as latency (`probe_slow`, inconclusive) and widens the
         derived offset's error by half of it."""
+        self._refuse_under_ip_hold()
         sent = self._now_ms()
         body = await self._client.signed_request(
             "GET", PROBE_PATH, params=_PROBE_PARAMS, endpoint_class=VERIFY_CLASS
@@ -110,4 +129,4 @@ def key_verification_calls(
     client = BybitRestClient(
         config, uid=uid, signer=signer, governor=governor, clock_offset_ms_provider=clock_offset_ms
     )
-    return KeyVerificationCalls(client)
+    return KeyVerificationCalls(client, governor)

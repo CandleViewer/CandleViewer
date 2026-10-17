@@ -9,7 +9,8 @@ with the key-import pipeline: no withdrawal or transfer right, the trade scopes,
 account, the account's UID, a whitelist holding only the egress IP, the expiry and a signed probe.
 Every call goes to the key's own environment's host (C-2.11). Code: `accounts/selfcheck.py`, wired
 by `key_selfcheck_wiring.py`. `CV_EGRESS_IP` is the address the exchange sees from this host (required
-once a key is stored); `CV_KEY_SELFCHECK_INTERVAL_S` is 60 to 3600. The start-up pass is bounded at 60 s.
+once a key is stored); `CV_KEY_SELFCHECK_INTERVAL_S` is 60 to 3600. The start-up pass is bounded at 60 s:
+the API serves nothing, `/healthz` included, until it ends, and a healthy pass of about 20 keys fits.
 
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 
@@ -46,10 +47,12 @@ No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and
 `api_keys.last_error_code` give the cause: a venue code (10004 signature refused, 10002 clock drift:
 the host clock is off and the ingestion clock guard has not measured the offset, 10006 or 10018 rate
-limit), `transport_error`, `timeout`, `unknown_state`, `probe_slow` or
+limit), `rate_limited` (an IP-level hold after a 10018 is in force, so the key was not called),
+`transport_error`, `timeout`, `unknown_state`, `probe_slow` or
 `check_error`. `unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
 the key list could not be read (`key_selfcheck_targets_failed`), a key's check passed its deadline
 (`key_selfcheck_unfinished`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
-with more than about ten keys an exchange outage at start-up is enough) or the loop died
+with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)
+or the loop died
 (`key_selfcheck_loop_died`). `/readyz` shows a failing `accounts` check for both. Fix the cause
 (exchange reachability, the host clock, Postgres, the setting), then restart cv-api via the launcher.

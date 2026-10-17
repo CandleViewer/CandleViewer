@@ -82,8 +82,11 @@ READ_TIMEOUT_S: Final = 10.0
 #: step of margin. The deadline derives from the wired bounds, so it cuts only an unbounded await.
 CHECK_STEPS: Final = 6
 #: The boot assertion as a whole: past it the job fails closed and start-up goes on (#836). It
-#: is fixed, not scaled by the key count: in an outage each key waits out a 5 s call bound, so
-#: past about ten keys an outage at start-up latches `UNAVAILABLE` until a restart (runbook).
+#: is fixed, not scaled by the key count, because the API serves nothing, `/healthz` included,
+#: until it ends (the compose healthcheck reports unhealthy after about 100 s). At SCR-126's 3 s
+#: round trip a healthy pass of 20 keys fits; in an outage each key waits out a 5 s call bound,
+#: so past about ten keys an outage at start-up latches `UNAVAILABLE` until a restart (runbook).
+#: An IP-level rate-limit hold costs no wait: the adapter refuses each call at once.
 BOOT_DEADLINE_S: Final = 60.0
 ACTOR: Final = "system:key-selfcheck"
 DISABLED_BY_POLICY: Final = "account.disabled_by_policy"

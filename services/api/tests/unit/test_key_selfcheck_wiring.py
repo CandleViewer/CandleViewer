@@ -208,6 +208,26 @@ async def test_the_wired_calls_sign_and_send_on_the_process_environment_only(
     assert [(key, purpose) for key, _, purpose in signed] == [(KEY, "key_verify")] * 2
 
 
+async def test_after_a_10018_the_next_keys_call_is_inconclusive_at_once_and_never_sent() -> None:
+    """The 10018 holds the IP for 10 minutes: waiting would only end at the 5 s call bound, so
+    the next key's call is refused at once (`rate_limited`) and a pass costs no wait per key."""
+    signed: list[Call] = []
+    real = ctx(signed, storage_backend="real")  # demo: its host only
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None))
+    assert check is not None
+    codes: list[str] = []
+    with respx.mock(assert_all_called=False) as router:
+        route = router.get(f"https://{HOSTS[1]}{KEY_INFO_PATH}")
+        route.respond(json=rest("rest/error_10018.json"))
+        for key in (KEY, UUID(int=12)):
+            calls = check._calls(key, ACCOUNT.exchange_uid)
+            with pytest.raises(VerificationInconclusive) as caught:
+                await asyncio.wait_for(calls.key_info(), timeout=1.0)  # a lost refusal fails fast
+            await calls.aclose()
+            codes.append(str(caught.value))
+    assert (codes, route.call_count, len(signed)) == (["10018", "rate_limited"], 1, 1)
+
+
 @pytest.fixture
 def skewed() -> Iterator[respx.MockRouter]:
     """The demo host on an exchange clock `SKEW_MS` behind the host's."""

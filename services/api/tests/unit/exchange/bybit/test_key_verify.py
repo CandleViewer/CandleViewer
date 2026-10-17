@@ -6,6 +6,7 @@ Replies: the documented-shape `tests/fixtures/key_verification/` (README there) 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Callable, Iterator
@@ -25,7 +26,11 @@ from candleviewer.exchange.base.errors import (
 )
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH, ProbeFacts
-from candleviewer.exchange.bybit.key_verify import KeyVerificationCalls, key_verification_calls
+from candleviewer.exchange.bybit.key_verify import (
+    CALL_TIMEOUT_S,
+    KeyVerificationCalls,
+    key_verification_calls,
+)
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.service import ExchangeBybitService
@@ -159,9 +164,10 @@ async def test_the_probe_reports_the_exchange_clock_and_the_local_send_and_recei
 ) -> None:
     config = RestClientConfig(base_url=SIGNED_REST_BASES["demo"], max_retries=0)
     signer = BybitSigner(fake_capability(), CREDENTIAL_ID, purpose="key_verify")
-    client = BybitRestClient(config, uid=UID, signer=signer, governor=Governor())
+    governor = Governor()
+    client = BybitRestClient(config, uid=UID, signer=signer, governor=governor)
     ticks = iter([100, 160])
-    calls = KeyVerificationCalls(client, wall_ms=lambda: next(ticks))
+    calls = KeyVerificationCalls(client, governor, wall_ms=lambda: next(ticks))
     seen = await calls.probe()
     await calls.aclose()
     assert seen == ProbeFacts(load("wallet_balance.json")["time"], 100, 160)
@@ -192,6 +198,41 @@ async def test_a_measured_offset_stamps_requests_on_the_exchange_clock_not_the_p
 def test_each_call_is_bounded_at_five_seconds_and_never_retried_by_the_client() -> None:
     config = build("demo")[0]._client._config
     assert (config.connect_timeout_s, config.total_timeout_s, config.max_retries) == (5.0, 5.0, 0)
+
+
+@pytest.mark.parametrize("call", ["key_info", "probe"])
+async def test_a_call_under_an_ip_hold_longer_than_its_bound_is_refused_at_once_never_sent(
+    venue: respx.MockRouter, call: str
+) -> None:
+    signed: list[Call] = []
+    calls, governor = build("demo", signed)
+    governor.hold_ip(600.0)  # what a 10018 sets: every caller waits 10 minutes
+    with pytest.raises(RateLimitError) as refused:
+        await asyncio.wait_for(getattr(calls, call)(), timeout=1.0)  # a wait fails fast
+    await calls.aclose()
+    assert (asked(venue), governor.drawn, signed) == ([], [], [])
+    assert refused.value.retry_after_s == pytest.approx(600.0, abs=1.0)
+
+
+async def test_a_hold_within_one_calls_bound_is_waited_out_and_the_call_is_sent(
+    venue: respx.MockRouter,
+) -> None:
+    now = [0.0]
+
+    async def wait(delay: float) -> None:  # the governor's sleep on a fake clock
+        now[0] += delay
+
+    governor = TokenBucketGovernor(
+        default_capacity=10.0, default_refill_per_s=10.0, clock=lambda: now[0], sleep=wait
+    )
+    calls = key_verification_calls(
+        fake_capability("test-key"), "demo", CREDENTIAL_ID, uid=UID, recv_window_ms=5000,
+        governor=governor,
+    )  # fmt: skip
+    governor.hold_ip(CALL_TIMEOUT_S)
+    assert (await calls.key_info()).uid == UID
+    await calls.aclose()
+    assert (asked(venue), now) == ([(HOSTS["demo"], KEY_INFO_PATH)], [CALL_TIMEOUT_S])
 
 
 async def test_the_service_builds_every_verification_client_on_one_capped_governor(
