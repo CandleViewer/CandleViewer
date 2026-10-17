@@ -196,3 +196,10 @@ KEK behind them. Table and formats: `21-database-schema.md` §3.1.5a. Slices S1�
   key-bytes port.
 - **Unchanged.** `CV_AUTH_PEPPER` and `CV_AUTH_CSRF_KEY_HEX` stay env-provided, and there is no
   tool to re-key the auth keys themselves.
+
+## Amendment 5 (2026-10-16, #2417; interim decision D1 by main-orchestrator, recorded on #2417)
+
+Supersedes Design §5's "soak for 24 h". The rotation overlap is one fixed 900 s: the
+`api_key_rotations.grace_seconds` default and US-ACCT-004's 15-minute drain window (`rotateApiKey`
+in `docs/plan/22-api-openapi.yaml`). The rest of §5 (keys are created in the Bybit dashboard, not
+"via the Bybit API"; the old key is revoked locally only) stays with E27-T05.

@@ -3735,7 +3735,7 @@ class ExchangeApiKey(BaseModel):
     account_id: AccountId
     environment: Environment
     label: str
-    api_key_masked: str            # "AbCd…WxYz" — first 4 + last 4 only
+    api_key_masked: str            # "...WxYz" — "..." + the last 4 only (SR-E27-03)
     secret_ciphertext: bytes       # envelope-encrypted; NEVER leaves the vault module
     dek_id: UUID                   # data encryption key id
     permissions_observed: tuple[str, ...]   # from GET /v5/user/query-api
@@ -3748,7 +3748,7 @@ class ExchangeApiKey(BaseModel):
     created_at: TsUs
 ```
 
-Rules: secrets are envelope-encrypted (DEK per key, KEK from the host keyring/env, never in the database); the plaintext secret exists only inside the signing function's stack frame and is never logged, never returned by any API, and is redacted by a structured-logging filter with a test that asserts redaction. On registration the adapter calls `GET /v5/user/query-api` and **refuses** any key with withdrawal permission or missing IP whitelist (warning only for the latter, since IP allowlist config became browser-only in Feb 2026 and cannot be automated). Keys are re-verified every 24 h and on every auth failure; expiry within 7 days raises a warning.
+Rules: secrets are envelope-encrypted (DEK per key, KEK from the host keyring/env, never in the database); the plaintext secret exists only inside the signing function's stack frame and is never logged, never returned by any API, and is redacted by a structured-logging filter with a test that asserts redaction. On registration the adapter calls `GET /v5/user/query-api` and **refuses** any key that holds a right outside the permission allow-list (withdrawal, transfer and the fiat, pay and card groups included) or whose IP whitelist is empty, a wildcard or anything other than the deployment egress IP (`createApiKey` steps 2 and 5 in `22-api-openapi.yaml`, C-2.8). Bybit made allowlist configuration browser-only in Feb 2026, so the operator sets it in the dashboard and CandleViewer only reads and compares it. Keys are re-verified at start-up, hourly (C-12.2) and on every auth failure; expiry within 14 days raises the `key_expiring_soon` warning (`KeyVerificationWarning` in `22-api-openapi.yaml`).
 
 ### 15.4 Audit event schema
 

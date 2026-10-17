@@ -37,6 +37,8 @@ class ErrorCode(StrEnum):
     CONFLICT = "conflict"
     IDEMPOTENCY_KEY_REUSE = "idempotency_key_reuse"
     IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
+    OPEN_EXPOSURE = "open_exposure"
+    EXPOSURE_UNKNOWN = "exposure_unknown"
     VERSION_CONFLICT = "version_conflict"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     GONE = "gone"
@@ -117,6 +119,8 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.CONFLICT: ErrorMeta(("rest",), None, False, None, None, "Concurrent modification or state conflict"),
     ErrorCode.IDEMPOTENCY_KEY_REUSE: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different request payload"),
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
+    ErrorCode.OPEN_EXPOSURE: ErrorMeta(("rest",), None, False, None, None, "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"),
+    ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because none of its keys can be used to read it"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
@@ -130,7 +134,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Bybit per-UID rate budget exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error (correlation id in `instance`)"),
     ErrorCode.NOT_IMPLEMENTED: ErrorMeta(("rest",), None, False, None, None, "Operation declared but its backing provider is not wired yet; nothing was done"),
-    ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero retCode"),
+    ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero exchange refusal code"),
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),

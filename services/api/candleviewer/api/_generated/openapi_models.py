@@ -581,18 +581,60 @@ class UpdateExchangeAccountRequest(BaseModel):
         extra="forbid",
     )
     label: Annotated[str | None, Field(max_length=80)] = None
-    enabled: bool | None = None
+    enabled: Annotated[
+        bool | None,
+        Field(
+            description="`false` disables the account; with open exposure it needs the `open_exposure` query choice."
+        ),
+    ] = None
     active_profile_id: UUID | None = None
     position_mode: Literal["one_way", "hedge"] | None = None
     margin_mode: Literal["cross", "isolated", "portfolio"] | None = None
 
 
+class OpenExposureChoice(RootModel[Literal["leave_positions", "flatten_first"]]):
+    root: Annotated[
+        Literal["leave_positions", "flatten_first"],
+        Field(
+            description="How an action that ends CandleViewer's management of an account treats its open exposure (SR-E27-07); see `components.parameters.OpenExposure`."
+        ),
+    ]
+
+
+class AssignedUser(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    user_id: UUID
+    username: str
+    level: Literal["read", "trade"]
+
+
+class ArmedRule(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    rule_id: UUID
+    name: str
+
+
 class ApiKey(BaseModel):
     id: UUID
     exchange_account_id: UUID
-    key_id_masked: Annotated[str, Field(description="First and last 4 characters only.")]
+    key_id_masked: Annotated[
+        str,
+        Field(
+            description="At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03). The rest is never stored in clear.",
+            pattern="^\\.\\.\\.[A-Za-z0-9]{4}$",
+        ),
+    ]
     label: Annotated[str | None, Field(max_length=80)] = None
-    status: Literal["pending", "active", "rotating", "revoked", "expired", "invalid"]
+    status: Annotated[
+        Literal["pending", "active", "rotating", "revoked", "expired", "invalid"],
+        Field(
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+        ),
+    ]
     read_only: bool | None = None
     expires_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
@@ -625,26 +667,6 @@ class CreateApiKeyRequest(BaseModel):
     ] = None
 
 
-class KeyVerification(BaseModel):
-    passed: bool
-    uid: str | None = None
-    unified: bool | None = None
-    permissions: dict[str, list[str]] | None = None
-    withdraw_enabled: Annotated[
-        bool, Field(description="Must be false; a true value causes rejection.")
-    ]
-    ip_whitelist: list[str] | None = None
-    ip_whitelist_matches_egress: bool | None = None
-    clock_offset_ms: int | None = None
-    probe_ret_code: int | None = None
-    warnings: list[str] | None = None
-
-
-class ApiKeyWithVerification(BaseModel):
-    key: ApiKey | None = None
-    verification: KeyVerification | None = None
-
-
 class RotateApiKeyRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -652,37 +674,45 @@ class RotateApiKeyRequest(BaseModel):
     api_key: SecretStr
     api_secret: SecretStr
     label: Annotated[str | None, Field(max_length=80)] = None
-    overlap_seconds: Annotated[int | None, Field(ge=0, le=3600)] = 300
-
-
-class ApiKeyRotation(BaseModel):
-    rotation_id: UUID | None = None
-    old_key_id: UUID | None = None
-    new_key: ApiKey | None = None
-    verification: KeyVerification | None = None
-    overlap_until: AwareDatetime | None = None
-    state: Literal["overlapping", "completed", "failed"] | None = None
 
 
 class Rest(BaseModel):
     ok: bool | None = None
     latency_ms: int | None = None
     ret_code: int | None = None
-    error: str | None = None
+    error: (
+        Literal[
+            "auth_error",
+            "permission_denied",
+            "ip_not_allowed",
+            "clock_drift",
+            "rate_limited",
+            "service_unavailable",
+            "transport_error",
+            "timeout",
+            "exchange_unknown",
+        ]
+        | None
+    ) = None
 
 
 class Websocket(BaseModel):
     ok: bool | None = None
     latency_ms: int | None = None
-    error: str | None = None
-
-
-class KeyTestResult(BaseModel):
-    passed: bool | None = None
-    checked_at: AwareDatetime | None = None
-    rest: Rest | None = None
-    websocket: Websocket | None = None
-    verification: KeyVerification | None = None
+    error: (
+        Literal[
+            "auth_error",
+            "permission_denied",
+            "ip_not_allowed",
+            "clock_drift",
+            "rate_limited",
+            "service_unavailable",
+            "transport_error",
+            "timeout",
+            "exchange_unknown",
+        ]
+        | None
+    ) = None
 
 
 class Offset(BaseModel):
@@ -5643,8 +5673,19 @@ class StatechartKindSummary(BaseModel):
 
 class Key(BaseModel):
     exchange_account_id: UUID | None = None
-    key_id_prefix: str | None = None
-    status: Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None = None
+    key_id_masked: Annotated[
+        str | None,
+        Field(
+            description="At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03), as `ApiKey.key_id_masked`.",
+            pattern="^\\.\\.\\.[A-Za-z0-9]{4}$",
+        ),
+    ] = None
+    status: Annotated[
+        Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None,
+        Field(
+            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+        ),
+    ] = None
     age_days: int | None = None
     expires_at: AwareDatetime | None = None
     withdrawal_permission_present: Annotated[
@@ -5802,6 +5843,94 @@ class ExchangeAccount(BaseModel):
     enabled: bool | None = True
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+
+
+class AccountConsequenceSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    open_positions: Annotated[
+        list[Position], Field(description="Every open position, with its native stop-loss state.")
+    ]
+    working_orders: Annotated[int, Field(description="Orders working on the exchange.", ge=0)]
+    running_algos: Annotated[int, Field(description="Emulated algos still running.", ge=0)]
+    assigned_users: Annotated[
+        list[AssignedUser],
+        Field(description="Users granted this account through `user_account_access`."),
+    ]
+    armed_rules: Annotated[
+        list[ArmedRule],
+        Field(
+            description="Armed rules scoped to the account, listed by name; the action disarms them."
+        ),
+    ]
+
+
+class OpenExposureProblem(Problem):
+    consequences: AccountConsequenceSummary | None = None
+    remedy: Annotated[
+        Literal["leave_positions", "fix_key"] | None,
+        Field(
+            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
+        ),
+    ] = None
+
+
+class KeyVerification(BaseModel):
+    passed: bool
+    uid: str | None = None
+    uta: Annotated[
+        bool | None,
+        Field(
+            description="From the key-info `uta` field; the deprecated `unified` field is never read."
+        ),
+    ] = None
+    read_only: Annotated[
+        bool | None,
+        Field(description="From the key-info `readOnly` field, which alone decides write access."),
+    ] = None
+    permissions: Annotated[
+        dict[str, list[str]] | None,
+        Field(
+            description="As reported. Every right must be on the `createApiKey` allow-list (step 2)."
+        ),
+    ] = None
+    withdraw_enabled: Annotated[
+        bool, Field(description="Must be false; a true value causes rejection.")
+    ]
+    ip_whitelist: list[str] | None = None
+    ip_whitelist_matches_egress: Annotated[
+        bool | None,
+        Field(
+            description="True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range)."
+        ),
+    ] = None
+    clock_offset_ms: int | None = None
+    probe_ret_code: int | None = None
+    warnings: list[Literal["key_expiring_soon", "clock_skew"]] | None = None
+
+
+class ApiKeyWithVerification(BaseModel):
+    key: ApiKey | None = None
+    verification: KeyVerification | None = None
+
+
+class ApiKeyRotation(BaseModel):
+    rotation_id: UUID | None = None
+    old_key_id: UUID | None = None
+    new_key: ApiKey | None = None
+    verification: KeyVerification | None = None
+    overlap_until: AwareDatetime | None = None
+    state: Literal["overlapping", "completed", "failed"] | None = None
+
+
+class KeyTestResult(BaseModel):
+    passed: bool | None = None
+    checked_at: AwareDatetime | None = None
+    rest: Rest | None = None
+    websocket: Websocket | None = None
+    verification: KeyVerification | None = None
 
 
 class OrderWithEvents(Order):

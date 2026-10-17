@@ -1793,7 +1793,20 @@ export interface paths {
     post?: never;
     /**
      * Deactivate an exchange account
-     * @description Revokes its keys locally, stops private streams, and marks it `disabled`. Refused with `conflict` while it holds a non-flat position or open orders.
+     * @description Revokes its keys locally, stops private streams, and marks it `disabled`.
+     *
+     *     An account is never deleted while it holds open positions, working orders or running
+     *     emulated algos (SCR-129, SR-E27-07). Without `open_exposure=flatten_first` such a request
+     *     is refused with `409 open_exposure` and the consequence summary, and nothing changes.
+     *     With it, the account is flattened first (as the `flatten_first` choice of
+     *     `components.parameters.OpenExposure` describes) and deleted only once it is flat.
+     *
+     *     An account whose exposure is unknown is never deleted: it is not known to be flat.
+     *     Whatever `open_exposure` the request carries, the answer is `409 exposure_unknown` and
+     *     nothing changes; its `remedy` says whether the account can be disabled instead
+     *     (`updateExchangeAccount` with `enabled: false`, a new request with a new `Idempotency-Key`
+     *     that must carry `open_exposure=leave_positions`) or a key is to be fixed first, and
+     *     `components.parameters.OpenExposure` defines both, and what a failed read is answered with.
      */
     delete: operations["deleteExchangeAccount"];
     options?: never;
@@ -1803,6 +1816,13 @@ export interface paths {
      * @description Changing `position_mode` or `margin_mode` proxies to Bybit
      *     (`POST /v5/position/switch-mode`, `switch-isolated`, `account/set-margin-mode`) and
      *     fails with `conflict` when the account holds open positions or active orders.
+     *
+     *     **Disable** (`enabled: false`, SCR-129): when the account holds open positions, working
+     *     orders or running emulated algos, the request must carry an `open_exposure` choice
+     *     (SR-E27-07). Without it the answer is `409 open_exposure` with the consequence summary,
+     *     and nothing changes. The choices, the `leave_positions` stop-loss refusal, unknown
+     *     exposure and a failed read are defined once, at `components.parameters.OpenExposure`.
+     *     The choice applies only to disabling, never to a mode change.
      */
     patch: operations["updateExchangeAccount"];
     trace?: never;
@@ -1840,31 +1860,53 @@ export interface paths {
     };
     /**
      * List API keys for an account (metadata only)
-     * @description Secrets are never returned. `key_id_masked` shows the first 4 and last 4 characters only.
+     * @description Secrets are never returned. `key_id_masked` shows at most the last 4 characters of the key id (`...` plus `key_id_last4`, SR-E27-03).
      */
     get: operations["listApiKeys"];
     put?: never;
     /**
      * Attach an API key, verifying permissions before it is accepted
-     * @description **Mandatory verification pipeline** — the key is only persisted if every check passes:
+     * @description **Mandatory verification pipeline** — the key is only persisted if every check passes.
+     *     The same key gate (SR-E27-04) applies to `rotateApiKey` and to every re-check of a
+     *     stored key:
      *
-     *     1. `GET /v5/user/query-api` with the candidate credentials.
-     *     2. `permissions.Wallet` must NOT contain `Withdraw` — withdrawal is always OFF
-     *        (owner decision #5). A key with withdrawal rights is rejected with
-     *        `validation_failed` / `key_withdraw_permission`.
-     *     3. Required scopes present: `ContractTrade` + `Order` + `Position` for a trade key;
-     *        read-only keys must have none of them and are stored with `read_only: "true`."
-     *     4. `unified` must be true (UTA) and the UID must equal `exchange_account.exchange_uid`.
-     *     5. IP whitelist must be non-empty when `require_ip_whitelist` is set in settings
-     *        (default true for `live`); the deployment egress IP must be inside it.
-     *     6. Expiry, if set, must be at least 14 days away, else a warning is attached.
-     *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must return `retCode=0`
-     *        within the `recv_window`, which also validates clock sync.
+     *     1. `GET /v5/user/query-api` with the candidate credentials, sent only to the host of the
+     *        account's environment (`exchange_accounts.env`, US-ACCT-007) and never retried on
+     *        another environment's host. A key that host does not know is refused with
+     *        `validation_failed` / `key_wrong_environment`.
+     *     2. **Permission allow-list** (C-2.8, SR-030a, #2270). The only rights a key may hold are
+     *        `ContractTrade` with `Order` and `Position`, and `Derivatives` with `DerivativesTrade`;
+     *        every other group must be empty or absent, and anything else is refused, fail closed
+     *        (owner decision #5). Withdrawal and transfer rights are checked first: a right whose
+     *        name contains `withdraw` or `transfer` in any letter case, such as `Withdraw`,
+     *        `AccountTransfer`, `SubMemberTransfer` and `SubMemberTransferList`, or a non-empty
+     *        group so named, is rejected with `validation_failed` / `key_withdraw_permission`, as
+     *        the credential broker and the account models already do. Every other right outside
+     *        the allow-list, such as those of the `FiatP2P`, `FiatBitPay`, `FiatConvertBroker` and
+     *        `BitCard` groups, an unknown group or right, or a name that is not plain ASCII or
+     *        carries padding, is rejected with `validation_failed` / `key_permission_not_allowed`.
+     *     3. Write access is read from `readOnly`, never from the permission lists (the reference
+     *        pairs `readOnly: 1` with trading rights). A trade key (`read_only: false`) must report
+     *        `readOnly: 0` and hold `ContractTrade` `Order` and `Position` (`key_missing_scopes`);
+     *        a read-only key (`read_only: true`) must report `readOnly: 1` (`key_not_read_only`).
+     *     4. UTA is read from `uta`, which must be `1`; the deprecated `unified` field is never
+     *        read (`key_not_unified`). The UID must equal `exchange_account.exchange_uid`
+     *        (`key_uid_mismatch`).
+     *     5. The IP whitelist is mandatory in every environment (C-2.8, owner decision #5): `ips`
+     *        must be non-empty, hold no wildcard (`*`) and no range wider than one host, and every
+     *        entry must be the configured deployment egress IP itself (SR-030a). An empty list is
+     *        `key_ip_whitelist_missing`; a wildcard, a range or any other address is
+     *        `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
+     *     6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
+     *        is attached.
+     *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
+     *        with return code 0 within the `recv_window`, which also validates clock sync
+     *        (`key_probe_failed`).
      *
      *     The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
      *     keyring / age-encrypted file) before it touches disk; the plaintext exists only in
      *     request-scoped memory. The full verification result is stored as
-     *     `permission_snapshot` and re-checked nightly.
+     *     `permission_snapshot` and re-checked at start-up and hourly (C-12.2).
      */
     post: operations["createApiKey"];
     delete?: never;
@@ -1888,7 +1930,20 @@ export interface paths {
     post?: never;
     /**
      * Revoke a stored API key
-     * @description Local revocation only — CandleViewer never deletes keys on Bybit. Revoking the last active trade key drops the account to `key_status: missing` and halts its private streams.
+     * @description Local revocation only — CandleViewer never deletes keys on Bybit. The exchange's delete
+     *     endpoints need a transfer or withdrawal right (vendor reference, to be confirmed on demo
+     *     by E27-S04), which the key gate refuses (C-2.8), so a compliant key cannot delete itself
+     *     there: the key stays valid at the exchange until the Owner deletes it in the Bybit
+     *     dashboard (SR-E27-06). Revoking the last active trade key drops the account to
+     *     `key_status: missing` and halts its private streams.
+     *
+     *     When no other `active` key remains and the account holds open positions, working orders
+     *     or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
+     *     Without it the answer is `409 open_exposure` with the consequence summary, and nothing
+     *     is revoked. The choices, the `leave_positions` stop-loss refusal, unknown exposure and a
+     *     failed read are defined once, at `components.parameters.OpenExposure`. Every signable
+     *     key of the account counts in that definition, a `rotating` key too: while a `rotating`
+     *     key is usable the account is not dead, whatever the key being revoked answers.
      */
     delete: operations["revokeApiKey"];
     options?: never;
@@ -1912,9 +1967,13 @@ export interface paths {
      * Rotate an API key with zero-downtime overlap
      * @description Two-phase rotation: the new credentials go through the same verification pipeline as
      *     `createApiKey`; on success the old key moves to `rotating` and both remain usable for
-     *     `overlap_seconds` (default 300) while in-flight requests drain, then the old key is
-     *     marked `revoked`. Private WS connections are re-authenticated with the new key at the
-     *     start of the overlap. The rotation is recorded in `api_key_rotations`.
+     *     the rotation overlap of **900 s** while in-flight requests drain, then the old key is
+     *     marked `revoked`. The overlap is one fixed value, the `api_key_rotations.grace_seconds`
+     *     of the rotation row (SR-E27-10; US-ACCT-004's 15-minute drain window), and no request
+     *     can change it. A suspected compromise never rotates: it takes the revoke path
+     *     (`revokeApiKey`), which ends the old key at once. Private WS connections are
+     *     re-authenticated with the new key at the start of the overlap. The rotation is recorded
+     *     in `api_key_rotations`.
      */
     post: operations["rotateApiKey"];
     delete?: never;
@@ -1938,9 +1997,12 @@ export interface paths {
     /**
      * Re-run the verification pipeline against a stored key
      * @description Read-only diagnostics used by the Admin - Accounts screen "Test connection" button and
-     *     by the nightly job. Runs signed probes for REST (`wallet-balance`, `query-api`) and, if
-     *     `include_ws` is set, opens a throwaway private WS connection and asserts `auth` succeeds.
-     *     Never places orders.
+     *     by the start-up and hourly self-check (C-12.2). Runs signed probes for REST
+     *     (`wallet-balance`, `query-api`) and, if `include_ws` is set, opens a throwaway private WS
+     *     connection and asserts `auth` succeeds.
+     *     Never places orders. A failed probe reports a `KeyProbeError` code and the verification
+     *     reports `KeyVerificationWarning` codes: no exchange error text, header, URL or request
+     *     fragment is ever echoed (SR-E27-08).
      */
     post: operations["testApiKey"];
     delete?: never;
@@ -4818,6 +4880,31 @@ export interface components {
        */
       level: "read" | "trade";
     };
+    /** @description What revoking an account's last active key, disabling the account or deleting it would affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is shown. Confidential: served only under the operation's own permission and scope. This contract serves it only in the `409 open_exposure` answer. SCR-129 fetches it before the dialog renders, which needs a side-effect-free read: E27-S04 (#898) adds that operation in its own interface-first PR (C-6.1) before it mounts these routes. */
+    AccountConsequenceSummary: {
+      /** @description Armed rules scoped to the account, listed by name; the action disarms them. */
+      armed_rules: {
+        name: string;
+        /** Format: uuid */
+        rule_id: string;
+      }[];
+      /** @description Users granted this account through `user_account_access`. */
+      assigned_users: {
+        /** @enum {string} */
+        level: "read" | "trade";
+        /** Format: uuid */
+        user_id: string;
+        username: string;
+      }[];
+      /** Format: uuid */
+      exchange_account_id: string;
+      /** @description Every open position, with its native stop-loss state. */
+      open_positions: components["schemas"]["Position"][];
+      /** @description Emulated algos still running. */
+      running_algos: number;
+      /** @description Orders working on the exchange. */
+      working_orders: number;
+    };
     /** @description Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry for the account is refused while it is `down`. The server derives every field from the evidence when it serves it, so a lapse shows without waiting for a scheduled re-check. */
     AccountHealth: {
       /**
@@ -5119,7 +5206,7 @@ export interface components {
       expires_at?: string | null;
       /** Format: uuid */
       id: string;
-      /** @description First and last 4 characters only. */
+      /** @description At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03). The rest is never stored in clear. */
       key_id_masked: string;
       label?: string | null;
       /** Format: date-time */
@@ -6024,6 +6111,11 @@ export interface components {
       /** Format: date-time */
       ts?: string;
     };
+    /**
+     * @description What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).
+     * @enum {string}
+     */
+    ExposureRemedy: "leave_positions" | "fix_key";
     FeatureFlag: {
       /** @description Deployment default: the deployment-wide stored value resolution falls back to (`feature_flags.default_value`, E42-T03). A `PUT` writes it on a `boolean` or `variant` flag; on a `percentage` flag it writes `rollout_pct` instead. Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable`. */
       default_value?: unknown;
@@ -6459,21 +6551,38 @@ export interface components {
       /** Format: uuid */
       rule_id?: string | null;
     };
-    /** @enum {string} */
+    /**
+     * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or request fragment is echoed.
+     * @enum {string}
+     */
+    KeyProbeError:
+      | "auth_error"
+      | "permission_denied"
+      | "ip_not_allowed"
+      | "clock_drift"
+      | "rate_limited"
+      | "service_unavailable"
+      | "transport_error"
+      | "timeout"
+      | "exchange_unknown";
+    /**
+     * @description Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.
+     * @enum {string}
+     */
     KeyStatus: "pending" | "active" | "rotating" | "revoked" | "expired" | "invalid";
     KeyTestResult: {
       /** Format: date-time */
       checked_at?: string;
       passed?: boolean;
       rest?: {
-        error?: string | null;
+        error?: components["schemas"]["KeyProbeError"] | null;
         latency_ms?: number;
         ok?: boolean;
         ret_code?: number | null;
       };
       verification?: components["schemas"]["KeyVerification"];
       websocket?: {
-        error?: string | null;
+        error?: components["schemas"]["KeyProbeError"] | null;
         latency_ms?: number | null;
         ok?: boolean;
       };
@@ -6481,18 +6590,28 @@ export interface components {
     KeyVerification: {
       clock_offset_ms?: number;
       ip_whitelist?: string[];
+      /** @description True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range). */
       ip_whitelist_matches_egress?: boolean;
       passed: boolean;
+      /** @description As reported. Every right must be on the `createApiKey` allow-list (step 2). */
       permissions?: {
         [key: string]: string[];
       };
       probe_ret_code?: number | null;
+      /** @description From the key-info `readOnly` field, which alone decides write access. */
+      read_only?: boolean;
       uid?: string | null;
-      unified?: boolean;
-      warnings?: string[];
+      /** @description From the key-info `uta` field; the deprecated `unified` field is never read. */
+      uta?: boolean;
+      warnings?: components["schemas"]["KeyVerificationWarning"][];
       /** @description Must be false; a true value causes rejection. */
       withdraw_enabled: boolean;
     };
+    /**
+     * @description Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days (`createApiKey` step 6). `clock_skew`: the probe measured a `clock_offset_ms` whose absolute value is above 500 ms, the exchange clock guard's warning threshold (`24-internal-schemas.md` §14.2 item 9).
+     * @enum {string}
+     */
+    KeyVerificationWarning: "key_expiring_soon" | "clock_skew";
     KillSwitch: {
       engaged: boolean;
       /** Format: date-time */
@@ -6981,6 +7100,17 @@ export interface components {
         unblock_at?: string | null;
       }[];
     };
+    /**
+     * @description How an action that ends CandleViewer's management of an account treats its open exposure (SR-E27-07); see `components.parameters.OpenExposure`.
+     * @enum {string}
+     */
+    OpenExposureChoice: "leave_positions" | "flatten_first";
+    /** @description The `409` problem of the revoke, disable and delete operations. `consequences` is present exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is `exposure_unknown`, which carries no `consequences` because the exposure cannot be read. */
+    OpenExposureProblem: components["schemas"]["Problem"] &
+      ({
+        consequences?: components["schemas"]["AccountConsequenceSummary"];
+        remedy?: components["schemas"]["ExposureRemedy"];
+      } & (unknown & unknown));
     Order: {
       algo?: components["schemas"]["AlgoSpec"];
       avg_fill_price?: components["schemas"]["Decimal"] | null;
@@ -7641,14 +7771,13 @@ export interface components {
     };
     /** @enum {string} */
     RoleName: "owner" | "manager" | "viewer";
+    /** @description No overlap field: the rotation overlap is one fixed value (`rotateApiKey`, SR-E27-10). */
     RotateApiKeyRequest: {
       /** Format: password */
       api_key: string;
       /** Format: password */
       api_secret: string;
       label?: string;
-      /** @default 300 */
-      overlap_seconds: number;
     };
     Rule: {
       /** Format: uuid */
@@ -8176,7 +8305,8 @@ export interface components {
         /** Format: date-time */
         expires_at?: string | null;
         ip_whitelist_matches_expected?: boolean;
-        key_id_prefix?: string;
+        /** @description At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03), as `ApiKey.key_id_masked`. */
+        key_id_masked?: string;
         /** Format: date-time */
         last_verified_at?: string | null;
         status?: components["schemas"]["KeyStatus"];
@@ -8786,6 +8916,7 @@ export interface components {
     UpdateExchangeAccountRequest: {
       /** Format: uuid */
       active_profile_id?: string | null;
+      /** @description `false` disables the account; with open exposure it needs the `open_exposure` query choice. */
       enabled?: boolean;
       label?: string;
       margin_mode?: components["schemas"]["MarginMode"];
@@ -9111,6 +9242,15 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /** @description State conflict (`conflict`, `idempotency_key_reuse`), or one of the two exposure refusals of SR-E27-07, so the revoke, disable or delete was not carried out. `open_exposure`: the account holds open positions, working orders or running emulated algos that the request does not resolve, or the request asks for `leave_positions` while a position has no native stop-loss; it always carries `consequences`, the summary the caller shows before it resends with an `open_exposure` choice. `exposure_unknown`: the exposure cannot be read because the exchange refuses every signable key of the account, or the account has none (`components.parameters.OpenExposure`); it always carries `remedy` and no `consequences`. `deleteExchangeAccount` answers it whatever the request carries. `updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries `flatten_first` or no choice, and for `leave_positions` too while a key can still be fixed. */
+    OpenExposureConflict: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["OpenExposureProblem"];
+      };
+    };
     /** @description The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation. */
     PayloadTooLarge: {
       headers: {
@@ -9222,6 +9362,107 @@ export interface components {
     /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
     MarketCursor: string;
     MethodId: string;
+    /**
+     * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+     *     disabling the account while it holds open positions, working orders or running emulated
+     *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
+     *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
+     *     `deleteExchangeAccount` point here and add only what is specific to them.
+     *
+     *     `leave_positions`: act now; positions and orders stay on the exchange untouched, each
+     *     position keeps the native stop-loss it carries (C-2.6), and
+     *     `consequences.open_positions[].native_stop_present` shows any that has none, while the
+     *     account's emulated algos stop and its rules are disarmed. It is refused with
+     *     `409 open_exposure` while any open position has no native stop-loss
+     *     (`native_stop_present: false`): once the last key is revoked or the account is disabled
+     *     nothing can re-assert a missing stop, so that position would stay unprotected (C-2.6),
+     *     and the caller resends with `flatten_first`. The Owner's confirmation of this refusal is
+     *     tracked on #2903; relaxing it later is non-breaking.
+     *
+     *     `flatten_first`: flatten the account first (cancel its working orders, stop its algos,
+     *     close its positions reduce-only), then act; if the account is still not flat, the action
+     *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
+     *     parameter such a request is `409 open_exposure` with the consequence summary, and
+     *     nothing changes. Ignored when the account holds no exposure.
+     *
+     *     **Unknown exposure.** The exposure is read from the exchange for each request with the
+     *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
+     *     whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
+     *     `revoked` key is never used to read it (`KeyStatus`). An account with no signable key
+     *     cannot read its exposure: it is unknown and counts as dead (disabled with
+     *     `leave_positions`, never deleted). An account that never had a key is disable-only on
+     *     purpose: nothing can show that it holds no exposure, and "no key" is never taken for "no
+     *     exposure". While a signable key can read it, the choices work as above. When the exchange
+     *     refuses every signable key of the account (`auth_error`, `ip_not_allowed` or
+     *     `permission_denied` in `KeyProbeError`), its positions and orders cannot be read and
+     *     nothing can be flattened, so its exposure is unknown, not none. Whether the Owner can fix
+     *     the refusal decides the answer, and the `409 exposure_unknown` says which in `remedy`
+     *     (`ExposureRemedy`, a closed set, always present on it and on no other problem):
+     *
+     *     - **Dead.** Only a credential the exchange no longer accepts (`auth_error`) makes a key
+     *       dead, and an account is dead when every one of its signable keys is dead, or when it has
+     *       none. `flatten_first`, or no choice, is then `409 exposure_unknown` with
+     *       `remedy: leave_positions`, and nothing changes. The resend is a new request with a new
+     *       `Idempotency-Key`: under the old key a request with `leave_positions` is
+     *       `409 idempotency_key_reuse`, the replay fingerprint covering the choice.
+     *       `leave_positions` is carried out: it is how a dead account is disabled or its last key
+     *       revoked, and the stop-loss refusal is lifted only for a dead account, because no stop
+     *       can be re-asserted there and `flatten_first` cannot run. The audit record of that
+     *       disable or revoke (`account.disabled` of `24-internal-schemas.md` §15.5 for the
+     *       disable, `api_key.revoke` of `audit/actions.py` for the revoke, written ahead of the
+     *       change, C-2.9) carries the code `exposure_unknown`, the `KeyProbeError` of each
+     *       signable key (none for an account without one) and that the stop-loss refusal was
+     *       lifted. A dead account is disabled, never deleted.
+     *     - **Fixable.** `ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033)
+     *       and `permission_denied` are put right at the Bybit dashboard, so such a key is not
+     *       dead. While every signable key is refused and any answers one of them, revoke,
+     *       disable and delete answer `409 exposure_unknown` with `remedy: fix_key` for every
+     *       `open_exposure` choice, `leave_positions` included, and nothing changes: fix the key
+     *       first, then the OMS re-asserts the stop and `flatten_first` can run. The resend is a new
+     *       request with a new `Idempotency-Key`: the identical request under the same key replays
+     *       the stored `409` for 24 h (the Idempotency rule of `info.description`), whether or not
+     *       the key has been fixed since.
+     *
+     *     `deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers
+     *     `409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means
+     *     disabling the account instead (`updateExchangeAccount` with `enabled: false`), a new
+     *     request with a new `Idempotency-Key` that must carry `open_exposure=leave_positions`:
+     *     without a choice that disable is `409 exposure_unknown` again.
+     *
+     *     `exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose
+     *     remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no
+     *     acknowledge parameter and delete never proceeds, so that remedy does not exist here.
+     *
+     *     **A failed read.** A transient failure to read the exposure is never "no exposure" and
+     *     never "dead". Every other `KeyProbeError` is a failed read: it says nothing about the
+     *     key, so an account is not dead while any of its signable keys answers one of them. Such
+     *     an answer is not a refusal, so while any signable key gives one neither the dead nor the
+     *     fixable rule applies. When no signable key reads the exposure, the request fails closed:
+     *     nothing is revoked, disabled or deleted, and the answer is a retryable error of its own,
+     *     decided by the error of the key. `timeout` and `transport_error`, where the exchange gave
+     *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
+     *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
+     *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
+     *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
+     *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+     *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
+     *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
+     *     `remedy`: the caller retries.
+     *
+     *     **Order.** When the signable keys of one request answer differently, the first of these
+     *     decides: (1) a signable key reads the exposure, and the choices work as above, whatever
+     *     another key answers; (2) else any signable key gives a failed read, and the request
+     *     fails closed (**A failed read**); (3) else any signable key answers a fixable refusal
+     *     (**Fixable**); (4) else the account is dead (**Dead**).
+     *
+     *     The `Idempotency-Key` replay fingerprint covers this value as well as the method, path
+     *     and body, so the same key with another choice, or with none, is
+     *     `409 idempotency_key_reuse`. A `502` or `503` of a failed read is never stored for
+     *     replay: the identical request re-sent with the same `Idempotency-Key` is a first
+     *     submission, which reads the exposure again and is not answered from the idempotency
+     *     store (no `Idempotency-Replayed`).
+     */
+    OpenExposure: components["schemas"]["OpenExposureChoice"];
     OrderId: string;
     PositionId: string;
     PresetId: string;
@@ -11987,7 +12228,10 @@ export interface operations {
   };
   deleteExchangeAccount: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description `flatten_first` is the only choice: deletion never leaves exposure behind, so `leave_positions` is not accepted here. The `Idempotency-Key` replay fingerprint covers this value as well as the method, path and body. A `502` or `503` of a failed read is never stored for replay (`components.parameters.OpenExposure`). */
+        open_exposure?: "flatten_first";
+      };
       header: {
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12014,12 +12258,116 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      409: components["responses"]["Conflict"];
+      409: components["responses"]["OpenExposureConflict"];
+      502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateExchangeAccount: {
     parameters: {
-      query?: never;
+      query?: {
+        /**
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         *     disabling the account while it holds open positions, working orders or running emulated
+         *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
+         *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
+         *     `deleteExchangeAccount` point here and add only what is specific to them.
+         *
+         *     `leave_positions`: act now; positions and orders stay on the exchange untouched, each
+         *     position keeps the native stop-loss it carries (C-2.6), and
+         *     `consequences.open_positions[].native_stop_present` shows any that has none, while the
+         *     account's emulated algos stop and its rules are disarmed. It is refused with
+         *     `409 open_exposure` while any open position has no native stop-loss
+         *     (`native_stop_present: false`): once the last key is revoked or the account is disabled
+         *     nothing can re-assert a missing stop, so that position would stay unprotected (C-2.6),
+         *     and the caller resends with `flatten_first`. The Owner's confirmation of this refusal is
+         *     tracked on #2903; relaxing it later is non-breaking.
+         *
+         *     `flatten_first`: flatten the account first (cancel its working orders, stop its algos,
+         *     close its positions reduce-only), then act; if the account is still not flat, the action
+         *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
+         *     parameter such a request is `409 open_exposure` with the consequence summary, and
+         *     nothing changes. Ignored when the account holds no exposure.
+         *
+         *     **Unknown exposure.** The exposure is read from the exchange for each request with the
+         *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
+         *     whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
+         *     `revoked` key is never used to read it (`KeyStatus`). An account with no signable key
+         *     cannot read its exposure: it is unknown and counts as dead (disabled with
+         *     `leave_positions`, never deleted). An account that never had a key is disable-only on
+         *     purpose: nothing can show that it holds no exposure, and "no key" is never taken for "no
+         *     exposure". While a signable key can read it, the choices work as above. When the exchange
+         *     refuses every signable key of the account (`auth_error`, `ip_not_allowed` or
+         *     `permission_denied` in `KeyProbeError`), its positions and orders cannot be read and
+         *     nothing can be flattened, so its exposure is unknown, not none. Whether the Owner can fix
+         *     the refusal decides the answer, and the `409 exposure_unknown` says which in `remedy`
+         *     (`ExposureRemedy`, a closed set, always present on it and on no other problem):
+         *
+         *     - **Dead.** Only a credential the exchange no longer accepts (`auth_error`) makes a key
+         *       dead, and an account is dead when every one of its signable keys is dead, or when it has
+         *       none. `flatten_first`, or no choice, is then `409 exposure_unknown` with
+         *       `remedy: leave_positions`, and nothing changes. The resend is a new request with a new
+         *       `Idempotency-Key`: under the old key a request with `leave_positions` is
+         *       `409 idempotency_key_reuse`, the replay fingerprint covering the choice.
+         *       `leave_positions` is carried out: it is how a dead account is disabled or its last key
+         *       revoked, and the stop-loss refusal is lifted only for a dead account, because no stop
+         *       can be re-asserted there and `flatten_first` cannot run. The audit record of that
+         *       disable or revoke (`account.disabled` of `24-internal-schemas.md` §15.5 for the
+         *       disable, `api_key.revoke` of `audit/actions.py` for the revoke, written ahead of the
+         *       change, C-2.9) carries the code `exposure_unknown`, the `KeyProbeError` of each
+         *       signable key (none for an account without one) and that the stop-loss refusal was
+         *       lifted. A dead account is disabled, never deleted.
+         *     - **Fixable.** `ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033)
+         *       and `permission_denied` are put right at the Bybit dashboard, so such a key is not
+         *       dead. While every signable key is refused and any answers one of them, revoke,
+         *       disable and delete answer `409 exposure_unknown` with `remedy: fix_key` for every
+         *       `open_exposure` choice, `leave_positions` included, and nothing changes: fix the key
+         *       first, then the OMS re-asserts the stop and `flatten_first` can run. The resend is a new
+         *       request with a new `Idempotency-Key`: the identical request under the same key replays
+         *       the stored `409` for 24 h (the Idempotency rule of `info.description`), whether or not
+         *       the key has been fixed since.
+         *
+         *     `deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers
+         *     `409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means
+         *     disabling the account instead (`updateExchangeAccount` with `enabled: false`), a new
+         *     request with a new `Idempotency-Key` that must carry `open_exposure=leave_positions`:
+         *     without a choice that disable is `409 exposure_unknown` again.
+         *
+         *     `exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose
+         *     remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no
+         *     acknowledge parameter and delete never proceeds, so that remedy does not exist here.
+         *
+         *     **A failed read.** A transient failure to read the exposure is never "no exposure" and
+         *     never "dead". Every other `KeyProbeError` is a failed read: it says nothing about the
+         *     key, so an account is not dead while any of its signable keys answers one of them. Such
+         *     an answer is not a refusal, so while any signable key gives one neither the dead nor the
+         *     fixable rule applies. When no signable key reads the exposure, the request fails closed:
+         *     nothing is revoked, disabled or deleted, and the answer is a retryable error of its own,
+         *     decided by the error of the key. `timeout` and `transport_error`, where the exchange gave
+         *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
+         *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
+         *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
+         *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
+         *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+         *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
+         *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
+         *     `remedy`: the caller retries.
+         *
+         *     **Order.** When the signable keys of one request answer differently, the first of these
+         *     decides: (1) a signable key reads the exposure, and the choices work as above, whatever
+         *     another key answers; (2) else any signable key gives a failed read, and the request
+         *     fails closed (**A failed read**); (3) else any signable key answers a fixable refusal
+         *     (**Fixable**); (4) else the account is dead (**Dead**).
+         *
+         *     The `Idempotency-Key` replay fingerprint covers this value as well as the method, path
+         *     and body, so the same key with another choice, or with none, is
+         *     `409 idempotency_key_reuse`. A `502` or `503` of a failed read is never stored for
+         *     replay: the identical request re-sent with the same `Idempotency-Key` is a first
+         *     submission, which reads the exposure again and is not answered from the idempotency
+         *     store (no `Idempotency-Replayed`).
+         */
+        open_exposure?: components["parameters"]["OpenExposure"];
+      };
       header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
@@ -12054,9 +12402,10 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      409: components["responses"]["Conflict"];
+      409: components["responses"]["OpenExposureConflict"];
       412: components["responses"]["PreconditionFailed"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getFeeRate: {
@@ -12171,7 +12520,109 @@ export interface operations {
   };
   revokeApiKey: {
     parameters: {
-      query?: never;
+      query?: {
+        /**
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         *     disabling the account while it holds open positions, working orders or running emulated
+         *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
+         *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
+         *     `deleteExchangeAccount` point here and add only what is specific to them.
+         *
+         *     `leave_positions`: act now; positions and orders stay on the exchange untouched, each
+         *     position keeps the native stop-loss it carries (C-2.6), and
+         *     `consequences.open_positions[].native_stop_present` shows any that has none, while the
+         *     account's emulated algos stop and its rules are disarmed. It is refused with
+         *     `409 open_exposure` while any open position has no native stop-loss
+         *     (`native_stop_present: false`): once the last key is revoked or the account is disabled
+         *     nothing can re-assert a missing stop, so that position would stay unprotected (C-2.6),
+         *     and the caller resends with `flatten_first`. The Owner's confirmation of this refusal is
+         *     tracked on #2903; relaxing it later is non-breaking.
+         *
+         *     `flatten_first`: flatten the account first (cancel its working orders, stop its algos,
+         *     close its positions reduce-only), then act; if the account is still not flat, the action
+         *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
+         *     parameter such a request is `409 open_exposure` with the consequence summary, and
+         *     nothing changes. Ignored when the account holds no exposure.
+         *
+         *     **Unknown exposure.** The exposure is read from the exchange for each request with the
+         *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
+         *     whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
+         *     `revoked` key is never used to read it (`KeyStatus`). An account with no signable key
+         *     cannot read its exposure: it is unknown and counts as dead (disabled with
+         *     `leave_positions`, never deleted). An account that never had a key is disable-only on
+         *     purpose: nothing can show that it holds no exposure, and "no key" is never taken for "no
+         *     exposure". While a signable key can read it, the choices work as above. When the exchange
+         *     refuses every signable key of the account (`auth_error`, `ip_not_allowed` or
+         *     `permission_denied` in `KeyProbeError`), its positions and orders cannot be read and
+         *     nothing can be flattened, so its exposure is unknown, not none. Whether the Owner can fix
+         *     the refusal decides the answer, and the `409 exposure_unknown` says which in `remedy`
+         *     (`ExposureRemedy`, a closed set, always present on it and on no other problem):
+         *
+         *     - **Dead.** Only a credential the exchange no longer accepts (`auth_error`) makes a key
+         *       dead, and an account is dead when every one of its signable keys is dead, or when it has
+         *       none. `flatten_first`, or no choice, is then `409 exposure_unknown` with
+         *       `remedy: leave_positions`, and nothing changes. The resend is a new request with a new
+         *       `Idempotency-Key`: under the old key a request with `leave_positions` is
+         *       `409 idempotency_key_reuse`, the replay fingerprint covering the choice.
+         *       `leave_positions` is carried out: it is how a dead account is disabled or its last key
+         *       revoked, and the stop-loss refusal is lifted only for a dead account, because no stop
+         *       can be re-asserted there and `flatten_first` cannot run. The audit record of that
+         *       disable or revoke (`account.disabled` of `24-internal-schemas.md` §15.5 for the
+         *       disable, `api_key.revoke` of `audit/actions.py` for the revoke, written ahead of the
+         *       change, C-2.9) carries the code `exposure_unknown`, the `KeyProbeError` of each
+         *       signable key (none for an account without one) and that the stop-loss refusal was
+         *       lifted. A dead account is disabled, never deleted.
+         *     - **Fixable.** `ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033)
+         *       and `permission_denied` are put right at the Bybit dashboard, so such a key is not
+         *       dead. While every signable key is refused and any answers one of them, revoke,
+         *       disable and delete answer `409 exposure_unknown` with `remedy: fix_key` for every
+         *       `open_exposure` choice, `leave_positions` included, and nothing changes: fix the key
+         *       first, then the OMS re-asserts the stop and `flatten_first` can run. The resend is a new
+         *       request with a new `Idempotency-Key`: the identical request under the same key replays
+         *       the stored `409` for 24 h (the Idempotency rule of `info.description`), whether or not
+         *       the key has been fixed since.
+         *
+         *     `deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers
+         *     `409 exposure_unknown`, whatever it carries; there `remedy: leave_positions` means
+         *     disabling the account instead (`updateExchangeAccount` with `enabled: false`), a new
+         *     request with a new `Idempotency-Key` that must carry `open_exposure=leave_positions`:
+         *     without a choice that disable is `409 exposure_unknown` again.
+         *
+         *     `exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose
+         *     remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no
+         *     acknowledge parameter and delete never proceeds, so that remedy does not exist here.
+         *
+         *     **A failed read.** A transient failure to read the exposure is never "no exposure" and
+         *     never "dead". Every other `KeyProbeError` is a failed read: it says nothing about the
+         *     key, so an account is not dead while any of its signable keys answers one of them. Such
+         *     an answer is not a refusal, so while any signable key gives one neither the dead nor the
+         *     fixable rule applies. When no signable key reads the exposure, the request fails closed:
+         *     nothing is revoked, disabled or deleted, and the answer is a retryable error of its own,
+         *     decided by the error of the key. `timeout` and `transport_error`, where the exchange gave
+         *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
+         *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
+         *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
+         *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
+         *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+         *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
+         *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
+         *     `remedy`: the caller retries.
+         *
+         *     **Order.** When the signable keys of one request answer differently, the first of these
+         *     decides: (1) a signable key reads the exposure, and the choices work as above, whatever
+         *     another key answers; (2) else any signable key gives a failed read, and the request
+         *     fails closed (**A failed read**); (3) else any signable key answers a fixable refusal
+         *     (**Fixable**); (4) else the account is dead (**Dead**).
+         *
+         *     The `Idempotency-Key` replay fingerprint covers this value as well as the method, path
+         *     and body, so the same key with another choice, or with none, is
+         *     `409 idempotency_key_reuse`. A `502` or `503` of a failed read is never stored for
+         *     replay: the identical request re-sent with the same `Idempotency-Key` is a first
+         *     submission, which reads the exposure again and is not answered from the idempotency
+         *     store (no `Idempotency-Replayed`).
+         */
+        open_exposure?: components["parameters"]["OpenExposure"];
+      };
       header: {
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12199,6 +12650,9 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["OpenExposureConflict"];
+      502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   rotateApiKey: {
