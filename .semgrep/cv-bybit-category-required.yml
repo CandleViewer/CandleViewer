@@ -21,9 +21,9 @@ rules:
           # A literal query/body dict handed to the REST client without category=linear.
           - patterns:
               - pattern-either:
-                  - pattern: '$C.get_public($P, ..., params={...}, ...)'
-                  - pattern: '$C.signed_request($M, $P, ..., params={...}, ...)'
-                  - pattern: '$C.signed_request($M, $P, ..., body={...}, ...)'
+                  - pattern: "$C.get_public($P, ..., params={...}, ...)"
+                  - pattern: "$C.signed_request($M, $P, ..., params={...}, ...)"
+                  - pattern: "$C.signed_request($M, $P, ..., body={...}, ...)"
               - pattern-not: '$C.get_public($P, ..., params={..., "category": "linear", ...}, ...)'
               - pattern-not: '$C.signed_request($M, $P, ..., params={..., "category": "linear", ...}, ...)'
               - pattern-not: '$C.signed_request($M, $P, ..., body={..., "category": "linear", ...}, ...)'
@@ -46,15 +46,16 @@ rules:
                       $D = {...}
                       ...
                       $C.signed_request(..., body=$D, ...)
-              - pattern: '$D = {...}'
+              - pattern: "$D = {...}"
               - pattern-not: '$D = {..., "category": "linear", ...}'
           # A categorised v5 endpoint called with no params at all.
           - patterns:
               - pattern: '$C.get_public("$PATH")'
               - metavariable-regex:
                   metavariable: $PATH
-                  regex: '^/v5/(market/(kline|mark-price-kline|index-price-kline|premium-index-price-kline|instruments-info|orderbook|tickers|recent-trade|funding/history|open-interest)|order/|position/|execution/)'
+                  regex: "^/v5/(market/(kline|mark-price-kline|index-price-kline|premium-index-price-kline|instruments-info|orderbook|tickers|recent-trade|funding/history|open-interest)|order/|position/|execution/)"
     paths:
       include:
         - "services/api/candleviewer/**"
+        - "services/api/cvdev/**" # #2893 (ADR-0036): the dev-only sibling package
         - "**/cv-bybit-category-required*"

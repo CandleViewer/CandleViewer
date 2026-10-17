@@ -25,6 +25,9 @@ rules:
       # An import string: `importlib.import_module`, `__import__`, `find_spec`, a constant
       # holding one, or a `sys.modules` key.
       - pattern: '"=~/^cvdev(\.[A-Za-z0-9_.]*)?$/"'
+    # These globs match paths from the repository root, so scan a git checkout from its root, as
+    # the CI `semgrep scan` in `_job-security.yml` does. A scan of an exported, non-git tree
+    # applies this rule to nothing and reports a false clean.
     paths:
       include:
         - "services/api/candleviewer/**"

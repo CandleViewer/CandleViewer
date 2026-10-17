@@ -11,6 +11,7 @@ rules:
     paths:
       include:
         - "services/api/candleviewer/**"
+        - "services/api/cvdev/**" # #2893 (ADR-0036): the dev-only sibling package
         - ".semgrep/tests/**"
       exclude:
         - "**/migrations/**"
