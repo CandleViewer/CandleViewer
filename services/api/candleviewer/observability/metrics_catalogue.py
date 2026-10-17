@@ -130,6 +130,16 @@ FE_SCREEN_MAX_SERIES: Final = 8
 #: Frontend pushed histograms (client pre-buckets on the same edges).
 FE_FRAME_BUCKETS: Final = (4.0, 8.0, 12.0, 16.0, 20.0, 33.0, 50.0, 100.0)
 FE_DECODE_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 5.0, 10.0)
+#: HTTP request duration (#2421): edges on the 150 ms read / 300 ms write p95 budgets
+#: (06-performance #13), so a p95 over either is decided exactly, plus 50 ms below and 1 s above:
+#: a quantile clamps to the top finite edge, so a p95 over 0.3 s needs an edge above 0.3.
+HTTP_DURATION_BUCKETS: Final = (0.05, 0.15, 0.3, 1.0)
+#: Series cap: a series is `len(buckets) + 4` scrape samples (~7 us each) and the max-cardinality
+#: /metrics scrape must stay < 50 ms (ADR-0014). 300 covers the 238 contract operations at 2xx with
+#: 62 to spare; the full declared set (238 2xx + 222 4xx + 72 5xx + 1 3xx = 533) does not fit, so
+#: late series would be dropped and counted in `metric_cardinality_breach_total`. Re-measure the
+#: scrape budget test before raising it.
+HTTP_DURATION_MAX_SERIES: Final = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -2259,6 +2269,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E04",
         max_series=FE_SCREEN_MAX_SERIES,
+    ),
+    _s(
+        "cv_http_request_duration_seconds",
+        "histogram",
+        "seconds",
+        ("route", "method", "status_class"),
+        "HTTP request duration by route template, method and status class (refusals included).",
+        "read p95 > 0.15s / write p95 > 0.3s (06-performance budget #13)",
+        _L,
+        "E04",
+        buckets=HTTP_DURATION_BUCKETS,
+        max_series=HTTP_DURATION_MAX_SERIES,
     ),
 )
 

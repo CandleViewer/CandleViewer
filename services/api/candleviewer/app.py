@@ -201,6 +201,10 @@ from candleviewer.observability.audit_query_metrics import export_audit_query_me
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.health_metrics import bind_health_metrics
 from candleviewer.observability.health_probes import HealthRegistry
+from candleviewer.observability.http_duration import (
+    METRIC_NAME as HTTP_DURATION_METRIC,
+)
+from candleviewer.observability.http_duration import HttpDurationMiddleware
 from candleviewer.observability.latency import StageRecorder
 from candleviewer.observability.log_level import LogLevelOverrides
 from candleviewer.observability.metrics import CollectorRegistry, Metrics
@@ -1861,7 +1865,7 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   Correlation -> MeshOnly -> Csrf -> read-only/step-up guard -> routes.
+    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> read-only/step-up guard -> routes.
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.
@@ -1882,9 +1886,13 @@ def create_app(
         trusted_proxy_header=resolved.mesh_trusted_proxy_header,
         trusted_proxy_address=resolved.mesh_trusted_proxy_address,
     )
-    # E04-T02: outermost (added last) so every request - even a mesh rejection -
-    # gets a correlation id and the X-Correlation-Id response header.
+    # E04-T02: outermost of the guards (added last of the trio) so every request - even a mesh
+    # rejection - gets a correlation id and the X-Correlation-Id response header.
     app.add_middleware(CorrelationMiddleware)
+    # #2421: outermost (added last), outside the Correlation -> MeshOnly -> Csrf guard trio, which
+    # must stay adjacent and in that order. Times every request, mesh/CSRF refusals included; it
+    # neither reads nor needs the correlation id.
+    app.add_middleware(HttpDurationMiddleware, histogram=metrics_facade.get(HTTP_DURATION_METRIC))
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.
     assert_app_routes_declared(app, spec)
     # #2551: /openapi.json publishes the contract's operations for the raw-body routers.
