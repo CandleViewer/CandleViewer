@@ -3791,9 +3791,12 @@ export interface paths {
      *     right surface; it never changes execution. `graph_layout` holds node coordinates for the
      *     node editor and is ignored by the engine.
      *
-     *     Creating a rule always stores it as version 1 in `mode: "disabled`. Arming is a separate,"
+     *     Creating a rule always stores it as version 1 in `mode: "disabled"`. Arming is a separate,
      *     audited call (`PUT /rules/{id}/mode`), and `simulate` mode is the mandatory intermediate
-     *     step in the Definition of Done for any rule that can send orders.
+     *     step in the Definition of Done for any rule that can send orders. No step-up applies: a
+     *     saved version reaches an order only when `setRuleMode` arms the rule, and the step-up
+     *     comes at that arm when the rule's scope includes `live` (`rules:arm_live` and a fresh
+     *     one-shot live-enablement step-up bound to that request).
      */
     post: operations["createRule"];
     delete?: never;
@@ -3818,7 +3821,12 @@ export interface paths {
      * @description Every save creates an immutable new `rule_versions` row (`version = previous + 1`) with
      *     a SHA-256 `ir_hash`. An **armed** rule keeps executing its previously active version
      *     until the new version is explicitly activated via `PUT /rules/{id}/active-version`,
-     *     so saving can never silently change live behaviour.
+     *     so saving can never silently change live behaviour. No step-up applies: a saved version
+     *     reaches an order only when `setRuleMode` arms the rule, and the step-up comes at that arm
+     *     when the rule's scope includes `live` (`rules:arm_live` and a fresh one-shot
+     *     live-enablement step-up bound to that request). Activating a different version of an
+     *     armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
+     *     the live step-up where the scope includes `live`.
      */
     put: operations["updateRule"];
     post?: never;
