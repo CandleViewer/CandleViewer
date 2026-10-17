@@ -163,6 +163,7 @@ from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
+from candleviewer.ws.system_filter import kill_switch_view, system_view
 
 WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
@@ -284,12 +285,13 @@ class GatewayHub:
         return [c for c in self._live if c.lifecycle.authenticated]
 
     def authenticated_count(self) -> int:
-        """How many connections `shutdown()` sends the `shutdown_notice` (every one gets the
-        `bye`)."""
+        """How many connections `shutdown()` offers the `shutdown_notice` (each gets its §15.9
+        view of it, or none; every one gets the `bye`)."""
         return len(self._authenticated())
 
     def broadcast_system(self, body: dict[str, Any]) -> int:
-        """Push one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket."""
+        """Offer one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket: each
+        queues its §15.9 view of it, or nothing. Returns how many were offered it."""
         conns = self._authenticated()
         for conn in conns:
             conn.push_system(body)
@@ -305,7 +307,7 @@ class GatewayHub:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> int:
         """§9.4: `shutdown_notice` on `system`, wait the grace period, close
-        `1001`. Returns the number of connections notified."""
+        `1001`. Returns the number of connections offered the notice (§15.9 filters it per role)."""
         self.shutting_down = True
         conns = self._authenticated()
         for conn in conns:
@@ -467,10 +469,15 @@ class _Connection:
             self.push(frame)
 
     def push_system(self, body: dict[str, Any]) -> None:
+        """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
+        whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3)."""
+        view = system_view(body, None if self.authz is None else self.authz.principal)
+        if view is None:
+            return
         self.system_seq += 1
         self.push(
             {"t": "d", "ch": SYSTEM_TOPIC, "s": self.system_seq, "ts": self.wall_ms(), "e": "j"}
-            | {"p": body}
+            | {"p": view}
         )
 
     def encode_frame(self, frame: dict[str, Any]) -> str | bytes:
@@ -989,11 +996,13 @@ def make_ws_router(
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
                 conn.pipeline.attach(conn.authz, conn.emitter)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
+        principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
+        view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
         payload = auth_ok_payload(
-            conn.authz.principal,  # the applied snapshot: the newest, never the stale read
+            principal,
             session_id=session_id,
             token_expires_at_ms=expires_ms,
-            kill_switch=killed(),
+            **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
         # E27-T02: current degraded/read-only state, so a client connecting after the

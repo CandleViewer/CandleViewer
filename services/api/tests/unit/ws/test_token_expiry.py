@@ -254,7 +254,8 @@ def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005, audit: A
         return await result(token) if callable(result) else result
 
     async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
-        return PrincipalSnapshot(uid, frozenset(), frozenset())
+        # A role, so `system` frames reach it: none reach a principal without one (SR-188).
+        return PrincipalSnapshot(uid, frozenset({"viewer"}), frozenset())
 
     hub, revocation = gateway.GatewayHub(), RevocationHub()
     app = FastAPI()
@@ -333,12 +334,14 @@ def test_expiry_is_floored_to_the_ms_and_honours_the_utc_offset() -> None:
 #: check before each dequeue and send, never from an idle poll (the old code's only check).
 _NO_IDLE_TICK_S = 3600.0
 _FEED_PERIOD = timedelta(milliseconds=10)  # 100 Hz on the fake clock
+#: A role-neutral `system` frame (an unknown `kind` would reach nobody, SR-188).
+_TICK = {"kind": "notice", "message": "tick"}
 
 
 def _broadcast(gw: _Bare, ws: Any, clock: _Clock) -> dict[str, Any]:
     """Advance one feed period, broadcast one `system` frame, return the next frame."""
     clock.now += _FEED_PERIOD
-    gw.call(lambda: gw.hub.broadcast_system({"kind": "tick"}))
+    gw.call(lambda: gw.hub.broadcast_system(_TICK))
     return _recv(ws)
 
 
@@ -368,7 +371,7 @@ def test_expiry_drops_the_queued_backlog_and_sends_bye_next() -> None:
 
         def burst_then_expire() -> None:
             for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
-                gw.hub.broadcast_system({"kind": "tick"})
+                gw.hub.broadcast_system(_TICK)
             clock.now = expiry
 
         gw.call(burst_then_expire)
@@ -385,7 +388,7 @@ def test_revocation_drops_the_queued_backlog_and_sends_bye_next() -> None:
 
         async def burst_then_revoke() -> int:
             for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
-                gw.hub.broadcast_system({"kind": "tick"})
+                gw.hub.broadcast_system(_TICK)
             return await gw.revocation.revoke("sess")
 
         assert gw.call(burst_then_revoke) == 1
@@ -405,7 +408,7 @@ def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
 
             async def burst_shutdown_then_expire() -> None:
                 for _ in range(gateway.OUTBOUND_QUEUE_MAX - 2):
-                    gw.hub.broadcast_system({"kind": "tick"})
+                    gw.hub.broadcast_system(_TICK)
                 # A planned shutdown is an ordinary close: its `bye` follows the backlog...
                 await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
                 clock.now = expiry  # ...until the identity ends while it drains.

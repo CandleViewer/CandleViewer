@@ -126,7 +126,7 @@ class PlannedShutdownServer(uvicorn.Server):
         """`runtime.stop()`, cut short by a second Ctrl+C (`force_exit`), which uvicorn's own
         drain also polls every 0.1 s. A failure is logged and never skips uvicorn's shutdown or
         the module teardown after it. Cutting it short is logged too (`_log_cut_short`). The
-        start line counts the open connections, and the ones that get the notice."""
+        start line counts the open connections, and the ones offered the notice."""
         logger().info(
             "planned ws shutdown (CTRL+C again to force quit)",
             open_connections=len(runtime.hub),

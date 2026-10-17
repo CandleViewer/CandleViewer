@@ -435,6 +435,7 @@ Rules:
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608, floor 4 194 304), `CV_WS_QUEUE_FRAMES` (2 000, floor 256) and `CV_WS_CLASSIFY_INTERVAL_MS` (1 000). The defaults are the values in this section, §8.3, §8.4 and §9.4. `CV_WS_BACKPRESSURE_ENABLED` (off) turns on the §8 mechanisms, and `welcome.features.coalescing` follows it (§4.2); it is a C-4.13 flag, removed with #2900. `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` may be lowered down to their floors and never below them, and never raised above the values here (a raise needs a security review, E17 threat model §6); `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000. The floors, 4 194 304 bytes and 256 frames, are typo guards that refuse, at startup, a byte budget under one maximum outbound frame or a frame budget under the 200 allowed subscriptions (§3.6), either of which would close a connection at its first large frame or its first round of snapshots. At a floor nothing more than one maximum frame is promised to fit.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
+- `auth_ok.kill_switch` carries the same role-filtered view as the `system` topic (§15.9), on a first `auth` and on an in-place re-`auth` alike: the whole object for the Owner; for a Manager or Viewer only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` its `account_scope` lists. A connection whose principal holds no role gets no `kill_switch` (the field is optional, §13.4).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is attempted (#2486):
   - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket (uvicorn's own `1012`, or the cancellation of the handler when uvicorn's graceful timeout expires); else `client_closed`: a close the client sent, a drop that a read or a failed send saw, or its own `1012` while the server runs. While the server is shutting down the label is best effort: a client's own `1012`, and a client that drops unseen just before the host cancels the handler, cannot be told from the host and read `shutdown`; and a send that fails in that window cannot be told from a socket the host has already closed, so a host's `1012` can read `client_closed` (the failed send ends the writer, which stops a reader that is busy, in a re-auth that hangs, before it reads the `1012`). Both labels are `info` rows. uvicorn's own `1012` under `--reload` reads `client_closed`, because `--reload` does not mark the server as shutting down;
   - it is `warning` for `auth_failed`, `slow_consumer` and `internal_error`, and `info` otherwise;
@@ -1292,7 +1293,7 @@ The UI uses `expected_downtime_ms` to show a countdown instead of a bare "discon
 **As built (#2546).** The sequence runs when the server is asked to exit (SIGTERM, Ctrl+C), before uvicorn's own shutdown. uvicorn fails every open WebSocket with `1012` before the application's shutdown hook runs, so the planned shutdown cannot live in that hook. Order:
 
 1. The server stops accepting connections. A client that reconnects during the grace is refused at TCP and retries with backoff, instead of connecting and then getting a bare `1012`.
-2. Every authenticated connection gets the `shutdown_notice`.
+2. Every authenticated connection whose principal holds a role gets the `shutdown_notice` (§15.9).
 3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
 4. uvicorn's shutdown and the application's teardown follow.
 
@@ -1302,7 +1303,7 @@ The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_E
 - a forced exit: a second Ctrl+C (SIGINT), before or during the grace, cuts the planned shutdown short and uvicorn then skips the application's teardown. A cut-short shutdown logs the warning `planned ws shutdown cut short` (reason `force_exit`, lifespan teardown skipped, and `started` for whether the planned shutdown had begun);
 - a failed planned shutdown: it logs `planned ws shutdown failed` with its traceback, and uvicorn's shutdown and the application's teardown still run.
 
-A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the last two cases the server has marked itself as shutting down, so the close audit row (§4.3) says `shutdown`, except that a send that fails after the host closed the socket can make it say `client_closed` (§4.3); under `--reload` it says `client_closed`. The start of the planned shutdown logs `open_connections` and `notified_connections`: the open connections, and the authenticated ones among them, which also get the `shutdown_notice`.
+A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the last two cases the server has marked itself as shutting down, so the close audit row (§4.3) says `shutdown`, except that a send that fails after the host closed the socket can make it say `client_closed` (§4.3); under `--reload` it says `client_closed`. The start of the planned shutdown logs `open_connections` and `notified_connections`: the open connections, and the authenticated ones among them, which are offered the `shutdown_notice` (step 2: a connection whose principal holds no role gets none).
 
 ### 9.5 Mid-connection authorisation changes
 
@@ -1583,7 +1584,9 @@ S→C {"t":"d","ch":"system","s":22,"ts":1789133000000,"e":"j","p":{
   "severity":"critical"}}
 ```
 
-The UI must disable every order-entry affordance on this frame alone, without waiting for a REST poll.
+The frame above is as the Owner receives it. A Manager or Viewer receives the §15.9 cut: no `engaged_by`, `engaged_by_username`, `reason` or `actions`, and only the accounts its `account_scope` lists.
+
+The UI must disable order entry on this frame alone, as C12 says, without waiting for a REST poll.
 
 ### 12.6 Subscribing to a symbol with no recorded history
 
@@ -3718,7 +3721,7 @@ does. This uses the existing schema; no schema change.
 
 **Read-only / degraded notice (E27-T02).** When the server's process read-only gate changes —
 the mesh binding self-check or the credential key (KEK) being unavailable — every authenticated
-connection receives a `system` frame of `kind: "notice"` using only the fields above:
+connection whose principal holds a role (§15.9) receives a `system` frame of `kind: "notice"` using only the fields above:
 `severity` (`critical` while trading is disabled, `info` when it is re-enabled), a role-neutral
 `message`, and `reason` carrying the machine code. The code set is **open**; current values are
 `secrets.kek_unavailable`, `net.public_binding_detected`, `net.off_mesh_binding_detected`,
@@ -3745,6 +3748,39 @@ carries the full set the role may see. Turning `maintenance.mode` on or off also
 `kind: "notice"` to every connection within 2 s, with `reason` `maintenance.enabled` (severity
 `warning`) or `maintenance.disabled` (severity `info`) and a role-neutral `message`. This uses
 the existing schema; no schema change.
+
+**Per-role filtering (SR-188, #2175).** Each connection gets its own view of a `system` frame,
+decided when the frame is queued for it, under the principal applied at that moment. A role or
+grant change (§9.5) or an in-place re-`auth` therefore applies to every later frame. A frame
+left out takes no `s` (S3). The Owner receives every frame whole. A Manager or Viewer receives
+`kind`, `severity`, `message` and the fields below for the frame's `kind`; any other field is
+left out. So `message` must be role-neutral in every kind, as the notices above require. A frame
+of any other `kind` is sent to nobody, and so is every frame to a connection whose principal
+holds no role (the deny-all principal of a failed load, and every socket on the fake backend).
+
+| `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` (as below) |
+| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`)                                                                 |
+| `feature_flags`      | none: the frame is not sent. Until the push above resolves each key's `visibility` (E42-T03), only the Owner receives this kind                                                                             |
+| `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                   |
+| `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                   |
+| `shutdown_notice`    | `reason`, `closing_in_ms`, `expected_downtime_ms`                                                                                                                                                           |
+| `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                       |
+| `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                           |
+| `notice`             | `reason`                                                                                                                                                                                                    |
+
+So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-text `reason`, the
+`actions` counts and the accounts outside the connection's scope reach the Owner only. This uses
+the existing schema; no schema change.
+
+An engaged kill switch covers a connection, as of that frame, when its `scope` is `global`, or when
+the `exchange_account_ids` that connection receives is not empty. Under `scope: "accounts"` a frame
+always carries `exchange_account_ids`, and a Manager's or Viewer's list names only the covered
+accounts it may view, so `[]` means that none of this connection's accounts is covered (C12).
+
+`auth_ok.kill_switch` (§4.3) is cut by the same rule, on a first `auth` and on an in-place re-`auth`,
+and is left out for a connection whose principal holds no role (the field is optional, §13.4).
 
 ### 15.10 `MachineStateUpdate`
 
@@ -3936,6 +3972,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | S12 | Reject unknown option keys rather than ignoring them.                                                |
 | S13 | Refuse the upgrade before `accept` when §2.5 fails; never negotiate, read or authenticate first.     |
 | S14 | Put `sp` only on a sampled `snap`/`d` while CV_TELEMETRY_ENABLED is on; draw it fresh from a CSPRNG. |
+| S15 | Filter each `system` frame per connection before queueing it, as §15.9 says (SR-188).                |
 
 **Client MUST:**
 
@@ -3952,7 +3989,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | C9  | Decouple rendering from frame arrival (`requestAnimationFrame`).                            |
 | C10 | Validate the binary `magic`/`format_version`; bars bodies must match length exactly (§3.4). |
 | C11 | Render replay data in visually distinct chrome.                                             |
-| C12 | Disable order-entry affordances on `kill_switch.engaged` and on `shutdown_notice`.          |
+| C12 | Disable order entry while a `kill_switch` covers it (§15.9) and on `shutdown_notice`.       |
 | C13 | Read `meta.include_delta`; treat a kind-4 `delta = 0` as real only if it is `true` (§6.1).  |
 | C14 | Replace the whole series on a `generation_swap` snap; never merge generations (§7.4, §8.2). |
 | C15 | Accept either encoding, frame by frame, on a binary `bars` subscription (§3.4, §6.1).       |

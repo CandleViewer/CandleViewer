@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from candleviewer.app import AppContext, Supervisor, create_app
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.net.system_topic import client_notice
 from candleviewer.secrets.errors import KekLoadError
 from candleviewer.settings import Environment, Settings
@@ -40,9 +41,14 @@ def _latch(ctx: AppContext) -> None:
     ctx.oms_read_only_gate.latch(reason_code="secrets.kek_unavailable", reason_text="internal")
 
 
+async def _viewer(user_id: uuid.UUID) -> PrincipalSnapshot:
+    """A role: the fake backend's deny-all principal receives no `system` frame (SR-188)."""
+    return PrincipalSnapshot(user_id, frozenset({"viewer"}), frozenset())
+
+
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    app = create_app(_settings(), ws_authenticate=_authenticate)
+    app = create_app(_settings(), snapshot_loader=_viewer, ws_authenticate=_authenticate)
     with TestClient(app, client=("127.0.0.1", 50000)) as c:
         yield c
 
