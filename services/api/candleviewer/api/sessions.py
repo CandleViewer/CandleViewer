@@ -1101,7 +1101,7 @@ def make_session_router(
             _log().error(
                 "auth.enrolment_only.unclassified", path="/auth/session", error=type(exc).__name__
             )
-            return _problem(503, "Service unavailable", "the session could not be checked")
+            return _session_unchecked()  # the guard's `503 store_unavailable` and Retry-After
         response = JSONResponse(
             await _session_info(identity, record, now(), enrolment_only=enrolment_only)
         )
