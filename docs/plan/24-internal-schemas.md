@@ -2452,7 +2452,7 @@ class RuleLimits(BaseModel):
 
 > **Implementation note (E35-T01).** Shipped as `candleviewer.rules.ir` (`services/api/candleviewer/rules/ir/`). Deviations from the listing above: `description`, `editor`, `limits` default when omitted; `created_by/created_at/updated_at` are optional metadata and, with `graph_layout`/`editor`, are excluded from `ir_hash`; `Literal_` accepts `bool|int|Decimal|str`; the committed schema is `rule-ir.json` beside the models, drift-guarded by `scripts/generate_rule_ir_schema.py --check`.
 
-> **Action budget (SR-104, #3232).** `max_fires_per_hour` and `max_fires_per_day` bound how often one scope instance fires; at either limit the evaluator skips the fire. For a rule, a value above its default needs the Owner role and a value above its hard cap is refused, at save. The caps live in `candleviewer.rules.limits`, mirrored by the contract's `x-cv-limit-caps` on `RuleIr`. Alerts reuse `RuleLimits` without either check.
+> **Action budget (SR-104, #3232).** `max_fires_per_hour` and `max_fires_per_day` bound how often one scope instance fires; at either limit the evaluator skips the fire. For a rule, a value above its default needs the Owner role and a value above its hard cap is refused, at save and again at arming; a rule armed above a cap before the caps existed is disarmed, never clamped. The caps live in `candleviewer.rules.limits`, mirrored by the contract's `x-cv-limit-caps` on `RuleIr`. Alerts reuse `RuleLimits` without either check.
 
 ### 11.3 JSON Schema (shared by both editors)
 
