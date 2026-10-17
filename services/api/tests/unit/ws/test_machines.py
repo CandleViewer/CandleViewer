@@ -110,7 +110,7 @@ def test_parse_refuses(ch: str, code: str) -> None:
 
 
 def test_machine_entity_refuses_an_id_outside_the_grammar() -> None:
-    with pytest.raises(TopicError):
+    with pytest.raises(ValueError, match="machine entity"):  # a publisher bug, not a wire refusal
         MachineEntity("order", OID.upper())
 
 
@@ -172,15 +172,23 @@ def _world(**kw: Any) -> tuple[Conn, MachineStateRegistry, SequencingHub]:
     return conn, registry, hub
 
 
-def test_sub_is_snapped_from_the_registry_and_matched_by_its_entity() -> None:
-    conn, registry, hub = _world()
+def test_sub_is_snapped_from_the_registry() -> None:
+    conn, registry, _ = _world()
     order = MachineEntity("order", OID, ON_A)
     registry.publish(order, _payload())
     result, _ = conn.sub(order.ch)
     assert result["effective"] == {"throttle_ms": 100, "encoding": "structured", "coalesce": True}
-    assert hub.publish(order.ch, _payload(state="filled")) == 1
-    snap, d = conn.take()  # both validated against the envelope and §15.10
+    (snap,) = conn.take()  # validated against the envelope and §15.10
     assert (snap["s"], snap["meta"]["reason"], snap["p"]["state"]) == (1, "initial", "submitted")
+
+
+def test_a_delta_reaches_the_subscriber_of_its_entity() -> None:
+    conn, registry, hub = _world()
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+    assert hub.publish(order.ch, _payload(state="filled")) == 1
+    d = conn.take()[-1]
     assert (d["t"], d["s"], d["p"]["state"]) == ("d", 2, "filled")
 
 
@@ -190,16 +198,23 @@ def test_unscoped_kind_without_an_entry_stays_pending() -> None:
     assert result["snapshot_pending"] is True and conn.take() == []
 
 
-def test_registry_bound_refuses_a_new_entity_and_keeps_updating_the_others() -> None:
+def test_registry_bound_refuses_a_new_entity() -> None:
     conn, registry, _ = _world(max_entries=1)
     one, two = MachineEntity("order", OID, ON_A), MachineEntity("order", OTHER, ON_A)
     with capture_logs() as logs:
         assert registry.publish(one, _payload()) and not registry.publish(two, _payload())
-    assert len(registry) == 1 and registry.publish(one, _payload(state="filled"))
     assert [(e["event"], e["entity_kind"]) for e in logs] == [
         ("machine state refused: registry full", "order")
     ]
     assert conn.authz.admit(two.ch)[0]["error"]["code"] == "account_scope_denied"
+
+
+def test_registry_bound_keeps_updating_the_others() -> None:
+    _, registry, _ = _world(max_entries=1)
+    one, two = MachineEntity("order", OID, ON_A), MachineEntity("order", OTHER, ON_A)
+    registry.publish(one, _payload())
+    registry.publish(two, _payload())
+    assert registry.publish(one, _payload(state="filled")) and len(registry) == 1
 
 
 def test_terminal_payload_is_the_entitys_last() -> None:

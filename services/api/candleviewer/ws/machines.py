@@ -15,7 +15,7 @@ import structlog
 
 from candleviewer.ws.limits import MACHINE_ENTRIES_MAX
 from candleviewer.ws.sequencing import SnapshotBody
-from candleviewer.ws.topics import EntityScope, parse_topic
+from candleviewer.ws.topics import EntityScope, TopicError, parse_topic
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import Subscription
@@ -29,18 +29,22 @@ def _log() -> Any:
 @dataclass(frozen=True, slots=True)
 class MachineEntity:
     """A machine's public id (its kind, plus a uuid or symbol unless a singleton) and the scope
-    the owning module binds from its own record, never from the machine's context."""
+    the owning module binds from its own record, never from the machine's context. Build it once
+    per machine (at build and at restore) and reuse it for every publish: construction checks the
+    id against the §6.4 grammar, and an id it refuses is a publisher bug (`ValueError`)."""
 
     kind: str
     ident: str | None = None
     scope: EntityScope = field(default_factory=EntityScope)
+    ch: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        parse_topic(self.ch)  # a programming error: an id the §6.4 grammar refuses raises
-
-    @property
-    def ch(self) -> str:
-        return f"machines.{self.kind}{'' if self.ident is None else ':' + self.ident}.state"
+        ch = f"machines.{self.kind}{'' if self.ident is None else ':' + self.ident}.state"
+        try:
+            parse_topic(ch)
+        except TopicError as exc:
+            raise ValueError(f"not a 23 section 6.4 machine entity: {exc.message}") from None
+        object.__setattr__(self, "ch", ch)
 
 
 @dataclass(slots=True)

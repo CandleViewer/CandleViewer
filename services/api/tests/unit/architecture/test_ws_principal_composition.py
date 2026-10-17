@@ -34,8 +34,10 @@ _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
 #: this backend (I/O). Their check is the same `marketdata:read` decision as `book` or `trades`.
 _LEASED = frozenset({"bars", "footprint"})
 FAMILIES = tuple(sorted(set(_TOPICS) - _LEASED))
-ACCOUNT_SCOPED = tuple(f for f in FAMILIES if _TOPICS[f]["scope"] == "granted_accounts")
-ACCOUNT_SCOPED = tuple(f for f in ACCOUNT_SCOPED if "." not in f)  # `machines.*`: by entity
+#: `machines.*` rows are scoped by entity, not by an `exchange_account_ids` option.
+ACCOUNT_SCOPED = tuple(
+    f for f in FAMILIES if _TOPICS[f]["scope"] == "granted_accounts" and "." not in f
+)
 UNLISTED = uuid.UUID("00000000-0000-4000-8000-00000000000c")  # in no `user_account_access` row
 _WS_TIMEOUT_S = 5.0
 

@@ -15,6 +15,7 @@ import pytest
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
 from candleviewer.ws.topics import (
     FAMILIES,
+    MACHINE_KINDS,
     MIN_THROTTLE_MS,
     TOPIC_REGISTRY,
     TopicError,
@@ -192,7 +193,8 @@ def test_registry_exposes_pattern_and_permission_pairs() -> None:
     assert pairs["wallet"] == "accounts:read"
     assert pairs["system"] is None
     # `machines` contributes one pattern per §6.4 kind instead of its family pattern
-    assert len(TOPIC_REGISTRY) == sum(len(f.shapes) for f in FAMILIES.values()) - 1 + 13
+    shapes = sum(len(f.shapes) for f in FAMILIES.values())
+    assert len(TOPIC_REGISTRY) == shapes - 1 + len(MACHINE_KINDS)
     assert pairs["machines.order:{uuid}.state"] == "orders:read"
     assert pairs["machines.session:{uuid}.state"] is None
 

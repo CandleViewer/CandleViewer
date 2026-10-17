@@ -46,7 +46,6 @@ from candleviewer.ws.limits import (
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
 )
-from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -131,6 +130,13 @@ class AuditSink(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
+class EntityScopes(Protocol):
+    """What `sub` reads of the §6.4 machine-state registry, which only the publisher writes."""
+
+    def scope(self, ch: str) -> EntityScope | None:
+        """The entry's scope; `None` when `ch` has no entry."""
+
+
 @dataclass
 class SubscriptionServices:
     """Process-wide collaborators shared by every connection (injected; never a global)."""
@@ -150,7 +156,7 @@ class SubscriptionServices:
     bars_off: bool = False
     #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
     #: means no entity has an entry.
-    machines: MachineStateRegistry | None = None
+    machines: EntityScopes | None = None
 
 
 @dataclass(frozen=True, slots=True)

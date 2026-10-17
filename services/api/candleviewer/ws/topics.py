@@ -401,14 +401,13 @@ class MachineKind:
 
 
 _U: Final = "uuid"
-_ACC: Final = Scope.GRANTED_ACCOUNTS
 _SELF: Final = Scope.SELF
 #: The closed §6.4 kind set (B8, B9, B13 and B15 have no public id yet, §16.6 W9).
 MACHINE_KINDS: Final[Mapping[str, MachineKind]] = {
-    "order": MachineKind(_U, Permission.ORDERS_READ, _ACC),
-    "trade_group": MachineKind(_U, Permission.ORDERS_READ, _ACC, pending=True),
-    "leg": MachineKind(_U, Permission.ORDERS_READ, _ACC),
-    "algo": MachineKind(_U, Permission.ORDERS_READ, _ACC),
+    "order": MachineKind(_U, Permission.ORDERS_READ, _G),
+    "trade_group": MachineKind(_U, Permission.ORDERS_READ, _G, pending=True),
+    "leg": MachineKind(_U, Permission.ORDERS_READ, _G),
+    "algo": MachineKind(_U, Permission.ORDERS_READ, _G),
     "alert": MachineKind(_U, Permission.ALERTS_READ, _SELF),
     "recording": MachineKind("symbol", Permission.RECORDING_READ, Scope.NONE),
     "replay": MachineKind(_U, Permission.REPLAY_READ, _SELF),
@@ -416,8 +415,8 @@ MACHINE_KINDS: Final[Mapping[str, MachineKind]] = {
     "session": MachineKind(_U, None, _SELF),
     "live_gate": MachineKind("singleton", None, Scope.NONE, pending=True),
     "kill_switch": MachineKind("singleton", Permission.ORDERS_READ, Scope.NONE),
-    "reconciliation": MachineKind(_U, None, _ACC, pending=True),
-    "risk_lockout": MachineKind(_U, Permission.POSITIONS_READ, _ACC),
+    "reconciliation": MachineKind(_U, None, _G, pending=True),
+    "risk_lockout": MachineKind(_U, Permission.POSITIONS_READ, _G),
 }
 
 
@@ -437,7 +436,7 @@ _NO_ACCOUNT: Final = frozenset({uuid.UUID(int=0)})
 def _granted(principal: PrincipalSnapshot, permission: Permission | None, acc: uuid.UUID) -> bool:
     if permission is None:  # B19 has no read rule yet: only the Owner reaches this step (W8)
         return principal.is_owner
-    decision = decide(principal, permission, scope=_ACC, exchange_account_id=acc)
+    decision = decide(principal, permission, scope=_G, exchange_account_id=acc)
     return isinstance(decision, Allow)
 
 
@@ -456,7 +455,7 @@ def machine_refusal(
         return None
     accounts = scope.accounts if scope is not None else frozenset()
     user = scope.user if scope is not None else None
-    if rule.scope == _ACC:
+    if rule.scope == _G:
         granted = all(_granted(principal, rule.permission, a) for a in accounts or _NO_ACCOUNT)
         code, held = "account_scope_denied", bool(accounts) and granted
     else:  # user-scoped: the caller's own entity only, Owner included (D2)
@@ -533,6 +532,9 @@ def parse_topic(ch: Any, *, instrument_known: Callable[[str], bool] | None = Non
     )
 
 
+_BAD_ENTITY: Final = "Unknown machine kind, or an id that does not fit it."
+
+
 def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[str, str | None]:
     """§6.4 `{entity}`: `{kind}` for a singleton, otherwise `{kind}:{id}`. Returns the kind and,
     for a symbol-keyed kind, the symbol. An unknown kind or an id that does not fit its kind is
@@ -550,9 +552,6 @@ def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[s
     if instrument_known is not None and not instrument_known(ident):
         raise TopicError("unsupported_symbol", "Not a supported USDT linear perpetual.")
     return name, ident
-
-
-_BAD_ENTITY: Final = "Unknown machine kind, or an id that does not fit it."
 
 
 def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | None) -> Any:
