@@ -11,10 +11,9 @@
 
 from __future__ import annotations
 
-import base64
 import importlib.util
 import json
-import math
+import re
 import sys
 from typing import Any, Protocol, cast
 
@@ -23,7 +22,7 @@ import yaml
 
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
-from candleviewer.ws.binary import FrameMalformedError, decode, decode_b64, encode, encode_b64
+from candleviewer.ws.binary import FrameMalformedError, decode, encode
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
 from candleviewer.ws.sequencing import UpstreamBookGuard
 from candleviewer.ws.topics import FAMILIES, effective_options, parse_topic
@@ -33,14 +32,20 @@ from tests.contract.ws._harness import (
     PROTOCOL_DOC,
     SCHEMAS,
     SYM,
+    HeatmapRef,
+    HeatmapRow,
     World,
     check_schema,
     connect,
     entry,
+    heatmap_reference,
     publish,
+    raw_payload,
+    scenario_frames,
     structured_of,
     topic_fields,
     wire_error_codes,
+    wire_payload,
 )
 from tests.unit.ws._seq_support import ACC_A, USER
 
@@ -99,6 +104,12 @@ def test_contract_every_server_frame_type_is_produced_and_validated_against_its_
     produced = {f["t"] for f in c.seen}
     assert SERVER_TYPES <= produced, f"never produced: {sorted(SERVER_TYPES - produced)}"
     assert produced <= SERVER_TYPES, f"unexpected frame types: {sorted(produced - SERVER_TYPES)}"
+
+
+def test_contract_both_wires_carry_the_same_frames() -> None:
+    """One scenario on each wire: after the handshake, every frame is equal field for field. An
+    encoder that drops or changes a field fails here, not only where a row happens to assert it."""
+    assert scenario_frames("json", RS) == scenario_frames("msgpack-preferred", RS)
 
 
 # -- binary / structured equivalence ------------------------------------------------------------
@@ -170,19 +181,23 @@ def test_contract_binary_and_structured_snapshots_of_one_state_are_equivalent(fa
             e = entry(family, FAMILIES[family].shapes[0], mode)
             c.sub(e)
             seen[mode] = c.recv()
+            binary_e = c.binary_e  # raw `b` on MessagePack, base64 `b64` on JSON (§3.2)
     structured_form = {k: v for k, v in seen["structured"]["p"].items() if k != "stale"}
     binary_form = structured_of(seen["binary"])
-    assert seen["binary"]["e"] == "b64" and seen["structured"]["e"] == "j"
+    assert seen["binary"]["e"] == binary_e and seen["structured"]["e"] == "j"
     assert binary_form == structured_form
 
 
-def test_contract_b64_snapshot_parts_round_trip_byte_identical() -> None:
+def test_contract_binary_snapshot_parts_round_trip_byte_identical() -> None:
     w = World()
     with connect(w) as c:
         c.sub(entry("book", ("symbol", "depth"), "binary"))
         snap = c.recv()
-    raw = base64.b64decode(snap["p"])
-    assert encode(decode(raw)) == raw and encode_b64(decode_b64(snap["p"])) == snap["p"]
+    raw = raw_payload(snap)
+    assert encode(decode(raw)) == raw
+    assert snap["p"] == wire_payload(
+        snap["e"], raw
+    )  # the base64 text on JSON, the bytes themselves
 
 
 # -- error-catalogue closure --------------------------------------------------------------------
@@ -209,39 +224,72 @@ def test_contract_every_bye_and_revoked_reason_is_in_its_closed_schema_set() -> 
 
 
 # -- heatmap_bucket_selection (§6.1.1) ------------------------------------------------------------
+# The document is the oracle: its six reference rows, formula constants, ladder, clamp and server
+# fallback are PARSED (`heatmap_reference`, as §10.2 is) and held against a reference algorithm
+# written once from it, so an edit to either side fails a test. A client's own `bucket_ms` is
+# E21/E17-D03's; there is no production implementation to call yet.
 
 _LADDER = (100, 250, 500, 1000, 5000)
+_DIVISOR, _CLAMP_MS, _CLAMP_IDEAL_MAX_MS, _FALLBACK_MS = 3, 1000, 2500, 500
+try:
+    HEATMAP: HeatmapRef | None = heatmap_reference()
+    HEATMAP_ERROR = ""
+except AssertionError as exc:  # a §6.1.1 edit must fail a test below, not the module's collection
+    HEATMAP, HEATMAP_ERROR = None, str(exc)
+
+
+def _rung(ideal_ms: float) -> int:
+    return next((r for r in _LADDER if r >= ideal_ms), _LADDER[-1])
 
 
 def heatmap_bucket_ms(window_s: float, css_px: float, dpr: float) -> int:
-    """The §6.1.1 reference algorithm, written from the document (there is no production
-    implementation yet; the web client owns it, E21/E17-D03): ideal -> smallest rung >= ideal,
+    """The §6.1.1 reference algorithm, written from the document: ideal -> smallest rung >= ideal,
     then the normative upward clamp to 1000 ms whenever ideal_ms <= 2500."""
-    ideal = (window_s * 1000) / (css_px * dpr / 3)
-    rung = next((r for r in _LADDER if r >= ideal), _LADDER[-1])
-    if rung == 5000 and ideal <= 2500:
-        return 1000
-    return rung
+    ideal = (window_s * 1000) / (css_px * dpr / _DIVISOR)
+    if _rung(ideal) == _LADDER[-1] and ideal <= _CLAMP_IDEAL_MAX_MS:
+        return _CLAMP_MS
+    return _rung(ideal)
 
 
-#: (display, pane CSS px, DPR, documented ideal_ms, documented selected) - the §6.1.1 table.
-_TABLE = [
-    ("4K 100%", 2380, 1.0, 1134, 1000),
-    ("4K 150%", 1587, 1.5, 1134, 1000),
-    ("2560x1440", 1587, 1.0, 1701, 1000),
-    ("1920x1080", 1190, 1.0, 2269, 1000),
-    ("MacBook 14in", 937, 2.0, 1441, 1000),
-    ("half-width 1920", 595, 1.0, 4538, 5000),
-]
+def check_heatmap_statements(ref: HeatmapRef) -> None:
+    """What §6.1.1 states about the formula, the ladder, the clamp and the server fallback."""
+    assert (ref.window_s, ref.divisor, ref.ladder) == (900, _DIVISOR, _LADDER)
+    assert (ref.clamp_ms, ref.clamp_ideal_max_ms) == (_CLAMP_MS, _CLAMP_IDEAL_MAX_MS)
+    assert ref.top_rung_above_ms == ref.clamp_ideal_max_ms  # the clamp and its complement agree
+    assert ref.fallback_ms == _FALLBACK_MS
+    assert len(ref.rows) == 6, ref.rows  # a parser that finds nothing must not pass
 
 
-@pytest.mark.parametrize(("display", "css", "dpr", "ideal", "selected"), _TABLE)
-def test_heatmap_bucket_selection_matches_every_reference_row(
-    display: str, css: int, dpr: float, ideal: int, selected: int
-) -> None:
-    computed = (900 * 1000) / (css * dpr / 3)
-    assert math.floor(computed) == ideal or round(computed) == ideal, (display, computed)
-    assert heatmap_bucket_ms(900, css, dpr) == selected, display
+def check_heatmap_row(ref: HeatmapRef, row: HeatmapRow) -> None:
+    """Every cell of one reference row: its device px, `ideal_ms`, the rung before the clamp where
+    the row prints one, and the rung selected."""
+    assert abs(row.css_px * row.dpr - row.device_px) <= 0.5, row.display
+    ideal = (ref.window_s * 1000) / (row.css_px * row.dpr / ref.divisor)
+    assert round(ideal) == row.ideal_ms, (row.display, ideal)
+    assert row.rung_ms in (None, _rung(ideal)), row.display
+    assert heatmap_bucket_ms(ref.window_s, row.css_px, row.dpr) == row.selected_ms, row.display
+
+
+def _heatmap() -> HeatmapRef:
+    assert HEATMAP is not None, HEATMAP_ERROR
+    return HEATMAP
+
+
+_ROWS = (
+    [pytest.param(r, id=f"{r.css_px}px-dpr{r.dpr:g}") for r in HEATMAP.rows]
+    if HEATMAP
+    else [pytest.param(None, id="unparsed")]
+)
+
+
+def test_heatmap_bucket_selection_document_states_formula_ladder_clamp_and_fallback() -> None:
+    check_heatmap_statements(_heatmap())
+
+
+@pytest.mark.parametrize("row", _ROWS)
+def test_heatmap_bucket_selection_matches_every_reference_row(row: HeatmapRow | None) -> None:
+    assert row is not None, HEATMAP_ERROR
+    check_heatmap_row(_heatmap(), row)
 
 
 @pytest.mark.parametrize(
@@ -261,28 +309,60 @@ def test_heatmap_bucket_selection_ladder_clamp_boundary(ideal_ms: float, expecte
     assert heatmap_bucket_ms(900, css, 1.0) == expected
 
 
-def test_heatmap_bucket_selection_server_applies_500_when_the_option_is_absent() -> None:
+#: One edit per statement or cell §6.1.1 makes (a row's pane, device px, `ideal_ms`, pre-clamp
+#: rung or selected rung; the formula, the ladder, the clamp, the fallback); each must fail the
+#: checks above: the mutant MH of the E17-Q01 audit, kept as a test.
+_EDITS = {
+    "row-selected": (r"(\|\s*4538\s*\|\s*)\*\*5000\*\*", r"\1**1000**"),
+    "row-ideal": (r"(\|\s*2380\s*\|\s*)1134", r"\g<1>1135"),
+    "row-css": (r"(scale \(3840\)\s*\|\s*)2380", r"\g<1>2381"),
+    "row-device-px": (r"(\|\s*1190\s*\|\s*1\s*\|\s*)1190", r"\g<1>1200"),
+    "row-rung": (r"(\|\s*1701\s*\|\s*)\*\*5000\*\*", r"\1**1000**"),
+    "row-removed": (r"^\|\s*Half-width pane[^\n]*\n", ""),
+    "divisor": (r"devicePixelRatio / 3\)", "devicePixelRatio / 4)"),
+    "ladder": (r"from \{100, 250, 500, 1000, 5000\}", "from {100, 250, 500, 1000, 2500}"),
+    "clamp-threshold": (r"`ideal_ms ≤ 2500`", "`ideal_ms ≤ 3000`"),
+    "clamp-complement": (r"`ideal_ms > 2500`", "`ideal_ms > 1000`"),
+    "clamp-bound": (r"selection at \*\*1000 ms\*\*", "selection at **500 ms**"),
+    "fallback": (r"server applies \*\*`500`\*\*", "server applies **`250`**"),
+}
+
+
+@pytest.mark.parametrize(("pattern", "edit"), _EDITS.values(), ids=_EDITS.keys())
+def test_heatmap_bucket_selection_an_edited_document_row_or_clamp_fails(
+    pattern: str, edit: str
+) -> None:
+    edited, edits = re.subn(
+        pattern, edit, PROTOCOL_DOC.read_text(encoding="utf-8"), count=1, flags=re.M
+    )
+    assert edits == 1, pattern  # the edit applies, so this test cannot pass vacuously
+    with pytest.raises(AssertionError):
+        ref = heatmap_reference(edited)
+        check_heatmap_statements(ref)
+        for row in ref.rows:
+            check_heatmap_row(ref, row)
+
+
+def test_heatmap_bucket_selection_server_applies_the_documented_fallback_if_absent() -> None:
     eff = effective_options(parse_topic("heatmap.BTCUSDT"), {})
-    assert eff["time_bucket_ms"] == 500  # §6.1.1 rule 3, real server code
+    assert eff["time_bucket_ms"] == _FALLBACK_MS  # §6.1.1 rule 3, real server code
     eff = effective_options(parse_topic("heatmap.BTCUSDT"), {"time_bucket_ms": 1000})
     assert eff["time_bucket_ms"] == 1000  # rule 1/2: an explicit value is never overridden
 
 
-def test_heatmap_bucket_selection_server_accepts_exactly_the_ladder_rungs() -> None:
-    w = World()
-    with connect(w) as c:
-        for i, rung in enumerate(_LADDER):
-            ch = f"heatmap.{'BTCUSDT' if i == 0 else 'ETHUSDT'}"
-            if i:
-                w.source.bodies["heatmap"] = w.source.bodies["heatmap"]
-            res = c.sub({"ch": ch, "opts": {"time_bucket_ms": rung}})["p"]["results"][0]
-            if i == 0:
-                assert res["ok"] and res["effective"]["time_bucket_ms"] == rung
-                break
-        res = c.sub({"ch": "heatmap.SOLUSDT", "opts": {"time_bucket_ms": 750}}, conform=False)["p"][
-            "results"
-        ][0]
-        assert res["error"]["code"] == "invalid_options"
+@pytest.mark.parametrize("rung", _LADDER)
+def test_heatmap_bucket_selection_server_accepts_every_documented_ladder_rung(rung: int) -> None:
+    with connect(World()) as c:
+        res = c.sub({"ch": "heatmap.BTCUSDT", "opts": {"time_bucket_ms": rung}})["p"]["results"][0]
+        assert res["ok"] and res["effective"]["time_bucket_ms"] == rung
+
+
+@pytest.mark.parametrize("value", [50, 750, 2500, 10_000])
+def test_heatmap_bucket_selection_server_refuses_a_value_off_the_ladder(value: int) -> None:
+    assert value not in _LADDER
+    with connect(World()) as c:
+        res = c.sub({"ch": "heatmap.BTCUSDT", "opts": {"time_bucket_ms": value}}, conform=False)
+        assert res["p"]["results"][0]["error"]["code"] == "invalid_options"
 
 
 # -- integration rows ---------------------------------------------------------------------------
@@ -399,7 +479,7 @@ class _ReplayHub(Protocol):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="E26-T05: replay clock not yet implemented; no code ends a replay session on a "
+    reason="E26-T05 (#628): replay clock not yet implemented; no code ends a replay session on a "
     "socket, so the documented `revoked replay_session_ended` series cannot be produced",
 )
 def test_integration_replay_finish_emits_revoked_replay_session_ended_per_topic() -> None:
@@ -492,7 +572,7 @@ def test_client_frames_the_server_must_reject_are_err_in_the_catalogue_and_non_f
 ) -> None:
     w = World()
     with connect(w) as c:
-        c.send(bad, conform=False) if isinstance(bad, dict) else c.send_text(json.dumps(bad))
+        c.send(bad, conform=False) if isinstance(bad, dict) else c.send_raw(bad)
         err = c.recv_err()
         assert err["p"]["code"] == code
         assert err["p"]["code"] in wire_error_codes()
@@ -503,16 +583,21 @@ def test_client_frames_the_server_must_reject_are_err_in_the_catalogue_and_non_f
 
 @pytest.mark.parametrize("payload", ["not json", "{", "\x00\x01", '{"t":"ping"'])
 def test_client_non_json_text_is_frame_malformed_not_a_crash(payload: str) -> None:
+    """On `cv.v1.msgpack` the same bytes arrive as a binary frame: `{` decodes as the integer 123,
+    which is no object, and each other payload stops at bytes left over (`ExtraData`)."""
     w = World()
     with connect(w) as c:
-        c.send_text(payload)
+        c.send_undecodable(payload)
         assert c.recv_err()["p"]["code"] == "frame_malformed"
 
 
 def test_client_deeply_nested_frame_is_a_violation_never_decoded() -> None:
     w = World()
+    nest: Any = []
+    for _ in range(39):  # 40 arrays, past the 32 the gateway reads on either codec
+        nest = [nest]
     with connect(w) as c:
-        c.send_text('{"t":"ping","p":' + "[" * 40 + "]" * 40 + "}")
+        c.send_raw({"t": "ping", "p": nest})
         assert c.recv_err()["p"]["code"] == "frame_malformed"
 
 
@@ -523,12 +608,12 @@ def test_client_binary_ws_frame_is_malformed_not_a_crash() -> None:
         assert c.recv_err()["p"]["code"] == "frame_malformed"
 
 
-def test_client_binary_ws_frame_holding_valid_json_is_malformed_on_a_json_connection() -> None:
-    """§2.2: a `cv.v1.json` connection takes text frames only, so a binary frame is refused even
-    when its bytes are a valid JSON frame, as a text frame is on `cv.v1.msgpack`."""
+def test_client_ws_frame_of_the_other_kind_holding_a_valid_frame_is_malformed() -> None:
+    """§2.2: a `cv.v1.json` connection takes text frames only and a `cv.v1.msgpack` one binary
+    frames only, so the other kind is refused even when its bytes are a valid JSON frame."""
     w = World()
     with connect(w) as c:
-        c.ws.send_bytes(b'{"t": "ping", "id": "p"}')
+        c.send_other_kind(json.dumps({"t": "ping", "id": "p"}))
         assert c.recv_err()["p"]["code"] == "frame_malformed"
 
 

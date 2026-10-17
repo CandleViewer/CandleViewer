@@ -22,11 +22,11 @@ from candleviewer.auth.scopes import AccountGrant
 from candleviewer.ws.errors import UnknownErrorCode, build_ws_error
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.contract.ws._harness import (
-    JSON,
     OFFERS,
     Client,
     World,
     all_private,
+    current_offer,
     delta_body,
     entry,
     wire_error_codes,
@@ -101,7 +101,7 @@ def test_s10_error_catalogue_is_closed_over_a_full_run_of_every_error_path() -> 
         frames.append(c.recv_err())
         c.send({"t": "hello", "id": "again"})
         frames.append(c.recv_err())
-        c.send_text("not json")
+        c.send_undecodable("not json")
         frames.append(c.recv_err())
     w = World()
     w.perms = frozenset({Permission.MARKETDATA_READ})
@@ -195,10 +195,10 @@ def test_s11_every_server_initiated_close_is_preceded_by_bye(label: str, expecte
         return
     with connect(w) as c:
         if label == "frame_too_big":
-            c.send_text('{"t":"ping","id":"' + "x" * (256 * 1024) + '"}')
+            c.send_raw({"t": "ping", "id": "x" * (256 * 1024)})
         elif label == "bad_client":
             for _ in range(3):
-                c.send_text("not json")
+                c.send_undecodable("not json")
         elif label == "heartbeat_timeout":
             w.clock.now = 20.0
             c.recv(skip_ping=False)  # the server's unsolicited ping, left unanswered
@@ -228,18 +228,19 @@ def _too_many_connections() -> None:
     inbound times on the fake clock make "oldest idle" unambiguous."""
     w = World()
     w.gateway.max_per_user = 2
+    offer = current_offer()
     with w.client:
-        with w.client.websocket_connect("/ws", subprotocols=JSON) as old_ws:
+        with w.client.websocket_connect("/ws", subprotocols=offer) as old_ws:
             old = Client(old_ws, conform=False)
             old.open()
-            with w.client.websocket_connect("/ws", subprotocols=JSON) as busy_ws:
+            with w.client.websocket_connect("/ws", subprotocols=offer) as busy_ws:
                 busy = Client(busy_ws, conform=False)
                 busy.send({"t": "hello", "id": "h"})
                 busy.recv()
                 w.clock.now = 5.0
                 busy.send({"t": "auth", "id": "a", "p": {"access_token": "good"}})
                 busy.recv()
-                with w.client.websocket_connect("/ws", subprotocols=JSON) as new_ws:
+                with w.client.websocket_connect("/ws", subprotocols=offer) as new_ws:
                     Client(new_ws, conform=False).open()
                     bye, code = old.bye_then_close()
                     assert (bye["p"]["reason"], code) == ("too_many_connections", 4429)
@@ -336,7 +337,7 @@ def test_s13_a_bad_origin_is_refused_before_accept_and_never_reaches_auth(
 ) -> None:
     w = World()
     with pytest.raises(WebSocketDisconnect) as exc, w.client:
-        with w.client.websocket_connect("/ws", subprotocols=["cv.v1.json"], headers=headers) as ws:
+        with w.client.websocket_connect("/ws", subprotocols=current_offer(), headers=headers) as ws:
             ws.send_json({"t": "hello", "id": "h"})
             ws.receive_json()
     assert exc.value.code == 4403
@@ -345,7 +346,8 @@ def test_s13_a_bad_origin_is_refused_before_accept_and_never_reaches_auth(
 
 def test_s13_a_token_in_the_query_string_is_never_read() -> None:
     w = World()
-    with w.client, w.client.websocket_connect("/ws?access_token=good", subprotocols=JSON) as ws:
+    offer = current_offer()
+    with w.client, w.client.websocket_connect("/ws?access_token=good", subprotocols=offer) as ws:
         c = Client(ws)
         c.open(auth=False)
         w.clock.now = 10.0
@@ -353,10 +355,11 @@ def test_s13_a_token_in_the_query_string_is_never_read() -> None:
     assert w.tokens_seen == []
 
 
-def test_s13_a_client_offering_no_recognised_subprotocol_is_closed_1002() -> None:
+@pytest.mark.parametrize("offer", [["cv.v2.json"]], ids=["v2-only"])
+def test_s13_a_client_offering_no_recognised_subprotocol_is_closed_1002(offer: list[str]) -> None:
     w = World()
     with pytest.raises(WebSocketDisconnect) as exc, w.client:
-        with w.client.websocket_connect("/ws", subprotocols=["cv.v2.json"]) as ws:
+        with w.client.websocket_connect("/ws", subprotocols=offer) as ws:
             ws.receive_json()
     assert exc.value.code == 1002
 
@@ -369,8 +372,20 @@ def test_s10_f1_err_frame_validates_against_the_error_schema(offer: list[str]) -
         assert err["p"]["code"] == "frame_malformed"
 
 
-def test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack() -> None:
+def test_contract_the_wire_fixture_selects_the_subprotocol(wire: str) -> None:
+    """AC6: the `msgpack-preferred` run speaks MessagePack and the `json` run speaks JSON."""
+    with connect(World()) as c:
+        assert c.msgpack is (wire == "msgpack-preferred")
+
+
+def test_contract_a_test_with_no_wire_set_fails_loudly_not_to_json() -> None:
+    with pytest.raises(RuntimeError, match="no wire set"):
+        current_offer()
+
+
+@pytest.mark.parametrize("offer", [["cv.v1.msgpack"]], ids=["msgpack-only"])
+def test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack(offer: list[str]) -> None:
     """The single F7 pin (§2.2): the preferred subprotocol must be served."""
     w = World()
-    with w.client, w.client.websocket_connect("/ws", subprotocols=["cv.v1.msgpack"]) as ws:
+    with w.client, w.client.websocket_connect("/ws", subprotocols=offer) as ws:
         assert ws.accepted_subprotocol == "cv.v1.msgpack"

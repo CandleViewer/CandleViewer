@@ -8,6 +8,8 @@ Every test drives the REAL gateway (`make_ws_router`, `ConnectionRegistry`, `Seq
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
@@ -17,7 +19,7 @@ import pytest
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.binary import FLAG_ESTIMATED, FLAG_REPLAY, decode_b64
+from candleviewer.ws.binary import FLAG_ESTIMATED, FLAG_REPLAY
 from candleviewer.ws.sequencing import TopicEmitter, causal_sort
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws._harness import (
@@ -25,11 +27,13 @@ from tests.contract.ws._harness import (
     MODES,
     OFFERS,
     PRIVATE_ORDER,
+    SCHEMAS,
     SYM,
     World,
     all_private,
     assert_contiguous,
     connect,
+    cvwb_part,
     delta_body,
     entry,
     publish,
@@ -364,7 +368,7 @@ def test_s6_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
 # -- S7 ----------------------------------------------------------------------------------------
 
 
-def test_s7_grant_withdrawal_emits_revoked_within_1s_and_other_topics_continue() -> None:
+def test_s7_grant_withdrawal_emits_revoked_and_other_topics_continue() -> None:
     w = World()
     with connect(w) as c:
         res = c.sub(
@@ -375,16 +379,39 @@ def test_s7_grant_withdrawal_emits_revoked_within_1s_and_other_topics_continue()
         assert all(r["ok"] for r in res["p"]["results"])
         c.drain(3)
         w.grants = (AccountGrant(ACC_A, True, False, False),)
-        t0 = w.clock.now
         w.call(w.registry.grants_changed, USER)
         revoked = c.next_validated("revoked")  # no assumption about other frames before it
-        assert w.clock.now - t0 < 1.0  # injected clock: no real time passed, none was needed
         assert (revoked["ch"], revoked["p"]["reason"]) == ("positions", "account_scope_changed")
         assert revoked["p"]["removed_accounts"] == [str(ACC_B)]
         assert revoked["p"]["resubscribe_allowed"] is True  # scope narrowed, account A kept
         publish(w, "trades", "trades.BTCUSDT", "structured")
         publish(w, "orders", "orders", "structured", account=ACC_A)
         assert [(f["ch"], f["s"]) for f in c.drain(2)] == [("trades.BTCUSDT", 2), ("orders", 2)]
+
+
+#: §16.4 (S7, §9.5): a grant change reaches the socket as `revoked` within this many real seconds.
+REVOKE_BUDGET_S = 1.0
+
+
+@pytest.mark.perf  # a wall-clock budget (C-13.9): the `py-perf` job and the contract job run it
+def test_s7_grant_withdrawal_revoked_arrives_within_1s() -> None:
+    """The fake clock is never advanced, so only real time sees a delayed revocation. Best of 3
+    damps scheduler noise; the frame is validated after the timed span, not inside it."""
+    delays: list[float] = []
+    frames: list[dict[str, Any]] = []
+    for _ in range(3):
+        w = World()
+        with connect(w) as c:
+            c.sub({"ch": "positions", "opts": {"exchange_account_ids": [str(ACC_A), str(ACC_B)]}})
+            c.drain(1)
+            w.grants = (AccountGrant(ACC_A, True, False, False),)
+            t0 = time.monotonic()
+            w.call(w.registry.grants_changed, USER)
+            frames.append(c.next_of_raw("revoked"))
+            delays.append(time.monotonic() - t0)
+    for frame in frames:
+        validate_frame(frame)
+    assert min(delays) < REVOKE_BUDGET_S, delays
 
 
 def test_s7_permission_loss_revokes_every_topic_of_that_family_only() -> None:
@@ -467,7 +494,7 @@ def test_s8_heuristic_heatmap_snapshot_is_tagged_estimated(mode: str) -> None:
         c.sub(entry("heatmap", ("symbol",), mode))
         snap = c.recv()
         if mode == "binary":
-            assert snap["e"] == "b64" and decode_b64(snap["p"]).flags & FLAG_ESTIMATED
+            assert snap["e"] == c.binary_e and cvwb_part(snap).flags & FLAG_ESTIMATED
         else:
             assert snap["p"]["estimated"] is True
 
@@ -479,7 +506,7 @@ def test_s8_non_heuristic_heatmap_is_not_tagged_estimated(mode: str) -> None:
         c.sub(entry("heatmap", ("symbol",), mode))
         snap = c.recv()
         if mode == "binary":
-            assert not decode_b64(snap["p"]).flags & FLAG_ESTIMATED
+            assert snap["e"] == c.binary_e and not cvwb_part(snap).flags & FLAG_ESTIMATED
         else:
             assert snap["p"]["estimated"] is False
 
@@ -493,6 +520,66 @@ def test_s8_metrics_payload_carries_estimated_per_series_where_heuristic(mode: s
     with connect(w) as c:
         c.sub(entry("metrics", ("symbol",), mode))
         assert c.recv()["p"]["series"][0]["estimated"] is True
+
+
+def test_s8_footprint_imbalance_carries_estimated_where_heuristic() -> None:
+    """`footprint` bars may hold heuristic imbalances (§14.4 `bars[].imbalances[].estimated`); an
+    `estimated:true` one must reach the wire. Structured only: a kind-5 body has no such bit."""
+    w = World()
+    plain = w.source.bodies["footprint"]
+    bars = [{**bar} for bar in plain.structured["bars"]]
+    bars[0]["imbalances"] = [
+        {"price": "100.0", "direction": "buy", "ratio": "3.5", "estimated": True}
+    ]
+    w.source.bodies["footprint"] = replace(plain, structured={**plain.structured, "bars": bars})
+    with connect(w) as c:
+        c.sub(entry("footprint", FAMILIES["footprint"].shapes[0]))
+        snap = c.recv()  # validated against §14.4 first: `estimated` is a declared boolean there
+        assert snap["p"]["bars"][0]["imbalances"][0]["estimated"] is True
+
+
+def _estimated_paths(node: Any, path: str) -> Iterator[str]:
+    """Where a schema declares an `estimated` property, wherever it sits: `.name` per property,
+    `[]` per array item, `/key` for any other keyword (`$defs`, `oneOf`, `additionalProperties`)."""
+    if isinstance(node, list):
+        for i, child in enumerate(node):
+            yield from _estimated_paths(child, f"{path}/{i}")
+    elif isinstance(node, dict):
+        if "estimated" in (node.get("properties") or {}):
+            yield path
+        for key, child in node.items():
+            if key == "properties" and isinstance(child, dict):
+                for name, prop in child.items():
+                    yield from _estimated_paths(prop, f"{path}.{name}")
+            else:
+                yield from _estimated_paths(child, path + ("[]" if key == "items" else f"/{key}"))
+
+
+def test_s8_the_closure_walk_sees_every_shape_a_schema_can_take() -> None:
+    declares = {"properties": {"estimated": {"type": "boolean"}}}
+    schema = {
+        "$defs": {"x": declares},
+        "oneOf": [{}, declares],
+        "properties": {"rows": {"items": declares}},
+        "additionalProperties": declares,
+    }
+    assert sorted(_estimated_paths(schema, "s")) == [
+        "s.rows[]",
+        "s/$defs/x",
+        "s/additionalProperties",
+        "s/oneOf/1",
+    ]
+
+
+def test_s8_every_estimated_field_the_schemas_declare_has_a_row_in_this_suite() -> None:
+    """S8 closure: `estimated` is declared in exactly the three places the rows above assert. A
+    fourth heuristic field fails here until it has a row of its own."""
+    declared = sorted(
+        path
+        for sid, schema in SCHEMAS.items()
+        for path in _estimated_paths(schema, sid.rsplit("/", 1)[1].removesuffix(".schema.json"))
+    )
+    assert declared == ["footprint.bars[].imbalances[]", "heatmap", "metrics.series[]"]
 
 
 # -- S9 ----------------------------------------------------------------------------------------
@@ -513,8 +600,8 @@ def test_s9_replay_frames_carry_source_rs_wt_and_the_recorded_ts(mode: str) -> N
         assert (d["rs"], d["ts"]) == (RS, recorded)  # `ts` is the recorded time...
         assert d["wt"] == w.clock.wall_ms()  # ...`wt` the wall-clock send time
         if mode == "binary":
-            assert decode_b64(d["p"]).flags & FLAG_REPLAY  # header bit2 (§3.4)
-            assert decode_b64(snap["p"]).flags & FLAG_REPLAY
+            assert cvwb_part(d).flags & FLAG_REPLAY  # header bit2 (§3.4)
+            assert cvwb_part(snap).flags & FLAG_REPLAY
 
 
 def test_s9_live_frames_never_carry_replay_markers() -> None:
@@ -526,7 +613,7 @@ def test_s9_live_frames_never_carry_replay_markers() -> None:
         d = c.recv()
         for f in (snap, d):
             assert "rs" not in f and "wt" not in f
-            assert not decode_b64(f["p"]).flags & FLAG_REPLAY
+            assert not cvwb_part(f).flags & FLAG_REPLAY
         assert snap["meta"]["source"] == "live"
 
 

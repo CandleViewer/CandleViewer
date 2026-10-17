@@ -14,7 +14,7 @@ import pytest
 
 from candleviewer.ws.limits import ENVELOPE_ID_MAX_LEN, MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.permissions import UNSUB_KEYS
-from tests.contract.ws._harness import SCHEMAS, World, connect
+from tests.contract.ws._harness import SCHEMAS, World, connect, json_only
 
 LONG = "t" * 10_000  # the issue's repro: a 10 000-character name
 LONG_ID = "i" * (ENVELOPE_ID_MAX_LEN + 1)
@@ -90,6 +90,7 @@ def test_contract_unsub_of_exactly_the_cap_welcome_advertises_is_answered_entry_
         assert all(r.get("noop") is True for r in results[1:])
 
 
+@json_only  # the JSON text fills the cap; MessagePack caps an array at 128 entries (SR-185)
 def test_contract_the_largest_unsub_the_frame_cap_allows_gets_one_small_err() -> None:
     """#2875's repro: 65 526 one-character names fill the 256 KiB inbound cap (262 143 bytes). The
     reply was one `unsub_ok` of about 2.1 MB (65 526 results); it is one `err` of a few hundred
