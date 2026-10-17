@@ -24,6 +24,7 @@ _PROBLEM = "application/problem+json"
 _PLAN = Path(__file__).resolve().parents[4] / "docs" / "plan"
 _ADR = "ADR-0009-secrets-and-key-management.md"
 _LOGIN = ("post", "/auth/login")
+_STEP_UP = ("post", "/auth/step-up")
 #: The eight operations that check or seal a second factor (ruling D4 on #2152).
 _MFA_OPERATIONS = {
     _LOGIN: "authLogin",
@@ -31,12 +32,12 @@ _MFA_OPERATIONS = {
     ("post", "/auth/mfa/recovery"): "authMfaRecovery",
     ("post", "/auth/mfa/enroll"): "authMfaEnroll",
     ("post", "/auth/mfa/enroll/confirm"): "authMfaEnrollConfirm",
-    ("post", "/auth/step-up"): "authStepUp",
+    _STEP_UP: "authStepUp",
     ("post", "/invites/{inviteToken}"): "redeemInvite",
     ("post", "/invites/{inviteToken}/confirm"): "confirmInvite",
 }
-#: Every one of them but login, whose 503 also keeps the generic meanings (C-6.3).
-_REF_OPERATIONS = {key: op for key, op in _MFA_OPERATIONS.items() if key != _LOGIN}
+#: Every one of them but login and step-up, whose 503 also keeps the generic meanings (C-6.3).
+_REF_OPERATIONS = {key: op for key, op in _MFA_OPERATIONS.items() if key not in (_LOGIN, _STEP_UP)}
 #: One pinned clause per operation from the "Order of checks" list (review Low 3 on #2152 S1).
 _ORDER = {
     "authLogin": "the failed-login count is neither incremented nor reset",
@@ -190,6 +191,21 @@ def test_login_503_keeps_every_generic_meaning_and_adds_auth_unavailable(
     ):
         assert rule in description
     assert _examples(login) == {"mfaUnavailable": _examples(_response(spec))["mfaUnavailable"]}
+
+
+def test_step_up_503_keeps_every_generic_meaning_and_adds_auth_unavailable(
+    spec: dict[str, Any],
+) -> None:
+    """Step-up also answers `audit_unavailable` (#2304), so it states its `503` itself."""
+    step_up = spec["paths"]["/auth/step-up"]["post"]["responses"]["503"]
+    generic = _response(spec, "ServiceUnavailable")
+    assert step_up["headers"] == generic["headers"]
+    assert step_up["content"][_PROBLEM]["schema"] == generic["content"][_PROBLEM]["schema"]
+    description = _flat(step_up["description"])
+    assert _flat(generic["description"]) in description  # C-6.3: the meaning does not narrow
+    assert "`code: auth_unavailable` when the second factor cannot be checked (see " in description
+    assert "`AuthUnavailable`, whose rules apply to this operation unchanged)" in description
+    assert _examples(step_up)["mfaUnavailable"] == _examples(_response(spec))["mfaUnavailable"]
 
 
 def test_description_names_exactly_the_eight_operations(spec: dict[str, Any]) -> None:

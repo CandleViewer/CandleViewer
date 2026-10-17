@@ -1475,9 +1475,10 @@ export interface paths {
     put?: never;
     /**
      * Elevate the current session for one action class with password and TOTP
-     * @description Requires the caller's **password and a TOTP code** (owner decision #1778 AE). The password is verified first (same Argon2id path and lockout counters as login), then the code. A missing `password` is `422`; any wrong factor is the same `401 mfa_invalid` and never reveals which one failed.
+     * @description Requires the caller's **password and a TOTP code** (owner decision #1778 AE). The password is verified first (same Argon2id path and lockout counters as login), then the code. A missing or empty `password`, or one longer than 512 characters (the cap of `LoginRequest.password`, so no longer password exists), is `422`, decided before any factor is checked and counting no failure; any wrong factor is the same `401 mfa_invalid` and never reveals which one failed.
      *     **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it refused. Its problem body carries `challenge_id`, `challenge_expires_at` (5 minutes after issue), `action_class`, `action_summary` and `target` (see `Problem`). A challenge is issued only to a caller the operation would otherwise admit: authentication, CSRF, session state, request validation, RBAC permission and account scope are all decided before the step-up gate, and a caller refused by any of them gets that refusal (such as `401 unauthenticated`, `403 forbidden`, `403 account_scope_denied` or `404 not_found`), never a challenge, so `action_summary` never resolves a label the caller may not read. The server composes `action_summary` from the validated request with a fixed per-route template, so it names what would execute. Request values appear in it only as validated enum values or as identifiers and server-resolved labels, never as free text such as a `reason` and never as credential material; the client shows it verbatim and never composes its own. A label never identifies an account or a rule on its own: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare, and every label is escaped before it is quoted (see `Problem`; naming a rule this way is provisional until the route slice of #2304 settles it). A session has at most one live challenge. A newer `403 step_up_required` supersedes it, and it also ends when a step-up uses it, at `challenge_expires_at`, when the session turns read-only and when it idle-locks (#2301). This operation elevates against the live challenge: `challenge_id`, when sent, must name it. A step-up for a no-grace class (named by the live challenge or by `action_class`) must send it: without it, or without a live challenge, the answer is `400`, so `action_class` alone never elevates a no-grace class. Audit: `auth.step_up_required` records the `challenge_id`; `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a no-grace class; `auth.step_up_mismatch` records the bound and the refused request's fingerprints. No audit record carries `action_summary`, `target`, a request body, the password or the code.
      *     **Binding (no-grace classes).** For each no-grace class the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
+     *     **Write-ahead audit and `503` (C-2.9).** The record an answer depends on is written before the answer is sent: `auth.step_up_mismatch` before the `403` that refuses a swapped request, `auth.step_up_failed` before the `400` of a challenge that cannot be answered (while the per-session refusal budget lasts) and `auth.mfa_reset_by_owner` before an owner TOTP reset revokes anything. When the audit writer cannot take that record within 2 seconds (it is down, not started or too slow) the answer is `503 audit_unavailable` instead, whatever the refusal would have been: no challenge is issued, no failure is counted, nothing is elevated or revoked, and a grant bound to a held request is neither used nor ended, so the client sends the same request again once the audit writer recovers. An operation that gates a no-grace class lists the same `503` among its responses and answers it when the `auth.step_up_mismatch` record of its refusal cannot be written; `resetUserMfa` answers it when its own record cannot.
      *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
      *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      *     **Session rotation (SR-013).** A successful step-up also rotates the session, the way `POST /auth/refresh` does: the server mints a replacement session with a new id, access token and refresh token. The replacement keeps the old session's absolute expiry and idle timeout, so rotation never extends the session's lifetime; it carries over the live step-up grants, including the one just granted, and drops the pending challenge. The old session is revoked as `rotated` and linked into the session family, so its access and refresh tokens stop working at once and replaying that refresh token at `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh token travels only in the cookie, so `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client continues with the returned access token. A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in again.
@@ -3806,7 +3807,10 @@ export interface paths {
      *     audited and broadcast on the `rules` WS topic. Arming a rule whose scope includes the
      *     `live` environment additionally needs `rules:arm_live` (dangerous, owner-seeded) and a
      *     fresh one-shot step-up (`live_enablement`); refusals use `permission_required` /
-     *     `step_up_required`.
+     *     `step_up_required`. That step-up is bound to this request (`authStepUp`, "Binding"), so
+     *     a live arm whose body is not I-JSON (RFC 7493: a lone surrogate, an integer beyond 2^53,
+     *     `NaN` or `Infinity`) has no canonical form and is `400 validation_failed`, never a
+     *     challenge.
      */
     put: operations["setRuleMode"];
     post?: never;
@@ -9889,6 +9893,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   issueBackupDownload: {
@@ -9930,6 +9935,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   downloadBackup: {
@@ -10039,6 +10045,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   verifyBackup: {
@@ -11621,7 +11628,16 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
-      503: components["responses"]["AuthUnavailable"];
+      /** @description A dependency is unavailable or data is degraded. This keeps every meaning of `ServiceUnavailable` (such as `store_unavailable`), whose examples apply unchanged. It is `code: audit_unavailable` when the audit record an answer is written ahead of cannot be written (see "Write-ahead audit and `503`" above), and `code: auth_unavailable` when the second factor cannot be checked (see `AuthUnavailable`, whose rules apply to this operation unchanged). */
+      503: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   authUnlock: {
@@ -16059,9 +16075,11 @@ export interface operations {
           "application/json": components["schemas"]["Rule"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRuleRuns: {
@@ -16450,6 +16468,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getSettings: {
@@ -17081,6 +17100,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listUsers: {
@@ -17447,6 +17467,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   previewMfaReset: {
