@@ -13,7 +13,8 @@ data the same way for every test and for #2893's stub:
 - Clock (test plan section 9.5): every exchange-side time is anchored on an injected, tz-aware
   `now`: the envelope `time`, server time, rate-limit reset headers and the key's created and
   expiry times, with `deadlineDay` derived from the expiry. No wall clock is read, so tests can
-  freeze time. It is not an application clock: a running stack's test clock is #2893's.
+  freeze time. It is not an application clock: a running stack's test clock is #2893's, and
+  `Scenario.at` moves exchange time on with it while the key keeps its start's times.
 - Account (test plan section 9.2): key info reports the UID the key is attached to, and
   `isMaster`/`parentUid` from that account's kind; `Scenario.egress_ip` is what the IP echo
   check answers.
@@ -38,7 +39,7 @@ import json
 import math
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import cache
@@ -69,7 +70,8 @@ WILDCARD: Final = "*"
 OVERLAY: Final = "overlay"
 _DAY: Final = timedelta(days=1)
 _KEY_INFO_CALL: Final = "GET /v5/user/query-api"
-_SERVER_TIME_CALL: Final = "GET /v5/market/time"
+#: Server time: the pack's one unauthenticated call, answered on the stub exchange's clock.
+SERVER_TIME_CALL: Final = "GET /v5/market/time"
 _WS_FIELDS: Final = ("on_connect", "on_auth", "on_subscribe", "on_ping", "after_auth", "timeline")
 _CLOCK_FIELDS: Final = ("server_offset_ms", "key_created_offset_ms", "key_expires_offset_ms")
 
@@ -130,6 +132,8 @@ class Clock:
     server_offset_ms: int
     key_created_offset_ms: int
     key_expires_offset_ms: int | None
+    #: The scenario start the key's times count from, once it answers later (`Scenario.at`).
+    started: datetime | None = None
 
     @property
     def now_ms(self) -> int:
@@ -142,13 +146,13 @@ class Clock:
 
     @property
     def key_created_at(self) -> datetime:
-        return self.now + timedelta(milliseconds=self.key_created_offset_ms)
+        return (self.started or self.now) + timedelta(milliseconds=self.key_created_offset_ms)
 
     @property
     def key_expires_at(self) -> datetime | None:
         if self.key_expires_offset_ms is None:
             return None
-        return self.now + timedelta(milliseconds=self.key_expires_offset_ms)
+        return (self.started or self.now) + timedelta(milliseconds=self.key_expires_offset_ms)
 
 
 def merge_patch(target: Any, patch: Any) -> Any:
@@ -194,6 +198,19 @@ def _payload(pack: Pack, ref: str) -> Any:
     if not path.is_relative_to(pack.root.parent):
         raise ValueError(f"payload {ref} is outside the fixtures package")
     return _read(path)
+
+
+def payload(pack: Pack, ref: str) -> Any:
+    """A copy of the payload file `ref` names, relative to the pack root."""
+    return copy.deepcopy(_payload(pack, ref))
+
+
+def warm(pack: Pack) -> None:
+    """Read every REST payload the manifests name, so no reply reads a file later (blocking: a
+    running stack calls it at boot)."""
+    for name in scenario_names(pack):
+        for stub in manifest(pack, name).get("rest", {}).values():
+            _payload(pack, str(stub["payload"]))
 
 
 def schema(pack: Pack) -> dict[str, Any]:
@@ -300,6 +317,12 @@ class Scenario:
     def stubbed_calls(self) -> frozenset[str]:
         return frozenset(call for m in self._answering() for call in m.get("rest", {}))
 
+    def at(self, now: datetime, *, started: datetime) -> Scenario:
+        """This scenario answering at `now` on a running stack, having started at `started`: the
+        stub exchange's clock and `deadlineDay` follow `now`, the key's times count from `started`
+        (#2893). Pass `at_ms` to `reply` as the time between them."""
+        return replace(self, clock=replace(self.clock, now=now, started=started))
+
     def reply(
         self,
         method: str,
@@ -353,7 +376,7 @@ class Scenario:
         result = body.get("result")
         if not isinstance(result, dict):
             return
-        if call == _SERVER_TIME_CALL and "timeSecond" in result:
+        if call == SERVER_TIME_CALL and "timeSecond" in result:
             result["timeSecond"] = str(self.clock.server_ms // 1000)
             result["timeNano"] = str(self.clock.server_ms * 1_000_000)
         if call == _KEY_INFO_CALL and "userID" in result:
