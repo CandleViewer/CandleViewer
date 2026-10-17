@@ -921,7 +921,9 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
     source address the gateway supplies, as the HTTP guard's 403 is. One past or beyond its 15
     minutes (Q7), any other verdict (deny by default, C-12.4) and a classification that fails
     raise like any failed `auth` (as an expired token does, `23-ws-protocol.md` §4.3), so HTTP
-    (401) and the socket (`auth_failed`) both lead to a new sign-in."""
+    (401) and the socket (`auth_failed`) both lead to a new sign-in. A user disabled or deleted
+    since `require_active` read the session (`USER_INACTIVE`) fails it too, uncounted: #2911's
+    refusal, not an enrolment one."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
@@ -943,6 +945,8 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
                 await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=ip)
 
             raise AuthRefused("mfa_enrollment_required", audit=_audit)
+        if verdict is SessionClass.USER_INACTIVE:
+            raise PermissionError("the session's user is disabled or gone")  # #2911 answers
         refusals.expired(record, channel="ws", method="GET", path="/ws")
         raise PermissionError("not a live enrolment-only session")
 

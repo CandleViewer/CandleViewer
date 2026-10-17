@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
 from candleviewer.auth.models import MfaMethodKind, UserRecord, UserStatus
@@ -91,7 +92,16 @@ MFA_PROVED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 class FullUsers:
     """The user store of a test world whose fake sessions stand for full ones (#2295): any id
     reads as an active user with a confirmed TOTP method, so the enrolment-only guard serves a
-    session that proved it (`mfa_satisfied_at`) and the route's own checks decide."""
+    session that proved it (`mfa_satisfied_at`) and the route's own checks decide. Given a fake
+    session store's `user_statuses`, it follows them as the one `users` row does (#2911): a user
+    reads as `disabled` there, or as gone (`None`)."""
 
-    async def find_by_id(self, user_id: str) -> UserRecord:
-        return make_user(password_hash="unused").model_copy(update={"id": uuid.UUID(user_id)})
+    def __init__(self, statuses: Mapping[str, UserStatus | None] | None = None) -> None:
+        self._statuses: Mapping[str, UserStatus | None] = {} if statuses is None else statuses
+
+    async def find_by_id(self, user_id: str) -> UserRecord | None:
+        status = self._statuses.get(user_id, UserStatus.ACTIVE)
+        if status is None:
+            return None
+        user = make_user(password_hash="unused", status=status)
+        return user.model_copy(update={"id": uuid.UUID(user_id)})

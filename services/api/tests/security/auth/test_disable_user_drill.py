@@ -96,7 +96,7 @@ class _Env:
         )
         # The composition root wires these only with a real database; same seams, fake storage.
         auth._sessions = self.sessions
-        auth._repository = FullUsers()  # #2295: classified as full
+        auth._repository = FullUsers(self.repo.user_statuses)  # #2295, as #2911 reads users
         auth._step_up = self.step_up
         self.audit: list[dict[str, Any]] = []
         self.app.state.app_context.audit._writer = self  # stand-in for the started AuditWriter

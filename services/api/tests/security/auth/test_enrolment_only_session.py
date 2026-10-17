@@ -18,6 +18,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
+from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord, UserStatus
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
 from candleviewer.ws.metrics import (
@@ -483,3 +484,83 @@ def test_ws_re_auth_of_an_overlong_session_fails_like_any_failed_re_auth(stack: 
         pong = _recv_type(ws, "pong")
 
     assert (err["p"]["code"], pong["t"]) == ("auth_failed", "pong")
+
+
+# -- #2911 answers a disabled or deleted user's session (USER_INACTIVE) ------------------------
+
+
+def _deactivate(stack: Stack, user: UserRecord, status: UserStatus | None) -> None:
+    """Disable *user* (`None`: delete it) in the user store and the session store's join alike,
+    as the one Postgres `users` row reads in both (#2911)."""
+    stack.auth._session_repository.user_statuses[str(user.id)] = status
+    if status is None:
+        del stack.users.users[str(user.id)]
+    else:
+        stack.users.add(user.model_copy(update={"status": status}))
+
+
+def _full_session(stack: Stack) -> tuple[MintedSession, UserRecord]:
+    """A full 12-hour session whose user then loses every method (a missed disable's state)."""
+    uid, _ = stack.add_user("member")
+    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
+    return minted, _user(stack, "member")
+
+
+@pytest.mark.parametrize("status", [None, UserStatus.DISABLED])
+def test_a_deleted_or_disabled_users_session_is_revoked_by_its_next_request(
+    stack: Stack, status: UserStatus | None
+) -> None:
+    """SR-029, not the enrolment gate: the route's `require_active` revokes the session as
+    `user_disabled`, counts the breach signal and ends its open socket (`bye user_disabled`)."""
+    minted, user = _full_session(stack)
+    before = stack.scraped("auth_disabled_user_sessions_revoked_total")
+
+    with _socket(stack) as ws:
+        assert _hello_auth(ws, minted.access_token)["t"] == "auth_ok"
+        _lose_every_method(stack, user)
+        _deactivate(stack, _user(stack, "member"), status)
+        with capture_logs() as logs:
+            resp = stack.client.get("/auth/sessions", headers=_headers(stack, minted))
+        bye = _recv_type(ws, "bye")
+        code = _closed(ws)
+
+    assert resp.status_code == 401
+    assert (bye["p"]["reason"], bye["p"]["code"], code) == ("user_disabled", 4403, 4403)
+    assert _session_row(stack, minted).revoked_reason == "user_disabled"
+    assert stack.scraped("auth_disabled_user_sessions_revoked_total") == before + 1
+    assert stack.audit.of(REFUSAL_ACTION) == []
+    assert [e for e in logs if e["event"].startswith("auth.enrolment_only.")] == []
+
+
+@pytest.mark.parametrize("status", [None, UserStatus.DISABLED])
+def test_refresh_of_a_deleted_or_disabled_users_session_writes_the_2911_denial(
+    stack: Stack, status: UserStatus | None
+) -> None:
+    """Refresh's classification leaves the session to `refresh`, whose #2911 check refuses it
+    after the intent record and records the denied `user_disabled` outcome (C-2.9)."""
+    minted, user = _full_session(stack)
+    _lose_every_method(stack, user)
+    _deactivate(stack, _user(stack, "member"), status)
+    before = _refusals(stack, "http", "expired")
+
+    resp = _refresh(stack, minted)
+
+    assert (resp.status_code, resp.json()["detail"]) == (401, "refresh_token_invalid")
+    denied = [r for r in stack.audit.of("auth.session_refreshed") if r.get("reason")]
+    assert [(r["outcome"], r["reason"]) for r in denied] == [(AuditOutcome.DENIED, "user_disabled")]
+    assert _refusals(stack, "http", "expired") == before
+
+
+def test_ws_auth_of_a_user_gone_since_its_lookup_fails_uncounted(stack: Stack) -> None:
+    """The socket's strict lookup refuses a disabled or deleted user's session first; a user gone
+    from the user store since then fails the `auth`, but no enrolment refusal is counted."""
+    minted, user = _full_session(stack)
+    del stack.users.users[str(user.id)]  # the session row still reads it active: a race
+    failures, expired = _failures(), _refusals(stack, "ws", "expired")
+
+    with _socket(stack) as ws:
+        reply = _hello_auth(ws, minted.access_token)
+
+    assert (reply["t"], reply["p"]["code"]) == ("err", "auth_failed")
+    assert (_failures(), _refusals(stack, "ws", "expired")) == (failures + 1, expired)
+    assert stack.audit.of(REFUSAL_ACTION) == []
