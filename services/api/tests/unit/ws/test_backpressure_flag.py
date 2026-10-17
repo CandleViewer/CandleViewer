@@ -1,10 +1,10 @@
 """E17-T03 (#412): `make_ws_router(backpressure=...)`, `BackpressureConfig` and the welcome.
 
-Until the backpressure wiring lands, with or without a config the router still bounds a
-connection's outbound queue at `OUTBOUND_QUEUE_MAX` (1 024 frames) and closes `slow_consumer`.
-What changes is `welcome.features.coalescing`, which mirrors the flag (`23-ws-protocol.md` §4.2):
-a router built without a config now advertises `false` (it was hard-coded `true`). Nothing
-coalesces yet, so the flag stays off until the pipeline is complete.
+Without a config the router bounds a connection's outbound queue at `OUTBOUND_QUEUE_MAX` (1 024
+frames) and closes `slow_consumer`; with one, the budgeted pipeline bounds it (S2a,
+`test_pipeline_outbound.py`). A config also sets `welcome.features.coalescing`, which mirrors the
+flag (`23-ws-protocol.md` §4.2): a router built without a config now advertises `false` (it was
+hard-coded `true`). Nothing coalesces yet, so the flag stays off until the pipeline is complete.
 
 The real router runs on the test's own loop behind a fake socket: no threads, no sleeps. Frames
 are queued in one synchronous turn, so the writer cannot drain them meanwhile.
@@ -107,12 +107,23 @@ async def test_router_without_backpressure_keeps_the_1024_frame_close(
     assert (bye["p"]["reason"], bye["p"]["code"]) == ("slow_consumer", 4429)
 
 
-async def test_router_with_a_backpressure_config_is_inert_until_the_pipeline_is_wired() -> None:
-    """The config is only threaded through for now: it must not move the bound. The wiring that
-    reads it replaces this test with the budgeted pipeline's own."""
-    frames, bye = await _frames_before_the_close(backpressure=BackpressureConfig())
+async def test_router_with_a_backpressure_config_bounds_at_its_budget_not_at_1024() -> None:
+    """S2a: a config swaps the bound for its budget. The burst that closes a flag-off socket is
+    delivered whole, and one frame over the config's budget closes it `slow_consumer` / 4429."""
+    rig, sock = _Rig(backpressure=BackpressureConfig(max_frames=OUTBOUND_QUEUE_MAX + 2)), _Socket()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, _ = await rig.open(sock)
+        (conn,) = rig.hub.of_user(USER)
+        for _ in range(OUTBOUND_QUEUE_MAX + 1):
+            conn.push_system({"kind": "tick"})
+        for _ in range(OUTBOUND_QUEUE_MAX + 1):
+            assert (await sock.sent.get())["t"] == "d"
+        assert not conn.closing
+        for _ in range(OUTBOUND_QUEUE_MAX + 3):
+            conn.push_system({"kind": "tick"})
+        bye = await sock.sent.get()  # both lanes cleared: the `bye` is next
+        await handler
 
-    assert frames == OUTBOUND_QUEUE_MAX
     assert (bye["p"]["reason"], bye["p"]["code"]) == ("slow_consumer", 4429)
 
 

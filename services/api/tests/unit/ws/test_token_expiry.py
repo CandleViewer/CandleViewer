@@ -90,8 +90,9 @@ class _Stack:
         return minted
 
 
-@pytest.fixture
-def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
+@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
+def stack(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[_Stack]:
+    """The composed path, with `CV_WS_BACKPRESSURE_ENABLED` off and on (#412 S2a)."""
     clock = _Clock()
     auth = AuthService(session_repository=FakeSessionRepository(), clock=clock)
     monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: auth)
@@ -102,7 +103,9 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
             gateway.make_ws_router, clock=clock.monotonic, wall_ms=clock.wall_ms, tick_s=0.005
         ),
     )
-    app = app_module.create_app(Settings(allowed_origins=_ORIGIN))
+    app = app_module.create_app(
+        Settings(allowed_origins=_ORIGIN, ws_backpressure_enabled=request.param)
+    )
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN}) as client:
         assert client.portal is not None
         client.portal.call(auth.start, app.state.app_context)

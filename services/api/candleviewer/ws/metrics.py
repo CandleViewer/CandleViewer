@@ -226,8 +226,9 @@ cv_ws_closes_total = Counter(
 # Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
-# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` (through
-# `lifecycle.bye_frame`, so validated) and by `revocation.bye_frame`, which does not validate its
+# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` and the flag-on
+# `pipeline.slow_consumer_bye` (both through `lifecycle.bye_frame`, so validated) and by
+# `revocation.bye_frame`, which does not validate its
 # reason and is reached through `RevocationHub.close_for` (from `_close_all` and from `run_auth`'s
 # revoked-before-registration check), whose reasons are the ones `revoke` remembered. So only
 # `app._hub_publisher` (it narrows a revoke reason to `user_disabled` or `session_revoked`) keeps
@@ -248,7 +249,8 @@ cv_ws_clock_skew_ms = Histogram(
 # -- E17-T03 backpressure (pacing.py, outbound.py) -----------------------------------------------
 cv_ws_overflow_total = Counter(
     "cv_ws_overflow_total",
-    "23 section 8.4 ladder steps by reason: per topic drop, unmergeable, resnapshot; per close.",
+    "23 section 8.4 overflow by reason: per topic drop, unmergeable, resnapshot; per close, "
+    "and per close whose flush deadline expired.",
     labelnames=("reason",),
 )
 cv_ws_malformed_updates_total = Counter(
@@ -351,10 +353,11 @@ ENCODE_COST: Final = {
     k: (cv_ws_frame_encode_seconds.labels(v.name), cv_ws_frame_bytes.labels(v.name))
     for k, v in KINDS.items()
 }
-#: The writer's encode of a data frame: its seconds, and the bytes sent (a JSON text is ASCII:
-#: chars == bytes). The writer observes the pair of the connection's codec for the frame the hub
-#: stamped, one in `SAMPLE_EVERY`: `json.dumps` on `cv.v1.json`, `encode_server_frame` on
-#: `cv.v1.msgpack`.
+#: The writer's encode of a data frame: its seconds, and the bytes encoded for the send (a JSON text
+#: is ASCII: chars == bytes). The writer observes the pair of the connection's codec for the frame
+#: the hub stamped, one in `SAMPLE_EVERY`: `json.dumps` on `cv.v1.json`, `encode_server_frame` on
+#: `cv.v1.msgpack`. With `CV_WS_BACKPRESSURE_ENABLED` on, `pipeline.ConnectionPipeline.push`
+#: observes the pair instead, at the frame's one encode.
 JSON_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(JSON_KIND)
 JSON_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(JSON_KIND)
 MSGPACK_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(MSGPACK_KIND)

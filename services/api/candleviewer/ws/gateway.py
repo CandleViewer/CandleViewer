@@ -57,11 +57,17 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   negotiated (`kind="json"` for `json.dumps` text, `kind="msgpack"` for MessagePack bytes; timed
   with `perf_counter`, not the injected clock), and its CVWB body was timed by the encoder.
 
+- **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, off by default):
+  `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
+  stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
+  budget; the `bye` takes a terminal slot, and every close flushes under one deadline, past
+  which the socket goes with no `bye` (§4.4, §8.4).
+
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
-close), rate-limiter window, `MAX_CONNECTIONS_PER_USER` per user (oldest idle
-connection closed), `MAX_AUTHS_PER_USER_PER_MIN` new sockets per user per minute
-(state only for users active in the last window). Transport only: no business
-logic, no data fan-out.
+close), or the pipeline's budget with the flag on; rate-limiter window,
+`MAX_CONNECTIONS_PER_USER` per user (oldest idle connection closed),
+`MAX_AUTHS_PER_USER_PER_MIN` new sockets per user per minute (state only for users
+active in the last window). Transport only: no business logic, no data fan-out.
 """
 
 from __future__ import annotations
@@ -71,7 +77,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any, Final, Protocol
@@ -152,6 +158,7 @@ from candleviewer.ws.permissions import (
     handle_unsub,
 )
 from candleviewer.ws.permissions import handle_sub as _handle_sub
+from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
 
@@ -369,6 +376,7 @@ class _Connection:
         clock: Clock,
         wall_ms: WallClockMs,
         auth_timeout_s: float,
+        backpressure: BackpressureConfig | None = None,
     ) -> None:
         self.ws = ws
         self.encoding = encoding
@@ -408,6 +416,17 @@ class _Connection:
         #: The token's real expiry (epoch ms), also checked on the wall clock.
         self.token_expires_at_ms: int | None = None
         self.opened_at = now
+        #: E17-T03 (#412): the budgeted outbound path while `CV_WS_BACKPRESSURE_ENABLED` is on;
+        #: None keeps `outbound` and its `OUTBOUND_QUEUE_MAX` push bound.
+        self.pipeline: ConnectionPipeline | None = None
+        if backpressure is not None:
+            self.pipeline = ConnectionPipeline(
+                encoding=encoding,
+                config=backpressure,
+                close=self.close_with,
+                wall_ms=wall_ms,
+                connection_id=self.connection_id,
+            )
 
     def due(self) -> str | None:
         """The watchdog verdict now. Token expiry fires on whichever clock gets
@@ -424,9 +443,16 @@ class _Connection:
         comes with `received`, the `clock` reading at which the hub took it, and is queued with it
         as `(received, frame)`: the writer observes `cv_ws_fanout_seconds` from that pair once the
         socket has the frame, and times and sizes its encode (`cv_ws_frame_*`) before the send. It
-        never reaches the wire, and a frame dropped from the queue (a seal, a full queue) is never
-        observed. Any other frame is queued bare."""
+        never reaches the wire, and with the flag off a frame dropped from the queue (a seal, a
+        full queue) is never observed. Any other frame is queued bare. With the flag on the
+        pipeline queues it (`ws/pipeline.py`), the stamp on its `Queued`: it encodes the frame
+        once, at push, and times and sizes a stamped one there, so the writer observes only the
+        fan-out span, and a stamped frame that a close drops after its push is in
+        `cv_ws_frame_*` but not in `cv_ws_fanout_seconds`."""
         if self.closing:
+            return
+        if self.pipeline is not None:
+            self.pipeline.push(frame, received)
             return
         if self.outbound.qsize() >= OUTBOUND_QUEUE_MAX:
             self.close_with("slow_consumer")
@@ -478,7 +504,11 @@ class _Connection:
         next frame sent, even if another close is already under way (#2259
         review). Otherwise the `bye` follows the frames already queued. May
         exceed the `push` bound by exactly these items so a full queue can
-        still be closed; every later push is dropped."""
+        still be closed; every later push is dropped.
+
+        With the flag on the `bye` takes the pipeline's terminal slot instead: a sealed or
+        `slow_consumer` close clears both lanes, any other keeps only the priority lane ahead
+        of the `bye` (`23-ws-protocol.md` §8.4)."""
         if self.closing:
             if seal and not self.sealed:
                 # An identity-ending event during a close already under way.
@@ -501,10 +531,16 @@ class _Connection:
         cv_ws_closes_total.labels(reason=close_reason_label(bye_reason)).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
-        dropped = self._seal() if seal else 0
-        self.bye_frame = frame
-        for item in (frame, _CLOSE, code):
-            self.outbound.put_nowait(item)
+        if self.pipeline is not None:
+            self.sealed = seal
+            self.bye_frame = frame
+            flush = not (seal or bye_reason == "slow_consumer")
+            dropped = self.pipeline.close(frame, code, flush=flush)
+        else:
+            dropped = self._seal() if seal else 0
+            self.bye_frame = frame
+            for item in (frame, _CLOSE, code):
+                self.outbound.put_nowait(item)
         _log().info(
             "ws close",
             connection_id=self.connection_id,
@@ -519,6 +555,8 @@ class _Connection:
         """End the identity: drop every queued frame except a pending close
         (`bye`, the close sentinel, its code). Returns how many were dropped."""
         self.sealed = True
+        if self.pipeline is not None:
+            return self.pipeline.seal()
         kept: list[Any] = []
         dropped = 0
         while not self.outbound.empty():
@@ -538,6 +576,12 @@ class _Connection:
         self.close_with(str(frame["p"]["reason"]), bye=frame, seal=True)
 
     async def evict(self) -> None:
+        """Registry hook: sending a `permission_change` or `revoked` stalled or failed, so the
+        connection closes `slow_consumer`. With the flag on its `bye` is the step 3 one
+        (`retry_after_ms` 3 000 and the generic message, `23-ws-protocol.md` §8.4)."""
+        if self.pipeline is not None:
+            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
+            return
         self.close_with("slow_consumer")
 
     # -- inbound ------------------------------------------------------------
@@ -633,6 +677,35 @@ def _step(conn: _Connection, name: str) -> Iterator[None]:
         )
 
 
+def _fault_flush(conn: _Connection) -> contextlib.AbstractAsyncContextManager[object]:
+    """The bound on a fault's `bye` and 1011: the close flush deadline with the flag on (a peer
+    that stopped reading would park them, `_bounded_flush`), none with it off, as before."""
+    if conn.pipeline is None:
+        return contextlib.nullcontext()
+    return _bounded_flush(conn.pipeline)
+
+
+@contextlib.asynccontextmanager
+async def _bounded_flush(pipe: ConnectionPipeline) -> AsyncIterator[asyncio.Timeout]:
+    """With a close under way, what is left of its deadline (one deadline, never a second window:
+    `23-ws-protocol.md` §8.4); else a fresh `close_flush_s`. Past it the flush is abandoned with
+    no `bye` and logged as the writer's is, and counted unless the writer's expiry already was
+    (`ConnectionPipeline.abandon` counts once per connection)."""
+    deadline = pipe.deadline
+    scope = (
+        asyncio.timeout(pipe.config.close_flush_s)
+        if deadline is None
+        else asyncio.timeout_at(deadline)
+    )
+    try:
+        async with scope:
+            yield scope
+    except TimeoutError:
+        if not scope.expired():
+            raise
+        pipe.abandon("internal_error")
+
+
 def _reply(t: str, frame_id: Any, **fields: Any) -> dict[str, Any]:
     """Envelope with `id` echoed only when the request carried a string id (§13.1)."""
     out: dict[str, Any] = {"t": t}
@@ -665,14 +738,17 @@ def make_ws_router(
     system_notices: Callable[[], list[dict[str, Any]]] | None = None,
     backpressure: BackpressureConfig | None = None,
 ) -> APIRouter:
-    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline,
-    so tests inject a fake clock; `tick_s` is only the poll cadence.
+    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
+    inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
+    deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
+    can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`).
 
-    `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline: `None`, today's path,
-    keeps the `OUTBOUND_QUEUE_MAX` push bound. Nothing reads the budget yet (the backpressure
-    wiring will); the one effect of a config is that the `welcome` advertises
-    `features.coalescing` (`23-ws-protocol.md` §4.2), which is why the flag stays off until the
-    pipeline is complete. Without a config the `welcome` says `coalescing: false`."""
+    `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
+    `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
+    deadline. `None`, today's path, keeps the `OUTBOUND_QUEUE_MAX` push bound. A config also
+    makes the `welcome` advertise `features.coalescing` (§4.2), though nothing coalesces before
+    the later slices, which is why the flag stays off until the pipeline is complete. Without a
+    config the `welcome` says `coalescing: false`."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
@@ -1049,6 +1125,9 @@ def make_ws_router(
         return False
 
     async def writer(conn: _Connection) -> None:
+        if conn.pipeline is not None:
+            await budgeted_writer(conn, conn.pipeline)
+            return
         pings = 0
         while True:
             if watch(conn):
@@ -1095,6 +1174,65 @@ def make_ws_router(
                 conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
                 raise
 
+    async def budgeted_writer(conn: _Connection, pipe: ConnectionPipeline) -> None:
+        """The writer with the flag on (still the one writer task, TG5): the priority lane
+        first, each payload as the pipeline encoded it; after a close, what the close kept, then
+        the `bye` and the close frame. The close's flush deadline bounds all of it: past it the
+        flush is abandoned with no `bye` (§4.4), counted (`ConnectionPipeline.abandon`), and the
+        handler tears the socket down. A stamped frame's encode was observed at push: the writer
+        observes only its fan-out span."""
+        queue = pipe.queue
+        pings = 0
+        try:
+            async with asyncio.timeout(None) as deadline:
+                pipe.arm(deadline)
+                while True:
+                    if watch(conn):
+                        pings += 1
+                        now_ms = conn.wall_ms()
+                        ping = {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms}
+                        conn.push(ping | {"p": {"server_ms": now_ms}})
+                    item = queue.pop()
+                    if item is None:
+                        if pipe.terminal is not None:
+                            await send_bye(conn, pipe.terminal)
+                            return
+                        queue.ready.clear()
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(queue.ready.wait(), timeout=tick_s)
+                        continue
+                    watch(conn)  # a close may land after the pop: send only what it keeps
+                    end = pipe.terminal
+                    if end is not None and not (item.priority and end.flush):
+                        continue
+                    try:
+                        await conn.send_payload(item.payload)
+                    except WebSocketDisconnect as exc:
+                        conn.disconnect_code = exc.code
+                        raise
+                    now = conn.clock()
+                    conn.watchdog.last_outbound = now
+                    if item.received is not None:
+                        FANOUT_SECONDS.observe(now - item.received, SAMPLE_EVERY)
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            pipe.abandon(pipe.terminal.bye["p"].get("reason") if pipe.terminal else None)
+        finally:
+            pipe.disarm()
+
+    async def send_bye(conn: _Connection, end: Terminal) -> None:
+        """The terminal slot: `bye`, then the close frame (S11)."""
+        try:
+            await conn.send_frame(end.bye)
+        except WebSocketDisconnect as exc:
+            conn.disconnect_code = exc.code
+            raise
+        conn.watchdog.last_outbound = conn.clock()
+        conn.close_code = end.code
+        with contextlib.suppress(Exception):
+            await conn.ws.close(code=end.code)
+
     @router.websocket(WS_PATH)
     async def ws_endpoint(ws: WebSocket) -> None:
         # §2.5 (SR-042, SR-183): first of all - before negotiation, `accept`, any frame,
@@ -1122,7 +1260,12 @@ def make_ws_router(
             return
         await ws.accept(subprotocol=encoding)
         conn = _Connection(
-            ws, encoding=encoding, clock=clock, wall_ms=wall_ms, auth_timeout_s=auth_timeout_s
+            ws,
+            encoding=encoding,
+            clock=clock,
+            wall_ms=wall_ms,
+            auth_timeout_s=auth_timeout_s,
+            backpressure=backpressure,
         )
         conn.lifecycle.fire(ConnEvent.OPEN_NEGOTIATED)
         gateway_hub.add(conn)
@@ -1173,8 +1316,9 @@ def make_ws_router(
                     )
                     with contextlib.suppress(Exception):  # S11: bye before the 1011 close
                         bye = lifecycle_bye("internal_error", now_ms=wall_ms())
-                        await conn.send_frame(bye)
-                        await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
+                        async with _fault_flush(conn):  # flag on: the close flush deadline
+                            await conn.send_frame(bye)
+                            await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             finally:
                 # Whatever leaves the `try` above runs the whole tail: `_join_writer` re-raises the
                 # handler's own cancellation (uvicorn's graceful-timeout cancel, mid-read), and a
@@ -1186,6 +1330,9 @@ def make_ws_router(
                     gateway_hub.discard(conn)
                 with _step(conn, "gauge"):
                     cv_ws_connections_in_use.dec()
+                if conn.pipeline is not None:
+                    with _step(conn, "pipeline"):
+                        conn.pipeline.release()
                 if conn.authz is not None:
                     with _step(conn, "sequencing"):
                         if registry.services.sequencing is not None:
