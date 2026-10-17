@@ -149,6 +149,17 @@
                   "type": "https://candleviewer.local/errors/csrf_token_invalid"
                 }
               },
+              "mfaEnrollmentRequired": {
+                "summary": "Enrolment-only session calling an operation outside its allow-list",
+                "value": {
+                  "code": "mfa_enrollment_required",
+                  "detail": "Set up two-factor authentication to continue.",
+                  "instance": "urn:cv:req:0193f2bb-2226",
+                  "status": 403,
+                  "title": "Session is enrolment-only; enrol and confirm a TOTP method first",
+                  "type": "https://candleviewer.local/errors/mfa_enrollment_required"
+                }
+              },
               "missingPermission": {
                 "value": {
                   "code": "forbidden",
@@ -218,7 +229,7 @@
             }
           }
         },
-        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
       },
       "NotFound": {
         "content": {
@@ -2423,9 +2434,7 @@
     "/auth/mfa/enroll": {
       "post": {
         "x-rbac": {
-          "permissions": [
-            "settings:write"
-          ],
+          "permissions": [],
           "scope": "self"
         }
       }
@@ -2433,9 +2442,7 @@
     "/auth/mfa/enroll/confirm": {
       "post": {
         "x-rbac": {
-          "permissions": [
-            "settings:write"
-          ],
+          "permissions": [],
           "scope": "self"
         }
       }
@@ -2452,6 +2459,7 @@
     },
     "/auth/mfa/recovery": {
       "post": {
+        "security": [],
         "x-rbac": {
           "permissions": [],
           "scope": "none"

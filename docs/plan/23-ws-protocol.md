@@ -408,6 +408,7 @@ Rules:
 - Until `auth_ok`, the only accepted frames are `auth` and `ping`; a `pong` (the reply to a server `ping`) is dropped without a reply and counts toward the inbound rate (§8.5). Anything else → `err` with `not_authenticated` and the connection closes after 3 such frames.
 - `auth_timeout_ms` (10 s) without a successful `auth` → `bye` with `auth_timeout`, close code `4401`.
 - Three failed `auth` attempts → `bye` with `auth_failed`, close `4401`, and a `warning` audit entry.
+- An `auth` or re-`auth` whose session is enrolment-only (its user must enrol TOTP first; `22-api-openapi.yaml`, "Enrolment-only session") is refused at once and the socket closes: `bye` with reason `mfa_enrollment_required`, close `4403`. It does not count as a failed `auth`. The client completes enrolment over REST and connects again with the full session's token.
 - `token_expires_at_ms` tells the client when to re-`auth`. The client SHOULD refresh at `expires_at - 60 s`. If the token expires without re-auth, the server sends `bye` (`token_expired`, `4401`) and closes — subscriptions are not silently continued on an expired identity.
 
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
@@ -448,11 +449,11 @@ Rules:
 | `1012` | service restart | Server exiting without the §9.4 sequence.     | Reconnect with backoff; see §9.4.            |
 | `1013` | try again later | Server shedding load.                         | Reconnect after `Retry-After` hint in `bye`. |
 | `4401` | unauthenticated | Auth timeout, auth failure, or token expiry.  | Refresh token over REST, reconnect.          |
-| `4403` | forbidden       | Permissions revoked entirely (user disabled). | Return to login; do not retry.               |
+| `4403` | forbidden       | Permissions revoked entirely (user disabled). | Return to login (see below); do not retry.   |
 | `4429` | rate limited    | Too many frames or reconnects.                | Back off per `bye.retry_after_ms`.           |
 | `4400` | bad client      | Repeated protocol violations.                 | Surface a bug report; do not hot-loop.       |
 
-A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`.
+A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`. An `auth` or re-`auth` refused because the session is enrolment-only (§4.3) also closes with `4403`, reason `mfa_enrollment_required`. The client does not return to login: it finishes TOTP enrolment over REST, then connects with the full session's token, and never auto-retries.
 
 `bye` is always sent _before_ the close frame (S11, §16.1; the gateway's two exceptions are noted below the example, and the host's own `1012` closes are in §9.4) so the client has a machine-readable reason:
 
@@ -1411,6 +1412,8 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `replay_session_ended`     | topic      | no          | `gone`                 | Replay finished or was destroyed; subscription revoked.                              |
 | `internal_error`           | any        | yes         | =                      | Server fault; `request_id` correlates to logs and the audit trail.                   |
 | `user_disabled`            | connection | no          | `forbidden`            | The account was disabled mid-session. `bye` + close `4403` follow; do not reconnect. |
+
+`mfa_enrollment_required` is deliberately absent from this table: it is a REST-only code (`x-error-codes`). An enrolment-only session never gets past `auth` (§4.3), so the WebSocket carries that refusal only as `bye.reason`, never as an `err` code.
 
 ### 10.3 Mapping to UI treatment
 
