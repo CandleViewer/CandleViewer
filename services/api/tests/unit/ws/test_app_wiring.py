@@ -19,6 +19,7 @@ from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
+from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 from candleviewer.ws.gateway import GatewayHub
@@ -26,6 +27,7 @@ from candleviewer.ws.metrics import CV_WS_NAMES
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
+    PENDING_ADAPTERS,
     IngestionUpstreamSink,
     PendingSnapshotSource,
     SnapshotRouter,
@@ -136,13 +138,22 @@ def test_revocation_hub_keeps_the_default_cap_of_4096_revoked_ids(
     assert hub.max_remembered == 4096
 
 
+def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill]) -> None:
+    """#2196: `book` is the book module's adapter, no longer a pending stub."""
+    client, _ = world
+    router = client.app.state.ws_registry.services.snapshots  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert "book" not in PENDING_ADAPTERS
+    assert isinstance(router._sources["book"], BookSnapshotSource)
+
+
+@pytest.mark.parametrize("ch", ["heatmap.BTCUSDT", "book.BTCUSDT.50"])  # a stub; no live book
 def test_pending_snapshot_adapter_reports_pending_not_crash(
-    world: tuple[TestClient, _Kill],
+    world: tuple[TestClient, _Kill], ch: str
 ) -> None:
     client, _ = world
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
-        ws.send_json({"t": "sub", "id": "s", "p": {"topics": ["book.BTCUSDT.50"]}})
+        ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch]}})
         result = ws.receive_json()["p"]["results"][0]
         assert result["ok"] is True and result["snapshot_pending"] is True
         ws.send_json({"t": "ping", "id": "p"})
@@ -150,15 +161,15 @@ def test_pending_snapshot_adapter_reports_pending_not_crash(
 
 
 def test_pending_source_raises_and_router_maps_to_none() -> None:
-    src = PendingSnapshotSource("book", "#2196")
+    src = PendingSnapshotSource("heatmap", "#2197")
     sub: Any = object()
-    with pytest.raises(NotImplementedError, match="#2196"):
+    with pytest.raises(NotImplementedError, match="#2197"):
         src.build(sub)
 
 
 def test_router_turns_pending_into_none_and_no_continuity() -> None:
-    sub: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="book")))
-    router = SnapshotRouter({"book": PendingSnapshotSource("book", "#2196")})
+    sub: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="heatmap")))
+    router = SnapshotRouter({"heatmap": PendingSnapshotSource("heatmap", "#2197")})
     assert router.build(sub) is None
     assert router.generation(sub) == 0 and router.continuity(sub, None) is False
     other: Any = SimpleNamespace(topic=SimpleNamespace(family=SimpleNamespace(family="trades")))

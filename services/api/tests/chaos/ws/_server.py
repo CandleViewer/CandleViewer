@@ -4,7 +4,8 @@ Wired like the E17-Q01 conformance `World` and served with the production uvicor
 (`server.uvicorn_kwargs`); grant changes enter through `ws_wiring.WsEvents`. Doubles: time (one
 `VirtualClock` for the gateway's clocks and the session service), the session store (real
 `SessionService` over `FakeSessionRepository`), the grant store the principal loader reads, the
-snapshot source (adapters #2195-#2197 not landed) and `POST /auth/refresh` (REST refresh double).
+snapshot source (a corpus-fed fake; adapters #2195 and #2197 not landed) and `POST /auth/refresh`
+(REST refresh double).
 The book is the recorded BTCUSDT corpus (C-13.5). Clients reach the server only via the proxy.
 
 Served as production serves it: `PlannedShutdownServer`, so a stop (`should_exit`) runs the §9.4

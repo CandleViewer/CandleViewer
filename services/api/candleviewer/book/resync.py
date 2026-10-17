@@ -179,6 +179,11 @@ class BookEngine:
         if not self.muted:
             await self.publish_current("subscribe" if self.resync_count == 0 else "resync")
 
+    @property
+    def snapshot_cross_seq(self) -> int | None:
+        """Cross sequence of the snapshot the book was last built from (REST serves it as `seq`)."""
+        return None if self._template is None else self._template.cross_seq
+
     def live_snapshot(self, depth: int | None = None) -> BookSnapshot | None:
         """The current top-`depth` book as a `BookSnapshot`, only while LIVE."""
         if self.phase is not BookPhase.LIVE or self.book is None or self._template is None:
