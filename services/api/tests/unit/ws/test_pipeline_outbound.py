@@ -475,6 +475,19 @@ def test_a_non_finite_number_fails_closed_on_either_codec(
     assert [e["error"] for e in logs if e["event"] == "ws frame unencodable"] == ["ValueError"]
 
 
+@_ENCODINGS
+def test_a_non_finite_map_key_fails_closed_on_either_codec(encoding: str) -> None:
+    """§10.1, the matrix above for a map key (#412, third review round): a NaN key fails closed
+    on both codecs, as JSON refuses it and the MessagePack refusal walks map keys as well as
+    values, so the two codecs never disagree on a frame."""
+    pipe, asked = _pipe(encoding)
+    with capture_logs() as logs:
+        pipe.push(_d(_BOOK, levels={float("nan"): "1"}))
+    assert asked == [("internal_error", None)]
+    assert len(pipe.queue) == 0
+    assert [e["error"] for e in logs if e["event"] == "ws frame unencodable"] == ["ValueError"]
+
+
 @pytest.mark.parametrize(
     "frame",
     [
@@ -940,6 +953,43 @@ async def test_the_fault_bye_is_bounded_by_the_close_deadline_under_the_flag() -
     assert _overflow("close_flush_deadline") == expired + 1
     (passed,) = [e for e in logs if e["event"] == "ws close deadline passed"]
     assert passed["reason"] == "internal_error"
+
+
+async def test_a_fault_after_the_writers_expiry_counts_the_expiry_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§8.4 step 4, once per connection (#412, third review round): the writer's flush deadline
+    expires, and the reader faults before the writer's end stops it (injected in that turn). The
+    fault's `bye` gets what is left of that deadline, none, so its flush is abandoned too: both
+    sites log, and `close_flush_deadline` grows by exactly one."""
+    rig, sock = _Rig(BackpressureConfig(close_flush_s=0.01)), _Wire()
+    expired = _overflow("close_flush_deadline")
+    with capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S):
+            handler, conn = await rig.open(sock)
+            pipe = conn.pipeline
+            assert pipe is not None
+            abandon = pipe.abandon
+
+            def abandon_then_fault(reason: str | None) -> None:
+                abandon(reason)
+                if reason == "heartbeat_timeout":  # the writer's expiry: wake the reader first
+                    sock.feed({"t": "ping", "id": "p", "p": {"client_ms": BASE_MS}})
+
+            def reader_fault(_msg: Any, _limit: int) -> Any:
+                raise RuntimeError("reader fault")
+
+            monkeypatch.setattr(pipe, "abandon", abandon_then_fault)
+            monkeypatch.setattr(conn, "decode", reader_fault)
+            sock.hold()
+            rig.hub.broadcast_system({"kind": "tick"})
+            await sock.parked.wait()
+            conn.close_with("heartbeat_timeout")
+            await handler
+    assert any(e["event"] == "ws connection fault" for e in logs) and sock.closed_with is None
+    passed = [e["reason"] for e in logs if e["event"] == "ws close deadline passed"]
+    assert passed == ["heartbeat_timeout", "internal_error"]
+    assert _overflow("close_flush_deadline") == expired + 1
 
 
 async def test_orders_encode_failure_closes_internal_error_audited_counted_redacted() -> None:

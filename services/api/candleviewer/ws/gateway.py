@@ -692,7 +692,8 @@ def _fault_flush(conn: _Connection) -> contextlib.AbstractAsyncContextManager[ob
 async def _bounded_flush(pipe: ConnectionPipeline) -> AsyncIterator[asyncio.Timeout]:
     """With a close under way, what is left of its deadline (one deadline, never a second window:
     `23-ws-protocol.md` §8.4); else a fresh `close_flush_s`. Past it the flush is abandoned with
-    no `bye`, counted and logged as the writer's is."""
+    no `bye` and logged as the writer's is, and counted unless the writer's expiry already was
+    (`ConnectionPipeline.abandon` counts once per connection)."""
     deadline = pipe.deadline
     scope = (
         asyncio.timeout(pipe.config.close_flush_s)
