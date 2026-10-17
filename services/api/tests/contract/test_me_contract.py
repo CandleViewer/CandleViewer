@@ -13,10 +13,13 @@ from typing import Any
 import jsonschema
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from jsonschema import Draft202012Validator
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import CheckConstraint
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.db.models import users
 from tests.contract.rbac.rbac_harness import ACTORS, World, bearer, build_world
 from tests.openapi_helpers import deref
 
@@ -57,6 +60,12 @@ def _response_schema(path: str, status: str) -> Any:
     return next(iter(content.values()))["schema"]
 
 
+def _with_formats(schema: Any) -> Draft202012Validator:
+    """Draft 2020-12 with `format` asserted, as the other contract suites build it:
+    `jsonschema.validate` alone only annotates `format`, so a body that broke one would pass."""
+    return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+
+
 @pytest.mark.parametrize("path", _PATHS)
 def test_the_operation_declares_every_status_the_route_can_answer(path: str) -> None:
     declared = set(_operation(path)["responses"])
@@ -73,7 +82,7 @@ def test_the_200_body_validates_against_the_contract_schema(
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "application/json"
     body = resp.json()
-    jsonschema.validate(body, _response_schema(path, "200"))
+    _with_formats(_response_schema(path, "200")).validate(body)
     model = _OPERATIONS[path][1]
     if model is not None:  # `getMyKeymap`'s response is an inline schema with no generated model
         dumped = model.model_validate(body).model_dump(
@@ -122,3 +131,64 @@ def test_session_environment_is_the_deployments_environment_not_the_default() ->
         mp.undo()
     assert resp.status_code == 200, resp.text
     assert resp.json()["session"]["environment"] == "testnet"
+
+
+#: (address, stored). `users_email_fmt` is `position('@' in email) > 1`: the first `@` is not the
+#: first character, and nothing is asked of the rest, which is why `.local` is valid data.
+_EMAILS = [
+    ("alice@example.com", True),
+    ("owner@candleviewer.local", True),  # the operator's owner address: a special-use domain
+    ("a@", True),  # the `@` in position 2 is the whole requirement
+    ("owner.candleviewer.local", False),  # no `@`
+    ("@candleviewer.local", False),  # the `@` in position 1
+    ("@owner@candleviewer.local", False),  # the first `@` decides; a later one does not help
+    ("", False),
+]
+_USER_ID = "00000000-0000-4000-8000-000000000001"  # fixed: nothing here is random (C-13.7)
+
+
+def _accepts(model: type[BaseModel], data: dict[str, Any]) -> bool:
+    try:
+        model.model_validate(data)
+    except ValidationError:
+        return False
+    return True
+
+
+def test_the_format_helper_asserts_format_where_a_plain_validate_would_not() -> None:
+    schema = {"type": "string", "format": "uuid"}
+    jsonschema.validate("not-a-uuid", schema)  # `format` is only an annotation here
+    assert not _with_formats(schema).is_valid("not-a-uuid")
+
+
+def test_the_email_check_the_contract_mirrors_is_the_stored_one() -> None:
+    """`User.email` copies the CHECK on `users.email` (`users_email_fmt`); a change to it must
+    lead here, to the pattern in the contract and to the cases below."""
+    checks = [
+        str(c.sqltext)
+        for c in users.constraints
+        if isinstance(c, CheckConstraint) and "email" in str(c.sqltext)
+    ]
+    assert checks == ["position('@' in email) > 1"]
+
+
+@pytest.mark.parametrize(("address", "stored"), _EMAILS)
+def test_user_email_is_accepted_exactly_when_the_database_would_store_it(
+    address: str, stored: bool
+) -> None:
+    """The contract, the generated model that serves `GET /me` and `users_email_fmt` agree on every
+    address. An `EmailStr` model refuses `.local`; `format: email` accepts a leading `@`."""
+    user = {
+        "id": _USER_ID,
+        "username": "owner",
+        "email": address,
+        "roles": ["owner"],
+        "status": "active",
+    }
+    contract = _with_formats(deref(_SPEC, {"$ref": "#/components/schemas/User"}))
+    verdicts = {
+        "database": address.find("@") + 1 > 1,  # `position` counts from 1 and gives 0 for no match
+        "contract": contract.is_valid(user),
+        "model": _accepts(api.User, user),
+    }
+    assert verdicts == dict.fromkeys(verdicts, stored), address

@@ -23,11 +23,11 @@ store (C-12.4); the UI uses these answers to decide what to render and they auth
 
 `GET /me` is assembled from the session row and the SQL identity read path (`user`,
 `session_info`, `accounts`). The `user` object is projected onto the contract's `User` fields, so
-a column the store later returns can never reach the client, and the email address is passed
-through as stored: `users.email` is only constrained to `position('@' in email) > 1` and the
-owner's address is operator input, so `owner@candleviewer.local` is valid data that the
-contract's `EmailStr` refuses, and refusing it would turn the call the shell cannot start
-without into a 500.
+a column the store later returns can never reach the client. The email address is served as
+stored: `users.email` is only constrained to `position('@' in email) > 1` and the owner's address
+is operator input, so `owner@candleviewer.local` is valid data. `User.email` carries that same
+pattern and not `format: email`, so the generated model accepts it (a refusal would turn the call
+the shell cannot start without into a 500), and no model here overrides the contract's.
 
 Preferences and keymap serve the contract's empty answer: no store for per-user overrides and
 no deployment default set exist yet (the `settings` table has no user-scope writer until
@@ -71,16 +71,6 @@ _KNOWN_ROLES: Final = frozenset(_ROLE_PRECEDENCE)
 #: `Me.permissions` is drawn from the contract's closed vocabulary; anything else is dropped.
 _VOCABULARY: Final = frozenset(permission.value for permission in Permission)
 _NO_STORE: Final = {"Cache-Control": "no-store"}  # SR-178: the shell holds these in memory only
-
-
-class _User(api.User):
-    """`User` with the stored address passed through (module docstring)."""
-
-    email: str
-
-
-class _Me(api.Me):
-    user: _User
 
 
 class _Sessions(Protocol):
@@ -250,7 +240,7 @@ def make_me_router(
                 "one_click_armed_until": None,  # one-click arming is not served yet
             },
         }
-        payload = _Me.model_validate(body).model_dump(mode="json", exclude_unset=True)
+        payload = api.Me.model_validate(body).model_dump(mode="json", exclude_unset=True)
         return JSONResponse(payload, headers=_NO_STORE)
 
     @router.get("/me/preferences", tags=["settings"])

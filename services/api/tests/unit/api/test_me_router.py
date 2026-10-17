@@ -412,13 +412,16 @@ async def test_me_elevated_until_is_null_when_no_grace_window_is_live(env: _Env)
     assert session["elevated_until"] is None
 
 
-async def test_me_serves_an_address_the_contract_email_format_would_refuse(env: _Env) -> None:
+async def test_me_serves_the_owner_address_on_a_special_use_domain(env: _Env) -> None:
     """`users.email` is only `position('@' in email) > 1` and the owner's address is operator
-    input (`CV_BOOTSTRAP_OWNER_EMAIL`), so `owner@candleviewer.local` is real data. Refusing it
-    would make `/me`, and with it the whole shell, a 500."""
+    input (`CV_BOOTSTRAP_OWNER_EMAIL`), so `owner@candleviewer.local` is real data, and the
+    contract's `User.email` accepts it. Refusing it would make `/me`, and with it the whole
+    shell, a 500."""
     _, headers, _ = await env.sign_in(roles=["owner"], email="owner@candleviewer.local")
     resp = env.client.get(_ME, headers=headers)
-    assert resp.status_code == 200 and resp.json()["user"]["email"] == "owner@candleviewer.local"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user"]["email"] == "owner@candleviewer.local"
+    jsonschema.validate(resp.json(), deref(_SPEC, {"$ref": "#/components/schemas/Me"}))
 
 
 async def test_me_carries_no_secret_field_even_when_the_store_returns_one(env: _Env) -> None:
