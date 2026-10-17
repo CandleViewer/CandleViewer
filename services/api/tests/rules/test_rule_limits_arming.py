@@ -23,6 +23,7 @@ from candleviewer.rules.arming import ArmingFacts, Refusal, check_arming
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.limits import BUDGET_FIELDS, LIMIT_CAPS, LIMIT_DEFAULTS
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
+from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rules_routes import _Env, _ir
 
@@ -59,11 +60,34 @@ class _StepUps:
         return True
 
 
+class _HeldWriter:
+    """An audit writer that holds each record until `release` is set."""
+
+    def __init__(self, rec: _Recorder) -> None:
+        self.rec = rec
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+
+    async def audit(self, action: str, payload: dict[str, Any]) -> None:
+        self.entered.set()
+        await self.release.wait()
+        await self.rec.audit(action, payload)
+
+
 def _mgr() -> tuple[RulesManager, _Recorder]:
     rec = _Recorder()
     store = InMemoryRuleStore()
     m = RulesManager(store, default_registry(), audit=rec.audit, broadcast=rec.broadcast)
     return m, rec
+
+
+async def _settle(m: RulesManager) -> None:
+    """Wait for the disarms the evaluator ticks handed off: they run beside the tick (#3232)."""
+    await asyncio.gather(*m._tick_disarms.values())
+
+
+def _tick_disarms() -> list[asyncio.Task[Any]]:
+    """The tick disarms still in flight on this loop."""
+    return [t for t in asyncio.all_tasks() if t.get_name() == "rule-limits-disarm"]
 
 
 async def _seed(
@@ -248,11 +272,19 @@ async def test_arming_an_unseen_owner_rule_is_404_before_any_limits_refusal() ->
     assert m.lifecycle.leaf(rid) is None  # the chart was never consulted
 
 
-async def test_evaluable_rules_skips_and_disarms_an_armed_rule_above_the_cap() -> None:
+async def test_evaluable_rules_skips_an_armed_rule_above_the_cap() -> None:
     m, rec = _mgr()
-    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
     kept = await _seed(m, rec, DAY, LIMIT_DEFAULTS[DAY], mode="armed", name="kept")
     assert [str(r.rule_id) for r in await m.evaluable_rules()] == [kept]
+    await _settle(m)
+
+
+async def test_evaluable_rules_disarms_an_armed_rule_above_the_cap_with_its_reason() -> None:
+    m, rec = _mgr()
+    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    await m.evaluable_rules()
+    await _settle(m)
     over = {DAY: {"cap": LIMIT_CAPS[DAY], "value": LIMIT_CAPS[DAY] + 1}}
     sent = {"rule_id": rid, "mode": "disabled", "from": "armed", "b9_from": "armed"}
     sent |= {"b9_event": "DISARM", "reason": "limits_above_cap"}
@@ -260,8 +292,17 @@ async def test_evaluable_rules_skips_and_disarms_an_armed_rule_above_the_cap() -
     assert rec.broadcasts == [{"topic": "rules", **sent}]
     row = await m._s.get(rid)
     assert row is not None and (row.mode, row.disabled_reason) == ("disabled", "disarmed")
-    assert [str(r.rule_id) for r in await m.evaluable_rules()] == [kept]
-    assert len(rec.audits) == 1  # disarmed once, never clamped and re-run
+
+
+async def test_evaluable_rules_disarms_an_armed_rule_above_the_cap_once() -> None:
+    """Disarmed, never clamped and run again: the next tick neither runs nor records it."""
+    m, rec = _mgr()
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    await m.evaluable_rules()
+    await _settle(m)
+    assert await m.evaluable_rules() == []
+    await _settle(m)
+    assert [a for a, _ in rec.audits] == ["rule.disarmed"]
 
 
 async def test_reading_an_armed_rule_above_the_cap_disarms_it_once_with_its_reason() -> None:
@@ -301,27 +342,37 @@ async def test_an_armed_rule_above_the_default_but_under_the_cap_keeps_running()
     assert rec.audits == []
 
 
-async def test_a_disarm_that_fails_on_a_tick_still_skips_the_rule_and_is_retried() -> None:
-    """Fail closed per rule: the runner never gets the rule, the loss is logged, the row stays
-    armed (nothing recorded) and the next tick disarms it."""
+async def _down(_action: str, _payload: dict[str, Any]) -> None:
+    raise RuntimeError("audit down")
+
+
+async def test_a_disarm_that_fails_beside_a_tick_is_logged_and_leaves_the_rule_armed() -> None:
+    """Fail closed per rule: the runner never gets the rule, the loss is logged, and nothing is
+    recorded or broadcast."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
-
-    async def down(_action: str, _payload: dict[str, Any]) -> None:
-        raise RuntimeError("audit down")
-
-    m.set_hooks(audit=down)
+    m.set_hooks(audit=_down)
     with capture_logs() as logs:
         assert await m.evaluable_rules() == []
-    failed = [e for e in logs if e["log_level"] == "error"]
-    assert [(e["event"], e["rule_id"], e["error"]) for e in failed] == [
-        ("rules.limits_disarm_failed", rid, "RuntimeError")
-    ]
+        await _settle(m)
+    failed = [(e["event"], e["rule_id"], e["error"]) for e in logs if e["log_level"] == "error"]
+    assert failed == [("rules.limits_disarm_failed", rid, "RuntimeError")]
     row = await m._s.get(rid)
     assert row is not None and row.mode == "armed" and rec.broadcasts == []
+
+
+async def test_a_failed_disarm_is_tried_again_on_the_next_tick() -> None:
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    m.set_hooks(audit=_down)
+    await m.evaluable_rules()
+    await _settle(m)
     m.set_hooks(audit=rec.audit)
     assert await m.evaluable_rules() == []
-    assert row.mode == "disabled" and [a for a, _ in rec.audits] == ["rule.disarmed"]
+    await _settle(m)
+    row = await m._s.get(rid)
+    assert row is not None and row.mode == "disabled"
+    assert [a for a, _ in rec.audits] == ["rule.disarmed"]
 
 
 async def _stalled(_action: str, _payload: dict[str, Any]) -> None:
@@ -331,19 +382,75 @@ async def _stalled(_action: str, _payload: dict[str, Any]) -> None:
     raise AssertionError("the disarm was not bounded")
 
 
-async def test_a_disarm_that_stalls_on_a_tick_is_bounded_and_the_rule_still_skipped(
+async def test_a_disarm_that_outlasts_its_bound_is_logged_and_leaves_the_rule_armed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A stalled audit writer cannot hold the runner: the tick gives up at the bound."""
     m, rec = _mgr()
     rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
     m.set_hooks(audit=_stalled)
     monkeypatch.setattr(rules_manager, "TICK_DISARM_TIMEOUT_S", 0.0)
     with capture_logs() as logs:
         assert await m.evaluable_rules() == []
+        await _settle(m)
     assert [e["error"] for e in logs if e["log_level"] == "error"] == ["TimeoutError"]
     row = await m._s.get(rid)
     assert row is not None and row.mode == "armed"
+
+
+async def test_a_tick_returns_while_its_disarm_is_held_by_the_audit_writer() -> None:
+    """The rule is skipped before it is disarmed, so the tick never waits for the disarm: a
+    stalled writer delays no other rule's evaluation."""
+    m, rec = _mgr()
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    writer = _HeldWriter(rec)
+    m.set_hooks(audit=writer.audit)
+    assert await m.evaluable_rules() == []
+    await writer.entered.wait()
+    assert rec.audits == [] and len(_tick_disarms()) == 1
+    writer.release.set()
+    await _settle(m)
+    assert [a for a, _ in rec.audits] == ["rule.disarmed"]
+
+
+async def test_a_tick_starts_no_second_disarm_while_one_is_in_flight() -> None:
+    m, rec = _mgr()
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    writer = _HeldWriter(rec)
+    m.set_hooks(audit=writer.audit)
+    await m.evaluable_rules()
+    await writer.entered.wait()
+    assert await m.evaluable_rules() == []
+    assert len(_tick_disarms()) == 1
+    writer.release.set()
+    await _settle(m)
+
+
+async def test_stop_cancels_a_disarm_in_flight_and_leaves_the_rule_armed() -> None:
+    m, rec = _mgr()
+    rid = await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    writer = _HeldWriter(rec)
+    m.set_hooks(audit=writer.audit)
+    await m.evaluable_rules()
+    await writer.entered.wait()
+    await m.stop()
+    row = await m._s.get(rid)
+    assert row is not None and (row.mode, rec.audits, _tick_disarms()) == ("armed", [], [])
+
+
+async def test_stopping_the_rules_service_cancels_a_disarm_in_flight() -> None:
+    rec = _Recorder()
+    svc = RulesService()
+    svc.bind(audit=rec.audit, broadcast=rec.broadcast)
+    await svc.start(None)  # type: ignore[arg-type]  # no AppContext: the evaluator stays off
+    m = svc.manager()
+    assert m is not None
+    await _seed(m, rec, DAY, LIMIT_CAPS[DAY] + 1, mode="armed")
+    writer = _HeldWriter(rec)
+    m.set_hooks(audit=writer.audit)
+    await m.evaluable_rules()
+    await writer.entered.wait()
+    await svc.stop(1.0)
+    assert (rec.audits, _tick_disarms()) == ([], [])
 
 
 def test_put_mode_armed_above_the_default_is_a_403_forbidden_problem_for_a_manager() -> None:

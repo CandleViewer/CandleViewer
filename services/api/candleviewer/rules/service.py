@@ -264,13 +264,14 @@ class RulesService:
         return True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds: stop the live B9 rule charts."""
+        """Stop the module within `grace_s` seconds: the manager cancels its tick disarms in
+        flight and stops the live B9 rule charts."""
         self._started = False
         if self.runner is not None:
             await self.runner.stop()
         self.runner = self.metric_source = None
         if self._manager is not None:
-            await self._manager.lifecycle.stop()
+            await self._manager.stop()
         self._registry = None
         self._manager = None
 

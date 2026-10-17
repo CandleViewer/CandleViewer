@@ -20,6 +20,7 @@ from uuid import UUID
 import structlog
 from pydantic import ValidationError
 
+from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
@@ -41,8 +42,9 @@ IDEM_CACHE_MAX = 4096
 #: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
 #: which `rules` may not import (a test pins them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
-#: How long a runner tick waits to disarm a rule above a hard cap (#3232, decision 9). Past it
-#: the miss is logged and the next tick tries again, so a stalled writer cannot hold the runner.
+#: How long one disarm of an armed rule above a hard cap waits for its record (#3232, decision
+#: 9). It runs beside the evaluator tick, never inside it; a miss is logged and the next tick
+#: tries again.
 TICK_DISARM_TIMEOUT_S: Final = 2.0
 _ORDER_ACTIONS = frozenset(
     {
@@ -250,12 +252,24 @@ class RulesManager:
         self.lifecycle = lifecycle or RuleLifecycle()
         #: rule_id -> (ir_hash, first evaluation ts_ms): simulation window for the current hash.
         self._sim_window: dict[str, tuple[str, int]] = {}
+        #: rule_id -> the disarm in flight of that armed rule above a hard cap (#3232): at most
+        #: one per rule, each a tracked task that `stop()` cancels.
+        self._tick_disarms: dict[str, asyncio.Task[None]] = {}
 
     def set_hooks(self, *, audit: Audit | None = None, broadcast: Broadcast | None = None) -> None:
         if audit is not None:
             self._audit = audit
         if broadcast is not None:
             self._bc = broadcast
+
+    async def stop(self) -> None:
+        """Cancel the tick disarms in flight, then stop the B9 charts. A cancelled disarm leaves
+        its rule armed in the store, and the evaluator skips the rule until it is disarmed."""
+        tasks = list(self._tick_disarms.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await self.lifecycle.stop()
 
     # ----- helpers -----------------------------------------------------------------
     async def _row(self, rule_id: str) -> RuleRow:
@@ -676,7 +690,7 @@ class RulesManager:
     async def evaluable_rules(self, modes: tuple[str, ...] = ("simulate", "armed")) -> list[Rule]:
         """Active-version IR of every non-deleted rule in `simulate` or `armed` mode (the
         evaluator runner's work list). Unreadable (quarantined) versions are skipped, and so is
-        an armed one above a hard cap, which is disarmed on the way (#3232, decision 9)."""
+        an armed one above a hard cap, whose disarm starts beside the tick (#3232, decision 9)."""
         out: list[Rule] = []
         for row in await self._s.all():
             if row.deleted or row.mode not in modes:
@@ -689,15 +703,26 @@ class RulesManager:
             except ValidationError:
                 continue
             if row.mode == "armed" and (capped := _capped_limits(rule)):
-                await self._disarm_on_tick(row, capped)
+                self._disarm_beside_tick(row, capped)
                 continue
             out.append(rule)
         return out
 
+    def _disarm_beside_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
+        """The tick has skipped the rule, so it never waits for the disarm: that runs as a
+        tracked task, at most one per rule, and a stalled or failing writer holds no tick."""
+        rid = row.id
+        if rid in self._tick_disarms:
+            return
+        task = spawn(self._disarm_on_tick(row, capped), name="rule-limits-disarm")
+        self._tick_disarms[rid] = task
+        task.add_done_callback(lambda _done: self._tick_disarms.pop(rid, None))
+
     async def _disarm_on_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
-        """The runner skips the rule either way. A disarm that fails or outlasts
-        `TICK_DISARM_TIMEOUT_S` leaves it armed, is logged and is tried again on the next tick,
-        so it never holds or stops the other rules."""
+        """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out attempt is
+        logged and leaves the row armed, and the next tick starts another. The record is
+        written at least once: an append the writer finishes after the bound is recorded again
+        by that next attempt."""
         try:
             async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
                 await self._force_disarm(row, "limits_above_cap", capped)
