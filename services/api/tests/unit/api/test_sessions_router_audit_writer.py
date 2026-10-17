@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 import httpx
@@ -42,7 +42,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.csrf_helpers import arm_csrf
+from tests.csrf_helpers import arm_csrf, csrf_headers
 from tests.unit.api._fakes import (
     BASE,
     CSRF_CODEC,
@@ -164,9 +164,13 @@ class _World:
     ) -> None:
         self.repo = FakeSessionRepository()
         self.published: list[tuple[str, str]] = []
+        #: Runs inside each revocation publish, after the revocation is committed.
+        self.on_publish: Callable[[], Awaitable[None]] | None = None
 
         async def publish(session_id: str, reason: str) -> None:
             self.published.append((session_id, reason))
+            if self.on_publish is not None:
+                await self.on_publish()
 
         # #2272: the service publishes every revocation; the router publishes nothing.
         self.svc = service(self.repo, HASHER, clock=lambda: NOW, publish_revocation=publish)
@@ -535,6 +539,123 @@ async def test_logout_cancelled_mid_outcome_loop_counts_every_unwritten_row_as_l
     assert {e["session_id"] for e in lost} == set(w.repo.sessions)  # one line per revoked session
 
 
+@pytest.mark.parametrize("all_sessions", [False, True])
+async def test_logout_cancelled_inside_the_revocation_counts_every_target_row_as_lost(
+    all_sessions: bool,
+) -> None:
+    """The revocation is committed, then the request is cancelled while the service publishes it
+    to the sockets (a shutdown): `revoke` and `revoke_all` never return what they revoked, so no
+    outcome record can be written for sessions that are already ended. Every target the intent
+    record named is counted and logged as lost (a session the cancellation reached first is counted
+    too: a false loss is the safe direction), and the cancellation goes on (#2914, 04 section 8.3
+    rule 2). Without this the sessions end with only the intent record and nothing alerts."""
+    w = _World()
+    a = await w.mint()
+    b = await w.mint()
+    c = await w.mint()
+    publishing = asyncio.Event()
+
+    async def hang() -> None:
+        publishing.set()
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=5)  # bounded: fails, not hangs
+
+    w.on_publish = hang
+    targets = {str(x.session_id) for x in ((a, b, c) if all_sessions else (a,))}
+    lost_before = _outcome_lost("auth.session_revoked")
+    transport = httpx.ASGITransport(app=w.client.app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE) as http:
+        request = asyncio.create_task(
+            http.post(
+                "/api/v1/auth/logout",
+                json={"all_sessions": all_sessions},
+                headers=_h(a.access_token),
+            )
+        )
+        await asyncio.wait_for(publishing.wait(), timeout=5)
+        with capture_logs() as logs:
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+    assert await w.live() == {str(x.session_id) for x in (a, b, c)} - targets  # committed first
+    intent, *outcomes = w.writer.events
+    assert (intent["action"], set(intent["after_state"]["session_ids"])) == ("auth.logout", targets)
+    assert outcomes == []  # no outcome record was written
+    assert _outcome_lost("auth.session_revoked") - lost_before == len(targets)
+    lost = [e for e in logs if e["event"] == _LOST_EVENT]
+    assert [(e["log_level"], e["action"], e["error"]) for e in lost] == [
+        ("error", "auth.session_revoked", "cancelled")
+    ] * len(targets)
+    assert {e["session_id"] for e in lost} == targets  # one line per target session
+    assert a.access_token not in repr(logs) and a.refresh_token not in repr(logs)
+
+
+async def _cancel_refresh_in_the_revocation_publish(
+    w: _World, token: str, session_id: uuid.UUID
+) -> list[MutableMapping[str, Any]]:
+    """POST /auth/refresh with `token`, cancel the request while the service publishes the
+    revocation of a family to the sockets (it commits it first), and return what that logged."""
+    publishing = asyncio.Event()
+
+    async def hang() -> None:
+        publishing.set()
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=5)  # bounded: fails, not hangs
+
+    w.on_publish = hang
+    transport = httpx.ASGITransport(app=w.client.app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE) as http:
+        request = asyncio.create_task(
+            http.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": token},
+                headers=csrf_headers(CSRF_CODEC, session_id),
+            )
+        )
+        await asyncio.wait_for(publishing.wait(), timeout=5)
+        with capture_logs() as logs:
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+    return logs
+
+
+async def test_refresh_race_cancelled_in_the_revocation_counts_the_unwritten_reuse_row() -> None:
+    """A concurrent-refresh race the service finds after the router saw a live token: it commits
+    the revocation of the family, then publishes it to the sockets, and a request cancelled in that
+    publish (a shutdown) never sees the answer (#2914, 04 section 8.3 rule 2). The critical outcome
+    record was never attempted, so it is counted and logged as lost, once, and the cancellation
+    goes on. Without this the family ends with only the intent record and nothing alerts."""
+    w = _World(service=_RacedSessionService)
+    m = await w.mint()
+    lost_before = _outcome_lost("auth.refresh_reuse_detected")
+    logs = await _cancel_refresh_in_the_revocation_publish(w, m.refresh_token, m.session_id)
+    assert await w.live() == set()  # the whole family was revoked before the publish
+    assert [e["action"] for e in w.writer.events] == ["auth.session_refreshed"]  # the intent only
+    assert _outcome_lost("auth.refresh_reuse_detected") - lost_before == 1
+    (lost,) = [e for e in logs if e["event"] == _LOST_EVENT]
+    assert (lost["log_level"], lost["action"], lost["session_id"], lost["error"]) == (
+        "error",
+        "auth.refresh_reuse_detected",
+        str(m.session_id),
+        "cancelled",
+    )
+    assert m.refresh_token not in repr(logs)
+
+
+async def test_refresh_of_a_spent_token_cancelled_in_the_revocation_loses_no_row() -> None:
+    """The router saw the token already spent: it wrote the critical record before it called the
+    service (write-ahead), so a request cancelled while the service publishes the revocation of
+    the family has lost nothing and counts nothing."""
+    w = _World()
+    m = await w.mint()
+    await w.svc.refresh(m.refresh_token)  # the token is spent: the replay below is the reuse
+    lost_before = _outcome_lost("auth.refresh_reuse_detected")
+    logs = await _cancel_refresh_in_the_revocation_publish(w, m.refresh_token, m.session_id)
+    assert await w.live() == set()  # the whole family was revoked before the publish
+    assert [e["action"] for e in w.writer.events] == ["auth.refresh_reuse_detected"]  # ahead
+    assert _outcome_lost("auth.refresh_reuse_detected") == lost_before
+    assert [e for e in logs if e["event"] == _LOST_EVENT] == []
+
+
 async def test_logout_outcome_record_that_never_returns_is_bounded_and_counted_as_a_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -653,19 +774,29 @@ async def test_csrf_refusal_record_writer_bug_is_not_swallowed_into_the_403() ->
     assert await w.live() == {str(m.session_id)}  # and nothing was rotated either
 
 
-async def test_logout_outcome_record_writer_bug_is_not_swallowed_into_a_counted_loss() -> None:
-    """The outcome handler absorbs only `AuditError`: a writer bug is a 500, not a counted loss."""
+async def test_logout_outcome_writer_bug_stays_a_500_and_counts_every_unwritten_row() -> None:
+    """#2914 item 6: the outcome handler absorbs only the sink's own refusal (`AuditError`) into the
+    204; any other failure of the write is a defect and still surfaces as a 500. The sessions are
+    already revoked, so the rows the defect leaves unwritten (the one that raised, which may have
+    landed, and the two not tried) are counted and logged as lost, by class name and never by
+    message: a failed outcome write must alert (04 section 8.3 rule 2)."""
     w = _World(lambda: RuntimeError("writer bug"))
     a = await w.mint()
     await w.mint()
     await w.mint()
     w.writer.accept = 1  # the intent record lands; the first outcome record raises
     lost_before = _outcome_lost("auth.session_revoked")
-    r = w.logout(a.access_token, all_sessions=True)
+    with capture_logs() as logs:
+        r = w.logout(a.access_token, all_sessions=True)
     assert r.status_code == 500
     assert w.writer.refused == ["auth.session_revoked"]  # and the loop stopped there
     assert await w.live() == set()  # every session was revoked before the first record
-    assert _outcome_lost("auth.session_revoked") == lost_before
+    assert [e["action"] for e in w.writer.events] == ["auth.logout"]
+    assert _outcome_lost("auth.session_revoked") - lost_before == 3
+    lost = [e for e in logs if e["event"] == _LOST_EVENT]
+    assert [e["error"] for e in lost] == ["RuntimeError"] * 3
+    assert {e["session_id"] for e in lost} == set(w.repo.sessions)  # one line per revoked session
+    assert "writer bug" not in repr(logs)  # the class name, never the message
 
 
 @pytest.mark.parametrize(

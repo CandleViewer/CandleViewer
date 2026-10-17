@@ -474,7 +474,9 @@ def make_session_router(
         `FANOUT_AUDIT_MAX_FAILURES` in a row (`ws/limits.py`, #2824); one timeout is enough here:
         it is one bound per request, the rows not tried are counted, and a refusal returns at once
         and never ends the loop. A request cancelled part-way is the same: the record
-        in flight and every one after it are counted and logged, never dropped silently."""
+        in flight and every one after it are counted and logged, never dropped silently. So is any
+        other error of the write (a defect, not the sink's refusal): the rows it leaves unwritten
+        are counted and logged by class name, and it propagates as the 500 it always was."""
         for i, sid in enumerate(session_ids):
             try:
                 async with asyncio.timeout(audit_timeout_s):
@@ -497,6 +499,10 @@ def make_session_router(
             except asyncio.CancelledError:
                 for lost in session_ids[i:]:
                     _outcome_lost(action, lost, "cancelled")
+                raise
+            except Exception as exc:
+                for lost in session_ids[i:]:
+                    _outcome_lost(action, lost, type(exc).__name__)
                 raise
 
     async def _revoke_denied(request: Request, record: SessionRecord, target: uuid.UUID) -> None:
@@ -757,6 +763,16 @@ def make_session_router(
             return _unauthorized("refresh_token_invalid")
         except (SessionNotFound, SessionRevoked, SessionIdleLocked):
             return _unauthorized("refresh_token_invalid")
+        except asyncio.CancelledError:
+            # The service commits a family's revocation before it publishes it to the sockets, so
+            # a request cancelled in there (a shutdown) may have ended the family of a token the
+            # lookup saw live, and its critical outcome record can no longer be written. The
+            # route cannot tell that from a cancellation elsewhere in `refresh()`: counted as
+            # lost either way, a false loss being the safe direction. A spent token wrote its
+            # record ahead (above), so it loses none.
+            if not reuse:
+                _outcome_lost("auth.refresh_reuse_detected", presented_record.id, "cancelled")
+            raise
         minted = outcome.minted
         user = await identity.user(str(presented_record.user_id))
         response = JSONResponse(
@@ -894,11 +910,22 @@ def make_session_router(
             )
         except AuditUnavailableError:
             return _audit_down()
-        if all_sessions:
-            revoked = await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
-        else:
-            ended = await auth_service.sessions.revoke(str(record.id), reason=reason)
-            revoked = () if ended is None else (ended,)
+        try:
+            if all_sessions:
+                revoked = await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
+            else:
+                ended = await auth_service.sessions.revoke(str(record.id), reason=reason)
+                revoked = () if ended is None else (ended,)
+        except asyncio.CancelledError:
+            # The service commits the revocation before it publishes it to the sockets, so a
+            # request cancelled in there (a shutdown) may have ended sessions without ever seeing
+            # which: their outcome rows can no longer be written. Every target is counted and
+            # logged as lost, as `_audit_outcomes` does for a cancellation; a session the
+            # cancellation reached first is counted too, and a false loss is the safe direction
+            # (04-security-program.md §8.3 rule 2).
+            for sid in targets:
+                _outcome_lost("auth.session_revoked", sid, "cancelled")
+            raise
         # What the service revoked, not what was read before: a session may have signed in since.
         await _audit_outcomes(
             "auth.session_revoked",

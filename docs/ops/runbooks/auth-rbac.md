@@ -555,10 +555,16 @@ after it refuses a disabled user's refresh; the answer stays the uniform `401`.
 
 Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
 `auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal
-class, `inactive`, `cancelled` for a request cancelled part-way, or `timeout` for a write that did
-not return within the audit timeout, 2 s: the row in flight may have landed, so check the trail, and
-the rows after it were not tried); it carries no token, address or user. Restore the audit sink
-first, then list the gap from those lines. For a lost `auth.session_revoked`, the `auth.logout` row
+class, `inactive`, `cancelled` for a request cancelled part-way, `timeout` for a write that did not
+return within the audit timeout, 2 s, or the class name of any other error the writer raised, a
+defect that also answers the request `500`: the row in flight may have landed, so check the trail,
+and the rows after it were not tried; a sign-out cancelled while it revoked has a `cancelled` line
+for each session it targeted and no row for any, so read each `sessions` row (`revoked_at`) to see
+which it ended; a refresh of a live token cancelled while the service ran has one `cancelled`
+line for `auth.refresh_reuse_detected` whether or not the service found a reuse, so read the
+family's `sessions` rows (`revoked_reason` `rotation_reuse`) before treating it as one); it
+carries no token, address or user. Restore the audit sink first, then list
+the gap from those lines. For a lost `auth.session_revoked`, the `auth.logout` row
 already names the session (above 50 targets it names only the first 50: the rest are that user's
 `sessions` rows with `revoked_reason` `logout_all` and a `revoked_at` at the time of that row) and
 the `sessions` row (`revoked_at`, `revoked_reason`) records the revocation; a lost
@@ -584,7 +590,9 @@ No page does not mean the sink is healthy: the page reads only outcome rows lost
 while a refusing sink makes every sign-out, revoke and refresh fail closed at its write-ahead record
 with a `503` that no counter or alert sees. Those refusals show only as
 `auth.session_audit.writer_refused` log lines (the alert runbook's third command greps them); a
-counter for them is requested under #3009 and E27 KV-D04 (#2267).
+counter for them is requested under #3009 and E27 KV-D04 (#2267). A page that has cleared is no
+better evidence: it sends no `[RESOLVED]` message and clears with its 15-minute window, so the test
+sign-out in the alert runbook entry (row 7) is the check.
 
 ## Known gaps referenced above
 
