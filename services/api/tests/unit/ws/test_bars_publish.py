@@ -397,7 +397,27 @@ async def test_two_snapshot_generations_re_snapshot_every_subscriber(seen: bool,
     for generation in (7, 9):  # one client's snapshot at 7, then another's at 9
         pub.note_generation("BTCUSDT", SPEC, generation)
     await pub.emit(_em(_up(), generation=at))  # either generation: a swap for both
-    assert [c.take()[-1]["meta"].get("reason") for c, _ in subs] == [SWAP, SWAP]
+    frames = [("d", None)] * seen + [("snap", SWAP)]  # each whole sequence: no `d` after the swap
+    assert [[(f["t"], f["meta"].get("reason")) for f in c.take()] for c, _ in subs] == [frames] * 2
+
+
+@pytest.mark.parametrize(
+    ("noted", "logged"),
+    [((7,), (7, False)), ((7, 9), (None, True)), ((-5,), (None, True))],
+    ids=["one-generation", "two-generations", "negative"],
+)
+async def test_the_swap_log_names_the_previous_generation_or_the_mixed_mark(
+    noted: tuple[int, ...], logged: tuple[int | None, bool]
+) -> None:
+    """Snapshots at `noted` before the first emission: one generation seeds the baseline; two, or
+    a negative one (none is valid), mark it mixed, so the swap has no `previous` generation."""
+    _, pub, _ = _world({})
+    for generation in noted:
+        pub.note_generation("BTCUSDT", SPEC, generation)
+    with capture_logs() as logs:
+        await pub.emit(_em(_up(), generation=11))
+    swaps = _events(logs, "ws_bars_generation_swap")
+    assert [(e["previous"], e["mixed"]) for e in swaps] == [logged]
 
 
 async def test_note_generation_seeds_aside_and_never_ages_out_an_emitting_series() -> None:
