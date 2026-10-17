@@ -12,7 +12,8 @@ constraints, and only then writes the `users.access_change` record ahead of the 
 error, including an audit write that fails or exceeds `audit_timeout_s`, rolls everything back.
 A commit that then fails or is cancelled appends `users.access_change_failed` (outcome failure)
 to close that record, as `secrets/broker.py` closes a borrow (C-2.9). An unchanged set writes and
-audits nothing. Each call logs one line naming its outcome. The audit emitter is injected:
+audits nothing. Each call logs one line naming its outcome, and returns the new set with each
+account's label and environment as read under the locks. The audit emitter is injected:
 storage (M10) may depend on M1 only (CONSTITUTION §3 module table).
 
 `list_grants`, the read behind `GET /users/{userId}/account-access`, takes no row lock.
@@ -23,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 import sqlalchemy as sa
@@ -87,12 +89,13 @@ _LOCK_USER = sa.text(
 # `FOR SHARE`, not `FOR KEY SHARE`: an account soft delete updates no key column, so it takes
 # `FOR NO KEY UPDATE`, which only `FOR SHARE` or stronger conflicts with.
 _KNOWN_ACCOUNTS = sa.text(
-    "SELECT id FROM exchange_accounts WHERE id = ANY(CAST(:ids AS uuid[])) "
+    "SELECT id, label, env::text FROM exchange_accounts WHERE id = ANY(CAST(:ids AS uuid[])) "
     "AND deleted_at IS NULL ORDER BY id FOR SHARE"
 )
 _CURRENT = sa.text(
-    "SELECT exchange_account_id, can_view, can_trade, frozen, frozen_at FROM user_account_access "
-    "WHERE user_id = CAST(:id AS uuid) ORDER BY exchange_account_id FOR NO KEY UPDATE"
+    "SELECT exchange_account_id, can_view, can_trade, frozen, frozen_at, granted_by "
+    "FROM user_account_access WHERE user_id = CAST(:id AS uuid) "
+    "ORDER BY exchange_account_id FOR NO KEY UPDATE"
 )
 # #965 O4: a soft revoke, never a DELETE; the freeze columns and the cap are never written.
 _REVOKE = sa.text(
@@ -128,6 +131,17 @@ _LIST_GRANTS = sa.text(
 )
 #: The audit record's `before_state` and `after_state`.
 _States = tuple[dict[str, object], dict[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Who:
+    """Who asked, as both records of a change name it (C-2.9): the actor, the request, the source
+    address and the session."""
+
+    actor: uuid.UUID
+    request_id: uuid.UUID | None
+    ip: str | None
+    session_id: uuid.UUID | None
 
 
 def _log() -> Any:
@@ -167,9 +181,9 @@ def _donor(rows: Sequence[Any]) -> uuid.UUID | None:
     and no live row is not. Read under the locks before any write, so neither swapping every
     account nor revoking all and granting again escapes it. `rows` are `_CURRENT`'s, in account
     order: the latest `frozen_at` donates, and a tie goes to the lowest account id."""
-    if any(view and not frozen for _, view, _, frozen, _ in rows):
+    if any(view and not frozen for _, view, _, frozen, *_ in rows):
         return None
-    frozen_at = {account: at for account, _, _, frozen, at in rows if frozen}
+    frozen_at = {account: at for account, _, _, frozen, at, *_ in rows if frozen}
     return _uuid(max(frozen_at, key=frozen_at.__getitem__)) if frozen_at else None
 
 
@@ -221,9 +235,12 @@ class SqlAlchemyAccountAccessStore:
         actor_user_id: uuid.UUID,
         request_id: uuid.UUID | None = None,
         removal: RemovalContext | None = None,
+        actor_ip: str | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> AccessChange:
         """Make `grants` the user's live set; every other live grant is soft-revoked. `removal`
         is what the caller read of the user's exposure; `None` reads as both counts unknown.
+        `actor_ip` and `session_id` name the caller in the write-ahead and the closing record.
 
         Raises `AccessSelfTargetError`, `AccessUserNotFoundError`, `AccessUserNotActiveError`,
         `AccessUnknownAccountError`, `AccessBusyError`, `AccessPositionsUnknownError`,
@@ -234,6 +251,7 @@ class SqlAlchemyAccountAccessStore:
         grant rows are the truth."""
         outcome = "error"
         written: _States | None = None  # recorded ahead, commit not yet confirmed
+        who = _Who(actor_user_id, request_id, actor_ip, session_id)
         try:
             if user_id == actor_user_id:  # SR-055 backstop: before any statement
                 raise AccessSelfTargetError(str(user_id))
@@ -244,7 +262,7 @@ class SqlAlchemyAccountAccessStore:
                 )
                 if change.changed:
                     states = _states(change, exposure)
-                    await self._write_ahead(user_id, states, actor_user_id, request_id)
+                    await self._write_ahead(user_id, states, who)
                     written = states
                     await uow.commit()
                     outcome, written = "replaced", None
@@ -257,7 +275,7 @@ class SqlAlchemyAccountAccessStore:
             if outcome == "error":  # once decided, only closing the session can still fail
                 outcome = _outcome(failure, written is not None)
             if written is not None:  # close the write-ahead record (C-2.9)
-                await self._close(user_id, written, actor_user_id, request_id, outcome)
+                await self._close(user_id, written, who, outcome)
             if failure is not exc:
                 raise failure from None
             raise
@@ -309,10 +327,12 @@ class SqlAlchemyAccountAccessStore:
             raise AccessUserNotFoundError(uid)
         if user[0] != "active":
             raise AccessUserNotActiveError(user[0])
+        known: dict[uuid.UUID, tuple[str, str]] = {}  # account -> (label, environment)
         if wanted:
             ids = sorted(str(a) for a in wanted)
-            found = {_uuid(r[0]) for r in (await s.execute(_KNOWN_ACCOUNTS, {"ids": ids})).all()}
-            if missing := frozenset(wanted) - found:
+            named = (await s.execute(_KNOWN_ACCOUNTS, {"ids": ids})).all()
+            known = {_uuid(r[0]): (r[1], r[2]) for r in named}
+            if missing := frozenset(wanted) - known.keys():
                 raise AccessUnknownAccountError(missing)
         rows = (await s.execute(_CURRENT, {"id": uid})).all()
         before: dict[uuid.UUID, AccessLevel] = {
@@ -322,7 +342,10 @@ class SqlAlchemyAccountAccessStore:
         donor = _donor(rows)  # evaluated before any write
         inherited = {a for a, _ in upserts} if donor is not None else set()
         frozen = {_uuid(r[0]) for r in rows if r[3]} | inherited
-        change = AccessChange(user_id, before, wanted, frozenset(frozen))
+        # An upsert names the actor; a grant kept as it was keeps its granter (NULL once deleted).
+        by = {_uuid(r[0]): r[5] and _uuid(r[5]) for r in rows} | {a: actor for a, _ in upserts}
+        granted = tuple(AccessGrant(a, lvl, *known[a], by[a]) for a, lvl in sorted(wanted.items()))
+        change = AccessChange(user_id, before, wanted, frozenset(frozen), granted)
         if not change.changed:
             return change
         if change.removed and removal.blocks_removal:  # AC7: every removal (#2648 Q2)
@@ -345,29 +368,20 @@ class SqlAlchemyAccountAccessStore:
         await s.execute(_IMMEDIATE)
         return change
 
-    async def _write_ahead(
-        self, user_id: uuid.UUID, states: _States, actor: uuid.UUID, request_id: uuid.UUID | None
-    ) -> None:
+    async def _write_ahead(self, user_id: uuid.UUID, states: _States, who: _Who) -> None:
         """A refused record was never written. After a timeout or a cancel it is unknown whether
         it landed (`AuditWriter.emit` finishes an append it has started), and nothing closes it:
         the transaction rolls back, and the grant rows are the truth."""
         try:
-            await self._emit(_CHANGE, user_id, states, actor, request_id, "success", None)
+            await self._emit(_CHANGE, user_id, states, who, "success", None)
         except Exception as exc:  # the writer's refusal (WAL full, stopped) or the timeout
             raise AccessAuditUnavailableError(str(user_id)) from exc
 
-    async def _close(
-        self,
-        user_id: uuid.UUID,
-        states: _States,
-        actor: uuid.UUID,
-        request_id: uuid.UUID | None,
-        reason: str,
-    ) -> None:
+    async def _close(self, user_id: uuid.UUID, states: _States, who: _Who, reason: str) -> None:
         """Best-effort closing record; it never replaces the original exception. A commit
         cancelled in flight may still have landed: the grant rows stay the truth."""
         try:
-            await self._emit(_CHANGE_FAILED, user_id, states, actor, request_id, "failure", reason)
+            await self._emit(_CHANGE_FAILED, user_id, states, who, "failure", reason)
         except Exception:
             _log().exception("account access closing audit record not written", reason=reason)
 
@@ -376,21 +390,22 @@ class SqlAlchemyAccountAccessStore:
         action: str,
         user_id: uuid.UUID,
         states: _States,
-        actor: uuid.UUID,
-        request_id: uuid.UUID | None,
+        who: _Who,
         outcome: str,
         reason: str | None,
     ) -> None:
         async with asyncio.timeout(self._audit_timeout_s):
             await self._audit.emit(
                 action,
-                actor_label=str(actor),
-                actor_user_id=actor,
+                actor_label=str(who.actor),
+                actor_user_id=who.actor,
+                actor_ip=who.ip,
+                session_id=who.session_id,
                 object_kind="user",
                 object_id=str(user_id),
                 before_state=states[0],
                 after_state=states[1],
-                request_id=request_id,
+                request_id=who.request_id,
                 outcome=outcome,
                 reason=reason,
             )

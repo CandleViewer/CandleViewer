@@ -1,4 +1,4 @@
-"""Integration (E42-T08 S8 and S9a, #2648): `SqlAlchemyAccountAccessStore` on real Postgres 16.
+"""Integration (E42-T08 S8 to S9c, #2648): `SqlAlchemyAccountAccessStore` on real Postgres 16.
 
 The audit record is written ahead of the commit, and a refused one changes nothing. A soft
 revoke keeps the freeze state and the cap. An unknown account or a user who is not active
@@ -8,7 +8,9 @@ UUIDs. Onboarding ignores revoked grants. S9a: a grant and an account soft delet
 each other in either order, as a user soft delete does; a lock wait past `lock_timeout` changes
 nothing; no grant write leaves a frozen manager an unfrozen grant, and an inherited freeze
 never copies the cap. S9b: the read behind `GET /users/{userId}/account-access` lists only the
-user's live grants of live accounts and takes no row lock.
+user's live grants of live accounts and takes no row lock. S9c: a replacement answers the new
+set (label, environment, last granter) read under its own locks, so the `PUT` reads nothing
+after the commit.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -642,3 +644,16 @@ async def test_list_grants_then_replacing_with_the_same_set_is_a_no_op(db: Any) 
     )
     assert not change.changed and not audit.calls
     assert await _access(engine, user) == {a: (True, False), b: (True, True), c: (False, False)}
+
+
+async def test_replace_answers_the_new_set_read_under_its_locks(db: Any) -> None:
+    """S9c: the `PUT` body, read inside the change; a kept grant keeps its granter."""
+    rel, engine = db
+    owner, user, (a, b) = await _setup(engine, 2)
+    other, _, _ = await _setup(engine, 0)
+    await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
+    change = await _store(rel).replace_grants(user, {a: "read", b: "trade"}, actor_user_id=other)
+    assert change.granted == (
+        AccessGrant(a, "read", _label(a), "demo", owner),
+        AccessGrant(b, "trade", _label(b), "demo", other),
+    )

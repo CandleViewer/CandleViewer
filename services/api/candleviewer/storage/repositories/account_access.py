@@ -96,6 +96,8 @@ class AccessAuditEmitter(Protocol):
         # An `AuditOutcome`, which storage cannot import: `Any`, as in `auth/scopes.py`.
         outcome: Any = ...,
         reason: str | None,
+        actor_ip: str | None = ...,
+        session_id: uuid.UUID | None = ...,
     ) -> None: ...
 
 
@@ -125,6 +127,10 @@ class AccessChange:
     #: or revives can become frozen, so a grant live before keeps its flag: the set also
     #: describes `before`.
     frozen: frozenset[uuid.UUID] = frozenset()
+    #: `after` as the listing shows it (label, environment, last granter), in account-id order,
+    #: read under the change's locks: the `PUT` answers with it, never with a read after the
+    #: commit (#2648 S9c).
+    granted: tuple[AccessGrant, ...] = ()
 
     @property
     def changed(self) -> bool:
