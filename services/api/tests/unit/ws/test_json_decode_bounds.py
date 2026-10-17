@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from candleviewer.ws.limits import MAX_JSON_DEPTH, json_depth_exceeds
+from candleviewer.ws.limits import MAX_JSON_CONTAINERS, MAX_JSON_DEPTH, json_depth_exceeds
 from tests.unit.ws.test_gateway_limits import _client, _hello
 from tests.unit.ws.test_lifecycle_socket import _bye_then_close, _recv
 
@@ -54,7 +54,9 @@ def test_depth_scan_string_and_closer_state_matches_expected(text: str, expected
 @pytest.mark.parametrize(
     "frame",
     [
-        pytest.param("[" * 100_000, id="100k-open-brackets"),
+        # One over the container cap, and within the 8 KiB frame cap that holds before `auth_ok`
+        # (a longer run of brackets there is `frame_too_big`; see `test_inbound_frame_limits.py`).
+        pytest.param("[" * (MAX_JSON_CONTAINERS + 1), id="containers-plus-one"),
         pytest.param(_nested(MAX_JSON_DEPTH + 1), id="limit-plus-one"),
         pytest.param('{"t":', id="malformed"),
         # Valid JSON that is no envelope. It decodes to `None`, which the reader once took for
@@ -69,6 +71,23 @@ def test_bad_text_frame_is_err_violation_and_socket_survives(
     with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         _hello(ws)
         ws.send_text(frame)
+        assert _recv(ws)["p"]["code"] == "frame_malformed"
+        ws.send_json({"t": "ping", "id": "p"})
+        assert _recv(ws)["t"] == "pong"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_100_000_brackets_after_auth_ok_is_err_violation_and_socket_survives(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After `auth_ok` a frame may be 256 KiB, so these 100 000 bytes reach the container cap: one
+    strike, never scanned or decoded. Before it they are past the 8 KiB cap."""
+    caplog.set_level(logging.DEBUG)
+    with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        _hello(ws)
+        ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "ok"}})
+        assert _recv(ws)["t"] == "auth_ok"
+        ws.send_text("[" * 100_000)
         assert _recv(ws)["p"]["code"] == "frame_malformed"
         ws.send_json({"t": "ping", "id": "p"})
         assert _recv(ws)["t"] == "pong"
@@ -109,7 +128,7 @@ def test_three_bad_frames_close_bad_client_4400_without_error_log(
     caplog.set_level(logging.DEBUG)
     with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         _hello(ws)
-        for frame in ("[" * 100_000, "{", _nested(MAX_JSON_DEPTH + 1)[:-1]):
+        for frame in ("[" * (MAX_JSON_CONTAINERS + 1), "{", _nested(MAX_JSON_DEPTH + 1)[:-1]):
             ws.send_text(frame)
             msg = ws.receive_json()
             if msg["t"] == "bye":

@@ -49,9 +49,9 @@ def decoders(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         ran.append("json")
         return loads(raw)
 
-    def spy_decode(raw: bytes) -> Any:
+    def spy_decode(raw: bytes, **budget: int) -> Any:
         ran.append("msgpack")
-        return decode_client_frame(raw)
+        return decode_client_frame(raw, **budget)
 
     monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
     monkeypatch.setattr(gateway, "decode_client_frame", spy_decode)

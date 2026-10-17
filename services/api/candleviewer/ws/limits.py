@@ -4,6 +4,11 @@ Single home for every bound the gateway enforces. Overflow policy:
 
 - Inbound frame > `MAX_INBOUND_FRAME_BYTES` -> close `1009` (checked on the
   raw text/bytes BEFORE JSON parsing, so an oversized frame is never decoded).
+- Until the first `auth_ok`, a frame > `MAX_PREAUTH_FRAME_BYTES` -> close `1009` (checked the
+  same way, so it is never scanned or decoded), and a MessagePack frame past the smaller value
+  budget `ws/codec.py` sets for that window -> `frame_malformed`.
+- JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
+  protocol violation); it is never depth-scanned or decoded.
 - `sub` with > `MAX_TOPICS_PER_SUB` topics -> the excess topics are rejected
   per-topic with `too_many_topics`; the rest are processed.
 - `unsub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
@@ -28,6 +33,18 @@ ENVELOPE_ID_MAX_LEN = 64
 #: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
 #: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.
 MAX_JSON_DEPTH = 32
+#: SR-040: max size, in encoded bytes, of an inbound frame until the first `auth_ok`, the `hello`
+#: included. The largest conforming frame there, with each enum list naming every member once,
+#: is an `auth` with the longest `access_token` the schema allows (4 096 characters) in ASCII,
+#: about 4.2 KiB: this is about 1.9x that, and 1/32 of `MAX_INBOUND_FRAME_BYTES`. A non-ASCII
+#: token of that many characters can exceed it, and is refused here. Checked on the raw frame
+#: BEFORE any scan or decode.
+MAX_PREAUTH_FRAME_BYTES = 8 * 1024
+#: SR-184: max `[` plus `{` characters in an inbound JSON text frame. The count ignores strings,
+#: so it can only over-count. The widest conforming frame, a `sub` of 50 topics with every option
+#: the schema defines and every list full, has about 400: this is about 2.5x that. Checked BEFORE
+#: the depth scan and `json.loads`.
+MAX_JSON_CONTAINERS = 1024
 #: §13.5 `maxItems` of `sub.topics` and `unsub.topics`, and `welcome.limits.max_topics_per_request`.
 MAX_TOPICS_PER_SUB = 50
 MAX_SUBSCRIPTIONS = 200
