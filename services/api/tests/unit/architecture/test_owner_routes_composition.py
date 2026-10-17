@@ -134,6 +134,7 @@ def deployed() -> Iterator[SimpleNamespace]:
         ctx = app.state.app_context
         ctx.audit._writer = audit
         ctx.auth._sessions, ctx.auth._step_up = rbac._Sessions(), rbac._StepUp()
+        ctx.auth._repository = rbac._Users()  # the enrolment-only guard reads it (#2295)
         ctx.auth._invites = rbac._Invites()
         client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
         yield SimpleNamespace(

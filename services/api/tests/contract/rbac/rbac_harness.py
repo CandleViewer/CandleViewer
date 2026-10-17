@@ -38,7 +38,7 @@ from candleviewer.auth.errors import (
     StepUpRequired,
 )
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord, UserStatus
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.recorder.retention import PrunePlan, RunReport
@@ -53,6 +53,8 @@ from candleviewer.user_cascade_wiring import NoOrderCounter
 from tests.csrf_helpers import csrf_headers
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
+#: A stored-hash placeholder for seeded users; nothing in the pack ever verifies a password.
+INERT_DIGEST = "unused"
 ACTORS = ("owner", "manager_with_grant", "manager_without_grant", "viewer", "unauthenticated")
 ROLE_OF = {
     "owner": "owner",
@@ -198,6 +200,29 @@ class _Sessions:
             device_label=None,
             is_electron=False,
             mfa_satisfied_at=now,
+        )
+
+
+class _Users:
+    """The user store's `find_by_id` over the seeded actors: each has `mfa_required` and a
+    confirmed TOTP method, so the enrolment-only guard classifies every actor's session as a
+    full one and the pack runs with it active (#2295)."""
+
+    async def find_by_id(self, user_id: str) -> UserRecord | None:
+        actor = next((a for a, u in _USER_IDS.items() if str(u) == user_id), None)
+        if actor is None:
+            return None
+        return UserRecord(
+            id=_USER_IDS[actor],
+            username=actor,
+            email=f"{actor}@example.test",
+            password_hash=INERT_DIGEST,
+            password_algo_params={},
+            status=UserStatus.ACTIVE,
+            mfa_required=True,
+            failed_login_count=0,
+            locked_until=None,
+            mfa_methods=(MfaMethodKind.TOTP,),
         )
 
 
@@ -528,6 +553,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     ctx.audit._writer = audit
     ctx.audit._query = _AuditQuery()  # the lifespan is not started; same seam tests/unit/ws uses
     ctx.auth._sessions = _Sessions()
+    ctx.auth._repository = _Users()  # the enrolment-only guard classifies every session
     step_up = _StepUp()
     ctx.auth._step_up = step_up
     ctx.auth._invites = _Invites()
