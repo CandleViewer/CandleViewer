@@ -33,7 +33,8 @@ R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`
     `kek_ack_path` (outside `settings.py`); str literals `/run/credentials…` or `CV_KEK_…`.
 R9  Borrow names (see R10); admin metadata (`_ADMIN_ONLY`: attribute, bare name, import or
     literal) outside `admin/`;
-    `mint_borrower` outside `admin/wiring.py`; every M2-defined private name (harvested with
+    `mint_borrower` / `mint_candidate_keys` outside `admin/wiring.py`; every M2-defined private
+    name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
 R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
     `borrow_handle`) anywhere outside `secrets/`; `.reveal()` (also via getattr/methodcaller)
@@ -54,6 +55,8 @@ import candleviewer.secrets as m2
 
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 MINT_SITES = {"admin/wiring.py"}
+#: The capability mints (`mint_candidate_keys`: key import's candidate verification, #836).
+MINTS = frozenset({"mint_borrower", "mint_candidate_keys"})
 #: The M4 exchange adapter package (the only signing-capability holder), built from parts.
 _BORROW_SITE = "/".join(("exchange", "by" + "bit")) + "/"
 _ADMIN_SITE = "admin/"
@@ -327,8 +330,8 @@ class _Checker:
                 if isinstance(node.value, ast.Name) and node.value.id in self.aliases:
                     if node.attr not in m2.__all__:
                         self.flag(f"{node.value.id}.{node.attr} (non-public M2 via alias)")
-                    if node.attr == "mint_borrower" and self.rel not in MINT_SITES:
-                        self.flag("alias mint_borrower")
+                    if node.attr in MINTS and self.rel not in MINT_SITES:
+                        self.flag(f"alias {node.attr}")
                 names, root = _chain(node)
                 if isinstance(root, ast.Name) and root.id == "candleviewer":
                     dotted = ".".join(reversed(names))
@@ -342,8 +345,8 @@ class _Checker:
                     self.flag(f"{node.id}")
                 if node.id in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):
                     self.flag(f"{node.id} (credential plaintext in the exchange adapter)")
-                if node.id == "mint_borrower" and self.rel not in MINT_SITES:
-                    self.flag("mint_borrower")
+                if node.id in MINTS and self.rel not in MINT_SITES:
+                    self.flag(node.id)
                 if node.id in _ADMIN_ONLY and not self.rel.startswith(_ADMIN_SITE):
                     self.flag(f"{node.id} (admin-only metadata)")
                 if node.id in _INTROSPECTION:

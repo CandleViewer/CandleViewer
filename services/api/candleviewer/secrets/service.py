@@ -12,6 +12,7 @@ Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/hea
 `admin.wiring` (`SecretsBundle.exchange_borrower`) — callers never declare their identity.
 It returns a MAC and the key id, never the API secret (C-2.7, #2339). The offline break-glass
 proof (`prove_kek_possession`, admin only, #2119) shares the custody path but never enrols.
+Key import's `CandidateKeys` (#836, `SecretsBundle.candidate_keys`) is minted in wiring too.
 """
 
 from __future__ import annotations
@@ -31,8 +32,9 @@ from candleviewer.secrets import _kek, _source
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
+from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
 from candleviewer.secrets.errors import KekLoadError, KekSourceNotPermitted, KekUnavailable
-from candleviewer.secrets.models import KekCheckResult, RewrapReport
+from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.signing import RequestSignature, SigningMessage
 from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 
@@ -93,9 +95,9 @@ class SecretsLifecycle(Protocol):
 
 
 class SigningCapability(Protocol):
-    """What the exchange adapter signs with (C-2.7), so the signer it builds is injectable
-    (#3233): today the stored-key `CredentialBorrower`. M2 MACs `message` and returns the key id
-    and the hex MAC, never the API secret."""
+    """What the exchange adapter signs with (C-2.7): the stored-key `CredentialBorrower` or a
+    candidate key's `CandidateSigner` (#836). M2 MACs `message` and returns the key id and the hex
+    MAC, never the API secret."""
 
     async def sign(
         self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
@@ -439,6 +441,22 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
     """Wiring-time signing capability bound to `caller_module`. Called once, in
     `admin.wiring.build_secrets_service`; fails closed while degraded."""
     return _sealed_borrower(service._require, caller_module)
+
+
+def mint_candidate_keys(
+    service: SecretsService, *, hold_s: float = CANDIDATE_HOLD_S
+) -> CandidateKeys:
+    """Wiring-time key-import capability (#836): the candidate signer it hands out is bound to
+    the exchange adapter, and each hold lasts at most `hold_s`. Called once, in
+    `admin.wiring.build_secrets_service`; fails closed while degraded."""
+    if not 0 < hold_s <= CANDIDATE_HOLD_S:
+        raise ValueError("a candidate is held for at most CANDIDATE_HOLD_S")
+    resolve, caller = service._require, "exchange_adapter"
+
+    async def run(*args: Any) -> StoredCredential | None:
+        return await hold_candidate(resolve(), caller, hold_s, *args)
+
+    return CandidateKeys(run)
 
 
 async def prove_kek_possession(

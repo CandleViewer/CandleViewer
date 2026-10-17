@@ -111,6 +111,7 @@ def _failing_bundle() -> Any:
         SecretsMetadataFacade,
         SecretsService,
         mint_borrower,
+        mint_candidate_keys,
     )
     from candleviewer.secrets._source import KekSources
     from candleviewer.secrets.store import InMemoryCredentialStore
@@ -127,6 +128,7 @@ def _failing_bundle() -> Any:
         SecretsLifecycleFacade(svc),
         SecretsMetadataFacade(svc),
         mint_borrower(svc, "exchange_adapter"),
+        mint_candidate_keys(svc),
     )
 
 

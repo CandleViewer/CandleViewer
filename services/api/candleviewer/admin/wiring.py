@@ -23,6 +23,7 @@ from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
+    CandidateKeys,
     CredentialBorrower,
     CredentialStore,
     KcvStore,
@@ -33,22 +34,25 @@ from candleviewer.secrets import (
     SecretsService,
     export_secrets_metrics,
     mint_borrower,
+    mint_candidate_keys,
 )
 from candleviewer.settings import Settings
 
 #: What `AppContext.secrets` holds: lifecycle + health only (C-3.2). `admin` is injected
-#: `SecretsMeta`; M4 is injected the one `CredentialBorrower` minted here.
+#: `SecretsMeta`; M4 is injected the one `CredentialBorrower` minted here. Key import (#836) gets
+#: `SecretsBundle.candidate_keys`, minted here too, so it imports no M2 module.
 SecretsHandle = SecretsLifecycle
 SecretsMeta = SecretsMetadata
 
 
 @dataclass(frozen=True)
 class SecretsBundle:
-    """The three narrow capabilities of one `SecretsService` (built once, in wiring)."""
+    """The four narrow capabilities of one `SecretsService` (built once, in wiring)."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
     exchange_borrower: CredentialBorrower
+    candidate_keys: CandidateKeys
 
 
 __all__ = [
@@ -107,6 +111,7 @@ def build_secrets_service(
         SecretsLifecycleFacade(svc),
         SecretsMetadataFacade(svc),
         mint_borrower(svc, "exchange_adapter"),
+        mint_candidate_keys(svc),
     )
 
 

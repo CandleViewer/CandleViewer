@@ -203,3 +203,14 @@ Supersedes Design §5's "soak for 24 h". The rotation overlap is one fixed 900 s
 `api_key_rotations.grace_seconds` default and US-ACCT-004's 15-minute drain window (`rotateApiKey`
 in `docs/plan/22-api-openapi.yaml`). The rest of §5 (keys are created in the Bybit dashboard, not
 "via the Bybit API"; the old key is revoked locally only) stays with E27-T05.
+
+## Amendment 6 (2026-10-17, #836 slice 2b3; decision 7 by main-orchestrator, recorded on #836)
+
+Refines Amendment 2's single audited path: key import signs inside M2 too (SR-E27-01).
+`CandidateKeys` holds a pasted pair in M2 memory for one check, bounded by the ticket's 12 s
+deadline (`CANDIDATE_HOLD_S`). Its `CandidateSigner` signs `key_verify` messages for the candidate's
+own id only, each after a write-ahead `security.credential_borrowed` naming the acting Owner the
+caller passes (SR-E27-09). The pair is stored `pending` only after the check passes; a refusal, an
+error or the bound stores nothing (decision 7, in place of SR-E27-01's `pending` row destroyed on
+refusal, whose ciphertext 0024 would keep). Both paths share one MAC wrapper and one record close. A
+stored key's borrow also re-checks C-2.8 on its row before its audit and any decrypt (SR-E27-14).

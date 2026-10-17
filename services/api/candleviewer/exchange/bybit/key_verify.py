@@ -1,8 +1,9 @@
-"""The stored-key self-check's signed calls on one environment's host (E27-T03, #836).
+"""Key verification's signed calls on one environment's host (E27-T03, #836).
 
 Key info (`GET /v5/user/query-api`) and the signed no-op probe (`GET /v5/account/wallet-balance`)
-for one stored key, signed by M2 under the `key_verify` purpose (C-2.7, #2339). The host is the
-key's own environment's (`SIGNED_REST_BASES`, US-ACCT-007): no other host, no fallback (C-2.11).
+for one key, signed by M2 under the `key_verify` purpose (C-2.7, #2339): a stored key through the
+borrower, or a candidate key M2 holds for one import through its signer. The host is the key's own
+environment's (`SIGNED_REST_BASES`, US-ACCT-007): no other host, no fallback (C-2.11).
 No call is retried, as the next run is the retry; the one repeat is the client's re-sign after a
 clock-drift refusal (10002, E08-S07). Each call is bounded at `CALL_TIMEOUT_S`. Both draw from the
 account-reads class of the key's per-UID budget, the `poll` share (`20-architecture.md` §4.3),
@@ -67,7 +68,7 @@ def verification_governor() -> TokenBucketGovernor:
 
 
 class KeyVerificationCalls:
-    """The two signed calls for one stored key, on the host its client was built for, under the
+    """The two signed calls for one key, on the host its client was built for, under the
     governor that client draws from."""
 
     def __init__(
