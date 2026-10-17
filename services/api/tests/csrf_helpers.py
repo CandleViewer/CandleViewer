@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
+from candleviewer.auth.errors import SessionNotFound
 
 #: The one session every fake test bearer resolves to (see `FakeBearerSessions`).
 TEST_SID = uuid.UUID("00000000-0000-4000-8000-00000000c5ef")
@@ -47,6 +48,11 @@ class FakeBearerSessions:
         if token in self._bearers:
             return SimpleNamespace(id=TEST_SID, user_id=TEST_SID)
         return None
+
+    async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
+        """No live session for the enrolment-only guard (#2295): it leaves the request to the
+        route, whose fake principal resolver authorises it."""
+        raise SessionNotFound("a fake bearer has no session")
 
 
 def wire_fake_sessions(app: Any, *bearers: str) -> None:
