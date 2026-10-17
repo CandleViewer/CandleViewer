@@ -37,7 +37,7 @@ disarm (`trading_enabled` false); how a boot check treats them is an open decisi
 
 Not here yet (#836 slice 2c, SR-E27-18): the freshness check independent of this job (at order
 admission or by a watchdog), its missed-run alert and the age metric. Until then a stalled job
-trips nothing by itself. Nothing builds this job before #836 slice 2a3c.
+trips nothing by itself. `key_selfcheck_wiring` builds the job on the real backend.
 """
 
 from __future__ import annotations

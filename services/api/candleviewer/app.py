@@ -172,6 +172,7 @@ from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.ingestion.watchdog import StalenessWatchdog
 from candleviewer.journal.service import JournalService
+from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
 from candleviewer.net import (
     BindingSelfCheck,
     CidrAllowList,
@@ -1428,6 +1429,9 @@ def create_app(
             metrics_facade.get("cv_api_keys_rows"),
             env=resolved.environment.value,
         )
+    # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
+    # started `AccountsService` before the app serves (real backend only).
+    wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit))
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
     # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
     app.state.audit_verify_job = build_audit_verify_job(
