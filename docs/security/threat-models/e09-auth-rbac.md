@@ -274,7 +274,7 @@ that review; it does not itself constitute the review.)*
 |---|---|
 | U3/D1-shared fail-closed route registration must be a startup failure, not a review-dependent control | `E09-T04` (PDP) implementation + its own regression test |
 | SR-024/052/053/054/056/057 need formal numbers in `04-security-program.md` §6 | follow-up docs PR before `E09-T*` tickets cite them by final number |
-| Break-glass abuse detection (beyond audit-on-next-boot) | `E09-X03` (detection rules) — alert on any break-glass invocation appearing in the folded-in audit trail |
+| Break-glass abuse detection (beyond audit-on-next-boot) | `E09-X03` (detection rules) routed it; delivered by #2496 as `AuthBreakGlassUsed`, a page while a reset's `break_glass_used` system event is unresolved. Not the folded-in trail: the CLI flushes its records to `audit_log`, so the boot fold-in carries only what Postgres refused, and a refused run reaches `audit_log` only |
 | Abuse-case exercises for U11–U13, U18, U30–U32 | `E09-X02` |
 | Accessibility note on recovery-code/step-up modal screen-reader behaviour (U23) | `E09-Q04` |
 

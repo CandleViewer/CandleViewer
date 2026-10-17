@@ -11,8 +11,8 @@ from tests.contract.ws._harness import PROTOCOL_DOC, World, connect
 
 
 class _Unresolved:
-    async def has_unresolved_break_glass(self) -> bool:
-        return True
+    async def unresolved_break_glass_count(self) -> int:
+        return 1
 
 
 def _section_15_9() -> str:

@@ -92,6 +92,7 @@ def test_required_rules_present() -> None:
         "CsrfRefusalAuditUnavailable",
         "AuthRecoveryCodeUsed",  # #2496 SR-022
         "NetBindingUnsafe",  # #2496 E09-T04
+        "AuthBreakGlassUsed",  # #2496 SR-023
     }
     assert required <= names
 
@@ -360,19 +361,48 @@ def test_recovery_code_alert_pages_the_owner_on_any_use_even_in_quiet_hours() ->
     ]
 
 
-#: #2931: pages whose resolution only means "the rate window elapsed", not "someone acted". A
+def test_break_glass_alert_pages_the_owner_while_a_reset_is_unresolved() -> None:
+    """#2496 item 3 (SR-023): the page reads the gauge of unresolved `break_glass_used` events,
+    not a counter of the records the boot fold-in moves (a use folds nothing in, and the fold-in
+    runs before the first scrape). The gauge is a count and the rule is `>= 1`, so two unresolved
+    resets page as one does. The 15-minute window keeps it through a restart or a scrape gap. No
+    hold time and a page, so quiet hours never mute it; a component of its own."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuthBreakGlassUsed"]
+    assert rule["expr"] == (
+        "max by (env) (max_over_time(auth_break_glass_unresolved_events[15m])) >= 1"
+    )
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {
+        "severity": "page",
+        "component": "auth_break_glass",
+        "resolves": "window",
+    }
+    route = _route_for(_alert_labels(rule))
+    assert route["receiver"] == "page_event" and "mute_time_intervals" not in route
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-authbreakglassused"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_break_glass"] == [
+        "AuthBreakGlassUsed"
+    ]
+
+
+#: #2931: pages whose resolution only means "the window elapsed", not "someone acted". A
 #: [RESOLVED] on the page channel reads as handled although the event still needs the Owner's
 #: review, so each carries `resolves: window` and takes the receiver that sends no resolved
-#: message. #2496 item 3 (the break-glass use alert) adds itself here with the same label.
-#: Each reads `increase(<counter>[window]) > 0`: a recovery code was used; an audit chain
-#: verification run failed (the break stands and is found again at the next start-up or nightly
-#: run); a trade gap went unrecovered (the trades stay missing from the tape and the recording).
+#: message. Three read `increase(<counter>[window]) > 0`: an audit chain verification run failed
+#: (the break stands and is found again at the next start-up or nightly run); a recovery code was
+#: used; a trade gap went unrecovered (the trades stay missing from the tape and the recording).
+#: `AuthBreakGlassUsed` (#2496 item 3) reads a gauge, but over a window that outlasts a restart or
+#: a scrape gap, so it also ends when cv-api has merely been down for that window, which a
+#: [RESOLVED] would report as handled while the event is unresolved.
 #: Not classified yet: `NakedPositionDetected`. Whether its [RESOLVED] means "protected again"
 #: or only "the window moved on" depends on how the E32 watchdog counts
 #: `naked_position_alerts_total`: once per detection (an event page), or on every scan while a
 #: position is naked (a condition page). TODO(#932): decide there; add it here if it is the former.
 EVENT_TYPE_PAGES = {
     "AuditChainVerificationFailed",
+    "AuthBreakGlassUsed",
     "AuthRecoveryCodeUsed",
     "IngestionTradeGapUnrecovered",
 }
@@ -419,7 +449,8 @@ def test_event_type_page_rules_carry_the_resolves_window_label() -> None:
     """#2931: the label is the only thing that tells an event page from a condition page, so
     the set of rules carrying it is pinned both ways. Every event-type page has it, and no
     condition page (whose [RESOLVED] means the condition cleared) picks it up and loses that
-    message. Each reads a rate window, which is what makes its resolution "the window moved on"."""
+    message. Each reads a window (a rate, or a maximum over time), which is what makes its
+    resolution "the window moved on"."""
     rules = {r["alert"]: r for r in _rules()}
     assert {name for name, r in rules.items() if "resolves" in r["labels"]} == EVENT_TYPE_PAGES
     for name in EVENT_TYPE_PAGES:

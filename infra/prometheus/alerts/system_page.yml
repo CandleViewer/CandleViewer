@@ -124,6 +124,26 @@ groups:
         annotations:
           summary: "A recovery code was used: confirm it was the account holder"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
+      - alert: AuthBreakGlassUsed
+        # #2496 item 3 (SR-023): an offline break-glass reset left a critical `break_glass_used`
+        # system event that nobody has resolved. A gauge of how many are unresolved, not a counter
+        # of the records the boot fold-in moves: the CLI flushes its records to audit_log, so a use
+        # folds nothing in, and the fold-in runs before the first scrape, so such a counter could
+        # never show an increase(). The CLI runs only while cv-api is stopped, so the page first
+        # appears at the restart after it; max_over_time keeps it through any later restart or
+        # scrape gap shorter than the window. No user label (the audit rows say who and when), and
+        # a component of its own, so it inhibits no auth ticket.
+        # #2931: an event page. It also ends when cv-api has been down for the window, which a
+        # [RESOLVED] would report as handled while the event is unresolved.
+        expr: max by (env) (max_over_time(auth_break_glass_unresolved_events[15m])) >= 1
+        for: 0m
+        labels:
+          severity: page
+          component: auth_break_glass
+          resolves: window
+        annotations:
+          summary: "Break-glass recovery was used on this host: review the audit log"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassused"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m

@@ -54,8 +54,8 @@ _MESSAGE = (
     "the Owner must enrol TOTP again"
 )
 _UNRESOLVED = sa.text(
-    "SELECT EXISTS (SELECT 1 FROM system_events WHERE component = 'auth' "
-    "AND kind = 'break_glass_used' AND resolved_at IS NULL)"
+    "SELECT count(*) FROM system_events WHERE component = 'auth' "
+    "AND kind = 'break_glass_used' AND resolved_at IS NULL"
 )
 
 #: The port's refusal channel (`auth.break_glass.BreakGlassStoreRefusal`), typed here
@@ -122,7 +122,7 @@ class SqlAlchemyBreakGlassEvents:
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._relational = relational
 
-    async def has_unresolved_break_glass(self) -> bool:
-        """Whether any `auth`/`break_glass_used` event is still unresolved: one EXISTS."""
+    async def unresolved_break_glass_count(self) -> int:
+        """How many `auth`/`break_glass_used` events are still unresolved: one count."""
         async with self._relational.unit_of_work() as uow:
-            return bool((await uow.session.execute(_UNRESOLVED)).scalar_one())
+            return int((await uow.session.execute(_UNRESOLVED)).scalar_one())
