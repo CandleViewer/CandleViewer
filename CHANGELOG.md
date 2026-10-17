@@ -3,14 +3,16 @@
 All notable changes to CandleViewer are documented here. Format follows
 `docs/plan/07-release-and-prr.md` §3: entries are grouped by category under
 each release heading, generated from Conventional Commits by
-`.github/workflows/changelog.yml` and finalised at release-train cut time by
-`.github/workflows/release.yml`. Security-relevant entries describe impact
+`tools/ci/update_changelog.py` in reviewed sync PRs (previewed on every merge
+by `.github/workflows/changelog.yml`, which never commits) and finalised at
+release-train cut time by `.github/workflows/release.yml`. Security-relevant entries describe impact
 only, never exploit detail (full detail is kept in the internal finding
 tracker).
 
 ## Unreleased
 
 ### Breaking Changes
+
 - **repo**: amend constitution — C-10.1 agent-delivery review mode (v1.1.0) (#1408) (edcfecd)
 - **repo**: amend constitution — C-10.1 agent-delivery review mode (v1.1.0) (#1408) (edcfecd)
 - **repo**: amend constitution — C-10.1 agent-delivery review mode (v1.1.0) (#1408) (edcfecd)
@@ -85,6 +87,7 @@ tracker).
 - **repo**: amend constitution — C-10.1 agent-delivery review mode (v1.1.0) (#1408) (edcfecd)
 
 ### Features
+
 - **infra-devops**: E03-T11 add release workflow, changelog and semver tagging (#1565) (15bbbd8)
 - **infra-devops**: wire coverage/bundle-size/flaky quality gates to §9 (#1543) (605cb2f)
 - **infra-devops**: E03-T08 build, scan, SBOM and cosign-sign images on merge to main (#1540) (4dc6bb7)
@@ -3200,6 +3203,7 @@ tracker).
 - **docs**: add GOV-001 CODEOWNERS coverage checker (#1430) (ebffa41)
 
 ### Fixes
+
 - **infra-devops**: correct semgrep rule-pack self-scan exclusions and test runner (#1566) (c829b96)
 - **docs**: E01-Q02 wire self-test, coverage gate and duration budget into governance job (#1560) (c8bb051)
 - **infra-devops**: enable Playwright failure-artifact capture (web + electron) (#1532) (a24d7d3)
@@ -5030,6 +5034,7 @@ tracker).
 - **design-system**: E08-D01 QA defects (#1463) (#1470) (3669e89)
 
 ### Performance
+
 - **infra-devops**: E04-K01 instrumentation overhead spike (#1522) (817a527)
 - **infra-devops**: E04-K01 instrumentation overhead spike (#1522) (817a527)
 - **infra-devops**: E04-K01 instrumentation overhead spike (#1522) (817a527)
@@ -5104,4 +5109,3 @@ tracker).
 - **infra-devops**: E04-K01 instrumentation overhead spike (#1522) (817a527)
 
 ### Security
-

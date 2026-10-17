@@ -171,7 +171,7 @@ Related:
 
 - [ ] Structured logs / metrics / alerts added or updated; no `print()` or `console.log` left behind
 - [ ] Docs updated **in this PR**: plan docs, ADR, `AGENTS.md` (if commands/layout/standards changed), package README (C-15.2, C-15.4)
-- [ ] `CHANGELOG.md` entry for user-visible change (C-15.6) — or N/A
+- [ ] Changelog (C-15.6): conventional-commit title for a user-visible change; a security fix adds an impact-only `CHANGELOG.md` Unreleased › Security line ending `(#N)` (07 §3) — or N/A
 
 ### Reviews required (§10)
 

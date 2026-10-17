@@ -1,100 +1,52 @@
 name: changelog
 
-# E03-T11: append conventional-commit-derived entries to CHANGELOG.md's
-# `## Unreleased` section on every merge to `main`
-# (docs/plan/07-release-and-prr.md §3; ADR-0013 pipeline shape "release tag
-# -> changelog -> ..."). Acceptance scenario "A feature merge lands in the
-# Unreleased changelog".
-#
-# Loop guard: the bot commit message is exactly `docs(changelog): update
-# unreleased` (acceptance scenario "the bot commit is 'docs(changelog):
-# update unreleased'"); this workflow's own `if:` below refuses to re-run
-# for a push whose HEAD commit message is already that exact string, so it
-# can never trigger itself (ticket "Technical notes": "guarded so it cannot
-# loop"). Branch-protection bypass for this bot identity is recorded in
-# E03-T13.
+# Read-only preview of CHANGELOG.md's `## Unreleased` section (07-release-and-prr.md §3,
+# job summary). It never commits: `main` is protected (C-4.1), and the old bot push to `main`
+# failed with GH006 on 288+ runs from 2026-10-01 (#2341). CHANGELOG.md changes only through
+# reviewed PRs (sync command: AGENTS.md §4). Supersedes E03-T11 scenario 1 and the E03-T13
+# bypass note. On a PR it previews the base history against the PR's CHANGELOG.md. Read-only
+# contents, no secrets and no artefact, so no ref guard.
 
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - CHANGELOG.md
+      - .github/workflows/changelog.yml
+      - tools/ci/changelog_lib.py
+      - tools/ci/update_changelog.py
+      - tools/ci/finalize_changelog.py
+      - tools/ci/collect_commits.py
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: changelog-main
-  cancel-in-progress: false
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  update-changelog:
-    name: update-changelog
-    # Never re-trigger on our own bot commit, and never run outside `main`
-    # (ticket Security notes: "the workflow refuses to run from a
-    # non-main/release/* ref" — this workflow only listens on `main`, so
-    # the ref check is implicit in the trigger, reasserted here defensively).
-    if: >-
-      ${{ github.event.head_commit.message != 'docs(changelog): update unreleased' &&
-          github.ref == 'refs/heads/main' }}
+  changelog-preview:
+    name: changelog-preview
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
-      - name: Collect commits since the last tag
-        id: commits
-        shell: bash
-        run: |
-          set -euo pipefail
-          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
-          if [ -z "$last_tag" ]; then
-            range="HEAD"
-          else
-            range="${last_tag}..HEAD"
-          fi
-          python - "$range" <<'PYEOF'
-          import json
-          import subprocess
-          import sys
-
-          range_ = sys.argv[1]
-          out = subprocess.run(
-              ["git", "log", range_, "--pretty=format:%H%x1f%B%x1e"],
-              capture_output=True, text=True, check=True,
-          ).stdout
-          commits = []
-          for chunk in out.split("\x1e"):
-              chunk = chunk.strip()
-              if not chunk:
-                  continue
-              sha, _, message = chunk.partition("\x1f")
-              commits.append({"sha": sha, "message": message})
-          with open("commits-since-tag.json", "w", encoding="utf-8") as fh:
-              json.dump(commits, fh)
-          print(f"collected {len(commits)} commits since {range_!r}")
-          PYEOF
-
-      - name: Update Unreleased section (CI-REL-001 fragment parsing)
-        run: |
-          python tools/ci/update_changelog.py --commits-json commits-since-tag.json --changelog CHANGELOG.md
-
-      - name: Commit if changed
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- CHANGELOG.md; then
-            echo "No changelog change; nothing to commit."
-            exit 0
-          fi
-          git config user.name "candleviewer-release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add CHANGELOG.md
-          git commit -m "docs(changelog): update unreleased"
-          git push origin HEAD:main
+      - name: Preview the Unreleased section (writes nothing)
+        env:
+          REV: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: >-
+          python tools/ci/update_changelog.py --since-last-tag --rev "$REV"
+          --preview --summary "$GITHUB_STEP_SUMMARY"

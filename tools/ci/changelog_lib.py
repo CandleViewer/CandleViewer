@@ -6,8 +6,8 @@ automation); ADR-0013 pipeline shape ("release tag -> changelog -> Electron
 installers (signed) -> release checklist + PRR gate").
 
 This module is the shared, unit-testable core used by both
-`.github/workflows/changelog.yml` (append to `Unreleased` on every merge to
-`main`) and `.github/workflows/release.yml` (compute the semver bump and
+`.github/workflows/changelog.yml` (read-only preview of `Unreleased`; the
+sync lands via reviewed PRs) and `.github/workflows/release.yml` (compute the semver bump and
 finalise the `Unreleased` section at a release-train cut). It has no GitHub
 API calls and no I/O beyond what its callers pass in, so it is exercised
 entirely by fixture-driven unit tests (stdlib only, no network).
