@@ -17,9 +17,9 @@ filters as the job, so these tests pin the filter, the job condition and the res
 its filter did not name the workflow, so a PR that edited only the workflow skipped them.
 
 #3175: the required `a11y` job runs on the `e2e` filter, which did not name the design system
-(`packages/ui/**`, its Storybook included) or the job's other inputs (`tools/contrast/**` for the
-contrast gate, `tools/a11y/**` for the axe baseline and gates, the job's workflow and its
-meta-tests), so a PR that changed only those skipped the axe sweep built to check them."""
+(`packages/ui/**`, its Storybook included) or the job's other inputs (`tools/contrast/**` and the
+token formats it imports for the contrast gate, `tools/a11y/**` for the axe baseline and gates, the
+job's workflow and its meta-tests), so a PR that changed only those skipped the axe sweep."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +44,7 @@ XSTATE_NIGHTLY = ".github/workflows/xstate-nightly.yml"
 A11Y_PATHS = (
     "packages/ui/**",
     "tools/contrast/**",
+    "tools/style-dictionary/**",
     "tools/a11y/**",
     ".github/workflows/_job-a11y.yml",
     "scripts/tests/test_a11y_gates.py",
@@ -104,7 +106,7 @@ def _resolver_security_filters() -> set[str]:
 
 
 def _resolver_lane_filters(name: str) -> set[str]:
-    """The filters the resolver script ORs together when it decides whether lane `name` applied.
+    """The filters the resolver ORs together to decide whether lane `name` (an unquoted key) applied.
 
     `//` comments are stripped first, so a name that only a comment mentions does not count. Then
     each `||` term must be exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
@@ -151,9 +153,10 @@ def test_pr_yml_resolver_security_lane_names_the_same_filters_as_the_job() -> No
     assert _resolver_security_filters() == _outputs_in(_jobs()["security"]["if"])
 
 
-def test_pr_yml_resolver_reads_each_security_filter_from_its_changed_paths_output() -> None:
+@pytest.mark.parametrize("lane", ["security", "a11y"])
+def test_pr_yml_resolver_reads_each_lane_filter_from_its_changed_paths_output(lane: str) -> None:
     env = _resolver_step()["env"]
-    for name in sorted(_resolver_security_filters()):
+    for name in sorted(_resolver_lane_filters(lane)):
         expected = "${{ needs.changed-paths.outputs." + name + " }}"
         assert env.get("FILTER_" + name.upper()) == expected, name
 
@@ -170,8 +173,9 @@ def test_pr_yml_e2e_filter_covers_every_a11y_input() -> None:
     assert set(A11Y_PATHS) <= covered, sorted(set(A11Y_PATHS) - covered)
 
 
-def test_pr_yml_a11y_inputs_exist_in_the_repo() -> None:
-    for pattern in A11Y_PATHS:
+def test_pr_yml_e2e_filter_paths_exist_in_the_repo() -> None:
+    # What pr.yml lists, not the pinned constant, so an added or mistyped entry is caught.
+    for pattern in _filters()["e2e"]:
         assert any(ROOT.glob(pattern)), pattern
 
 
