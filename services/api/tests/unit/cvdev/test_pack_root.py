@@ -1,12 +1,13 @@
 """#2893 S5: the account-pack resolver answers from the root it is given.
 
 The resolver moved from the test tree into the dev-only `cvdev` package, so a running stack serves
-the same scenarios as the tests (ADR-0036). A stack may mount the pack anywhere, so its root is
-explicit (`Pack(root)`): payloads stay inside the pack's parent (the pack and the shared corpus
-beside it), the payload cache never answers one root with another root's file, and a scenario name
-is never a path. Each pack here is a copy of the checkout's pack under `tmp_path`; every write
-goes to a path built from `tmp_path`, never through a `Pack`, so a broken resolver cannot redirect
-a write into the checkout.
+the same scenarios as the tests (ADR-0036). A stack may mount the pack anywhere but at or directly
+under a filesystem root, so its root is explicit (`Pack(root)`, resolved once): manifests stay
+inside the pack, payloads inside the pack's parent (the pack and the shared corpus beside it), the
+payload cache never answers one root with another root's file, and a scenario name is never a
+path. Each pack here is a copy of the checkout's pack under `tmp_path`; every write goes to a path
+built from `tmp_path`, never through a `Pack`, so a broken resolver cannot redirect a write into
+the checkout.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import Any, Final
 
 import pytest
 
-from cvdev.account_fixture.pack import Pack, _payload, load, scenario_names
+from cvdev.account_fixture.pack import _SCENARIO_NAME, Pack, _payload, load, scenario_names, schema
 from tests._account_fixtures import PACK_ROOT
 
 NOW: Final = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
@@ -53,6 +54,27 @@ def test_pack_root_is_configurable(tmp_path: Path) -> None:
 
     assert scenario_names(pack) == ["compliant"]
     assert reply.body["retMsg"] == "from the mounted pack"
+
+
+def test_pack_root_is_resolved_once(tmp_path: Path) -> None:
+    """Mounted through a link, the pack answers from the real directory, inside its boundaries."""
+    real = _copy_pack(tmp_path / "fixtures", "compliant")
+    (tmp_path / "mnt").mkdir()
+    (tmp_path / "mnt" / "accounts").symlink_to(real, target_is_directory=True)
+
+    pack = Pack(tmp_path / "mnt" / "accounts")
+
+    assert pack.root == real.resolve()
+    assert load(pack, "compliant", now=NOW).reply("GET", "/v5/market/time").body["retCode"] == 0
+
+
+@pytest.mark.parametrize("below", ["", "accounts"], ids=["at", "directly-under"])
+def test_pack_root_cannot_sit_at_or_directly_under_a_filesystem_root(
+    tmp_path: Path, below: str
+) -> None:
+    """The pack's parent is its payload boundary: mounted at `/accounts`, any file would pass."""
+    with pytest.raises(ValueError, match="filesystem root"):
+        Pack(Path(tmp_path.anchor) / below)
 
 
 @pytest.mark.parametrize(
@@ -98,3 +120,17 @@ def test_scenario_name_from_a_manifest_cannot_traverse(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not a scenario name"):
         load(Pack(root), "expired_key", now=NOW)
+
+
+def test_scenario_directory_linked_outside_the_pack_is_refused(tmp_path: Path) -> None:
+    root = _copy_pack(tmp_path / "fixtures", "compliant")
+    shutil.copytree(root / "compliant", tmp_path / "planted")
+    (root / "planted").symlink_to(tmp_path / "planted", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="outside the pack"):
+        load(Pack(root), "planted", now=NOW)
+
+
+def test_scenario_name_rule_is_the_schemas() -> None:
+    pattern = schema(Pack(PACK_ROOT))["$defs"]["scenarioName"]["pattern"]
+    assert pattern == f"^{_SCENARIO_NAME.pattern}$"

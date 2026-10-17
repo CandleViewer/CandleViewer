@@ -23,8 +23,9 @@ mount one anywhere, and turns one scenario into concrete data the same way for e
 It serves nothing and opens no socket: #2893's stub serves a scenario to a running stack
 (`CV_ACCOUNT_FIXTURE=<scenario>`), and tests drive the adapter's own client through an
 `httpx.MockTransport` built on `Scenario.reply` (`tests/_account_fixtures.py` binds the checkout's
-pack). A scenario name is never a path, and a payload never comes from outside the pack's parent
-directory. Nothing here imports `candleviewer`, so neither `secrets` nor `audit` (ADR-0036).
+pack). A scenario name is never a path, a manifest never comes from outside the pack, and a
+payload never from outside the pack's parent directory, which is never a filesystem root. Nothing
+here imports `candleviewer`, so neither `secrets` nor `audit` (ADR-0036).
 """
 
 from __future__ import annotations
@@ -154,13 +155,17 @@ def _read(path: Path) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class Pack:
-    """The pack at `root`, resolved: a directory per scenario, each with its `manifest.json`.
-    Payloads come from the pack and the shared corpus beside it, never from outside its parent."""
+    """The pack at `root`, resolved once: a directory per scenario, each with its `manifest.json`.
+    Payloads come from the pack and the shared corpus beside it, never from outside its parent, so
+    it may be mounted anywhere but at or directly under a filesystem root."""
 
     root: Path
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "root", self.root.resolve())
+        root = self.root.resolve()
+        if root.parent == root.parent.parent:
+            raise ValueError(f"pack root {root} sits at or directly under a filesystem root")
+        object.__setattr__(self, "root", root)
 
 
 @cache
@@ -186,7 +191,9 @@ def scenario_names(pack: Pack) -> list[str]:
 def manifest(pack: Pack, name: str) -> dict[str, Any]:
     if _SCENARIO_NAME.fullmatch(name) is None:
         raise ValueError(f"not a scenario name: {name!r}")
-    path = pack.root / name / "manifest.json"
+    path = (pack.root / name / "manifest.json").resolve()
+    if not path.is_relative_to(pack.root):
+        raise ValueError(f"scenario {name} is outside the pack")
     if not path.is_file():
         raise KeyError(f"no such scenario: {name}")
     body: dict[str, Any] = _read(path)
