@@ -11,6 +11,7 @@ Every statement is static and parameterised.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -105,8 +106,14 @@ _RC_FIND = sa.text(
     "SELECT id::text AS id FROM recovery_codes WHERE user_id = CAST(:u AS uuid) "
     "AND code_hash = :h AND used_at IS NULL"
 )
-#: #2344: the recovery sign-in's unit of work. Each conditional update wins at most once and
-#: only for the code's and the challenge's own user.
+#: #2344: the recovery sign-in's unit of work. #2911: the user row first, `FOR SHARE`, as a session
+#: insert reads it (`sessions_sqlalchemy`): a disable that commits first is read as `disabled`, one
+#: that comes later queues behind this. Each conditional update then wins at most once and only
+#: for the code's and the challenge's own user.
+_LOCK_USER = sa.text(
+    "SELECT status::text AS status FROM users WHERE id = CAST(:u AS uuid) "
+    "AND deleted_at IS NULL FOR SHARE"
+)
 _RC_USE = sa.text(
     "UPDATE recovery_codes SET used_at = :now WHERE id = CAST(:id AS uuid) "
     "AND user_id = CAST(:u AS uuid) AND used_at IS NULL RETURNING 1"
@@ -118,6 +125,16 @@ _CH_SATISFY_OWN = sa.text(
 _REVOKE_ALL = sa.text(
     "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
     "AND revoked_at IS NULL"
+)
+#: Contract `authMfaRecovery`: the spend raises `security.mfa_recovery_used`, committed with it.
+_RC_EVENT = sa.text(
+    "INSERT INTO system_events (component, kind, severity, message, details, event_ts) "
+    "VALUES ('auth', 'security.mfa_recovery_used', 'warning', :message, "
+    "CAST(:details AS jsonb), :now)"
+)
+_RC_EVENT_MESSAGE = (
+    "Recovery code used: every MFA method of the user was revoked and the user must enrol "
+    "TOTP again"
 )
 _RC_COUNT = sa.text(
     "SELECT count(*) AS n FROM recovery_codes WHERE user_id = CAST(:u AS uuid) AND used_at IS NULL"
@@ -258,11 +275,16 @@ class SqlAlchemyMfaRepository:
 
     async def complete_recovery(
         self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
-    ) -> bool:
-        """One unit of work (#2344): spend the code, satisfy the challenge, revoke every method;
-        a lost race on either rolls back."""
+    ) -> bool | None:
+        """One unit of work (#2344): spend the code, satisfy the challenge, revoke every method
+        and insert the system event; a lost race rolls back (`False`), and so does a user who
+        is `disabled` or gone (`None`, #2911), before any change."""
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
+            user = (await run(_LOCK_USER, {"u": user_id})).first()
+            if user is None or user._mapping["status"] == "disabled":
+                await uow.rollback()
+                return None
             won = (await run(_RC_USE, {"id": code_id, "u": user_id, "now": now})).first()
             if won is not None:
                 satisfy = {"id": challenge_id, "u": user_id, "now": now}
@@ -271,5 +293,8 @@ class SqlAlchemyMfaRepository:
                 await uow.rollback()
                 return False
             await run(_REVOKE_ALL, {"u": user_id, "now": now})
+            details = json.dumps({"user_id": user_id, "challenge_id": challenge_id})
+            event = {"message": _RC_EVENT_MESSAGE, "details": details, "now": now}
+            await run(_RC_EVENT, event)
             await uow.commit()
         return True

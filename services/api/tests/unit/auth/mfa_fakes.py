@@ -28,6 +28,10 @@ class FakeMfaRepository:
         self.recovery_codes: dict[str, dict[str, str | None]] = {}
         # user_id -> {code_id: code_hash}, used_at tracked in `used_codes`
         self.used_codes: set[str] = set()
+        #: #2911: users `complete_recovery` reads as `disabled` or gone under its user-row lock.
+        self.disabled_users: set[str] = set()
+        #: `security.mfa_recovery_used`, one user id per committed spend (contract, #2344).
+        self.recovery_events: list[str] = []
 
     # -- mfa_methods ---------------------------------------------------
 
@@ -218,10 +222,12 @@ class FakeMfaRepository:
 
     async def complete_recovery(
         self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
-    ) -> bool:
-        """Single-threaded fake of the SQL unit of work (#2344): both conditions are checked
-        before anything changes, so a lost race leaves the code, the challenge and the
-        methods as they were."""
+    ) -> bool | None:
+        """Single-threaded fake of the SQL unit of work (#2344): the user's status and both
+        conditions are checked before anything changes, so a disabled user (`None`) or a lost
+        race leaves the code, the challenge and the methods as they were."""
+        if user_id in self.disabled_users:
+            return None
         row = self.recovery_codes.get(code_id)
         challenge = self.challenges.get(challenge_id)
         if row is None or row["user_id"] != user_id or row["used_at"] is not None:
@@ -235,6 +241,7 @@ class FakeMfaRepository:
         for method_id, method in list(self.methods.items()):
             if str(method.user_id) == user_id and method.revoked_at is None:
                 self.methods[method_id] = method.model_copy(update={"revoked_at": now})
+        self.recovery_events.append(user_id)
         return True
 
 

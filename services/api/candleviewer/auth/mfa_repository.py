@@ -144,12 +144,15 @@ class MfaRepository(Protocol):
 
     async def complete_recovery(
         self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
-    ) -> bool:
+    ) -> bool | None:
         """#2344, ONE transaction: mark the recovery code `code_id` of `user_id` used and
         satisfy its login challenge `challenge_id`, each only while unused and unsatisfied
         (conditional `UPDATE`s), then revoke (`revoked_at = now`) every unrevoked MFA method
-        of `user_id`, which forces TOTP re-enrolment: `find_pending_method` never returns a
-        revoked method. Returns whether this call won both; when it did not, it rolls back,
-        so a lost race spends no code. PR #1618 review finding 2 (high): the conditions are
-        what make one code, and one challenge, sign in at most once."""
+        of `user_id` (which forces TOTP re-enrolment: `find_pending_method` never returns a
+        revoked method) and record the contract's `security.mfa_recovery_used` system event.
+        Returns whether this call won both; when it did not, it rolls back, so a lost race
+        spends no code. PR #1618 review finding 2 (high): the conditions are what make one
+        code, and one challenge, sign in at most once. `None`, rolled back before any change,
+        when the user is `disabled` or gone: its row is read first under a share lock, as a
+        session insert does (#2911)."""
         ...

@@ -32,6 +32,7 @@ from candleviewer.auth.errors import (
     MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    UserDisabled,
 )
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import (
@@ -266,7 +267,8 @@ class MfaService:
         of *mfa_token* and the unused recovery code of its user that *recovery_code* matches.
         Only a refusal changes anything: it counts toward the challenge's attempt cap, the
         login lockout's 5, so wrong codes are throttled and each five cost a password sign-in.
-        The router writes its audit records between this and `complete_recovery` (C-2.9).
+        The split from `complete_recovery` lets the router write its audit records in between
+        (C-2.9).
 
         Raises `MfaChallengeInvalid`, `MfaChallengeLocked`, `RecoveryCodeInvalid`, or
         `RecoveryCodesExhausted`.
@@ -303,17 +305,23 @@ class MfaService:
 
     async def complete_recovery(self, check: MfaRecoveryCheck) -> None:
         """The mutating half (#2344, contract `authMfaRecovery`): one repository transaction
-        spends the code, satisfies the challenge and revokes every MFA method of the user, so
-        the sign-in forces TOTP re-enrolment however many codes remain (#2296) and no old
-        method can be confirmed again.
+        spends the code, satisfies the challenge, revokes every MFA method of the user and
+        raises the contract's `security.mfa_recovery_used` system event, so the sign-in forces
+        TOTP re-enrolment however many codes remain (#2296) and no old method can be confirmed
+        again.
 
         Raises `RecoveryCodeInvalid`, with nothing changed, when a concurrent request spent
         the code or satisfied the challenge first (PR #1618 review finding 2); like a replay,
-        it counts as a failed attempt."""
+        it counts as a failed attempt. Raises `UserDisabled`, with nothing changed and no
+        attempt counted, when the user is disabled or gone, read under the user-row lock in
+        that transaction (#2911), so a disable that commits first always wins."""
         challenge_id = str(check.challenge_id)
-        if not await self._repository.complete_recovery(
+        done = await self._repository.complete_recovery(
             str(check.user_id), challenge_id=challenge_id, code_id=check.code_id, now=self._clock()
-        ):
+        )
+        if done is None:
+            raise UserDisabled(None)
+        if not done:
             await self._repository.record_challenge_attempt(challenge_id)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
 
