@@ -26,6 +26,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def test_the_rotation_day_counts_print_masked_though_they_hold_no_secret() -> None:
+    """`repr()` masks by field name, and `key` is in the name: harmless, so not widened for them."""
+    shown = repr(Settings())
+    assert "key_rotation_policy_days='**redacted**'" in shown
+    assert "key_rotation_warn_days='**redacted**'" in shown
+
+
 @pytest.mark.parametrize(
     "bad",
     [

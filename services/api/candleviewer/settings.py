@@ -10,9 +10,9 @@ runtime/per-user layers are owned by M21 `admin`.
 Security: `__repr__`/`__str__` never print secret values (redacting `__str__`
 below) — an early instance of M24's redaction-filter requirement. Any field
 whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is a
-`SecretStr`, except the `key_rotation_*` day counts, which hold no secret;
-`repr()` masks all of them, so none can leak into logs, tracebacks or
-`repr()` by accident.
+`SecretStr` so it can never leak into logs, tracebacks or `repr()` by
+accident. The two `key_rotation_*` day counts hold no secret and are plain
+ints, but their names match too, so they print as `**redacted**`.
 """
 
 from __future__ import annotations

@@ -3,7 +3,9 @@
 Pure: the answer follows from the key's registration time and status, the policy and `now`, and
 nothing is stored, so a policy change recomputes every key on the same call. `rotation_due_at` is
 `created_at` plus the policy, never the exchange-reported `expires_at` (US-ACCT-005 NFR). Age only
-reports: nothing here disables a key, and the order-entry gate never reads it.
+reports: nothing here disables a key, and the order-entry gate never reads it. The column
+`api_keys.rotation_due_at` is never written and stays NULL (21-database-schema.md), so serve both
+fields from `KeyRotationPolicy.evaluate`, never from `ApiKeyMetadata.rotation_due_at`.
 """
 
 from __future__ import annotations

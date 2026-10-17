@@ -16,6 +16,7 @@ from hypothesis import strategies as st
 
 from candleviewer.accounts.health import AccountHealthMonitor, HealthState
 from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason, KeyStanding
+from candleviewer.accounts.verification import Rule
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryGate, OrderEntryRefusal
 from tests.unit.accounts._fakes import ACC, Dms, FakeClock, Sizing, Standings
 
@@ -30,6 +31,16 @@ class _Maintenance:
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
         return None
+
+
+class _Health:
+    """A `HealthStates` answering one fixed value, in the contract or out of it."""
+
+    def __init__(self, state: object) -> None:
+        self.state = state
+
+    def current(self, account_id: UUID) -> HealthState | None:
+        return cast(HealthState | None, self.state)
 
 
 def _gate(
@@ -99,6 +110,29 @@ def test_key_standing_refusals(standing: KeyStanding | None, expected: str) -> N
     health.ws_heartbeat(ACC)
     refusal = check.refusal(ACC)
     assert refusal is not None and refusal.reason == expected
+
+
+@pytest.mark.parametrize("state", [*HealthState, None, "suspended", "unverified", "", 1], ids=repr)
+def test_only_a_healthy_or_degraded_account_admits_an_order(state: object) -> None:
+    """An allow-list (KV-T12): a state added later, or a value outside the contract, refuses."""
+    check = AccountHealthCheck(_Health(state), Standings({ACC: ACTIVE}), Sizing())
+    refusal = check.refusal(ACC)
+    assert (refusal is None) == (state in {HealthState.HEALTHY, HealthState.DEGRADED})
+    assert refusal is None or refusal.reason == "account_unhealthy"
+
+
+@pytest.mark.parametrize("truthy", [1, "yes", "True"], ids=repr)
+def test_only_an_active_key_that_is_exactly_true_admits_an_order(truthy: object) -> None:
+    check, health, _ = _gate(KeyStanding(cast(bool, truthy)))
+    health.ws_heartbeat(ACC)
+    refusal = check.refusal(ACC)
+    assert refusal is not None and refusal.reason == "no_active_key"
+
+
+def test_the_policy_disable_codes_are_the_key_verifiers_rule_codes() -> None:
+    """`DisabledReason` repeats three codes that `Rule` owns: a rename there must fail here."""
+    verifier = {Rule.WITHDRAW_PERMISSION, Rule.IP_WHITELIST_MISSING, Rule.IP_WHITELIST_MISMATCH}
+    assert {d.value for d in DisabledReason} == {r.value for r in verifier} | {"account_disabled"}
 
 
 @pytest.mark.parametrize("disabled", list(DisabledReason))

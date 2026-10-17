@@ -37,6 +37,10 @@ class DisabledReason(StrEnum):
 #: One detail for every policy disable, whatever the `DisabledReason`: which key-policy rule failed
 #: is `keys:read` information, shown on the key-health screen, never in the 403.
 _POLICY_DETAIL: Final = "Trading is disabled for this account by policy."
+#: The only health states that admit an order, an allow-list: an unmonitored account (`None`), a
+#: state added later and a value outside the contract all refuse (KV-T12: health is never asserted
+#: optimistically; C-2.21).
+_ADMITTING: Final = (HealthState.HEALTHY, HealthState.DEGRADED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +72,8 @@ class SizingSource(Protocol):
 
 class AccountHealthCheck:
     """`OrderEntryCheck` for one account's key standing and health, and the sizing flag for its
-    wallet freshness."""
+    wallet freshness. It admits an order only for a verified active key (exactly `True`) and a
+    `healthy` or `degraded` account; every other answer refuses."""
 
     def __init__(self, health: HealthStates, keys: KeyStandingPort, wallets: SizingSource) -> None:
         self._health = health
@@ -79,9 +84,9 @@ class AccountHealthCheck:
         standing = self._keys.standing(account_id)
         if standing is not None and standing.disabled_reason is not None:
             return OrderEntryRefusal("account_disabled_by_policy", _POLICY_DETAIL)
-        if standing is None or not standing.has_active_key:
+        if standing is None or standing.has_active_key is not True:
             return OrderEntryRefusal("no_active_key", "The account has no verified active key.")
-        if self._health.current(account_id) in (None, HealthState.DOWN):
+        if self._health.current(account_id) not in _ADMITTING:
             return OrderEntryRefusal(
                 "account_unhealthy", "Neither the private WS nor REST has succeeded recently."
             )

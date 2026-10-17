@@ -815,7 +815,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `last_used_at`              | timestamptz | yes  | NULL            | ≤1 attempt/min/key, async; only writer: M2 broker `_touch`  |
 | `last_error_code`           | text        | yes  | NULL            | e.g. `10003`, `10018`, `10002`                              |
 | `last_error_at`             | timestamptz | yes  | NULL            |                                                             |
-| `rotation_due_at`           | timestamptz | yes  | NULL            | Policy: 90 days                                             |
+| `rotation_due_at`           | timestamptz | yes  | NULL            | Never written; derived on read (`key_age.py`), stays NULL   |
 | `created_by` / `updated_by` | uuid        | yes  | NULL            |                                                             |
 | `created_at` / `updated_at` | timestamptz | no   | `now()`         |                                                             |
 | `revoked_at`                | timestamptz | yes  | NULL            |                                                             |
@@ -845,7 +845,7 @@ CREATE TABLE api_keys (
   last_used_at             timestamptz,
   last_error_code          text,
   last_error_at            timestamptz,
-  rotation_due_at          timestamptz,
+  rotation_due_at          timestamptz,                 -- never written: derived on read
   created_by               uuid REFERENCES users(id) ON DELETE SET NULL,
   updated_by               uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at               timestamptz NOT NULL DEFAULT now(),
@@ -861,10 +861,17 @@ CREATE TABLE api_keys (
 CREATE UNIQUE INDEX ux_api_keys_label  ON api_keys (exchange_account_id, lower(label)) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX ux_api_keys_active ON api_keys (exchange_account_id)
   WHERE status = 'active' AND revoked_at IS NULL;     -- exactly one active key per account
-CREATE INDEX ix_api_keys_rotation ON api_keys (rotation_due_at) WHERE status = 'active';
+CREATE INDEX ix_api_keys_rotation ON api_keys (rotation_due_at) WHERE status = 'active';  -- unused
 CREATE INDEX ix_api_keys_kek      ON api_keys (kek_version)     WHERE revoked_at IS NULL;
 COMMENT ON COLUMN api_keys.secret_enc IS 'SECRET: AES-256-GCM ciphertext; decryption only inside the credential broker module';
 ```
+
+`rotation_due_at` is derived, not stored (E27-T04, US-ACCT-005). `KeyRotationPolicy.evaluate`
+(`accounts/key_age.py`) computes `ApiKey.rotation_due_at` and `rotation_state` on every read from
+`created_at`, the key's `status` and `CV_KEY_ROTATION_POLICY_DAYS` (default 90), so a policy change
+recomputes every key at once and nothing needs a backfill. No code writes the column: it stays
+`NULL`, and `ix_api_keys_rotation` is unused. The reminder (query 33) reads the active keys and ages
+each one with the policy; it never reads this column.
 
 `permission_snapshot` shape (validated by the `jsonb` CHECK `ak_snapshot_shape` below). Bybit reports a
 key's rights as **values inside a group**: `permissions.Wallet` may list `AccountTransfer`,
@@ -3748,7 +3755,7 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 30  | Audit viewer                  | `ORDER BY event_ts DESC` + filters on actor/action/object                              | `ix_audit_time`, `ix_audit_actor`, `ix_audit_action`, `ix_audit_object` | < 20 ms                               |
 | 31  | Audit verifier                | full scan by `id`                                                                      | PK                                                                      | minutes (nightly)                     |
 | 32  | System health                 | `system_events WHERE resolved_at IS NULL AND severity IN ('error','critical')`         | `ix_se_sev_open` (partial)                                              | < 5 ms                                |
-| 33  | Key rotation reminder         | `api_keys WHERE rotation_due_at < now() AND status='active'`                           | `ix_api_keys_rotation` (partial)                                        | < 2 ms                                |
+| 33  | Key rotation reminder         | `api_keys WHERE status='active' AND revoked_at IS NULL`, aged in code                  | `ux_api_keys_active` (partial)                                          | < 2 ms                                |
 | 34  | KEK rotation job              | `api_keys WHERE kek_version < $1`                                                      | `ix_api_keys_kek`                                                       | < 5 ms                                |
 | 35  | Risk dashboard                | latest `wallet_balances` per account                                                   | `ix_wb_acct_time` + `DISTINCT ON`                                       | < 10 ms                               |
 | 36  | Incident list / upsert        | `WHERE status = $1 ORDER BY last_seen_at DESC`; `ON CONFLICT (component, signature)`   | `ix_incidents_status_seen`, `ix_incidents_seen`, `ux_incidents_group`   | < 5 ms                                |
