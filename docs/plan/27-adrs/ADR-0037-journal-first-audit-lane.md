@@ -1,7 +1,7 @@
 # ADR-0037 — Journal-first audit lane for auth and risk-reducing records (EX-07 exit)
 
-- Status: **proposed**. The design PR of #3009, docs only. main-orchestrator accepts or amends it under the
-  owner's delegation before S1a merges; the owner ratifies it before S3 merges, the first slice that changes what
+- Status: **accepted (interim; main-orchestrator 2026-10-17 — owner ratification due before S3)**, on #3009 under
+  the owner's delegation; the owner ratifies it before S3 merges, the first slice that changes what
   a user sees during an audit outage. EX-07 expires on 2026-11-15; Rollout has the dates.
 - Date: 2026-10-17 (review round 4 folded the same day)
 - Deciders: Owner (`@basiltt`) through main-orchestrator. Questions pending: hcl-worker-1 (Q2), the E27 owner

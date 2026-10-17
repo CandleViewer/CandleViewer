@@ -2,7 +2,7 @@
 
 MADR-format records for CandleViewer. The authoritative index (with summaries) is §16 of [`../20-architecture.md`](../20-architecture.md).
 
-Status values: `decided` (binding now), `proposed` (decision deadline stated inside the record), `proposed (gated)` (part of the record is binding now and part is gated — the record says which), `superseded` (points at its replacement).
+Status values: `decided` (binding now), `proposed` (decision deadline stated inside the record), `proposed (gated)` (part of the record is binding now and part is gated — the record says which), `superseded` (points at its replacement), `accepted (interim)` (binding now; the record names the ratification still due).
 
 | ADR                                                               | Title                                                                                                                         | Status                                                                                      |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -40,7 +40,7 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0034](ADR-0034-indicator-compute-placement.md)               | Indicator compute placement (`client_worker` vs `server`) and bit-for-bit worker-mirror parity (E13-K01)                      | decided (ratified 2026-10-09, #1778)                                                        |
 | [ADR-0035](ADR-0035-replay-source-and-seek.md)                    | Replay source tier, read-ahead and seek strategy (E26-K01; ticket said ADR-0018, taken)                                       | **proposed** (finalised in E26-T07; owner approval pending)                                 |
 | [ADR-0036](ADR-0036-dev-only-account-fixture-transport.md)        | Dev-only account-fixture transport (`CV_ACCOUNT_FIXTURE`) and its fence (#2893)                                               | **proposed** (orchestrator rulings 2026-10-16; owner ratification pending)                  |
-| [ADR-0037](ADR-0037-journal-first-audit-lane.md)                  | Journal-first audit lane for auth and risk-reducing records (EX-07 exit, #3009)                                               | **proposed** (orchestrator interim acceptance, then owner ratification)                     |
+| [ADR-0037](ADR-0037-journal-first-audit-lane.md)                  | Journal-first audit lane for auth and risk-reducing records (EX-07 exit, #3009)                                               | **accepted (interim)** (main-orchestrator 2026-10-17; owner ratification due before S3)     |
 
 ## Writing a new ADR
 
