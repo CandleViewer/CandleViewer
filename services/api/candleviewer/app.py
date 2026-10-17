@@ -97,6 +97,11 @@ from candleviewer.api.deny_by_default import (
 )
 from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.drawings_models import TOOLS
+from candleviewer.api.enrolment_guard import (
+    EnrolmentRefusals,
+    make_enrolment_only_guard,
+    sessionless_operations,
+)
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
@@ -1285,6 +1290,8 @@ def create_app(
     # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
     csrf_audits = RefusalAuditTracker()
     app.state.csrf_refusal_audits = csrf_audits
+    # #2295: refusals of an enrolment-only session, HTTP and WS, share that cap and drain.
+    enrolment_refusals = EnrolmentRefusals(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits)
     app.include_router(
         make_auth_router(
             ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec, server_timing=auth_perf
@@ -1459,6 +1466,17 @@ def create_app(
         IdleLockMiddleware,
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
         spec=spec,
+    )
+    # #2295: the enrolment-only session reaches five operations; added after (so outside) the
+    # idle-lock gate and the read-only/step-up guard, so a refused request never records a step-up
+    # challenge, and a locked full session still meets the idle lock's own 401.
+    app.middleware("http")(
+        make_enrolment_only_guard(
+            ctx.auth,
+            refusals=enrolment_refusals,
+            operations=declared_operations(spec),
+            sessionless=sessionless_operations(spec),
+        )
     )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
@@ -2033,7 +2051,8 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> IdleLock (#2300)
+    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> enrolment-only guard (#2295)
+    #   -> IdleLock (#2300)
     #   -> read-only/step-up guard -> routes.
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level

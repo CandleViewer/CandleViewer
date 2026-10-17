@@ -36,7 +36,7 @@ from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, CLOSE_USER_DISABLED, RevocationHub
 from tests.csrf_helpers import arm_csrf
-from tests.unit.auth.auth_fakes import FakeUserRepository
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -47,6 +47,7 @@ _WS_TIMEOUT_S = 5.0
 _ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every request and upgrade
 _OWNER, _MANAGER, _TARGET = (uuid.uuid5(uuid.NAMESPACE_URL, f"cv-2272/{n}") for n in "omt")
 _ROLES = {_OWNER: "owner", _MANAGER: "manager", _TARGET: "manager"}
+_INERT_DIGEST = "unused"  # stored-hash placeholder: no password is ever verified here
 
 
 class _Clock:
@@ -96,8 +97,14 @@ class _Env:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
+        # Every session belongs to a user with a confirmed TOTP method: a session of an unknown
+        # user is never a full one (#2295).
+        users = FakeUserRepository()
+        for user_id in _ROLES:
+            user = make_user(password_hash=_INERT_DIGEST, username=str(user_id), email="u@x.t")
+            users.add(user.model_copy(update={"id": user_id}))
         self.auth = AuthService(
-            FakeUserRepository(),
+            users,
             mfa_repository=FakeMfaRepository(),
             session_repository=self.repo,
             clock=self.clock,

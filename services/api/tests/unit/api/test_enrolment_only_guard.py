@@ -7,6 +7,7 @@ answer and that no handler logic ran. The composed app is covered by
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,20 +17,27 @@ from typing import Any, cast
 import pytest
 import yaml
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from starlette.datastructures import Headers
+from structlog.testing import capture_logs
 
+from candleviewer.api import csrf as csrf_module
+from candleviewer.api import sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import RefusalAuditTracker
 from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.enrolment_guard import (
     ENROLMENT_OPERATIONS,
+    REFUSAL_ACTION,
     EnrolmentRefusals,
     make_enrolment_only_guard,
     sessionless_operations,
 )
+from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.audit.actions import validate_action
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
     AuthServiceUnavailable,
     SessionIdleLocked,
@@ -306,6 +314,61 @@ def test_guard_reads_the_bearer_scheme_case_insensitively(world: _World) -> None
     assert _refused(resp)
 
 
+class _TokenRecorder:
+    """A session store that records the token it is asked for and knows none."""
+
+    def __init__(self) -> None:
+        self.tokens: list[str] = []
+
+    async def authenticate_access_token(self, token: str, **_kw: Any) -> SessionRecord:
+        self.tokens.append(token)
+        raise SessionNotFound("recorded only")
+
+
+def _request(header: str) -> Request:
+    headers = [(b"authorization", header.encode())] if header else []
+    scope = {"type": "http", "method": "GET", "path": "/auth/sessions", "headers": headers}
+    return Request(scope)
+
+
+async def _ok(request: Request) -> Response:
+    return Response(status_code=204)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Bearer tok-enrolling",
+        "bearer tok-enrolling",
+        "BEARER tok-enrolling",
+        "Bearer  tok-enrolling",
+        "Bearer tok-enrolling ",
+        "Bearer tok-enrolling extra",
+        "Bearer\ttok-enrolling",
+        " Bearer tok-enrolling",
+        "Bearer",
+        "Bearer ",
+        "Basic tok-enrolling",
+        "tok-enrolling",
+        "",
+    ],
+)
+async def test_guard_reads_the_bearer_exactly_as_the_route_resolvers_do(header: str) -> None:
+    """A parse that drifted from the routes' would let a token past the guard that a route
+    then accepts. The RBAC routes' resolver, the session routes and the CSRF binding agree."""
+    request = _request(header)
+    resolver_store = _TokenRecorder()
+    await SessionSnapshotResolver(lambda: resolver_store, cast(Any, None)).resolve(request)
+    routes_see = sessions_module._bearer(request)
+    auth = _Auth()
+
+    await _guard(auth, _refusals(_Audit()))(request, _ok)
+
+    assert auth.authenticated == resolver_store.tokens
+    assert auth.authenticated == ([] if routes_see is None else [routes_see])
+    assert csrf_module._bearer(Headers(scope=request.scope)) == routes_see
+
+
 @pytest.mark.parametrize("error", [SessionNotFound("x"), SessionRevoked("x")])
 def test_guard_leaves_a_token_without_a_live_session_to_the_route(
     world: _World, error: Exception
@@ -381,3 +444,152 @@ def test_guard_refuses_an_overlong_enrolment_only_session_like_an_expired_one(
     assert _refused(world.call(method, path, "overlong"), 401, "unauthenticated")
     assert world.call("POST", "/auth/logout", "overlong").status_code == 200  # sign-out stays
     assert world.hits == [("POST", "/auth/logout")]
+
+
+# -- the security trail: metric, log line, audit record (SR-125, C-2.9) ------------------------
+
+
+def test_guard_refusal_is_audited_with_the_actor_session_and_route_template(
+    world: _World,
+) -> None:
+    world.call("DELETE", _REVOKE_OTHER)
+
+    (record,) = world.audit.records
+    assert record == {
+        "action": REFUSAL_ACTION,
+        "actor_label": str(_USERS["enrolling"]),
+        "actor_user_id": _USERS["enrolling"],
+        "actor_ip": "testclient",
+        "session_id": uuid.uuid5(_USERS["enrolling"], "session"),
+        "outcome": AuditOutcome.DENIED,
+        "severity": Severity.WARNING,
+        "reason": _CODE,
+        "after_state": {"channel": "http", "method": "DELETE", "path": "/me/sessions/{sessionId}"},
+    }
+
+
+def test_guard_refusal_is_counted_and_logged_with_the_template_never_the_raw_path(
+    world: _World,
+) -> None:
+    before = _count("http", "enrolment_only")
+
+    with capture_logs() as logs:
+        world.call("DELETE", _REVOKE_OTHER)
+
+    assert _count("http", "enrolment_only") == before + 1
+    (line,) = [e for e in logs if e["event"] == "auth.enrolment_only.refused"]
+    assert (line["channel"], line["method"], line["path"]) == (
+        "http",
+        "DELETE",
+        "/me/sessions/{sessionId}",
+    )
+    assert _REVOKE_OTHER not in repr(logs)
+
+
+def test_guard_refusal_audits_stay_within_the_per_session_budget() -> None:
+    world = _World(budget=2)
+    before = _count("http", "audit_throttled")
+
+    answers = [world.call("GET", "/auth/sessions").json() for _ in range(3)]
+
+    assert answers[0] == answers[1] == answers[2] and answers[0]["code"] == _CODE
+    assert [r["action"] for r in world.audit.records] == [REFUSAL_ACTION] * 2
+    assert _count("http", "audit_throttled") == before + 1
+
+
+def test_guard_refusal_answer_never_depends_on_the_audit_write(world: _World) -> None:
+    world.audit.failure = RuntimeError("audit store down")
+    before = _count("http", "audit_unavailable")
+
+    resp = world.call("GET", "/auth/sessions")
+
+    assert _refused(resp) and "audit" not in resp.text
+    assert _count("http", "audit_unavailable") == before + 1
+
+
+def test_guard_counts_an_overlong_session_as_expired_and_audits_nothing(world: _World) -> None:
+    before = _count("http", "expired")
+
+    world.call("GET", "/auth/sessions", "overlong")
+
+    assert _count("http", "expired") == before + 1
+    assert world.audit.records == []  # an expired session, not an authorisation denial
+
+
+def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -> None:
+    world.auth.failure = OSError("user store unreachable")
+    before = _count("http", "unclassified")
+
+    with capture_logs() as logs:
+        world.call("GET", "/auth/sessions", "full")
+
+    assert _count("http", "unclassified") == before + 1
+    (line,) = [e for e in logs if e["event"] == "auth.enrolment_only.unclassified"]
+    assert (line["log_level"], line["error"], line["path"]) == (
+        "error",
+        "OSError",
+        "/auth/sessions",
+    )
+
+
+async def test_refusal_audit_that_outlasts_the_wait_is_left_to_finish() -> None:
+    """The write is never cancelled mid-append (C-2.9, writer fix #2250): it finishes after
+    the answer, and the late arrival is counted `audit_slow`."""
+    release = asyncio.Event()
+    written: list[str] = []
+
+    class _Slow:
+        async def emit(self, action: str, **_kw: Any) -> None:
+            await release.wait()
+            written.append(action)
+
+    tracker = RefusalAuditTracker()
+    refusals = EnrolmentRefusals(_Slow(), tracker=tracker, audit_timeout_s=0.01)
+    record = SessionRecord.model_construct(id=uuid.uuid4(), user_id=uuid.uuid4())
+    before = _count("ws", "audit_slow")
+
+    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
+
+    assert _count("ws", "audit_slow") == before + 1
+    assert (len(tracker), written) == (1, [])
+    release.set()
+    assert await tracker.drain() == 0
+    assert written == [REFUSAL_ACTION]
+
+
+async def test_refusal_is_not_audited_while_the_in_flight_cap_is_full() -> None:
+    audit = _Audit()
+    refusals = _refusals(audit, cap=0)
+    record = SessionRecord.model_construct(id=uuid.uuid4(), user_id=uuid.uuid4())
+    before = _count("ws", "audit_throttled")
+
+    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
+
+    assert audit.records == []
+    assert _count("ws", "audit_throttled") == before + 1
+
+
+# -- its slot in the composed app --------------------------------------------------------------
+
+
+def _middleware_name(middleware: Any) -> str:
+    dispatch = middleware.kwargs.get("dispatch")
+    if dispatch is not None:
+        return str(dispatch.__qualname__).split(".")[0]
+    return str(getattr(middleware.cls, "__name__", "?"))
+
+
+def test_guard_sits_between_the_csrf_guard_and_the_read_only_guard() -> None:
+    """Inside MeshOnly and CSRF (SR-041/SR-042: off-mesh traffic never reaches its session and
+    user reads), outside the read-only/step-up guard (a refusal records no step-up challenge)."""
+    from candleviewer import app as appmod
+
+    order = [_middleware_name(m) for m in appmod.create_app().user_middleware]  # outermost first
+    at = order.index("CsrfMiddleware")
+
+    assert order[at : at + 3] == [
+        "CsrfMiddleware",
+        "make_enrolment_only_guard",
+        "make_read_only_guard",
+    ]
+    assert order.index("MeshOnlyMiddleware") < at
