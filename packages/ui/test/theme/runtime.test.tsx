@@ -10,6 +10,7 @@ import {
   HIGH_CONTRAST_SHORTCUT,
   ThemeProvider,
   createThemeStore,
+  sharedThemeStore,
   toggleHighContrastAnnounced,
   useDensity,
   useReducedMotion,
@@ -91,7 +92,11 @@ describe("theme provider and hooks", () => {
       api = { scale, reduced, setScale, override };
       return null;
     };
-    const options = { storage: memoryStorage(), matchMedia: mediaStub().matchMedia };
+    const options = {
+      root: document.createElement("html"),
+      storage: memoryStorage(),
+      matchMedia: mediaStub().matchMedia,
+    };
     await mount(
       <ThemeProvider options={options}>
         <Probe />
@@ -102,7 +107,7 @@ describe("theme provider and hooks", () => {
       api?.override("on");
     });
     expect(api).toMatchObject({ scale: 125, reduced: true });
-    expect(rootData["textScale"]).toBe("125");
+    expect(options.root.dataset["textScale"]).toBe("125");
     expect(() => renderToStaticMarkup(<Probe />)).toThrow("requires <ThemeProvider>");
     // jsdom defines `document`, so React warns that the layout effect does nothing on the server
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -113,6 +118,37 @@ describe("theme provider and hooks", () => {
     );
     quiet.mockRestore();
     expect(served).toBe("");
+  });
+
+  it("providers on one root share a store, so they agree and the root is written once", async () => {
+    const root = document.createElement("html");
+    const options = { root, storage: memoryStorage(), matchMedia: mediaStub().matchMedia };
+    let setTheme: (theme: "light") => void = () => undefined;
+    const Reader = ({ id }: { id: string }): JSX.Element => {
+      const [theme, set] = useTheme();
+      setTheme = set;
+      return <output aria-label={id}>{theme}</output>;
+    };
+    const host = await mount(
+      <>
+        <ThemeProvider options={options}>
+          <Reader id="first" />
+        </ThemeProvider>
+        <ThemeProvider options={options}>
+          <Reader id="second" />
+        </ThemeProvider>
+      </>,
+    );
+    const writes: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => writes.push(...records));
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    await act(async () => setTheme("light"));
+    const shown = ["first", "second"].map((id) => within(host).getByLabelText(id).textContent);
+    expect(shown).toEqual(["light", "light"]);
+    expect(root.dataset["theme"]).toBe("light");
+    expect(writes).toHaveLength(1);
+    observer.disconnect();
+    expect(sharedThemeStore({ root })).toBe(sharedThemeStore(options));
   });
 
   it("exposes the Ctrl+Shift+H contract and announces each toggle through one polite live region", () => {

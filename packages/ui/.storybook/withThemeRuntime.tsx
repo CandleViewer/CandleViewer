@@ -2,14 +2,17 @@ import { useEffect, type JSX } from "react";
 import type { Decorator } from "@storybook/react";
 import {
   ThemeProvider,
-  createThemeStore,
+  sharedThemeStore,
   type DensityName,
   type MotionOverride,
   type ThemeName,
 } from "../src/theme/index.js";
 
-/** One in-memory store for the preview: the toolbar globals, not localStorage, are the source of truth. */
-const store = createThemeStore({ storage: { getItem: () => null, setItem: () => undefined } });
+/**
+ * One in-memory store for the preview: the toolbar globals, not localStorage, are the source of truth.
+ * It is the shared store of `document.documentElement`, so providers a story adds itself agree with it.
+ */
+const store = sharedThemeStore({ storage: { getItem: () => null, setItem: () => undefined } });
 
 interface ThemeGlobals {
   readonly theme: ThemeName;
