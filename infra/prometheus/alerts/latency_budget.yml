@@ -45,11 +45,15 @@ groups:
         expr: (1 - (sum by (env) (rate(e2e_tick_to_paint_seconds_bucket{le="0.1"}[1h])) / sum by (env) (rate(e2e_tick_to_paint_seconds_count[1h])))) / 0.05
       - record: cv:slo_tick_to_paint:burn_rate_6h
         expr: (1 - (sum by (env) (rate(e2e_tick_to_paint_seconds_bucket{le="0.1"}[6h])) / sum by (env) (rate(e2e_tick_to_paint_seconds_count[6h])))) / 0.05
-      # Budget #6: 95% of fan-outs within the 20 ms backend envelope.
+      # Budget #6: 95% of fan-outs within the 20 ms backend envelope, read from the gateway's
+      # `cv_ws_fanout_seconds` (E17-T06). It observes one frame in 32 with weight 32, so the good
+      # and total counts are both weighted and the ratio is unbiased. The `fanout` stage of
+      # `ingest_stage_seconds` is another span (ingestion to the queue hand-off): it stays in the
+      # per-stage attribution rules above and no longer feeds this budget.
       - record: cv:slo_backend_fanout:burn_rate_1h
-        expr: (1 - (sum by (env) (rate(ingest_stage_seconds_bucket{stage="fanout",le="0.02"}[1h])) / sum by (env) (rate(ingest_stage_seconds_count{stage="fanout"}[1h])))) / 0.05
+        expr: (1 - (sum by (env) (rate(cv_ws_fanout_seconds_bucket{le="0.02"}[1h])) / sum by (env) (rate(cv_ws_fanout_seconds_count[1h])))) / 0.05
       - record: cv:slo_backend_fanout:burn_rate_6h
-        expr: (1 - (sum by (env) (rate(ingest_stage_seconds_bucket{stage="fanout",le="0.02"}[6h])) / sum by (env) (rate(ingest_stage_seconds_count{stage="fanout"}[6h])))) / 0.05
+        expr: (1 - (sum by (env) (rate(cv_ws_fanout_seconds_bucket{le="0.02"}[6h])) / sum by (env) (rate(cv_ws_fanout_seconds_count[6h])))) / 0.05
       # WS frame decode p95 <= 4 ms (frontend).
       - record: cv:slo_fe_decode:burn_rate_1h
         expr: (1 - (sum by (env) (rate(fe_ws_decode_ms_bucket{le="4"}[1h])) / sum by (env) (rate(fe_ws_decode_ms_count[1h])))) / 0.05

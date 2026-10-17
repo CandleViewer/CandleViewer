@@ -1,0 +1,103 @@
+# E17-T06 (#571): WS gateway alert set. Series: services/api/candleviewer/observability/
+# metrics_catalogue.py (`cv_ws_*`). Thresholds: docs/plan/23-ws-protocol.md section 16.3 and
+# 06-performance-and-load-standard.md budget #6. Runbooks: docs/plan/07-release-and-prr.md
+# section 9. Tests: infra/prometheus/tests/ws_alerts.test.yml (promtool) and
+# services/api/tests/unit/observability/test_ws_alert_rules.py, which ties each expression to the
+# catalogue and the code.
+# Severities (20-architecture.md section 12.5): all four are `ticket`. The ticket calls the
+# sequence-gap alert critical (`page`); the rule below says why it is not. `increase()` needs an
+# earlier sample, so every series read here is bound at import (ws/metrics.py, ws/sequencing.py):
+# a series created by its first event would hide that event.
+# Quiet hours: Alertmanager mutes tickets 22:00-07:00 UTC (default) and never sends one that fires
+# and resolves inside that time, so the two any-event tickets carry `keep_firing_for: 9h30m`: one
+# that fires at 22:00 is still firing, and is sent, at 07:00. The 4 h repeat_interval re-sends it.
+# Two preconditions, neither checked: a CV_ALERT_QUIET_HOURS wider than about 9 h 35 m (window plus
+# hold, less one 5 m group_interval) needs a longer hold, and a Prometheus restart drops the ticket.
+groups:
+  - name: ws-gateway
+    interval: 30s
+    rules:
+      - alert: WsFanoutP95OverBudget
+        # `cv_ws_fanout_seconds` observes one frame in 32 with weight 32 (ws/metrics.py
+        # SAMPLE_EVERY), so a count moves in steps of 32. The p95 is only judged with at least
+        # 40 sampled frames (40 x 32 = 1280 weighted observations) in the 5 m window. With N
+        # sampled frames the p95 passes the line only when more than 5 % of them (k > 0.05 N) are
+        # slow: at 40 that takes three, so one or two stragglers cannot raise it alone. A quieter
+        # window stays silent; a stalled loop is EventLoopLagHigh's to catch.
+        expr: >-
+          histogram_quantile(0.95, sum by (env, le) (rate(cv_ws_fanout_seconds_bucket[5m]))) > 0.02
+          and on (env)
+          sum by (env) (increase(cv_ws_fanout_seconds_count[5m])) >= 1280
+        for: 5m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsfanoutp95overbudget"
+          summary: "WS gateway fan-out p95 {{ $value | humanizeDuration }} is over the 20 ms budget (#6)."
+          description: >-
+            The gateway segment of budget #6 (sampled 1 in 32) held a p95 above 20 ms for five
+            minutes, judged on at least 40 sampled frames. Live data reaches clients late. Order entry
+            shares the event loop: if EventLoopLagHigh also fires, treat order latency as affected.
+
+      - alert: WsUpstreamDesyncHigh
+        # 23-ws-protocol.md section 16.3: target under 1 an hour per topic, hard fail above 5. The
+        # counter has no topic label (a symbol or channel must never be one), and one desync
+        # re-snapshots every subscription to the book, so this is the total across topics and
+        # connections: it cannot miss a topic over the line, and the `ch` in the `ws resync` log
+        # lines says which one it was. `increase()` extrapolates to the window edges, so five
+        # events read a little over 5: round() makes "above 5" mean six. Nothing calls
+        # SequencingHub.upstream_desync in production yet, so this stays at zero until it does.
+        expr: round(sum by (env) (increase(cv_ws_resync_total{reason="upstream_desync"}[1h]))) > 5
+        for: 5m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsupstreamdesynchigh"
+          summary: "More than 5 upstream_desync re-snapshots on the WS gateway in the last hour."
+          description: >-
+            23-ws-protocol.md section 16.3 puts the hard-fail line at 5 an hour per topic
+            (target: under 1). Each affected subscription counts once, so one desync adds
+            one per subscribed book topic; group the `ws resync` log lines by `ch`.
+
+      - alert: WsSlowConsumerClosed
+        # Any close for `slow_consumer` (code 4429, 23-ws-protocol.md section 8.4): that user's
+        # live feed stopped. The window is long enough for the 30 s evaluation; for the hold, see
+        # the header.
+        expr: sum by (env) (increase(cv_ws_closes_total{reason="slow_consumer"}[15m])) > 0
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsslowconsumerclosed"
+          summary: "A WS client was closed as a slow consumer: its live feed stopped."
+          description: >-
+            The connection's outbound queue overflowed and the server closed it with 4429
+            `slow_consumer` (23-ws-protocol.md section 8.4). The client reconnects with
+            backoff and receives fresh snapshots.
+
+      - alert: WsSequenceGapDetected
+        # The counter moves when a client sends `resync` with reason `sequence_gap`
+        # (ws/sequencing.py), and the server does not check the claim against what it sent: any
+        # authenticated client can raise it with one frame. The ticket asks for a page; that would
+        # page the Owner through quiet hours on a client's say-so and, because the page-over-ticket
+        # inhibit rule matches on component and env and all four alerts here share component
+        # `gateway`, hold back the other three (a page on a component of its own would not). So it
+        # is a ticket; a server-side continuity count (a send-path check that `s` follows
+        # `previous_s + 1`, with its own series), which does not exist, is what could earn the page.
+        # Any increase is a bug to chase, never a load condition: do not tune the threshold.
+        expr: sum by (env) (increase(cv_ws_sequence_gaps_detected_total[10m])) > 0
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wssequencegapdetected"
+          summary: "A WS client reported a sequence gap; the server guarantees there is none."
+          description: >-
+            A client sent a `resync` with reason `sequence_gap`. The server numbers every
+            frame of a subscription consecutively (23-ws-protocol.md section 7.1), so this is
+            a bug in the send path or the client, not a load condition. The client already
+            recovered by re-snapshot.
