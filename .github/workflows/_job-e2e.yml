@@ -124,8 +124,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # apps/web's tests import built artefacts of its workspace dependencies; turbo's `^build`
-      # builds them first, but this step runs pnpm directly (#3244).
+      # apps/web's tests may import built artefacts of its workspace dependencies (packages/ui's
+      # CSS exports, #3189); turbo's `^build` builds them first, but this job runs pnpm directly
+      # (#3244).
       - name: Build the workspace packages apps/web depends on
         run: pnpm --filter "@candleviewer/web^..." run build
 

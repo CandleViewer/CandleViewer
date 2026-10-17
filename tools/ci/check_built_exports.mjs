@@ -4,8 +4,11 @@
 // so a lane that runs those tests with pnpm directly must build them first; this guard makes a
 // missing build fail with a clear message instead of a confusing test failure.
 //
-// Every export target must be a file. A pattern target (`./dist/tokens.*.css`) must match at least
-// one file, so a pattern export is never skipped.
+// Every export target must be a file, and every alternative of a fallback array must exist
+// (stricter than Node, which takes the first that resolves). A pattern target
+// (`./dist/tokens.*.css`) must match at least one file in its folder, so a pattern export is never
+// skipped. Only a `*` in the file name is supported: a `*` in a folder segment is reported as
+// unsupported. Every case the guard cannot prove built fails closed.
 //
 // Usage: node tools/ci/check_built_exports.mjs <package-dir> [<package-dir> ...]
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -45,6 +48,10 @@ function exportsOf(dir) {
     console.error(`${CODE}: cannot read ${join(dir, "package.json")}: ${err.message}`);
     process.exit(1);
   }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    console.error(`${CODE}: ${join(dir, "package.json")} is not a JSON object`);
+    process.exit(1);
+  }
   const files = targets(manifest.exports ?? manifest.main ?? [], []);
   if (files.length === 0) {
     console.error(`${CODE}: ${dir}/package.json declares no exports to check`);
@@ -59,10 +66,18 @@ function main(dirs) {
     process.exit(2);
   }
   const missing = [];
+  const unsupported = [];
   for (const dir of dirs) {
     for (const target of exportsOf(dir)) {
-      if (!present(dir, target)) missing.push(join(dir, target));
+      if (dirname(target).includes("*")) unsupported.push(join(dir, target));
+      else if (!present(dir, target)) missing.push(join(dir, target));
     }
+  }
+  if (unsupported.length > 0) {
+    console.error(
+      `${CODE}: unsupported pattern exports (a "*" is supported in the file name only):`,
+    );
+    for (const file of unsupported) console.error(`  ${file}`);
   }
   if (missing.length > 0) {
     console.error(
@@ -70,8 +85,8 @@ function main(dirs) {
         '(pnpm --filter "@candleviewer/web^..." run build):',
     );
     for (const file of missing) console.error(`  ${file}`);
-    process.exit(1);
   }
+  if (unsupported.length > 0 || missing.length > 0) process.exit(1);
   console.log(`check_built_exports: OK (${dirs.join(", ")})`);
 }
 

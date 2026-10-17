@@ -33,7 +33,7 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ _job-gen.yml   (always)           → generated-code freshness gate    (CI-GEN-001..004)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
-├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001)
+├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
 ├─ _job-security.yml (always)        → CodeQL/Semgrep/Bandit/pip-audit/npm-audit/gitleaks/licence (CI-SEC-001..005)
 ├─ _job-coverage.yml (always)        → per-package threshold + ratchet  (CI-COV-001..003)
 ├─ _job-engine-bench.yml (engine filter) → GPU benchmark vs baseline    (CI-BEN-001, stub pending E03-T14)
@@ -50,10 +50,11 @@ merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/work
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
-scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml)
+scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
-└─ coverage-ratchet       → baseline-raise PR from merged coverage runs
+├─ coverage-ratchet       → baseline-raise PR from merged coverage runs
+└─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
