@@ -8,6 +8,7 @@ import pytest
 
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
+    FEATURES,
     LIMITS_BLOCK,
     TRANSITIONS,
     CloseCode,
@@ -19,6 +20,7 @@ from candleviewer.ws.lifecycle import (
     Watchdog,
     bye_frame,
     negotiate_subprotocol,
+    welcome_features,
     welcome_payload,
 )
 
@@ -142,6 +144,7 @@ def test_welcome_payload_full_limits_and_clock_skew() -> None:
         connection_id="ws_1",
         server_time_ms=1_000_022,
         client_clock_ms=1_000_000,
+        features=welcome_features(coalescing=False),
     )
     assert p["clock_skew_ms"] == 22
     assert p["limits"] == LIMITS_BLOCK
@@ -166,6 +169,7 @@ def test_welcome_payload_omits_skew_without_integer_client_clock(clock: object) 
         connection_id="ws_1",
         server_time_ms=5,
         client_clock_ms=clock,
+        features=welcome_features(coalescing=False),
     )
     assert "clock_skew_ms" not in p
 
@@ -178,8 +182,52 @@ def test_welcome_clock_skew_can_be_negative() -> None:
         connection_id="c",
         server_time_ms=1000,
         client_clock_ms=3500,
+        features=welcome_features(coalescing=False),
     )
     assert p["clock_skew_ms"] == -2500
+
+
+def test_the_fixed_features_do_not_advertise_coalescing() -> None:
+    """`coalescing` mirrors `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so it is never
+    fixed."""
+    assert FEATURES == {"replay": True, "binary_payloads": True}
+
+
+@pytest.mark.parametrize("coalescing", [False, True])
+def test_welcome_features_carry_coalescing_and_leave_the_rest_alone(coalescing: bool) -> None:
+    assert welcome_features(coalescing=coalescing) == {
+        "replay": True,
+        "binary_payloads": True,
+        "coalescing": coalescing,
+    }
+
+
+def test_welcome_features_hands_out_a_fresh_dict_and_leaves_features_alone() -> None:
+    """A router keeps its block for every welcome: a later change to one copy, or to the shared
+    `FEATURES`, must not reach another."""
+    first = welcome_features(coalescing=True)
+    second = welcome_features(coalescing=True)
+
+    assert first is not second
+    first["replay"] = False
+    assert second == {"replay": True, "binary_payloads": True, "coalescing": True}
+    assert FEATURES == {"replay": True, "binary_payloads": True}
+
+
+def test_welcome_payload_carries_exactly_the_features_it_is_given() -> None:
+    given = welcome_features(coalescing=True)
+    p = welcome_payload(
+        encoding="json",
+        server_version="1",
+        git_sha="a",
+        connection_id="c",
+        server_time_ms=1000,
+        client_clock_ms=None,
+        features=given,
+    )
+
+    assert p["features"] == given
+    assert p["features"] is not given  # a later change to `given` cannot reach a sent welcome
 
 
 def test_watchdog_priority_and_deadlines() -> None:

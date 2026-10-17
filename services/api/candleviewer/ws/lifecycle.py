@@ -14,7 +14,8 @@ Pure, I/O-free building blocks the gateway drives:
 - `ConnectRateLimiter`: new authenticated sockets per user per sliding minute (§4.3, #2558).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
   timeout evaluated against an injected monotonic clock (no sleeps).
-- `welcome_payload`: the §4.2 `welcome` body with the full §16.2 limits block.
+- `welcome_payload`: the §4.2 `welcome` body with the full §16.2 limits block and the
+  `features` the router serves (`welcome_features`).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import enum
 import math
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -66,7 +67,10 @@ LIMITS_BLOCK: Final[dict[str, int]] = {
     "min_throttle_ms": 50,
     "max_symbols_per_connection": 40,
 }
-FEATURES: Final[dict[str, bool]] = {"replay": True, "binary_payloads": True, "coalescing": True}
+#: §4.2 `welcome.features` every build serves. `coalescing` is not one of them: it mirrors
+#: `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so `welcome_features` adds it per
+#: router.
+FEATURES: Final[dict[str, bool]] = {"replay": True, "binary_payloads": True}
 
 
 class CloseCode(enum.IntEnum):
@@ -421,6 +425,16 @@ class ConnectRateLimiter:
             del self._stamps[stalest]
 
 
+def welcome_features(*, coalescing: bool) -> dict[str, bool]:
+    """The §4.2 `features` block: `FEATURES` plus `coalescing`, which mirrors
+    `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2): advertised when the flag is on.
+    The flag must stay off until the backpressure wiring is complete (#412; removal ticket
+    #2900), so a welcome from a build that has it on earlier advertises ahead of what that build
+    does. That rollout precondition is the operator's; nothing here checks it. Hands out a fresh
+    dict."""
+    return {**FEATURES, "coalescing": coalescing}
+
+
 def welcome_payload(
     *,
     encoding: str,
@@ -429,6 +443,7 @@ def welcome_payload(
     connection_id: str,
     server_time_ms: int,
     client_clock_ms: object,
+    features: Mapping[str, bool],
     auth_timeout_s: float = AUTH_TIMEOUT_S,
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
     heartbeat_timeout_s: float = HEARTBEAT_TIMEOUT_S,
@@ -449,7 +464,7 @@ def welcome_payload(
             "timeout_ms": int(heartbeat_timeout_s * 1000),
         },
         "limits": dict(LIMITS_BLOCK),
-        "features": dict(FEATURES),
+        "features": dict(features),
     }
     if isinstance(client_clock_ms, int) and not isinstance(client_clock_ms, bool):
         p["clock_skew_ms"] = server_time_ms - client_clock_ms
