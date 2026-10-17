@@ -1645,6 +1645,7 @@ def create_app(
         make_market_bars_router(
             lambda: bars_reader,
             recording_started_at_us=recording_started_at_us(ctx),
+            trade_totals=lambda sym, rng: ctx.storage.market_data.trade_totals(sym, rng),
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             now_us=lambda: time.time_ns() // 1000,

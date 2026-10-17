@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api._generated.openapi_models import KlineResponse, Problem
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.market import MarketDataPrincipal
-from candleviewer.api.market_bars import make_market_bars_router
+from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
 from candleviewer.bars.metrics import bars_endpoint_422_no_data_recorded_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
@@ -29,6 +29,8 @@ from candleviewer.bars.rows import bar_param_for, bar_row, row_checksum
 from candleviewer.bars.threshold_builders import DeltaBarBuilder, RangeBarBuilder
 from candleviewer.bars.time_builder import TimeBarBuilder
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.storage.models import TimeRange
+from candleviewer.storage.repositories.rows import TradeTotals
 from tests.unit.bars._trades import final_bars
 from tests.unit.bars.test_time_builder_golden import _tape
 
@@ -124,10 +126,16 @@ class _Resolver:
         return None if self._perms is None else MarketDataPrincipal("u1", self._perms)
 
 
+async def _tape_totals(symbol: str, rng: TimeRange) -> TradeTotals:
+    """The trades table behind the stored rows (#2093): the recorded tape's prints in `rng`."""
+    inside = [t for t in _TAPE if t.symbol == symbol and rng.start_us <= t.ts_event < rng.end_us]
+    return TradeTotals(len(inside), sum((t.qty for t in inside), Decimal(0)))
+
+
 def _client(
     *, perms: frozenset[str] | None = frozenset({"marketdata:read"}),
     recording_us: int | None = _T0, fetch: _Fetch | None = None, wired: bool = True,
-    recording_wired: bool = True,
+    recording_wired: bool = True, totals: TradeTotalsSource | None = _tape_totals,
 ) -> TestClient:  # fmt: skip
     reader = BarReader(fetch or _Fetch(), _noop)
 
@@ -138,7 +146,7 @@ def _client(
     app.include_router(
         make_market_bars_router(
             lambda: reader if wired else None,
-            recording_started_at_us=started if recording_wired else None,
+            recording_started_at_us=started if recording_wired else None, trade_totals=totals,
             principal_resolver=_Resolver(perms), symbol_listed=lambda s: s == "BTCUSDT",
             now_us=lambda: _NOW,
         )

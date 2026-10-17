@@ -210,6 +210,7 @@ def test_regression_bars_with_tape_and_no_sessions_is_served_not_422() -> None:
     app.include_router(make_market_bars_router(
         lambda: BarReader(_Empty(), no_rebuild),
         recording_started_at_us=recording_started_at_us(ctx),
+        trade_totals=ctx.storage.market_data.trade_totals,  # as `create_app` composes it (#2093)
         principal_resolver=_Resolver(frozenset({"marketdata:read"})),
         symbol_listed=lambda s: s == "BTCUSDT", now_us=lambda: NOW))  # fmt: skip
     resp = TestClient(app, client=("127.0.0.1", 50000)).get("/market/bars", params={

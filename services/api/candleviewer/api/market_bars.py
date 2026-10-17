@@ -14,10 +14,11 @@ Order of refusal (each before any storage read except where noted):
    This is checked **before** the window cap: it is the more specific data-availability fact,
    and the client cannot fix it by paginating (22-api precedence rule).
 5. Hard window caps only (SR-E12-02, 22-api paging rule): time bars <= 400 d and <= 250 000
-   estimated bars (window / interval), non-time bars
-   <= 31 d -> 422 `bar_window_too_large`. Anything narrower is paged by rows: an uncursored
-   request is the first page, every read asks for `limit + 1` rows (bounded work), and a
-   server-issued `next_cursor` is returned whenever more rows remain.
+   estimated bars (window / interval), non-time bars <= 31 d and then <= 250 000 bars estimated
+   from the window's stored prints (`bars.estimate`, #2093: one bounded count, the only read
+   before the bars; it fails closed with 503) -> 422 `bar_window_too_large`. Anything narrower
+   is paged by rows: an uncursored request is the first page, every read asks for `limit + 1`
+   rows (bounded work), and a server-issued `next_cursor` is returned whenever more rows remain.
 
 The cursor is bound to `(bars, symbol, bar_type:param)` (`api.market_response`), so a klines
 cursor or one for another series is `invalid_cursor`. Time bars order by `ts` with a `ts`
@@ -53,6 +54,7 @@ from candleviewer.api.market_response import (
     with_recording_started_at,
 )
 from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
+from candleviewer.bars.estimate import estimate_non_time_bars
 from candleviewer.bars.limits import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -69,6 +71,9 @@ from candleviewer.bars.metrics import (
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, row_key, stored_bar
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire
+from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.models import TimeRange
+from candleviewer.storage.repositories.rows import TradeTotals
 
 _REQUIRED_PERMISSION: Final = "marketdata:read"
 _BAR_TYPES: Final = frozenset(
@@ -105,6 +110,8 @@ class BarReaderLike(Protocol):
 
 
 RecordingStart = Callable[[str], Awaitable[int | None]]
+#: SR-E12-02 (#2093): a symbol's stored prints in a window (`MarketDataRepository.trade_totals`).
+TradeTotalsSource = Callable[[str, TimeRange], Awaitable[TradeTotals]]
 
 
 class _Rejected(Exception):
@@ -164,13 +171,14 @@ def make_market_bars_router(
     reader_provider: Callable[[], BarReaderLike | None],
     *,
     recording_started_at_us: RecordingStart | None = None,
+    trade_totals: TradeTotalsSource | None = None,
     principal_resolver: _Resolver | None = None,
     symbol_listed: Callable[[str], bool] | None = None,
     now_us: Callable[[], int],
 ) -> APIRouter:
     """Bind `GET /market/bars`. `reader_provider()` is resolved per request (the bars reader
     exists only once a real QuestDB is composed); `None` -> 503. `symbol_listed=None` fails
-    closed (503), never open."""
+    closed (503), never open, and so does `trade_totals=None` for non-time bars."""
     router = APIRouter(tags=["market-data"])
 
     async def _authorize(request: Request) -> None:
@@ -185,6 +193,30 @@ def make_market_bars_router(
         if not principal.has(_REQUIRED_PERMISSION):
             detail = f"Reading market data requires {_REQUIRED_PERMISSION}."
             raise _Rejected(problem(403, "forbidden", "Forbidden", detail))
+
+    async def _print_estimate(
+        symbol: str, spec: BarSpec, bar_type: str, rng: TimeRange
+    ) -> JSONResponse | None:
+        """SR-E12-02 for non-time bars (#2093): None when the bars estimated from `rng`'s stored
+        prints fit `MAX_WINDOW_BARS`, else the 422. Fails closed, like the read: no count source,
+        or a count that fails or outlives `QUERY_TIMEOUT_S`, is 503. Never a skipped check (a
+        slow store is when the extra load costs most) and never a 422, which is final
+        (`retryable: false`) and would state a size nobody measured."""
+        if trade_totals is None:
+            detail = "Recorded trade totals are not available yet; retry shortly."
+            return problem(503, "store_unavailable", "Service unavailable", detail)
+        try:
+            async with asyncio.timeout(QUERY_TIMEOUT_S):
+                totals = await trade_totals(symbol, rng)
+        except (TimeoutError, OSError, ConnectionError, StorageTierUnavailable):
+            detail = "Trade storage did not answer in time; retry shortly or narrow from/to."
+            return problem(503, "store_unavailable", "Service unavailable", detail)
+        if estimate_non_time_bars(spec, totals.prints, totals.qty) <= MAX_WINDOW_BARS:
+            return None
+        return _window_too_large(
+            f"The window holds more than {MAX_WINDOW_BARS:,} {bar_type} bars, estimated from "
+            "recorded trades; narrow from/to."
+        )
 
     @router.get("/market/bars")
     async def get_bars(
@@ -265,10 +297,13 @@ def make_market_bars_router(
                     f"The window holds more than {MAX_WINDOW_BARS:,} {param}-minute bars; "
                     "narrow from/to."
                 )
-        # Non-time bars: SR-E12-02 also asks for a pre-query estimate from the stored print
-        # count. No trade-count read exists yet, so that estimate is NOT enforced here; the
-        # 31 d cap plus `limit + 1` rows per read bounds the work of this request, but not the
-        # total series a client can page through. TODO(#2093): stored-print-count estimate.
+        else:
+            # Non-time bars (#2093): estimate from the prints the read pages through, which
+            # start at the cursor's bar when there is one.
+            first_us = start_us if at_key is None else at_key[0]
+            rng = TimeRange(start_us=first_us, end_us=end_us)
+            if (refusal := await _print_estimate(symbol, spec, bar_type, rng)) is not None:
+                return refusal
         try:
             async with asyncio.timeout(QUERY_TIMEOUT_S):
                 page = await (
