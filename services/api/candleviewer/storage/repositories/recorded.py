@@ -300,9 +300,13 @@ class ManifestCoverage(Protocol):
 class RecordingGapReader(Protocol):
     """Read side of `recording_gaps` (21 Sec.3.6.2)."""
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange) -> Sequence[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, limit: int
+    ) -> Sequence[RecordedGap]:
         """Gaps of `symbol` (any stream) with `start_us < rng.end_us` and
-        `end_us > rng.start_us`."""
+        `end_us > rng.start_us`, at most `limit` of them (the earliest by `start_us` when the
+        cap binds; callers pass `cap + 1` to detect truncation, as for `read`). A `limit` below
+        1 (or a bool) raises `RecordedQueryRejected` before storage is read."""
         ...
 
 

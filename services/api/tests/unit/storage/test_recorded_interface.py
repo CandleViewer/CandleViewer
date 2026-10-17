@@ -83,7 +83,7 @@ async def test_fakes_conform_to_the_reader_protocols_by_signature() -> None:
     assert list(await reader.read(SYM, StreamKind.TRADES, window, depth=200, limit=1)) == []
     assert await reader.snapshot_at(SYM, 200, 10, not_before_us=0) is None
     assert list(await coverage.archived(SYM, StreamKind.TRADES, window)) == []
-    assert list(await gaps.recording_gaps(SYM, window)) == []
+    assert list(await gaps.recording_gaps(SYM, window, limit=1)) == []
 
 
 async def test_read_includes_the_range_start_and_excludes_its_end() -> None:
@@ -341,7 +341,7 @@ async def test_gap_reader_returns_half_open_intersections(start: int, end: int, 
     gap = RecordedGap(SYM, StreamKind.TRADES, start, end, "ws_disconnect")
     reader = StaticGapReader([gap])
 
-    got = await reader.recording_gaps(SYM, _window(10, 20))
+    got = await reader.recording_gaps(SYM, _window(10, 20), limit=5)
 
     assert got == ([gap] if hit else [])
 
@@ -349,7 +349,26 @@ async def test_gap_reader_returns_half_open_intersections(start: int, end: int, 
 async def test_gap_reader_ignores_other_symbols() -> None:
     reader = StaticGapReader([RecordedGap("ETHUSDT", StreamKind.TRADES, 0, 99, "x")])
 
-    assert await reader.recording_gaps(SYM, _window(10, 20)) == []
+    assert await reader.recording_gaps(SYM, _window(10, 20), limit=5) == []
+
+
+async def test_gap_reader_at_the_row_cap_keeps_the_earliest_starts() -> None:
+    stored = [RecordedGap(SYM, StreamKind.TRADES, start, 30, "x") for start in (14, 11, 13, 12)]
+    reader = StaticGapReader(stored)
+
+    got = await reader.recording_gaps(SYM, _window(10, 20), limit=3)
+
+    assert [g.start_us for g in got] == [11, 12, 13]
+    assert reader.limits == [3]
+
+
+@pytest.mark.parametrize("limit", [0, -1, True])
+async def test_gap_reader_refuses_a_limit_below_one_before_touching_storage(limit: int) -> None:
+    reader = StaticGapReader([RecordedGap(SYM, StreamKind.TRADES, 11, 12, "x")])
+
+    with pytest.raises(RecordedQueryRejected):
+        await reader.recording_gaps(SYM, _window(10, 20), limit=limit)
+    assert reader.limits == []
 
 
 @pytest.mark.parametrize(
