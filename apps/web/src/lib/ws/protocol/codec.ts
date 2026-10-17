@@ -15,7 +15,7 @@ export interface WsDecodeError {
   readonly diagnostic: DecodeDiagnostic;
   /** Safe to log: never carries payload bytes or a token. */
   readonly message: string;
-  /** The topic the envelope named, if any, so the caller can resync it. */
+  /** The topic the envelope named, only if it is a well-formed topic name (so it is bounded and safe to log or resync). */
   readonly ch?: string | undefined;
 }
 
@@ -25,9 +25,12 @@ interface Head {
   readonly ts?: number | undefined;
   readonly wt?: number | undefined;
   readonly rs?: string | undefined;
+  /** 13.1: span id of a sampled `snap` or `d` (W3C form). */
+  readonly sp?: string | undefined;
 }
 
-type ControlType = keyof F.ControlPayloads;
+export type ControlType = keyof F.ControlPayloads;
+export type ControlOf<T extends ControlType> = Extract<ControlFrame, { readonly t: T }>;
 
 export type ControlFrame = Head &
   (
@@ -47,6 +50,8 @@ export interface DataFrame extends Head {
   readonly ts: number;
   readonly meta?: F.SnapMeta | undefined;
   readonly body: DataBody;
+  /** The message length in characters: what a buffer holding this frame is charged (bounded buffering). */
+  readonly size: number;
 }
 
 export type Inbound = ControlFrame | DataFrame;
@@ -95,6 +100,44 @@ const isInt = (v: unknown): v is number =>
 const isSeq = (v: unknown): v is number | null => v === null || isInt(v);
 const optional = (v: unknown, ok: (x: unknown) => boolean): boolean => v === undefined || ok(v);
 
+// Server-controlled strings are bounded here, before anything keys a map with them, logs them or
+// sends them back in a `resync` (C-12.6). Length first, so a huge string never reaches a regex.
+const TOPIC = /^[a-z_]+(\.[A-Za-z0-9:_-]+)*$/; // 13.1 `topic`: this pattern, `maxLength 120`
+const isTopic = (v: unknown): v is string =>
+  isStr(v) && v.length > 0 && v.length <= 120 && TOPIC.test(v);
+const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown): v is string => isStr(v) && v.length === 36 && UUID.test(v);
+const SPAN = /^(?!0{16}$)[0-9a-f]{16}$/; // W3C span id: 16 hex digits, never all zeros
+const isSpan = (v: unknown): v is string => isStr(v) && v.length === 16 && SPAN.test(v);
+/** 13.1 `error.message` and `bye.message`: `maxLength 1000`. They reach the log (`errorHandler`), so the bound is checked. */
+const MAX_TEXT = 1000;
+const isText = (v: unknown): v is string => isStr(v) && v.length <= MAX_TEXT;
+/** `bye.reason` is `maxLength 64`, and `revoked.reason` is an enum of names well under that: a short tag, logged and compared. */
+const isTag = (v: unknown): v is string => isStr(v) && v.length <= 64;
+/** RFC 6455 close codes; the server's own set (`bye.code`) may grow, so the range is checked, not the list. */
+const isCloseCode = (v: unknown): boolean =>
+  typeof v === "number" && Number.isInteger(v) && v >= 1000 && v <= 4999;
+
+/** 13.1 `snapMeta`: the documented fields, each checked. `reason` is an open set (C18), so any short string is kept. */
+const META_FIELDS: Readonly<Record<string, (v: unknown) => boolean>> = {
+  reason: isTag,
+  source: (v) => v === "live" || v === "replay",
+  previous_seq: isSeq,
+  include_delta: (v) => typeof v === "boolean",
+  history_bars: isInt,
+  recording_started_at_ms: isInt,
+  spec_hash: (v) => isStr(v) && v.length === 64 && /^[0-9a-f]{64}$/.test(v),
+  build_version: isInt,
+};
+
+/** `meta` is server-controlled: only the documented fields survive (unknown ones are ignored, 2.3), so it stays small and of known shape. */
+function readMeta(m: Record<string, unknown>): F.SnapMeta {
+  const kept: Record<string, unknown> = {};
+  for (const [key, ok] of Object.entries(META_FIELDS)) if (ok(m[key])) kept[key] = m[key];
+  // Cast: each kept field passed its own check above.
+  return kept as F.SnapMeta;
+}
+
 /** Strict on purpose: the kill switch is safety state (C12), so an inexact shape is refused. */
 const isKillSwitch = (v: unknown): boolean =>
   isObj(v) &&
@@ -104,16 +147,18 @@ const isKillSwitch = (v: unknown): boolean =>
 
 /** Fields each control payload must carry (`path:kind`): the ones the client reads. */
 const REQUIRED: Readonly<Record<ControlType, string>> = {
-  welcome: `connection_id:string heartbeat.interval_ms:number heartbeat.timeout_ms:number
-    limits.max_subscriptions:number limits.max_topics_per_request:number limits.min_throttle_ms:number`,
-  auth_ok: "user_id:string token_expires_at_ms:number roles:array account_scope:array",
+  welcome: `connection_id:string server_time_ms:number heartbeat.interval_ms:number
+    heartbeat.timeout_ms:number limits.max_subscriptions:number
+    limits.max_topics_per_request:number limits.min_throttle_ms:number`,
+  auth_ok: `user_id:string session_id:string token_expires_at_ms:number roles:array
+    permissions:array account_scope:array`,
   permission_change: "roles:array account_scope:array",
   sub_ok: "results:array",
   unsub_ok: "results:array",
   ctl_ok: "effective:object",
-  revoked: "reason:string",
-  err: "code:string",
-  bye: "code:number reason:string",
+  revoked: "reason:tag message:string",
+  err: "code:text message:text",
+  bye: "code:number reason:tag message:text",
 };
 
 const isControl = (t: unknown): t is ControlType => isStr(t) && Object.hasOwn(REQUIRED, t);
@@ -124,6 +169,8 @@ function hasFields(spec: string, p: unknown): boolean {
     const v = path.split(".").reduce<unknown>((o, k) => (isObj(o) ? o[k] : undefined), p);
     if (kind === "array") return Array.isArray(v);
     if (kind === "object") return isObj(v);
+    if (kind === "text") return isText(v);
+    if (kind === "tag") return isTag(v);
     return typeof v === kind && (kind !== "number" || Number.isFinite(v));
   });
 }
@@ -131,9 +178,10 @@ function hasFields(spec: string, p: unknown): boolean {
 function payloadOk(t: ControlType, p: unknown): boolean {
   if (!isObj(p) || !hasFields(REQUIRED[t], p)) return false;
   if (t === "auth_ok") return optional(p["kill_switch"], isKillSwitch);
+  if (t === "bye") return isCloseCode(p["code"]);
   if (t !== "sub_ok" && t !== "unsub_ok") return true;
   const results = p["results"];
-  const isResult = (r: unknown) => isObj(r) && isStr(r["ch"]) && typeof r["ok"] === "boolean";
+  const isResult = (r: unknown) => isObj(r) && isTopic(r["ch"]) && typeof r["ok"] === "boolean";
   return Array.isArray(results) && results.every(isResult);
 }
 
@@ -152,17 +200,27 @@ function fromBase64(text: string): ArrayBuffer | undefined {
 }
 
 function readHead(o: Record<string, unknown>): Head | undefined {
-  const { id, ch, ts, wt, rs } = o;
+  const { id, ch, ts, wt, rs, sp } = o;
   const isId = (v: unknown) => isStr(v) && v.length <= F.MAX_ID_LENGTH;
   const ok = [
     optional(id, isId),
-    optional(ch, isStr),
+    optional(ch, isTopic),
     optional(ts, isInt),
     optional(wt, isInt),
-    optional(rs, isStr),
+    optional(rs, isUuid),
+    optional(sp, isSpan),
   ];
   // Cast: each field was just verified to be absent or of its declared type.
-  return ok.every(Boolean) ? ({ id, ch, ts, wt, rs } as Head) : undefined;
+  return ok.every(Boolean) ? ({ id, ch, ts, wt, rs, sp } as Head) : undefined;
+}
+
+/**
+ * `revoked.message` has no `maxLength` in the schema, and the revocation must still end the stream,
+ * so a long one is cut for the log (C-12.6), not refused as an over-long `err` or `bye` one is.
+ */
+function cutMessage(p: Record<string, unknown>): Record<string, unknown> {
+  // Cast: `payloadOk` verified that `message` is a string.
+  return { ...p, message: (p["message"] as string).slice(0, MAX_TEXT) };
 }
 
 /**
@@ -178,7 +236,7 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
     return malformed("envelope", "message is not valid JSON");
   }
   if (!isObj(raw)) return malformed("envelope", "message is not a JSON object");
-  const topic = isStr(raw["ch"]) ? raw["ch"] : undefined;
+  const topic = isTopic(raw["ch"]) ? raw["ch"] : undefined;
   const fail = (message: string, diagnostic: DecodeDiagnostic = "envelope") =>
     malformed(diagnostic, message, topic);
   const head = readHead(raw);
@@ -188,8 +246,9 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
 
   if (t === "ping" || t === "pong" || isControl(t)) {
     const ok = t === "ping" || t === "pong" ? optional(p, isObj) : payloadOk(t, p);
+    const body = ok && t === "revoked" && isObj(p) ? cutMessage(p) : p;
     // Cast: the fields the client reads were verified above; the rest of `p` is carried through.
-    return ok ? ({ ...head, t, p } as Inbound) : fail(`${t} payload is malformed`, "payload");
+    return ok ? ({ ...head, t, p: body } as Inbound) : fail(`${t} payload is malformed`, "payload");
   }
   if (t !== "snap" && t !== "d") return fail("unknown or client-only frame type");
 
@@ -203,6 +262,6 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
   // `b` is the MessagePack form of a binary body; on `cv.v1.json` it must be `b64`.
   if (e !== "j" && bytes === undefined) return fail("payload is not a valid j or b64 body");
   const body: DataBody = bytes === undefined ? { e: "j", p } : { e: "b64", bytes };
-  // Cast: every `SnapMeta` field is optional and read defensively by its consumer.
-  return { ...head, t, ch, s, ts, meta: meta as F.SnapMeta | undefined, body };
+  const kept = isObj(meta) ? readMeta(meta) : undefined; // only the documented fields survive
+  return { ...head, t, ch, s, ts, meta: kept, body, size: data.length };
 }

@@ -11,21 +11,55 @@ export type PaneVisibility = "visible" | "offscreen" | "collapsed";
 
 export interface ConsumerSpec {
   readonly ch: string;
-  readonly opts?: SubOptions;
+  readonly opts?: SubOptions | undefined;
   readonly paneId: string;
   /** Restore order after a reconnect (9.3): private, then the focused pane, then the rest. */
   readonly priority: SubscriptionPriority;
 }
 
-/** One validated data frame. A `b64` body is the raw CVWB bytes (D13): transferred, not decoded. */
-export interface TopicFrame {
-  readonly kind: "snap" | "d";
+/** Why the state a consumer holds for a topic is void: it clears it, and a `snap` follows unless the subscription ended. */
+export type ResetReason =
+  | "gap"
+  | "malformed"
+  | "overflow"
+  | "resnapshot"
+  | "narrowed"
+  | "revoked"
+  | "unsubscribed"
+  | "reconnect";
+
+interface Stamped {
   readonly seq: number;
   readonly ts: number;
-  readonly meta: SnapMeta | undefined;
-  readonly body: DataBody;
+  /** 13.1: span id of a sampled frame. */
+  readonly sp: string | undefined;
   readonly decodeMs: number;
 }
+
+/**
+ * A complete snapshot. A chunked set (3.6) is handed over whole, never piecemeal: `bodies` holds
+ * its chunks in order (one for a single-frame `snap`) and `seq` is the final chunk's. A `b64`
+ * body is the raw CVWB bytes (D13): transferred, not decoded.
+ */
+export interface SnapFrame extends Stamped {
+  readonly kind: "snap";
+  readonly meta: SnapMeta | undefined;
+  readonly bodies: readonly [DataBody, ...DataBody[]];
+}
+
+export interface DeltaFrame extends Stamped {
+  readonly kind: "d";
+  readonly body: DataBody;
+}
+
+/** In-band, so a consumer that reads late still clears its state before it applies what follows. */
+export interface ResetFrame {
+  readonly kind: "reset";
+  readonly reason: ResetReason;
+}
+
+/** One entry of `read()`: validated and sequenced, never state assembled across a gap (7.1). */
+export type TopicFrame = SnapFrame | DeltaFrame | ResetFrame;
 
 export interface TopicHandle {
   readonly ch: string;
