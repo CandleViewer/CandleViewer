@@ -1,4 +1,4 @@
-"""Postgres order and order-event store (E29-T01 #845 slice 2/3, migration `0029_oms_core`).
+"""Postgres order and order-event store (E29-T01 #845, migration `0029_oms_core`).
 
 SQLAlchemy Core over `db.models.orders` and `db.models.order_events`: every value is a bound
 parameter and nothing is built from strings. Reads select the explicit allow-lists `ORDER_COLUMNS`
@@ -24,8 +24,10 @@ A failure of any call, read or write, never leaves with its statement, parameter
 which carry P1 money values (21 Sec.12), and is never chained (C-12.6). A database error is
 re-raised `from None` as `OrderConstraintError(name)` or `StorageQueryFailed(sqlstate)`; a
 connection the store cannot get or loses (an `OSError` from the driver, connect timeouts
-included, or the pool's checkout `TimeoutError`) as `StorageTierUnavailable` (24 Sec.8.2 S7:
-Postgres is unavailable). Cancellation passes through unchanged. So a caller meets
+included, the pool's checkout `TimeoutError`, or a `DBAPIError` that is `connection_invalidated`
+or of SQLSTATE class 08, as asyncpg reports a connection lost mid-statement) as
+`StorageTierUnavailable` (24 Sec.8.2 S7: Postgres is unavailable). Cancellation passes through
+unchanged. So a caller meets
 `OrderStoreError` or `StorageError`, never a driver or pool exception.
 """
 
@@ -202,6 +204,8 @@ def _constraints() -> Iterator[None]:
     try:
         yield
     except DBAPIError as exc:
+        if exc.connection_invalidated or (_sqlstate(exc) or "").startswith("08"):
+            raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
         name = _violated_constraint(exc)
         if name is None:
             raise StorageQueryFailed(_sqlstate(exc)) from None

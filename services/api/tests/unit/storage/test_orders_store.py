@@ -631,14 +631,21 @@ async def test_an_unreachable_database_is_tier_unavailable_unchained(call: str, 
 
 
 @pytest.mark.parametrize("write", sorted(_WRITES))
+@pytest.mark.parametrize(
+    ("invalidated", "sqlstate"), [(True, "08003"), (True, None), (False, "08006")]
+)
 async def test_a_connection_lost_mid_write_is_tier_unavailable_and_commits_nothing(
-    write: str,
+    write: str, invalidated: bool, sqlstate: str | None
 ) -> None:
-    lost = ConnectionResetError(104, f"Connection reset by peer {_PEER}")
-    rel = _Rel(lost) if write == "create" else _Rel(_Result(scalar=LINK), lost)
+    """asyncpg reports a connection lost mid-statement as a `DBAPIError` that SQLAlchemy marks
+    `connection_invalidated`, SQLSTATE 08003: Postgres is unavailable (24 Sec.8.2 S7)."""
+    orig = _PgError(sqlstate, message=f"connection was closed in the middle of operation {_PEER}")
+    rel = _script(write, DBAPIError("stmt", {"p": _P1}, orig, connection_invalidated=invalidated))
     with pytest.raises(StorageTierUnavailable) as err:
         await _WRITES[write](_store(rel))
-    assert (err.value.__cause__, rel.commits) == (None, 0)
+    assert (str(err.value), rel.commits) == ("postgres unreachable (DBAPIError)", 0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _PEER not in "".join(traceback.format_exception(err.value))
 
 
 @pytest.mark.parametrize("call", ["append", "get"])
