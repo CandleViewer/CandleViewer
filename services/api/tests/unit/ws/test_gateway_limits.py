@@ -141,12 +141,19 @@ def test_sub_over_subscription_cap_is_rejected_and_set_does_not_grow() -> None:
     assert authz.by_id == before
 
 
-def test_sub_frame_with_too_many_topics_rejects_the_excess() -> None:
+def test_sub_frame_with_too_many_topics_is_refused_whole() -> None:
+    """SR-192 (#2292): one `err too_many_topics` before any entry is read, so not even the first
+    50 are subscribed (`test_sub_entry_cap.py` has the rest)."""
     authz = _viewer()
+    out: list[dict[str, Any]] = []
+
+    async def send(frame: dict[str, Any]) -> None:
+        out.append(frame)
+
     topics = _many(0, limits.MAX_TOPICS_PER_SUB + 3)
-    res = asyncio.run(_collect_sub(authz, topics))
-    assert [r["error"]["code"] for r in res if not r["ok"]] == ["too_many_topics"] * 3
-    assert len(authz.by_id) == limits.MAX_TOPICS_PER_SUB
+    asyncio.run(handle_sub(authz, {"t": "sub", "id": "s", "p": {"topics": topics}}, send))
+    assert [(f["t"], f["p"]["code"]) for f in out] == [("err", "too_many_topics")]
+    assert authz.by_id == {}
 
 
 def test_roles_changed_stalled_socket_is_evicted_and_does_not_block_others() -> None:

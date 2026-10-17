@@ -8,15 +8,20 @@ Every test drives the REAL gateway (`make_ws_router`, `ConnectionRegistry`, `Seq
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws._harness import (
     OFFERS,
+    SCHEMAS,
     World,
     connect,
+    json_only,
 )
 from tests.unit.ws._seq_support import ACC_B
 
@@ -111,3 +116,95 @@ def test_s1_f6_unknown_key_in_sub_payload_refuses_it_without_a_strike() -> None:
             f = c.recv()
             assert (f["t"], f["p"]["code"], f["p"]["field"]) == ("err", "invalid_options", "p")
         assert c.sub("trades.BTCUSDT")["p"]["results"][0]["ok"]
+
+
+# SR-192 (#2292): a `sub` longer than the 50 entries §13.5 allows is refused whole, before any
+# entry is read, with one `err too_many_topics`; neither its reply nor its audit writes grow with
+# the frame (E17 threat model WS-D15, AC-29; §5.2).
+
+#: §13.5 `sub.topics.maxItems`, the most entries one `sub` may hold (50).
+CAP: int = SCHEMAS["cv://ws/v1/sub.schema.json"]["properties"]["topics"]["maxItems"]
+
+
+def _footprints(n: int) -> list[str]:
+    """`n` distinct public topics on one symbol, all of which a market-data principal may hold."""
+    return [f"footprint.BTCUSDT.tick.{i}" for i in range(1, n + 1)]
+
+
+class _Audit:
+    """The gateway's audit sink: each `emit` is one append."""
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.records.append({"action": action, **kw})
+
+
+def test_s1_a_sub_of_exactly_the_cap_welcome_advertises_gets_one_result_per_topic() -> None:
+    """The limit `welcome` advertises is the one `sub` enforces: `max_topics_per_request`
+    entries are processed (the frame is schema-valid, so the harness validates it on send)."""
+    with connect(World()) as c:
+        welcome = next(f for f in c.seen if f["t"] == "welcome")
+        assert welcome["p"]["limits"]["max_topics_per_request"] == CAP
+        names = _footprints(CAP)
+        results = c.sub(*names)["p"]["results"]
+        assert [(r["ch"], r["ok"]) for r in results] == [(n, True) for n in names]
+
+
+@pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
+def test_s1_a_sub_over_the_cap_is_refused_whole_and_is_no_strike(offer: list[str]) -> None:
+    """One `err too_many_topics` (`field: topics`) per frame, validated against §13, on both
+    subprotocols (51 entries are within MessagePack's 128, §3.6). Four in a row are past the three
+    strikes that close a socket (§4.3), and nothing was subscribed: the first name is still free."""
+    names = _footprints(CAP + 1)
+    with connect(World(), offer) as c:
+        for i in range(4):
+            frame = {"t": "sub", "id": f"z{i}", "p": {"topics": [{"ch": n} for n in names]}}
+            c.send(frame, conform=False)
+            f = c.recv()
+            assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
+                "err",
+                f"z{i}",
+                "too_many_topics",
+                "topics",
+            )
+            assert f["p"]["retryable"] is True and "ch" not in f
+        assert c.sub(names[0])["p"]["results"][0]["ok"] is True
+
+
+def _sub_text(topics: list[str]) -> str:
+    return json.dumps({"t": "sub", "id": "s", "p": {"topics": topics}}, separators=(",", ":"))
+
+
+@json_only  # the JSON text fills the cap; MessagePack caps an array at 128 entries (SR-185)
+def test_s1_the_largest_sub_the_frame_cap_allows_gets_one_small_err_and_no_audit_row() -> None:
+    """AC-29 at the socket, as a principal with market data only: the issue's frame, 21 842 bare
+    `positions` names filling the 256 KiB cap, gets one `err` of a few hundred bytes and writes
+    no audit row, and the socket is still served. A 50-entry frame of private families is then
+    processed, and its 50 refusals are one `ws.subscribe.denied` record that counts them."""
+    w = World()
+    w.perms = frozenset({Permission.MARKETDATA_READ})
+    audit = _Audit()
+    w.registry.services.audit = audit
+    entries = (MAX_INBOUND_FRAME_BYTES - len(_sub_text([])) + 1) // len('"positions",')
+    text = _sub_text(["positions"] * entries)  # the very text that is sent below
+    assert entries == 21_842
+    assert MAX_INBOUND_FRAME_BYTES - 12 < len(text.encode()) <= MAX_INBOUND_FRAME_BYTES
+    private = ["orders", "positions", "executions", "wallet"]
+    with connect(w) as c:
+        c.send_text(text)
+        f = c.recv()
+        assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
+            "err",
+            "s",
+            "too_many_topics",
+            "topics",
+        )
+        assert len(json.dumps(f)) < 400 and audit.records == []
+        c.send({"t": "ping", "id": "k"})
+        assert c.next_of("pong")["id"] == "k"
+        results = c.sub(*(private * CAP)[:CAP])["p"]["results"]
+        assert [r["error"]["code"] for r in results] == ["forbidden"] * CAP
+    ((action, count),) = [(r["action"], r["after_state"]["count"]) for r in audit.records]
+    assert (action, count) == ("ws.subscribe.denied", CAP)

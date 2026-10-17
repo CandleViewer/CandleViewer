@@ -121,7 +121,8 @@ def test_s10_error_catalogue_is_closed_over_a_full_run_of_every_error_path() -> 
         c.send({"t": "ctl", "id": "k", "ch": "heatmap.BTCUSDT", "p": {"throttle_ms": 1}})
         frames.append(c.recv_err())  # not_subscribed
         many = [{"ch": f"bars.BTCUSDT.tick.{i}"} for i in range(1, 52)]
-        frames.append(c.sub(*many))  # too_many_topics
+        c.send({"t": "sub", "id": "m", "p": {"topics": many}})
+        frames.append(c.recv_err())  # too_many_topics: the whole frame (SR-192, #2292)
     w = World()
     with connect(w) as c:
         c.sub("book.BTCUSDT.50")
