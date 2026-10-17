@@ -34,6 +34,7 @@ from candleviewer.account_fixture_wiring import build_account_fixture
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.ops.health import AdminHealthService
+from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
@@ -1536,7 +1537,9 @@ def create_app(
             inspector, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
         )
     )
-    # E42-T05: the health report over the E04 registry's cached snapshot, behind the same guard.
+    # E42-T05: the health report over the E04 registry's snapshot and the incident list, behind the
+    # same guard. The list has no store yet: the materialiser that fills `incidents` is a later
+    # slice, so it answers 501 rather than an empty page that would read as "no incidents".
     admin_health = AdminHealthService(
         health_registry,
         version=resolved.version,
@@ -1545,7 +1548,10 @@ def create_app(
     )
     app.include_router(
         make_admin_ops_router(
-            admin_health, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+            admin_health,
+            AdminIncidentsService(None),
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
         )
     )
     app.state.admin_overview_metrics = export_overview_metrics(
