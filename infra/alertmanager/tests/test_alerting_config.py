@@ -400,7 +400,7 @@ def _receiver_without_resolved(name: str) -> dict[str, Any]:
     return out
 
 
-def _matches(matcher: str, labels: dict[str, str]) -> bool:
+def _matcher_holds(matcher: str, labels: dict[str, str]) -> bool:
     """Whether one Alertmanager matcher (`=`, `!=`, `=~`, `!~`) holds for `labels`."""
     parsed = re.fullmatch(r'(\w+)\s*(=~|!~|!=|=)\s*"([^"]*)"', matcher)
     assert parsed is not None, matcher
@@ -497,7 +497,7 @@ def test_event_type_page_is_not_a_target_of_any_inhibit_rule() -> None:
     for rule in (r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES):
         labels = _alert_labels(rule)
         for inhibit in AM["inhibit_rules"]:
-            hidden = all(_matches(m, labels) for m in inhibit["target_matchers"])
+            hidden = all(_matcher_holds(m, labels) for m in inhibit["target_matchers"])
             assert not hidden, (rule["alert"], inhibit)
 
 
@@ -541,6 +541,54 @@ def test_promtool_case_for_each_event_page_expects_the_resolves_label() -> None:
     assert {case["alertname"] for case in firing} == EVENT_TYPE_PAGES
     for case in firing:
         assert all(alert["exp_labels"]["resolves"] == "window" for alert in case["exp_alerts"])
+
+
+#: The CI step that runs `amtool config routes test` (E04-T05).
+CI_WORKFLOW = INFRA.parent / ".github" / "workflows" / "_job-py.yml"
+
+
+def _ci_route_cases() -> list[tuple[str, dict[str, str]]]:
+    """The cases of the CI loop `for r in "<receiver> <key>=<value> ..." ...; do amtool config
+    routes test --verify.receivers=<receiver> <key>=<value> ...`: each as (receiver, labels)."""
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    scripts = [
+        step["run"]
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if "config routes test" in step.get("run", "")
+    ]
+    assert len(scripts) == 1, "one CI step runs the amtool routes test"
+    loop = re.search(r"\bfor r in (.*?); do\b", scripts[0], re.DOTALL)
+    assert loop is not None, "the routes test loop"
+    cases: list[tuple[str, dict[str, str]]] = []
+    for word in re.findall(r'"([^"]*)"', loop[1]):
+        receiver, *pairs = word.split()
+        cases.append((receiver, dict(pair.split("=", 1) for pair in pairs)))
+    return cases
+
+
+def test_ci_routes_test_cases_resolve_to_the_receiver_they_expect() -> None:
+    """Only CI can run `amtool config routes test` (it needs docker). The same lookup on the
+    configured route tree here (the first matching child route, else the root) shows a case with
+    a wrong receiver before the push, not in the `py` lane."""
+    cases = _ci_route_cases()
+    assert cases, "no routes test case found"
+    for receiver, labels in cases:
+        assert _route_for(labels)["receiver"] == receiver, (receiver, labels)
+
+
+def test_ci_routes_test_loop_has_a_page_event_case_for_each_event_page() -> None:
+    """#2931: `amtool check-config` accepts a receiver no route uses, and the tests above are a
+    local gate, so a case per event page is what fails the `py` lane when the event route is
+    deleted, listed below the generic page route, or shadowed by a route added above it. Each
+    case carries the labels its rule does (alertname, severity, component and resolves; `env`
+    comes from the series, not the rule) and expects `page_event`."""
+    cases = _ci_route_cases()
+    event_rules = [r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES]
+    assert {r["alert"] for r in event_rules} == EVENT_TYPE_PAGES
+    for rule in event_rules:
+        wanted = ("page_event", {**rule["labels"], "alertname": rule["alert"]})
+        assert cases.count(wanted) == 1, rule["alert"]
 
 
 def _runbook_section(rule: dict[str, Any]) -> str:

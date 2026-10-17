@@ -90,10 +90,10 @@ recent-trades backfill (`trade_gaps_total{recovered="false"}`). Trades in that w
 the tape and the recording. Severity: Page. No `[RESOLVED]` message follows: the alert clears 15
 minutes after the last unrecovered gap because the window moved on, not because the trades were
 filled in, so a resolved page would read as recovered (`resolves: window`, the `page_event`
-receiver).
+receiver). Work through the steps below whether or not the alert has cleared.
 
-1. Whether or not the alert has cleared, note the symbol and the alert start time; the gap window
-   is published on `{env}.md.{symbol}.gap` and appears in the tape as a gap marker.
+1. Note the symbol and the alert start time; the gap window is published on `{env}.md.{symbol}.gap`
+   and appears in the tape as a gap marker.
 2. Check `trade_backfill_rows_total{result="error"|"unavailable"}` and
    [IngestionRateLimitHeadroomExhausted](#alert-ingestionratelimitheadroomexhausted): a rate-limited
    backfill is the usual cause.

@@ -99,9 +99,19 @@ jobs:
           A=prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
           AM="docker run --rm --entrypoint amtool -v $PWD/infra/alertmanager:/etc/alertmanager:ro $A"
           $AM check-config /etc/alertmanager/alertmanager.yml
-          # page_event (#2931): check-config accepts an unused receiver, so only this case fails the
-          # build if the event route is deleted or listed below the generic page route.
-          for r in "page severity=page" "page_event severity=page resolves=window" "ticket severity=ticket" "deadman alertname=Watchdog" "ticket severity=ticket component=auth"; do
+          # page_event (#2931): check-config accepts a receiver no route uses, so only these cases
+          # fail the build if the event route is deleted, listed below the generic page route or
+          # shadowed by a route above it. One per event page (a rule labelled `resolves: window`),
+          # with the labels its rule carries; infra/alertmanager/tests pins that the list has them.
+          for r in \
+            "page severity=page" \
+            "page_event severity=page resolves=window" \
+            "page_event alertname=AuditChainVerificationFailed severity=page component=audit resolves=window" \
+            "page_event alertname=AuthRecoveryCodeUsed severity=page component=auth_recovery resolves=window" \
+            "page_event alertname=IngestionTradeGapUnrecovered severity=page component=ingestion resolves=window" \
+            "ticket severity=ticket" \
+            "deadman alertname=Watchdog" \
+            "ticket severity=ticket component=auth"; do
             set -- $r; recv=$1; shift
             $AM config routes test --config.file=/etc/alertmanager/alertmanager.yml --verify.receivers=$recv "$@"
           done
