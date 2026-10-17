@@ -1,6 +1,6 @@
-// E17-T04 S1: the connection state the UI binds to (C11, C12, WS-E06). Plain data; the pure
-// reducer that produces it (and the engine events it consumes) lands in S2.
-import type { KillSwitchPayload } from "../protocol/frames";
+// E17-T04: the connection state the UI binds to (C11, C12, WS-E06). Plain data: only `reduce`
+// (reducer.ts) produces it.
+import type { KillSwitchPayload, SystemUpdate } from "../protocol/frames";
 
 /** The six E17-D02 rows plus `connecting`. Provisional until #325 is signed off (Q4). */
 export type TransportState =
@@ -50,7 +50,7 @@ export interface WsState {
   readonly transitionSeq: number;
   readonly link: Link;
   readonly quality: Quality;
-  /** Set by `shutdown_notice`, cleared by the next `auth_ok`. */
+  /** Set by `shutdown_notice`, cleared by the `auth_ok` of the next connection (a re-auth keeps it). */
   readonly shutdown: {
     readonly closingInMs: number | undefined;
     readonly expectedDowntimeMs: number | undefined;
@@ -58,6 +58,30 @@ export interface WsState {
   readonly systemStream: TopicStatus;
   readonly killSwitch: KillSwitchView;
   readonly orderEntry: OrderEntry;
-  /** Behind a "copy details" affordance only; never in default copy. */
+  /** Behind a "copy details" affordance only; never in default copy. Kept across reconnects. */
   readonly diagnostics: { readonly connectionId: string | null; readonly requestId: string | null };
 }
+
+/**
+ * What the connection engine (S4) tells the reducer. Its promises: (1) every new socket is
+ * announced by `connecting` before its `auth_ok`, so an `auth_ok` after `reconnecting` or `offline`
+ * is ignored; (2) `connecting` announces only a new socket, so an `auth_ok` on an `up` link is an
+ * in-place re-auth (23 4.1) and a re-auth emits no `connecting`, `reconnecting` or `offline`; (3)
+ * after a resync of the `system` stream it reports `live` before the update of the snapshot that
+ * ended it (a kill-switch fact that arrives sooner is dropped, WS-E06). `assertEngineOrder` (test
+ * support) checks (1) and (3); (2) is S4's own test obligation, as events alone cannot tell a
+ * re-auth from a new socket. The reducer vets every wire value it reads and keeps only the vetted.
+ */
+export type EngineEvent =
+  | { readonly type: "connecting" }
+  | { readonly type: "welcome"; readonly connectionId: string }
+  | { readonly type: "auth_ok"; readonly killSwitch: KillSwitchPayload | undefined }
+  | { readonly type: "reconnecting"; readonly attempt: number; readonly nextAttemptAtMs: number }
+  | {
+      readonly type: "offline";
+      readonly cause: OfflineCause;
+      readonly closeCode?: number | undefined;
+    }
+  | { readonly type: "system"; readonly update: SystemUpdate }
+  | { readonly type: "system_stream"; readonly status: TopicStatus }
+  | { readonly type: "request_id"; readonly requestId: string };
