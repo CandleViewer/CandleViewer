@@ -160,7 +160,7 @@ def _blob_version_2_resealed(
     # Even a correctly-MACed blob that declares v2 is refused by from_snapshot.
     blob = {**env.snapshot, "version": 2}
     return dataclasses.replace(
-        env, snapshot=blob, seal=seal(keys, chart, blob, env.machine_hash, 3)
+        env, snapshot=blob, seal=seal(keys, chart, blob, env.machine_hash, 3, key=KEY)
     )
 
 
@@ -177,6 +177,25 @@ async def test_restore_bad_envelope_refused_quarantined_paged(
     with pytest.raises(RestoreRefusedError):
         await _restorer(registry, keys, audit, pager).restore(KEY, env)
     assert [k for k, _ in audit.quarantined] == [KEY]
+    assert [s for s, _ in pager.pages] == ["P1"]
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        dataclasses.replace(KEY, env="live"),
+        dataclasses.replace(KEY, entity_id="00000000-0000-0000-0000-0000000000ff"),
+    ],
+    ids=["env", "entity_id"],
+)
+async def test_restore_envelope_persisted_for_another_machine_refused_quarantined_paged(
+    registry: Registry, other: MachineKey
+) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    with pytest.raises(RestoreRefusedError, match="another machine key"):
+        await _restorer(registry, keys, audit, pager).restore(other, env)
+    assert [k for k, _ in audit.quarantined] == [other]
     assert [s for s, _ in pager.pages] == ["P1"]
 
 
@@ -245,14 +264,14 @@ async def test_restore_chain_trip_latch_serves_reads_refuses_orders(registry: Re
 def test_open_sealed_round_trip_and_low_version_seal_refused(registry: Registry) -> None:
     keys, chart = FakeKeys(), registry.get(_KIND)
     blob = {"a": 1}
-    s = seal(keys, chart, blob, "h", 3)
+    s = seal(keys, chart, blob, "h", 3, key=KEY)
     env = SealedSnapshot(key=KEY, version=3, machine_hash="h", snapshot=blob, seal=s)
-    assert open_sealed(keys, chart, env, expected_machine_hash="h") == blob
+    assert open_sealed(keys, chart, env, key=KEY, expected_machine_hash="h") == blob
     with pytest.raises(ValueError, match="CV-C53"):
-        seal(keys, chart, blob, "h", 2)
+        seal(keys, chart, blob, "h", 2, key=KEY)
     # Chart bytes are bound: a different chart fails verification.
     with pytest.raises(ValueError, match="bad HMAC"):
-        open_sealed(keys, {**chart, "id": "other"}, env, expected_machine_hash="h")
+        open_sealed(keys, {**chart, "id": "other"}, env, key=KEY, expected_machine_hash="h")
 
 
 class _Stub:

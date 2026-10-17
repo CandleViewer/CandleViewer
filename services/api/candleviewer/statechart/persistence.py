@@ -14,7 +14,7 @@ Owns the shutdown path of every catalogue machine
 `drain_pending()` is called only here (CV-LINT-DRAIN).
 
 Restore (E50-T49, 29 §1.3) is `Restorer.restore`: `open_sealed` (HMAC-SHA256
-over chart bytes + blob, CV-C53) -> `from_snapshot(minimum_version=3,
+over chart bytes + blob + machine key, CV-C53) -> `from_snapshot(minimum_version=3,
 expected_machine_hash=, plugins=)` (CV-C52, MUST-12, R13-W1) -> pre-start
 asserts (C45'', C60, C27', C54) -> `_cv_bring_up` -> bounded `start()` ->
 `journal.replay_once` -> `chain_trips` latch (C63). Any refusal writes a
@@ -36,7 +36,7 @@ import hmac
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from xstate_statemachine import Interpreter, PluginBase, XStateMachineError
 from xstate_statemachine.clock import Clock
@@ -102,8 +102,8 @@ class DrainJournal(Protocol):
     async def replay_once(self, key: MachineKey, interp: Interpreter[Any]) -> int: ...
 
 
-#: Seal callback: `(snapshot, machine_hash, version) -> seal` (E50-T49).
-Sealer = Callable[[dict[str, Any], str, int], Awaitable[Any]]
+#: Seal callback: `(snapshot, machine_hash, version, key) -> seal` (E50-T49).
+Sealer = Callable[[dict[str, Any], str, int, MachineKey], Awaitable[Any]]
 
 
 def stable_send_id(key: MachineKey, ordinal: int, record: dict[str, Any]) -> str:
@@ -224,7 +224,7 @@ class Persister:
 
         blob = interp.get_persisted_snapshot()  # root only (CV-C41)
         machine_hash = self.machine_hash_of(key.machine_kind)
-        seal = await self.seal(blob, machine_hash, self.version)
+        seal = await self.seal(blob, machine_hash, self.version, key)
         await self.repo.write_snapshot(
             key,
             SealedSnapshot(
@@ -254,7 +254,7 @@ class RestoreRefusedError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Seal:
-    """HMAC-SHA256 tag over `chart bytes || blob` plus the KMS key id."""
+    """HMAC-SHA256 tag over `_mac_input` plus the KMS key id."""
 
     key_id: str
     tag: str
@@ -277,15 +277,32 @@ class Pager(Protocol):
     async def page(self, key: MachineKey, severity: str, message: str) -> None: ...
 
 
+#: Layout of the HMAC input (CV-C53). A label carrying it leads every tag as a domain-separation
+#: part, so a tag sealed under another layout, or for another purpose, never verifies. It is not
+#: `SNAPSHOT_V`: that is the library's snapshot floor (`from_snapshot(minimum_version=)`, CV-C52)
+#: and must not move with this. 1 = chart, blob, machine_hash, version; 2 adds the label and the
+#: machine key.
+SEAL_LAYOUT_V: Final[int] = 2
+
+
 def _mac_input(
-    chart: dict[str, Any], snapshot: dict[str, Any], machine_hash: str, version: int
+    key: MachineKey,
+    chart: dict[str, Any],
+    snapshot: dict[str, Any],
+    machine_hash: str,
+    version: int,
 ) -> bytes:
-    # Length-prefixed parts so no byte shift can move data between fields.
+    # Length-prefixed parts so no byte shift can move data between fields. The machine key
+    # closes the list: a tag verifies only for the (kind, entity, env) it was sealed for (C-2.11).
     parts = [
+        f"cv-snapshot-seal-v{SEAL_LAYOUT_V}".encode("ascii"),
         canonical_json(chart),
         canonical_json(snapshot),
         machine_hash.encode("utf-8"),
         str(version).encode("ascii"),
+        key.machine_kind.encode("utf-8"),
+        key.entity_id.encode("utf-8"),
+        key.env.encode("utf-8"),
     ]
     return b"".join(len(p).to_bytes(8, "big") + p for p in parts)
 
@@ -296,13 +313,15 @@ def seal(
     snapshot: dict[str, Any],
     machine_hash: str,
     version: int,
+    *,
+    key: MachineKey,
 ) -> Seal:
-    """CV-C53: HMAC-SHA256 over chart bytes + blob, `key_id=KMS.current()`."""
+    """CV-C53: HMAC-SHA256 over the chart, blob and machine `key`, `key_id=KMS.current()`."""
     if version < SNAPSHOT_V:
         raise ValueError(f"seal version {version} < {SNAPSHOT_V} (CV-C53)")
     key_id = keys.current()
     tag = hmac.new(
-        keys.key(key_id), _mac_input(chart, snapshot, machine_hash, version), hashlib.sha256
+        keys.key(key_id), _mac_input(key, chart, snapshot, machine_hash, version), hashlib.sha256
     )
     return Seal(key_id=key_id, tag=tag.hexdigest())
 
@@ -312,9 +331,16 @@ def open_sealed(
     chart: dict[str, Any],
     envelope: SealedSnapshot,
     *,
+    key: MachineKey,
     expected_machine_hash: str,
 ) -> dict[str, Any]:
-    """Verify an envelope; returns the blob or raises `ValueError(reason)`."""
+    """Verify an envelope for `key`; returns the blob or raises `ValueError(reason)`.
+
+    `key` is the machine the caller means to open, taken from where it looked the envelope up.
+    The envelope only has to agree with it: the tag is checked against `key`, never `envelope.key`.
+    """
+    if envelope.key != key:
+        raise ValueError("envelope seal is bound to another machine key (CV-C53, C-2.11)")
     if envelope.version < SNAPSHOT_V:
         raise ValueError(f"envelope version {envelope.version} < {SNAPSHOT_V} (CV-C52)")
     if envelope.machine_hash != expected_machine_hash:
@@ -328,7 +354,7 @@ def open_sealed(
         raise ValueError("unknown HMAC key_id (CV-C53)") from None
     want = hmac.new(
         secret,
-        _mac_input(chart, envelope.snapshot, envelope.machine_hash, envelope.version),
+        _mac_input(key, chart, envelope.snapshot, envelope.machine_hash, envelope.version),
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(want, s.tag):
@@ -442,7 +468,7 @@ class Restorer:
         chart = self.registry.get(key.machine_kind)
         expected = self.registry.hash(key.machine_kind)
         try:
-            blob = open_sealed(self.keys, chart, envelope, expected_machine_hash=expected)
+            blob = open_sealed(self.keys, chart, envelope, key=key, expected_machine_hash=expected)
         except ValueError as exc:
             raise await self._refuse(key, envelope, str(exc)) from None
 
@@ -482,9 +508,11 @@ class Restorer:
 
 
 def hmac_sealer(keys: HmacKeys, chart: dict[str, Any]) -> Sealer:
-    """Adapt `seal()` to `Persister.seal` for one chart."""
+    """Adapt `seal()` to `Persister.seal` for one chart, sealing for the key `persist` is given."""
 
-    async def _seal(snapshot: dict[str, Any], machine_hash: str, version: int) -> Seal:
-        return seal(keys, chart, snapshot, machine_hash, version)
+    async def _seal(
+        snapshot: dict[str, Any], machine_hash: str, version: int, key: MachineKey
+    ) -> Seal:
+        return seal(keys, chart, snapshot, machine_hash, version, key=key)
 
     return _seal

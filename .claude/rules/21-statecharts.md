@@ -31,7 +31,7 @@ Source (normative): `docs/plan/28-statechart-catalogue.md` (B1–B20, §1.3b/§1
   may be denied; `"maxIterations": 500`.
 - Restore: `Interpreter.from_snapshot(machine, blob, minimum_version=3, plugins=[...])` (kwarg, not
   `.use()`), assert `last_transition_ok is not None` before `start()`, then `_cv_bring_up()`.
-- Snapshot only at quiescence; never when context carries `_fault`; HMAC envelope binds `machine_hash`.
+- Snapshot only at quiescence; never when context carries `_fault`; HMAC envelope binds `machine_hash` and the machine identity (29 §1.3).
 - Shutdown: `drain_pending()` → journal → snapshot → `stop()`; journal replayed exactly once.
 - Re-mint events with `cv_re_mint(ev, data=...)`; never forge `type=`/`src=`.
 - Timers (`after:`, delayed raise) are coarse only: ≥10 ms, ≥250 ms tolerance.

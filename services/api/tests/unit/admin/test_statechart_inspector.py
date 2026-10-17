@@ -74,8 +74,9 @@ def row(
     chart, blob = REGISTRY.get(kind), {"configuration": [kind, *(f"{kind}.{s}" for s in states)]}
     blob |= snapshot or {}
     digest = sealed_as or machine_hash(chart)
-    tag = seal(Keys(), chart, blob, digest, SNAPSHOT_V)
-    envelope = SealedSnapshot(MachineKey(kind, eid or kind, env), SNAPSHOT_V, digest, blob, tag)
+    key = MachineKey(kind, eid or kind, env)
+    tag = seal(Keys(), chart, blob, digest, SNAPSHOT_V, key=key)
+    envelope = SealedSnapshot(key, SNAPSHOT_V, digest, blob, tag)
     if tamper is not None:
         envelope = dataclasses.replace(envelope, snapshot=blob | tamper)
     return SnapshotRow(kind, eid, env, envelope, NOW, scope or BoundScope())
@@ -215,10 +216,23 @@ async def test_rows_follow_e17_t08_machine_refusal_per_entity() -> None:
         lambda r: row("kill_switch", None, [], env="live"),  # no state under the root
         lambda r: row("kill_switch", None, ["engaged"], env="live", snapshot={"chain_trips": -1}),
         lambda r: dataclasses.replace(r, machine_kind="unregistered"),
-        lambda r: dataclasses.replace(r, environment="prod"),  # the HMAC does not cover these two
-        lambda r: dataclasses.replace(r, updated_at=NOW.replace(tzinfo=None)),
+        lambda r: dataclasses.replace(r, environment="prod"),  # not an `Environment`
+        lambda r: dataclasses.replace(r, updated_at=NOW.replace(tzinfo=None)),  # not sealed
+        lambda r: dataclasses.replace(r, environment="demo"),  # the live envelope, copied to demo
+        lambda r: dataclasses.replace(fleet()[2], entity_id=ID_2),  # an order under another's id
     ],
-    ids=["tampered", "hash", "config", "no-state", "trips", "kind", "environment", "naive"],
+    ids=[
+        "tampered",
+        "hash",
+        "config",
+        "no-state",
+        "trips",
+        "kind",
+        "environment",
+        "naive",
+        "copied-to-environment",
+        "copied-to-entity",
+    ],
 )
 async def test_a_snapshot_that_does_not_verify_is_left_out_and_named(
     bad: Callable[[SnapshotRow], SnapshotRow],
