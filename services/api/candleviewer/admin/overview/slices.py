@@ -22,6 +22,8 @@ class AdminSlice(StrEnum):
     INGESTION = "ingestion"
     RATE_BUDGET = "rate_budget"
     SUBACCOUNTS = "subaccounts"
+    STATECHART_SNAPSHOTS = "statechart_snapshots"
+    STATECHART_METRICS = "statechart_metrics"
 
 
 #: `GET /admin/overview` slices and `GET /admin/capacity` sections: disjoint cache keys.
@@ -43,4 +45,8 @@ CAPACITY_SLICES: Final = frozenset(
         AdminSlice.RATE_BUDGET,
         AdminSlice.SUBACCOUNTS,
     }
+)
+#: The statechart inspector's sources (E42-T07).
+INSPECTOR_SLICES: Final = frozenset(
+    {AdminSlice.STATECHART_SNAPSHOTS, AdminSlice.STATECHART_METRICS}
 )
