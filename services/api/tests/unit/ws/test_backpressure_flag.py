@@ -144,7 +144,7 @@ def test_backpressure_config_defaults_to_the_contract_budget() -> None:
 
     assert (config.max_bytes, config.max_frames) == (QUEUE_BYTES, QUEUE_FRAMES)
     assert (config.max_bytes, config.max_frames) == (8_388_608, 2_000)
-    assert config.classify_interval_ms == round(CLASSIFY_INTERVAL_S * 1000) == 2_000
+    assert config.classify_interval_ms == round(CLASSIFY_INTERVAL_S * 1000) == 1_000
 
 
 def test_backpressure_config_is_frozen() -> None:

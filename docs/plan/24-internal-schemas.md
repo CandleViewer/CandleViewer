@@ -3849,7 +3849,7 @@ class ServerConfig(BaseModel):
     ws_backpressure_enabled: bool = False # C-4.13 flag, removal #2900; off keeps the 1 024-frame push bound
     ws_queue_bytes: int = 8_388_608       # 23 §8.4 budget; lower only, floor 4 194 304
     ws_queue_frames: int = 2_000          # 23 §8.4 budget; lower only, floor 256
-    ws_classify_interval_ms: int = 2_000  # 23 §8.3; 500..10 000
+    ws_classify_interval_ms: int = 1_000  # 23 §8.3; 500..10 000
     request_timeout_s: int = 30
     cors_origins: tuple[str, ...] = ()
     trusted_proxies: tuple[str, ...] = ()

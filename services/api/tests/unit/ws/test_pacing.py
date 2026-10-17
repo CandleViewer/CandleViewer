@@ -10,6 +10,7 @@ from candleviewer.ws.binary import BOOK_DELTA, FLAG_COALESCED, Frame, decode_b64
 from candleviewer.ws.coalescing import MAX_PENDING_KEYS
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflow_total
 from candleviewer.ws.pacing import (
+    CLASSIFY_INTERVAL_S,
     DEGRADED_THROTTLE_MS,
     PONG_TIMEOUT_S,
     Classifier,
@@ -212,7 +213,7 @@ def test_pacer_class_multiplies_throttles_and_degrades_heatmap() -> None:
 
 
 def test_pacer_rtt_over_500ms_announces_saturated_with_degraded_topics() -> None:
-    """#412: within one 2 s sample, `connection_quality` names the class, multiplier and topics."""
+    """#412: within one 1 s sample, `connection_quality` names the class, multiplier and topics."""
     conn, pacer = _conn()
     heatmap = _sub(conn, "heatmap.BTCUSDT")
     book = _sub(conn, "book.BTCUSDT.50")
@@ -394,6 +395,11 @@ def test_pacer_failing_emit_never_leaves_the_window_due() -> None:
 def test_rtt_probe_ids_carry_a_per_connection_nonce() -> None:
     assert RttProbe(nonce="abc").ping_id(0.0) == "s-rtt-abc-1"
     assert RttProbe().prefix != RttProbe().prefix
+
+
+def test_the_probe_and_the_pacer_default_to_the_classify_interval() -> None:
+    assert RttProbe().interval_s == CLASSIFY_INTERVAL_S == 1.0
+    assert _conn()[1].probe.interval_s == CLASSIFY_INTERVAL_S
 
 
 def test_pacer_next_update_after_a_snapshot_drops_the_stale_window() -> None:
