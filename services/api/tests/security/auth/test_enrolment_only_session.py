@@ -84,9 +84,9 @@ def _lose_every_method(stack: Stack, user: UserRecord) -> None:
     stack.users.add(user.model_copy(update={"mfa_methods": ()}))  # e.g. a recovery sign-in
 
 
-def _refusals(stack: Stack, channel: str, reason: str) -> float:
+def _refusals(stack: Stack, transport: str, reason: str) -> float:
     """`auth_enrolment_refused_total` as the scraped app registry serves it (SR-125)."""
-    return stack.scraped("auth_enrolment_refused_total", channel=channel, reason=reason)
+    return stack.scraped("auth_enrolment_refused_total", transport=transport, reason=reason)
 
 
 # -- HTTP ------------------------------------------------------------------------------------

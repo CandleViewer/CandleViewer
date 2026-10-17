@@ -710,7 +710,7 @@ def make_session_router(
         try:
             verdict = await auth_service.classify(record)
         except Exception as exc:
-            auth_enrolment_refused_total.labels(channel="http", reason="unclassified").inc()
+            auth_enrolment_refused_total.labels(transport="http", reason="unclassified").inc()
             _log().error(
                 "auth.enrolment_only.unclassified",
                 path="/auth/refresh",
@@ -721,7 +721,7 @@ def make_session_router(
             return _problem(503, "Service unavailable", "the session could not be checked")
         if verdict is not SessionClass.ENROLMENT_ONLY_EXPIRED:
             return None
-        auth_enrolment_refused_total.labels(channel="http", reason="expired").inc()
+        auth_enrolment_refused_total.labels(transport="http", reason="expired").inc()
         _log().warning(
             "auth.enrolment_only.expired",
             path="/auth/refresh",
