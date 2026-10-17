@@ -58,8 +58,12 @@ function live(over: Partial<RegistryOptions> = {}) {
   t.take();
   return { ...t, handle };
 }
-const resynced = (host: { resync: unknown }, last_seq: number | null, reason: string) =>
-  expect(host.resync).toHaveBeenCalledWith(BOOK, { last_seq, reason });
+const resynced = (
+  host: { resync: unknown },
+  last_seq: number | null,
+  reason: string,
+  rs?: string,
+) => expect(host.resync).toHaveBeenCalledWith(BOOK, rs, { last_seq, reason });
 
 describe("streams", () => {
   it("takes server-chosen topic names as plain stream keys", () => {
@@ -142,6 +146,23 @@ describe("live and replay data (C11)", () => {
     registry.onData(snap(9, { ch: "metrics.BTCUSDT" }), 1);
     expect(sticky.source).toBe("live"); // ...until a live baseline
   });
+  it("a resync names the replay stream it is for: a bare ch would get the live stream's snapshot", () => {
+    const { registry, host } = setup();
+    registry.consume(spec());
+    registry.consume(spec(), RS);
+    registry.onData(snap(100), 1);
+    registry.onData(snap(5, { rs: RS, meta: { source: "replay" } }), 1);
+    registry.onData(delta(7, { rs: RS }), 1); // a gap in the replay stream
+    registry.onData(snap(8, { rs: RS }), 1);
+    registry.consume(spec({ paneId: "p2" }), RS); // another replay consumer needs a baseline of its own
+    registry.onData(delta(102), 1); // a gap in the live stream
+    const asked = host.resync.mock.calls.map(([, rs, payload]) => [rs, payload.reason]);
+    expect(asked).toEqual([
+      [RS, "sequence_gap"],
+      [RS, "client_restart"],
+      [undefined, "sequence_gap"],
+    ]);
+  });
 });
 
 describe("chunked snapshots (3.6, 7.2)", () => {
@@ -191,6 +212,24 @@ describe("chunked snapshots (3.6, 7.2)", () => {
     expect([got(), handle.status]).toEqual([[], "resyncing"]);
     registry.onData(snap(800), 1);
     expect(got()).toEqual(["snap:800"]);
+  });
+
+  it("stops asking when a snapshot passes the cap twice in a row: the server sends the same one again", () => {
+    const cost = part(null, { n: 1 }).size * JSON_HEAP_FACTOR + FRAME_OVERHEAD_BYTES;
+    const { registry, host, got } = live({ maxHeldBytes: 2 * cost });
+    const tooBig = (id: string) => {
+      for (const n of [1, 2, 3]) registry.onData(part(null, { n }, id), 1); // the third is over the cap
+    };
+    tooBig("a");
+    tooBig("b"); // the answer to the resync
+    expect([host.resync.mock.calls.length, registry.counters.overflows]).toEqual([1, 2]);
+    expect(got()).toEqual(["reset:overflow"]); // once: consumers hold nothing to clear
+    registry.onData(part(null, { n: 1 }, "c"), 1);
+    registry.onData(delta(101), 1); // a delta amid chunks would ask, but this stream is out of asks
+    expect(host.resync).toHaveBeenCalledTimes(1);
+    registry.onData(snap(300), 1); // one that fits: live again, and it asks if it loses its baseline
+    registry.onData(delta(305), 1);
+    expect(host.resync).toHaveBeenCalledTimes(2);
   });
 
   it("a stream that has no baseline yet stays pending while its first snapshot is assembled", () => {
@@ -264,6 +303,15 @@ describe("malformed data (C10)", () => {
     registry.onData(snap(60, { id: "b", ...binary(bookSnapshot()) }), 1); // b's last chunk alone
     expect(registry.heldBytes).toBe(0);
     expect([got(), host.resync.mock.calls.length]).toEqual([["reset:malformed"], 1]); // refused, not a second loss
+  });
+
+  it("a first chunk whose markers disagree refuses the rest of its set: [b2, b3] is never a snapshot", () => {
+    const { registry, got } = live();
+    registry.onData(snap(null, { id: "a", ...binary(bookSnapshot(FLAG_PARTIAL)) }), 1);
+    registry.onData(snap(null, { id: "b", ...binary(bookSnapshot()) }), 1); // "more to come", no partial bit
+    registry.onData(snap(null, { id: "b", ...binary(bookSnapshot(FLAG_PARTIAL)) }), 1); // b2
+    registry.onData(snap(60, { id: "b", ...binary(bookSnapshot()) }), 1); // b3, the last
+    expect([registry.heldBytes, got()]).toEqual([0, ["reset:malformed"]]);
   });
 });
 

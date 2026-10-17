@@ -29,8 +29,12 @@ export interface RegistryHost {
   subscribe(spec: ConsumerSpec, rs: string | undefined): void;
   /** The last consumer left the stream: send its `unsub`. */
   unsubscribe(ch: string, rs: string | undefined): void;
-  /** A resync the guard admitted: frame it and pace it. */
-  resync(ch: string, payload: ResyncPayload): void;
+  /**
+   * A resync the guard admitted: frame it and pace it. `rs` is the replay stream it is for, and the
+   * engine puts it on the envelope (13.1): the gateway resolves a bare `ch` to the live stream, so
+   * a replay stream's loss would re-snapshot its live twin and stay void (#572).
+   */
+  resync(ch: string, rs: string | undefined, payload: ResyncPayload): void;
   /**
    * One validated frame of a stream, in order: a `snap` replaces all before it, a `reset` voids
    * them, a `d` extends them. The host owns what happens next: a bounded queue (C-2.18), a copy per
@@ -82,6 +86,8 @@ interface Rec {
   /** Consumers holding the stream. */
   refs: number;
   stale: boolean;
+  /** Chunk sets dropped for size since the last complete `snap`: it comes back the same, so a second in a row ends the asking. */
+  overflows: number;
   /** A `reset` was delivered and no `snap` since: consumers already hold nothing, so none repeats it. */
   voided: boolean;
   /** Sticky until the next baseline: a frame that says replay makes the stream replay (C11). */
@@ -117,9 +123,10 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
   }
 
   function requestResync(rec: Rec, reason: ResyncPayload["reason"]): void {
+    if (rec.overflows > 1) return; // see applySnap: asking again would get the same snapshot
     const go = () => {
       counters.resyncsSent += 1;
-      host.resync(rec.ch, { last_seq: seq.lastSeq(rec.key), reason });
+      host.resync(rec.ch, rec.rs, { last_seq: seq.lastSeq(rec.key), reason });
     };
     if (guard.request(rec.ch, go) === "deferred") counters.resyncsDeferred += 1;
   }
@@ -182,6 +189,10 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     if (result.kind === "malformed") return malformed(rec, id);
     if (result.kind === "overflow") {
       counters.overflows += 1;
+      // The server answers a resync with the same snapshot, which passes the cap again: the second
+      // overflow in a row ends the asking (`requestResync`) until a snapshot fits or the stream is
+      // subscribed again; the engine's baseline deadline surfaces a stream left void.
+      rec.overflows += 1;
       return lose(rec, "overflow", "state_corrupt");
     }
     if (result.kind === "pending") {
@@ -193,6 +204,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     rec.stale = result.bodies.some(isStale);
     rec.replay = replay;
     rec.voided = false;
+    rec.overflows = 0;
     const { ts, sp, meta } = frame;
     const { seq: snapSeq, bodies, decodeMs: total } = result;
     send(rec, { kind: "snap", seq: snapSeq, ts, sp, decodeMs: total, meta, bodies });
@@ -228,7 +240,16 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
       const key = topicKey(spec.ch, rs);
       let rec = records.get(key);
       if (rec === undefined) {
-        rec = { key, ch: spec.ch, rs, refs: 1, stale: false, voided: false, replay: false };
+        rec = {
+          key,
+          ch: spec.ch,
+          rs,
+          refs: 1,
+          stale: false,
+          overflows: 0,
+          voided: false,
+          replay: false,
+        };
         records.set(key, rec);
         host.subscribe(spec, rs);
       } else {
