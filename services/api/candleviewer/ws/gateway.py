@@ -58,9 +58,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   with `perf_counter`, not the injected clock), and its CVWB body was timed by the encoder.
 
 - **Backpressure flag** (E17-T03, `CV_WS_BACKPRESSURE_ENABLED`, off by default):
-  `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push, onto two
-  lanes inside one 8 MiB / 2 000-frame budget; the `bye` takes a terminal slot, and every
-  close flushes under one deadline, past which the socket goes with no `bye` (§4.4, §8.4).
+  `ws/pipeline.py` replaces the outbound queue. Frames are encoded once at push (where a
+  stamped frame's encode is timed and sized), onto two lanes inside one 8 MiB / 2 000-frame
+  budget; the `bye` takes a terminal slot, and every close flushes under one deadline, past
+  which the socket goes with no `bye` (§4.4, §8.4).
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
@@ -444,7 +445,8 @@ class _Connection:
         socket has the frame, and times and sizes its encode (`cv_ws_frame_*`) before the send. It
         never reaches the wire, and a frame dropped from the queue (a seal, a full queue) is never
         observed. Any other frame is queued bare. With the flag on the pipeline queues it
-        (`ws/pipeline.py`), the stamp on its `Queued`."""
+        (`ws/pipeline.py`), the stamp on its `Queued`: it encodes the frame once, at push, and
+        times and sizes a stamped one there, so the writer observes only the fan-out span."""
         if self.closing:
             return
         if self.pipeline is not None:
@@ -484,13 +486,6 @@ class _Connection:
     async def send_frame(self, frame: dict[str, Any]) -> None:
         """Write one frame in the negotiated encoding (§2.2, §3.2)."""
         await self.send_payload(self.encode_frame(frame))
-
-    async def send_encoded(self, payload: str | bytes) -> None:
-        """Write one payload the pipeline encoded at push: bytes on msgpack, text on JSON."""
-        if isinstance(payload, bytes):
-            await self.ws.send_bytes(payload)
-        else:
-            await self.ws.send_text(payload)
 
     def close_with(
         self,
@@ -1173,7 +1168,8 @@ def make_ws_router(
         first, each payload as the pipeline encoded it; after a close, what the close kept, then
         the `bye` and the close frame. The close's flush deadline bounds all of it: past it the
         flush is abandoned with no `bye` (§4.4), counted (`ConnectionPipeline.abandon`), and the
-        handler tears the socket down."""
+        handler tears the socket down. A stamped frame's encode was observed at push: the writer
+        observes only its fan-out span."""
         queue = pipe.queue
         pings = 0
         try:
@@ -1199,7 +1195,7 @@ def make_ws_router(
                     if end is not None and not (item.priority and end.flush):
                         continue
                     try:
-                        await conn.send_encoded(item.payload)
+                        await conn.send_payload(item.payload)
                     except WebSocketDisconnect as exc:
                         conn.disconnect_code = exc.code
                         raise

@@ -8,6 +8,14 @@ included. It is encoded once in the negotiated subprotocol (`outbound.encode`), 
 step 3); the ladder's drop and re-snapshot steps before it arrive in a later slice. The writer
 (`gateway.py`) sends each payload as it was encoded.
 
+The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
+encode. For a data frame the hub stamped (`received`: one frame of a subscription in
+`SAMPLE_EVERY`) the encode is timed with `perf_counter` and sized at its wire length, once, under
+the connection's own kind (`json` or `msgpack`) with weight `SAMPLE_EVERY`, as the flag-off writer
+does before its send. Any other frame reads no timer, and an encode that fails is not observed.
+The encode happens at push, so a stamped frame that a close drops before the send is in these
+series but not in `cv_ws_fanout_seconds`, which the writer observes once the socket has the frame.
+
 A close takes the terminal slot (`Terminal`), in no lane and never counted: its `bye` and close
 marker are the only items admitted past the budget, one small frame, so the bound holds to within
 one frame and the budget never refuses a `bye` (§8.4, WS-D01). A close that ends the
@@ -43,6 +51,7 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Final, Protocol
 
 import structlog
@@ -50,7 +59,14 @@ import structlog
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.codec import encode_server_frame
 from candleviewer.ws.lifecycle import SUBPROTOCOL_MSGPACK, bye_frame
-from candleviewer.ws.metrics import cv_ws_overflow_total
+from candleviewer.ws.metrics import (
+    JSON_ENCODE_SECONDS,
+    JSON_FRAME_BYTES,
+    MSGPACK_ENCODE_SECONDS,
+    MSGPACK_FRAME_BYTES,
+    SAMPLE_EVERY,
+    cv_ws_overflow_total,
+)
 from candleviewer.ws.outbound import FrameEncoder, OutboundQueue, encode, json_payload
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES
 from candleviewer.ws.topics import FAMILIES
@@ -146,6 +162,12 @@ class ConnectionPipeline:
         self._dumps: FrameEncoder = (
             msgpack_payload if encoding == SUBPROTOCOL_MSGPACK else json_payload
         )
+        #: E17-T06: the frame cost pair (encode seconds, frame bytes) of this connection's codec.
+        self._cost = (
+            (MSGPACK_ENCODE_SECONDS, MSGPACK_FRAME_BYTES)
+            if encoding == SUBPROTOCOL_MSGPACK
+            else (JSON_ENCODE_SECONDS, JSON_FRAME_BYTES)
+        )
         self._close = close
         self._wall_ms = wall_ms
         self._connection_id = connection_id
@@ -159,15 +181,21 @@ class ConnectionPipeline:
         return self._deadline
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
-        """Queue one frame; nothing once a close or `release` happened (WS-D01)."""
+        """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
+        stamped (`received`) has its encode timed and sized here, once (module docstring)."""
         if self.terminal is not None or self.released:
             return
+        began = perf_counter() if received is not None else 0.0
         try:
             item = encode(frame, self._dumps, received=received)
         except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
             _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
             self._close("internal_error")
             return
+        if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
+            seconds, size = self._cost
+            seconds.observe(perf_counter() - began, SAMPLE_EVERY)
+            size.observe(item.size, SAMPLE_EVERY)
         if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused
             _log().warning(
                 "ws outbound frame over the frame limit", **self._fields(frame), size=item.size

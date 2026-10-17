@@ -356,7 +356,8 @@ ENCODE_COST: Final = {
 #: The writer's encode of a data frame: its seconds, and the bytes sent (a JSON text is ASCII:
 #: chars == bytes). The writer observes the pair of the connection's codec for the frame the hub
 #: stamped, one in `SAMPLE_EVERY`: `json.dumps` on `cv.v1.json`, `encode_server_frame` on
-#: `cv.v1.msgpack`.
+#: `cv.v1.msgpack`. With `CV_WS_BACKPRESSURE_ENABLED` on, `pipeline.ConnectionPipeline.push`
+#: observes the pair instead, at the frame's one encode.
 JSON_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(JSON_KIND)
 JSON_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(JSON_KIND)
 MSGPACK_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(MSGPACK_KIND)

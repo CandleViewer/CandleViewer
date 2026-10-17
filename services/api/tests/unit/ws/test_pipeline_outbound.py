@@ -4,7 +4,8 @@ With `CV_WS_BACKPRESSURE_ENABLED` on, `_Connection.push` hands every frame to
 `ws.pipeline.ConnectionPipeline`: it is encoded once in the negotiated subprotocol, queued on the
 `OutboundQueue` lanes inside the 8 MiB / 2 000-frame budget, and sent as is by the writer. A close
 takes the terminal slot and flushes under one deadline (`23-ws-protocol.md` §4.4, §8.4); a frame
-that cannot be encoded fails closed (§10.1). With the flag off nothing of this exists, and the
+that cannot be encoded fails closed (§10.1). The one encode at push is where a frame the hub
+stamped feeds #2921's frame cost series, once. With the flag off nothing of this exists, and the
 wire is byte-for-byte what it was: `test_flag_off_wire_transcript_is_unchanged` pins a transcript
 recorded on the commit before this slice.
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import struct
 from collections.abc import Callable
@@ -39,7 +41,18 @@ from candleviewer.ws.binary import encode_b64
 from candleviewer.ws.cvwb_vectors import vector_frames
 from candleviewer.ws.gateway import GatewayHub, _Connection, make_ws_router
 from candleviewer.ws.lifecycle import bye_frame
-from candleviewer.ws.metrics import cv_ws_closes_total, cv_ws_overflow_total
+from candleviewer.ws.metrics import (
+    JSON_ENCODE_SECONDS,
+    JSON_FRAME_BYTES,
+    JSON_KIND,
+    MSGPACK_ENCODE_SECONDS,
+    MSGPACK_FRAME_BYTES,
+    MSGPACK_KIND,
+    SAMPLE_EVERY,
+    FastHistogramChild,
+    cv_ws_closes_total,
+    cv_ws_overflow_total,
+)
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES, Queued
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.pipeline import (
@@ -52,6 +65,7 @@ from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, SequencingHub, SnapshotBody
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.ws._seq_support import ACC_A, USER, Book, Source
+from tests.unit.ws.test_frame_metrics import _Ticks, _writer
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, ORIGIN, SESSION, _Audit, _Clock
 
 _DEADLINE_S = 5.0
@@ -1057,6 +1071,146 @@ async def test_an_outbound_frame_over_4_mib_is_logged_and_sent() -> None:
     (event,) = [e for e in logs if e["event"] == "ws outbound frame over the frame limit"]
     assert (event["t"], event["family"], event["log_level"]) == ("d", "system", "warning")
     assert event["size"] > MAX_OUTBOUND_FRAME_BYTES and "x" * 64 not in repr(logs)
+
+
+# -- flag on: the frame cost series (#2921) ------------------------------------------------------
+
+#: The frame cost children a connection's codec feeds (E17-T06), by a readable name.
+_COST_NAMES = {
+    JSON_ENCODE_SECONDS: "json seconds",
+    JSON_FRAME_BYTES: "json bytes",
+    MSGPACK_ENCODE_SECONDS: "msgpack seconds",
+    MSGPACK_FRAME_BYTES: "msgpack bytes",
+}
+
+
+@_ENCODINGS
+@pytest.mark.parametrize("case", ["stamped", "unstamped", "refused"])
+def test_a_stamped_frame_is_observed_once_per_series_at_push(
+    encoding: str, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2921 with the flag on: the pipeline encodes a frame once, at push, so that is where a
+    frame the hub stamped (`received`) is timed, by a `perf_counter` pair around the encode, and
+    sized at its wire length: one observation in each series of its codec's pair, weight
+    `SAMPLE_EVERY`, and none anywhere else. An unstamped frame reads no timer and observes
+    nothing; a stamped frame whose encode is refused observes nothing and closes instead."""
+    ticks = _Ticks(0.25)  # each timer read is 0.25 s after the one before
+    real = outbound.encode
+
+    def slow_encode(frame: Any, dumps: Any, *, received: float | None = None) -> Queued:
+        ticks.now += 5.0  # an encode takes 5 s on the stand-in clock: it is inside the pair
+        return real(frame, dumps, received=received)
+
+    monkeypatch.setattr(pipeline, "perf_counter", ticks)
+    monkeypatch.setattr(pipeline, "encode", slow_encode)
+    seen: list[tuple[str, float, int]] = []
+    observe = FastHistogramChild.observe
+
+    def spy(child: FastHistogramChild, value: float, weight: int = 1) -> None:
+        seen.append((_COST_NAMES.get(child, "another series"), value, weight))
+        observe(child, value, weight)
+
+    monkeypatch.setattr(FastHistogramChild, "observe", spy)
+    pipe, asked = _pipe(encoding)
+    frame = _d(_BOOK, x=float("nan")) if case == "refused" else _d(_BOOK, bids=[["1.0", "2"]])
+    pipe.push(frame, received=None if case == "unstamped" else 1.0)
+    item = pipe.queue.pop()
+    if case == "refused":
+        assert (item, asked, seen) == (None, [("internal_error", None)], [])
+        return
+    assert item is not None and asked == []
+    if case == "unstamped":
+        assert (ticks.reads, seen) == (0, [])
+        return
+    codec_kind = "msgpack" if encoding == _MSGPACK else "json"
+    assert ticks.reads == 2
+    assert seen == [
+        (f"{codec_kind} seconds", 5.0 + 0.25, SAMPLE_EVERY),
+        (f"{codec_kind} bytes", item.size, SAMPLE_EVERY),
+    ]
+
+
+@_ENCODINGS
+@pytest.mark.parametrize(
+    "deltas", [2 * SAMPLE_EVERY - 1, SAMPLE_EVERY - 2], ids=["two_stamped", "none_stamped"]
+)
+async def test_the_budgeted_writer_sends_what_push_timed_and_sized(
+    encoding: str, deltas: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2921 through the router with the flag on, as `test_frame_metrics` pins the flag-off
+    writer: every frame is encoded once, at push, and sent as encoded; each data frame the hub
+    stamped (`s` a multiple of `SAMPLE_EVERY`) is timed and sized once, under the connection's own
+    kind only, and the send is not encode time. The writer does not observe a frame again, and a
+    session of unstamped frames reads no timer and observes nothing."""
+    ticks = _Ticks(1.0)  # the timer pair around the encode: exactly 1 s apart
+    monkeypatch.setattr(pipeline, "perf_counter", ticks)
+    real, send = outbound.encode, _Connection.send_payload
+    encoded: list[str | bytes] = []
+    sent: list[str | bytes] = []
+
+    def recording(frame: Any, dumps: Any, *, received: float | None = None) -> Queued:
+        item = real(frame, dumps, received=received)
+        encoded.append(item.payload)
+        return item
+
+    async def slow_send(conn: Any, payload: str | bytes) -> None:
+        ticks.now += 10.0  # a send takes 10 s on the stand-in clock: it is not encode time
+        sent.append(payload)
+        await send(conn, payload)
+
+    monkeypatch.setattr(pipeline, "encode", recording)
+    monkeypatch.setattr(_Connection, "send_payload", slow_send)
+    kind, n = (MSGPACK_KIND if encoding == _MSGPACK else JSON_KIND), SAMPLE_EVERY
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, _ = await rig.open(sock)
+        await rig.sub(sock)  # `sub_ok`, then the `snap`: `s` 1
+        before = _writer()
+        for i in range(deltas):  # `s` 2 on: the hub stamps `n` and 2 x `n`
+            rig.book_delta(i)
+        frames = await sock.next(deltas)
+        after = _writer()
+        handler.cancel()
+        await asyncio.wait({handler})
+    wire = [payload for _, payload in sock.raw]
+    assert {how for how, _ in sock.raw} == {"bytes" if sock.msgpack else "text"}
+    assert encoded == sent == wire  # once each, at push; the writer encoded nothing
+    stamped = [i for i, f in enumerate(frames) if f["s"] % n == 0]
+    assert [frames[i]["s"] for i in stamped] == ([n, 2 * n] if deltas > n else [])
+    assert ticks.reads == 2 * len(stamped)  # a timer pair per stamped frame; none for any other
+    assert {k for k in after if after[k] != before[k]} == ({kind} if stamped else set())
+    (n0, t0), (c0, b0) = before[kind]
+    (n1, t1), (c1, b1) = after[kind]
+    assert (n1 - n0, c1 - c0) == (n * len(stamped),) * 2  # weight `n`, once each: never twice
+    assert t1 - t0 == pytest.approx(n * len(stamped) * 1.0)
+    data = wire[-deltas:]
+    assert b1 - b0 == n * sum(len(data[i]) for i in stamped)
+
+
+@_ENCODINGS
+async def test_the_idle_budgeted_writer_holds_no_payload_it_sent(encoding: str) -> None:
+    """As `test_frame_metrics` pins for the flag-off writer: a stamped frame's payload (up to 4
+    MiB for a snapshot chunk) is let go once sent, not held until the next frame. By identity:
+    no value the idle writer holds is one of the payloads it sent."""
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        await rig.sub(sock)
+        for i in range(SAMPLE_EVERY - 1):  # `s` 2 to `n`: the last frame sent is the stamped one
+            rig.book_delta(i)
+        frames = await sock.next(SAMPLE_EVERY - 1)
+        (task,) = [t for t in asyncio.all_tasks() if t.get_name() == f"{conn.connection_id}-writer"]
+        outer = task.get_coro()
+        assert inspect.iscoroutine(outer)
+        inner = outer.cr_await  # with the flag on, `writer` awaits `budgeted_writer`
+        assert inspect.iscoroutine(inner)
+        code, held = inner.cr_code.co_name, dict(inspect.getcoroutinelocals(inner))
+        handler.cancel()
+        await asyncio.wait({handler})
+    assert code == "budgeted_writer" and frames[-1]["s"] == SAMPLE_EVERY
+    sent = [payload for _, payload in sock.raw]
+    retained = sorted(name for name, value in held.items() if any(value is p for p in sent))
+    assert not retained, f"the idle writer still holds a payload it sent, in: {retained}"
 
 
 async def test_teardown_releases_the_pipeline() -> None:
