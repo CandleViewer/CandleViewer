@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
 from dataclasses import replace
 
 import pytest
@@ -89,8 +90,32 @@ def _dies_reporting(exc: Exception) -> object:
 
 
 class _BrokenLogger:
+    """A logger whose sink is gone. The exception type varies from test to test, so the net
+    around a report cannot be a narrower `except` than the one it is."""
+
+    failure: type[Exception] = OSError
+
     def error(self, event: str, **fields: object) -> None:
-        raise OSError("the log sink is gone")
+        raise self.failure("the log sink is gone")
+
+
+class _BrokenLoggerValueError(_BrokenLogger):
+    failure = ValueError
+
+
+class _UnwindsSlowly(InMemoryRecordedTier):
+    """Waits for ever, and takes five scheduler turns to give up when cancelled."""
+
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            for _ in range(5):
+                await asyncio.sleep(0)
+            raise
+        return []
 
 
 class _IgnoresCancellation(MintingTier):
@@ -265,6 +290,66 @@ async def test_a_logger_that_fails_changes_nothing_the_consumer_sees(
     assert str(raised.value) == "the replay read failed unexpectedly"
 
 
+async def test_a_logger_that_fails_changes_nothing_when_the_producer_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_module, "_log", _BrokenLoggerValueError)
+    harness = Harness().replace_ports(hot=_NeverAnswers())
+
+    async with ReplaySource(harness.req, harness.tiers, config=SMALL) as source:
+        waiting = asyncio.create_task(anext(source))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        (producer,) = _producers()
+        producer.cancel()
+
+        async with asyncio.timeout(5):
+            with pytest.raises(ReplayInternalError):  # not the sink's own error
+                await waiting
+
+
+async def test_a_logger_that_fails_does_not_make_the_give_up_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_module, "_log", _BrokenLoggerValueError)
+    reader = _IgnoresCancellation()
+    harness = Harness().replace_ports(hot=reader)
+    source = ReplaySource(harness.req, harness.tiers, config=replace(SMALL, io_timeout_s=0.01))
+    await source.__aenter__()
+    await reader.entered.wait()
+    (producer,) = _producers()
+
+    try:
+        async with asyncio.timeout(5):
+            await source.aclose()  # it gives up on the producer, and its report fails
+    finally:
+        reader.release.set()
+        await _finished(producer)
+
+
+async def test_a_closed_source_lets_go_of_a_producer_that_unwinds_after_its_release() -> None:
+    """`aclose` is cancelled while it waits: it releases at once, and the producer, still
+    unwinding, ends cancelled a few turns later. Nothing may keep that task (and its traceback)."""
+    harness = Harness().replace_ports(hot=_UnwindsSlowly())
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL)
+    await source.__aenter__()
+    for _ in range(20):  # the producer waits in the reader
+        await asyncio.sleep(0)
+    (producer,) = _producers()
+    ended = weakref.ref(producer)
+
+    closing = asyncio.create_task(source.aclose())
+    await asyncio.sleep(0)  # it has asked the producer to stop and waits for it
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    await _finished(producer)
+    del producer, closing
+    await asyncio.sleep(0)
+
+    assert ended() is None
+
+
 async def test_a_producer_cancelled_by_someone_else_leaves_nothing_in_the_closed_source() -> None:
     tier = MintingTier(many(2_000))
     harness = Harness().replace_ports(hot=tier)
@@ -339,6 +424,13 @@ async def test_closing_gives_up_on_a_producer_that_ignores_cancellation_after_th
         ]
         assert {d for d in delays if d is not None and d < 1} == {0.01}  # io_timeout_s, no more
         assert await drain(source) == []
+
+        with capture_logs() as again:  # the producer is still there: a second close waits again
+            async with asyncio.timeout(5):
+                await source.aclose()
+        assert [e["event"] for e in again if e["log_level"] == "error"] == [
+            "replay_source_producer_did_not_stop"
+        ]
     finally:
         reader.release.set()  # the reader gives the producer back, which then ends by itself
         await _finished(producer)
@@ -399,10 +491,13 @@ async def test_a_producer_that_outlives_the_give_up_queues_nothing_for_the_close
     assert reader.alive() == 0  # not even in the closed queue
 
 
-async def test_a_producer_that_outlives_the_give_up_does_not_park_on_the_closed_queue() -> None:
+@pytest.mark.parametrize("rows", [0, 100], ids=["nothing-to-queue", "a-batch-to-queue"])
+async def test_a_producer_that_outlives_the_give_up_does_not_park_on_the_closed_queue(
+    rows: int,
+) -> None:
     """With one queue slot, already holding the end marker the close left, a producer that put
     a marker or a batch of its own would wait for room that never comes."""
-    reader = _IgnoresCancellation(many(100))
+    reader = _IgnoresCancellation(many(rows))
     harness = Harness().replace_ports(hot=reader)
     one_slot = ReadAheadConfig(
         window_us=SECOND, readahead_events=9, batch_events=3, io_timeout_s=0.01

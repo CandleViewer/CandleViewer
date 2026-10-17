@@ -137,8 +137,8 @@ DEFAULT_MAX_ROWS_PER_READ: Final = 8_192
 _MARKER_YIELD_EVERY: Final = 1_024
 _RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
-#: Order-of-magnitude bytes per buffered event (E26-K01 measured ~0.4 KB a row, 0.78 KB in its
-#: dense window: E26-Q03 calibrates) and per snapshot level (two Decimals and a tuple).
+#: Order-of-magnitude bytes per buffered event (E26-K01's marginal cost was 0.3-0.4 KB over a
+#: fixed 55 MB baseline, so this is above it) and per snapshot level (two Decimals and a tuple).
 _EVENT_BYTES: Final = 512
 _LEVEL_BYTES: Final = 128
 

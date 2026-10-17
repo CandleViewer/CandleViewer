@@ -25,8 +25,8 @@ takes `readahead_bytes` of it and the merge's cursors share the rest, each read 
 share in rows and at the merge's `DEFAULT_MAX_ROWS_PER_READ`. A session too wide or a stream too
 dense for it fails with `ReplayMemoryCeilingExceeded`; gap markers sit outside it (see
 `replay.merge`). Every byte figure is an estimate, not a measured resident size: an event counts
-512 B plus 128 B per snapshot level (`merge.approx_bytes`); E26-K01 measured about 0.4 KB a row in
-one run and 0.78 KB in its dense 200-depth window, so E26-Q03 is to calibrate it.
+512 B plus 128 B per snapshot level (`merge.approx_bytes`); E26-K01's marginal cost was 0.3-0.4 KB
+an event over a fixed 55 MB baseline, so 512 B is above it, and E26-Q03 is to re-measure it.
 
 **Failures** reach the consumer in order. A `ReplayError` is raised after every event merged
 before it (the merge yields its batch in progress first). Any other failure is a bug or a
