@@ -17,8 +17,9 @@ step-up audit records (`auth` itself may not import `audit`).
 
 Challenges (#2304; PR #2290 ruling, rule 4): every refusal issues one live
 challenge per session (`record_pending`), stored on the row with its id,
-class, 5-minute expiry and, when the route names it, the SHA-256 fingerprint
-of the refused request; `step_up()` answers the live one.
+class, 5-minute expiry and, for a no-grace class, the SHA-256 fingerprint
+of the refused request; `step_up()` answers the live one, and a no-grace grant (60 s)
+is bound to that fingerprint: only the identical request uses it, once.
 
 Writes (#2304, #2798): a no-grace class's one-shot grant is used by one
 conditional write (`consume_step_up_key`), and every other write of the
@@ -45,6 +46,7 @@ from candleviewer.auth.errors import (
     SessionRevoked,
     StepUpChallengeRefused,
     StepUpCodeInvalid,
+    StepUpMismatch,
     StepUpRequired,
     UnknownActionClass,
 )
@@ -84,11 +86,14 @@ NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"}
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.
 _PENDING = "pending:"
-#: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class is stored as
-#: `once:<class>` by `step_up()` and removed by `consume_single_use`.
+#: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class's is stored as
+#: `once:<class>:<challenge_id>:<sha256>` by `step_up()`, bound to the challenged request
+#: (#2304), and removed by `consume_single_use`.
 _ONCE = "once:"
-#: #2304: a challenge expires 5 minutes after issue.
+#: #2304: a challenge expires 5 minutes after issue; a one-shot grant 60 s after the
+#: step-up, which leaves time only for the immediate re-send.
 CHALLENGE_WINDOW = timedelta(minutes=5)
+SINGLE_USE_WINDOW = timedelta(seconds=60)
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
 
@@ -103,18 +108,23 @@ def last_step_up_at(elevations: dict[str, datetime]) -> datetime | None:
     """When the session's most recent successful step-up happened, whatever its action class,
     or `None` when the row records none (#2754).
 
-    `step_up()` stores `now + GRACE_WINDOW` under the class (`once:<class>` for a one-shot
-    grant), so a grant's expiry less the window is the instant it was given. A `pending:`
-    challenge carries the same expiry but is no step-up, and a key that is not an action class
+    `step_up()` stores `now + GRACE_WINDOW` under the class, and `now + SINGLE_USE_WINDOW` under a
+    no-grace class's bound `once:` key (#2304), so a grant's expiry less its window is the instant
+    it was given. A `pending:` challenge is no step-up, and a key that is not an action class
     is ignored. A grant stays on the row after its window lapses, so the instant outlives the
     window; it is gone once something removes the grant: an idle-lock unlock (B16.7), the
     read-only downgrade, the spend of a one-shot grant, or a later write that prunes lapsed
     windows. A token refresh starts a successor row, which holds none. Observability only:
     elevation is still decided by `require_elevation`, never here."""
-    given = [
+    given = [  # a class-only `once:<class>` grant from before #2304 had the grace window
         until - GRACE_WINDOW
         for key, until in elevations.items()
         if key.removeprefix(_ONCE) in ACTION_CLASSES
+    ]
+    given += [
+        until - SINGLE_USE_WINDOW
+        for key, until in elevations.items()
+        if StepUpChallenge.parse(key, until, _ONCE) is not None
     ]
     return max(given) if given else None
 
@@ -149,8 +159,9 @@ class StepUpGrant:
     #: True for no-grace classes: no window is opened; the grant authorises
     #: exactly the one action it was obtained for.
     single_use: bool
-    #: #2304: the challenge the step-up answered, if any.
+    #: #2304: the challenge the step-up answered, and (no-grace) the request it binds.
     challenge_id: uuid.UUID | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -212,7 +223,19 @@ def _answered(
     resolved = live.action_class if live is not None else action_class
     if resolved is None:
         raise StepUpChallengeRefused("action_class", "required")
+    if resolved in NO_GRACE_ACTION_CLASSES and challenge_id is None:
+        raise StepUpChallengeRefused("challenge_id", "challenge_required")
     return resolved, live
+
+
+def _grant_key(action_class: str, challenge: StepUpChallenge | None) -> str:
+    """Where a step-up's elevation is stored: a grace class's window, or a no-grace class's
+    one-shot grant bound to the challenged request - never a window for a no-grace class."""
+    if action_class not in NO_GRACE_ACTION_CLASSES:
+        return action_class
+    if challenge is None or challenge.fingerprint is None:
+        raise StepUpChallengeRefused("challenge_id", "challenge_required")
+    return challenge.key(_ONCE)
 
 
 # Every write of the step-up columns is one of these changes, applied by
@@ -422,6 +445,7 @@ class StepUpService:
             raise SessionRevoked("step_up")
         now = self._clock()
         action_class, challenge = _answered(record, now, action_class, challenge_id)
+        grant_key = _grant_key(action_class, challenge)
         if not await self._verify_both(user_id, code, password, now):
             auth_stepup_failures_total.inc()  # SR-125; the audit row names the action class
             strike = _Strike(now)
@@ -434,14 +458,12 @@ class StepUpService:
                     auth_readonly_downgrades_total.inc()
                 raise SessionReadOnly(struck.readonly_until)
             raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
-        until = now + GRACE_WINDOW
         single_use = action_class in NO_GRACE_ACTION_CLASSES
-        # No-grace classes store a one-shot grant under "once:<class>" that a
-        # handler consumes via `consume_single_use`; grace classes a window.
-        grant_key = f"{_ONCE}{action_class}" if single_use else action_class
+        until = now + (SINGLE_USE_WINDOW if single_use else GRACE_WINDOW)
         saved = await self._update(session_id, _elevate(action_class, grant_key, until, now))
         if saved.readonly_until is not None:  # downgraded during the factor check
             raise SessionReadOnly(saved.readonly_until)
+        fingerprint = challenge.fingerprint if single_use and challenge is not None else None
         cid = None if challenge is None else challenge.challenge_id
         await self._record(
             record,
@@ -450,20 +472,25 @@ class StepUpService:
             action_class=action_class,
             elevated_until_us=to_us(until),
             **({} if cid is None else {"challenge_id": str(cid)}),
+            **({} if fingerprint is None else {"request_sha256": fingerprint}),
         )
         auth_step_up_total.labels(action_class=action_class).inc()
-        return StepUpGrant(action_class, until, single_use=single_use, challenge_id=cid)
+        return StepUpGrant(
+            action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
+        )
 
     async def record_pending(
         self, session_id: str, action_class: str, *, fingerprint: str | None = None
     ) -> StepUpChallenge:
         """Issue the challenge for the request a `403 step_up_required` refuses (#2304): a
         random id scoped to this session, expiring in 5 minutes, recording the refused
-        request's `fingerprint` when the route names it. It supersedes the session's live
+        request's `fingerprint` (a no-grace class must bind one). It supersedes the session's live
         challenge, so `POST /auth/step-up` elevates the class the server itself demanded.
         Server-side only."""
         if action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
+        if action_class in NO_GRACE_ACTION_CLASSES and fingerprint is None:
+            raise ValueError(f"a {action_class} challenge must bind the refused request")
         if fingerprint is not None and not _FINGERPRINT.fullmatch(fingerprint):
             raise ValueError("fingerprint must be a hex SHA-256")
         record = await self._live(session_id)
@@ -549,17 +576,36 @@ class StepUpService:
             return None
         return until - now
 
-    async def consume_single_use(self, session_id: str, action_class: str) -> None:
-        """Handler-side check for no-grace classes: succeeds once per fresh
-        step-up code, then the one-shot grant is gone. The grant is removed by
-        one conditional write (#2798), so of two requests racing to use it one
-        does; the other is refused as if it had none."""
+    async def consume_single_use(
+        self, session_id: str, action_class: str, *, fingerprint: str
+    ) -> StepUpChallenge:
+        """Handler-side check for no-grace classes: the one-shot grant is used by the
+        request it is bound to, once, within 60 s of the step-up; then it is gone (#2304).
+        Another request of the class raises `StepUpMismatch` and leaves the grant bound.
+        The grant is removed by one conditional write, so of two identical requests
+        racing inside the window one uses it; the other is refused as if it had none."""
         await self.assert_writable(session_id)
-        used = await self._sessions.consume_step_up_key(
-            session_id, key=f"{_ONCE}{action_class}", now=self._clock()
+        record = await self._live(session_id)
+        if record is None:
+            raise SessionRevoked("step_up")
+        now = self._clock()
+        grant = next(
+            (g for g in _stored(record, now, _ONCE) if g.action_class == action_class), None
         )
-        if used is None:  # no live grant: never granted, expired, used or the session ended
+        if grant is None or grant.fingerprint is None:  # `parse` keeps only bound grants
             raise StepUpRequired(action_class)
+        if grant.fingerprint != fingerprint:
+            raise StepUpMismatch(
+                action_class,
+                user_id=str(record.user_id),
+                challenge_id=str(grant.challenge_id),
+                bound=grant.fingerprint,
+                refused=fingerprint,
+            )
+        used = await self._sessions.consume_step_up_key(session_id, key=grant.key(_ONCE), now=now)
+        if used is None:  # a concurrent request used it first, or the session just ended
+            raise StepUpRequired(action_class)
+        return grant
 
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         """Server-side gate for `is_dangerous` routes (the E09-T03 decision

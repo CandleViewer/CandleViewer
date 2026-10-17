@@ -29,7 +29,13 @@ from candleviewer.api.step_up import (
     require_elevation_for,
     require_session_elevation,
 )
-from candleviewer.api.step_up_challenge import ChallengeText, account_reference, typed_target
+from candleviewer.api.step_up_challenge import (
+    ChallengeText,
+    account_reference,
+    raw_request_target,
+    request_fingerprint,
+    typed_target,
+)
 from candleviewer.api.users import make_users_router
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.envelope import TotpEncryptor
@@ -168,12 +174,14 @@ async def _world() -> _World:
     @app.post("/trading/kill-switch")
     async def kill_switch(request: Request) -> Any:
         body = _KillSwitch.model_validate(await request.json()).model_dump(mode="json")
-        if not body["engaged"]:  # release needs a no-grace step-up
+        if not body["engaged"]:  # release: a no-grace step-up bound to this request
             denied = await require_elevation_for(
                 auth,
                 _sid(request),
                 "killswitch",
                 text=ChallengeText(f"Release kill switch, scope {body['scope']}"),
+                fingerprint=request_fingerprint(request.method, raw_request_target(request), body),
+                emitter=audit,
             )
             if denied is not None:
                 return denied
@@ -365,7 +373,7 @@ async def test_gate_on_a_revoked_session_is_401_never_a_challenge(action_class: 
     w = await _world()
     sid = str(w.sessions["tok"].id)
     await w.rows.revoke(sid, reason="logout", now=w.clock.now)
-    denied = await require_elevation_for(w.auth, sid, action_class)
+    denied = await require_elevation_for(w.auth, sid, action_class, fingerprint="a" * 64)
     assert denied is not None and denied.status_code == 401
     _assert_unauthenticated(json.loads(bytes(denied.body)))
     assert not w.of("auth.step_up_required")
@@ -393,7 +401,7 @@ async def test_unregistered_class_fails_closed_without_a_challenge() -> None:
 )
 async def test_challenge_not_issued_to_a_refused_caller() -> None:
     """Contract: a challenge goes only to a caller the operation would otherwise admit, so a
-    Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U34)."""
+    Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U35)."""
     w = await _world()
     manager = PrincipalSnapshot(
         user_id=w.sessions["tok"].user_id, roles=frozenset({"manager"}), permissions=frozenset()

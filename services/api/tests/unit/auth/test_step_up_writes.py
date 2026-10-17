@@ -253,17 +253,15 @@ async def test_identical_requests_racing_inside_the_window_use_the_grant_once(
 ) -> None:
     """#2798: both re-sends read the row before either writes; one conditional write uses the
     grant, so exactly one executes and the other is refused as if it had no grant."""
-    svc, clock, _seed, _user, sessions = await _setup()
-    sessions.sessions["s1"] = sessions.sessions["s1"].model_copy(
-        update={"step_up_elevations": {"once:killswitch": clock.now + timedelta(minutes=5)}}
-    )
+    svc, _clock, _seed, _user, sessions = await _holding_a_grant()
     _yielding_reads(monkeypatch, sessions)
-    consumers = (svc.consume_single_use("s1", "killswitch") for _ in range(2))
+    consumers = (svc.consume_single_use("s1", "killswitch", fingerprint=_BOUND) for _ in range(2))
     results = await asyncio.gather(*consumers, return_exceptions=True)
 
+    used = [r for r in results if not isinstance(r, Exception)]  # the challenge it spent
     refused = [r for r in results if type(r) is StepUpRequired]
-    assert (results.count(None), len(refused)) == (1, 1)
-    assert sessions.sessions["s1"].step_up_elevations == {}
+    assert (len(used), len(refused)) == (1, 1)
+    assert _GRANT not in sessions.sessions["s1"].step_up_elevations
 
 
 async def _wrong_code(svc: StepUpService, user: uuid.UUID, seed: bytes, clock: _Clock) -> None:

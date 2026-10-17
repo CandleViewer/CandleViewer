@@ -185,6 +185,7 @@ lives instead.
 | U26    | **FINDING F-8**: `/healthz` (`security: []`) and the pre-auth WS `welcome` (`23-ws-protocol.md` §4.2) serve `git_sha` and the version to any client (`tests/unit/test_app.py::test_healthz_returns_200_with_build_info`, `tests/unit/ws/test_app_wiring.py::test_welcome_carries_settings_build_info`)                |
 | U29    | Not executable: no expired-session reap job exists in `candleviewer/` yet, and the `GET /auth/session` p95 budget needs Postgres and k6 (E09-Q05 in #2105)                                                                                                                                                            |
 | U33    | Not executable: a startup refusal, not a request path; this harness injects `auth_clock`, which wins. Tests: `tests/unit/test_settings_test_clock.py`, `tests/unit/auth/test_testnet_clock.py`, `tests/unit/test_main_lifespan.py`. Time-moving cases: e2e stack only (`qa/plans/e09-auth-rbac-test-plan.md` §6.3)    |
+| U35    | Not executable here: no mounted route restates its request yet (the route slice of #2304). Cases: `test_bound_grant_refuses_a_swapped_payload` (`tests/unit/api/test_step_up_binding_router.py`), `test_rules_grant_bound_to_one_rule_refuses_to_arm_another` (`tests/unit/api/test_step_up_rules_route.py`)          |
 
 ## Observability per case (#2144)
 
