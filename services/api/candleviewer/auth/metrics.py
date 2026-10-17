@@ -125,6 +125,16 @@ auth_break_glass_attempts = Gauge(
     "auth_break_glass_attempts",
     "Break-glass CLI runs on record in audit_log (auth.break_glass_attempt rows); only rises.",
 )
+# SR-125 (#2496 review, detection health): one per failed read of the break-glass state (a
+# timeout, a database error, a revoked grant), counted per statement by `BreakGlassNotice`. A
+# failed read keeps the last value of the gauges above, which is 0 in a fresh process, and their
+# `absent()` guards cannot see it (the series exist), so without this counter a reader that cannot
+# read leaves both pages silent and nothing says so. `AuthBreakGlassStateReadFailing` is a ticket
+# on it. No label: the log line names the statement and the error class.
+auth_break_glass_state_read_failures_total = Counter(
+    "auth_break_glass_state_read_failures_total",
+    "Failed reads of the break-glass state from Postgres (the gauges keep their last value).",
+)
 
 _KNOWN_REASONS = frozenset(
     {
@@ -191,6 +201,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_recovery_codes_used_total",
         "auth_break_glass_unresolved_events",
         "auth_break_glass_attempts",
+        "auth_break_glass_state_read_failures_total",
     }
 )
 
