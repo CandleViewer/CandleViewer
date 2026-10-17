@@ -40,6 +40,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from functools import cache
 from pathlib import Path
 from typing import Any, Final
@@ -70,6 +71,12 @@ _CLOCK_FIELDS: Final = ("server_offset_ms", "key_created_offset_ms", "key_expire
 
 class UnstubbedCall(LookupError):
     """A call the scenario does not answer: a test failure, never a silent success."""
+
+
+class _Unset(Enum):
+    """`Scenario.reply`'s default `body`: left out, unlike `None` (a request without one)."""
+
+    UNSET = "unset"
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,11 +231,12 @@ def _active(stub: Mapping[str, Any], at_ms: int) -> bool:
     return int(stub.get("from_ms", 0)) <= at_ms < int(stub.get("until_ms", 2**63))
 
 
-def _matches(stub: Mapping[str, Any], body: Mapping[str, object] | None) -> bool:
+def _matches(stub: Mapping[str, Any], body: Mapping[str, object] | _Unset | None) -> bool:
     """Whether a request with JSON body `body` meets the stub's `when` (README, "Manifest format");
     a stub without one answers any request. Each field `when.body` names must be in the body with
     the same type and value, so `true` never matches `1` (as Python's `True == 1` would) or
-    `"true"`; an absent field, or a body that is not a JSON object, never matches."""
+    `"true"`; an absent field, or a body that is not a JSON object, never matches. An empty
+    `when.body` would match any object body, so the pack checks refuse one."""
     if "when" not in stub:
         return True
     if not isinstance(body, Mapping):
@@ -277,17 +285,28 @@ class Scenario:
         return frozenset(call for m in self._answering() for call in m.get("rest", {}))
 
     def reply(
-        self, method: str, path: str, *, at_ms: int = 0, body: Mapping[str, object] | None = None
+        self,
+        method: str,
+        path: str,
+        *,
+        at_ms: int = 0,
+        body: Mapping[str, object] | _Unset | None = _Unset.UNSET,
     ) -> Reply:
         """The reply to `method path` at `at_ms` after the scenario starts. `body` is the request's
         JSON body (`None` without one), which a stub's `when` matches: a stub it does not match is
-        passed over for the next one in lookup order."""
+        passed over for the next one in lookup order. Left out, it fails closed: a stub with `when`
+        raises `TypeError`, so a caller that forgets the body is never answered by the next stub
+        (README, "Using a scenario")."""
         call = f"{method.upper()} {path}"
         for entry in self._answering():
             rest = entry.get("rest", {})
             for key in (call, WILDCARD):
                 stub = rest.get(key)
-                if stub is not None and _active(stub, at_ms) and _matches(stub, body):
+                if stub is None or not _active(stub, at_ms):
+                    continue
+                if body is _Unset.UNSET and "when" in stub:
+                    raise TypeError(f"{self.name}: {call} reaches a stub with `when`: pass body=")
+                if _matches(stub, body):
                     return self._render(call, stub)
         raise UnstubbedCall(f"{self.name}: nothing answers {call} at {at_ms} ms")
 

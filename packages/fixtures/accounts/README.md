@@ -15,8 +15,9 @@ live call (C-13.5).
 
 - **Automation (now):** `tests/_account_fixtures.py` in `services/api` resolves a scenario:
   `load("withdraw_enabled", now=<tz-aware datetime>)` returns `reply(method, path, at_ms=...)` for
-  REST (pass `body=`, the request's JSON body, so that a stub's `when` can match it), `ws` for the
-  private-WS script, `clock` for the anchored times and `egress_ip`.
+  REST (pass `body=`, the request's JSON body or `None` without one, so that a stub's `when` can
+  match it; left out, a stub with `when` raises `TypeError` instead of passing the call on), `ws`
+  for the private-WS script, `clock` for the anchored times and `egress_ip`.
   `overlays=["open_position_btcusdt_5x_sl"]` combines overlays with it, `switched=True` answers
   after a runtime switch (`stored_key_rejected`), and `load_rotation("rotation_ok", now=...)`
   returns the old and new key. Tests serve the replies to the adapter's own REST client through an

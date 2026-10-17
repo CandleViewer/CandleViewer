@@ -987,6 +987,16 @@ def test_close_rejected_rejects_only_reduce_only_creates(
     assert scenario.reply("POST", "/v5/order/create", body=body).body["retCode"] == ret_code
 
 
+def test_a_body_left_out_fails_loudly_where_none_falls_through() -> None:
+    """Leaving out `body=` is a caller's mistake, never "no JSON body" (README, "Using a
+    scenario"): a stub with `when` raises, so TC-305's close is never acked by compliant for want
+    of its body. An explicit `body=None` still passes the stub over (the `no_body` case above)."""
+    scenario = _with("open_position_btcusdt_5x_sl", "close_rejected")
+    with pytest.raises(TypeError, match=r"close_rejected: POST /v5/order/create .*pass body="):
+        scenario.reply("POST", "/v5/order/create")
+    assert scenario.reply("POST", "/v5/order/create", body=None).body["retCode"] == 0
+
+
 async def test_reference_order_accepted_under_close_rejected() -> None:
     """Test plan section 9.7's control order on TC-305's setup (the open-position overlay) is no
     reduce-only close, so close_rejected's stub passes it over and the next stub in lookup order,
