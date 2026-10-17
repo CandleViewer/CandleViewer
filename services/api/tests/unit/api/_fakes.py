@@ -15,7 +15,12 @@ from prometheus_client import REGISTRY
 from candleviewer.audit.actions import validate_action
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import MfaVerifiedResult, MfaVerifyRequest, SessionRecord
+from candleviewer.auth.models import (
+    MfaVerifiedResult,
+    MfaVerifyRequest,
+    SessionRecord,
+    UserRecord,
+)
 from candleviewer.auth.session_service import SessionClass, SessionService
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -101,3 +106,6 @@ class MfaAuth:
     def __init__(self, user_id: uuid.UUID, service: SessionService) -> None:
         self.mfa: Any = _VerifyingMfa(user_id)
         self.sessions: Any = service
+
+    async def find_user(self, user_id: str) -> UserRecord | None:
+        raise AssertionError("the enrolment routes are not under test here")

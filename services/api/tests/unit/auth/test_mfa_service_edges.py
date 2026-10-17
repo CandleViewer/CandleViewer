@@ -14,7 +14,6 @@ from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     MfaChallengeLocked,
     MfaCodeInvalid,
-    MfaCodeReused,
     MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
 )
@@ -36,7 +35,11 @@ def _service(repo: FakeMfaRepository) -> MfaService:
     )
 
 
-async def _challenge(repo: FakeMfaRepository, user_id: uuid.UUID, token: str = "tok") -> str:  # noqa: S107 - test mfa_token label, not a credential
+async def _challenge(
+    repo: FakeMfaRepository,
+    user_id: uuid.UUID,
+    token: str = "tok",  # noqa: S107 - test mfa_token label, not a credential
+) -> str:
     await repo.create_challenge(
         str(user_id),
         purpose="login",
@@ -147,7 +150,9 @@ async def test_confirm_pending_method_without_secret_is_not_found() -> None:
         await svc.confirm_enrollment(uid, method_id=mid, code="123456")
 
 
-async def test_confirm_with_replayed_step_is_rejected() -> None:
+async def test_confirm_refuses_a_method_with_an_accepted_step() -> None:
+    """#2295: an accepted step means the method was confirmed before (a recovery sign-in only
+    un-confirms it), so it is never confirmable again, whatever the code."""
     repo = FakeMfaRepository()
     svc = _service(repo)
     uid = str(uuid.uuid4())
@@ -159,12 +164,14 @@ async def test_confirm_with_replayed_step_is_rejected() -> None:
     assert method.secret_enc is not None
     seed = svc._encryptor.decrypt(method.secret_enc)
     step = time_step_for(_NOW.timestamp())
-    repo.methods[mid] = method.model_copy(update={"last_accepted_time_step": step + 1})
-    with pytest.raises(MfaCodeReused):
+    repo.methods[mid] = method.model_copy(update={"last_accepted_time_step": step - 1})
+    with pytest.raises(MfaEnrollmentNotFound):
         await svc.confirm_enrollment(uid, method_id=mid, code=generate_code(seed, step))
+    assert repo.methods[mid].confirmed_at is None
 
 
-async def test_confirm_keeps_existing_recovery_codes() -> None:
+async def test_confirm_replaces_existing_recovery_codes_with_ten_new_ones() -> None:
+    """#2295 (Q8): every confirmation issues 10 new codes; the old set stops working."""
     repo = FakeMfaRepository()
     svc = _service(repo)
     uid = str(uuid.uuid4())
@@ -176,7 +183,58 @@ async def test_confirm_keeps_existing_recovery_codes() -> None:
     assert method.secret_enc is not None
     seed = svc._encryptor.decrypt(method.secret_enc)
     _, codes = await svc.confirm_enrollment(uid, method_id=str(res.method_id), code=_totp(seed))
-    assert codes == ()
+    assert len(set(codes)) == 10
+    assert await repo.find_unused_recovery_code(uid, code_hash="x" * 64) is None
+    for code in codes:
+        assert await repo.find_unused_recovery_code(
+            uid, code_hash=hash_recovery_code(code, key=_RC_KEY)
+        )
+
+
+async def test_confirm_revokes_every_other_totp_method_in_the_same_step() -> None:
+    """#2295 (Q8b): a confirmed method left from before, or one a recovery sign-in
+    un-confirmed, stops working at the instant the new one starts."""
+    repo = FakeMfaRepository()
+    svc = _service(repo)
+    uid = uuid.uuid4()
+    await _enrolled(svc, repo, uid)  # a confirmed method
+    (old,) = repo.methods
+    res = await svc.enroll(
+        str(uid), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="a"
+    )
+    new = repo.methods[str(res.method_id)]
+    assert new.secret_enc is not None
+    step = await svc.check_enrollment(
+        str(uid), method_id=str(new.id), code=_totp(svc._encryptor.decrypt(new.secret_enc))
+    )
+    method, codes = await svc.complete_enrollment(str(uid), method_id=str(new.id), time_step=step)
+    assert (method.id, method.confirmed_at, method.last_accepted_time_step) == (new.id, _NOW, step)
+    assert repo.methods[old].revoked_at == _NOW
+    assert [m.id for m in await repo.find_active_totp_methods(str(uid))] == [new.id]
+    assert len(codes) == 10
+
+
+async def test_check_enrollment_changes_nothing_and_a_lost_race_changes_nothing() -> None:
+    """The router audits between the two halves (C-2.9): the check changes no row, and a
+    completion that lost to a concurrent one changes nothing either."""
+    repo = FakeMfaRepository()
+    svc = _service(repo)
+    uid = str(uuid.uuid4())
+    res = await svc.enroll(
+        uid, MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="a"
+    )
+    mid = str(res.method_id)
+    secret_enc = repo.methods[mid].secret_enc
+    assert secret_enc is not None
+    seed = svc._encryptor.decrypt(secret_enc)
+    before = dict(repo.methods)
+    step = await svc.check_enrollment(uid, method_id=mid, code=_totp(seed))
+    assert repo.methods == before and repo.recovery_codes == {}
+    _, codes = await svc.complete_enrollment(uid, method_id=mid, time_step=step)
+    won = dict(repo.recovery_codes)
+    with pytest.raises(MfaEnrollmentNotFound):
+        await svc.complete_enrollment(uid, method_id=mid, time_step=step)
+    assert repo.recovery_codes == won and len(codes) == 10
 
 
 async def test_confirm_refuses_a_non_ascii_digit_code_like_a_wrong_one() -> None:

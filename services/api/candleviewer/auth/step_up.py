@@ -698,7 +698,9 @@ class StepUpService:
         `users` elevation; touches no OMS surface and returns no secret.
         Self-reset is refused, before the elevation check: no step-up can cure it.
         It cannot be undone, so `audit` is written ahead of the first revoke
-        (C-2.9): if it raises, nothing changes."""
+        (C-2.9): if it raises, nothing changes. It sets the target's
+        `mfa_required` first (#2295, Q9), so even a partial reset leaves a next
+        sign-in that must enrol TOTP."""
         if actor_user_id == target_user_id:
             raise SelfResetRefused("the owner cannot reset their own TOTP")
         await self.require_elevation(actor_session_id, "users")
@@ -706,6 +708,7 @@ class StepUpService:
         methods = await self._mfa.find_active_methods(target_user_id)
         live = await self._sessions.find_live_by_user(target_user_id)
         await audit(len(methods), len(live))
+        await self._users.set_mfa_required(target_user_id)
         for method in methods:
             await self._mfa.revoke_method(str(method.id), now=now)
         revoked = await self._sessions.revoke_all_for_user(
