@@ -9,7 +9,9 @@ expose:
   refused with `403 step_up_required`;
 - with sessions wired but step-up not (no user repository: a wiring fault),
   the dangerous write answers 503 before the handler runs instead of minting
-  an invite unchecked.
+  an invite unchecked;
+- with no user store at all, the enrolment-only guard (#2295) answers every
+  session `503 store_unavailable` first, the read included.
 """
 
 from __future__ import annotations
@@ -90,3 +92,16 @@ async def test_invite_create_fails_closed_when_sessions_are_wired_without_step_u
     assert not w.invites.rows and not w.audit.of("users.invited")
     # Not an outage: the owner's non-dangerous read is served as before.
     assert w.client.get("/users/invites", headers=_h(owner)).status_code == 200
+
+
+async def test_every_session_fails_closed_without_a_user_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2295 (C-12.4): no session can be classified, so the enrolment-only guard, outside the
+    step-up guard, refuses each one before any route runs."""
+    w = await _world(monkeypatch, with_user_repository=False)
+    owner = await _login(w, "owner", _OWNER_PERMS)
+    r = w.client.post("/users", headers=_h(owner), json=_BODY)
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
+    assert not w.invites.rows and not w.audit.of("users.invited")
+    assert w.client.get("/users/invites", headers=_h(owner)).status_code == 503
