@@ -56,6 +56,10 @@ jobs:
               - 'apps/web/**'
               - 'apps/desktop/**'
               - 'packages/ui/**'
+              # Every workspace package the js lane lints, type-checks or tests; security and
+              # coverage-thresholds follow js, so these start them too (#3230).
+              - 'packages/chart-engine/**'
+              - 'packages/protocol/**'
               - 'tools/contrast/**'
               - 'packages/config/**'
               - 'packages/fixtures/**'
