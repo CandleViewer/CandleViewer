@@ -24,8 +24,7 @@ from candleviewer.storage.repositories.orders import (
 PositionSide = Literal["Buy", "Sell", "None"]
 SnapshotReason = Literal["ws_push", "rest_reconcile", "minute_tick", "risk_eval"]
 #: How far an exchange time may lie ahead of the store's clock: the ingest window's `now + 5 s`
-#: (24 Sec.14.2 rule 10, `MAX_FUTURE_SKEW_MS`; the 5000 ms `recv_window` too). A later time is a
-#: parse or unit error, not a push: `upsert` refuses it, and a stored one no longer blocks writes.
+#: (24 Sec.14.2 rule 10, `MAX_FUTURE_SKEW_MS`; the 5000 ms `recv_window` too).
 MAX_FUTURE_SKEW: Final = timedelta(seconds=5)
 
 
@@ -110,7 +109,8 @@ _SNAPSHOT_MONEY: Final = dict.fromkeys(typed_fields(NewPositionSnapshot, Decimal
 
 class FutureDatedPositionError(OrderStoreError):
     """`exchange_updated_ts` lies more than `MAX_FUTURE_SKEW` ahead of the store's clock: refused,
-    nothing written."""
+    nothing written, the position stays as stored. A clock or parse fault, not a push to drop: the
+    writer logs and counts it, alerts and retries once the clock is in sync (21 Sec.3.3.7)."""
 
     def __init__(self) -> None:
         super().__init__(f"exchange_updated_ts leads the clock by over {MAX_FUTURE_SKEW}")

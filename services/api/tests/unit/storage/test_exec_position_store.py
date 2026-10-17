@@ -257,8 +257,9 @@ async def test_an_insert_reports_stored_or_duplicate_and_refuses_another_account
 async def test_a_skipped_stale_upsert_returns_the_stored_row_from_a_scoped_read() -> None:
     newer = _POSITION_ROW | {"size": Decimal(2), "exchange_updated_ts": T0}
     rel = _Rel(_Result(), _Result([newer]))  # the guard skipped the update: nothing returned
+    store = pos.SqlAlchemyPositionStore(cast(Any, rel), clock=lambda: T0)
     stale = _state(exchange_updated_ts=T0.replace(hour=11))
-    assert await pos.SqlAlchemyPositionStore(cast(Any, rel)).upsert(stale) == PositionRow(**newer)
+    assert await store.upsert(stale) == PositionRow(**newer)
     assert _sql(rel.statements[1]) == _sql(pos.stored_statement(stale))
     assert rel.commits == 1
 

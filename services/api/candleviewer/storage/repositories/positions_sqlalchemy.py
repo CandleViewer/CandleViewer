@@ -5,13 +5,12 @@ is `INSERT ... ON CONFLICT (exchange_account_id, symbol, position_idx) DO UPDATE
 state, `recv_ts` and `updated_at` become now(), a new row's id is `gen_random_uuid()`. The update
 applies only when the stored or the new `exchange_updated_ts` is NULL or the stored one is not
 later, so a stale snapshot never overwrites a newer push and `list_unprotected` cannot lose a
-position without a stop-loss (C-2.6); a skipped update returns the stored row, re-selected under
-the conflict's row lock. Against the injected clock, a new time more than `MAX_FUTURE_SKEW` ahead
-is refused before any statement, and a stored one that far ahead no longer wins the guard, so a
-future-dated row heals on the next write instead of freezing. A stop of 0 or less is bound as
-NULL, or `ix_pos_no_sl` would miss an unprotected position (C-2.6). The reads render `size > 0`
-with a literal 0 so the planner matches the partial indexes, and filter on the account (C-12.4);
-the two inserts write the account they are given (`UNSCOPED`).
+position without a stop-loss (C-2.6); a skipped update returns the stored row, re-selected under the
+conflict's row lock. A new time more than `MAX_FUTURE_SKEW` past the injected clock is refused
+before any statement, and a stored one that far ahead loses the guard, so a future-dated row heals.
+A stop of 0 or less is bound as NULL, or `ix_pos_no_sl` would miss an unprotected position (C-2.6).
+The reads render `size > 0` with a literal 0 so the planner matches the partial indexes, and filter
+on the account (C-12.4); the two inserts write the account they are given (`UNSCOPED`).
 """
 
 from __future__ import annotations
@@ -100,7 +99,9 @@ def _position(row: Mapping[Any, Any]) -> PositionRow:
 
 
 class SqlAlchemyPositionStore(CappedStore):
-    """`PositionStore` and `PositionSnapshotStore` over one relational repository (asyncpg)."""
+    """`PositionStore` and `PositionSnapshotStore` over one relational repository (asyncpg). Its
+    `clock` must be exchange-synchronised (24 Sec.2.8): a lagging one refuses newer pushes and lets
+    older writes win, so E29-T04 passes the wall clock plus the monitor's offset."""
 
     def __init__(
         self,
