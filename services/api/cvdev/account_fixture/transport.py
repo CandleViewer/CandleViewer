@@ -7,9 +7,10 @@
   `httpx.ConnectError`, as a closed port would, with a fixed message that holds no header value,
   since the client copies it into its `TransportError` (FX-I01). The client retries it, so one
   refusal logs a line per attempt, and the caller gets no verdict (SR-E27-18).
-- A key-id trip latches the transport, so every later request is refused, even one already being
-  read or served, and latches the injected read-only gate with `account_fixture_guard` unless the
-  gate holds a latch already, which is kept. Recovery: revoke the key, then restart (FX-D01).
+- A signed request whose key is not a pack key id latches the transport, whichever guard refuses
+  it first, and the injected read-only gate with `account_fixture_guard` unless the gate holds a
+  latch already, which is kept. A latched transport, or one on a gate so latched, refuses every
+  request, even one already being read or served. Recovery: revoke the key, then restart (FX-D01).
 - A signature mismatch, or a body past `MAX_BODY_BYTES` that is never read whole, answers the
   pack's `_base/error_10004.json`.
 - What passes every guard is answered by `_serve`, the seam where S9 serves the pack. Until then it
@@ -97,14 +98,16 @@ class FixtureTransport(httpx.AsyncBaseTransport):
 
     @property
     def latched(self) -> bool:
-        return self._latched
+        """True once a key trips this or another transport on its gate (ADR-0036 decision 4)."""
+        return self._latched or self._gate.latched_reason_code == guards.GUARD_REASON_CODE
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         seen = guards.admit(request, self._key_ids)
-        if seen.refusal == "refused_key":
+        if seen.key_class == "non_fixture":  # whichever guard refuses it first (FX-S01)
             self._trip()
-        if seen.refusal is not None or self._latched:
+        if seen.refusal is not None or self.latched:
             self._refuse(request, seen)
+        body: bytes | None = None
         verified: bool | None = None
         if seen.key_id is not None:
             body = await _body(request)
@@ -112,16 +115,18 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         if verified is False:
             answer = self._mismatch(request, seen)
         else:
-            answer = await self._serve(request, seen)
-        if self._latched:  # tripped while this request was read or served: still unanswered
+            answer = await self._serve(request, seen, body)
+        if self.latched:  # tripped while this request was read or served: still unanswered
             self._refuse(request, seen)
         if not self._record(request, seen, answer.outcome, verified, answer):
             raise httpx.ConnectError(_message("request_log_failed"), request=request)
         return answer.response
 
-    async def _serve(self, request: httpx.Request, seen: Admission) -> Answer:
-        """A request that passed every guard. S9 answers from the pack here (the key's scenario,
-        or the stack default when unsigned); until then every call is unstubbed."""
+    async def _serve(self, request: httpx.Request, seen: Admission, body: bytes | None) -> Answer:
+        """A request that passed every guard, with `body`, the bytes guard 4 verified (None when
+        unsigned), so no one-shot stream is read twice. S9 serves the pack here, for the key's
+        scenario or the stack default, and owns the rule that an unsigned call, which meets no key
+        or signature guard, is served on a public path only. Until then all are unstubbed."""
         response = httpx.Response(UNSTUBBED_STATUS, content=_UNSTUBBED, headers=_JSON)
         return Answer(response, "unstubbed")
 
@@ -144,7 +149,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         request every guard passed as a key refusal, without the P0 its trip carried."""
         p0 = seen.refusal is not None
         outcome: Outcome = seen.refusal or "refused_key"
-        event = {"outcome": outcome, "priority": _P0 if p0 else None, "latched": self._latched}
+        event = {"outcome": outcome, "priority": _P0 if p0 else None, "latched": self.latched}
         event |= self._fields(request, seen)
         (logger().critical if p0 else logger().error)("exchange.account_fixture_refused", **event)
         self._record(request, seen, outcome, None)
