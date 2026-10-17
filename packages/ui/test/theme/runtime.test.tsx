@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createRequire } from "node:module";
 import { act, useEffect } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { composeStories } from "@storybook/react";
 import { within } from "@storybook/test";
@@ -8,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as stories from "../../src/theme/ThemeRuntime.stories.js";
 import {
   HIGH_CONTRAST_SHORTCUT,
+  THEME_STORAGE_KEY,
   ThemeProvider,
   createThemeStore,
   sharedThemeStore,
@@ -57,6 +59,7 @@ describe("theme provider and hooks", () => {
       </ThemeProvider>,
     );
     const html = host.innerHTML;
+    expect(html).toBe("<i>still</i><b>dark</b><u>compact</u>"); // the provider renders exactly its children
     await act(async () => store.setTheme("high-contrast"));
     expect(rootData["theme"]).toBe("high-contrast");
     expect(counts).toEqual({ mounts: 1, still: 1, theme: 2, density: 1 });
@@ -76,13 +79,32 @@ describe("theme provider and hooks", () => {
         </div>
       </ThemeProvider>,
     );
+    expect(host.firstElementChild?.getAttribute("role")).toBe("row");
     const before = host.innerHTML;
     await act(async () => store.setDensity("comfortable"));
     expect(rootData["density"]).toBe("comfortable");
     expect(host.innerHTML).toBe(before);
   });
 
-  it("owns a store when none is passed, exposes values and setters, and refuses to run without a provider", async () => {
+  it("connects its store to the root on mount and releases the OS listeners on unmount", async () => {
+    const root = document.createElement("html");
+    const media = mediaStub();
+    const storage = memoryStorage({ [THEME_STORAGE_KEY]: JSON.stringify({ baseTheme: "light" }) });
+    const store = createThemeStore({ root, storage, matchMedia: media.matchMedia });
+    const mounted = createRoot(document.body.appendChild(document.createElement("div")));
+    const page = (
+      <ThemeProvider store={store}>
+        <i />
+      </ThemeProvider>
+    );
+    await act(async () => mounted.render(page));
+    expect(root.getAttribute("data-theme")).toBe("light");
+    expect([media.listeners.dark.size, media.listeners.reduce.size]).toEqual([1, 1]);
+    await act(async () => mounted.unmount());
+    expect([media.listeners.dark.size, media.listeners.reduce.size]).toEqual([0, 0]);
+  });
+
+  it("uses the root's shared store when none is passed, exposes values and setters, and refuses to run without a provider", async () => {
     let api:
       | { scale: number; reduced: boolean; setScale: (s: 125) => void; override: (o: "on") => void }
       | undefined;

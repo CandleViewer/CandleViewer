@@ -95,8 +95,11 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   `a11y-preferences` feature should call it rather than write the attributes themselves.
 - Store details: `sharedThemeStore()` returns one store per root element, so every provider, story and
   bootstrap on a page agrees; without a DOM the store is inert (state and subscriptions only);
-  `apply(patch, { persist: false, silent: true })` is the hydration form, and invalid values fall back to
-  their defaults.
+  `apply(patch, { persist: false, track: false })` is the hydration form, and an invalid value keeps the
+  current preference of that field.
+- Tests: a `ThemeProvider` without a `store` prop (or a `root` option) uses the shared store of
+  `document.documentElement`, which outlives a single test. Call `resetSharedThemeStores()` in `afterEach`,
+  or pass a fresh `root`, so tests do not leak preferences into each other.
 
 ## Scripts
 
