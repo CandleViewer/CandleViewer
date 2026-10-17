@@ -1,6 +1,6 @@
 """E27-T03 (#836): the stored-key self-check's composition-root wiring.
 
-The error table runs on M4's own classifier and `map_ret_code`, with exchange text in every
+The error table runs on M4's own classifier and `probe_error`, with exchange text in every
 message so a leak would show; `respx` answers for every host. The skewed venue refuses, as the
 exchange does, a request stamped 1 s or more ahead of its clock (10002, the corpus reply). No
 network, no database.
@@ -121,18 +121,19 @@ async def test_a_refusal_about_the_key_is_a_verdict(code: int, reason: Refusal, 
 @pytest.mark.parametrize(
     ("error", "code"),
     [
-        (map_ret_code(10004, TEXT), "10004"),
-        (map_ret_code(10002, TEXT), "10002"),
-        (map_ret_code(10018, TEXT), "10018"),
-        (map_ret_code(10006, TEXT), "10006"),
-        (TransportError(f"HTTP 503 {TEXT}"), "transport_error"),
-        (UnknownStateError(f"malformed {TEXT}"), "unknown_state"),
+        (map_ret_code(10004, TEXT), "auth_error"),
+        (map_ret_code(10002, TEXT), "clock_drift"),
+        (map_ret_code(10018, TEXT), "rate_limited"),
+        (map_ret_code(10006, TEXT), "rate_limited"),
+        (map_ret_code(10016, TEXT), "service_unavailable"),
+        (TransportError(f"HTTP 503 {TEXT}"), "service_unavailable"),
+        (UnknownStateError(f"malformed {TEXT}"), "exchange_unknown"),
         (ExchangeError(TEXT), "exchange_unknown"),
         (None, "timeout"),
     ],
-    ids=["10004", "10002", "10018", "10006", "5xx", "malformed", "untyped", "timeout"],
+    ids=["10004", "10002", "10018", "10006", "10016", "5xx", "malformed", "untyped", "timeout"],
 )
-async def test_any_other_error_is_inconclusive_with_a_code_only(
+async def test_any_other_error_is_inconclusive_with_a_probe_error_name_only(
     error: ExchangeError | None, code: str
 ) -> None:
     inconclusive = await judge(error, bound_s=0.0)  # the adapter's bound cuts the hang at once
@@ -225,7 +226,7 @@ async def test_after_a_10018_the_next_keys_call_is_inconclusive_at_once_and_neve
                 await asyncio.wait_for(calls.key_info(), timeout=1.0)  # a lost refusal fails fast
             await calls.aclose()
             codes.append(str(caught.value))
-    assert (codes, route.call_count, len(signed)) == (["10018", "rate_limited"], 1, 1)
+    assert (codes, route.call_count, len(signed)) == (["rate_limited", "rate_limited"], 1, 1)
 
 
 @pytest.fixture
@@ -268,7 +269,7 @@ async def test_a_host_clock_12_s_ahead_shows_in_the_offset_with_a_warning_once_m
     skewed: respx.MockRouter,
 ) -> None:
     result = await verify_skewed(-SKEW_MS)
-    assert result.passed and VerificationWarning.CLOCK_OFFSET in result.warnings
+    assert result.passed and VerificationWarning.CLOCK_SKEW in result.warnings
     offset = result.clock_offset_ms  # the probe's own latency (at most 5 s) blurs it by half
     assert offset is not None and -SKEW_MS - 2_500 <= offset <= -SKEW_MS + 2_500
 
@@ -276,6 +277,6 @@ async def test_a_host_clock_12_s_ahead_shows_in_the_offset_with_a_warning_once_m
 async def test_an_unmeasured_skew_is_the_venues_clock_refusal_never_a_verdict(
     skewed: respx.MockRouter,
 ) -> None:
-    with pytest.raises(VerificationInconclusive, match=r"^10002$"):
+    with pytest.raises(VerificationInconclusive, match=r"^clock_drift$"):
         await verify_skewed(None)
     assert [c.request.url.path for c in skewed.calls] == [KEY_INFO_PATH] * 2  # one re-sign

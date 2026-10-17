@@ -18,7 +18,7 @@ from typing import Any, Final
 from candleviewer.secrets.errors import SnapshotInvalid, WithdrawPermissionRejected
 
 _SNAPSHOT_KEYS = frozenset(
-    {"fetched_at", "uid", "note", "readOnly", "permissions", "ips", "type", "expiredAt"}
+    {"fetched_at", "uid", "note", "readOnly", "permissions", "ips", "type", "expiredAt", "uta"}
 )
 _FORBIDDEN_TOKENS = ("withdraw", "transfer")
 

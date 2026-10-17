@@ -8,8 +8,8 @@ deny-list) and by the shipped verification pipeline (`accounts.verification.veri
 #2854). Its two sources call the adapter here and map its errors the way
 `tests/unit/accounts/test_key_verification.py` does, standing in for the production wiring that
 E27-T03 has not shipped yet. Every key scenario's recorded verdict is asserted against the
-pipeline's. The plan rows the pipeline does not produce yet are pinned (`PLAN_AHEAD_OF_PIPELINE`,
-`AC15_SHARED_RULE`); the one row judged outside it by design is `JUDGED_OUTSIDE_THE_PIPELINE`.
+pipeline's. Pinned: the plan row it does not produce (`PLAN_AHEAD_OF_PIPELINE`) and the AC-15 pair
+that shares a rule (`AC15_SHARED_RULE`); judged outside it by design: `JUDGED_OUTSIDE_THE_PIPELINE`.
 Unconfirmed refusal codes are compared with the scenario's own reply, never with a literal.
 Times are anchored on a frozen `NOW`; nothing sleeps. Each request is asserted to be signed with
 the scenario's key id. Its host is the one these tests point the client at, so the host check is a
@@ -59,6 +59,7 @@ from candleviewer.exchange.bybit.key_info import (
     ProbeFacts,
     parse_key_info,
     parse_probe,
+    probe_error,
     refusal,
 )
 from candleviewer.exchange.bybit.models import ServerTime
@@ -139,7 +140,7 @@ TRADE_ONLY: dict[str, Any] = {
 }  # fmt: skip
 COMPLIANT = ApiKeyFacts(
     uid="90000001",
-    unified=True,
+    uta=True,
     read_only=False,
     permissions=TRADE_ONLY,
     ip_whitelist=(EGRESS_IP,),
@@ -186,7 +187,7 @@ KEY_INFO: dict[str, ApiKeyFacts | type[ExchangeError]] = {
     "ip_extra_foreign": facts(ip_whitelist=(EGRESS_IP, "192.0.2.30")),
     "ip_wildcard": facts(ip_whitelist=(WILDCARD,)),
     "uid_mismatch": facts(uid="90000099"),
-    "non_uta": facts(unified=False),
+    "non_uta": facts(uta=False),
     "clock_skew": COMPLIANT,
     "wallet_probe_error": COMPLIANT,
     "missing_trade_scope": facts(permissions=rights(ContractTrade=[])),
@@ -250,11 +251,11 @@ PIPELINE: dict[str, Verdict] = {
     "compliant": PASSED,
     "compliant_alt": PASSED,
     **dict.fromkeys(FUND_RIGHTS, refused(Rule.WITHDRAW_PERMISSION)),
-    **dict.fromkeys(OUTSIDE_ALLOW_LIST, refused(Rule.WITHDRAW_PERMISSION)),
+    **dict.fromkeys(OUTSIDE_ALLOW_LIST, refused(Rule.PERMISSION_NOT_ALLOWED)),
     "ip_missing": refused(Rule.IP_WHITELIST_MISSING),
     "ip_mismatch": refused(Rule.IP_WHITELIST_MISMATCH),
     "ip_extra_foreign": refused(Rule.IP_WHITELIST_MISMATCH),
-    "ip_wildcard": refused(Rule.IP_WHITELIST_MISSING),
+    "ip_wildcard": refused(Rule.IP_WHITELIST_MISMATCH),
     "uid_mismatch": refused(Rule.UID_MISMATCH),
     "non_uta": refused(Rule.NOT_UNIFIED),
     "clock_skew": INCONCLUSIVE,
@@ -264,7 +265,7 @@ PIPELINE: dict[str, Verdict] = {
     "unknown_key": refused(Rule.WRONG_ENVIRONMENT),
     "stored_key_rejected": refused(Rule.WRONG_ENVIRONMENT),
     "demo_ws_unreachable": PASSED,
-    "expiring_13d": ("passed_with_warning", ("key_expires_soon",)),
+    "expiring_13d": ("passed_with_warning", ("key_expiring_soon",)),
     "expiring_15d": PASSED,
     "expired_key": refused(Rule.KEY_EXPIRED),
     "new_key_48h": PASSED,
@@ -291,18 +292,17 @@ PLAN_AHEAD_OF_PIPELINE: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: E27 threat model AC-15 (test plan section 2): these six inputs are each refused with a rule of
-#: their own (TC-103a, TC-103d, TC-104, TC-106a, TC-106b, TC-108).
+#: E27 threat model AC-15 (test plan section 2): these six inputs are each refused, with five rules
+#: (TC-103a, TC-103d, TC-104, TC-106a, TC-106b, TC-108).
 AC15_INPUTS = (
     "transfer_enabled", "fiat_p2p_enabled", "ip_missing", "ip_extra_foreign", "ip_wildcard",
     "non_uta",
 )  # fmt: skip
-#: The AC-15 inputs that get an earlier input's rule from the shipped pipeline (#2417). Each
-#: records a bare `validation_failed`: its rule is pending and must differ. Pinned, so the day the
-#: pipeline separates a pair the AC-15 test fails and the manifest records the new rule.
+#: The AC-15 inputs that get an earlier input's rule, as the merged contract has it (`createApiKey`
+#: step 5, #3089): a wildcard and an extra address are both a whitelist mismatch, so the six
+#: inputs get five rules. Pinned: a second shared pair, or a separated one, fails the AC-15 tests.
 AC15_SHARED_RULE: dict[str, str] = {
-    "fiat_p2p_enabled": "transfer_enabled",
-    "ip_wildcard": "ip_missing",
+    "ip_wildcard": "ip_extra_foreign",
 }
 
 #: Plan verdicts judged outside verification.py by design: (recorded verdict, why). Not a pin,
@@ -397,7 +397,7 @@ def _judge(error: ExchangeError) -> NoReturn:
     """A verdict refusal is `KeyRefused`; anything else is inconclusive (SR-E27-18)."""
     found = refusal(error)
     if found is None:
-        raise VerificationInconclusive(type(error).__name__) from None
+        raise VerificationInconclusive(probe_error(error)) from None
     raise KeyRefused(Refusal(found[0]), found[1]) from None
 
 
@@ -520,15 +520,13 @@ def test_recorded_verdict_matches_the_pipeline(name: str) -> None:
         return
     assert recorded in (None, verdict)
     problem = str(expected.get("problem", ""))
-    if name in AC15_SHARED_RULE:
-        assert (problem, verdict) == ("validation_failed", "refused")  # its rule is pending
-    elif problem.startswith("validation_failed/"):
+    if problem.startswith("validation_failed/"):
         assert (verdict, codes) == ("refused", (problem.removeprefix("validation_failed/"),))
 
 
 async def test_ac15_inputs_share_a_pipeline_rule_only_in_the_pinned_pairs() -> None:
-    """E27 threat model AC-15 wants six rules for its six inputs. The pipeline gives two pairs
-    one rule each (#2417); a third shared pair, or a separated one, fails here."""
+    """E27 threat model AC-15 has five rules for its six inputs: the contract gives one pair a
+    rule (#3089). A second shared pair, or a separated one, fails here."""
     verdicts = {name: await judged(load(name, now=NOW)) for name in AC15_INPUTS}
     assert {verdict for verdict, _ in verdicts.values()} == {"refused"}
     shared = {
@@ -540,12 +538,12 @@ async def test_ac15_inputs_share_a_pipeline_rule_only_in_the_pinned_pairs() -> N
     assert shared == set(AC15_SHARED_RULE.items())
 
 
-def test_ac15_inputs_record_six_distinct_rules_or_a_pending_one() -> None:
-    """The pack, as E27-Q02's oracle, never records one rule for two AC-15 inputs."""
+def test_ac15_inputs_record_a_rule_each_and_only_the_pinned_pair_shares_one() -> None:
+    """The pack, as E27-Q02's oracle, never records one rule for two AC-15 inputs but the pair."""
     problems = {name: str(manifest(name)["expected"]["problem"]) for name in AC15_INPUTS}
-    pending = {name for name, problem in problems.items() if problem == "validation_failed"}
-    assert pending == set(AC15_SHARED_RULE)
-    named = [problem for name, problem in problems.items() if name not in pending]
+    twins = {name for name, other in AC15_SHARED_RULE.items() if problems[name] == problems[other]}
+    assert twins == set(AC15_SHARED_RULE)
+    named = [problem for name, problem in problems.items() if name not in twins]
     assert all(problem.startswith("validation_failed/") for problem in named)
     assert len(named) == len(set(named))
 

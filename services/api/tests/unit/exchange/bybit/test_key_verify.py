@@ -25,7 +25,12 @@ from candleviewer.exchange.base.errors import (
     TransportError,
 )
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
-from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH, ProbeFacts
+from candleviewer.exchange.bybit.key_info import (
+    KEY_INFO_PATH,
+    PROBE_PATH,
+    ProbeFacts,
+    probe_error,
+)
 from candleviewer.exchange.bybit.key_verify import (
     CALL_TIMEOUT_S,
     KeyVerificationCalls,
@@ -116,6 +121,36 @@ async def test_a_failing_demo_host_never_falls_back_to_another_host(
         await calls.key_info()
     await calls.aclose()
     assert asked(venue) == [(HOSTS["demo"], KEY_INFO_PATH)]  # once, and no other host
+
+
+@pytest.mark.parametrize(
+    ("failure", "name"),
+    [
+        (httpx.Response(503, json={}), "service_unavailable"),
+        (httpx.Response(502, text="bad gateway"), "service_unavailable"),
+        (httpx.ConnectError("unreachable"), "transport_error"),
+        (httpx.ReadTimeout("slow"), "timeout"),
+        (httpx.Response(200, text="<html>not json</html>"), "transport_error"),
+        # Pinned gaps (#3281): the contract names a 403 `ip_not_allowed` and a 429
+        # `rate_limited`, but the client exposes no HTTP status, so with no JSON body they read as
+        # a transport fault. The day it does, these two cases fail and take their contract names.
+        (httpx.Response(403, text="<html>forbidden</html>"), "transport_error"),
+        (httpx.Response(429, text="slow down"), "transport_error"),
+    ],
+    ids=["503", "502_html", "reset", "slow", "non_json_200", "403_gap", "429_gap"],
+)
+async def test_a_failing_call_is_named_by_the_probe_table_from_the_real_clients_error(
+    venue: respx.MockRouter, failure: httpx.Response | Exception, name: str
+) -> None:
+    """The table reads the REST client's own errors: a 5xx is its cause-less `TransportError`, a
+    reset, a timeout or a body that is not JSON chains its own error. A change to how the client
+    raises them fails here, not in production."""
+    venue.get(f"https://{HOSTS['demo']}{KEY_INFO_PATH}").mock(side_effect=[failure])
+    calls, _ = build("demo")
+    with pytest.raises(TransportError) as caught:
+        await calls.key_info()
+    await calls.aclose()
+    assert probe_error(caught.value) == name
 
 
 async def test_both_calls_are_signed_by_m2_under_key_verify_for_the_stored_key(

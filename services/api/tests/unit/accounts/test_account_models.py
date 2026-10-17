@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
@@ -73,6 +73,25 @@ def test_models_never_expose_secret_columns() -> None:
     assert not _SECRET & set(acct)
     assert not _SECRET & set(key)
     assert not _SECRET & set(ApiKeyMetadata.model_fields)
+
+
+@pytest.mark.parametrize("flag", [0, 1])
+def test_snapshot_holds_the_uta_flag_the_verification_stored(flag: Literal[0, 1]) -> None:
+    """SR-E27-04: a stored `uta` loads back (the model forbids unknown fields)."""
+    snap = _fixtures()[0]["permission_snapshot"]
+    assert PermissionSnapshot(**snap, uta=flag).uta == flag
+    assert _key({**snap, "uta": flag}).permission_snapshot.uta == flag
+
+
+def test_snapshot_without_a_uta_flag_still_loads_and_says_so() -> None:
+    """A key stored before the flag was kept has none: unknown, never claimed non-UTA."""
+    assert PermissionSnapshot(**_fixtures()[0]["permission_snapshot"]).uta is None
+
+
+@pytest.mark.parametrize("flag", [2, -1, "yes", 1.5])
+def test_snapshot_refuses_a_uta_flag_the_exchange_never_reports(flag: object) -> None:
+    with pytest.raises(ValidationError):
+        PermissionSnapshot.model_validate({**_fixtures()[0]["permission_snapshot"], "uta": flag})
 
 
 def test_snapshot_rejects_withdraw() -> None:
