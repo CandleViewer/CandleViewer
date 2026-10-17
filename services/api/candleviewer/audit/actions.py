@@ -18,8 +18,12 @@ never pass an ad-hoc string.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Literal
 
 from candleviewer.audit.errors import AuditError
+from candleviewer.audit.models import AuditOutcome
 
 #: Mirrors the migration's `au_action_fmt` CHECK exactly.
 _ACTION_FMT_RE = re.compile(r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")
@@ -214,6 +218,29 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
 for _action in AUDIT_ACTIONS:
     if not _ACTION_FMT_RE.match(_action):  # pragma: no cover - defends the registry itself
         raise AuditError(f"registry action {_action!r} violates au_action_fmt")
+
+LaneClass = Literal["reserved", "shared"]
+_ANY = frozenset(AuditOutcome)
+
+#: The journal-first audit lane's closed registry (ADR-0037 decision 3; the single source, C-16.5):
+#: each admitted action, its class and the outcomes it may carry. The class follows the action,
+#: never the caller. The two `audit.lane_*` rows join AUDIT_ACTIONS in S2a2, which first emits them.
+LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
+    {
+        "auth.logout": ("reserved", _ANY),
+        "auth.session_revoked": ("reserved", _ANY),
+        "auth.refresh_reuse_detected": ("reserved", _ANY),
+        "auth.session_refreshed": ("shared", frozenset({AuditOutcome.DENIED})),
+        "auth.login": ("shared", _ANY),
+        "auth.login_failed": ("shared", _ANY),
+        "auth.account_locked": ("shared", _ANY),
+        "auth.mfa_failed": ("shared", _ANY),
+        "auth.recovery_codes_exhausted": ("shared", _ANY),
+        "auth.recovery_code_used": ("shared", _ANY),
+        "audit.lane_started": ("reserved", frozenset({AuditOutcome.SUCCESS})),
+        "audit.lane_resumed": ("reserved", frozenset({AuditOutcome.SUCCESS})),
+    }
+)
 
 
 def validate_action(action: str) -> str:
