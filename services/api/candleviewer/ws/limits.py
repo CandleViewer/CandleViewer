@@ -13,6 +13,8 @@ Single home for every bound the gateway enforces. Overflow policy:
   `too_many_topics` (`field: topics`) before any entry is read; nothing is subscribed (SR-192).
 - The refusals of one `sub` that `ws.subscribe.denied` records -> ONE record for the frame, which
   counts them all and lists the first `MAX_DENIALS_LISTED` (SR-192, #2292).
+- A connection's `ws.subscribe.denied` records past `DENIAL_AUDITS_PER_WINDOW` in any sliding
+  `DENIAL_AUDIT_WINDOW_S` -> not written, each counted once; the `sub_ok` is unchanged (#3185).
 - `unsub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
   `invalid_options` (`field: topics`) before any entry is read; nothing is unsubscribed (#2875).
 - A subscription that would grow a connection past `MAX_SUBSCRIPTIONS` ->
@@ -58,6 +60,11 @@ MAX_TOPICS_PER_SUB = 50
 #: SR-192: the one `ws.subscribe.denied` record of a `sub` frame lists the `object_id` and
 #: `reason` of at most this many of its refusals, in request order; its `count` holds them all.
 MAX_DENIALS_LISTED = 10
+#: #3185 (23 section 4.3): `ws.subscribe.denied` records one connection writes in any sliding
+#: `DENIAL_AUDIT_WINDOW_S`, the CSRF and session-fixation refusal budgets' size and window. Past it
+#: a frame's record is counted (`cv_ws_subscribe_denied_unaudited_total`), not written.
+DENIAL_AUDITS_PER_WINDOW = 20
+DENIAL_AUDIT_WINDOW_S = 60.0
 MAX_SUBSCRIPTIONS = 200
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.
 MAX_SYMBOLS_PER_CONNECTION = 40

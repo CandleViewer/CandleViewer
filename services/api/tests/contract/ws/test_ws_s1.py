@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
+from candleviewer.ws.limits import DENIAL_AUDITS_PER_WINDOW, MAX_INBOUND_FRAME_BYTES
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws._harness import (
     OFFERS,
@@ -192,6 +192,26 @@ def test_s1_denial_audit_of_a_sub_over_and_at_the_cap(offer: list[str]) -> None:
         assert [r["error"]["code"] for r in results] == ["forbidden"] * CAP
     ((action, count),) = [(r["action"], r["after_state"]["count"]) for r in audit.records]
     assert (action, count) == ("ws.subscribe.denied", CAP)
+
+
+@pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
+def test_s1_past_the_denial_record_budget_the_reply_is_unchanged_and_no_record_is_written(
+    offer: list[str],
+) -> None:
+    """#3185 on both subprotocols: a socket writes `DENIAL_AUDITS_PER_WINDOW` denial records in a
+    window (the world's clock, which only the test moves, holds it still). The next `sub` whose
+    refusal the audit keeps gets the same `sub_ok`, validated against §13, and writes nothing."""
+    w = World()
+    w.perms = frozenset({Permission.MARKETDATA_READ})
+    audit = _Audit()
+    w.registry.services.audit, w.registry.services.clock = audit, w.clock
+    with connect(w, offer) as c:
+        first = c.sub("orders")
+        later = [c.sub("orders") for _ in range(DENIAL_AUDITS_PER_WINDOW)]
+    assert first["p"]["results"][0]["error"]["code"] == "forbidden"
+    assert later == [first] * DENIAL_AUDITS_PER_WINDOW
+    denied = ["ws.subscribe.denied"] * DENIAL_AUDITS_PER_WINDOW
+    assert [r["action"] for r in audit.records] == denied
 
 
 def _sub_text(topics: list[str]) -> str:

@@ -1529,6 +1529,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_subscribe_denied_unaudited_total",
+        "counter",
+        "records",
+        (),
+        "ws.subscribe.denied records not written: the connection's budget was spent (#3185).",
+        "none: deliberate; sustained = a client probing private topics or with no backoff, "
+        "see the per-connection warning",
+        _L,
+        "E17",
+        exported=True,
+    ),
+    _s(
         "cv_ws_clock_skew_ms",
         "histogram",
         "ms",

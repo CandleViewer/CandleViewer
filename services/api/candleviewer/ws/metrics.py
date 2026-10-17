@@ -301,6 +301,14 @@ cv_ws_audit_failures_total = Counter(
 )
 for _audit_reason in AUDIT_FAILURE_REASONS:  # bound now, so increase() sees the first failure
     cv_ws_audit_failures_total.labels(reason=_audit_reason)
+#: #3185: one per `ws.subscribe.denied` record a connection's budget kept from the writer
+#: (`limits.DENIAL_AUDITS_PER_WINDOW` in any sliding `DENIAL_AUDIT_WINDOW_S`), however many
+#: refusals it held. Deliberate, not a failure: no `cv_ws_audit_failures_total` reason, so
+#: `WsAuditWriteFailed` does not fire on it. Unlabelled: its one series exists from import.
+cv_ws_subscribe_denied_unaudited_total = Counter(
+    "cv_ws_subscribe_denied_unaudited_total",
+    "ws.subscribe.denied records not written: their connection's budget for the window was spent.",
+)
 
 
 def count_audit_failure(rows: int = 1, reason: AuditFailureReason | None = None) -> None:
@@ -362,6 +370,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_closes_total",
         "cv_ws_connect_rate_limited_total",
         "cv_ws_audit_failures_total",
+        "cv_ws_subscribe_denied_unaudited_total",
         "cv_ws_clock_skew_ms",
         "cv_ws_system_frames_withheld_total",
         "cv_ws_subscribe_total",

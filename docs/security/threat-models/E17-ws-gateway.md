@@ -2,9 +2,10 @@
 
 - Ticket: E17-X01 (issue #381). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-13;
   review log in §10). Accepted residuals WS-I04 and WS-R04 are owner-accepted per #1778 (2026-10-12; review date
-  2027-01-15). WS-D15's control (SR-192, #2292) is built and its row is re-scored residual Medium (#3123; recorded as
-  RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is Open, tracked in #2293,
-  and is residual Medium until #2293 merges.
+  2027-01-15). WS-D15's controls (SR-192, #2292; a per-connection budget for its denial records, #3185) are built and
+  its row is re-scored residual Low (#3185; Medium in #3123 before the budget; recorded as RR-08 in
+  `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is Open, tracked in #2293, and is
+  residual Medium until #2293 merges.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1). Format mirrors `E13-indicators.md`. Reuses the E09 auth/RBAC model (`e09-auth-rbac.md`, U-rows);
   those threats are **referenced, not duplicated**. Upstream Bybit connection security is E08's model.
@@ -152,7 +153,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 
 | ID     | Flow / element | Threat                                                                           | L   | I   | Risk   | Control                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Owner            | Verify      | Disp. | Residual |
 | ------ | -------------- | -------------------------------------------------------------------------------- | --- | --- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------- | ----- | -------- |
-| WS-R01 | F5, F16        | Subscription to a private topic leaves no trail                                  | M   | M   | Medium | Denied and rejected private-topic attempts write `ws.subscribe.denied`; **successful** private-topic subscriptions write one `ws.subscribe.granted` record per `sub` frame (actor, connection id, and each new subscription's `ch` and account ids: the first 10 listed, all counted) (SR-E17-04, #2174)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | E17-S02, E17-T06 | integration | M     | Low      |
+| WS-R01 | F5, F16        | Subscription to a private topic leaves no trail                                  | M   | M   | Medium | Denied and rejected private-topic attempts write `ws.subscribe.denied` (within the 23 §4.3 budget); **successful** private-topic subscriptions write one `ws.subscribe.granted` record per `sub` frame (actor, connection id, and each new subscription's `ch` and account ids: the first 10 listed, all counted) (SR-E17-04, #2174)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | E17-S02, E17-T06 | integration | M     | Low      |
 | WS-R02 | F7, F8, F16    | A revocation leaves no record                                                    | L   | M   | Low    | Every `revoked` frame writes `ws.subscription.revoked` with reason and removed accounts, a resync loop's too (#2174); session-revocation and user-disabled closes are counted (`ws_revoked_total`) and audited as `ws.connection.closed` with reason `session_revoked` / `user_disabled` and the user, session and source (#2486; pinned by #2174) (SR-E17-04)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | E17-S02          | integration | M     | Low      |
 | WS-R03 | F17            | Repeated auth failures not attributable                                          | M   | L   | Low    | Third failure writes a `warning` audit entry naming the source address (`actor_ip`, #2174); every failure is counted (`cv_ws_auth_failures_total{reason}`) and logged with its source (`ws auth failed`), so spraying across sockets is visible per source (SR-E17-05)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | E17-S01, E17-T06 | integration | M     | Low      |
 | WS-R04 | F16, DS1       | Audit write failure silently drops the record (best-effort audit on the WS path) | L   | M   | Low    | Best-effort audit: each wait is bounded (2 s), the denial record's too; failures are logged and alerted (`cv_ws_audit_failures_total`, SR-E17-04). Accepted: denial still happens even when the record is lost. A close that stays within its bounds attempts its row until its own 2 s bound, and uvicorn's drain does not cut that attempt short (at the floor the margin is only its 0.1 s settle sleep): settings refuse a drain shorter than the 4 s one close can need, the flush plus the audit write (#2565); a handler that outlives the drain is still cancelled, and waiting for such tails is #2827. This is compatible with C-2.9 **only because no order, auth-credential or key action is carried over the WS** (order entry and the kill switch are REST, `23-ws-protocol.md` §1.2); if any such action is ever added to the WS, its audit must be write-ahead, not best-effort | E17-T06          | unit        | A     | Low      |
@@ -190,8 +191,8 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-D12 | F1-F2, P1        | permessage-deflate amplification: a small compressed frame inflates to a large message before any app check                                                                                                                                                                                                                                                       | M   | M   | Medium | Server compression settings not explicitly configured; disable inbound compression or bound the decompressed size at the server (SR-191); the protocol does not require compression (§3.5)                                                                                                                                          | #2176            | integration               | M     | Low after #2176           |
 | WS-D13 | F1-F2, P1        | Fragmentation reassembly: many continuation frames held open to accumulate buffered state                                                                                                                                                                                                                                                                         | L   | M   | Low    | Same server message-size limit bounds the reassembled message; per-connection server queue limit (SR-191); auth timeout closes idle pre-auth sockets                                                                                                                                                                                | #2176, E17-S01   | integration               | M     | Low                       |
 | WS-D14 | F1, P1           | Slowloris on the upgrade: HTTP upgrade requests sent slowly to hold server slots before the app sees the socket                                                                                                                                                                                                                                                   | L   | M   | Low    | Server keep-alive/handshake timeouts not explicitly configured; set explicit server timeouts and connection limits (SR-191); tailnet-only reachability (SR-045/047)                                                                                                                                                                 | #2176            | integration               | M     | Low after #2176           |
-| WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built (#2292): a `sub` of more than `MAX_TOPICS_PER_SUB` (50) entries is refused whole before any entry is read (one small `too_many_topics` `err`, no audit row); the audited refusals of a processed frame are one `ws.subscribe.denied` record (count, codes, first 10 refusals); its reply holds at most 50 results (SR-192) | #2292, #3185     | unit, load, chaos (AC-29) | M     | Medium (until measured)   |
-| WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached                                                                                                                            | M   | M   | Medium | WS-D03 limits only client `resync` frames (5/topic/min). Required: one rebuild budget across resync, `ctl`-forced and sub-churn paths, returning `resync_rate_limited` (SR-193). Only the generic 30 frames/s bounds this today                                                                                                     | #2293            | unit, load (AC-30)        | M     | Medium until #2293 merges |
+| WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built: a `sub` of over 50 entries is refused whole before any entry is read (one small `err`, no audit row); a processed frame's audited refusals are one `ws.subscribe.denied` record and its reply holds at most 50 results (SR-192, #2292); a connection writes at most 20 such records in a minute, the rest counted (#3185) | #2292, #3185     | unit, load, chaos (AC-29) | M     | Low                       |
+| WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached, and each churned `sub` that makes a new private subscription writes a `ws.subscribe.granted` row (WS-R01)                 | M   | M   | Medium | WS-D03 limits only client `resync` frames (5/topic/min). Required: one rebuild budget across resync, `ctl`-forced and sub-churn paths, returning `resync_rate_limited` (SR-193). Only the generic 30 frames/s bounds this today                                                                                                     | #2293            | unit, load (AC-30)        | M     | Medium until #2293 merges |
 | WS-D17 | F13, P1          | The planned shutdown outruns the container stop budget, or uvicorn's drain never ends: SIGKILL cuts off the storage flushes and secrets zeroing of the module teardown. Outside the sum today: `BarsRuntime.stop` (up to 30 s with bars on) and the metrics listener's unbounded drain, each able to use the budget alone (#2878); #2827 adds a 2 s term to it    | M   | M   | Medium | `Settings` refuses a `CV_WS_SHUTDOWN_GRACE_MS` that cannot fit `CV_API_STOP_BUDGET_S` (grace + 2 s flush + drain + 16 s for one hung module + 0.2 s of ticks; the lifespan's earlier stops are outside it); uvicorn drain bounded, and not below the 4 s one close can need; compose `stop_grace_period` equals the budget          | #2565, #2878     | unit                      | M     | Low                       |
 
 ### 3.6 Elevation of privilege
@@ -223,8 +224,8 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | E3 Internal bus (F9)           | N/A: internal bus is authenticated by process boundary (E08) | T07                | —             | —             | D08           | —        |
 
 Every STRIDE category has analysed rows. Counts: 52 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
-WS-I09 and WS-I10 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored in #3123);
-residual Medium: WS-D08, WS-D15 (until measured), WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until
+WS-I09 and WS-I10 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored Medium in #3123, Low in #3185);
+residual Medium: WS-D08, WS-D16 (until #2293 merges), and WS-D11, WS-D12, WS-D14 until
 #2176 merges (open items, §10).
 
 ## 4. WS authentication and the 10-second unauthenticated window
@@ -431,7 +432,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-27 | Two users subscribe to `positions` for different accounts on the same symbol; capture both streams                                         | No frame for one account reaches the other subscriber                                                                                                   | I08             |
 | AC-28 | Subscribe the same public topic live and with a `replay_session_id`                                                                        | Two subscriptions, separate sequences; replay frames flagged `replay`                                                                                   | T09             |
 | AC-29 | As V, send one 256 KiB `sub` frame of ~21,800 minimal entries (mix of denied and private-family)                                           | One bounded reply; O(1) audit appends (one aggregated denial record); no WAL growth proportional to entries; audited order path still succeeds (SR-192) | WS-D15          |
-| AC-30 | Loop `ctl` identity-option flips on one topic, and 50-entry unsub/sub churn, for 60 s                                                      | Rebuilds capped by the shared budget; `resync_rate_limited`; no unbounded snapshot builds (SR-193)                                                      | WS-D16          |
+| AC-30 | Loop `ctl` identity-option flips on one topic, and 50-entry unsub/sub churn, for 60 s                                                      | The shared budget caps rebuilds and the `ws.subscribe.granted` rows each cycle writes; `resync_rate_limited`; no unbounded snapshot builds (SR-193)     | WS-D16          |
 
 AC-29 as built (#2292): the frame is refused whole before any entry is read, so it writes no audit row; a frame within the cap writes at most one aggregated `ws.subscribe.denied` record (23-ws-protocol.md §5.2). Its "audited order path still succeeds" leg is E17-X02's (#415).
 
@@ -444,7 +445,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Repeated `auth_failed` per identity | auth-failure `warning` (3rd failure) | `cv_ws_auth_failures_total{reason}`              | S03, R03 | merged; per source by `actor_ip` (#2174) |
 | Slow-consumer closes per identity   | `ws.connection.closed`, `warning`    | `cv_ws_closes_total{reason="slow_consumer"}`     | D01      | merged (#2486; alert #3035)              |
 | Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | merged (#2174)                           |
-| Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged                                   |
+| Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged (within the 23 §4.3 budget)       |
 | Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
 | Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
 | Withheld `system` frames (SR-188)   | none, by design (no row per frame)   | `cv_ws_system_frames_withheld_total{reason}`     | I05      | merged (#3125)                           |
@@ -453,6 +454,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | User connect/close churn (#2322)    | `ws.connection.closed` (#2486)       | `cv_ws_handshake_seconds_count`                  | D07      | merged (#2486); capped by #2558          |
 | Per-user connect-rate refusals      | none, by design; capped log line     | `cv_ws_connect_rate_limited_total`               | D07      | merged (#2558)                           |
 | Sockets shed awaiting auth (#2155)  | none (no identity); capped log line  | `cv_ws_closes_total` (`server_shedding_load`)    | S03, D07 | merged (#2155)                           |
+| Denial records past the WS budget   | none past budget; capped log line    | `cv_ws_subscribe_denied_unaudited_total`         | D15      | merged (#3185)                           |
 
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
@@ -460,7 +462,7 @@ session fault, not a user action, so it writes no audit row: one per socket and 
 failed principal load) counts every other frame under `no_role` (`23-ws-protocol.md` §15.9).
 
 The connect-rate limit (`CV_WS_MAX_AUTHS_PER_USER_PER_MIN`, 20 per user per sliding minute; `23-ws-protocol.md`
-§4.3) is the control behind the last two rows. A `ws.connection.closed` row needs a counted `auth` first, so
+§4.3) is the control behind the connect/close churn and per-user connect-rate refusal rows. A `ws.connection.closed` row needs a counted `auth` first, so
 connect/close churn adds at most that many rows per user per minute instead of one per loop iteration, and what
 remains is visible as that audit action's rate per identity (the metrics carry no user label).
 Private-topic `unsub`/`sub` churn also grows the `ws.subscribe.granted` rows; it is related to WS-D16 (#2293).
@@ -486,6 +488,23 @@ in `docs/security/abuse-cases/e09-auth.md`), where the connect-rate refusals kee
 line. A sender that keeps going past the frame limit is closed at its second breach and shows in the limiter's scraped
 `cv_ws_closes_total{reason="client_rate_limited"}` (D05); one within the limit leaves no scraped trace. The over-cap refusal is answered with `too_many_topics` and
 has no per-entry identity to audit (the frame is refused before any entry is read).
+
+**Denial records past the budget (#3185).** A connection writes at most 20 `ws.subscribe.denied` records in any sliding
+60 s window (`23-ws-protocol.md` §4.3), the size and window of the CSRF and session-fixation budgets above, kept per
+connection. Past it a frame's refusals are still answered in its `sub_ok`, unchanged, and counted in
+`cv_ws_subscribe_total{topic,result}`; its one record is not written and counts once in
+`cv_ws_subscribe_denied_unaudited_total`, and the `ws subscribe-denied audit over budget` warning (connection and user)
+is logged for a connection's first record kept back in a window. So what C-2.9 keeps of a refused subscribe is every
+refusal answered and counted and, of each connection's records, at most 20 in any sliding 60 s written, each as
+`23-ws-protocol.md` §5.2 describes; past the budget, a count and the capped warning, not a row per frame, because a
+row per frame is what WS-D15's flooding would use. The counter is not a `cv_ws_audit_failures_total` reason, so
+`WsAuditWriteFailed` does not fire for a client past the budget, and it carries no user label: attribution comes from
+the capped warning, which names the connection and the user. Why
+20: within the inbound frame limit (D05) a socket could send an audited refusal in every `sub` frame, one record each
+since SR-192, while a client subscribes when a workspace opens or its layout changes, a few frames at a time. The
+connection caps (D07) bound how many budgets one user holds in a window. The budget covers the `ws.subscribe.denied`
+records only, not the one `ws.subscribe.granted` record a frame that makes a new private subscription also writes
+(WS-R01): the private-topic `unsub`/`sub` churn that grows those is WS-D16's, bounded by #2293's rebuild budget.
 
 **Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
 (`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries an `after_state` of at most two
@@ -597,19 +616,26 @@ scope on the open tickets named above.
   raises a ticket on any increase (WS-R04, §8). Denied cross-account subscribes and slow-consumer closes already had an
   audit action and a metric (§8). The loss windows above are unchanged, now counted; WS-R04 stays accepted.
 - **Residual High: none.** WS-D15 (audit-store flooding) was the one, a release blocker under the
-  `04-security-program.md` §5.11 rule while SR-192 was unbuilt. It is re-scored Medium below (#3123).
-- **Residual Medium (not eliminated):**
-  - WS-D15: audit-store flooding, re-scored from High (#3123). Inherent High (likelihood Medium x impact High scores
-    High in the `04-security-program.md` §5 template). With SR-192 built (#2292), a `sub` over 50 topics is refused
-    whole before any entry is read and a processed frame writes at most one `ws.subscribe.denied` record, so likelihood
-    drops to Low (sustained sending is needed) and impact stays High: likelihood Low x impact High scores Medium. What
-    remains is at most one record per `sub` frame; the frame and connection limits (WS-D05, WS-D07) bound the rate. A
-    per-connection budget for these rows is tracked as a follow-up to this re-score (#3185). The Medium is re-scored
-    once that budget is built (#3185 tracks it if RR-08 closes); a failed order-path leg in E17-X02's AC-29 run
-    re-scores it to High. AC-29's
-    bounded-reply and audit-append legs are tested in #2292 (unit and contract); E17-X02 (#415) executes AC-29 whole.
-    Recorded as RR-08 in `04-security-program.md` §16.1: closure proposed, owner sign-off pending (queued on #2701),
-    review date 2026-11-15.
+  `04-security-program.md` §5.11 rule while SR-192 was unbuilt. #3123 re-scored it Medium, and #3185 Low (below).
+- **WS-D15 re-scored Low (#3185), from Medium (#3123):** inherent High (likelihood Medium x impact High in the
+  `04-security-program.md` §5 template). #3123 rated SR-192 as built (#2292) Medium: a `sub` over 50 topics is refused
+  whole before any entry is read, and what remained was bounded only by the frame and connection limits (WS-D05,
+  WS-D07): likelihood Low, impact High. A `sub` frame writes at most one `ws.subscribe.denied` record, plus one
+  `ws.subscribe.granted` record when it makes a new private subscription (WS-R01). The budget built here (§8) covers
+  the denial records: a connection writes at most 20 in any 60 s, and the rest are counted, not written. It does not
+  cover the grant records; the private-topic `unsub`/`sub` churn that grows those is WS-D16's, bounded by #2293's
+  rebuild budget (residual Medium until it merges). Likelihood stays Low: one socket adds at most 20 denial records a
+  minute whatever it sends, and adding more takes new sockets, which the connect rate and the 8-socket cap bound
+  (D07) and each of which writes its own `ws.connection.closed` row. With the default limits a user's worst case is
+  (8 open + 20 new sockets in a minute) x 20 = 560 denial records a minute, plus a `ws.connection.closed` row for each
+  of those sockets that closes. Impact drops to Medium: the budget bounds what
+  refusals add to the audit store, as per-session limits bound the refused-attempt floods that E28 PF-D08 and E27
+  KV-D07 rate at impact Medium; the High of a stalled audit WAL itself is rated in E27 KV-D04. Low x Medium scores
+  Low. A failed order-path leg in E17-X02's AC-29 run would show the impact is High and re-scores it. AC-29's
+  bounded-reply and audit-append legs are tested in #2292 and the budget in #3185; E17-X02 (#415) executes AC-29
+  whole. Recorded as RR-08 in `04-security-program.md` §16.1: closure proposed, owner sign-off pending (queued on
+  #2701), review date 2026-11-15.
+- **Residual Medium (not eliminated; WS-D15 left this list when its budget was built, #3185):**
   - WS-D11, WS-D12, WS-D14: transport-layer limits enforced by the ASGI server are not explicitly configured;
     Low once #2176 merges. Part of **RSK-063**.
   - WS-D08: per-user amplification on hot symbols is bounded but unmeasured until E17-Q03. **RSK-063**.
@@ -619,11 +645,11 @@ scope on the open tickets named above.
   Mitigating in `32-risk-register.md`.
 - **Lowered by #2155:** WS-S03 and WS-D07 are Low: at most 64 sockets await auth per process, and each `auth` call
   is bounded at 6 s (§4). They were **RSK-063**'s first trigger; #3145 re-rates WG1 and RSK-063 to match.
-- No High residual: WS-D15 was the one (re-scored above, #3123). The unauthenticated-window argument (§4) holds only
-  for tailnet-only exposure.
-- Status is **Approved** (2026-10-13). WS-D15 is residual Medium since SR-192 was built (#2292; re-scored in #3123;
-  RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16 is residual Medium
-  until #2293 merges.
+- No High residual: WS-D15 was the one (re-scored Medium in #3123, then Low in #3185, above). The
+  unauthenticated-window argument (§4) holds only for tailnet-only exposure.
+- Status is **Approved** (2026-10-13). WS-D15 is residual Low since its denial-record budget was built (#3185; Medium
+  after SR-192, #2292 and #3123; RR-08 in `04-security-program.md` §16.1, closure proposed, owner sign-off pending);
+  WS-D16 is residual Medium until #2293 merges.
 
 ### Review log
 
@@ -652,3 +678,4 @@ scope on the open tickets named above.
 | 2026-10-17 | author (agent; PR for #3125)                      | WS-I05 as built (#3125): nested allow-lists, a guard on the one queueing point, a counter for withheld frames (§3.4, §8)                     |
 | 2026-10-17 | author (agent; PR for #2174)                      | SR-186/187 built (#2174): R01-R04 controls, §8 rows and §10 status; `cv_ws_audit_failures_total`, `WsAuditWriteFailed`                       |
 | 2026-10-17 | author (agent; PR for #571 slice D2)              | WS-I10 added (#571 D2): `sp` from the OS CSPRNG per frame, a log field only; a client's `sp` never read, echoed or logged (§3.4, §3.7)       |
+| 2026-10-17 | author (agent; PR for #3185)                      | WS-D15 Low: 20 `ws.subscribe.denied` records a minute per connection, rest counted; §8 row and budget; §10, counts                           |
