@@ -486,8 +486,8 @@ class TopicEmitter:
     def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
         """Emit a (possibly chunked) `snap`; False when the state cannot be built yet, or before
         the subscription's `sub_ok` is queued (#2831): it stays pending and no `d` is emitted
-        until a later flush succeeds."""
-        if self.source is None or not sub.announced:
+        until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth)."""
+        if self.source is None or not sub.announced or sub.ended:
             return False
         previous = sub.seq
         seq = previous + 1
@@ -579,10 +579,10 @@ class TopicEmitter:
         release, not at its source update), and a stamped binary delta is also encoded with that
         weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
         rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key the
-        server owns."""
+        server owns. Suppressed too once the subscription has ended, as a `snap` is."""
         if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
             raise ValueError("delta meta may not name a server-owned key")
-        if sub.snapshot_pending or sub.effective.get("paused") is True:
+        if sub.snapshot_pending or sub.effective.get("paused") is True or sub.ended:
             return False
         sub.seq += 1
         received = None if sub.seq & SAMPLE_MASK else self.clock()
@@ -740,18 +740,44 @@ def in_scope(
 # -- process-wide fan-out ------------------------------------------------------------------------
 
 
+class Sink(Protocol):
+    """One connection's frames from the hub: its `TopicEmitter`, or with the flag on its
+    `ConnectionPipeline`, which paces the deltas (§8.1) and never raises into the fan-out."""
+
+    @property
+    def cache(self) -> SnapshotCache: ...
+
+    @property
+    def on_rebuild(self) -> Callable[[list[Subscription]], None] | None: ...
+
+    def delta(
+        self,
+        sub: Subscription,
+        body: Mapping[str, Any] | None = None,
+        *,
+        part: Frame | None = None,
+        coalesced_count: int = 1,
+        ts_ms: int | None = None,
+        meta: Mapping[str, Any] | None = None,
+    ) -> bool: ...
+
+    def snapshot(self, sub: Subscription, reason: SnapReason) -> bool: ...
+
+    def flush_pending(self, subs: Iterable[Subscription]) -> int: ...
+
+
 class SequencingHub:
-    """Routes owning-module events to every live connection's `TopicEmitter` (E17-S03 side of
+    """Routes owning-module events to every live connection's `Sink` (E17-S03 side of
     the fan-out; coalescing and the overflow ladder are E17-T03). Bounded by the gateway's
     connection caps: one entry per authenticated socket."""
 
     def __init__(self) -> None:
-        self._conns: dict[int, tuple[ConnectionAuthz, TopicEmitter]] = {}
+        self._conns: dict[int, tuple[ConnectionAuthz, Sink]] = {}
 
     def __len__(self) -> int:
         return len(self._conns)
 
-    def register(self, authz: ConnectionAuthz, emitter: TopicEmitter) -> None:
+    def register(self, authz: ConnectionAuthz, emitter: Sink) -> None:
         self._conns[id(authz)] = (authz, emitter)
 
     def unregister(self, authz: ConnectionAuthz) -> None:
@@ -817,7 +843,7 @@ class SequencingHub:
             raise ValueError(f"unknown snap reason {reason!r}")
         if reason == "backpressure":  # the ladder pends these, so its `drain` knows them all
             raise ValueError("only the overflow ladder pends a backpressure snapshot")
-        hits: list[tuple[TopicEmitter, Subscription]] = []
+        hits: list[tuple[Sink, Subscription]] = []
         for authz, emitter in list(self._conns.values()):
             for sub in list(authz.by_id.values()):
                 if match(sub):

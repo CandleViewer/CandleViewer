@@ -249,6 +249,8 @@ class Subscription:
     #: records it False and `handle_sub` sets it once that reply is queued. It holds the `snap`
     #: only: a `d` for a §7.6 continuity attach can still precede `sub_ok` (#2909).
     announced: bool = True
+    #: E17-T03: set when it ends (`_drop`), after which `TopicEmitter` sends nothing of it.
+    ended: bool = False
     #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
     resyncs: collections.deque[float] = field(
         default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)
@@ -609,6 +611,7 @@ class ConnectionAuthz:
 
     def _drop(self, sub: Subscription) -> None:
         """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
+        sub.ended = True
         self.by_id.pop(sub.sub_id, None)
         ids = self._by_topic.get(sub.ch)
         if ids is not None:

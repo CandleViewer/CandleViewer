@@ -306,7 +306,7 @@ async def test_a_backpressure_snapshot_that_does_not_queue_is_parked_until_rebui
             if trigger == "rebuild":
                 rig.sequencing.flush_pending()
             else:
-                rig.clock.now = 1.0  # the timer is due at the writer's next turn
+                rig.clock.now += 1.0  # the timer is due at the writer's next turn
             (snap,) = await sock.next()
             handler.cancel()
             await asyncio.wait({handler})

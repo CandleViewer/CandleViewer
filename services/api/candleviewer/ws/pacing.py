@@ -13,6 +13,11 @@ A full queue counts as `cv_ws_overflow_total{reason="drop"}`, an update its merg
 producer bug, counted in `cv_ws_malformed_updates_total` and logged (family, topic and error class
 only), never as an overflow.
 
+With the flag on `ws/pipeline.py` routes the hub's deltas here (S3), checking the budget per update:
+`pending_bytes` is a total kept as the lanes change, and open windows are armed on a heap, so the
+check, `tick` and `next_due` are O(1) until one is due (C-2.18). A window whose emit raises drops
+its topic and tells `on_error` (the pipeline's containment, §10.1).
+
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
 `CLASSIFY_INTERVAL_S`: a class worsens at once and improves only after two consecutive better
 samples. `Pacer.apply` enforces it: `lagging` doubles throttles and forces coalescing; `saturated`
@@ -24,9 +29,10 @@ Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's
 
 from __future__ import annotations
 
+import heapq
 import math
 import secrets
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final
@@ -37,7 +43,7 @@ from candleviewer.ws.binary import Frame
 from candleviewer.ws.coalescing import CoalescingQueue
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflow_total
 from candleviewer.ws.permissions import Subscription
-from candleviewer.ws.sequencing import TopicEmitter
+from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, TopicEmitter
 
 CLASSIFY_INTERVAL_S: Final = 1.0
 LAGGING_QUEUE_PCT: Final = 25.0
@@ -181,13 +187,14 @@ def quality_notice(
 class _Lane:
     """One subscription's throttle window. `seq` is the topic's sequence number when the lane last
     emitted or started collecting: if anything else (a snapshot) moved it on, what the lane holds
-    predates that and is discarded."""
+    predates that and is discarded. `bytes` is its queue's `pending_bytes` as last counted."""
 
     sub: Subscription
     queue: CoalescingQueue
     seq: int
     last_emit: float = -math.inf
     due: float | None = None
+    bytes: int = 0
 
 
 class Pacer:
@@ -195,12 +202,24 @@ class Pacer:
 
     def __init__(self, emitter: TopicEmitter) -> None:
         self.emitter = emitter
+        #: Told of a window whose emit raised, after its topic is dropped; without it the error
+        #: propagates out of `offer` / `tick`.
+        self.on_error: Callable[[Subscription, Exception], None] | None = None
+        #: Told the close of each window it arms: the pipeline wakes its idle writer for one that
+        #: closes before the writer's wait ends (§8.1).
+        self.on_arm: Callable[[float], None] | None = None
         self.classifier = Classifier()
         self.probe = RttProbe()
         self.lanes: dict[str, _Lane] = {}
         #: §8.4 step 1: dropped topics awaiting their `backpressure` snapshot, by `sub_id`; the
         #: outbound ladder (`Backpressure.drain`) sends them and removes them.
         self.resnapshot_required: dict[str, Subscription] = {}
+        #: Every lane's `bytes`, summed as they change.
+        self._pending = 0
+        #: Armed windows, `(due, rank, sub_id)`, earliest first, then in §16.1 S5 causal order
+        #: (`_causal_rank`); one whose lane no longer has that `due` is stale and skipped.
+        #: Rebuilt from the lanes once mostly stale (bounded, C-2.18).
+        self._dues: list[tuple[float, int, str]] = []
 
     @property
     def cls(self) -> ConnectionClass:
@@ -208,21 +227,24 @@ class Pacer:
 
     @property
     def pending_bytes(self) -> int:
-        """Estimated size of every lane's pending state, for the connection budget (§8.4)."""
-        return sum(lane.queue.pending_bytes for lane in self.lanes.values())
+        """Estimated size of every lane's pending state, for the connection budget (§8.4): O(1),
+        kept as the lanes change, never summed per call."""
+        return self._pending
 
     def offer(
         self,
         sub: Subscription,
-        body: Mapping[str, Any],
+        body: Mapping[str, Any] | None,
         *,
         part: Frame | None = None,
         ts_ms: int | None = None,
+        meta: Mapping[str, Any] | None = None,
     ) -> bool:
         """Route one source update of `sub`; True when it was emitted or queued. A throttled
-        topic needs the structured `body`; the CVWB `part` is optional."""
+        topic needs the structured `body` (malformed without it); the CVWB `part` is optional.
+        `meta` rides on the envelope: a window carries its last update's."""
         if sub.topic.family.never_throttled:
-            return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms)
+            return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms, meta=meta)
         if _held(sub):
             lane = self.lanes.get(sub.sub_id)
             if lane is not None and lane.queue.pending:
@@ -234,13 +256,16 @@ class Pacer:
         elif lane.seq != sub.seq:
             self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
-        if not lane.queue.offer(body, part, ts_ms=ts_ms):
+        if not lane.queue.offer(body, part, ts_ms=ts_ms, meta=meta):
             self._refused(lane)
             return False
-        now = self.emitter.clock()
-        if lane.due is None:
-            lane.due = max(now, lane.last_emit + self.throttle_ms(sub) / 1000)
-        if now >= lane.due:
+        self._account(lane)
+        now, due = self.emitter.clock(), lane.due
+        if due is None:
+            due = max(now, lane.last_emit + self.throttle_ms(sub) / 1000)
+            if now < due:  # else the leading edge: it leaves at once
+                self._arm(lane, due)
+        if now >= due:
             self._flush(lane, now)
         return True
 
@@ -248,20 +273,49 @@ class Pacer:
         """Flush every lane whose window has closed; returns the frames emitted."""
         now = self.emitter.clock() if now is None else now
         sent = 0
-        for lane in list(self.lanes.values()):
-            if lane.due is not None and now >= lane.due:
+        while self._dues and self._dues[0][0] <= now:  # read each time: `_arm` may rebuild it
+            lane = self._armed(heapq.heappop(self._dues))
+            if lane is not None:
                 sent += self._flush(lane, now)
         return sent
 
     def next_due(self) -> float | None:
         """When the earliest pending window closes (monotonic seconds), if any."""
-        return min((lane.due for lane in self.lanes.values() if lane.due is not None), default=None)
+        dues = self._dues
+        while dues and self._armed(dues[0]) is None:
+            heapq.heappop(dues)  # stale: its lane was flushed, re-timed or let go
+        return dues[0][0] if dues else None
+
+    def _armed(self, entry: tuple[float, int, str]) -> _Lane | None:
+        """The lane `entry` still times; None when the entry is stale."""
+        lane = self.lanes.get(entry[2])
+        return lane if lane is not None and lane.due == entry[0] else None
+
+    def _arm(self, lane: _Lane, due: float) -> None:
+        lane.due = due
+        heapq.heappush(self._dues, (due, _causal_rank(lane.sub), lane.sub.sub_id))
+        if len(self._dues) > 2 * len(self.lanes) + 64:  # mostly stale: rebuild from the lanes
+            self._dues = [
+                (ln.due, _causal_rank(ln.sub), sid)
+                for sid, ln in self.lanes.items()
+                if ln.due is not None
+            ]
+            heapq.heapify(self._dues)
+        if self.on_arm is not None:
+            self.on_arm(due)
+
+    def _account(self, lane: _Lane) -> None:
+        """`pending_bytes` follows `lane`'s queue after anything changed it."""
+        size = lane.queue.pending_bytes
+        self._pending += size - lane.bytes
+        lane.bytes = size
 
     def _restart(self, lane: _Lane) -> None:
         """A snapshot went out or is pending: a new queue, since the old one's memory across
         windows (the heatmap's sent buckets, keyed by `t_ms` only) predates it (§8.2)."""
         lane.queue = _queue(lane.sub)
         lane.due, lane.seq = None, lane.sub.seq
+        self._account(lane)
 
     def _flush(self, lane: _Lane, now: float) -> int:
         lane.due = None  # first: a failing emit must not leave the window due forever
@@ -269,6 +323,7 @@ class Pacer:
             self._restart(lane)  # never a pre-snapshot delta after the `snap`
             return 0
         emissions = lane.queue.take()
+        self._account(lane)
         if lane.queue.overflowed:  # defensive: `take` refused what it could not emit
             self._refused(lane)
             return 0
@@ -281,10 +336,14 @@ class Pacer:
                     part=emission.part,
                     coalesced_count=emission.coalesced_count,
                     ts_ms=emission.ts_ms,
+                    meta=emission.meta,
                 )
-        except Exception:
+        except Exception as exc:
             self.drop(lane.sub)  # part of the window is lost: recover through a snapshot
-            raise
+            if self.on_error is None:
+                raise
+            self.on_error(lane.sub, exc)
+            return sent
         lane.seq = lane.sub.seq
         if sent:
             lane.last_emit = now
@@ -311,6 +370,7 @@ class Pacer:
         if lane is not None:
             lane.queue.clear()
             lane.due = None
+            self._account(lane)
         sub.snapshot_pending, sub.pending_reason = True, "backpressure"
         self.resnapshot_required[sub.sub_id] = sub
 
@@ -324,8 +384,14 @@ class Pacer:
 
     def forget(self, sub_id: str) -> None:
         """The subscription ended: nothing of it may be emitted or re-snapshotted."""
-        self.lanes.pop(sub_id, None)
+        self.discard(sub_id)
         self.resnapshot_required.pop(sub_id, None)
+
+    def discard(self, sub_id: str) -> None:
+        """Drop the window of `sub_id`, if any, but not its `backpressure` mark (§8.4 Lanes)."""
+        lane = self.lanes.pop(sub_id, None)
+        if lane is not None:
+            self._pending -= lane.bytes
 
     def throttle_ms(self, sub: Subscription) -> float:
         """The subscription's `effective.throttle_ms` under the current class (§8.3)."""
@@ -364,8 +430,10 @@ class Pacer:
             lane.queue.set_coalesce(self._coalesce(lane.sub))
             if lane.queue.overflowed:  # forced coalescing folded past a bound
                 self._refused(lane)
-            elif lane.due is not None:
-                lane.due = max(now, lane.last_emit + self.throttle_ms(lane.sub) / 1000)
+                continue
+            self._account(lane)  # a fold re-estimates the pending state
+            if lane.due is not None:
+                self._arm(lane, max(now, lane.last_emit + self.throttle_ms(lane.sub) / 1000))
         return {
             "throttle_multiplier": _MULTIPLIER[self.cls],
             "forced_coalesce": self.cls is not ConnectionClass.HEALTHY,
@@ -381,6 +449,15 @@ def _held(sub: Subscription) -> bool:
 
 def _queue(sub: Subscription) -> CoalescingQueue:
     return CoalescingQueue(sub.topic.family.family)
+
+
+#: §16.1 S5: windows that close together leave in causal order (`sequencing.causal_sort`'s), the
+#: other families after them.
+_CAUSAL: Final = {family: i for i, family in enumerate(PRIVATE_CAUSAL_ORDER)}
+
+
+def _causal_rank(sub: Subscription) -> int:
+    return _CAUSAL.get(sub.topic.family.family, len(_CAUSAL))
 
 
 def _log() -> Any:

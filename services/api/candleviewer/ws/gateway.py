@@ -64,7 +64,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   re-snapshot, `slow_consumer` close); the writer drains it. A control frame that ends or resets
   a subscription's stream drops what it overtakes of it (§8.4 Lanes). The `bye` takes a terminal
   slot, and every close flushes under one deadline, past which the socket goes with no `bye`
-  (§4.4, §8.4); the close audit records the ladder's trigger and an expired flush (§4.3).
+  (§4.4, §8.4); the close audit records the ladder's trigger and an expired flush (§4.3). The
+  hub's deltas go through the pipeline's pacer (§8.1); the writer's turn closes due windows.
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), or the pipeline's budget with the flag on; rate-limiter window,
@@ -1122,8 +1123,9 @@ def make_ws_router(
                 cache=svc.snapshot_cache,
                 push_data=conn.push,
             )
-            if svc.sequencing is not None:
-                svc.sequencing.register(conn.authz, conn.emitter)
+            if svc.sequencing is not None:  # flag on: the pipeline paces the deltas (§8.1)
+                sink = conn.emitter if conn.pipeline is None else conn.pipeline
+                svc.sequencing.register(conn.authz, sink)
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
                 conn.pipeline.attach(conn.authz, conn.emitter)
                 conn.authz.on_settle = lambda subs: settle(conn, subs)
@@ -1173,26 +1175,20 @@ def make_ws_router(
     def flush(conn: _Connection, fresh: set[str]) -> None:
         """Snapshot the pending subscriptions after a `sub` or `ctl`; a `machines` one only when
         this frame made it pending (`fresh`). After that only a publish on its topic wakes it,
-        never an inbound frame (§6.4)."""
+        never an inbound frame (§6.4). Flag on, the pipeline contains a build that raises."""
         if conn.authz is not None and conn.emitter is not None:
             subs = conn.authz.by_id.values()
-            conn.emitter.flush_pending(
+            sink = conn.emitter if conn.pipeline is None else conn.pipeline
+            sink.flush_pending(
                 [s for s in subs if s.topic.entity_kind is None or s.sub_id in fresh]
             )
 
     def settle(conn: _Connection, subs: list[Subscription]) -> None:
         """Flag on, once a permission change's frames are queued: the `reconfigure` snapshots of
-        what its narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One
-        that raises fails closed, `internal_error` (§10.1); if this raises, the registry evicts."""
-        try:
-            if conn.emitter is not None:
-                conn.emitter.flush_pending(subs)
-        except Exception as exc:
-            with contextlib.suppress(Exception):  # a failing logger must not skip the close
-                _log().error(
-                    "ws snapshot failed", connection_id=conn.connection_id, error=type(exc).__name__
-                )
-            conn.close_with("internal_error")
+        what its narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). The
+        pipeline contains one that raises (§10.1); if this raises, the registry evicts."""
+        if conn.pipeline is not None:
+            conn.pipeline.flush_pending(subs)
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
@@ -1364,8 +1360,9 @@ def make_ws_router(
                             await send_bye(conn, pipe.terminal)
                             return
                         queue.ready.clear()
+                        wait = pipe.wait_s(conn.clock(), tick_s)  # to the next window, if sooner
                         with contextlib.suppress(TimeoutError):
-                            await asyncio.wait_for(queue.ready.wait(), timeout=tick_s)
+                            await asyncio.wait_for(queue.ready.wait(), timeout=wait)
                         continue
                     watch(conn)  # a close may land after the pop: send only what it keeps
                     end = pipe.terminal

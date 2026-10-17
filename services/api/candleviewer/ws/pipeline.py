@@ -19,6 +19,13 @@ From `attach` the pipeline is `ConnectionAuthz.on_drop` (§8.4 Lanes, §9.5): a 
 ends or resets a subscription's stream overtakes what the normal lane holds of it, so those frames
 and its throttle window go before it is queued; its priority-lane frames stay, ahead of it.
 
+The pipeline is also the connection's hub sink (`sequencing.Sink`, S3): the hub's deltas go
+through the attached `Pacer` (§8.1, §8.2), `orders` and `executions` frame by frame, the rest in
+windows the writer's `service` closes on time (its wait cut to the next, `wait_s`); `check` runs
+after every routed update too (O(1)). An update, a window or a flushed snapshot's build that
+raises is contained to its subscription (D9, §10.1). A paced frame's fan-out span runs from its
+release to the send (D7); a producer's own `coalesced_count` is not carried through a window.
+
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
@@ -63,6 +70,7 @@ Plain synchronous code: no I/O and no task of its own; the gateway's writer driv
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -99,7 +107,9 @@ from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, TopicEmitter
 from candleviewer.ws.topics import FAMILIES
 
 if TYPE_CHECKING:
+    from candleviewer.ws.binary import Frame
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
+    from candleviewer.ws.sequencing import SnapReason, SnapshotCache
 
 #: §8.4 step 3's `bye`: one fixed message for both triggers (a `redrop` close happens under budget).
 SLOW_CONSUMER_RETRY_AFTER_MS: Final = 3000
@@ -227,6 +237,9 @@ class ConnectionPipeline:
         self._attached: tuple[ConnectionAuthz, Pacer] | None = None
         #: §10.1: per key, a chunk set whose chunk its encoder refused; its rest is never queued.
         self._skips: dict[Key, str] = {}
+        #: When the writer's last idle wait ends (`wait_s`); None once a window armed to close
+        #: sooner has woken it (`_wake_for`).
+        self._wake_by: float | None = None
 
     @property
     def deadline(self) -> float | None:
@@ -234,9 +247,11 @@ class ConnectionPipeline:
         return self._deadline
 
     def attach(self, authz: ConnectionAuthz, emitter: TopicEmitter) -> None:
-        """The first `auth_ok`: the ladder over this queue. Its `Pacer` holds the topics marked
-        for a `backpressure` snapshot; no update is routed through it yet (a later slice)."""
+        """The first `auth_ok`: the ladder over this queue, and the `Pacer` that the hub's deltas
+        go through from now on (this pipeline is the connection's sink, module docstring)."""
         self._live, pacer = authz.by_id, Pacer(emitter)
+        pacer.on_error = partial(self._failed, "update", pacer)
+        pacer.on_arm = self._wake_for
         self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
         emitter.on_rebuild = self._rebuilt
         authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
@@ -274,11 +289,14 @@ class ConnectionPipeline:
             self._step3("budget", ())
 
     def service(self, now: float) -> None:
-        """The writer's turn before each pop (after every send and wake): `drain` while a topic
+        """The writer's turn before each pop (after every send and wake): the throttle windows
+        closed by `now` go out (`Pacer.tick`, O(1) while none is), then `drain` while a topic
         awaits its snapshot, opening the ladder's `retry` pass over the parked ones once per
         `classify_interval_ms` (the coarse timer)."""
         ladder = self.ladder
         self._now = now  # `_quiet`'s clock, as of the writer's last turn
+        if ladder is not None and self.terminal is None:
+            ladder.pacer.tick(now)
         if ladder is None or self.terminal is not None or not ladder.pacer.resnapshot_required:
             self._retry_at = None
             return
@@ -333,7 +351,94 @@ class ConnectionPipeline:
         deletes an ended subscription's entry unsent, and snapshots a held one as it is then."""
         self.queue.drop({(sub.ch, sub.replay_session_id) for sub in subs})
         for sub in subs:
-            pacer.lanes.pop(sub.sub_id, None)
+            pacer.discard(sub.sub_id)
+
+    # -- the hub's `Sink` (module docstring) ------------------------------------------------------
+
+    @property
+    def cache(self) -> SnapshotCache:
+        return self._paced().emitter.cache
+
+    @property
+    def on_rebuild(self) -> Callable[[list[Subscription]], None]:
+        return self._rebuilt
+
+    def delta(
+        self,
+        sub: Subscription,
+        body: Mapping[str, Any] | None = None,
+        *,
+        part: Frame | None = None,
+        coalesced_count: int = 1,
+        ts_ms: int | None = None,
+        meta: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """One source update of `sub` through the pacer, then the budget check: its pending
+        state counts (§8.4). Nothing once a close or `release` happened. Never raises."""
+        ladder = self.ladder
+        if ladder is None or self.terminal is not None or self.released:
+            return False
+        try:
+            sent = ladder.pacer.offer(sub, body, part=part, ts_ms=ts_ms, meta=meta)
+        except Exception as exc:  # contained to `sub`: the fan-out goes on
+            self._failed("update", ladder.pacer, sub, exc)
+            return False
+        self._apply(ladder.check(self._live.values()))
+        return sent
+
+    def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
+        return self._paced().emitter.snapshot(sub, reason)
+
+    def flush_pending(self, subs: Iterable[Subscription]) -> int:
+        """The emitter's, one subscription at a time: a build that raises is `_failed`."""
+        pacer, sent = self._paced(), 0
+        for sub in subs:
+            try:
+                sent += pacer.emitter.flush_pending((sub,))
+            except Exception as exc:
+                self._failed("snapshot", pacer, sub, exc)
+        return sent
+
+    def wait_s(self, now: float, tick_s: float) -> float:
+        """The idle writer's wait: `tick_s`, or less when a window closes sooner (§8.1). A
+        window armed during it to close before it ends wakes the writer (`_wake_for`)."""
+        due = None if self.ladder is None else self.ladder.pacer.next_due()
+        wait = tick_s if due is None else min(tick_s, max(0.0, due - now))
+        self._wake_by = now + wait
+        return wait
+
+    def _wake_for(self, due: float) -> None:
+        """`Pacer.on_arm`: wake the idle writer, once per wait, for a window that closes
+        before its wait ends, so it re-reads the wait; any other arm wakes nothing (§8.1)."""
+        if self._wake_by is not None and due < self._wake_by:
+            self._wake_by = None
+            self.queue.wake()
+
+    def _paced(self) -> Pacer:
+        if self.ladder is None:  # the gateway registers the pipeline at the `attach`
+            raise RuntimeError("the pipeline is not attached")
+        return self.ladder.pacer
+
+    def _failed(self, what: str, pacer: Pacer, sub: Subscription, exc: Exception) -> None:
+        """An `update` (or window) or a `snapshot` build of `sub` that raised (D9, §10.1): a
+        throttled topic (any family outside `PRIORITY_FAMILIES`) drops to a `backpressure`
+        re-snapshot (`drain` parks one that fails), the connection open; `orders` and `executions`
+        fail closed. Logged by family and error class (C-12.6); a failing logger changes nothing."""
+        family, error = sub.topic.family.family, type(exc).__name__
+        fields = {"connection_id": self._connection_id, "family": family, "error": error}
+        if sub.topic.family.never_throttled:
+            self._close("internal_error")
+            with contextlib.suppress(Exception):  # never into the caller (`delta`: the fan-out)
+                _log().error(f"ws {what} failed", **fields)
+            return
+        if what == "update":
+            cv_ws_malformed_updates_total.labels(topic=family).inc()
+        if (held := self._quiet((what, family))) is not None:
+            with contextlib.suppress(Exception):  # nor may it skip the drop below
+                _log().warning(f"ws {what} failed", **fields, suppressed=held)
+        self.queue.drop({(sub.ch, sub.replay_session_id)})
+        pacer.drop(sub)  # held for the ladder's `drain` (§8.4 steps 1 and 2)
+        self.queue.wake()
 
     def _apply(self, events: list[LadderEvent]) -> None:
         """A drop wakes the writer, whose `service` drains (never a drain from here); a close is
