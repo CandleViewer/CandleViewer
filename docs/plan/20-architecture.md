@@ -1380,7 +1380,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | OMS | `orders_total{state,env}` | counter | reject-rate alerting |
 | OMS | `oms_unknown_orders` | gauge | **alert > 0 for 60 s** |
 | OMS | `naked_position_alerts_total` | counter | **page immediately** |
-| OMS | `oms_db_write_seconds{table}` | histogram | OMS Postgres write time per table (`orders`, an order with its first event; `order_events`; `executions`; `positions`; `position_snapshots`), failed writes included; recorded by the M14 repositories (E29-T01); p99 near the store's 2 s statement cap means order writes are close to refusal |
+| OMS | `oms_db_write_seconds{table}` | histogram | OMS Postgres write time per table (`orders`, an order with its first event; `order_events`; `executions`; `positions`; `position_snapshots`), failed writes included; recorded by the M14 repositories (E29-T01); p99 near the store's 2 s statement cap means order writes are close to refusal; buckets 5 ms to 2.5 s, with edges at 1, 1.5, 2 and 2.5 s around the cap |
 | OMS | `oms_rate_reject_total`, `bybit_rate_remaining{endpoint_group}` | counter/gauge | budget health |
 | OMS | `bybit_clock_drift_ms` | gauge | alert > 1500 ms |
 | Rules | `rule_evaluations_total`, `rule_fires_total{rule_id}`, `rule_autodisarm_total` | counter | rule-storm detection |

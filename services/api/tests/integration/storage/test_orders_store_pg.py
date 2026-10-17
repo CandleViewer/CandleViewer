@@ -6,9 +6,10 @@ one-statement create and its atomicity, `ux_orders_link` surfacing as `Duplicate
 numeric(38,18) through asyncpg with no float, the named constraints the store reports, account
 scoping, a dense `seq` under concurrent appends, `list_open` planned over `ix_orders_open`, the
 store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest;
-for slice 3, one row per fill whatever reports it, the account-scoped order link of a fill, the
-position upsert with a cleared stop, and `list_unprotected` planned over `ix_pos_no_sl`. The DDL
-itself is `test_oms_core_migration.py`'s.
+for fills and positions, one row per fill whatever reports it, the account-scoped order link of a
+fill, the position upsert with a cleared stop, a stale position write that leaves the newer row,
+and `list_unprotected` planned over `ix_pos_no_sl`. The DDL itself is
+`test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -426,7 +427,7 @@ async def test_a_write_blocked_by_a_row_lock_fails_within_the_store_cap(
     assert _sql(pg_dsn, "SELECT count(*) FROM order_events WHERE order_id = %s", new.id) == [(1,)]
 
 
-# -- slice 3: executions, positions and position snapshots -------------------------------------
+# -- executions, positions and position snapshots ----------------------------------------------
 
 Ledger = tuple[ExecutionRepository, PositionRepository, PositionSnapshotRepository]
 
@@ -509,6 +510,30 @@ async def test_an_open_position_whose_stop_was_cleared_is_listed_unprotected(
     assert [p.symbol for p in await positions.list_unprotected(a)] == ["BTCUSDT"]
     assert [p.symbol for p in await positions.list_open(a)] == ["BTCUSDT", "ETHUSDT"]
     assert [p.symbol for p in await positions.list_unprotected(b)] == ["XRPUSDT"]
+
+
+async def test_a_stale_position_write_leaves_the_newer_row(ledger: Ledger, pg_dsn: str) -> None:
+    """C-2.6: a snapshot older than the stored row changes nothing and returns the stored row, so
+    a newer push without a stop-loss stays in `list_unprotected`; an equal time applies, and so
+    does a NULL time on either side."""
+    positions, account, older = ledger[1], _account(pg_dsn), _T0 - timedelta(seconds=1)
+    newer = await positions.upsert(_state(account, "BTCUSDT", exchange_updated_ts=_T0))
+    stop = Decimal("62000")
+    kept = await positions.upsert(
+        _state(account, "BTCUSDT", size=Decimal(2), stop_loss=stop, exchange_updated_ts=older)
+    )
+    assert (kept.id, kept.size, kept.stop_loss, kept.exchange_updated_ts, kept.updated_at) == (
+        newer.id, newer.size, None, _T0, newer.updated_at,
+    )  # fmt: skip
+    assert [p.symbol for p in await positions.list_unprotected(account)] == ["BTCUSDT"]
+    times = ((3, _T0), (4, None), (5, older))  # equal; a NULL new time; over a NULL stored one
+    applied = [
+        await positions.upsert(_state(account, "BTCUSDT", size=Decimal(n), exchange_updated_ts=ts))
+        for n, ts in times
+    ]
+    assert [(p.size, p.exchange_updated_ts) for p in applied] == list(times)
+    size = "SELECT size FROM positions WHERE exchange_account_id = %s"
+    assert _sql(pg_dsn, size, account) == [(Decimal(5),)]
 
 
 async def test_list_unprotected_is_planned_over_ix_pos_no_sl(ledger: Ledger, pg_dsn: str) -> None:

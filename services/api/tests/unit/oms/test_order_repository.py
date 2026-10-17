@@ -4,7 +4,7 @@ The facade's own behaviour: `DuplicateOrderLinkId` for the unique index (Gherkin
 enforced by the database", unit half), the 24 Sec.8.3 rule 5 lookup the #846 allocator uses, the
 account passed through on every read, and the `order_link_id` logged on every write (ADR-0006
 rule 1). The stores themselves are tested in `tests/unit/storage/test_orders_store.py` and against
-Postgres in `tests/integration/storage/test_orders_store_pg.py`. Slice 3 adds the execution,
+Postgres in `tests/integration/storage/test_orders_store_pg.py`. Below them: the execution,
 position and snapshot repositories and `oms_db_write_seconds{table}` on every write.
 """
 
@@ -22,7 +22,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId, GroupId
 from candleviewer.observability.metrics import Metrics
-from candleviewer.observability.metrics_catalogue import CATALOGUE, STORAGE_BUCKETS
+from candleviewer.observability.metrics_catalogue import CATALOGUE, OMS_WRITE_BUCKETS
 from candleviewer.oms import (
     DuplicateOrderLinkId,
     ExecutionRepository,
@@ -45,6 +45,7 @@ from candleviewer.storage.repositories.orders import (
     OrderEventRow,
     OrderRow,
 )
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
@@ -215,7 +216,7 @@ async def test_a_failed_append_logs_nothing() -> None:
     assert logs == []
 
 
-# -- slice 3: executions, positions, snapshots, and `oms_db_write_seconds` ----------------------
+# -- executions, positions, snapshots, and `oms_db_write_seconds` -------------------------------
 
 FILL = NewExecution(
     exchange_account_id=ACCOUNT, exec_id="E1", symbol="BTCUSDT", side="Buy",
@@ -261,7 +262,7 @@ async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) ->
     order path as long."""
     metrics = Metrics("dev")
     histogram = metrics.histogram(
-        "oms_db_write_seconds", "OMS writes", ("table",), buckets=STORAGE_BUCKETS, max_series=5
+        "oms_db_write_seconds", "OMS writes", ("table",), buckets=OMS_WRITE_BUCKETS, max_series=5
     )
     ticks = iter([10.0, 10.25, 20.0, 22.0])
     timer = WriteTimer(histogram, clock=lambda: next(ticks))
@@ -276,8 +277,10 @@ async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) ->
 
 def test_the_catalogue_bounds_the_table_label_by_the_tables_written() -> None:
     (spec,) = (s for s in CATALOGUE if s.name == "oms_db_write_seconds")
-    assert (spec.kind, spec.labels, spec.buckets) == ("histogram", ("table",), STORAGE_BUCKETS)
+    assert (spec.kind, spec.labels, spec.buckets) == ("histogram", ("table",), OMS_WRITE_BUCKETS)
     assert spec.max_series == len(WRITE_TABLES) == len(_WRITES)
+    cap = OMS_STATEMENT_TIMEOUT_MS / 1000  # a p99 near the store's statement cap shows apart
+    assert {cap - 0.5, cap, cap + 0.5} <= set(spec.buckets)
 
 
 @pytest.mark.parametrize(

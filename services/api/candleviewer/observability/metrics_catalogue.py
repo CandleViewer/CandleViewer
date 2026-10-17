@@ -110,6 +110,8 @@ STORAGE_BUCKETS: Final = (
     1.0,
     5.0,
 )
+#: OMS Postgres writes (E29-T01): edges at and around the order store's 2 s statement cap.
+OMS_WRITE_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5)
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
@@ -1818,7 +1820,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "p99 near the store's 2 s statement cap: order writes at risk of refusal",
         _P,
         "E29",
-        STORAGE_BUCKETS,
+        OMS_WRITE_BUCKETS,
         max_series=5,
     ),
     _s(
