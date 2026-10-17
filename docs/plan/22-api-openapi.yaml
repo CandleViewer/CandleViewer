@@ -492,12 +492,12 @@ x-error-codes-ws:
   - code: unknown_topic
     scope: topic
     retryable: false
-    title: Topic name not in the catalogue
+    title: Topic name not in the catalogue, or bars.* while the bars feature is off
     rest_analogue: not_found
   - code: invalid_topic_format
     scope: topic
     retryable: false
-    title: Malformed topic string
+    title: Malformed topic string, or a bar spec the server cannot build or bound
     rest_analogue: validation_failed
   - code: unsupported_symbol
     scope: topic
@@ -507,7 +507,7 @@ x-error-codes-ws:
   - code: invalid_options
     scope: topic
     retryable: false
-    title: Subscription option out of range or unknown key
+    title: Subscription option out of range, of the wrong type, or an unknown key
     rest_analogue: validation_failed
   - code: encoding_unsupported
     scope: topic
@@ -516,7 +516,7 @@ x-error-codes-ws:
   - code: subscription_limit
     scope: topic
     retryable: true
-    title: 200-subscription ceiling reached
+    title: Subscription ceiling reached (200 subscriptions, 40 symbols or 16 bars.* per connection) or a bar spec cap
     rest_analogue: rate_limited
   - code: too_many_topics
     scope: request

@@ -247,3 +247,21 @@ def test_envelope_meta_carries_the_bars_fields_on_snap_and_d_frames(
     delta = {**frame, "t": "d", "s": 2, "meta": {"include_delta": False}}
     assert env.is_valid(snap) and env.is_valid(delta)
     assert not env.is_valid({**delta, "meta": {"include_delta": False, "sources": ["tape"]}})
+
+
+def test_snap_meta_names_the_bar_generation_swap_reason(schemas: dict[str, object]) -> None:
+    """#399: a bars series whose generation changes is re-snapshotted with `generation_swap`
+    (§7.4). The reason is in the closed `snapMeta` enum, and §7.4's prose lists that same set."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"reason": "generation_swap", "previous_seq": 41})
+    assert not meta.is_valid({"reason": "generation_swapped"})
+    common = json.loads(json.dumps(schemas))["cv://ws/v1/common.schema.json"]
+    enum = common["$defs"]["snapMeta"]["properties"]["reason"]["enum"]
+    listed = re.search(r"^`reason` ∈ (.+)\.$", MD_TEXT, re.MULTILINE)
+    assert listed is not None, "§7.4 no longer lists the reasons on one `reason` ∈ line"
+    assert re.findall(r"`(\w+)`", listed.group(1)) == enum

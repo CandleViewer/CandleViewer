@@ -201,7 +201,7 @@
             "properties": {
               "amended": {
                 "default": false,
-                "description": "Optional. True when a late trade re-closed an already-confirmed bar at this (generation, index); the client replaces the stored bar by key and re-renders (§8.2). Structured payloads only; binary records carry no amended bit.",
+                "description": "Optional. True when a late trade re-closed an already-confirmed bar at this (generation, index); the client replaces the stored bar by key and re-renders (§8.2). Structured payloads only: binary records carry no amended bit, so a frame that carries an amended close is always sent structured, even on a binary subscription (§3.4).",
                 "type": "boolean"
               },
               "c": {
@@ -255,7 +255,8 @@
                 "type": "integer"
               },
               "turnover": {
-                "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
+                "description": "Price × qty, an exact decimal string. CVWB kind 4 rounds it half-even to qty_scale (§3.4)."
               },
               "v": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
@@ -569,6 +570,7 @@
               "$ref": "#/$defs/seq"
             },
             "reason": {
+              "description": "The server's closed set. A client MUST NOT validate against it: an unknown value is a routine re-snapshot (§7.4, C18).",
               "enum": [
                 "initial",
                 "client_resync",
@@ -577,7 +579,8 @@
                 "backpressure",
                 "reconfigure",
                 "instrument_revision",
-                "replay_seek"
+                "replay_seek",
+                "generation_swap"
               ]
             },
             "recording_started_at_ms": {

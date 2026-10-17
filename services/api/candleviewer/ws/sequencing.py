@@ -65,6 +65,7 @@ SnapReason = Literal[
     "reconfigure",
     "instrument_revision",
     "replay_seek",
+    "generation_swap",
 ]
 #: §7.4 closed `meta.reason` set.
 SNAP_REASONS: Final[tuple[str, ...]] = (
@@ -76,6 +77,7 @@ SNAP_REASONS: Final[tuple[str, ...]] = (
     "reconfigure",
     "instrument_revision",
     "replay_seek",
+    "generation_swap",  # bars only: the series' generation changed (§7.4, #2662)
 )
 #: The reasons `cv_ws_resync_total` counts: every one but `initial`, a routine attach. The one
 #: source for both the counting (`TopicEmitter.snapshot`) and the series bound at import.
