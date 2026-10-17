@@ -36,7 +36,7 @@ from candleviewer.auth.break_glass_notice import (
     BreakGlassEvents,
     BreakGlassNotice,
 )
-from candleviewer.auth.metrics import auth_break_glass_unresolved_state
+from candleviewer.auth.metrics import auth_break_glass_unresolved_events
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.settings import Environment, Settings
@@ -53,13 +53,13 @@ _TASK = "break-glass-notice-refresh"
 
 
 class _Events:
-    """`BreakGlassEvents` fake: the scripted answer, or the error to raise."""
+    """`BreakGlassEvents` fake: the scripted count, or the error to raise."""
 
-    def __init__(self, answer: bool | BaseException) -> None:
+    def __init__(self, answer: int | BaseException) -> None:
         self.answer = answer
         self.reads = 0
 
-    async def has_unresolved_break_glass(self) -> bool:
+    async def unresolved_break_glass_count(self) -> int:
         self.reads += 1
         if isinstance(self.answer, BaseException):
             raise self.answer
@@ -173,7 +173,7 @@ def _queued(ws: Any) -> list[dict[str, Any]]:
 
 @pytest.mark.parametrize("role", ["owner", "manager", "viewer"])
 def test_notice_after_auth_ok_while_unresolved(monkeypatch: pytest.MonkeyPatch, role: str) -> None:
-    with _app(monkeypatch, _Events(True), role) as (client, _), _authenticated(client) as ws:
+    with _app(monkeypatch, _Events(1), role) as (client, _), _authenticated(client) as ws:
         (frame,) = _queued(ws)  # one notice per first authentication
     validate(frame)  # the §15.9 `system` schema
     assert frame["ch"] == "system" and set(frame["p"]) == {"kind", "severity", "message", "reason"}
@@ -184,14 +184,14 @@ def test_notice_after_auth_ok_while_unresolved(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_no_notice_when_resolved_or_reauth(monkeypatch: pytest.MonkeyPatch) -> None:
-    events = _Events(True)
+    events = _Events(1)
     with _app(monkeypatch, events) as (client, auth):
         with _authenticated(client) as ws:
             assert [f["p"]["reason"] for f in _queued(ws)] == [BREAK_GLASS_NOTICE_REASON]
             ws.send_json({"t": "auth", "id": "b", "p": {"access_token": "tok"}})
             assert ws.receive_json()["t"] == "auth_ok"  # an in-place re-auth ...
             assert _queued(ws) == []  # ... does not repeat it
-        events.answer = False  # the Owner resolved the event
+        events.answer = 0  # the Owner resolved the event
         assert client.portal is not None
         client.portal.call(auth.break_glass_notice.refresh)
         with _authenticated(client) as ws:
@@ -229,7 +229,7 @@ def test_failed_startup_read_is_counted_and_the_refresher_recovers(
         assert (notice.read_failures, notice.unresolved) == (1, None)  # counted, nothing guessed
         with _authenticated(client) as ws:
             assert _queued(ws) == []  # auth_ok arrived, with no notice
-        events.answer = True  # the store is back ...
+        events.answer = 1  # the store is back ...
         client.portal.call(ticks.tick)  # ... and the refresher's next read finds the event
         assert (notice.read_failures, notice.unresolved) == (1, True)
         with _authenticated(client) as ws:  # the next first authentication carries the notice
@@ -238,15 +238,15 @@ def test_failed_startup_read_is_counted_and_the_refresher_recovers(
 
 @pytest.fixture
 def store_reads(monkeypatch: pytest.MonkeyPatch) -> list[SqlAlchemyBreakGlassEvents]:
-    """The read-only reader's one SQL edge, faked to answer "unresolved" and to record each call.
-    Like the composition guards in tests/unit/architecture, only the SQL edge is faked."""
+    """The read-only reader's one SQL edge, faked to answer "one unresolved" and to record each
+    call. Like the composition guards in tests/unit/architecture, only the SQL edge is faked."""
     reads: list[SqlAlchemyBreakGlassEvents] = []
 
-    async def unresolved(self: SqlAlchemyBreakGlassEvents) -> bool:
+    async def unresolved(self: SqlAlchemyBreakGlassEvents) -> int:
         reads.append(self)
-        return True
+        return 1
 
-    monkeypatch.setattr(SqlAlchemyBreakGlassEvents, "has_unresolved_break_glass", unresolved)
+    monkeypatch.setattr(SqlAlchemyBreakGlassEvents, "unresolved_break_glass_count", unresolved)
     return reads
 
 
@@ -261,14 +261,14 @@ def test_deployed_app_wires_the_read_only_reader_on_the_real_backend(
 
 @pytest.fixture
 def _clean_unresolved_gauge() -> Iterator[None]:
-    """`auth_break_glass_unresolved_state` is process-wide: start and leave it at 0."""
-    auth_break_glass_unresolved_state.set(0.0)
+    """`auth_break_glass_unresolved_events` is process-wide: start and leave it at 0."""
+    auth_break_glass_unresolved_events.set(0.0)
     yield
-    auth_break_glass_unresolved_state.set(0.0)
+    auth_break_glass_unresolved_events.set(0.0)
 
 
 @pytest.mark.usefixtures("_clean_unresolved_gauge")
-def test_deployed_app_serves_the_unresolved_state_on_the_scraped_registry(
+def test_deployed_app_serves_the_unresolved_count_on_the_scraped_registry(
     store_reads: list[SqlAlchemyBreakGlassEvents],
 ) -> None:
     """#2496: what `AuthBreakGlassUsed` reads. The start-up read ran before cv-api served, so the
@@ -276,7 +276,7 @@ def test_deployed_app_serves_the_unresolved_state_on_the_scraped_registry(
     with _deployed(**_REAL) as client:
         app = cast(FastAPI, client.app)  # the app `create_app` built; the client types it as ASGI
         text = generate_latest(app.state.app_context.metrics).decode()
-    assert 'auth_break_glass_unresolved_state{env="demo"} 1.0' in text
+    assert 'auth_break_glass_unresolved_events{env="demo"} 1.0' in text
     assert len(store_reads) == 1  # the one start-up read, none for the scrape
 
 
@@ -289,7 +289,7 @@ def test_deployed_app_wires_no_reader_on_the_fake_backend(
 
 
 async def test_failed_refresh_keeps_the_last_state_read() -> None:
-    events = _Events(True)
+    events = _Events(1)
     source = BreakGlassNotice(events)
     await source.refresh()
     events.answer = OSError("connection reset")
@@ -299,9 +299,9 @@ async def test_failed_refresh_keeps_the_last_state_read() -> None:
 
 async def test_hung_read_is_bounded_by_the_timeout() -> None:
     class _Hung:
-        async def has_unresolved_break_glass(self) -> bool:
+        async def unresolved_break_glass_count(self) -> int:
             await asyncio.Event().wait()
-            return True
+            return 1
 
     source = BreakGlassNotice(_Hung(), timeout_s=0.0)  # a deadline already due
     async with asyncio.timeout(5):  # an unbounded wait on the read fails here
@@ -317,7 +317,7 @@ async def test_cancellation_is_never_swallowed() -> None:
 
 
 async def test_refreshes_every_interval_until_stopped() -> None:
-    events, parked, sleeps = _Events(True), asyncio.Event(), []
+    events, parked, sleeps = _Events(1), asyncio.Event(), []
 
     async def sleep(seconds: float) -> None:
         sleeps.append(seconds)
@@ -328,7 +328,7 @@ async def test_refreshes_every_interval_until_stopped() -> None:
     source = BreakGlassNotice(events, sleep=sleep)
     await source.start()
     assert (events.reads, len(source.notices())) == (1, 1)  # preloaded before start returns
-    events.answer = False
+    events.answer = 0
     async with asyncio.timeout(5):
         await parked.wait()
     assert (events.reads, sleeps, source.notices()) == (2, [REFRESH_INTERVAL_S] * 2, [])
@@ -338,7 +338,7 @@ async def test_refreshes_every_interval_until_stopped() -> None:
 
 
 async def test_auth_module_starts_and_stops_the_refresh() -> None:
-    auth = AuthService(break_glass_events=_Events(True))
+    auth = AuthService(break_glass_events=_Events(1))
     await auth.start(cast(AppContext, None))  # the context is read only to wire MFA
     (task,) = [t for t in asyncio.all_tasks() if t.get_name() == _TASK]
     assert len(auth.break_glass_notice.notices()) == 1
@@ -347,7 +347,7 @@ async def test_auth_module_starts_and_stops_the_refresh() -> None:
 
 
 async def test_a_second_start_neither_reads_nor_spawns_a_second_refresher() -> None:
-    events = _Events(True)
+    events = _Events(1)
     source = BreakGlassNotice(events)
     await source.start()
     await source.start()
@@ -369,7 +369,7 @@ async def test_without_a_store_nothing_is_read_or_sent() -> None:
 class _Rel:
     """One-statement unit of work answering `row`; records the SQL."""
 
-    def __init__(self, row: bool) -> None:
+    def __init__(self, row: int) -> None:
         self.row, self.sql = row, list[str]()
 
     @asynccontextmanager
@@ -381,14 +381,14 @@ class _Rel:
         yield SimpleNamespace(session=SimpleNamespace(execute=execute))
 
 
-@pytest.mark.parametrize("row", [True, False])
-async def test_store_reads_one_exists_over_unresolved_events(row: bool) -> None:
+@pytest.mark.parametrize("row", [0, 1, 3])
+async def test_store_reads_one_count_over_unresolved_events(row: int) -> None:
     rel = _Rel(row)
     # cast: `_Rel` is a structural fake of the one method the reader calls.
     store: BreakGlassEvents = SqlAlchemyBreakGlassEvents(cast(SqlAlchemyRelationalRepository, rel))
     assert not hasattr(store, "reset_owner_mfa")  # cv-api's side can only read
-    assert await store.has_unresolved_break_glass() is row
+    assert await store.unresolved_break_glass_count() == row
     assert rel.sql == [
-        "SELECT EXISTS (SELECT 1 FROM system_events WHERE component = 'auth' "
-        "AND kind = 'break_glass_used' AND resolved_at IS NULL)"
+        "SELECT count(*) FROM system_events WHERE component = 'auth' "
+        "AND kind = 'break_glass_used' AND resolved_at IS NULL"
     ]

@@ -30,7 +30,10 @@ from candleviewer.observability.metrics_runtime import (
 #: `_ms`/`_mb`: frontend-pushed names fixed by 20-architecture.md §12.1 (E04-T06).
 #: `_rows`: `recorder_write_backlog_rows`, named by E16-T03 (a gauge of queued rows).
 #: `_safe`: `net_binding_safe`, the 1/0 mesh-guard gauge named by E09-T04 (US-ONB-008).
-_UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe)$")
+#: `_events`: `auth_break_glass_unresolved_events`, a gauge of unresolved system events (#2496).
+_UNIT_SUFFIX = re.compile(
+    r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events)$"
+)
 #: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules).
 _SUFFIX_EXCEPTIONS = frozenset(
     {

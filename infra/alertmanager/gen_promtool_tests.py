@@ -88,7 +88,7 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     # #2496 item 3 (SR-023): the first scrape after the restart that follows a break-glass run
     # already reads 1 (the start-up read runs before cv-api serves), so the series starts at 1.
     "AuthBreakGlassUsed": (
-        'auth_break_glass_unresolved_state{env="live"}',
+        'auth_break_glass_unresolved_events{env="live"}',
         "1+0x20",
         "0+0x20",
         "5m",
@@ -122,7 +122,12 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {
     # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
     # break-glass run, a failed scrape) and ends once the last reading of 1 has aged out of it.
-    "AuthBreakGlassUsed": [("1+0x4 _x8", "12m", True), ("1+0x4 _x25", "25m", False)],
+    # The gauge is a count: a second unresolved reset (2) pages the same as the first.
+    "AuthBreakGlassUsed": [
+        ("1+0x4 _x8", "12m", True),
+        ("1+0x4 _x25", "25m", False),
+        ("2+0x20", "5m", True),
+    ],
 }
 
 

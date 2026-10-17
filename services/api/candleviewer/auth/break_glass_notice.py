@@ -14,8 +14,9 @@ one keeps the last state read (never a guessed notice), is counted in `read_fail
 by error class only. `auth` imports no storage driver (ADR-0003), hence the port, implemented
 read-only by `SqlAlchemyBreakGlassEvents` in `storage/repositories/break_glass_sqlalchemy.py`.
 
-Every successful read also sets `auth_break_glass_unresolved_state` (1 while unresolved, else 0),
-the series `AuthBreakGlassUsed` pages the Owner on (#2496). A failed read leaves it as it was.
+Every successful read also sets `auth_break_glass_unresolved_events` (how many are unresolved,
+0 when none), the series `AuthBreakGlassUsed` pages the Owner on (#2496). A failed read leaves it
+as it was.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import Any, Final, Protocol
 
 import structlog
 
-from candleviewer.auth.metrics import auth_break_glass_unresolved_state
+from candleviewer.auth.metrics import auth_break_glass_unresolved_events
 from candleviewer.observability.context import spawn
 
 #: §15.9 `notice` reason of the break-glass notice (decision R3).
@@ -42,8 +43,8 @@ def _log() -> Any:
 
 
 class BreakGlassEvents(Protocol):
-    async def has_unresolved_break_glass(self) -> bool:
-        """Whether any `auth`/`break_glass_used` system event is still unresolved."""
+    async def unresolved_break_glass_count(self) -> int:
+        """How many `auth`/`break_glass_used` system events are still unresolved."""
         ...
 
 
@@ -81,7 +82,7 @@ class BreakGlassNotice:
             return
         try:
             async with asyncio.timeout(self._timeout_s):
-                unresolved = await self._events.has_unresolved_break_glass()
+                unresolved = await self._events.unresolved_break_glass_count()
         except Exception as exc:  # TimeoutError included; CancelledError propagates
             self._read_failures += 1
             _log().error(
@@ -90,8 +91,8 @@ class BreakGlassNotice:
                 failures=self._read_failures,
             )
             return
-        self._unresolved = unresolved
-        auth_break_glass_unresolved_state.set(1.0 if unresolved else 0.0)
+        self._unresolved = unresolved > 0
+        auth_break_glass_unresolved_events.set(unresolved)
 
     def notices(self) -> list[dict[str, object]]:
         """The gateway's first-`auth_ok` hook: one notice while unresolved. No I/O."""

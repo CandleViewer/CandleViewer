@@ -363,12 +363,13 @@ def test_recovery_code_alert_pages_the_owner_on_any_use_even_in_quiet_hours() ->
 def test_break_glass_alert_pages_the_owner_while_a_reset_is_unresolved() -> None:
     """#2496 item 3 (SR-023): the page reads the gauge of unresolved `break_glass_used` events,
     not a counter of the records the boot fold-in moves (a use folds nothing in, and the fold-in
-    runs before the first scrape). The 15-minute window keeps it through a restart or a scrape
-    gap. No hold time and a page, so quiet hours never mute it; a component of its own."""
+    runs before the first scrape). The gauge is a count and the rule is `>= 1`, so two unresolved
+    resets page as one does. The 15-minute window keeps it through a restart or a scrape gap. No
+    hold time and a page, so quiet hours never mute it; a component of its own."""
     rules = _rules()
     rule = {r["alert"]: r for r in rules}["AuthBreakGlassUsed"]
     assert rule["expr"] == (
-        "max by (env) (max_over_time(auth_break_glass_unresolved_state[15m])) == 1"
+        "max by (env) (max_over_time(auth_break_glass_unresolved_events[15m])) >= 1"
     )
     assert rule["for"] == "0m"
     assert rule["labels"] == {

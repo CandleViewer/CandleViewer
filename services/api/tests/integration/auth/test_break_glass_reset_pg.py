@@ -258,7 +258,7 @@ async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
         assert await _state(engine, uid) == _RESET
 
 
-async def test_notice_port_sees_only_unresolved_break_glass(pg_dsn: str) -> None:
+async def test_notice_port_counts_only_unresolved_break_glass(pg_dsn: str) -> None:
     rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-notice")
     store = SqlAlchemyBreakGlassRepository(rel)
     events: BreakGlassEvents = SqlAlchemyBreakGlassEvents(rel)  # mypy checks the port
@@ -267,13 +267,16 @@ async def test_notice_port_sees_only_unresolved_break_glass(pg_dsn: str) -> None
         async with engine.begin() as conn:  # other tests' resets: start with none open
             await conn.execute(_RESOLVE_ALL)
             await conn.execute(_OTHER_AUTH_EVENT)
-        assert await events.has_unresolved_break_glass() is False
+        assert await events.unresolved_break_glass_count() == 0
         uid, code = await _user(engine)
         assert not isinstance(await _reset(store, uid, code), str)
-        assert await events.has_unresolved_break_glass() is True
-        async with engine.begin() as conn:  # the Owner resolves it
+        assert await events.unresolved_break_glass_count() == 1
+        other, other_code = await _user(engine)  # a second reset while the first is unresolved
+        assert not isinstance(await _reset(store, other, other_code), str)
+        assert await events.unresolved_break_glass_count() == 2
+        async with engine.begin() as conn:  # the Owner resolves them
             await conn.execute(_RESOLVE_ALL)
-        assert await events.has_unresolved_break_glass() is False
+        assert await events.unresolved_break_glass_count() == 0
     finally:
         await rel.dispose()
         await engine.dispose()

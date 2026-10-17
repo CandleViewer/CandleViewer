@@ -53,14 +53,14 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       # #2496 item 3: the series behind the AuthBreakGlassUsed page. A gauge exists from import,
       # so an absent series means the auth series are not served, not that nothing happened.
-      - alert: ExpectedMetricMissingAuthBreakGlassUnresolvedState
-        expr: absent(auth_break_glass_unresolved_state)
+      - alert: ExpectedMetricMissingAuthBreakGlassUnresolvedEvents
+        expr: absent(auth_break_glass_unresolved_events)
         for: 15m
         labels:
           severity: ticket
           component: alerting
         annotations:
-          summary: "Expected metric auth_break_glass_unresolved_state is not emitted"
+          summary: "Expected metric auth_break_glass_unresolved_events is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingPgUp
         expr: absent(pg_up)
