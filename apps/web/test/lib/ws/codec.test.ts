@@ -126,6 +126,13 @@ describe("decodeFrame", () => {
     ["a bye code below 1000", bye(999)],
     ["a bye code above 4999", bye(5000)],
     ["a fractional bye code", bye(4000.5)],
+    // S2a lens C: a data frame needs `ch`, `ts` and `p` each on its own.
+    ...[DELTA, { ...DELTA, t: "snap" }].flatMap((frame) =>
+      ["ch", "ts", "p"].map((gone): [string, string] => [
+        `a ${frame.t} without ${gone}`,
+        wire(without(frame, gone)),
+      ]),
+    ),
   ])("%s is frame_malformed", (_what, input) => {
     expect(decodeFrame(input)).toMatchObject({ t: "decode_error", code: "frame_malformed" });
   });
