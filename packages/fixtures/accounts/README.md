@@ -123,7 +123,7 @@ Unless the row says otherwise, a scenario extends `compliant` and the account is
 | `uid_mismatch`                   | ticket                               | Key info pins UID `90000099`                                                                                                                          | 107                                                         |
 | `non_uta`                        | ticket                               | `unified: 0` and `uta: 0`, both pinned (plan DC-33)                                                                                                   | 108                                                         |
 | `clock_skew`                     | ticket                               | Exchange clock +6 s; probe answers `10002` (inconclusive, SR-E27-18)                                                                                  | 109                                                         |
-| `wallet_probe_error`             | ticket                               | Probe answers `10005` on every call (a verdict; code unconfirmed)                                                                                     | 110                                                         |
+| `wallet_probe_error`             | ticket                               | Probe answers `10005` on every call (a verdict)                                                                                                       | 110                                                         |
 | `missing_trade_scope`            | plan                                 | `ContractTrade: []`                                                                                                                                   | 111                                                         |
 | `extra_scope_spot`               | plan                                 | `Spot: [SpotTrade]`                                                                                                                                   | 112                                                         |
 | `extra_scope_options`            | plan                                 | `Options: [OptionsTrade]`                                                                                                                             | 112                                                         |
@@ -149,11 +149,11 @@ Unless the row says otherwise, a scenario extends `compliant` and the account is
 | `rotation_ok`                    | plan                                 | Pair: old `compliant`, new `compliant_alt`                                                                                                            | 201 202 203 205                                             |
 | `rotation_new_key_withdraw`      | plan                                 | Pair: old `compliant`, new `withdraw_enabled`                                                                                                         | 204                                                         |
 | `key_delete_5xx`                 | plan                                 | Account `90000011`; both key-delete calls answer 503 (a negative guard)                                                                               | 306                                                         |
-| `close_rejected`                 | plan                                 | Account `90000011`; order create rejected (code unconfirmed)                                                                                          | 305                                                         |
+| `close_rejected`                 | plan                                 | Account `90000011`; order create rejected with `110017` (reduce-only)                                                                                 | 305                                                         |
 | `leverage_ok`                    | plan                                 | Set-leverage answers `retCode` 0                                                                                                                      | 415 417 418                                                 |
-| `leverage_refused_open_position` | plan                                 | Set-leverage refused (code unconfirmed)                                                                                                               | 416                                                         |
-| `open_position_btcusdt_5x_sl`    | overlay                              | One 0.001 BTCUSDT long at 5x with a native SL; mode switches refused (open position; code unconfirmed)                                                | 126 132 205 302-305 310 316 410 412 415-418 420             |
-| `working_orders_2`               | overlay                              | Two resting BTCUSDT limit orders; mode switches refused (active orders; code unconfirmed)                                                             | 126 132 205 310 314 421                                     |
+| `leverage_refused_open_position` | plan                                 | Set-leverage refused with `110013` (risk limit level)                                                                                                 | 416                                                         |
+| `open_position_btcusdt_5x_sl`    | overlay                              | One 0.001 BTCUSDT long at 5x with a native SL; mode switches refused (`110024`; margin mode `110073`, unconfirmed)                                    | 126 132 205 302-305 310 316 410 412 415-418 420             |
+| `working_orders_2`               | overlay                              | Two resting BTCUSDT limit orders; mode switches refused (`110028`; margin mode `110073`, unconfirmed)                                                 | 126 132 205 310 314 421                                     |
 | `history_round_trip`             | overlay                              | Order history: a filled market buy and its reduce-only sell; their two fills                                                                          | 311                                                         |
 
 ## Provenance (C-13.5)
@@ -186,8 +186,8 @@ One line per file (C-13.5: source, date, symbol, env, redaction):
 | `_base/order_ack.json`                                     | Synthetic; research 06 §5, §10                                                                                 | 2026-10-16 | none                                    | demo | `orderId` `00000000-0000-4000-8000-0000000000f1` and `orderLinkId` `fixture-order-0001`, fabricated                                                                                    |
 | `_base/order_list_empty.json`                              | Synthetic; the corpus list layout                                                                              | 2026-10-16 | none                                    | demo | Empty list                                                                                                                                                                             |
 | `_base/position_list_empty.json`                           | Synthetic; the corpus list layout                                                                              | 2026-10-16 | none                                    | demo | Empty list                                                                                                                                                                             |
-| `close_rejected/order_create_rejected.json`                | Synthetic; the corpus error envelope with §8.6's `110017`                                                      | 2026-10-16 | none                                    | demo | No identifier; code unconfirmed                                                                                                                                                        |
-| `leverage_refused_open_position/set_leverage_refused.json` | Synthetic; the corpus error envelope with §8.6's `110044`                                                      | 2026-10-16 | none                                    | demo | No identifier; code unconfirmed                                                                                                                                                        |
+| `close_rejected/order_create_rejected.json`                | Synthetic; the corpus error envelope with `110017` and the v5 table's text                                     | 2026-10-16 | none                                    | demo | No identifier                                                                                                                                                                          |
+| `leverage_refused_open_position/set_leverage_refused.json` | Synthetic; the corpus error envelope with `110013` and the v5 table's text                                     | 2026-10-16 | none                                    | demo | No identifier                                                                                                                                                                          |
 | `<scenario>/manifest.json` (49)                            | Authored from plan §9.3; their merge patches (seeded positions, orders and fills, refusal codes) are synthetic | 2026-10-16 | BTCUSDT in the overlays, none elsewhere | demo | Key ids `fixture-<scenario>-NNNN`, UIDs `9000xxxx`, RFC 5737 addresses, ids `00000000-0000-4000-8000-0000000000fN` (fills `eN`), links `fixture-order-000N`, all fabricated; no secret |
 
 **Redaction evidence.** Nothing here was captured, so nothing needed redacting: every value is
@@ -198,8 +198,8 @@ the Python suite's `test_no_pack_file_holds_a_typed_secret` proves that no deriv
 stored ("Checks", below).
 
 **Shapes.** The exchange's documentation site was unreachable from the authoring network under
-its web policy, so no page was re-read for this pack. The "Verified" column says where field
-names come from.
+its web policy, so no page was re-read for this pack; #2893 S15 later checked the error codes alone
+(below). The "Verified" column says where field names come from.
 
 | File                                                                          | Call                                                                                    | Page (`bybit-exchange.github.io/docs/v5/…`) | Field names from                                                                                                                                                                                                                   | Verified             |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
@@ -218,50 +218,47 @@ names come from.
 | `open_position_btcusdt_5x_sl` merge patch on `_base/position_list_empty.json` | `GET /v5/position/list`                                                                 | `position/position-info`                    | research 06 §6 (`size`, `avgPrice`, `positionValue`, `markPrice`, `liqPrice`, `bustPrice`, `leverage`, `positionIdx`, `tpslMode`, `takeProfit`, `stopLoss`, `trailingStop`, `unrealisedPnl`); `symbol`, `side` as the order fields | no: a subset         |
 | `working_orders_2` merge patch on `_base/order_list_empty.json`               | `GET /v5/order/realtime`                                                                | `order/open-order`                          | the order fields of research 06 §5, §10 and `24-internal-schemas.md` §8.9; `orderStatus` (below)                                                                                                                                   | no: a subset         |
 | `history_round_trip` merge patches on `_base/order_list_empty.json`           | `GET /v5/order/history`, `GET /v5/execution/list`                                       | `order/order-list`, `order/execution`       | as above; the fills use the execution stream's fields (research 06 §10)                                                                                                                                                            | no: a subset         |
-| `close_rejected/order_create_rejected.json`                                   | `POST /v5/order/create`                                                                 | error-code table                            | the corpus error envelope                                                                                                                                                                                                          | **code unconfirmed** |
-| `leverage_refused_open_position/set_leverage_refused.json`                    | `POST /v5/position/set-leverage`                                                        | error-code table                            | the corpus error envelope                                                                                                                                                                                                          | **code unconfirmed** |
+| `close_rejected/order_create_rejected.json`                                   | `POST /v5/order/create`                                                                 | error-code table                            | the corpus error envelope                                                                                                                                                                                                          | code verified by S15 |
+| `leverage_refused_open_position/set_leverage_refused.json`                    | `POST /v5/position/set-leverage`                                                        | error-code table                            | the corpus error envelope                                                                                                                                                                                                          | code verified by S15 |
 
 By reference, not copied: `../bybit/2026-10-05/rest/error_10002.json`, `error_10018.json`,
 `error_503.json` and `server_time.json` (provenance in `../bybit/README.md` and its manifest).
 `wallet_probe_error`'s `10005` reply and the overlays' mode-switch refusals are
-`_base/error_10004.json` with a merge patch, flagged in their manifests like the two
-scenario-local files. `fee_rate.json` rates, the order and fill ids and prices, and
+`_base/error_10004.json` with a merge patch; of these, only the overlays' margin-mode refusals are
+flagged in their manifests. `fee_rate.json` rates, the order and fill ids and prices, and
 `fixture-order-NNNN` are fabricated; a stub transport should echo the request's `orderLinkId`.
 
 ### Unconfirmed codes and shapes
 
-Each reply below carries `"code_unconfirmed": true` in its manifest. No test asserts these codes:
-they compare what the adapter sees with the scenario's own reply. The three scenario codes are the
-closest entry of `docs/plan/24-internal-schemas.md` §8.6 (the message is that table's "Meaning"
-text, not the exchange's wording), so the adapter maps each the way a real reply with that code
-would be mapped. Verify each against the documentation or #2240's capture before E27-Q02 relies on
-it:
+The refusal codes were checked against the official v5 error table
+(<https://bybit-exchange.github.io/docs/v5/error>, page dated 2026-10-14) by main-orchestrator for
+#2893 S15, and #3005 brought `mapping.py` and `docs/plan/24-internal-schemas.md` §8.6 in line with
+it. A reply's message is that table's description, not a recorded reply, and no test asserts a
+message. These codes are confirmed, so their replies are no longer flagged:
 
 - `wallet_probe_error`: `10005` (permission denied) on the probe. The plan asks for a non-zero
   code that SR-E27-18 does not class as inconclusive; the adapter classes this one as a verdict
   about the key. `10004` and `10002` are inconclusive.
-- `close_rejected`: `110017` (reduce-only would increase the position).
-- `leverage_refused_open_position`: `110044`. **Check this one first**: §8.6 reads it "Exceeds
-  risk-limit tier" (and `mapping.py` maps it to `risk_limit_tier`), but the exchange's v5 table
-  may read `110044` "Available margin is insufficient" and `110013` "Cannot set leverage due to
-  risk limit level" (an unverified recollection from review, 2026-10-16). If so, §8.6 and
-  `mapping.py` need a fix of their own, outside this pack.
-- `open_position_btcusdt_5x_sl` and `working_orders_2` answer their three mode-switch calls with
-  `110024` and `110028`, which the plan's §9.3 also lists as unconfirmed. §8.6 has no
-  open-position or active-order refusal of a mode switch, and its one position-mode entry,
-  `110025`, is a hard error ("never auto-switch mode; alert and block the account until
-  resolved"). So both codes are outside the table, where §8.6's last row reads them as a plain
-  reject (`EXCHANGE_UNKNOWN`, not retried). The shipped `mapping.py` raises its catch-all
-  `UnknownStateError` for them (marked retryable, where §8.6 says no), and the client sends the
-  call once. The Python suite pins both, with the client at its default retry budget (as
-  `service.py` builds it), so a change to `mapping.py`, or a `rest.py` that retried the catch-all,
-  shows as a second send and fails it. From recollection
-  only, they are the exchange's refusals of a position-mode switch for an open position and for
-  open orders; the margin-mode calls' own codes are unknown. Each overlay's one message names its
-  condition, not the exchange's wording. TC-420 and TC-421 rest on the code only where the server
-  maps the exchange's refusal instead of checking first: that path needs a §8.6 entry for the
-  confirmed code that yields `409 conflict`. Until then a server mapping it by §8.6 alone answers
-  an exchange error, as in TC-416.
+- `close_rejected`: `110017`, the reduce-only family ("orderQty will be truncated to zero").
+- `leverage_refused_open_position`: `110013`, "Cannot set leverage due to risk limit level."
+  (`risk_limit_tier`). It answered `110044` before S15; the table reads that code "Available
+  margin is insufficient.", and §8.6 now maps it with the other insufficient-margin rejects.
+- `open_position_btcusdt_5x_sl` and `working_orders_2` refuse the position-mode switch
+  (`switch-mode`) with `110024` (an existing position) and `110028` (existing open orders). §8.6
+  maps both to explicit, non-retryable rejections that keep the mode (never auto-switch mode).
+  The Python suite pins every overlay refusal, with the client at its default retry budget (as
+  `service.py` builds it), so a `rest.py` that retried one shows as a second send and fails it.
+
+Each reply below still carries `"code_unconfirmed": true` in its manifest. No test asserts its
+code: tests compare what the adapter sees with the scenario's own reply.
+
+- Both overlays answer their two margin-mode calls (`switch-isolated`, `set-margin-mode`) with
+  `110073`, "Set margin mode failed", which S15 advises for the margin-mode overlays. Whether the
+  exchange answers a margin-mode switch refused for an open position or open orders with that
+  code is not verified (`110026`, "Cross/isolated margin mode has not been modified.", is the
+  no-op, not a refusal). Where the server maps the exchange's refusal instead of checking first,
+  TC-421's position-mode refusal can rest on the confirmed `110028`; TC-420's margin-mode refusal
+  cannot yet, so a server mapping `110073` by §8.6 alone answers an exchange error, as in TC-416.
 
 `new_key_48h` carries no refusal: the plan row says no restriction reply may be invented (C-13.5)
 and the system derives the restriction from `createdAt` (plan §10 DC-23).

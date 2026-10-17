@@ -520,10 +520,13 @@ are this plan's additions. Rules for every scenario:
   endpoint cannot be recorded without a real key, so every reply follows the documented shape and
   nothing beyond it is invented (C-13.5). #2240's recorded, redacted `query-api` capture replaces
   the key-info replies, and #2893 (scope item 10) verifies the other stand-ins against the v5 docs
-  or that capture. Three scenarios' refusal codes (`wallet_probe_error`, `close_rejected`,
-  `leverage_refused_open_position`) and the two overlays' mode-switch refusals
-  (`open_position_btcusdt_5x_sl`, `working_orders_2`) are unconfirmed stand-ins: no case asserts
-  their value, and a case compares what it sees with the scenario.
+  or that capture. Its S15 confirmed, against the official v5 error table (page dated 2026-10-14;
+  #3005), three scenarios' refusal codes, `wallet_probe_error` (`10005`), `close_rejected`
+  (`110017`) and `leverage_refused_open_position` (`110013`), and the two overlays' position-mode
+  refusals (`110024`, `110028`); a case or row that still calls one of these unconfirmed predates
+  S15. The overlays' margin-mode refusals (`110073` on `switch-isolated` and `set-margin-mode`)
+  remain unconfirmed stand-ins: no case asserts their value. Every case compares what it sees with
+  the scenario.
 - Fabricated values only: UIDs `9000xxxx`; key ids `fixture-<scenario>-NNNN` (hyphenated, so they
   can never look like a real Bybit key, and ending in four alphanumerics for the masked tail); secrets
   `fixture-<scenario>-secret-not-real`; RFC 5737 addresses, with egress `203.0.113.10`.

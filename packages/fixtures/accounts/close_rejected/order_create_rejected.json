@@ -1,6 +1,6 @@
 {
   "retCode": 110017,
-  "retMsg": "Reduce-only would increase position",
+  "retMsg": "orderQty will be truncated to zero",
   "result": {},
   "retExtInfo": {},
   "time": 1792141200000

@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "working_orders_2",
   "origin": "overlay",
-  "description": "Seeds two resting BTCUSDT limit orders on the scenario it is named with: the open-order list holds them, cancels are accepted by the scenario's order cancel, and the three mode-switch calls answer with an active-order refusal whose code is unconfirmed.",
+  "description": "Seeds two resting BTCUSDT limit orders on the scenario it is named with: the open-order list holds them and cancels are accepted by the scenario's order cancel. The position-mode switch is refused with 110028, existing open orders (the official v5 error table, #3005); the two margin-mode calls answer 110073, set margin mode failed, whose use for this refusal is unconfirmed.",
   "environment": "demo",
   "rest": {
     "GET /v5/order/realtime": {
@@ -42,28 +42,27 @@
       "payload": "_base/error_10004.json",
       "merge_patch": {
         "retCode": 110028,
-        "retMsg": "Mode switch refused: the account has active orders"
+        "retMsg": "You have existing open orders, so the position mode cannot be switched."
       },
-      "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no active-order refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-421 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110028 is the exchange's open-order refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110028 and its message come from the official v5 error table (page dated 2026-10-14, #2893 S15; #3005): the open-order refusal of a position-mode switch, which mapping.py maps to an explicit, non-retryable rejection (never auto-switch mode). The message is the table's description, not a recorded reply."
     },
     "POST /v5/position/switch-isolated": {
       "payload": "_base/error_10004.json",
       "merge_patch": {
-        "retCode": 110028,
-        "retMsg": "Mode switch refused: the account has active orders"
+        "retCode": 110073,
+        "retMsg": "Set margin mode failed"
       },
       "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no active-order refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-421 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110028 is the exchange's open-order refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110073, set margin mode failed, is the official v5 error table's margin-mode failure, which #2893 S15 advises for the margin-mode overlays. Whether the exchange answers a margin-mode switch with open orders this way is not verified, so the code stays flagged (README, unconfirmed codes)."
     },
     "POST /v5/account/set-margin-mode": {
       "payload": "_base/error_10004.json",
       "merge_patch": {
-        "retCode": 110028,
-        "retMsg": "Mode switch refused: the account has active orders"
+        "retCode": 110073,
+        "retMsg": "Set margin mode failed"
       },
       "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no active-order refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-421 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110028 is the exchange's open-order refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110073, set margin mode failed, is the official v5 error table's margin-mode failure, which #2893 S15 advises for the margin-mode overlays. Whether the exchange answers a margin-mode switch with open orders this way is not verified, so the code stays flagged (README, unconfirmed codes)."
     }
   },
   "expected": {

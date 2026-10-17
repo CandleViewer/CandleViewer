@@ -26,7 +26,10 @@ from candleviewer.exchange.base.errors import (
 #: in `map_ret_code` because its taxonomy target depends on the message text
 #: (duplicate `orderLinkId` vs. a generic parameter error). Entries that map
 #: to `InstrumentFilterError` carry the filter name §8.6 associates with
-#: that retCode, since `InstrumentFilterError` requires one.
+#: that retCode, since `InstrumentFilterError` requires one. The codes #3005
+#: re-checked follow the official v5 error table (page dated 2026-10-14; §8.6
+#: says how to re-verify it): every `*_not_modified` filter is a benign no-op,
+#: and every risk-limit refusal shares `risk_limit_tier`.
 _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     10002: (ClockDriftError, {}),
     10003: (AuthError, {}),
@@ -46,14 +49,29 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     110004: (InsufficientMarginError, {}),
     110007: (InsufficientMarginError, {}),
     110012: (InsufficientMarginError, {}),
+    110013: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
     110014: (InsufficientMarginError, {}),
+    110016: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
     110017: (InstrumentFilterError, {"filter_name": "reduce_only_violation"}),
     110020: (InstrumentFilterError, {"filter_name": "max_open_orders"}),
-    110025: (InstrumentFilterError, {"filter_name": "position_mode_mismatch"}),
+    110024: (InstrumentFilterError, {"filter_name": "position_mode_switch_open_position"}),
+    110025: (InstrumentFilterError, {"filter_name": "position_mode_not_modified"}),
+    110026: (InstrumentFilterError, {"filter_name": "margin_mode_not_modified"}),
+    110028: (InstrumentFilterError, {"filter_name": "position_mode_switch_open_orders"}),
+    110031: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
+    110036: (InstrumentFilterError, {"filter_name": "leverage_refused_margin_mode"}),
+    110038: (InstrumentFilterError, {"filter_name": "leverage_refused_margin_mode"}),
     110043: (InstrumentFilterError, {"filter_name": "leverage_not_modified"}),
-    110044: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
+    110044: (InsufficientMarginError, {}),
+    110045: (InsufficientMarginError, {}),
+    110047: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
+    110048: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
     110072: (DuplicateClientIdError, {}),
+    110073: (InstrumentFilterError, {"filter_name": "margin_mode_switch_failed"}),
     110079: (UnknownStateError, {}),
+    110086: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
+    110089: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
+    3400139: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
 }
 
 _DUPLICATE_MARKERS = ("duplicate", "orderlinkid", "order_link_id")

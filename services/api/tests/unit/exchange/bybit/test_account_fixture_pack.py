@@ -46,9 +46,9 @@ from candleviewer.exchange.base.errors import (
     AuthError,
     ClockDriftError,
     ExchangeError,
+    InstrumentFilterError,
     RateLimitError,
     TransportError,
-    UnknownStateError,
 )
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
@@ -91,11 +91,12 @@ DAY = timedelta(days=1)
 DEMO_HOST = "api-demo.bybit.com"
 ROTATIONS = ("rotation_ok", "rotation_new_key_withdraw")
 OVERLAYS = ("open_position_btcusdt_5x_sl", "working_orders_2", "history_round_trip")
-MODE_SWITCHES = (
-    ("POST", "/v5/position/switch-mode", EndpointClass.POSITION),
+POSITION_MODE_SWITCH = ("POST", "/v5/position/switch-mode", EndpointClass.POSITION)
+MARGIN_MODE_SWITCHES = (
     ("POST", "/v5/position/switch-isolated", EndpointClass.POSITION),
     ("POST", "/v5/account/set-margin-mode", EndpointClass.ACCOUNT),
 )
+MODE_SWITCHES = (POSITION_MODE_SWITCH, *MARGIN_MODE_SWITCHES)
 ORDER_BODY: Final = {"category": "linear", "symbol": "BTCUSDT", "orderLinkId": "fixture-order-0001"}
 
 #: Test plan section 9.3: 46 scenarios and 3 overlays; the JS lane pins the same list
@@ -210,15 +211,11 @@ PROBE_FAILS: dict[str, tuple[type[ExchangeError], str | None]] = {
 }
 
 #: Every reply the pack flags `code_unconfirmed` (README): a new flag is added here on purpose.
+#: #2893 S15 confirmed the other refusal codes against the official v5 error table (#3005).
 UNCONFIRMED = {
-    ("wallet_probe_error", "GET /v5/account/wallet-balance"),
-    ("close_rejected", "POST /v5/order/create"),
-    ("leverage_refused_open_position", "POST /v5/position/set-leverage"),
-    *(
-        (overlay, f"{method} {path}")
-        for overlay in ("open_position_btcusdt_5x_sl", "working_orders_2")
-        for method, path, _ in MODE_SWITCHES
-    ),
+    (overlay, f"{method} {path}")
+    for overlay in ("open_position_btcusdt_5x_sl", "working_orders_2")
+    for method, path, _ in MARGIN_MODE_SWITCHES
 }
 
 #: A pipeline outcome in the manifests' words: the verdict, with the failing rules of a refusal
@@ -636,26 +633,25 @@ def test_exactly_the_listed_replies_are_flagged_unconfirmed() -> None:
 
 
 @pytest.mark.parametrize(
-    ("scenario", "method", "path", "endpoint"),
+    ("scenario", "method", "path", "endpoint", "code", "filter_name"),
     [
-        ("close_rejected", "POST", "/v5/order/create", EndpointClass.ORDER),
-        (
-            "leverage_refused_open_position",
-            "POST",
-            "/v5/position/set-leverage",
-            EndpointClass.POSITION,
-        ),
+        ("close_rejected", "POST", "/v5/order/create", EndpointClass.ORDER, 110017,
+         "reduce_only_violation"),
+        ("leverage_refused_open_position", "POST", "/v5/position/set-leverage",
+         EndpointClass.POSITION, 110013, "risk_limit_tier"),
     ],
-)
-async def test_unconfirmed_refusals_are_business_rejections(
-    scenario: str, method: str, path: str, endpoint: EndpointClass
+)  # fmt: skip
+async def test_confirmed_refusals_are_business_rejections(
+    scenario: str, method: str, path: str, endpoint: EndpointClass, code: int, filter_name: str
 ) -> None:
-    """Compared with the scenario's own code, never a literal (test plan section 9.3)."""
+    """Codes confirmed against the official v5 error table (#2893 S15, #3005): the section 8.6
+    filter, sent once, never a verdict about the key."""
     loaded = load(scenario, now=NOW)
-    sent = loaded.reply(method, path).body["retCode"]
-    with pytest.raises(ExchangeError) as caught:
-        await call(loaded, method, path, endpoint=endpoint, body=ORDER_BODY)
-    assert (caught.value.exchange_ret_code, caught.value.retryable) == (sent, False)
+    log: list[httpx.Request] = []
+    with pytest.raises(InstrumentFilterError) as caught:
+        await call(loaded, method, path, endpoint=endpoint, body=ORDER_BODY, log=log)
+    assert (caught.value.exchange_ret_code, caught.value.filter_name) == (code, filter_name)
+    assert (caught.value.retryable, len(log)) == (False, 1)
     assert refusal(caught.value) is None  # a business rejection, never a verdict about the key
 
 
@@ -664,31 +660,34 @@ async def test_unconfirmed_refusals_are_business_rejections(
 async def test_overlay_mode_switch_refusals_are_plain_rejections(
     overlay: str, method: str, path: str, endpoint: EndpointClass
 ) -> None:
-    """A code outside section 8.6's table, so its last row (a plain reject, not retried) applies,
-    never 110025's hard error: mapping.py's catch-all, sent once, never a verdict about the key.
-    The catch-all marks it retryable where section 8.6 says no (README, an E08 gap): pinned, so
-    the day mapping.py follows the table this fails and the README line changes with it. The
-    client runs with its default retry budget, so "sent once" fails if rest.py ever retries it."""
+    """Each overlay refusal is an explicit section 8.6 rejection (#3005), not retried: never the
+    catch-all, never 110025's no-op and never a verdict about the key. The code is compared with
+    the scenario's own reply. The client runs with its default retry budget, so "sent once"
+    fails if rest.py ever retries it."""
     assert RestClientConfig(base_url=f"https://{DEMO_HOST}").max_retries > 0
     loaded = _with(overlay)
     sent = loaded.reply(method, path).body["retCode"]
     log: list[httpx.Request] = []
-    with pytest.raises(UnknownStateError) as caught:
+    with pytest.raises(InstrumentFilterError) as caught:
         await call(loaded, method, path, endpoint=endpoint, body=ORDER_BODY, log=log)
     assert (caught.value.exchange_ret_code, len(log)) == (sent, 1)
-    assert caught.value.retryable is True
+    assert caught.value.retryable is False
     assert refusal(caught.value) is None
 
 
 def test_the_overlays_refuse_mode_switches_for_their_own_reasons() -> None:
-    """Test plan section 9.3: an open-position refusal (TC-420), an active-order one (TC-421)."""
+    """Test plan section 9.3: an open-position refusal (TC-420), an active-order one (TC-421). The
+    position-mode switch answers each overlay's own confirmed code (#3005). The margin-mode calls
+    share one code whose use here is unconfirmed, so it is compared, never a literal."""
     position, orders = _with("open_position_btcusdt_5x_sl"), _with("working_orders_2")
-    for method, path, _ in MODE_SWITCHES:
-        mine, theirs = position.reply(method, path).body, orders.reply(method, path).body
-        assert mine["retCode"] != theirs["retCode"]
-        assert mine["retMsg"] != theirs["retMsg"]
-        # One message serves all three calls of an overlay, so it names no single mode.
-        assert not any("position mode" in body["retMsg"].lower() for body in (mine, theirs))
+    switch_method, switch_path, _ = POSITION_MODE_SWITCH
+    codes = tuple(o.reply(switch_method, switch_path).body["retCode"] for o in (position, orders))
+    assert codes == (110024, 110028)
+    for method, path, _ in MARGIN_MODE_SWITCHES:
+        mine, theirs = position.reply(method, path), orders.reply(method, path)
+        assert mine.body["retCode"] == theirs.body["retCode"]
+        assert mine.body["retCode"] not in codes
+        assert (mine.code_unconfirmed, theirs.code_unconfirmed) == (True, True)
 
 
 async def test_new_key_differs_from_compliant_only_in_its_creation_time() -> None:
@@ -931,7 +930,7 @@ async def test_an_overlay_replaces_the_compliant_default() -> None:
 async def test_a_scenario_fault_beats_an_overlay() -> None:
     """README lookup order: a fault the scenario sets wins over seeded state (TC-305, TC-410)."""
     rejected = _with("open_position_btcusdt_5x_sl", "close_rejected")
-    assert rejected.reply("POST", "/v5/order/create").code_unconfirmed is True
+    assert rejected.reply("POST", "/v5/order/create").body["retCode"] == 110017  # not the ack
     assert rejected.reply("GET", "/v5/position/list").body["result"]["list"] != []
     with pytest.raises(TransportError):
         await call(

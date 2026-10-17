@@ -116,8 +116,8 @@ class RateLimitError(ExchangeError):
 
 class InsufficientMarginError(ExchangeError):
     """Insufficient wallet/available balance or margin (retCodes
-    110004/110007/110012/110014). Never retryable as-is; the leg-failure
-    policy (§9.5) applies."""
+    110004/110007/110012/110014/110044/110045). Never retryable as-is; the
+    leg-failure policy (§9.5) applies."""
 
     code = OmsErrorCode.INSUFFICIENT_MARGIN
 
