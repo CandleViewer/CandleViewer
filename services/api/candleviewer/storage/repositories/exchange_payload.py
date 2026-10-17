@@ -1,0 +1,201 @@
+"""Fail-closed redaction of what the exchange says before `order_events` stores it (#845).
+
+`21-database-schema.md` Sec.3.3.5 keeps the raw exchange message "redacted of credentials" (the
+#845 security notes: redacted before insert), and `order_events` is append-only and kept for good
+(C-5.7), so a credential stored once could never be removed (C-2.7). This is the fail-closed pass
+before insert; the adapter's allow-listed record is the other one (E29-T04). `orders_sqlalchemy`
+runs `redact_exchange_payload()` on every `payload` and `redact_exchange_text()` on `ret_msg` and
+`ret_code` before binding them, so no writer can skip it: an exchange signature error (an auth
+class code of 24 Sec.8.6) can echo the signed string, the API key included, in its message. It
+only removes or replaces, and it returns plain JSON.
+
+Replaced by `REDACTED`:
+
+* the value of a credential name (`key`, `sign`, `signature`, `api_key`, `secret`, `token`, `auth`,
+  `authorization`, `cookie`, `password`, `passphrase`, `session`, `recv_window`, ...), compared
+  lower-cased without separators, so `apiKey`, `API-KEY` and `api_key` are one name;
+* every header: the value of `headers` or `header`, and of any key that starts with `x-` or `x_`,
+  where request-signing headers live;
+* the `args` of an `{"op": "auth"}` frame, where a key, an expiry and a MAC travel by position;
+* the query of a URL; a query string naming a credential; and a string holding a credential-shaped
+  run, 18 or more ASCII letters and digits with at least one of each (an API key, a secret, a hex
+  MAC), outside an `OUR_ID` or `EXT_ID` (24 Sec.8.3). Ids, numbers and words pass, CamelCase enum
+  values such as reject reasons included, and so does a run shaped like a USDT-linear symbol
+  (upper-case letters and digits ending in `USDT`, at most 20 characters: the `symbol_code`
+  domain, so `1000000BABYDOGEUSDT`), in a message too;
+* in a message, also a run of 18 or more letters alone (the message rule): in `ret_msg`
+  (`redact_exchange_text(..., message=True)`) and in every string under a payload key whose name
+  holds `msg` or `message`. Prose has no such word, but a key of letters alone is one, and the
+  rule above would keep it. It holds whatever the return code, which this module never reads
+  (codes are the adapter's, C-2.2); an enum value inside a message goes with it, while `ret_code`
+  and the other payload fields keep theirs;
+* a non-finite number, text `jsonb` refuses (NUL, a lone surrogate) and any value that is not
+  JSON (bytes, sets, objects); a `Decimal` becomes its string.
+
+Keys that are not strings, longer than `MAX_STRING_CHARS` (checked first, so a huge key costs no
+scan), that `jsonb` refuses or that are credential-shaped are dropped. A string over
+`MAX_STRING_CHARS`, an integer past 64 bits, a container over `MAX_ITEMS` entries and nesting past
+`MAX_DEPTH` become `OVERSIZE`, and a result whose JSON exceeds `MAX_PAYLOAD_CHARS` is replaced
+whole by `{"redacted": OVERSIZE}`. `redact_exchange_text()` is the string rule alone, with its own
+length bound (`MAX_CODE_CHARS` for a code).
+
+A foreign client order id is a string like any other: one that is credential-shaped (the 32 hex
+characters of a `uuid4().hex`, say) is stored as `REDACTED` (21 Sec.3.3.4 "Adopted rows").
+What remains: a credential under 18 characters, split by separators or shaped like a symbol,
+under a name this module does not know; the adapter's allow-listed record (E29-T04) is the
+control for those.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections.abc import Mapping
+from decimal import Decimal
+from typing import Any, Final
+
+from candleviewer.domain.order_link import EXT_ID, OUR_ID
+
+type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
+
+REDACTED: Final = "[redacted]"
+OVERSIZE: Final = "[redacted:oversize]"
+MAX_DEPTH: Final = 8
+MAX_ITEMS: Final = 256
+MAX_STRING_CHARS: Final = 2048
+MAX_PAYLOAD_CHARS: Final = 16384
+#: Bound of a code (`ret_code`): an exchange return code has at most six digits, a local code is a
+#: word.
+MAX_CODE_CHARS: Final = 64
+
+#: Credential names, compared after `_name()`: exact matches, then fragments anywhere in the name.
+_NAMES: Final = frozenset({"key", "sign", "auth", "session", "recvwindow", "headers", "header"})
+_FRAGMENTS: Final = (
+    "apikey", "secret", "signature", "token", "password", "passphrase", "privatekey",
+    "authorization", "cookie", "credential",
+)  # fmt: skip
+#: Message names, compared after `_name()`: a fragment anywhere (`ret_msg`, `errorMessage`).
+_MESSAGE_FRAGMENTS: Final = ("msg", "message")
+_HEADER_KEY: Final = re.compile(r"[xX][-_]")
+_URL_QUERY: Final = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://|/)[^\s?#]*\?")
+_PARAM: Final = re.compile(r"(?:^|[?&;])\s*([A-Za-z0-9_.-]{1,64})=")
+#: Both `ord_link_fmt` arms, unanchored: masked before the shape scan, so an id is never a key.
+_IDS: Final = re.compile(f"{OUR_ID.pattern[1:-1]}|{EXT_ID.pattern[1:-1]}")
+_RUN: Final = re.compile(r"[A-Za-z0-9]{18,}")
+#: A USDT-linear symbol (`symbol_code`, `^[A-Z0-9]{4,20}$`, ending in `USDT`): a run of this shape
+#: is a symbol, not a key. A key is mixed-case or does not end in `USDT`, a hex MAC is lower-case.
+_SYMBOL: Final = re.compile(r"[A-Z0-9]{0,16}USDT")
+#: What `jsonb` refuses in text: NUL and a lone surrogate.
+_UNSTORABLE: Final = re.compile(r"[\x00\ud800-\udfff]")
+
+
+def _name(key: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", key.lower())
+
+
+def _credential_name(key: str) -> bool:
+    name = _name(key)
+    return (
+        name in _NAMES or any(f in name for f in _FRAGMENTS) or _HEADER_KEY.match(key) is not None
+    )
+
+
+def _message_name(key: str) -> bool:
+    name = _name(key)
+    return any(f in name for f in _MESSAGE_FRAGMENTS)
+
+
+def _storable(text: str) -> bool:
+    """`jsonb` refuses NUL and lone surrogates, and either would fail the whole write."""
+    return _UNSTORABLE.search(text) is None
+
+
+def _credential_shaped(text: str, *, message: bool = False) -> bool:
+    """A run of 18+ letters and digits outside our ids and other than a symbol: with a letter and
+    a digit, or, in a message, any run but one of digits alone."""
+    runs = [run for run in _RUN.findall(_IDS.sub("-", text)) if not _SYMBOL.fullmatch(run)]
+    if message:
+        return any(not run.isdigit() for run in runs)
+    return any(not run.isalpha() and not run.isdigit() for run in runs)
+
+
+def _string(text: str, max_chars: int = MAX_STRING_CHARS, *, message: bool = False) -> str:
+    if len(text) > max_chars:
+        return OVERSIZE
+    if not _storable(text):
+        return REDACTED
+    url = _URL_QUERY.match(text)
+    if url is not None:
+        text = text[: url.end()] + REDACTED
+    if any(_credential_name(p) for p in _PARAM.findall(text)):
+        return REDACTED
+    return REDACTED if _credential_shaped(text, message=message) else text
+
+
+def _value(value: object, depth: int, *, message: bool) -> JsonValue:
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value if value.bit_length() <= 64 else OVERSIZE
+    if isinstance(value, float):
+        return value if math.isfinite(value) else REDACTED
+    if isinstance(value, Decimal):
+        return str(value) if value.is_finite() else REDACTED
+    if isinstance(value, str):
+        return _string(value, message=message)
+    if not isinstance(value, Mapping | list | tuple):
+        return REDACTED
+    if depth >= MAX_DEPTH or len(value) > MAX_ITEMS:
+        return OVERSIZE
+    if isinstance(value, Mapping):
+        return _mapping(value, depth, message=message)
+    return [_value(item, depth + 1, message=message) for item in value]
+
+
+def _mapping(value: Mapping[Any, object], depth: int, *, message: bool) -> dict[str, JsonValue]:
+    """`value` sits `depth` containers deep; its entries one deeper. Under a message name, every
+    string below takes the message rule."""
+    op = value.get("op")
+    auth_frame = isinstance(op, str) and _name(op) == "auth"
+    out: dict[str, JsonValue] = {}
+    for key, item in value.items():
+        if (
+            not isinstance(key, str)
+            or len(key) > MAX_STRING_CHARS  # before any scan: a huge key costs nothing
+            or not _storable(key)
+            or _credential_shaped(key)
+        ):
+            continue
+        if _credential_name(key) or (auth_frame and key == "args"):
+            out[key] = REDACTED
+        else:
+            out[key] = _value(item, depth + 1, message=message or _message_name(key))
+    return out
+
+
+def redact_exchange_payload(raw: Mapping[str, object]) -> dict[str, JsonValue]:
+    """A redacted, JSON-safe copy of `raw`; `raw` itself is never changed."""
+    if not isinstance(raw, Mapping):
+        return {"redacted": REDACTED}
+    out: dict[str, JsonValue] = (
+        _mapping(raw, 0, message=False) if len(raw) <= MAX_ITEMS else {"redacted": OVERSIZE}
+    )
+    if len(json.dumps(out, allow_nan=False)) > MAX_PAYLOAD_CHARS:
+        return {"redacted": OVERSIZE}
+    return out
+
+
+def redact_exchange_text(
+    text: str | None, *, max_chars: int = MAX_STRING_CHARS, message: bool = False
+) -> str | None:
+    """The string rule alone, for a text column the exchange fills (`ret_msg`, `ret_code`);
+    `message=True` adds the message rule, for the exchange's message (`ret_msg`).
+
+    `None` stays `None`; anything that is not a string becomes `REDACTED`; a string longer than
+    `max_chars` becomes `OVERSIZE`; otherwise the result of the string rule above."""
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        return REDACTED
+    return _string(text, max_chars, message=message)
