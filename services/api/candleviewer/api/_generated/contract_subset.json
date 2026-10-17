@@ -2045,6 +2045,26 @@
         }
       }
     },
+    "/admin/backups/{backupId}/download": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "backups:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/backups/{backupId}/download/{token}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "backups:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/backups/{backupId}/restore": {
       "post": {
         "x-rbac": {
@@ -2120,6 +2140,16 @@
         "x-rbac": {
           "permissions": [
             "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/incidents/{incidentId}/acknowledge": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "admin:write"
           ],
           "scope": "none"
         }

@@ -110,7 +110,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
-    ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention policy"),
+    ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
     ErrorCode.ORDER_NOT_AMENDABLE: ErrorMeta(("rest",), None, False, None, None, "Order is in a terminal or transitional state and cannot be amended"),
     ErrorCode.RULE_IR_INVALID: ErrorMeta(("rest",), None, False, None, None, "Rule intermediate representation failed semantic validation"),
     ErrorCode.INSUFFICIENT_BALANCE: ErrorMeta(("rest",), None, False, None, None, "Exchange rejected the order for insufficient margin"),

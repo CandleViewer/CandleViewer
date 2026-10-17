@@ -73,6 +73,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /admin/backups/{backupId}/download/{token}": {
+      "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
+      "ticket": "E42-T05"
+    },
     "GET /admin/feature-flags": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -373,6 +377,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "POST /admin/backups/{backupId}/download": {
+      "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
+      "ticket": "E42-T05"
+    },
     "POST /admin/backups/{backupId}/restore": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -380,6 +388,10 @@
     "POST /admin/backups/{backupId}/verify": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "POST /admin/incidents/{incidentId}/acknowledge": {
+      "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
+      "ticket": "E42-T05"
     },
     "POST /alerts/deliveries/ack-all": {
       "reason": "contract-first operation; implementation lands with its owning epic",

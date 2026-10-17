@@ -2939,6 +2939,10 @@
               },
               "detail": {
                 "type": "string"
+              },
+              "last_good_at": {
+                "type": "string",
+                "format": "date-time"
               }
             },
             "additionalProperties": false

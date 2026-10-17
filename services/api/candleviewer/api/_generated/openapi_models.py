@@ -4525,7 +4525,12 @@ class Backup(BaseModel):
     encrypted: bool | None = None
     retention_until: AwareDatetime | None = None
     verified_at: AwareDatetime | None = None
-    error: str | None = None
+    error: Annotated[
+        str | None,
+        Field(
+            description="Why the run or its latest verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. Stored in `backups.error_message`; `null` when nothing failed.\n"
+        ),
+    ] = None
 
 
 class AuditExportResult(BaseModel):
@@ -5359,14 +5364,22 @@ class Incident(BaseModel):
     component: str
     severity: Literal["debug", "info", "warning", "error", "critical"]
     status: Literal["open", "acknowledged", "resolved"]
-    title: str | None = None
-    detail: str | None = None
-    occurrences: int | None = None
+    title: Annotated[str | None, Field(max_length=200)] = None
+    detail: Annotated[str | None, Field(max_length=2000)] = None
+    occurrences: Annotated[int | None, Field(ge=1)] = None
     first_seen_at: AwareDatetime
     last_seen_at: AwareDatetime
     acknowledged_by: UUID | None = None
     resolved_at: AwareDatetime | None = None
     runbook_ref: str | None = None
+    acknowledged_at: AwareDatetime | None = None
+    signature: Annotated[
+        str | None,
+        Field(
+            description="Stable grouping key (E42-T05): a hash of the component, the error class and the normalised message. Equal signatures in one component are the same fault.\n",
+            pattern="^[0-9a-f]{16}$",
+        ),
+    ] = None
 
 
 class Key(BaseModel):
@@ -5656,20 +5669,24 @@ class LayoutGridTabset(BaseModel):
 
 class Job(BaseModel):
     id: UUID | None = None
-    kind: (
+    kind: Annotated[
         Literal[
             "instrument_refresh",
             "audit_export",
             "backup",
             "backup_verify",
+            "backup_restore",
             "rule_simulation",
             "retention_sweep",
             "reconciliation",
             "archive_import",
             "retention_purge",
         ]
-        | None
-    ) = None
+        | None,
+        Field(
+            description="**Open-ended for readers:** clients must tolerate values they do not know, so adding a kind is an additive change (C-6.3)."
+        ),
+    ] = None
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
     progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
     started_at: AwareDatetime | None = None

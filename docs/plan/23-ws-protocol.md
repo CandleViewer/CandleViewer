@@ -3510,7 +3510,8 @@ replaces it (the later frame wins).
         "properties": {
           "name": { "type": "string" },
           "state": { "enum": ["healthy", "degraded", "warning", "down"] },
-          "detail": { "type": "string" }
+          "detail": { "type": "string" },
+          "last_good_at": { "type": "string", "format": "date-time" }
         },
         "additionalProperties": false
       }
@@ -3791,6 +3792,17 @@ here and checked against the charts by the contract test, never restated (C-2.19
   ]
 }
 ```
+
+**Health components (E42-T05).** `components[]` in `kind: "health"` frames uses the component
+names of `GET /admin/health` (`HealthReport.components[].name`), so a snapshot read over REST and
+the deltas pushed here agree. A component name the client does not know is passed through, never
+dropped. `not_deployed` exists only in the REST report; here it is sent as `state: "healthy"` with
+`detail: "not deployed"`, matching its rank for `overall`. `last_good_at` is the component's last
+healthy observation (`HealthReport.components[].last_good_at`), omitted until there is one, so a
+tile can be marked stale instead of showing an old value. `detail` may name internal
+dependencies, so it is sent to Owner sessions only; manager and viewer sessions get each
+component's `name`, `state` and `last_good_at`, never `detail` (`04-security-program.md` §7.2.2
+row 48). The only schema change is the optional `last_good_at`, which is additive.
 
 ---
 
