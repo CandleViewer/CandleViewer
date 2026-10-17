@@ -13,8 +13,8 @@ fresh every `REFRESH_S` (5 s), so a database change applies within 5 s without a
 bumps a generation, so a poll that read before it drops its reading; one lock serialises polls
 and side effects.
 
-Side effects run only at a real transition to a value actually read as `True` from the store or
-committed by a write (D1c), never on a fail-closed reading (an outage or an unreadable row):
+Side effects run only at a real transition (`setFeatureFlag`) to a value read as `True` from the
+store or committed by a write, never on a fail-closed reading (an outage or an unreadable row):
 entering maintenance cancels running emulated algos through `AlgoCanceller` and pauses the
 recorder only when `maintenance.keep_recorder` is false. Resting orders are not cancelled and
 can still fill. Each effect has a timeout, and an entry that fails is retried on the next poll.
@@ -38,7 +38,7 @@ from candleviewer.admin.flags.writes import ChangeHook, readable
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
 REFRESH_S: Final = KILLSWITCH_TTL_S
-EFFECT_TIMEOUT_S: Final = 5.0
+EFFECT_TIMEOUT_S: Final = 1.0  # each; two fit the hook bound if the store and lock are prompt
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -72,13 +72,14 @@ class MaintenanceGate:
 
 class AlgoCanceller(Protocol):
     async def cancel_running_algos(self, reason: str) -> int:
-        """Cancel every running emulated algo (B4-B7); never a native exchange stop."""
+        """Cancel every running emulated algo (B4-B7); never a native exchange stop. Must be
+        cancel-safe and idempotent: a budget may cut it, and the next poll calls it again."""
 
 
 class RecorderControl(Protocol):
-    async def pause(self, reason: str) -> None: ...
+    async def pause(self, reason: str) -> None: ...  # cancel-safe, idempotent: a budget may cut it
 
-    async def resume(self, reason: str) -> None: ...
+    async def resume(self, reason: str) -> None: ...  # cancel-safe, idempotent, as `pause`
 
 
 class MaintenanceController:

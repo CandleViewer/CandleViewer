@@ -5,10 +5,10 @@ flag's mandatory `visibility` admits gets `SystemUpdate {kind: "feature_flags", 
 {key: value}}` carrying only the changed key, resolved for that session's user exactly as
 `GET /admin/feature-flags` resolves it; no other session gets a frame, so a manager or viewer
 never learns an `owner_only` key (`23-ws-protocol.md` 15.9, D6a). A real transition of the
-stored `maintenance.mode` (D1c) also sends every session a `notice`. Sessions come through the
-`SessionDirectory` port (the composition root adapts the WS hub to it), so the admin module never
-imports the WS gateway. The push is synchronous fan-out onto each session's bounded outbound
-queue, past the 1 s `system` throttle (8.1), measured by `cv_flag_push_latency_seconds`.
+stored `maintenance.mode` (`setFeatureFlag`) also sends every session a `notice`. Sessions come
+through the `SessionDirectory` port (the composition root adapts the WS hub to it), so the admin
+module never imports the WS gateway. The push is synchronous fan-out onto each session's bounded
+outbound queue, past the 1 s `system` throttle (8.1), measured by `cv_flag_push_latency_seconds`.
 """
 
 from __future__ import annotations

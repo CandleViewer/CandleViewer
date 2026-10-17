@@ -5,6 +5,7 @@ and keeps the gate in step with the database through fresh polls."""
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections.abc import Iterable
 from dataclasses import replace
@@ -29,9 +30,10 @@ from candleviewer.admin.flags import (
     chain_hooks,
     default_registry,
 )
-from candleviewer.admin.flags.maintenance import REFRESH_S
+from candleviewer.admin.flags.maintenance import EFFECT_TIMEOUT_S, REFRESH_S
 from candleviewer.admin.flags.metrics import EXPORTED_NAMES, maintenance_mode_gauge
 from candleviewer.admin.flags.push import FlagPush, Session
+from candleviewer.admin.flags.writes import WRITE_AWAIT_TIMEOUT_S
 from candleviewer.api.order_entry_gate import order_entry_refusal
 from candleviewer.audit.access import AuditPrincipal
 from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
@@ -74,7 +76,9 @@ class _Sessions:
 
 
 class _Rig:
-    def __init__(self, algos: _Algos | None = None, effect_timeout_s: float = 5.0) -> None:
+    def __init__(
+        self, algos: _Algos | None = None, effect_timeout_s: float = EFFECT_TIMEOUT_S
+    ) -> None:
         self.store, self.clock, self.sessions = FakeFlagStore(), Clock(), _Sessions()
         self.service = FlagService(default_registry(), self.store, clock=self.clock)
         self.algos, self.recorder = algos or _Algos(), _Recorder()
@@ -230,13 +234,19 @@ async def test_a_failed_entry_is_retried_on_the_next_poll() -> None:
     assert "maintenance_refresh_failed" in [e["event"] for e in logs]
 
 
-async def test_a_hung_algo_engine_times_out_and_still_lets_the_notice_out() -> None:
+async def test_a_hung_algo_engine_is_cut_by_its_own_budget_and_retried_by_the_next_poll() -> None:
+    assert 2 * EFFECT_TIMEOUT_S <= WRITE_AWAIT_TIMEOUT_S  # fits if the store and lock are prompt
+    default = inspect.signature(MaintenanceController).parameters["effect_timeout_s"].default
+    assert default == EFFECT_TIMEOUT_S  # the controller built without an argument follows it
     rig = await _Rig(algos=_Algos(hang=True), effect_timeout_s=0.001).start()
     with capture_logs() as logs:
-        await rig.toggle(MAINTENANCE_MODE, True)
+        await rig.toggle(MAINTENANCE_MODE, True)  # the write returns and the notice is out
     assert rig.controller.gate.engaged
     assert any(f["kind"] == "notice" for f in rig.sessions.frames)
-    assert "feature_flag_hook_failed" in [e["event"] for e in logs]
+    assert "feature_flag_hook_failed" in [e["event"] for e in logs]  # cut by its own budget
+    rig.algos.hang = False
+    await rig.controller.refresh()  # the next poll retries the entry the budget cut
+    assert rig.algos.calls == ["maintenance.enabled"] * 2
 
 
 async def test_the_recorder_pauses_only_when_keep_recorder_is_false() -> None:

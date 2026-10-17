@@ -100,7 +100,7 @@ async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key(key: str) ->
         (False, True, [("maintenance.enabled", "warning")]),
         (True, False, [("maintenance.disabled", "info")]),
         (1, True, [("maintenance.enabled", "warning")]),  # unreadable (1 == True): unknown to true
-        ("on", False, []),  # unknown to false is no transition (D1c)
+        ("on", False, []),  # unknown to false is no transition (`setFeatureFlag`)
         (True, True, []),
     ],
 )
