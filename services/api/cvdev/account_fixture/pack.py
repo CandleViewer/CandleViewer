@@ -5,10 +5,11 @@ README is the user guide). Every function that reads the pack takes the `Pack`, 
 can mount the fixtures package anywhere (see `Pack`). The module turns one scenario into concrete
 data the same way for every test and for #2893's stub:
 
-- REST: `Scenario.reply(method, path, at_ms=...)` follows the manifest's lookup rule (the
-  scenario's own answers along its `extends` chain, then the overlays named with it, then the
-  root `compliant`; in each, the exact call before `*`; a call nothing answers raises
-  `UnstubbedCall`), loads the payload, applies the clock and then the RFC 7396 merge patch.
+- REST: `Scenario.reply(method, path, at_ms=..., body=...)` follows the manifest's lookup rule
+  (the scenario's own answers along its `extends` chain, then the overlays named with it, then
+  the root `compliant`; in each, the exact call before `*`; a stub whose `when` the request's JSON
+  body does not meet is passed over; a call nothing answers raises `UnstubbedCall`), loads the
+  payload, applies the clock and then the RFC 7396 merge patch.
 - Clock (test plan section 9.5): every exchange-side time is anchored on an injected, tz-aware
   `now`: the envelope `time`, server time, rate-limit reset headers and the key's created and
   expiry times, with `deadlineDay` derived from the expiry. No wall clock is read, so tests can
@@ -223,6 +224,22 @@ def _active(stub: Mapping[str, Any], at_ms: int) -> bool:
     return int(stub.get("from_ms", 0)) <= at_ms < int(stub.get("until_ms", 2**63))
 
 
+def _matches(stub: Mapping[str, Any], body: Mapping[str, object] | None) -> bool:
+    """Whether a request with JSON body `body` meets the stub's `when` (README, "Manifest format");
+    a stub without one answers any request. Each field `when.body` names must be in the body with
+    the same type and value, so `true` never matches `1` (as Python's `True == 1` would) or
+    `"true"`; an absent field, or a body that is not a JSON object, never matches."""
+    if "when" not in stub:
+        return True
+    if not isinstance(body, Mapping):
+        return False
+    wanted: Mapping[str, object] = stub["when"]["body"]
+    return all(
+        field in body and type(body[field]) is type(value) and body[field] == value
+        for field, value in wanted.items()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Scenario:
     #: The pack it was loaded from, which its payloads come from.
@@ -259,14 +276,18 @@ class Scenario:
     def stubbed_calls(self) -> frozenset[str]:
         return frozenset(call for m in self._answering() for call in m.get("rest", {}))
 
-    def reply(self, method: str, path: str, *, at_ms: int = 0) -> Reply:
-        """The reply to `method path` at `at_ms` after the scenario starts."""
+    def reply(
+        self, method: str, path: str, *, at_ms: int = 0, body: Mapping[str, object] | None = None
+    ) -> Reply:
+        """The reply to `method path` at `at_ms` after the scenario starts. `body` is the request's
+        JSON body (`None` without one), which a stub's `when` matches: a stub it does not match is
+        passed over for the next one in lookup order."""
         call = f"{method.upper()} {path}"
         for entry in self._answering():
             rest = entry.get("rest", {})
             for key in (call, WILDCARD):
                 stub = rest.get(key)
-                if stub is not None and _active(stub, at_ms):
+                if stub is not None and _active(stub, at_ms) and _matches(stub, body):
                     return self._render(call, stub)
         raise UnstubbedCall(f"{self.name}: nothing answers {call} at {at_ms} ms")
 

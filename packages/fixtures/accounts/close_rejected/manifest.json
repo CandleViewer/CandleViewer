@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "close_rejected",
   "origin": "plan",
-  "description": "As compliant, but every order create, so the flatten's reduce-only close, is rejected with retCode 110017, the reduce-only family of the official v5 error table (#3005). TC-305's open position comes from the overlay open_position_btcusdt_5x_sl, so no opening order is needed; the stub has no request matcher (#2893).",
+  "description": "As compliant, but a reduce-only order create, the flatten's position-closing order, is rejected with retCode 110017, the reduce-only family of the official v5 error table (#3005). The stub matches reduceOnly true in the request body (#2893 S11), so any other create, such as the plan's section 9.7 reference order, passes it over and compliant's ack answers. TC-305's open position comes from the overlay open_position_btcusdt_5x_sl, so no opening order is needed.",
   "environment": "demo",
   "extends": "compliant",
   "tester_inputs": {
@@ -12,6 +12,7 @@
   "rest": {
     "POST /v5/order/create": {
       "payload": "close_rejected/order_create_rejected.json",
+      "when": { "body": { "reduceOnly": true } },
       "note": "No recorded close rejection exists. 110017 and its message come from the official v5 error table (page dated 2026-10-14, #2893 S15; #3005): the reduce-only family, which mapping.py maps to reduce_only_violation. The message is the table's description, not a recorded reply."
     }
   },

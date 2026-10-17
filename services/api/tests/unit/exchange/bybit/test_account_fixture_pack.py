@@ -20,6 +20,7 @@ log (test plan section 9.6).
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -98,6 +99,20 @@ MARGIN_MODE_SWITCHES = (
 )
 MODE_SWITCHES = (POSITION_MODE_SWITCH, *MARGIN_MODE_SWITCHES)
 ORDER_BODY: Final = {"category": "linear", "symbol": "BTCUSDT", "orderLinkId": "fixture-order-0001"}
+#: A flatten's position-closing create: reduce-only (`reduceOnly` is a bool, research 06 section 5).
+CLOSE_BODY: Final = {**ORDER_BODY, "reduceOnly": True}
+#: Test plan section 9.7's reference order as a create (research 06 section 5): a post-only limit
+#: buy of 0.001 at 10 % below the last trade (63110.00, README), on the 0.10 tick, with its native
+#: SL 300 ticks lower (C-2.6). It opens a position, so it is never reduce-only.
+REFERENCE_ORDER: Final = {
+    **ORDER_BODY,
+    "side": "Buy",
+    "orderType": "Limit",
+    "qty": "0.001",
+    "price": "56799.0",
+    "timeInForce": "PostOnly",
+    "stopLoss": "56769.0",
+}
 
 #: Test plan section 9.3: 46 scenarios and 3 overlays; the JS lane pins the same list
 #: (packages/fixtures/test).
@@ -328,7 +343,8 @@ async def call(
     at_ms: int = 0,
     log: list[httpx.Request] | None = None,
 ) -> dict[str, Any]:
-    """One signed call through the adapter's REST client, answered by the scenario.
+    """One signed call through the adapter's REST client, answered by the scenario from the
+    request's JSON body as sent, which a stub's `when` matches.
 
     The client keeps its default retry budget, as `service.py` builds it, so `log` shows every
     send a retried reply would cause: a "sent once" pin fails if a code is ever retried.
@@ -337,7 +353,8 @@ async def call(
 
     def answer(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        reply = scenario.reply(request.method, request.url.path, at_ms=at_ms)
+        sent = json.loads(request.content) if request.content else None
+        reply = scenario.reply(request.method, request.url.path, at_ms=at_ms, body=sent)
         return httpx.Response(reply.status, json=reply.body, headers=dict(reply.headers))
 
     client = BybitRestClient(
@@ -633,23 +650,29 @@ def test_exactly_the_listed_replies_are_flagged_unconfirmed() -> None:
 
 
 @pytest.mark.parametrize(
-    ("scenario", "method", "path", "endpoint", "code", "filter_name"),
+    ("scenario", "method", "path", "endpoint", "body", "code", "filter_name"),
     [
-        ("close_rejected", "POST", "/v5/order/create", EndpointClass.ORDER, 110017,
+        ("close_rejected", "POST", "/v5/order/create", EndpointClass.ORDER, CLOSE_BODY, 110017,
          "reduce_only_violation"),
         ("leverage_refused_open_position", "POST", "/v5/position/set-leverage",
-         EndpointClass.POSITION, 110013, "risk_limit_tier"),
+         EndpointClass.POSITION, ORDER_BODY, 110013, "risk_limit_tier"),
     ],
 )  # fmt: skip
 async def test_confirmed_refusals_are_business_rejections(
-    scenario: str, method: str, path: str, endpoint: EndpointClass, code: int, filter_name: str
+    scenario: str,
+    method: str,
+    path: str,
+    endpoint: EndpointClass,
+    body: Mapping[str, Any],
+    code: int,
+    filter_name: str,
 ) -> None:
     """Codes confirmed against the official v5 error table (#2893 S15, #3005): the section 8.6
     filter, sent once, never a verdict about the key."""
     loaded = load(scenario, now=NOW)
     log: list[httpx.Request] = []
     with pytest.raises(InstrumentFilterError) as caught:
-        await call(loaded, method, path, endpoint=endpoint, body=ORDER_BODY, log=log)
+        await call(loaded, method, path, endpoint=endpoint, body=body, log=log)
     assert (caught.value.exchange_ret_code, caught.value.filter_name) == (code, filter_name)
     assert (caught.value.retryable, len(log)) == (False, 1)
     assert refusal(caught.value) is None  # a business rejection, never a verdict about the key
@@ -930,7 +953,8 @@ async def test_an_overlay_replaces_the_compliant_default() -> None:
 async def test_a_scenario_fault_beats_an_overlay() -> None:
     """README lookup order: a fault the scenario sets wins over seeded state (TC-305, TC-410)."""
     rejected = _with("open_position_btcusdt_5x_sl", "close_rejected")
-    assert rejected.reply("POST", "/v5/order/create").body["retCode"] == 110017  # not the ack
+    close = rejected.reply("POST", "/v5/order/create", body=CLOSE_BODY)
+    assert close.body["retCode"] == 110017  # not the ack
     assert rejected.reply("GET", "/v5/position/list").body["result"]["list"] != []
     with pytest.raises(TransportError):
         await call(
@@ -939,6 +963,57 @@ async def test_a_scenario_fault_beats_an_overlay() -> None:
             "/v5/position/list",
             endpoint=EndpointClass.POSITION,
         )
+
+
+@pytest.mark.parametrize(
+    ("body", "ret_code"),
+    [
+        (CLOSE_BODY, 110017),
+        ({**ORDER_BODY, "reduceOnly": False}, 0),
+        (ORDER_BODY, 0),
+        ({**ORDER_BODY, "reduceOnly": "true"}, 0),
+        ({**ORDER_BODY, "reduceOnly": 1}, 0),
+        (None, 0),
+    ],
+    ids=["reduce_only", "not_reduce_only", "field_absent", "string_true", "integer_1", "no_body"],
+)
+def test_close_rejected_rejects_only_reduce_only_creates(
+    body: Mapping[str, object] | None, ret_code: int
+) -> None:
+    """Its stub matches `reduceOnly: true` in the request body (README, `when`): the same JSON
+    type and value, so neither an absent field nor `"true"` or `1` matches. Any other create is
+    passed over and answered by the next stub in lookup order, compliant's ack."""
+    scenario = load("close_rejected", now=NOW)
+    assert scenario.reply("POST", "/v5/order/create", body=body).body["retCode"] == ret_code
+
+
+async def test_reference_order_accepted_under_close_rejected() -> None:
+    """Test plan section 9.7's control order on TC-305's setup (the open-position overlay) is no
+    reduce-only close, so close_rejected's stub passes it over and the next stub in lookup order,
+    compliant's ack, answers it: accepted, sent once."""
+    scenario = _with("open_position_btcusdt_5x_sl", "close_rejected")
+    log: list[httpx.Request] = []
+    ack = await call(
+        scenario,
+        "POST",
+        "/v5/order/create",
+        endpoint=EndpointClass.ORDER,
+        body=REFERENCE_ORDER,
+        log=log,
+    )
+    compliant = load("compliant", now=NOW).reply("POST", "/v5/order/create", body=REFERENCE_ORDER)
+    assert (ack, len(log)) == (compliant.body, 1)
+    assert ack["retCode"] == 0
+
+
+def test_a_create_no_stub_matches_fails_loudly() -> None:
+    """A stub whose `when` a request does not meet never answers it: with nothing after it in
+    lookup order (close_rejected cut off from compliant), the call fails as an unstubbed one."""
+    scenario = load("close_rejected", now=NOW)
+    alone = dataclasses.replace(scenario, chain=scenario.chain[:1])
+    assert alone.reply("POST", "/v5/order/create", body=CLOSE_BODY).body["retCode"] == 110017
+    with pytest.raises(UnstubbedCall, match="nothing answers POST /v5/order/create"):
+        alone.reply("POST", "/v5/order/create", body=REFERENCE_ORDER)
 
 
 def test_overlays_combine_in_the_order_named_and_reach_both_rotated_keys() -> None:

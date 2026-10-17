@@ -500,12 +500,12 @@ function resolvedField(chain, pick) {
   return merged;
 }
 
-/** Whether some scenario in the chain answers `call` at scenario time 0. */
+/** Whether some scenario in the chain answers `call` at scenario time 0, whatever its body. */
 function answersAtStart(chain, call) {
   for (const manifest of chain) {
     for (const key of [call, "*"]) {
       const stub = manifest.rest?.[key];
-      if (stub !== undefined && (stub.from_ms ?? 0) === 0) return true;
+      if (stub !== undefined && stub.when === undefined && (stub.from_ms ?? 0) === 0) return true;
     }
   }
   return false;
@@ -535,6 +535,21 @@ function checkWindows(name, manifest) {
   for (const [call, stub] of Object.entries(manifest.rest ?? {})) {
     if ((stub.from_ms ?? 0) >= (stub.until_ms ?? Infinity)) {
       problems.push(`${name}: rest "${call}" has an empty time window`);
+    }
+  }
+  return problems;
+}
+
+/** A body matcher (`when`) names a field, and never sits on a GET, which carries no body. */
+function checkMatchers(name, manifest) {
+  const problems = [];
+  for (const [call, stub] of Object.entries(manifest.rest ?? {})) {
+    if (stub.when === undefined) continue;
+    if (Object.keys(stub.when.body).length === 0) {
+      problems.push(`${name}: rest "${call}" has an empty body matcher`);
+    }
+    if (call.startsWith("GET ")) {
+      problems.push(`${name}: rest "${call}" matches a body, which a GET never carries`);
     }
   }
   return problems;
@@ -704,7 +719,11 @@ export function checkPack(dir = ACCOUNTS_DIR, { expectedScenarios, plan } = {}) 
     else if (manifest.rotation !== undefined)
       kindProblems = checkRotation(name, manifest, manifests);
     else kindProblems = checkKeyScenario(name, manifest, manifests, tails);
-    problems.push(...kindProblems, ...checkPayloads(name, manifest, root, referenced));
+    problems.push(
+      ...kindProblems,
+      ...checkMatchers(name, manifest),
+      ...checkPayloads(name, manifest, root, referenced),
+    );
   }
   if (expectedScenarios !== undefined) {
     const missing = expectedScenarios.filter((n) => !manifests.has(n));
