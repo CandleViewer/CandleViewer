@@ -7,16 +7,34 @@
 // A doc-drift test (packages/protocol/test/ws-schema-drift.test.ts) forbids the
 // two from disagreeing (same pattern as E02-T06's §3 manifest).
 //
-// Usage: node scripts/extract-ws-schema.mjs [--check]
+// Usage: node scripts/extract-ws-schema.mjs [--check [--schema <path>]]
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import prettier from "prettier";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..", "..");
 const mdPath = join(repoRoot, "docs", "plan", "23-ws-protocol.md");
 const outPath = join(repoRoot, "docs", "plan", "ws-schema.json");
+// `--schema` checks another copy of the artefact, formatted as the tracked one, so the drift test
+// tampers with a temp copy and never rewrites docs/plan/ws-schema.json (#2970). Any other argument
+// is refused, and so is a path that starts with `--`: that is a mistyped flag, not a file.
+function parseArgs(args) {
+  if (args.length === 0) return { checkMode: false, schemaPath: outPath };
+  if (args.length === 1 && args[0] === "--check") return { checkMode: true, schemaPath: outPath };
+  if (
+    args.length === 3 &&
+    args[0] === "--check" &&
+    args[1] === "--schema" &&
+    args[2] &&
+    !args[2].startsWith("--")
+  ) {
+    return { checkMode: true, schemaPath: resolve(args[2]) };
+  }
+  console.error("usage: node scripts/extract-ws-schema.mjs [--check [--schema <path>]]");
+  process.exit(2);
+}
 
 /** Section heading -> schema group. Only §13-15 carry JSON Schema fences. */
 const SECTION_RANGE = {
@@ -79,7 +97,7 @@ function extractTopicCatalogue(markdown) {
 }
 
 async function main() {
-  const checkMode = process.argv.includes("--check");
+  const { checkMode, schemaPath } = parseArgs(process.argv.slice(2));
   const markdown = readFileSync(mdPath, "utf8");
   const section = extractRange(markdown);
   const schemas = extractJsonFences(section);
@@ -122,13 +140,13 @@ async function main() {
   if (checkMode) {
     let existing = "";
     try {
-      existing = readFileSync(outPath, "utf8");
+      existing = readFileSync(schemaPath, "utf8");
     } catch {
       // Missing file also fails the check.
     }
     if (existing !== serialized) {
       console.error(
-        `[extract-ws-schema] ${outPath} is stale relative to ${mdPath}. Run ` +
+        `[extract-ws-schema] ${schemaPath} is stale relative to ${mdPath}. Run ` +
           `\`pnpm --filter @candleviewer/protocol generate\` to regenerate.`,
       );
       process.exit(1);
