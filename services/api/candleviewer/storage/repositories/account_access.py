@@ -100,6 +100,20 @@ class AccessAuditEmitter(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class AccessGrant:
+    """One live grant as `GET /users/{userId}/account-access` lists it: the account, its level,
+    its label and environment, and who last wrote the grant (`None` once that user is deleted).
+    No `granted_at` (no column is truthful for it: `created_at` is the first grant ever,
+    `updated_at` moves with every freeze write), and no freeze state or cap. Plain `uuid.UUID`s."""
+
+    exchange_account_id: uuid.UUID
+    level: AccessLevel
+    account_label: str
+    environment: str
+    granted_by: uuid.UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AccessChange:
     """A user's live grants (`exchange_account_id` -> level) before and after a replacement.
     The keys are plain `uuid.UUID`s (never the driver's subclass), so orjson serialises them."""

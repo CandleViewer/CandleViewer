@@ -14,6 +14,8 @@ A commit that then fails or is cancelled appends `users.access_change_failed` (o
 to close that record, as `secrets/broker.py` closes a borrow (C-2.9). An unchanged set writes and
 audits nothing. Each call logs one line naming its outcome. The audit emitter is injected:
 storage (M10) may depend on M1 only (CONSTITUTION §3 module table).
+
+`list_grants`, the read behind `GET /users/{userId}/account-access`, takes no row lock.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from candleviewer.storage.repositories.account_access import (
     AccessAuditUnavailableError,
     AccessBusyError,
     AccessChange,
+    AccessGrant,
     AccessLevel,
     AccessPositionsUnknownError,
     AccessSelfTargetError,
@@ -114,6 +117,15 @@ _INHERIT = sa.text(
     "AND NOT g.frozen"
 )
 _IMMEDIATE = sa.text("SET CONSTRAINTS ALL IMMEDIATE")
+# The read (#2648 S9b): no row lock. `granted_by` is whoever last wrote the grant (an upsert
+# overwrites it); `granted_at` is not selected, no column is truthful for it.
+_USER_EXISTS = sa.text("SELECT 1 FROM users WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL")
+_LIST_GRANTS = sa.text(
+    "SELECT a.exchange_account_id, a.can_trade, e.label, e.env::text, a.granted_by "
+    "FROM user_account_access AS a JOIN exchange_accounts AS e ON e.id = a.exchange_account_id "
+    "WHERE a.user_id = CAST(:id AS uuid) AND a.can_view AND e.deleted_at IS NULL "
+    "ORDER BY a.exchange_account_id"
+)
 #: The audit record's `before_state` and `after_state`.
 _States = tuple[dict[str, object], dict[str, object]]
 
@@ -161,14 +173,19 @@ def _donor(rows: Sequence[Any]) -> uuid.UUID | None:
     return _uuid(max(frozen_at, key=frozen_at.__getitem__)) if frozen_at else None
 
 
+def _sqlstate(exc: DBAPIError) -> str | None:
+    state = getattr(exc.orig, "sqlstate", None)
+    return state if isinstance(state, str) else None
+
+
 def _db_refusal(exc: DBAPIError) -> Exception:
     """A lock wait that timed out or deadlocked is `AccessBusyError`; any other driver error is
     `StorageQueryFailed` with its SQLSTATE alone. Raise either `from None`: the driver's text
     can carry row values (C-12.6)."""
-    sqlstate = getattr(exc.orig, "sqlstate", None)
+    sqlstate = _sqlstate(exc)
     if sqlstate in _BUSY:
         return AccessBusyError()
-    return StorageQueryFailed(sqlstate if isinstance(sqlstate, str) else None)
+    return StorageQueryFailed(sqlstate)
 
 
 def _outcome(exc: BaseException, written: bool) -> str:
@@ -251,6 +268,30 @@ class SqlAlchemyAccountAccessStore:
                 "account access replace", outcome=outcome, target_user_id=str(user_id), **rid
             )
         return change
+
+    async def list_grants(self, user_id: uuid.UUID) -> list[AccessGrant]:
+        """The user's live grants of live accounts, in account-id order (a soft-revoked grant and
+        a grant on a deleted account are not listed), whatever the user's status. Raises
+        `AccessUserNotFoundError` for a missing or deleted user and `StorageQueryFailed` (its
+        SQLSTATE alone) for a driver error; a refused connection raises the driver's `OSError`."""
+        uid = str(user_id)
+        try:
+            async with self._relational.unit_of_work() as uow:
+                if (await uow.session.execute(_USER_EXISTS, {"id": uid})).first() is None:
+                    raise AccessUserNotFoundError(uid)
+                rows = (await uow.session.execute(_LIST_GRANTS, {"id": uid})).all()
+        except DBAPIError as exc:
+            raise StorageQueryFailed(_sqlstate(exc)) from None
+        return [
+            AccessGrant(
+                _uuid(account),
+                "trade" if can_trade else "read",
+                label,
+                env,
+                None if granter is None else _uuid(granter),
+            )
+            for account, can_trade, label, env, granter in rows
+        ]
 
     async def _apply(
         self,

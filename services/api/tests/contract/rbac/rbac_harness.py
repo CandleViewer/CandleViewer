@@ -40,6 +40,10 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
+from candleviewer.storage.repositories.account_access import (
+    AccessGrant,
+    AccessUserNotFoundError,
+)
 from candleviewer.storage.repositories.alerts import Page
 from tests.csrf_helpers import csrf_headers
 
@@ -310,6 +314,21 @@ class UserStore:
         return True
 
 
+class AccessStore:
+    """`AccountAccessStore` over the seeded actors (in-memory, no grants until a test gives
+    some). Any other user id does not exist. `calls` records each user whose grants were read."""
+
+    def __init__(self) -> None:
+        self.grants: dict[uuid.UUID, list[AccessGrant]] = {u: [] for u in _USER_IDS.values()}
+        self.calls: list[uuid.UUID] = []
+
+    async def list_grants(self, user_id: uuid.UUID) -> list[AccessGrant]:
+        self.calls.append(user_id)
+        if user_id not in self.grants:
+            raise AccessUserNotFoundError(str(user_id))
+        return list(self.grants[user_id])
+
+
 class _AuditSink:
     """Stand-in for the started `AuditWriter`; records every emitted audit action."""
 
@@ -373,6 +392,7 @@ class World:
     scope_events: list[str] = field(default_factory=list)
     step_up: _StepUp = field(default_factory=_StepUp)
     users: UserStore = field(default_factory=UserStore)
+    access: AccessStore = field(default_factory=AccessStore)
     rule_store: InMemoryRuleStore = field(default_factory=InMemoryRuleStore)
     purge_backend: _PurgeBackend = field(default_factory=_PurgeBackend)
     grants: dict[uuid.UUID, tuple[uuid.UUID, ...]] = field(default_factory=dict)
@@ -413,6 +433,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     spec = load_contract()
     resolver = _Resolver(spec)
     users = UserStore()
+    access = AccessStore()
 
     async def snapshot_loader(uid: uuid.UUID) -> PrincipalSnapshot:
         actor = next(a for a, u in _USER_IDS.items() if u == uid)
@@ -442,6 +463,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     app = appmod.create_app(
         principal_resolver=resolver,
         user_role_store=users,
+        account_access_store=access,
         snapshot_loader=snapshot_loader,
         ws_authenticate=ws_authenticate,
     )
@@ -472,7 +494,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     )
     return World(
         app, client, audit, spec, resolver,
-        scope_events=scope_events, step_up=step_up, users=users, rule_store=store,
+        scope_events=scope_events, step_up=step_up, users=users, access=access, rule_store=store,
         purge_backend=purge_backend,
     )  # fmt: skip
 

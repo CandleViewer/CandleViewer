@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ from candleviewer.storage.repositories.account_access import (
     AccessAuditUnavailableError,
     AccessBusyError,
     AccessChange,
+    AccessGrant,
     AccessLevel,
     AccessPositionsUnknownError,
     AccessSelfTargetError,
@@ -45,6 +47,8 @@ _A, _B, _C, _D = sorted(uuid.uuid4() for _ in range(4))
 _T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)
 _Row = tuple[uuid.UUID, bool, bool]  # (exchange_account_id, can_view, can_trade), not frozen
 _FrozenRow = tuple[uuid.UUID, bool, bool, bool, datetime | None]  # ..., frozen, frozen_at
+#: What the listing selects: (exchange_account_id, can_trade, label, env, granted_by).
+_ListedRow = tuple[uuid.UUID, bool, str, str, uuid.UUID | None]
 _LIVE_A: tuple[_Row, ...] = ((_A, True, False),)
 #: _A read, _B trade, and _D soft-revoked (not live).
 _MIXED: tuple[_Row, ...] = ((_A, True, False), (_B, True, True), (_D, False, False))
@@ -74,10 +78,12 @@ class _Rel:
         on_commit: Callable[[], Awaitable[None]] | None = None,
         on_close: Exception | None = None,
         on_enter: Exception | None = None,
+        listing: tuple[_ListedRow, ...] = (),
     ) -> None:
         self.status, self.rows, self.unknown = status, rows, unknown
         self.fail_on, self.error = fail_on, error
         self.on_commit, self.on_close, self.on_enter = on_commit, on_close, on_enter
+        self.listing = listing
         self.log: list[tuple[Any, Any]] = []
         self.committed = False
 
@@ -86,6 +92,13 @@ class _Rel:
             raise self.error or RuntimeError("deadlock detected")
         if stmt is m._LOCK_USER:
             return [] if self.status is None else [(self.status,)]
+        if stmt is m._USER_EXISTS:
+            return [] if self.status is None else [(1,)]
+        if stmt is m._LIST_GRANTS:  # what the read selects, ids as the driver returns them
+            return [
+                (DriverUUID(str(r[0])), *r[1:4], r[4] and DriverUUID(str(r[4])))
+                for r in self.listing
+            ]
         if stmt is m._KNOWN_ACCOUNTS:
             return [(DriverUUID(i),) for i in params["ids"] if uuid.UUID(i) not in self.unknown]
         if stmt is m._CURRENT:  # a 3-tuple row reads back `frozen = false, frozen_at = NULL`
@@ -682,3 +695,87 @@ async def test_replace_that_removes_no_grant_needs_no_acknowledgement() -> None:
     await _replace(rel, audit, {_A: "trade", _B: "read", _C: "read"}, None)  # widen, narrow, add
     assert audit.calls[0][1]["after_state"] == _grants((_A, "trade"), (_B, "read"), (_C, "read"))
     assert rel.committed
+
+
+# -- S9b: the read behind `GET /users/{userId}/account-access` (#2648) ---------------------------
+
+#: Two live grants as the listing selects them: _A read, granted by the actor; _B trade, whose
+#: granting user was deleted since (`granted_by` is NULL).
+_LISTED: tuple[_ListedRow, ...] = (
+    (_A, False, "main", "live", _ACTOR),
+    (_B, True, "sub-1", "demo", None),
+)
+_ROW_LOCK = re.compile(r"\bFOR\s+(NO\s+KEY\s+UPDATE|UPDATE|SHARE|KEY\s+SHARE)\b", re.IGNORECASE)
+
+
+async def test_list_grants_returns_each_live_grant_with_its_label_environment_and_granter() -> None:
+    rel = _Rel(listing=_LISTED)
+    audit = _Audit(rel)
+    grants = await _store(rel, audit).list_grants(_USER)
+    assert grants == [
+        AccessGrant(_A, "read", "main", "live", _ACTOR),
+        AccessGrant(_B, "trade", "sub-1", "demo", None),
+    ]
+    assert rel.ran() == [m._USER_EXISTS, m._LIST_GRANTS]
+    assert rel.params(m._LIST_GRANTS) == {"id": str(_USER)}
+    assert not audit.calls and not rel.committed  # a read writes and audits nothing
+    # the driver's UUID subclass, which orjson refuses, never leaves the store
+    assert {type(g.exchange_account_id) for g in grants} == {uuid.UUID}
+    assert orjson.loads(orjson.dumps(grants))[0]["granted_by"] == str(_ACTOR)
+
+
+async def test_list_grants_for_a_missing_or_deleted_user_raises_not_found_and_reads_no_grants() -> (
+    None
+):
+    rel = _Rel(status=None, listing=_LISTED)
+    with pytest.raises(AccessUserNotFoundError):
+        await _store(rel, _Audit(rel)).list_grants(_USER)
+    assert rel.ran() == [m._USER_EXISTS]
+
+
+def test_the_read_statements_take_no_row_lock_and_write_nothing() -> None:
+    # A read must neither queue behind a grant writer nor hold up one (lock order, 21 §3.1.3).
+    for stmt in (m._USER_EXISTS, m._LIST_GRANTS):
+        assert not _ROW_LOCK.search(stmt.text)
+        assert not re.search(r"\b(INSERT|UPDATE|DELETE|SET)\b", stmt.text, re.IGNORECASE)
+
+
+def test_the_listing_selects_only_the_users_live_grants_of_live_accounts() -> None:
+    sql = m._LIST_GRANTS.text
+    assert "a.user_id = CAST(:id AS uuid) AND a.can_view AND e.deleted_at IS NULL" in sql
+    assert "JOIN exchange_accounts AS e ON e.id = a.exchange_account_id" in sql
+    assert sql.endswith("ORDER BY a.exchange_account_id")
+    assert m._USER_EXISTS.text.endswith("AND deleted_at IS NULL")
+    # no column is truthful for `granted_at`, and freeze state and the cap are not shown
+    for column in ("granted_at", "created_at", "updated_at", "frozen", "max_daily_loss_usd"):
+        assert column not in sql
+
+
+@pytest.mark.parametrize("sqlstate", ["55P03", "40P01", "57014"])
+async def test_list_grants_whose_statement_fails_raises_only_the_sqlstate(sqlstate: str) -> None:
+    error = DBAPIError("SELECT", None, _DriverError(sqlstate))
+    rel = _Rel(listing=_LISTED, fail_on=m._LIST_GRANTS, error=error)
+    with pytest.raises(StorageQueryFailed) as err:  # a read is never "busy": no lock was taken
+        await _store(rel, _Audit(rel)).list_grants(_USER)
+    assert err.value.sqlstate == sqlstate and "drawdown" not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+
+
+async def test_list_grants_whose_unit_of_work_fails_to_open_raises_only_the_sqlstate() -> None:
+    rel = _Rel(on_enter=DBAPIError("SET LOCAL", None, _DriverError("57P01")))
+    with pytest.raises(StorageQueryFailed) as err:
+        await _store(rel, _Audit(rel)).list_grants(_USER)
+    assert err.value.sqlstate == "57P01" and "drawdown" not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+
+
+async def test_list_grants_then_replacing_with_the_same_set_changes_nothing() -> None:
+    """GET then PUT round-trips: the listed grants, sent back as they are, are a no-op."""
+    rows: tuple[_Row, ...] = ((_A, True, False), (_B, True, True), (_D, False, False))
+    rel = _Rel(rows=rows, listing=_LISTED)  # _D is soft-revoked: not live, not listed
+    audit = _Audit(rel)
+    store = _store(rel, audit)
+    listed = await store.list_grants(_USER)
+    again = {g.exchange_account_id: g.level for g in listed}
+    change = await store.replace_grants(_USER, again, actor_user_id=_ACTOR, removal=_KNOWN)
+    assert not change.changed and not audit.calls and not rel.committed

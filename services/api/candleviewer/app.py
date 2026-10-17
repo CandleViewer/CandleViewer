@@ -102,7 +102,12 @@ from candleviewer.api.step_up import (
 )
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
-from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
+from candleviewer.api.users import (
+    AccountAccessStore,
+    SnapshotResolver,
+    UserRoleStore,
+    make_users_router,
+)
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
@@ -228,6 +233,9 @@ from candleviewer.storage.cold.scrub import ScrubTask
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.wiring import QuestDbRowSink
+from candleviewer.storage.repositories.account_access_sqlalchemy import (
+    SqlAlchemyAccountAccessStore,
+)
 from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
     SqlAlchemyAlertDeliveryRepository,
@@ -551,6 +559,19 @@ def build_user_role_store(settings: Settings) -> SqlAlchemyUserRoleStore | None:
         owner_floor=lambda current, new, owners: assert_owner_floor(
             current_roles=current, new_roles=new, active_owner_count=owners
         ),
+    )
+
+
+def build_account_access_store(
+    settings: Settings, audit: AuditHandle
+) -> SqlAlchemyAccountAccessStore | None:
+    """E42-T08 (#2648): the Postgres store behind `/users/{userId}/account-access`; `None` on the
+    fake backend, where the route fails closed (501). No I/O at construction."""
+    if settings.storage_backend != "real":
+        return None
+    return SqlAlchemyAccountAccessStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "account-access"),
+        audit=_LazyAuditEmitter(audit),
     )
 
 
@@ -951,6 +972,7 @@ def create_app(
     *,
     snapshot_loader: SnapshotLoader | None = None,
     user_role_store: UserRoleStore | None = None,
+    account_access_store: AccountAccessStore | None = None,
     principal_resolver: SnapshotResolver | None = None,
     ws_authenticate: Authenticate | None = None,
     auth_clock: Callable[[], datetime] | None = None,
@@ -1240,6 +1262,8 @@ def create_app(
         owner_resolver = SessionSnapshotResolver(lambda: ctx.auth.sessions, identity)
     if user_role_store is None:
         user_role_store = build_user_role_store(resolved)
+    if account_access_store is None:
+        account_access_store = build_account_access_store(resolved, ctx.audit)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
         make_step_up_router(
@@ -1262,6 +1286,7 @@ def create_app(
             owner_resolver,
             ws_registry,
             auth=ctx.auth,
+            account_access=account_access_store,
         )
     )
     app.include_router(

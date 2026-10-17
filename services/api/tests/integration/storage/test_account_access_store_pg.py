@@ -7,7 +7,8 @@ rolls the whole set back. A replacement racing a disable leaves no live grant in
 UUIDs. Onboarding ignores revoked grants. S9a: a grant and an account soft delete queue behind
 each other in either order, as a user soft delete does; a lock wait past `lock_timeout` changes
 nothing; no grant write leaves a frozen manager an unfrozen grant, and an inherited freeze
-never copies the cap.
+never copies the cap. S9b: the read behind `GET /users/{userId}/account-access` lists only the
+user's live grants of live accounts, takes no row lock, and its listing sent back is a no-op.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -33,6 +34,7 @@ from testcontainers.postgres import PostgresContainer
 from candleviewer.storage.repositories.account_access import (
     AccessAuditUnavailableError,
     AccessBusyError,
+    AccessGrant,
     AccessLevel,
     AccessUnknownAccountError,
     AccessUserNotActiveError,
@@ -523,3 +525,119 @@ async def test_replacement_queued_behind_a_freeze_inherits_it(
         async with asyncio.timeout(_WAIT_S):
             await call
     assert [r[3] for r in await _rows(engine, user)] == [True, True]
+
+
+# -- S9b: the read behind `GET /users/{userId}/account-access` (#2648) ---------------------------
+
+
+_DELETE_USER = sa.text("DELETE FROM users WHERE id = CAST(:id AS uuid)")
+
+
+def _label(account: uuid.UUID) -> str:
+    return f"a-{account.hex[:12]}"  # as `_setup` names it
+
+
+def _pairs(grants: list[AccessGrant]) -> list[tuple[uuid.UUID, str]]:
+    return [(g.exchange_account_id, g.level) for g in grants]
+
+
+async def test_list_grants_returns_only_live_grants_of_live_accounts(db: Any) -> None:
+    """A soft-revoked grant and a grant on a soft-deleted account are not listed; a re-grant is."""
+    rel, engine = db
+    owner, user, (a, b, c, d) = await _setup(engine, 4)
+    store = _store(rel)
+    await store.replace_grants(
+        user, {a: "read", b: "trade", c: "read", d: "read"}, actor_user_id=owner
+    )
+    await store.replace_grants(
+        user, {a: "read", b: "trade", d: "read"}, actor_user_id=owner, removal=_ACK
+    )
+    await _exec(engine, _SOFT_DELETE, id=str(d))  # d's grant row stays live, on a dead account
+    await _exec(engine, _FREEZE, id=str(user), by=str(owner))  # a frozen grant is listed too
+    assert _pairs(await store.list_grants(user)) == [(a, "read"), (b, "trade")]
+    await store.replace_grants(
+        user, {a: "read", b: "trade", c: "trade"}, actor_user_id=owner, removal=_ACK
+    )
+    assert _pairs(await store.list_grants(user)) == [(a, "read"), (b, "trade"), (c, "trade")]
+
+
+async def test_list_grants_carries_the_label_environment_and_last_granter(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    second_owner, _, _ = await _setup(engine, 0)
+    store = _store(rel)
+    await store.replace_grants(user, {a: "read"}, actor_user_id=owner)
+    await store.replace_grants(user, {a: "trade"}, actor_user_id=second_owner)
+    granted = AccessGrant(a, "trade", _label(a), "demo", second_owner)
+    assert await store.list_grants(user) == [granted]
+    await _exec(engine, _DELETE_USER, id=str(second_owner))  # `granted_by` is ON DELETE SET NULL
+    assert await store.list_grants(user) == [AccessGrant(a, "trade", _label(a), "demo", None)]
+
+
+async def test_list_grants_never_returns_another_users_grants(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a, b, c) = await _setup(engine, 3)
+    other_owner, other, _ = await _setup(engine, 0)
+    store = _store(rel)
+    await store.replace_grants(user, {a: "read", b: "trade"}, actor_user_id=owner)
+    await store.replace_grants(other, {a: "trade", c: "read"}, actor_user_id=owner)
+    await store.replace_grants(owner, {b: "read"}, actor_user_id=other_owner)  # the caller's own
+    assert _pairs(await store.list_grants(user)) == [(a, "read"), (b, "trade")]
+    assert _pairs(await store.list_grants(other)) == [(a, "trade"), (c, "read")]
+
+
+async def test_list_grants_of_a_missing_or_deleted_user_raises_not_found(db: Any) -> None:
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
+    with pytest.raises(AccessUserNotFoundError):
+        await _store(rel).list_grants(uuid.uuid4())
+    await _exec(engine, _USER_SOFT_DELETE, id=str(user))
+    with pytest.raises(AccessUserNotFoundError):
+        await _store(rel).list_grants(user)
+
+
+@pytest.mark.parametrize("status", ["invited", "locked", "disabled"])
+async def test_list_grants_lists_a_user_who_is_not_active(db: Any, status: str) -> None:
+    rel, engine = db
+    _, user, (a,) = await _setup(engine, 1, status)  # a grant change would be 409 here
+    await _exec(engine, _ROW, id=str(user), account=str(a), view=True)
+    assert _pairs(await _store(rel).list_grants(user)) == [(a, "read")]
+
+
+async def test_list_grants_takes_no_row_lock_and_sees_only_committed_grants(db: Any) -> None:
+    """With a replacement held at its audit gate (the user row locked, its rows rewritten), the
+    read returns at once with the committed grants; it neither queues nor sees the new ones."""
+    rel, engine = db
+    owner, user, (a, b) = await _setup(engine, 2)
+    await _store(rel).replace_grants(user, {a: "read"}, actor_user_id=owner)
+    gate = asyncio.Event()
+    audit = _Audit(gate=gate)
+    call = asyncio.create_task(
+        _store(rel, audit).replace_grants(user, {b: "trade"}, actor_user_id=owner, removal=_ACK)
+    )
+    async with asyncio.timeout(_WAIT_S):
+        await audit.entered.wait()
+    async with asyncio.timeout(_WAIT_S):  # a read that queued behind the writer never returns
+        during = await _store(rel).list_grants(user)
+    gate.set()
+    async with asyncio.timeout(_WAIT_S):
+        await call
+    assert _pairs(during) == [(a, "read")]
+    assert _pairs(await _store(rel).list_grants(user)) == [(b, "trade")]
+
+
+async def test_list_grants_then_replacing_with_the_same_set_is_a_no_op(db: Any) -> None:
+    """GET then PUT round-trips: the listing sent back changes nothing and audits nothing."""
+    rel, engine = db
+    owner, user, (a, b, c) = await _setup(engine, 3)
+    store = _store(rel)
+    await store.replace_grants(user, {a: "read", b: "trade", c: "read"}, actor_user_id=owner)
+    await store.replace_grants(user, {a: "read", b: "trade"}, actor_user_id=owner, removal=_ACK)
+    audit = _Audit()
+    listed = await store.list_grants(user)
+    change = await _store(rel, audit).replace_grants(
+        user, {g.exchange_account_id: g.level for g in listed}, actor_user_id=owner
+    )
+    assert not change.changed and not audit.calls
+    assert await _access(engine, user) == {a: (True, False), b: (True, True), c: (False, False)}

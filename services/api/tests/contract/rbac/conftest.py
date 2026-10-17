@@ -55,6 +55,7 @@ def world(_world_module: World) -> World:
     w.scope_events.clear()
     w.audit.records.clear()
     w.purge_backend.calls.clear()
+    w.access.calls.clear()
     w.step_up.elevated = True
     w.resolver.revoked.clear()
     for actor_uid in list(w.users.roles):
