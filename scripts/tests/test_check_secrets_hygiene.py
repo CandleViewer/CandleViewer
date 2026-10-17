@@ -103,8 +103,8 @@ def test_run_script_env_dump_fails(tmp_path: Path) -> None:
 
 
 def test_script_no_workflow_runs_is_not_scanned(tmp_path: Path) -> None:
-    run = "bash tools/run.sh && idle.sh && echo tools/idle.sh  # ; bash tools/idle.sh"
-    _write(tmp_path, WF, _runs(run))
+    run = "bash tools/run.sh && idle.sh && chmod +x tools/idle.sh && echo tools/idle.sh"
+    _write(tmp_path, WF, _runs(f"{run}  # ; bash tools/idle.sh"))
     _write(tmp_path, "tools/run.sh", "set -x\n")
     _write(tmp_path, "tools/idle.sh", "set -x\n")
     _write(tmp_path, "idle.sh", "set -x\n")  # a bare `idle.sh` is a PATH lookup, not this file
@@ -113,13 +113,33 @@ def test_script_no_workflow_runs_is_not_scanned(tmp_path: Path) -> None:
     ]
 
 
-def test_run_script_allow_marker_and_comment_lines_skip(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("run", "script"),
+    [
+        ("|\n          # old; bash tools/idle.sh\n          echo ok", ""),
+        ("bash tools/a.sh", "echo ok  # was: cd x; bash tools/idle.sh\n"),
+    ],
+    ids=["workflow-block", "script"],
+)
+def test_commented_out_invocation_is_not_followed(tmp_path: Path, run: str, script: str) -> None:
+    _write(tmp_path, WF, _runs(run))
+    _write(tmp_path, "tools/a.sh", script)
+    _write(tmp_path, "tools/idle.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == []
+
+
+def test_run_prose_is_not_read_as_sourcing_a_file(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs('echo "Gate failed (see the log). docs/notes.md has the fix."'))
+    _write(tmp_path, "docs/notes.md", "# Fix\n\n    set -x\n")
+    assert h.check_workflows(tmp_path) == []
+
+
+@pytest.mark.parametrize("skipped", ["# never set -x", "set -x  # secrets-hygiene: allow"])
+def test_run_script_comment_or_allow_marked_line_is_skipped(tmp_path: Path, skipped: str) -> None:
     _write(tmp_path, WF, _runs("sh scripts/x.sh"))
-    _write(
-        tmp_path, "scripts/x.sh", "# never set -x\nset -x  # secrets-hygiene: allow\nenv | sort\n"
-    )
+    _write(tmp_path, "scripts/x.sh", f"{skipped}\nenv | sort\n")
     assert h.check_workflows(tmp_path) == [
-        "scripts/x.sh:3: environment dump (SR-146); run by w.yml"
+        "scripts/x.sh:2: environment dump (SR-146); run by w.yml"
     ]
 
 
@@ -146,6 +166,24 @@ def test_run_script_paths_outside_the_repo_are_refused(tmp_path: Path) -> None:
         '"bash tools/x.sh"',
         "if true; then ./tools/x.sh; fi",
         "|\n          set -euo pipefail\n          bash tools/x.sh",
+        '|\n          echo "see #1" && bash tools/x.sh',
+        '|\n          echo "a \\" # b" && bash tools/x.sh',
+        "! bash tools/x.sh",
+        "if ! bash tools/x.sh; then exit 1; fi",
+        "timeout 300 bash tools/x.sh",
+        "timeout --preserve-status -k 5 10m ./tools/x.sh",
+        "env -i CV_X=1 bash tools/x.sh",
+        "nohup bash tools/x.sh &",
+        "nice -n 10 bash tools/x.sh",
+        "xvfb-run -a bash tools/x.sh",
+        "sudo -E bash tools/x.sh",
+        "uv run --frozen bash tools/x.sh",
+        "stdbuf -oL bash tools/x.sh",
+        "command bash tools/x.sh",
+        "bash -o pipefail tools/x.sh",
+        "bash --noprofile --norc tools/x.sh",
+        "bash -eu tools/x.sh",
+        "bash -euo pipefail tools/x.sh",
     ],
 )
 def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
@@ -154,15 +192,66 @@ def test_run_script_forms_are_followed(tmp_path: Path, run: str) -> None:
     assert h.check_workflows(tmp_path) == ["tools/x.sh:1: environment dump (SR-146); run by w.yml"]
 
 
-def test_run_script_working_directory_shebang_and_in_repo_dotdot(tmp_path: Path) -> None:
-    run = "./x && ./gen.py && python3 gen.py && bash ../scripts/y.sh"
-    _write(tmp_path, WF, f"      - working-directory: tools\n        run: {run}\n")
+def test_run_script_path_is_tried_from_the_working_directory(tmp_path: Path) -> None:
+    _write(tmp_path, WF, "      - working-directory: tools\n        run: ./x.sh\n")
+    _write(tmp_path, "tools/x.sh", "printenv\n")
+    assert h.check_workflows(tmp_path) == ["tools/x.sh:1: environment dump (SR-146); run by w.yml"]
+
+
+def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("./tools/x"))
     _write(tmp_path, "tools/x", "#!/usr/bin/env bash\nprintenv\n")
+    assert h.check_workflows(tmp_path) == ["tools/x:2: environment dump (SR-146); run by w.yml"]
+
+
+@pytest.mark.parametrize("run", ["./tools/gen.py", "python3 tools/gen.py"])
+def test_run_python_script_is_not_followed(tmp_path: Path, run: str) -> None:
+    _write(tmp_path, WF, _runs(run))
     _write(tmp_path, "tools/gen.py", '#!/usr/bin/env python3\n"""Never set -x in CI."""\n')
+    assert h.check_workflows(tmp_path) == []
+
+
+def test_run_script_dotdot_inside_the_repo_is_followed(tmp_path: Path) -> None:
+    _write(tmp_path, WF, "      - working-directory: tools\n        run: bash ../scripts/y.sh\n")
     _write(tmp_path, "scripts/y.sh", "set -x\n")
     assert h.check_workflows(tmp_path) == [
-        "scripts/y.sh:1: 'set -x' tracing (SR-146); run by w.yml",
-        "tools/x:2: environment dump (SR-146); run by w.yml",
+        "scripts/y.sh:1: 'set -x' tracing (SR-146); run by w.yml"
+    ]
+
+
+def test_run_script_that_does_not_resolve_never_fails(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("bash tools/missing.sh && ./scripts/gone.sh && . tools/x.sh/y.sh"))
+    _write(tmp_path, "tools/x.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == []
+    assert h.main(["workflows", "--root", str(tmp_path)]) == 0
+
+
+def test_run_script_sourced_helper_is_scanned(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("bash tools/a.sh"))
+    _write(tmp_path, "tools/a.sh", "set -eu\nsource tools/lib.sh\n")
+    _write(tmp_path, "tools/lib.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [
+        "tools/lib.sh:1: 'set -x' tracing (SR-146); run by w.yml via tools/a.sh"
+    ]
+
+
+def test_run_script_nested_scripts_are_followed_transitively_once_each(tmp_path: Path) -> None:
+    _write(tmp_path, WF, _runs("bash tools/a.sh"))
+    _write(tmp_path, "tools/a.sh", ". tools/b.sh\n")
+    _write(tmp_path, "tools/b.sh", "bash tools/a.sh  # a cycle\n./tools/c.sh\n")
+    _write(tmp_path, "tools/c.sh", "printenv\n")
+    assert h.check_workflows(tmp_path) == [
+        "tools/c.sh:1: environment dump (SR-146); run by w.yml via tools/b.sh"
+    ]
+
+
+@pytest.mark.parametrize("script", ["tools/loop.sh", "tools/loop"])
+def test_run_script_symlink_loop_fails_closed(tmp_path: Path, script: str) -> None:
+    _write(tmp_path, WF, _runs(f"./{script}"))
+    (tmp_path / "tools").mkdir()
+    (tmp_path / script).symlink_to(Path(script).name)
+    assert h.check_workflows(tmp_path) == [
+        f"{script}: unreadable script (SR-146 scan); run by w.yml"
     ]
 
 
