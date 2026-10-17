@@ -4,8 +4,7 @@ the self-scoped first-run checklist (`SqlAlchemyOnboardingStore`) through `Sessi
 every cell answers as `tests/contract/rbac/matrix.yaml` says and an authorised caller is never
 refused with the fail-closed 501/503. Only the SQL edges of those real classes, the host socket
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
-network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`) the same way, and
-#965 S6 the user disable."""
+network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`), #965 the disable."""
 
 from __future__ import annotations
 

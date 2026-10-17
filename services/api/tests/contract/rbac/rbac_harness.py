@@ -356,26 +356,20 @@ class AccessStore:
 
 
 class LifecycleStore:
-    """The S3 disable store's seam: it finds no user, so an authorised disable is observable (404)
-    and nothing changes. `calls` records each user it was asked about."""
-
-    def __init__(self) -> None:
-        self.calls: list[uuid.UUID] = []
+    """The S3 disable store's seam: it finds no user, so an authorised disable is a 404."""
 
     async def disable(
         self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: Any
     ) -> UserStatusChange | None:
-        self.calls.append(user_id)
         return None
 
 
-def user_disable_service(lifecycle: LifecycleStore, audit: Any) -> UserDisableService:
-    """The real service (its guards are the cells' subject) over the store seam: no user is
-    found, so no cascade runs and its other ports are never reached."""
+def user_disable_service(audit: Any) -> UserDisableService:
+    """The real service (its guards are the cells' subject) over a store that finds no user."""
     unreached: Any = object()
     ports = ("sessions", "session_rows", "chart", "publish_revocation", "invites", "rules", "scope")
     return UserDisableService(
-        lifecycle,
+        LifecycleStore(),
         audit,
         positions=appmod._NoPositionStore(),
         orders=NoOrderCounter(),
@@ -447,7 +441,6 @@ class World:
     step_up: _StepUp = field(default_factory=_StepUp)
     users: UserStore = field(default_factory=UserStore)
     access: AccessStore = field(default_factory=AccessStore)
-    lifecycle: LifecycleStore = field(default_factory=LifecycleStore)
     rule_store: InMemoryRuleStore = field(default_factory=InMemoryRuleStore)
     purge_backend: _PurgeBackend = field(default_factory=_PurgeBackend)
     grants: dict[uuid.UUID, tuple[uuid.UUID, ...]] = field(default_factory=dict)
@@ -489,7 +482,6 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     resolver = _Resolver(spec)
     users = UserStore()
     access = AccessStore()
-    lifecycle = LifecycleStore()
     audit = _AuditSink()
 
     async def snapshot_loader(uid: uuid.UUID) -> PrincipalSnapshot:
@@ -521,7 +513,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
         principal_resolver=resolver,
         user_role_store=users,
         account_access_store=access,
-        user_disable=user_disable_service(lifecycle, audit),
+        user_disable=user_disable_service(audit),
         snapshot_loader=snapshot_loader,
         ws_authenticate=ws_authenticate,
     )
@@ -552,7 +544,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     return World(
         app, client, audit, spec, resolver,
         scope_events=scope_events, step_up=step_up, users=users, access=access, rule_store=store,
-        purge_backend=purge_backend, lifecycle=lifecycle,
+        purge_backend=purge_backend,
     )  # fmt: skip
 
 

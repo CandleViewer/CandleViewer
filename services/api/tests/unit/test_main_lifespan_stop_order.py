@@ -106,8 +106,6 @@ class _Audits:
 
 
 class _Cascades(_Audits):
-    """`UserDisableService.drain`: the steps in flight end before the modules they use stop."""
-
     async def drain(self) -> int:
         self.stops.order.append("user_disable")
         return 0

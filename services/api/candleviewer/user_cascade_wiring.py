@@ -184,8 +184,7 @@ class ScopeRefreshAdapter:
 
 
 class NoOrderCounter:
-    """No order has a user on main (UL-F9): the count is unknown, never 0, so a disable needs the
-    acknowledgement (AC7), as for positions. Replace with the OMS read model."""
+    """No order has a user on main (UL-F9): the count is unknown, never 0, so AC7 needs the ack."""
 
     async def open_order_count(self, user_id: str) -> int | None:
         return None

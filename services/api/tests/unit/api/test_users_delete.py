@@ -1,10 +1,8 @@
-"""DELETE /users/{userId} (E42-T04 S6, #965; contract `deleteUser`, the disable).
+"""DELETE /users/{userId} (E42-T04 S6, #965; `deleteUser`, the disable).
 
-The route over the REAL `UserDisableService` and the S3 store on its fake unit of work (the world
-of `tests/unit/admin/test_user_disable.py`): guards, audit records and nothing-changed cases are
-production code's, so what is under test is the order the route puts them in and the problem each
-refusal becomes. `_World.log` orders every port call and audit record; the step-up fake adds
-`step_up`. The deployed app: `tests/unit/architecture/test_owner_routes_composition.py`.
+The route over the real `UserDisableService` and S3 store, on `test_user_disable.py`'s world: what
+is under test is the order of the guards and the problem each refusal becomes. The deployed app:
+`tests/unit/architecture/test_owner_routes_composition.py`.
 """
 
 from __future__ import annotations
@@ -65,6 +63,10 @@ class _Auth:
         return StepUpChallenge(uuid.uuid4(), action_class, datetime.now(UTC) + CHALLENGE_WINDOW)
 
 
+class _NoStepUp(_Auth):
+    step_up_is_active = False
+
+
 @pytest.fixture(scope="module")
 def spec() -> dict[str, Any]:
     loaded: dict[str, Any] = load_openapi_spec()
@@ -109,8 +111,7 @@ def _untouched(w: _World) -> bool:
 
 
 def test_disable_answers_204_with_no_body_after_the_guards_in_order(spec: dict[str, Any]) -> None:
-    """The guards pass silently, the step-up is consulted once, and only then are the counts
-    read and `users.disable` written ahead of the commit (R7)."""
+    """R7: the step-up is asked once, then the counts are read and `users.disable` written ahead."""
     w = _World()
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
     assert r.status_code == 204 and r.content == b""
@@ -122,14 +123,14 @@ def test_disable_answers_204_with_no_body_after_the_guards_in_order(spec: dict[s
 
 
 _DENIED, _STEP = ("rbac.denied",), ("step_up",)  # the log of a refusal, of a passed step-up
-_ORDER = [  # role, target, elevated, query, status, code, log
-    ("manager", TARGET, False, "", 403, "forbidden", _DENIED),
-    ("viewer", TARGET, True, "?purge=true", 403, "forbidden", _DENIED),
-    ("owner", CALLER, False, "", 403, "forbidden", _DENIED),
-    ("owner", TARGET, False, "", 403, "step_up_required", _STEP),
-    ("owner", TARGET, False, "?purge=true", 403, "step_up_required", _STEP),
-    ("owner", TARGET, True, "?purge=true", 400, "validation_failed", _STEP),
-    ("owner", TARGET, True, _BAD_ACK, 400, "validation_failed", _STEP),
+_ORDER = [  # role, target, elevated, query, status, code, log, challenges issued
+    ("manager", TARGET, False, "", 403, "forbidden", _DENIED, 0),
+    ("viewer", TARGET, True, "?purge=true", 403, "forbidden", _DENIED, 0),
+    ("owner", CALLER, False, "", 403, "forbidden", _DENIED, 0),
+    ("owner", TARGET, False, "", 403, "step_up_required", _STEP, 1),
+    ("owner", TARGET, False, "?purge=true", 403, "step_up_required", _STEP, 1),
+    ("owner", TARGET, True, "?purge=true", 400, "validation_failed", _STEP, 0),
+    ("owner", TARGET, True, _BAD_ACK, 400, "validation_failed", _STEP, 0),
 ]
 
 
@@ -139,17 +140,16 @@ _ORDER = [  # role, target, elevated, query, status, code, log
     ids=["role", "role-then-query", "self", "step-up", "step-up-then-query", "purge", "ack"],
 )
 def test_guard_order_before_change(case: tuple[Any, ...], spec: dict[str, Any]) -> None:
-    """UL1-S1, SR-025: `users:write`, then a self-target (refusals no step-up can cure, audited,
-    before any read), then the step-up, then the query, then the change. No refusal reads or
-    writes a row, and only the step-up refusal issues a challenge."""
-    role, target, elevated, query, status, code, log = case
+    """UL1-S1, SR-025: `users:write`, a self-target (audited), the step-up, the query, then the
+    change. No refusal reads or writes a row, and only the step-up's issues a challenge."""
+    role, target, elevated, query, status, code, log, challenges = case
     w = _World()
     auth = _Auth(w.log, elevated=elevated)
     r = _client(w, _principal(role, spec), auth=auth).delete(_PATH.format(target) + query)
     assert (r.status_code, r.json()["code"]) == (status, code)
     _conforms(spec, r)
     assert tuple(w.log) == log and _untouched(w)
-    assert auth.pending == ([(str(SESSION), "users")] if code == "step_up_required" else [])
+    assert auth.pending == [(str(SESSION), "users")] * challenges
 
 
 @pytest.mark.parametrize(
@@ -178,8 +178,7 @@ def test_forbidden_manager_viewer_audited(
 
 
 def test_self_target_403(spec: dict[str, Any]) -> None:
-    """AC6, SR-055: disabling oneself is refused and audited before anything is read (never a
-    challenge, whatever the step-up: the guard-order case `self`)."""
+    """AC6, SR-055: one's own account is refused and audited before any read, step-up or not."""
     w = _World()
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(CALLER))
     assert (r.status_code, r.json()["reason"]) == (403, "self_target")
@@ -209,9 +208,8 @@ def test_last_owner_409(spec: dict[str, Any]) -> None:
     ids=["write-ahead-record", "refusal-of-a-role", "refusal-of-a-self-target"],
 )
 def test_audit_down_503(failing: str, role: str, target: uuid.UUID, spec: dict[str, Any]) -> None:
-    """AC8, C-2.9, UL-AC05: with the audit writer down the call is 503 `audit_unavailable` with
-    `Retry-After`, and nothing changes: the write-ahead record rolls the transaction back, and a
-    refusal that cannot be recorded is not told 403, with nothing read."""
+    """AC8, C-2.9, UL-AC05: audit down is 503 `audit_unavailable` with `Retry-After` and nothing
+    changed: the write-ahead record rolls the change back, and an unrecorded refusal is no 403."""
     w = _World(fail={failing: [AuditUnavailable("wal at 10.1.2.3 unwritable")]})
     r = _client(w, _principal(role, spec)).delete(_PATH.format(target))
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
@@ -250,38 +248,39 @@ def test_twice_204_one_audit(spec: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["true", "True", "1", "", "maybe", "False", "0", "false&purge=false", "false"]
+    ("value", "status"),
+    [
+        *[("true", 400), ("True", 400), ("1", 400), ("", 400), ("maybe", 400), ("False", 400)],
+        *[("0", 400), ("false&purge=false", 400), ("false", 204)],
+    ],
 )
-def test_purge_400_flag_off(value: str, spec: dict[str, Any]) -> None:
-    """UL4-D1: `?purge=true` is E42-T10's (S14), so until it serves it the answer is 400, flag or
-    no flag (R8's `users_purge_enabled` is undecided, #2710, and none exists), and the disable is
-    not done either. The boolean is strict: `true` or `false`, once. `False`, `0` and a repeat are
-    what a lenient parse reads as false and would disable, so each is a 400 too."""
-    status = 204 if value == "false" else 400
+def test_purge_400_flag_off(value: str, status: int, spec: dict[str, Any]) -> None:
+    """UL4-D1: `?purge=true` is E42-T10's (S14): 400 until it serves it, flag or none (R8, #2710).
+    A boolean is `true` or `false`, once: `False`, `0` and a repeat, which a lenient parse reads
+    as false, are 400 too and disable nothing."""
     w = _World()
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET) + f"?purge={value}")
-    assert r.status_code == status
+    assert r.status_code == status and w.rel.committed == (status == 204)
     _conforms(spec, r)
-    assert w.rel.committed == (status == 204)
 
 
 @pytest.mark.parametrize(
     ("wired", "status", "code"),
     [
         ({"principal_resolver": SimpleNamespace(resolve=lambda r: None)}, 401, "unauthenticated"),
-        ({"auth": "session-gone"}, 401, "unauthenticated"),
+        ({"auth": _Auth([], session_error=SessionNotFound("gone"))}, 401, "unauthenticated"),
         ({"user_disable": None}, 501, "not_implemented"),
         ({"auth": None}, 501, "not_implemented"),
+        ({"auth": SimpleNamespace(sessions_is_active=False)}, 501, "not_implemented"),
+        ({"auth": _NoStepUp([])}, 503, "service_unavailable"),
     ],
-    ids=["no-session", "session-gone-at-the-gate", "no-service", "no-step-up"],
+    ids=["no-session", "session-gone", "no-service", "no-auth", "no-session-store", "no-step-up"],
 )
 def test_unauthenticated_or_unwired_is_refused_before_any_read(
     wired: dict[str, Any], status: int, code: str, spec: dict[str, Any]
 ) -> None:
-    """Nothing is wired on the fake backend (no store): never an unchecked disable."""
+    """Never an unchecked disable: 501 on the fake backend, 503 for sessions without a step-up."""
     w = _World()
-    if wired.get("auth") == "session-gone":
-        wired = {"auth": _Auth(w.log, session_error=SessionNotFound("gone"))}
     r = _client(w, _principal("owner", spec), **wired).delete(_PATH.format(TARGET))
     assert (r.status_code, r.json()["code"]) == (status, code)
     assert _untouched(w) and w.calls == []
@@ -292,21 +291,24 @@ def test_unauthenticated_or_unwired_is_refused_before_any_read(
     [
         (lambda: _World(_Rel(status=None)), 404, "not_found"),
         (lambda: _World(_Rel(commit_error=OSError("10.1.2.3 reset"))), 503, "store_unavailable"),
-        (lambda: _World(fail={"users.disable": [ValueError("bad")]}), 500, None),
-        (lambda: _World(fail={"users.disable": [UserLifecycleError("new")]}), 500, None),
     ],
-    ids=["unknown-user", "store-outage", "defect-is-no-outage", "unknown-refusal-is-a-defect"],
+    ids=["unknown-user", "store-outage"],
 )
 def test_store_answers_map_to_their_problem(
-    world: Any, status: int, code: str | None, spec: dict[str, Any]
+    world: Any, status: int, code: str, spec: dict[str, Any]
 ) -> None:
-    """A missing user is 404; an outage is a retryable 503 without driver text (the commit's
-    outcome is unknown, so a repeat is AC5's no-op if it landed); anything else, a refusal this
-    route does not know too, is a 500."""
+    """A missing user is 404; an outage is a retryable 503 with no driver text (outcome unknown)."""
     r = _client(world(), _principal("owner", spec)).delete(_PATH.format(MISSING))
-    assert r.status_code == status and "10.1.2.3" not in r.text and str(MISSING) not in r.text
-    if code is not None:
-        assert r.json()["code"] == code
-        _conforms(spec, r)
-    if status == 503:
-        assert r.headers["Retry-After"] == str(r.json()["retry_after_seconds"])
+    assert (r.status_code, r.json()["code"]) == (status, code)
+    _conforms(spec, r)
+    assert "10.1.2.3" not in r.text and str(MISSING) not in r.text
+    # `Retry-After` mirrors the body's `retry_after_seconds`, and is absent when there is none
+    assert r.headers.get("Retry-After", "") == str(r.json().get("retry_after_seconds", ""))
+
+
+@pytest.mark.parametrize("error", [ValueError("bad"), UserLifecycleError("new")])
+def test_anything_else_is_a_500(error: Exception, spec: dict[str, Any]) -> None:
+    """A defect, or a refusal this route does not know, is a 500 that names no id."""
+    w = _World(fail={"users.disable": [error]})
+    r = _client(w, _principal("owner", spec)).delete(_PATH.format(MISSING))
+    assert r.status_code == 500 and str(MISSING) not in r.text

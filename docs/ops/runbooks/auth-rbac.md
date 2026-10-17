@@ -195,7 +195,7 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    did not cause, or several for one session, mean something in the session sent a request the
    user never approved: nothing executed, but treat the session as exposed and have the user sign
    out everywhere (`POST $API/auth/logout` with `{"all_sessions": true}`). An Owner cannot revoke
-   another user's sessions today (§4); the reset below does, but locks the user out (step 4).
+   another user's sessions without locking them out (the disable, §4, or the reset, step 4).
 
    A live arm (`PUT /rules/{ruleId}/mode`) whose mismatch record cannot be written is the same
    `503`, counted in `rule_mode_transitions_total{result="audit_unavailable"}`. The route also
@@ -291,11 +291,15 @@ docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-
 
 ## 4. Disable a user and what follows (SR-029)
 
-**BLOCKED — not implemented** as a single action. The cascade (revoke sessions, close sockets,
-cancel pending actions, positions decision) is owned by E42-T04 (#965). `DELETE /users/{userId}` does
-not exist in `api/users.py`; the only user route there is `PUT /users/{userId}/roles`.
+`DELETE /users/{userId}` (`api/users.py`, E42-T04 #965) disables a user: Owner only, never your own
+account, after a step-up for action class `users` (§2). No position or order source is deployed
+yet, so it answers `409 positions_unknown` until it carries `acknowledge_unknown_positions=true`.
+One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
+then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
+a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the
+sweep, the scope refresh and the disarm.
 
-What exists and may be used as separate primitives (no endpoint wires them to a disable):
+What the cascade builds on, and what to read afterwards:
 
 - `SessionService.revoke_all` (`auth/session_service.py`) and the socket hub
   (`ws/revocation.py`). Metric `auth_session_revocations_total{reason}` counts revocations (served on
@@ -328,7 +332,7 @@ it (login refuses `disabled` only):
   the log line are the whole trail. Any increase means a session outlived a disable (SR-029):
   escalate with the log line.
 
-Until #965 lands, an operator cannot disable a user end to end. Escalate. The in-process drill
+Not proven end to end until the SR-029 drill (E09-X04, #2494) runs it. The in-process drill
 `services/api/tests/security/auth/test_disable_user_drill.py` is a test counterpart only.
 
 ## 5. Audit-chain verification failure
@@ -445,7 +449,7 @@ audit failure never hides a denial. `permission` is the permission code from a c
 generated vocabulary plus `other`).
 
 - `auth/scopes.py::enforce` (audit row `rbac.denied`). Only routes that call `enforce` count this
-  way, and today those are all `users:write` routes: `PUT /users/{userId}/roles`, the invite routes
+  way, and today those are all `users:write` routes: `PUT /users/{userId}/roles`, `DELETE /users/{userId}`, the invite routes
   (`POST /users`, `GET /users/invites`, `POST` and `DELETE /users/{userId}/invite`) and the TOTP
   reset routes.
 - The admin-area guard, `admin/http.py` (audit row `admin.area_entered` with outcome `denied`, not

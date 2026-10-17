@@ -15,10 +15,9 @@ the contract's `x-error-codes`. `account_access=None` fails closed with 501; the
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
 lookup: U25, SR-055), the step-up `users` (SR-025), the query (`purge=true` is E42-T10's: 400
-until it serves it), then the change. `user_disable` is the `UserDisableService`; None fails
-closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
-(`make_read_only_guard`) answers an un-elevated caller with the challenge before this handler
-runs, so this order is the second line: it alone decides an elevated caller.
+until it serves it), then the change. `user_disable=None` fails closed with 501. In the deployed
+app the path-gated `DANGEROUS_ROUTES` guard (`make_read_only_guard`) answers an un-elevated caller
+first, so this order is the second line: it alone decides an elevated caller.
 """
 
 from __future__ import annotations
@@ -44,7 +43,13 @@ from candleviewer.admin.errors import (
 from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
-from candleviewer.api.step_up import _AuthLike, _bearer, _unauthenticated, require_elevation_for
+from candleviewer.api.step_up import (
+    _AuthLike,
+    _bearer,
+    _unauthenticated,
+    require_elevation_for,
+    require_session_elevation,
+)
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -189,8 +194,7 @@ def _lifecycle_problem(exc: UserLifecycleError) -> JSONResponse:
 
 
 def _flag(request: Request, name: str) -> bool | None:
-    """The contract's boolean query parameter: absent is false, and `true` and `false` are the
-    only values (`None` for any other, or a repeated one)."""
+    """The contract's boolean flag: absent is false; only `true` or `false`, once, else None."""
     values = request.query_params.getlist(name) or ["false"]
     return {"true": True, "false": False}.get(values[0]) if len(values) == 1 else None
 
@@ -446,17 +450,16 @@ def make_users_router(
         return JSONResponse({"items": [_grant_json(grant) for grant in grants]})
 
     async def users_elevation(request: Request) -> JSONResponse | None:
-        """SR-025: a live `users` elevation, asked once RBAC and the self-target refusal are past
-        (no step-up cures those) and before any change: `None` when elevated, else the answer."""
-        if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
-            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no step-up service wired")
+        """SR-025: `None` when the session holds a live `users` elevation, else the answer."""
+        if auth is None or not auth.sessions_is_active:  # the fake backend: nothing authenticates
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no session service wired")
         try:  # no bearer is an unknown token: the same refusal
             record = await auth.sessions.authenticate_access_token(_bearer(request) or "")
         except AuthError:
             return _unauthenticated()
-        return await require_elevation_for(auth, str(record.id), "users")
+        return await require_session_elevation(auth, record.id, "users")  # 503: no step-up wired
 
-    @router.delete("/users/{userId}")
+    @router.delete("/users/{userId}")  # nosem: audit-write-required reason=audited-below-the-handler-in-UserDisableService-users.disable-ahead-and-rbac.denied-refusals-#965 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def delete_user(
         request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
     ) -> Response:

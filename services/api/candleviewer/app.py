@@ -1320,9 +1320,8 @@ def create_app(
         user_role_store = build_user_role_store(resolved)
     if account_access_store is None:
         account_access_store = build_account_access_store(resolved, ctx.audit)
-    # E42-T04 S6 (#965): `DELETE /users/{userId}`. The rule store is the one `ctx.rules` is bound
-    # to below; `None` on the fake backend (the route fails closed, 501). The lifespan drains the
-    # cascade steps still in flight (`app.state.user_disable`) before the modules they use stop.
+    # E42-T04 S6 (#965): `DELETE /users/{userId}` (None on the fake backend: 501). `rule_store` is
+    # the one `ctx.rules` binds below; the lifespan drains `app.state.user_disable` before it stops.
     rule_store = PostgresRuleStore(
         SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rules")
     )
