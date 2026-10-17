@@ -36,6 +36,7 @@ from sqlalchemy import event, text
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.drawings import (
+    BatchOp,
     CreateOp,
     DrawingFields,
     DrawingLayoutNotFoundError,
@@ -55,7 +56,7 @@ ROUNDS = 60
 WS_ROUNDS = 24  # even: the batch parks first (committed); odd: the delete parks first (rejected)
 DEADLOCK_ROUNDS = 3  # per writer and release timing
 DEADLOCK_MS = 100  # `deadlock_timeout` on the race engines (`_fast_deadlock_check`)
-_MAX_POLLS = 100_000  # a safety bound only: polls stop as soon as their condition holds
+_POLL_TIMEOUT_S = 30  # fails a missed wait fast; polls stop as soon as their condition holds
 Repos = tuple[SqlAlchemyDrawingRepository, SqlAlchemyWorkspaceRepository, str, str]
 
 
@@ -141,27 +142,69 @@ async def _until_waiting(
     ms: int = 0,
     done: asyncio.Task[str] | None = None,
 ) -> None:
-    """Return once the `side` engine's backend has waited on a lock for `ms` milliseconds, or once
-    `done` has finished (autocommit: a fresh snapshot of `pg_stat_activity` per poll); the unit
-    of work tags the backend `candleviewer:<side>`."""
-    for _ in range(_MAX_POLLS):
-        if done is not None and done.done():
-            return
-        cur = await poll.execute(
-            "SELECT count(*) FROM pg_stat_activity WHERE application_name = %s "
-            "AND wait_event_type = 'Lock' "
-            "AND clock_timestamp() - query_start >= %s * interval '1 ms'",
-            (f"candleviewer:{side}", ms),
-        )
-        if await cur.fetchone() != (0,):
-            return
-    raise AssertionError(f"{side} never waited on a lock")
+    """Poll `pg_stat_activity` (autocommit: a fresh snapshot per poll; the unit of work tags the
+    backend `candleviewer:<side>`) until one of three exits: the `side` engine's backend has
+    waited on a lock for `ms` milliseconds (return); `done` has finished (return: no wait is left
+    to see); or `_POLL_TIMEOUT_S` has passed (AssertionError, so a missed wait fails fast)."""
+    try:
+        async with asyncio.timeout(_POLL_TIMEOUT_S):
+            while done is None or not done.done():
+                cur = await poll.execute(
+                    "SELECT count(*) FROM pg_stat_activity WHERE application_name = %s "
+                    "AND wait_event_type = 'Lock' "
+                    "AND clock_timestamp() - query_start >= %s * interval '1 ms'",
+                    (f"candleviewer:{side}", ms),
+                )
+                if await cur.fetchone() != (0,):
+                    return
+    except TimeoutError:
+        raise AssertionError(f"{side} never waited on a lock") from None
 
 
 def _fast_deadlock_check(dbapi_connection: Any, _record: object) -> None:
     """Pool `connect` hook: run the deadlock check `DEADLOCK_MS` into a lock wait, not after 1 s
     (session level, outside any transaction, so it sticks)."""
     dbapi_connection.run_async(lambda c: c.execute("SET deadlock_timeout = '100ms'"))
+
+
+def _assert_one_cascade(
+    dsn: str, layouts: tuple[str, str], old: str, new: str, outcome: str
+) -> None:
+    """One soft-delete timestamp on both layouts and on `old`; `new` shares it when the batch
+    committed first, else it was never written (the delete won)."""
+    with _sync(dsn) as c:
+        lays: dict[str, object] = {
+            str(i): ts
+            for i, ts in c.execute(
+                "SELECT id::text, deleted_at FROM layouts WHERE id = ANY(%s::uuid[])",
+                (list(layouts),),
+            ).fetchall()
+        }
+        rows: dict[str, object] = {
+            str(i): ts
+            for i, ts in c.execute(
+                "SELECT id::text, deleted_at FROM drawings WHERE id = ANY(%s::uuid[])",
+                ([old, new],),
+            ).fetchall()
+        }
+    ts = lays[layouts[0]]
+    assert ts is not None and lays[layouts[1]] == ts and rows[old] == ts  # one cascade
+    if outcome == "committed":
+        assert rows[new] == ts  # committed first: the delete cascaded to the new row
+    else:
+        assert new not in rows  # the delete won: the batch wrote nothing
+
+
+def _assert_settled(dsn: str, owner: str, outcomes: dict[str, int], rounds: int) -> None:
+    """After the rounds: every one is counted and no live drawing of `owner` is left on a
+    soft-deleted layout."""
+    with _sync(dsn) as c:
+        stray = c.execute(
+            "SELECT count(*) FROM drawings d JOIN layouts l ON l.id = d.layout_id "
+            "WHERE d.owner_user_id = %s AND d.deleted_at IS NULL AND l.deleted_at IS NOT NULL",
+            (owner,),
+        ).fetchone()
+    assert stray == (0,) and sum(outcomes.values()) == rounds, outcomes
 
 
 async def _release(gate: asyncio.Event) -> str:
@@ -223,7 +266,7 @@ async def test_a_batch_racing_the_soft_delete_of_its_layout_never_leaves_a_live_
         lid = await _layout(workspaces, owner, wid)
         old, new = str(uuid.uuid4()), str(uuid.uuid4())
         token = (await drawings.create(owner, old, _f(lid))).updated_at
-        ops = [CreateOp(new, _f(lid)), UpdateOp(old, token, _f(lid))]
+        ops: list[BatchOp] = [CreateOp(new, _f(lid)), UpdateOp(old, token, _f(lid))]
         held.update(batch=asyncio.Event(), delete=asyncio.Event())
         go, mode = asyncio.Event(), n % 3  # 0: together, 1: batch locks first, 2: delete first
         batch = _parked(held["delete"] if mode == 2 else go, drawings.apply_batch(owner, ops))
@@ -239,20 +282,14 @@ async def test_a_batch_racing_the_soft_delete_of_its_layout_never_leaves_a_live_
                 "SELECT id::text, deleted_at FROM drawings WHERE id = ANY(%s::uuid[])",
                 ([old, new],),
             ).fetchall()
-        rows = dict(got_rows)
+        rows: dict[str, object] = {str(i): ts for i, ts in got_rows}
         assert ts is not None and ts[0] is not None  # L is soft-deleted in every round
         assert rows[old] == ts[0]  # the pre-existing drawing went with L
         if outcome == "committed":
             assert rows[new] == ts[0]  # committed first: the delete cascaded to the new row
         else:
             assert new not in rows  # the delete won: the batch found L gone and wrote nothing
-    with _sync(pg_dsn) as c:
-        stray = c.execute(
-            "SELECT count(*) FROM drawings d JOIN layouts l ON l.id = d.layout_id "
-            "WHERE d.owner_user_id = %s AND d.deleted_at IS NULL AND l.deleted_at IS NOT NULL",
-            (owner,),
-        ).fetchone()
-    assert stray == (0,) and sum(outcomes.values()) == ROUNDS, outcomes
+    _assert_settled(pg_dsn, owner, outcomes, ROUNDS)
     print("LAYOUT_RACE_OUTCOMES=" + repr(outcomes))
 
 
@@ -264,7 +301,9 @@ async def test_a_two_layout_batch_racing_a_workspace_soft_delete_never_leaves_a_
 
     def count(_c: object, _cur: object, statement: str, *_rest: object) -> None:
         if "FROM layouts" in statement:
-            checks[0] += 1  # the batch's layout check; a 40P01 retry would run it again
+            # `checks[0]` counts the drawings engine's `FROM layouts` statements: the batch runs
+            # one (its layout check) per attempt, so a 40P01 retry would make it 2.
+            checks[0] += 1
 
     event.listen(drawings._relational._engine.sync_engine, "before_cursor_execute", count)
     plain = pg_dsn.replace("postgresql+asyncpg", "postgresql")
@@ -280,7 +319,7 @@ async def test_a_two_layout_batch_racing_a_workspace_soft_delete_never_leaves_a_
             await _layout(workspaces, owner, wid, l2)
             old, new = str(uuid.uuid4()), str(uuid.uuid4())
             token = (await drawings.create(owner, old, _f(l2))).updated_at
-            ops = [CreateOp(new, _f(l1)), UpdateOp(old, token, _f(l2))]
+            ops: list[BatchOp] = [CreateOp(new, _f(l1)), UpdateOp(old, token, _f(l2))]
             batch_first = n % 2 == 0
             with _sync(pg_dsn, autocommit=False) as third:
                 if batch_first:  # the batch's insert of `new` waits for this transaction
@@ -305,28 +344,8 @@ async def test_a_two_layout_batch_racing_a_workspace_soft_delete_never_leaves_a_
             assert outcome == ("committed" if batch_first else "rejected"), (n, outcome)
             assert checks[0] == 1, (n, checks)  # the layout check ran once: no 40P01 retry
             outcomes[outcome] += 1
-            with _sync(pg_dsn) as c:
-                lays = dict(c.execute(
-                    "SELECT id::text, deleted_at FROM layouts WHERE id = ANY(%s::uuid[])",
-                    ([l1, l2],),
-                ).fetchall())  # fmt: skip
-                rows = dict(c.execute(
-                    "SELECT id::text, deleted_at FROM drawings WHERE id = ANY(%s::uuid[])",
-                    ([old, new],),
-                ).fetchall())  # fmt: skip
-            ts = lays[l1]
-            assert ts is not None and lays[l2] == ts and rows[old] == ts  # one cascade
-            if outcome == "committed":
-                assert rows[new] == ts  # committed first: the delete cascaded to the new row
-            else:
-                assert new not in rows  # the delete won: the batch wrote nothing
-    with _sync(pg_dsn) as c:
-        stray = c.execute(
-            "SELECT count(*) FROM drawings d JOIN layouts l ON l.id = d.layout_id "
-            "WHERE d.owner_user_id = %s AND d.deleted_at IS NULL AND l.deleted_at IS NOT NULL",
-            (owner,),
-        ).fetchone()
-    assert stray == (0,) and sum(outcomes.values()) == WS_ROUNDS, outcomes
+            _assert_one_cascade(pg_dsn, (l1, l2), old, new, outcome)
+    _assert_settled(pg_dsn, owner, outcomes, WS_ROUNDS)
     print("WORKSPACE_RACE_OUTCOMES=" + repr(outcomes))
 
 
@@ -340,14 +359,16 @@ async def test_two_layout_writers_lock_in_id_order_so_a_batch_never_deadlocks(
 
     def count(_c: object, _cur: object, statement: str, *_rest: object) -> None:
         if "FROM layouts" in statement:
-            checks[0] += 1  # the batch's layout check; a 40P01 rerun would run it again
+            # `checks[0]` counts the drawings engine's `FROM layouts` statements: the batch runs
+            # one (its layout check) per attempt, so a 40P01 rerun would make it 2.
+            checks[0] += 1
 
     event.listen(drawings._relational._engine.sync_engine, "before_cursor_execute", count)
     for rel in (drawings._relational, workspaces._relational):
         event.listen(rel._engine.sync_engine, "connect", _fast_deadlock_check)
         await rel.dispose()  # reconnect: every connection now has the short deadlock_timeout
         async with rel.unit_of_work() as uow:
-            got = (await uow.session.execute(text("SHOW deadlock_timeout"))).scalar_one()
+            got: str = (await uow.session.execute(text("SHOW deadlock_timeout"))).scalar_one()
             assert got == f"{DEADLOCK_MS}ms"
     plain = pg_dsn.replace("postgresql+asyncpg", "postgresql")
     async with await psycopg.AsyncConnection.connect(plain, autocommit=True) as poll:
@@ -360,7 +381,7 @@ async def test_two_layout_writers_lock_in_id_order_so_a_batch_never_deadlocks(
             await _layout(workspaces, owner, wid, lo, name="b", default=True)
             old, new = str(uuid.uuid4()), str(uuid.uuid4())
             token = (await drawings.create(owner, old, _f(hi))).updated_at
-            ops = [CreateOp(new, _f(lo)), UpdateOp(old, token, _f(hi))]
+            ops: list[BatchOp] = [CreateOp(new, _f(lo)), UpdateOp(old, token, _f(hi))]
             take = LayoutFields("a", "1x1", None, True, False, False, None, True, ())
             write = (
                 workspaces.soft_delete_workspace(owner, wid)
@@ -379,6 +400,8 @@ async def test_two_layout_writers_lock_in_id_order_so_a_batch_never_deadlocks(
                         await _until_waiting(poll, "workspaces-race", ms=3 * DEADLOCK_MS)
                         await _until_waiting(poll, "drawings-race", ms=3 * DEADLOCK_MS, done=batch)
                     third.rollback()
+            # The outcome relies on Postgres granting the batch's FOR SHARE on `lo` alongside the
+            # writer's queued FOR NO KEY UPDATE (the third connection holds a compatible FOR SHARE).
             assert (batch.result(), checks[0]) == ("committed", 1)  # first attempt, no rerun
             with _sync(pg_dsn) as c:
                 kept = c.execute(
