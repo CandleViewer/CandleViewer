@@ -32,6 +32,7 @@ export interface ThemeProviderProps {
 /**
  * Connects a theme store to `document.documentElement`. It renders no DOM of its own and its context
  * value (the store) never changes, so a switch re-renders only components that read a value.
+ * The store is fixed for the provider's lifetime (remount to change it).
  */
 export function ThemeProvider({ children, store, options }: ThemeProviderProps): JSX.Element {
   const [active] = useState(() => store ?? createThemeStore(options));

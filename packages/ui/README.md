@@ -86,7 +86,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   embeds it byte-for-byte as its only inline script and allows it by hash (a `'sha256-…'` source in
   `script-src`), never `'unsafe-inline'`.
 - `HIGH_CONTRAST_SHORTCUT` (`Ctrl+Shift+H`) and `toggleHighContrastAnnounced` — the shortcut contract the
-  E10 hotkey registry calls; each toggle is announced through one polite live region.
+  E10 hotkey registry calls; each toggle is announced through one polite live region that the provider
+  pre-renders (bootstraps without the provider, like the E10 registry, call `mountLiveRegion()` at startup).
 - `theme.css` — density pointers, the `--cv-motion-scale` hook (the motion recipes are `TODO(#3174)`) and
   the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks. Import it next to the token CSS.
 - Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
