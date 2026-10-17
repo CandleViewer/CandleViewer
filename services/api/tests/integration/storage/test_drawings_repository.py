@@ -351,6 +351,52 @@ async def test_batch_success_collects_results_in_op_order(
     assert await repo.get(a, d) is None
 
 
+def _fields_at(*times: datetime) -> DrawingFields:
+    """A trendline through `times`, in the order given, with the anchors the API derives from
+    its points: the earliest and the latest point time."""
+    return dataclasses.replace(
+        _f(),
+        geometry={"points": [{"t": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "p": "1.5"} for t in times]},
+        anchor_start=min(times),
+        anchor_end=max(times),
+    )
+
+
+def _anchors_of(dsn: str, drawing_id: str) -> tuple[datetime, datetime]:
+    """`anchor_start`, `anchor_end` as the table holds them; the repository never returns them."""
+    with _sync(dsn) as c:
+        row = c.execute(
+            "SELECT anchor_start, anchor_end FROM drawings WHERE id = %s", (drawing_id,)
+        ).fetchone()
+    assert row is not None
+    start, end = row
+    assert isinstance(start, datetime) and isinstance(end, datetime)
+    return start, end
+
+
+async def test_every_write_stores_the_earliest_and_latest_point_time_as_the_anchors(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """#2994: create, `update` (PUT) and a batch create and update each write `anchor_start` and
+    `anchor_end` (the `ix_dr_range` columns) from their own points. Each write is followed by a
+    read of the two columns straight from `drawings`, the points are given latest first so it is
+    the min and max that are pinned, and every write moves the anchors, so one that leaves the
+    old values (or none) fails."""
+    a, rid, bid = _user(pg_dsn), str(uuid.uuid4()), str(uuid.uuid4())
+    t = [_T + timedelta(days=n, minutes=7 * n) for n in range(8)]  # eight distinct instants
+    made = await repo.create(a, rid, _fields_at(t[1], t[0]))
+    assert _anchors_of(pg_dsn, rid) == (t[0], t[1])
+    put = await repo.update(a, rid, _fields_at(t[3], t[2]), if_match=made.updated_at)
+    assert _anchors_of(pg_dsn, rid) == (t[2], t[3])
+    ops: list[BatchOp] = [
+        CreateOp(bid, _fields_at(t[5], t[4])),
+        UpdateOp(rid, put.updated_at, _fields_at(t[7], t[6])),
+    ]
+    await repo.apply_batch(a, ops)
+    assert _anchors_of(pg_dsn, bid) == (t[4], t[5])  # the batch create
+    assert _anchors_of(pg_dsn, rid) == (t[6], t[7])  # the batch update
+
+
 async def test_list_keyset_paging_and_layout_filter(
     repo: SqlAlchemyDrawingRepository, pg_dsn: str
 ) -> None:
