@@ -94,7 +94,7 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   is one conditional `UPDATE ... RETURNING` of the session row (`consume_single_use`, #2895), so
   concurrent requests cannot share one code: of two, one spends it and the other is refused
   `step_up_required` (#2798, proven on Postgres in #2919); the other step-up writes (challenge,
-  elevation, strike, downgrade lift) apply a pure change to the row as read `FOR NO KEY UPDATE` in
+  elevation, strike, downgrade lift) apply their change to the row as read `FOR NO KEY UPDATE` in
   the same transaction (`update_step_up_state`), so none writes a spent code back; B16 records no
   spend: #2799); 3 wrong password/code attempts make the session read-only for 5 min.
 - **Rotation points that exist**: refresh (new session row, old marked `rotated`, reuse revokes the
