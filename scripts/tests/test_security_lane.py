@@ -43,7 +43,25 @@ SCANS = {
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
 OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
-NODE_INSTALL = re.compile(r"\b(?:pnpm|npm|yarn)\s+(?:i|install|ci|add)\b")
+NODE_TOOL = re.compile(r"(?:^|[\s;&|(])(?:pnpm|npm|npx|yarn|corepack)(?=\s|$)")
+# Every node package-manager command line in the workflow. Any other one (an install under another
+# spelling or with options before the verb, `pnpm rebuild`, a bare `yarn`, `npx`) fails the pin.
+NODE_COMMANDS = {
+    "corepack enable && corepack prepare pnpm@12.5.1 --activate",
+    "pnpm install --frozen-lockfile --ignore-scripts",
+    "pnpm audit --json > npm-audit.json || true",
+    "pnpm licenses list --json --prod > pnpm-licenses.json",
+}
+# Job -> the actions it uses (SHA pins aside), so no install action joins a job unnoticed.
+BASE_ACTIONS = {"actions/checkout", "actions/setup-python"}
+CODEQL_ACTION = "github/codeql-action/"
+ACTIONS = {
+    "codeql": BASE_ACTIONS | {CODEQL_ACTION + a for a in ("init", "analyze", "upload-sarif")},
+    "semgrep-bandit": BASE_ACTIONS | {CODEQL_ACTION + "upload-sarif"},
+    "gitleaks": BASE_ACTIONS,
+    "read-only-scans": BASE_ACTIONS | {"actions/setup-node", "actions/upload-artifact"},
+    "trivy": BASE_ACTIONS | {"aquasecurity/trivy-action", CODEQL_ACTION + "upload-sarif"},
+}
 SCANNERS = ('"semgrep==', '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
@@ -120,11 +138,19 @@ def test_verdict_runs_last_and_no_folded_step_uses_failure(job: str) -> None:
 
 
 def test_the_shared_pnpm_install_never_runs_lifecycle_scripts() -> None:
-    # read-only-scans installs once for four scans, so no package script may run there (C-12.3).
-    steps = [s for job in JOBS for s in _steps(job)]
-    installs = [s["run"] for s in steps if NODE_INSTALL.search(s.get("run", ""))]
-    assert installs == ["pnpm install --frozen-lockfile --ignore-scripts"]
-    assert not any(s.get("with", {}).get("run_install") for s in steps)
+    # read-only-scans installs once for four scans, so no package script may run there (C-12.3):
+    # every node command line is a known one, and no job gains an action that could install.
+    lines = {
+        line.strip()
+        for job in JOBS
+        for step in _steps(job)
+        for line in step.get("run", "").splitlines()
+        if NODE_TOOL.search(line) and not line.strip().startswith("#")
+    }
+    assert lines == NODE_COMMANDS
+    assert {job: {s["uses"].split("@")[0] for s in _steps(job) if "uses" in s} for job in JOBS} == (
+        ACTIONS
+    )
 
 
 def test_freeze_proposal_upload_keys_on_the_freeze_step_outcome() -> None:
