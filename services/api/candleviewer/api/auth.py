@@ -40,10 +40,11 @@ writes its audit records (C-2.9), then one transaction spends the code,
 satisfies the challenge and revokes every MFA method of the user; every
 session of the user is revoked next and the new one minted. It used to answer
 200 with no session while it spent the code, which locked the user out.
-Every refusal is the contract's 401 (it declares no 503). When the session
-step fails after that transaction, the 401 tells the client to sign in again
-with the password, which is enrolment-only with no method left (error log
-`auth.recovery.completed_unminted`; runbook `auth-rbac.md` section 1).
+Every refusal is the contract's 401, a backend that is not wired and an audit
+record that cannot be written included (its 503 is #2152's `AuthUnavailable`).
+When the session step fails after that transaction, the 401 tells the client to
+sign in again with the password, which is enrolment-only with no method left
+(error log `auth.recovery.completed_unminted`; runbook `auth-rbac.md` section 1).
 
 Audit `actor_ip`, the SR-015 per-address sign-in throttle key and the minted
 session's `ip` are `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
@@ -411,8 +412,8 @@ def make_auth_router(
     ) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
         """The audit writer and the identity provider when every backend an enrolment-only
         sign-in (*mfa* False) or an enrolment step or recovery (*mfa* True) needs is wired, else
-        a *status* refusal (503; 401 on recovery, whose contract declares no 503): nothing here
-        is minted or changed without its write-ahead audit record (C-2.9)."""
+        a *status* refusal (503; 401 on recovery, whose 503 is #2152's `AuthUnavailable`):
+        nothing here is minted or changed without its write-ahead audit record (C-2.9)."""
         wired = auth_service.is_active and auth_service.sessions_is_active
         if identity is None or not wired or (mfa and not auth_service.mfa_is_active):
             return _problem(status, title, "enrolment backend is not wired")
@@ -676,7 +677,7 @@ def make_auth_router(
         documented 401. A failure after the commit mints nothing: its 401 tells the client to
         sign in again with the password, which is enrolment-only once no method is left, and
         the error log `auth.recovery.completed_unminted` names the user and the sessions."""
-        # 401 is this operation's documented refusal (no 503 in its contract), as on
+        # 401 is this operation's documented refusal (its 503 is #2152's `AuthUnavailable`), as on
         # `/auth/mfa/verify`: nothing is checked or spent that could not be audited and minted.
         ready = _enrolment_ready(mfa=True, status=401, title=_RECOVERY_FAILED)
         if isinstance(ready, JSONResponse):

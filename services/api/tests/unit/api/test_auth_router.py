@@ -353,7 +353,7 @@ def _recovery_app(mfa_outcome: object, audit_service: object) -> tuple[FastAPI, 
 def test_mfa_recovery_fails_closed_until_every_backend_is_wired() -> None:
     """#2344: a recovery that could not mint the session checks and spends nothing (it used to
     answer 200 with no session while the code was spent). The refusal is the operation's
-    documented 401: `authMfaRecovery` declares no 503."""
+    documented 401 (the 503 `authMfaRecovery` declares is #2152's `AuthUnavailable`)."""
     check = MfaRecoveryCheck(user_id=uuid.uuid4(), challenge_id=uuid.uuid4(), code_id="c")
     unwired = _FakeAuthService(InvalidCredentials("n/a"), mfa_outcome=check)
     app = FastAPI()
