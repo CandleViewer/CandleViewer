@@ -1,5 +1,5 @@
 """E42-T04 S4 (#965): `UserDisableService` over the S3 store's fake unit of work (Postgres: S3's
-integration tests). One log orders every port call."""
+integration tests). One log orders every port call; `!open` marks a call before the commit."""
 
 from __future__ import annotations
 
@@ -8,33 +8,58 @@ import uuid
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from structlog.testing import capture_logs
 
 from candleviewer.admin import errors
+from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.admin.user_disable import DisableResult, UserDisableService
 from candleviewer.audit.writer import AuditUnavailable
+from candleviewer.auth.errors import InviteNotFound
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.invite_repository import InviteAudit
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.session_chart import SessionChart
+from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
-from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
+from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
+from tests.conftest import RecordingAuditSink
+from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_step_up import _T0 as _NOW
-from tests.unit.storage.test_user_lifecycle_sqlalchemy import _A, _B, _GUARD_S, _S1, _Rel, _store
+from tests.unit.auth.test_step_up import _session
+from tests.unit.storage.test_user_lifecycle_sqlalchemy import (
+    _A,
+    _B,
+    _GUARD_S,
+    _S1,
+    _S2,
+    _Rel,
+    _store,
+)
 
 _OWNER = PrincipalSnapshot(uuid.uuid4(), frozenset({"owner"}), frozenset(Permission))
 _MANAGER = PrincipalSnapshot(uuid.uuid4(), frozenset({"manager"}), frozenset())
 _TARGET, _RID = uuid.uuid4(), uuid.uuid4()
-_AUDIT_DOWN = errors.LifecycleAuditUnavailableError
+_POST_COMMIT = ("socket", "sweep", "b16", "invite")
+_STEPS = ("socket_close", "session_sweep", "b16_revoke", "invite_revoke")
+_AUDIT_DOWN, _INVITE = errors.LifecycleAuditUnavailableError, ("invite_revoke",)
 _OPEN, _CLOSE = ("success", None, "disabled"), ("failure", "not_applied", "active")
 _UNKNOWN = ("failure", "outcome_unknown", None)  # the commit may have gone through: no after state
 
 
+def _revoked(record: SessionRecord) -> SessionRecord:
+    return record.model_copy(update={"revoked_at": _NOW, "revoked_reason": "user_disabled"})
+
+
 class _World:
-    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` raises."""
+    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` and `invite` raise."""
 
     source = "not_deployed"  # the position provider's
 
@@ -45,17 +70,23 @@ class _World:
         fail: dict[str, list[BaseException]] | None = None,
         positions: int | Exception | None = 0,
         orders: int | None = 0,
+        invite: Exception | None = None,
         store: Any = None,
         **ports: Any,
     ) -> None:
         self.log, self.calls = list[str](), list[dict[str, Any]]()
-        self.rel, self.fail = rel or _Rel(), fail or {}
+        self.rel, self.fail, self.invite = rel or _Rel(), fail or {}, invite
         self.positions, self.orders = positions, orders
         self.svc = UserDisableService(
             store or _store(self.rel),
             self,
             positions=self,
             orders=self,
+            sessions=ports.get("sessions", self),
+            session_rows=ports.get("rows", self),
+            chart=ports.get("chart", SimpleNamespace(revoke=self.record)),
+            publish_revocation=ports.get("publish", self.publish),
+            invites=ports.get("invites", SimpleNamespace(revoke=self.revoke_invite)),
             clock=lambda: _NOW,
             **{k: v for k, v in ports.items() if k.endswith("_s")},
         )
@@ -79,8 +110,72 @@ class _World:
         self.log.append("orders")
         return self.orders
 
+    def mark(self, entry: str) -> None:
+        self.log.append(entry if self.rel.committed else f"{entry}!open")
+
+    async def publish(self, session_id: str, reason: str) -> None:
+        self.mark(f"socket:{reason}")
+
+    async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]:
+        self.mark(f"sweep:{reason}")
+        return ()
+
+    async def find_by_id(self, session_id: str) -> SessionRecord | None:
+        return _revoked(_session(_TARGET)).model_copy(update={"id": uuid.UUID(session_id)})
+
+    async def record(self, record: SessionRecord, now: object, reason: str) -> None:
+        self.mark(f"b16:{reason}")
+
+    async def revoke_invite(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
+        self.mark("invite")  # as `InviteService.revoke`: the hook runs only for an open invite
+        if self.invite is not None:
+            raise self.invite
+        await audit(user_id, "viewer")
+
     async def disable(self, actor: PrincipalSnapshot = _OWNER, **kw: Any) -> DisableResult:
         return await self.svc.disable(_TARGET, actor=actor, **kw)
+
+    def post_commit(self) -> list[str]:
+        return [entry for entry in self.log if entry.startswith(_POST_COMMIT)]
+
+
+async def test_step_order() -> None:
+    """R7: exposure, `users.disable` before the commit, then sockets, sweep, B16 and invite."""
+    w = _World(_Rel(status="invited", sessions=(_S1, _S2)))
+    assert await w.disable() == DisableResult(changed=True)
+    assert w.log == [
+        *("positions", "orders", "users.disable", "socket:user_disabled", "socket:user_disabled"),
+        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled", "invite"),
+        "users.invite_revoked",
+    ]
+    (invite,) = w.of("users.invite_revoked")
+    assert (invite["actor_user_id"], invite["object_id"]) == (_OWNER.user_id, str(_TARGET))
+    assert (invite["reason"], invite["after_state"]) == ("user_disabled", {"role": "viewer"})
+
+
+async def test_b16_revoke_per_session(b16_audit: RecordingAuditSink) -> None:
+    """R5 on the real B16 chart and hub: one `auth.session_revoked` and one 4403 per session."""
+    repo, hub, closed = FakeSessionRepository(), RevocationHub(), dict[str, tuple[str, int]]()
+    rows = [_revoked(_session(_TARGET)), _revoked(_session(_TARGET)), _session(_TARGET)]
+    for row in rows:
+        await repo.create_session(row)
+
+        async def close(frame: dict[str, Any], code: int, sid: str = str(row.id)) -> None:
+            closed[sid] = (frame["p"]["reason"], code)
+
+        hub.register(str(row.id), close)
+
+    async def publish(session_id: str, reason: str) -> None:
+        await hub.revoke(session_id, reason)
+
+    sessions = SessionService(repo, Hasher(), clock=lambda: _NOW, publish_revocation=publish)
+    rel = _Rel(sessions=[r.id for r in rows[:2]])
+    w = _World(rel, sessions=sessions, rows=repo, chart=SessionChart(), publish=publish)
+    assert await w.disable() == DisableResult(changed=True)
+    assert sorted((c["action"], c["session_id"], c["reason"]) for c in b16_audit.calls) == sorted(
+        ("auth.session_revoked", str(r.id), "user_disabled") for r in rows
+    )
+    assert closed == {str(r.id): ("user_disabled", CLOSE_USER_DISABLED) for r in rows}
 
 
 @pytest.mark.parametrize(
@@ -96,11 +191,11 @@ class _World:
 async def test_store_failure_no_post_commit(
     world: Callable[[], _World], error: type[Exception]
 ) -> None:
-    """UL1-T1, UL1-D1, AC8: no record unless the change committed."""
+    """UL1-T1, UL1-D1, AC8: no post-commit step and no record unless the change committed."""
     w = world()
     with pytest.raises(error):
         await w.disable()
-    assert not w.rel.committed and w.calls == []
+    assert not w.rel.committed and w.calls == [] and w.post_commit() == []
 
 
 def _records(w: _World) -> list[tuple[Any, ...]]:  # each record's outcome, reason, after status
@@ -128,7 +223,7 @@ async def test_unapplied_record_is_closed(
     with pytest.raises(error):
         await w.disable()
     assert _records(w) == records
-    assert not w.rel.committed
+    assert w.post_commit() == [] and not w.rel.committed
 
 
 @pytest.mark.parametrize(
@@ -241,7 +336,7 @@ async def test_open_orders_left_and_counted(
     with pytest.raises(errors.PositionsUnknownError) as error:
         await refused.disable()
     assert (error.value.code, error.value.source) == ("positions_unknown", "not_deployed")
-    assert not refused.rel.committed and refused.calls == []
+    assert not refused.rel.committed and refused.calls == [] == refused.post_commit()
     acked = _World(positions=positions, orders=orders)
     assert await acked.disable(acknowledge_unknown_positions=True) == DisableResult(changed=True)
     after = acked.of("users.disable")[0]["after_state"]
@@ -266,13 +361,14 @@ async def test_positions_decision_never_flattens() -> None:
 
 
 def _keys(call: dict[str, Any]) -> tuple[Any, ...]:  # the record's keys, then its states'
-    return call["action"], set(call), set(call["before_state"]), set(call["after_state"] or ())
+    states = [set(call.get(name) or ()) for name in ("before_state", "after_state")]
+    return call["action"], set(call), *states
 
 
 async def test_lifecycle_audit_has_no_pii() -> None:
     """UL-F1, O6: lifecycle records carry ids, status, roles and counts only (no email, name or
     address; the actor label is the id), so any new key fails here."""
-    done, closed = _World(), _World(fail={"users.disable": [TimeoutError()]})
+    done, closed = _World(_Rel(status="invited")), _World(fail={"users.disable": [TimeoutError()]})
     lost = _World(_Rel(commit_error=TimeoutError("commit lost")))
     assert await done.disable() == DisableResult(changed=True)
     with pytest.raises(_AUDIT_DOWN):
@@ -287,17 +383,160 @@ async def test_lifecycle_audit_has_no_pii() -> None:
     after |= {"open_order_count", "acknowledged_unknown_positions"}
     assert [_keys(c) for c in calls] == [
         ("users.disable", record, state | {"grants"}, after),
+        ("users.invite_revoked", who | {"after_state", "reason"}, set(), {"role"}),
         ("users.disable", record | {"reason"}, state, state),
         ("users.disable", record | {"reason"}, state, set()),
     ]
     assert {c["actor_label"] for c in calls} == {str(_OWNER.user_id)}
 
 
-async def test_already_disabled_is_a_noop() -> None:
-    """AC5: a repeat needs no acknowledgement and commits nothing, unaudited."""
+@pytest.mark.parametrize(
+    ("status", "kw", "records", "failed"),
+    [
+        ("invited", {}, 1, ()),
+        ("invited", {"invite": InviteNotFound("none open")}, 0, ()),
+        ("invited", {"invite": OSError("invites down")}, 0, _INVITE),
+        ("invited", {"fail": {"users.invite_revoked": [AuditUnavailable("down")]}}, 0, _INVITE),
+        ("active", {}, 0, ()),
+    ],
+    ids=["invited", "invite_already_gone", "revoke_failed", "record_refused", "active"],
+)
+async def test_invited_revokes_invite(
+    status: str, kw: dict[str, Any], records: int, failed: tuple[str, ...]
+) -> None:
+    """R6, UL1-E4, C-2.9: the invite store writes one record ahead, only if one is open."""
+    w = _World(_Rel(status=status), **kw)
+    assert await w.disable() == DisableResult(True, failed)
+    assert len(w.of("users.invite_revoked")) == records
+    assert ("invite" in w.log) == (status == "invited")
+
+
+async def test_already_disabled_is_a_noop_that_sweeps_again() -> None:
+    """AC5: a repeat needs no acknowledgement, commits nothing (`!open`), sweeps again (SR-029)."""
     w = _World(_Rel(status="disabled"), positions=None)
     assert await w.disable() == DisableResult(changed=False)
-    assert w.calls == [] and w.log == ["positions", "orders"] and not w.rel.committed
+    assert w.calls == [] and w.log == ["positions", "orders", "sweep:user_disabled!open"]
+
+
+async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> None:
+    """AC5, S3: the commit failed on the wire but had gone through (`outcome_unknown`), and the
+    ids it revoked died with the error. The retry finds the user disabled: it writes no record,
+    commits nothing and has no ids, so it only sweeps (SR-029). Those two sessions get no socket
+    close and no B16 REVOKE from it: their sockets stay open until the access token expires."""
+    w = _World(_Rel(sessions=(_S1, _S2), commit_error=TimeoutError("commit lost")))
+    with pytest.raises(TimeoutError):
+        await w.disable()
+    assert w.post_commit() == [] and w.calls[-1]["reason"] == "outcome_unknown"
+    w.rel.rows[LOCK_USER] = [("disabled",)]  # the commit had gone through after all
+    assert await w.disable() == DisableResult(changed=False)
+    assert len(w.of("users.disable")) == 2 and w.post_commit() == ["sweep:user_disabled!open"]
+
+
+async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
+    """R7: a request cancelled after the commit cannot cut the steps short: shielded, they run."""
+    gate = asyncio.Event()
+
+    async def publish(*_: Any) -> None:  # the request goes away while the first step runs
+        call.cancel()
+        await gate.wait()
+
+    w = _World(_Rel(status="invited", sessions=(_S1,)), publish=publish)
+    call = asyncio.create_task(w.disable())
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    gate.set()
+    await w.svc.drain()
+    assert w.post_commit() == ["sweep:user_disabled", "b16:user_disabled", "invite"]
+
+
+async def test_cancelled_steps_are_failed_then_reraised() -> None:
+    """R7: steps that a cancellation of their task (shutdown) cuts off are failed, not skipped;
+    the cancellation then reaches the caller, and `drain` returns."""
+
+    async def publish(*_: Any) -> None:  # the steps' task is cancelled while a step runs
+        (steps,) = [t for t in asyncio.all_tasks() if t.get_name() == "user-disable-steps"]
+        steps.cancel()
+        await asyncio.Event().wait()
+
+    w = _World(_Rel(status="invited", sessions=(_S1,)), publish=publish)
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await w.disable()
+    await w.svc.drain()
+    lines = [(e["step"], e["outcome"], e["error"]) for e in logs if "step" in e]
+    assert lines == [(step, "failed", "CancelledError") for step in _STEPS]
+
+
+class _Fatal(BaseException):
+    """Not an `Exception`: like a cancellation, it leaves the steps' task once counted."""
+
+
+async def test_steps_raise_after_the_caller_left_is_logged() -> None:
+    """R7: a raise out of the steps' task (only a non-`Exception` gets out) is logged at error,
+    though no caller awaits it."""
+
+    async def publish(*_: Any) -> None:  # the request goes away while the first step runs
+        call.cancel()
+
+    sweep = SimpleNamespace(revoke_all=Mock(side_effect=_Fatal))  # no step isolates a non-Exception
+    w = _World(_Rel(sessions=(_S1,)), publish=publish, sessions=sweep)
+    call = asyncio.create_task(w.disable())
+    with capture_logs() as logs:
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        await w.svc.drain()
+    lines = [(e["log_level"], e["error"]) for e in logs if e["event"].endswith("steps_failed")]
+    assert lines == [("error", "_Fatal")]
+
+
+def _steps(step: str, outcome: str) -> float:  # `cv_user_lifecycle_steps_total`, read as a delta
+    return float(user_lifecycle_steps_total.labels(step=step, outcome=outcome)._value.get())
+
+
+@pytest.mark.parametrize(
+    ("ports", "failed"),
+    [
+        ({"publish": Mock(side_effect=LookupError)}, "socket_close"),
+        ({"sessions": SimpleNamespace(revoke_all=Mock(side_effect=LookupError))}, "session_sweep"),
+    ],
+    ids=["sink", "sweep"],
+)
+async def test_port_that_raises_before_its_awaitable_fails_its_step_alone(
+    ports: dict[str, Any], failed: str
+) -> None:
+    """R7: a port that raises before it returns an awaitable (a plain function) is a failed run
+    of its own step, counted as failed (it was skipped, attempted 0); every other step still
+    runs, and the committed disable still answers the caller."""
+    w = _World(_Rel(status="invited", sessions=(_S1, _S2)), **ports)
+    counted = _steps(failed, "failed")
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(True, (failed,))
+    lines = [(e["step"], e["outcome"], e["error"]) for e in logs if "step" in e]
+    assert lines == [
+        (s, "failed", "LookupError") if s == failed else (s, "ok", None) for s in _STEPS
+    ]
+    assert _steps(failed, "failed") == counted + 1
+
+
+async def test_sink_that_raises_is_tried_for_every_session() -> None:
+    """R7: one session's sink raising does not stop the next session's socket close."""
+    w = _World(_Rel(sessions=(_S1, _S2)), publish=Mock(side_effect=LookupError))
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(True, _STEPS[:1])
+    (socket,) = [e for e in logs if e.get("step") == "socket_close"]
+    assert (socket["attempted"], socket["outcome"]) == (2, "failed")
+
+
+async def test_raise_outside_a_step_fails_the_rest_never_the_caller() -> None:
+    """R7: an `Exception` that no step isolates (here a sweep that answers with something the B16
+    loop cannot unpack) fails every step not yet logged; the committed disable still answers."""
+    sweep = SimpleNamespace(revoke_all=AsyncMock(return_value=7))
+    w = _World(_Rel(status="invited", sessions=(_S1,)), sessions=sweep)
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(True, _STEPS[2:])
+    lines = [(e["step"], e["outcome"], e["error"]) for e in logs if "step" in e]
+    assert lines == [(s, "ok", None) for s in _STEPS[:2]] + [
+        (s, "failed", "TypeError") for s in _STEPS[2:]
+    ]
 
 
 async def _hang(*_: Any, **__: Any) -> Any:
@@ -317,3 +556,23 @@ async def test_hung_count_is_unknown(read: str, monkeypatch: pytest.MonkeyPatch)
     ack = acked.disable(acknowledge_unknown_positions=True)
     assert await asyncio.wait_for(ack, _GUARD_S) == DisableResult(changed=True)
     assert acked.of("users.disable")[0]["after_state"][read] is None
+
+
+@pytest.mark.parametrize(
+    ("ports", "failed"),
+    [
+        ({"publish": _hang, "step_timeout_s": 0}, _STEPS[:1]),
+        ({"sessions": SimpleNamespace(revoke_all=_hang), "step_timeout_s": 0}, _STEPS[1:2]),
+        ({"chart": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[2:3]),
+        ({"invites": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[3:]),
+        ({"publish": _hang, "deadline_s": 0}, _STEPS),
+        ({"publish": _hang, "deadline_s": 0, "status": "active"}, _STEPS[:3]),
+        ({"rows": SimpleNamespace(find_by_id=AsyncMock(return_value=None))}, _STEPS[2:3]),
+    ],
+    ids=[*_STEPS, "deadline", "deadline_active", "b16_row_missing"],
+)
+async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple[str, ...]) -> None:
+    """R7: each await after the commit and all of them are bounded; hung, unreached or broken, a
+    step fails alone (an `active` user has no invite step to fail)."""
+    w = _World(_Rel(status=ports.get("status", "invited"), sessions=(_S1,)), **ports)
+    assert await w.disable() == DisableResult(True, failed)
