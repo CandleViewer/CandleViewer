@@ -165,6 +165,16 @@ class PositionStateProvider(Protocol):
 
 
 @dataclass(frozen=True)
+class PasswordVerdict:
+    """`verify_password`'s answer: whether the password verified, and, when this
+    failure is the one that locked the account (SR-016), until when. The caller
+    audits that lockout (`auth` may not import `audit`)."""
+
+    ok: bool
+    locked_until: datetime | None = None
+
+
+@dataclass(frozen=True)
 class StepUpGrant:
     action_class: str
     elevated_until: datetime
@@ -405,6 +415,16 @@ class StepUpService:
         record = await self._sessions.find_by_id(session_id)
         return None if record is None or record.is_revoked else record
 
+    async def _grantable(self, session_id: str) -> SessionRecord | None:
+        """The live row whose step-up grants still count. An idle-locked row's grants
+        are void from the lock itself (#2300; #2290 ruling rule 4d): this synchronous
+        check enforces it from the row (C-2.21), and `SessionService.unlock()` deletes
+        them in the write that lifts the lock."""
+        record = await self._live(session_id)
+        if record is None or record.is_idle_locked(now=self._clock()):
+            return None
+        return record
+
     async def _update(self, session_id: str, change: StepUpChange) -> SessionRecord:
         """Apply `change` to the step-up columns as the row holds them now (#2304)."""
         saved = await self._sessions.update_step_up_state(session_id, change)
@@ -523,8 +543,8 @@ class StepUpService:
         return challenge
 
     async def live_challenge(self, session_id: str) -> StepUpChallenge | None:
-        """The session's one live challenge, if any (#2304)."""
-        record = await self._live(session_id)
+        """The session's one live challenge, if any (#2304); an idle-locked row has none."""
+        record = await self._grantable(session_id)
         if record is None:
             return None
         return next(iter(_stored(record, self._clock(), _PENDING)), None)
@@ -533,33 +553,45 @@ class StepUpService:
         challenge = await self.live_challenge(session_id)
         return None if challenge is None else challenge.action_class
 
+    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict:
+        """The account password on login's Argon2id path and lockout counters
+        (SR-015, SR-016), as step-up checks it: a wrong password counts toward
+        the account lockout, and a locked or unknown account fails like a wrong
+        password. `POST /auth/unlock` (#2300) re-authenticates with it and audits
+        the lockout a wrong password applies (`locked_until`)."""
+        user = await self._users.find_by_id(user_id)
+        return await self._password_verdict(user, password, self._clock())
+
     async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
         """Password first (login's hasher + lockout counters), then TOTP.
 
         The TOTP step (and its replay guard) is only reached with a correct
         password, so a wrong password never burns a valid time step."""
         user = await self._users.find_by_id(user_id)
-        if not await self._password_ok(user, password, now):
+        if not (await self._password_verdict(user, password, now)).ok:
             return False
         return await self._verify(user_id, code, now)
 
-    async def _password_ok(self, user: UserRecord | None, password: str, now: datetime) -> bool:
+    async def _password_verdict(
+        self, user: UserRecord | None, password: str, now: datetime
+    ) -> PasswordVerdict:
         if user is None:
             await self._hasher.verify_dummy(password)  # same Argon2id work as a real user
-            return False
+            return PasswordVerdict(ok=False)
         ok = await self._hasher.verify(user.password_hash, password)  # always, even if locked
         if user.locked_until is not None and user.locked_until > now:
-            return False  # locked accounts are refused like any other failure
-        if not ok:
-            locked_until = await self._users.record_login_failure(
-                str(user.id),
-                lockout_threshold=LOCKOUT_THRESHOLD,
-                lock_duration=LOCKOUT_DURATION,
-                now=now,
-            )
-            if locked_until is not None:
-                auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
-        return ok
+            return PasswordVerdict(ok=False)  # locked accounts are refused like any other failure
+        if ok:
+            return PasswordVerdict(ok=True)
+        locked_until = await self._users.record_login_failure(
+            str(user.id),
+            lockout_threshold=LOCKOUT_THRESHOLD,
+            lock_duration=LOCKOUT_DURATION,
+            now=now,
+        )
+        if locked_until is not None:
+            auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
+        return PasswordVerdict(ok=False, locked_until=locked_until)
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
         refused: list[tuple[bytes, int | None]] = []
@@ -581,7 +613,7 @@ class StepUpService:
         """Remaining window for the dialog text; None if none / no-grace."""
         if action_class in NO_GRACE_ACTION_CLASSES:
             return None
-        record = await self._live(session_id)
+        record = await self._grantable(session_id)
         until = record.step_up_elevations.get(action_class) if record else None
         now = self._clock()
         if until is None or until <= now:
@@ -601,6 +633,8 @@ class StepUpService:
         if record is None:
             raise SessionRevoked("step_up")
         now = self._clock()
+        if record.is_idle_locked(now=now):  # its grants are void from the lock (#2300)
+            raise StepUpRequired(action_class)
         grant = next(
             (g for g in _stored(record, now, _ONCE) if g.action_class == action_class), None
         )

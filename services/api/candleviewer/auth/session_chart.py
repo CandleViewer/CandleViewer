@@ -160,6 +160,23 @@ class SessionChart:
                 await old.stop()
             return interp
 
+    async def _observed(self, record: SessionRecord, now: datetime) -> Any:
+        """The session's interpreter, built and hydrated from *record* if needed, with
+        an idle lock the row shows but the chart has not seen yet recorded first
+        (INV-B16-e, #2301): `IDLE_DEADLINE`, and no other event."""
+        interp = await self._get(record, now)
+        sid = str(record.id)
+        if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
+            before = b16_session.elevation_view(dict(interp.context))
+            await self._send(sid, "IDLE_DEADLINE", before=before)
+        return interp
+
+    async def observe(self, record: SessionRecord, now: datetime) -> None:
+        """Bring the chart up to the row and send nothing else. `POST /auth/unlock`
+        (#2300) records the lock with it before `unlock()` runs (B16.7), so the
+        route never sends `REQUEST`; a failed `auth.idle_locked` raises here."""
+        await self._observed(record, now)
+
     async def record(
         self, record: SessionRecord, now: datetime, event: str, **payload: Any
     ) -> None:
@@ -169,13 +186,9 @@ class SessionChart:
         so the audit action can write before/after state (C-12.8). An idle
         lock the row shows but the chart has not seen yet is recorded first
         (INV-B16-e, #2301): an unlock is recorded against the still-locked row."""
-        interp = await self._get(record, now)
-        sid = str(record.id)
-        if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
-            before = b16_session.elevation_view(dict(interp.context))
-            await self._send(sid, "IDLE_DEADLINE", before=before)
+        interp = await self._observed(record, now)
         before = b16_session.elevation_view(dict(interp.context))
-        await self._send(sid, event, before=before, **payload)
+        await self._send(str(record.id), event, before=before, **payload)
 
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
         """Session revoked by sync code: record `REVOKE`, then drop the chart."""

@@ -16,7 +16,7 @@ import os
 import uuid
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
     ABSOLUTE_LIFETIME,
+    DEFAULT_IDLE_TIMEOUT_S,
     MAX_UNLOCK_ATTEMPTS,
     SessionService,
 )
@@ -142,6 +143,7 @@ async def _require_active_expired(w: _World) -> Calls:
 
 async def _unlock_attempts_exceeded(w: _World) -> Calls:
     sid = await w.mint()
+    w.clock.now += timedelta(seconds=DEFAULT_IDLE_TIMEOUT_S + 1)  # unlock needs a lock (#2300)
     password_hash = await w.hasher.hash(_PASSWORD, _FAST_ARGON2)
     for _ in range(MAX_UNLOCK_ATTEMPTS - 1):
         with pytest.raises(UnlockPasswordInvalid):

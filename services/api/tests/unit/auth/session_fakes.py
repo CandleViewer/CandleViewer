@@ -56,7 +56,8 @@ class FakeSessionRepository:
 
     async def touch_last_seen(self, session_id: str, *, now: datetime) -> SessionRecord | None:
         session = self.sessions.get(session_id)
-        if session is None or session.revoked_at is not None:
+        # The SQL write is conditional on the lock too: activity never lifts it (#2300).
+        if session is None or session.revoked_at is not None or session.is_idle_locked(now=now):
             return None
         updated = session.model_copy(update={"last_seen_at": now})
         self.sessions[session_id] = updated
