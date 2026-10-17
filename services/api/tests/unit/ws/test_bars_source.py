@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.bars.emit import BarEmission
+from candleviewer.bars.leases import GRACE_US
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarTail
 from candleviewer.bars.rows import BUILD_VERSIONS
@@ -17,9 +19,11 @@ from candleviewer.ws.bars_source import BarsSnapshotSource, Seed
 from candleviewer.ws.binary import BARS, decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription
-from candleviewer.ws.sequencing import SnapshotBody, TopicEmitter
+from candleviewer.ws.sequencing import SnapshotBody, TopicEmitter, cv_ws_stale_topics_in_use
 from candleviewer.ws.topics import effective_options, parse_topic
 from tests.contract.ws._harness import check_schema
+from tests.unit.bars._set_harness import Clock as SetClock
+from tests.unit.bars._set_harness import make_set
 from tests.unit.ws._seq_support import validate
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
@@ -179,3 +183,37 @@ async def test_each_build_seeds_the_publisher_with_the_generation_it_sent() -> N
     seeds: list[tuple[str, BarSpec, int]] = []
     _build(_src(await _store(1), seed=lambda *a: seeds.append(a)), _sub())
     assert seeds == [(SYM, SPEC, GEN)]
+
+
+async def test_a_quarantined_builder_makes_the_snapshot_stale_until_a_new_builder(
+    tmp_path: Path,
+) -> None:
+    """#2195 through the emitter's cache: `stale` while the series' builder is quarantined, and
+    `cv_ws_stale_topics_in_use` with it; a new builder clears both."""
+    clock = SetClock(T0)
+    bset = make_set(tmp_path, clock=clock)
+    await bset.register(SPEC, SYM, "a")
+    src = BarsSnapshotSource(await _store(1), lambda s: (1, 3), stale=bset.quarantined)
+    out: list[dict[str, Any]] = []
+    emitter = TopicEmitter(
+        out.append, connection_id="c", wall_ms=lambda: 1, clock=lambda: 0.0, source=src
+    )
+    sub = _sub(encoding="structured")
+
+    def stale() -> tuple[bool, float]:  # the body built, and the gauge the emitter's cache set
+        assert emitter.snapshot(sub, "initial")
+        return _build(src, sub).stale, cv_ws_stale_topics_in_use._value.get()
+
+    def defect(now: int) -> Any:
+        raise ValueError("builder defect")
+
+    assert stale() == (False, 0)
+    bset._lanes[SYM].entries[0].builder.on_clock = defect  # type: ignore[method-assign,assignment]
+    await bset.tick()  # the set quarantines the series
+    assert stale() == (True, 1)
+    bset.release(H, SYM, "a")
+    clock.t += GRACE_US
+    await bset.tick()
+    await bset.register(SPEC, SYM, "b")  # a new builder
+    assert stale() == (False, 0)
+    await bset.stop()
