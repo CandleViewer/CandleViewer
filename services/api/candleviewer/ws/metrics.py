@@ -292,7 +292,8 @@ AUTH_FAILURE_REASONS: Final = frozenset(
 #: append it began). `cancelled`: a cancellation ended the wait, and the row is lost unless its
 #: append had begun. `abandoned`: never handed to the writer, after `FANOUT_AUDIT_MAX_FAILURES`
 #: failed rows in a row (the fan-out's `ws audit rows abandoned`, cause `writer_down`).
-AUDIT_FAILURE_REASONS: Final = ("error", "timeout", "cancelled", "abandoned")
+AuditFailureReason = Literal["error", "timeout", "cancelled", "abandoned"]  # the closed set
+AUDIT_FAILURE_REASONS: Final[tuple[str, ...]] = get_args(AuditFailureReason)
 cv_ws_audit_failures_total = Counter(
     "cv_ws_audit_failures_total",
     "WS audit rows not confirmed written (SR-186): error, timeout, cancelled or abandoned.",
@@ -302,14 +303,17 @@ for _audit_reason in AUDIT_FAILURE_REASONS:  # bound now, so increase() sees the
     cv_ws_audit_failures_total.labels(reason=_audit_reason)
 
 
-def count_audit_failure(rows: int = 1, reason: str | None = None) -> None:
-    """Count `rows` WS audit rows not confirmed written. Without `reason`, call it in the `except`
-    that caught the failure: the exception being handled names it (`TimeoutError`: `timeout`, a
-    cancellation: `cancelled`, anything else: `error`)."""
+def count_audit_failure(rows: int = 1, reason: AuditFailureReason | None = None) -> None:
+    """Count `rows` WS audit rows not confirmed written. Without `reason`, call it directly in the
+    `except` that caught the failure: the exception being handled names it (a bare `TimeoutError`,
+    the bound: `timeout`; a cancellation: `cancelled`; anything else, an `ExceptionGroup` whatever
+    it wraps (the sink raised), or no exception: `error`). A reason outside the closed set counts
+    as `error`, so it never adds a series, and never raises inside the caller's `except`."""
     if reason is None:
         exc = sys.exception()
         reason = "timeout" if isinstance(exc, TimeoutError) else "error"
         reason = "cancelled" if isinstance(exc, CancelledError) else reason
+    reason = reason if reason in AUDIT_FAILURE_REASONS else "error"
     cv_ws_audit_failures_total.labels(reason=reason).inc(rows)
 
 

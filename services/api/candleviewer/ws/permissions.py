@@ -801,8 +801,8 @@ def _log_abandoned(
     are counted in `cv_ws_audit_failures_total`, as `cancelled` or, for `writer_down`, `abandoned`
     (SR-E17-04). Nothing may replace the cancellation, so a failing logger is ignored."""
     with contextlib.suppress(Exception):
-        reason = "abandoned" if cause == "writer_down" else "cancelled"
-        count_audit_failure(len(lost) + (0 if in_flight is None else 1), reason)
+        n = len(lost) + (0 if in_flight is None else 1)
+        count_audit_failure(n, "abandoned" if cause == "writer_down" else "cancelled")
         users = list(dict.fromkeys(r.fields.get("actor_user_id") for r in [in_flight, *lost] if r))
         _log().warning(
             "ws audit rows abandoned",
@@ -1338,11 +1338,11 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
 
 async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> None:
     """`ws.subscribe.granted` (SR-186, WS-R01): ONE record for the private-topic subscriptions a
-    `sub` frame made, never one per topic, as for its refusals (SR-192). Its `object_id` is the
-    connection, and `after_state` holds their `count` and the `ch` and account ids of the first
-    `MAX_GRANTS_LISTED` in request order (`subscriptions`). Written once the `sub_ok` is queued,
-    best effort (threat model WS-R04) and bounded at `FANOUT_AUDIT_TIMEOUT_S`: a row not
-    confirmed is logged and counted, and so is a cancellation, which still propagates."""
+    `sub` frame made, never one per topic (as SR-192, #2292, makes the denial record). Its
+    `object_id` is the connection, and `after_state` holds their `count` and the `ch` and account
+    ids of the first `MAX_GRANTS_LISTED` in request order (`subscriptions`). Written once the
+    `sub_ok` is queued, best effort (threat model WS-R04) and bounded at `FANOUT_AUDIT_TIMEOUT_S`:
+    a row not confirmed is logged and counted, and so is a cancellation, which still propagates."""
     audit = authz.services.audit
     private = [s for s in subs if s.topic.family.private]
     if audit is None or not private:

@@ -448,7 +448,7 @@ Rules:
 
   An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
 
-- Every WS audit row that is not confirmed written (this close row, `auth.login_failed`, `auth.ws_origin_refused`, `ws.subscribe.granted`, `ws.subscribe.denied`, `ws.subscription.revoked` and `ws.permission_snapshot.refused`) counts once in `cv_ws_audit_failures_total{reason}` (SR-186, #2174): `error` (the sink raised: lost), `timeout` (its 2 s bound expired: it may still land), `cancelled` (a cancellation ended the wait) or `abandoned` (a §9.5 change's writer gave up its remaining rows after 3 failed in a row). Any increase raises `WsAuditWriteFailed` (a ticket; runbook in `07-release-and-prr.md`).
+- Every WS audit row that is not confirmed written (this close row, `auth.login_failed`, `auth.ws_origin_refused`, `ws.subscribe.granted`, `ws.subscribe.denied`, `ws.subscription.revoked` and `ws.permission_snapshot.refused`) counts once in `cv_ws_audit_failures_total{reason}` when its wait ends (SR-186, #2174): `error` (the sink raised: lost), `timeout` (its 2 s bound expired: it may still land), `cancelled` (a cancellation ended the wait) or `abandoned` (a §9.5 change's writer gave up its remaining rows after 3 failed in a row). Two rows differ: a refused upgrade's write runs on when its wait is cancelled, so it counts `error` only if it then fails, and the `ws.subscribe.denied` wait has no bound yet, so a stalled write counts only once it ends. Any increase raises `WsAuditWriteFailed` (a ticket; runbook in `07-release-and-prr.md`).
 
 - Gateway metrics as built: connections in use are `cv_ws_connections_in_use` (the ticket's `cv_ws_clients`), and `cv_ws_closes_total` is labelled by `reason` alone, because each reason has one close code (#2486).
 
@@ -621,7 +621,7 @@ When more than one applies, the first in this list names the code and the `field
 
 `effective` echoes the options **after** clamping, so a client that asked for `throttle_ms: 5` sees it became 50 and can stop expecting 200 fps.
 
-**Audit of the private subscriptions (SR-186, #2174).** The private-topic subscriptions one `sub` makes (§6.2, and `machines`, §6.4) are one `ws.subscribe.granted` record for the frame, written once its `sub_ok` is queued: `object_kind` `ws_connection`, `object_id` the connection id that `welcome` gives, and in `after_state` their `count` and, for the first 10 in request order, each `ch` with its granted `exchange_account_ids` (`subscriptions`). A public topic writes none. Like the frame's refusals, it is one record however many topics the frame holds (SR-192), and it is best effort, bounded at 2 s (E17 threat model WS-R04).
+**Audit of the private subscriptions (SR-186, #2174).** The private-topic subscriptions one `sub` makes (§6.2, and `machines`, §6.4) are one `ws.subscribe.granted` record for the frame, written once its `sub_ok` is queued: `object_kind` `ws_connection`, `object_id` the connection id that `welcome` gives, and in `after_state` their `count` and, for the first 10 in request order, each `ch` with its granted `exchange_account_ids` (`subscriptions`). A public topic writes none. It is one record however many topics the frame holds, and it is best effort, bounded at 2 s (E17 threat model WS-R04).
 
 ### 5.3 `unsub`
 

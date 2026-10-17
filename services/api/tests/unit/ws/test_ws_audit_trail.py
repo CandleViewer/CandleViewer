@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -55,19 +56,19 @@ def _delta(before: Mapping[str, float]) -> dict[str, float]:
 
 class _Sink:
     """Records each row and the frames sent before it. A write of the `fail` action raises; one of
-    the `hang` action never returns (only a bound or a cancellation ends it)."""
+    the `hang` action first waits for `release` (unset, only a bound or a cancellation ends it)."""
 
     def __init__(self, sent: list[dict[str, Any]], fail: str = "", hang: str = "") -> None:
         self.sent, self.fail, self.hang = sent, fail, hang
         self.rows: list[dict[str, Any]] = []
         self.sent_before: dict[str, list[str]] = {}
-        self.entered = asyncio.Event()
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
 
     async def emit(self, action: str, **kw: Any) -> None:
         validate_action(action)  # refused unless registered, as `AuditWriter.emit` does
         self.entered.set()
         if action == self.hang:
-            await asyncio.Event().wait()
+            await self.release.wait()
         if action == self.fail:
             raise OSError("audit WAL unavailable")
         self.sent_before[action] = [f["t"] for f in self.sent]
@@ -100,15 +101,28 @@ def test_every_reason_is_bound_at_import() -> None:
 
 @pytest.mark.parametrize(
     ("exc", "reason"),
-    [(TimeoutError(), "timeout"), (asyncio.CancelledError(), "cancelled"), (OSError(), "error")],
+    [
+        (TimeoutError(), "timeout"),
+        (asyncio.CancelledError(), "cancelled"),
+        (OSError(), "error"),
+        (ExceptionGroup("sink", [TimeoutError()]), "error"),  # the sink raised, whatever it wraps
+    ],
 )
 def test_the_exception_being_handled_names_the_reason(exc: BaseException, reason: str) -> None:
     before = _failures()
     try:
         raise exc
-    except (TimeoutError, asyncio.CancelledError, OSError):
+    except (TimeoutError, asyncio.CancelledError, OSError, ExceptionGroup):
         count_audit_failure()
     assert _delta(before) == {reason: 1}
+
+
+def test_an_unknown_reason_or_no_exception_counts_error_and_adds_no_series() -> None:
+    before = _failures()
+    unknown: Any = "timed_out"  # a typo past the type check
+    count_audit_failure(1, unknown)
+    count_audit_failure()  # outside an `except`
+    assert _delta(before) == {"error": 2} and set(_failures()) == set(AUDIT_FAILURE_REASONS)
 
 
 # -- SR-186: one `ws.subscribe.granted` record per `sub` frame ------------------------------------
@@ -149,12 +163,20 @@ async def test_a_frame_without_a_new_private_subscription_writes_no_granted_row(
 async def test_the_granted_row_lists_the_first_max_grants_listed_and_counts_them_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert permissions.MAX_GRANTS_LISTED == 10
     monkeypatch.setattr(permissions, "MAX_GRANTS_LISTED", 1)
     authz, sent, sink = _connection()
     await _sub(authz, sent, _acc("positions", B), _acc("orders", A))
     (row,) = sink.rows
     assert row["after_state"] == {"count": 2, "subscriptions": [["positions", [str(B)]]]}
+
+
+def test_the_contract_and_the_threat_model_state_how_many_grants_are_listed() -> None:
+    """§5.2 and WS-R01 give the bound in prose: a change to the constant must change both."""
+    n, docs = permissions.MAX_GRANTS_LISTED, Path(__file__).resolve().parents[5] / "docs"
+    contract = (docs / "plan" / "23-ws-protocol.md").read_text(encoding="utf-8")
+    threats = (docs / "security" / "threat-models" / "E17-ws-gateway.md").read_text("utf-8")
+    assert f"for the first {n} in request order" in contract
+    assert f"the first {n} listed, all counted" in threats
 
 
 @pytest.mark.parametrize(("mode", "reason"), [("fail", "error"), ("hang", "timeout")])
@@ -278,8 +300,9 @@ def test_a_gateway_row_not_confirmed_is_counted_and_the_close_still_goes(
     assert events == ["warning"]
 
 
-async def test_a_cancel_inside_the_close_row_is_counted_and_still_propagates(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("row", ["close", "auth-failure"])
+async def test_a_cancel_inside_a_gateway_row_is_counted_and_still_propagates(
+    row: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rig, sock, emitting = _Rig(), _Socket(), asyncio.Event()
 
@@ -290,10 +313,16 @@ async def test_a_cancel_inside_the_close_row_is_counted_and_still_propagates(
     monkeypatch.setattr(rig.audit, "emit", hung_emit)
     before = _failures()
     async with asyncio.timeout(5):
-        handler = await rig.authenticated(sock)
-        handler.cancel(msg=_UVICORN_CANCEL)  # the first, mid-read
-        await emitting.wait()  # the teardown now waits on the sink
-        await _cancel(handler)  # the second lands inside the emit: still ends cancelled
+        if row == "close":
+            handler = await rig.authenticated(sock)
+            handler.cancel(msg=_UVICORN_CANCEL)  # the first, mid-read: the teardown writes it
+        else:  # three `auth` frames without a token: the 3rd failure writes its row
+            handler = asyncio.create_task(rig.endpoint(sock))
+            sock.feed({"t": "hello", "id": "h"})
+            for _ in range(3):
+                sock.feed({"t": "auth", "id": "a", "p": {}})
+        await emitting.wait()  # the row now waits on the sink
+        await _cancel(handler)  # a cancel inside the emit: the handler still ends cancelled
     assert _delta(before) == {"cancelled": 1}
 
 
@@ -339,3 +368,19 @@ async def test_a_refused_upgrade_row_not_confirmed_is_counted_once() -> None:
     stalled.release.set()
     assert await tracker.drain(5) == 0  # the slow one lands late: counted once, as `timeout`
     assert _delta(before) == {"error": 1, "timeout": 1}
+
+
+@pytest.mark.parametrize("fails", [True, False])
+async def test_a_cancelled_upgrade_audit_wait_counts_only_a_late_failure(fails: bool) -> None:
+    refused, tracker = "auth.ws_origin_refused", RefusalAuditTracker()
+    sink = _Sink([], fail=refused if fails else "", hang=refused)
+    audit, before = OriginRefusalAudit(sink, tracker=tracker), _failures()
+    task = asyncio.create_task(audit.record(OriginRefusal.CROSS_SITE, "100.64.0.9"))
+    async with asyncio.timeout(5):
+        await sink.entered.wait()
+        task.cancel()  # the upgrade's handler is cancelled while it waits for the row
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        sink.release.set()  # the shielded write runs on: it fails, or it lands
+        assert await tracker.drain(5) == 0
+    assert _delta(before) == ({"error": 1} if fails else {})
