@@ -1456,6 +1456,31 @@ docker compose -f infra/compose/docker-compose.yml --profile core logs --since 1
 docker compose -f infra/compose/docker-compose.yml --profile core exec -e PGOPTIONS='-c default_transaction_read_only=on' postgres psql -U "${POSTGRES_USER:-cv}" -d "${POSTGRES_DB:-candleviewer}" -c "SELECT (SELECT count(*) FROM system_events WHERE component = 'auth' AND kind = 'break_glass_used' AND resolved_at IS NULL) AS unresolved, (SELECT count(*) FROM audit_log WHERE action = 'auth.break_glass_attempt') AS attempts"  # read-only, on the host
 ```
 
+<a id="alert-authauditoutcomelost"></a>
+
+### AuthAuditOutcomeLost / AuthAuditOutcomesLostBurst
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | `AuthAuditOutcomeLost`: an outcome audit record could not be written after the action it records had been taken (`auth_audit_outcome_lost_total{action}`). Ticket. `AuthAuditOutcomesLostBurst`: more than 5 in 15 min, so the audit sink is failing while sessions are still being revoked. Page.                                                          |
+| 2. User impact        | None from the lost record: the action it records had already been taken and its answer sent. While the sink refuses records, sign-out, revoking a session and refreshing a token answer `503` and change nothing (write-ahead, C-2.9): nobody can sign out or revoke, and no refresh succeeds, so each access token lapses within 12 min.                   |
+| 3. What is still safe | Every action has its write-ahead record; only the outcome row is missing. The `sessions` row (`revoked_at`, `revoked_reason`) says what happened. Positions keep their native exchange stop-loss (C-2.6). The same sink gates every other write-ahead action, orders included (E27 threat model KV-D04): read the page as an outage of all audited actions. |
+| 5. Remediation        | Restore the audit sink first: a full or unwritable audit WAL (disk full, wrong permissions, a wedged fsync) or a stopped writer. Then list the gap: set the audit trail (second command below) against the `sessions` rows revoked in the window, and note each session without its row in the incident record. The lost row cannot be replayed (below).    |
+| 6. Escalation         | Security reviewer; the Owner on the page (a window of the audit trail is missing). `SECURITY.md` if the failure has no disk or process explanation (possible tampering).                                                                                                                                                                                    |
+| 7. Verify recovery    | `increase(auth_audit_outcome_lost_total[15m])` back to 0 for 15 min; a sign-out of a throwaway test session writes an `auth.logout` row and an `auth.session_revoked` row.                                                                                                                                                                                  |
+
+Rule 2 of `docs/plan/04-security-program.md` section 8.3 asks a lost outcome record to alert and to be enqueued for a durable retry. The alert is these two rules. The ticket is muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and stays active only 15 minutes after the last loss, so a lone loss at night is not delivered and the page (more than 5 in 15 minutes) does not cover it: read the counter in the morning (the same limit as the lockout ticket, #2621). The retry is not built: the journal-first lane (#3009) is its ticket, and until it exists a lost row stays lost. `action` is one of the registered audit actions the counter covers (`auth.session_revoked`, `auth.refresh_reuse_detected`, `auth.session_refreshed`); a value outside that set counts as `other`. Nothing increments the counter yet: the session routes that write these outcome records count a lost one from the next slice of #2914 (D2), so neither rule can fire before it lands. Both rules use the component `auth_audit`, not `auth`, so the page never hides the `auth` tickets (lockouts, step-up, CSRF) while the sink is failing.
+
+No page does not mean the sink is healthy: the page reads only outcome rows lost after an action, while a refusing sink makes every sign-out, revoke and refresh fail closed at its write-ahead record with a `503` that no counter or alert sees. Those refusals show only as `auth.session_audit.writer_refused` log lines (the third command below greps them); a counter for them is requested under #3009 and E27 KV-D04 (#2267).
+
+**4. First three diagnostic commands** (run from the repo root, as an Owner; expected healthy result: no losses, no `audit WAL unavailable` lines.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (action) (increase(auth_audit_outcome_lost_total[1h]))'
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.session_revoked"  # the outcome rows that did land, to set against the sessions revoked in the window
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -E 'audit WAL unavailable|auth.session_audit.writer_refused' | tail -20
+```
+
 <a id="observability-stack-is-down"></a>
 
 ### Observability stack is down

@@ -55,6 +55,11 @@ ALERTING: dict[str, set[str]] = {
     },
     "auth_lockouts_total": {"AuthLockouts", "ExpectedMetricMissingAuthLockoutsTotal"},
     "authz_denied_total": {"AuthzDeniedSpike", "ExpectedMetricMissingAuthzDeniedTotal"},
+    "auth_audit_outcome_lost_total": {
+        "AuthAuditOutcomeLost",
+        "AuthAuditOutcomesLostBurst",
+        "ExpectedMetricMissingAuthAuditOutcomeLostTotal",
+    },
 }
 
 

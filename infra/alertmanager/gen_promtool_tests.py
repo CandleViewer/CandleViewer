@@ -104,6 +104,23 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "20m",
         {"env": "live"},
     ),
+    # #2914 (04 section 8.3 rule 2): one lost outcome record tickets, more than 5 in 15 minutes
+    # pages. 4 is the near-miss: exactly 5 could page under Prometheus 3 (`increase` extrapolates
+    # differently over its left-open ranges).
+    "AuthAuditOutcomeLost": (
+        'auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "15m",
+        {"env": "live"},
+    ),
+    "AuthAuditOutcomesLostBurst": (
+        'auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}',
+        "0+0x10 8+0x10",
+        "0+0x10 4+0x10",
+        "15m",
+        {"env": "live"},
+    ),
     "CredentialVerificationFailures": (
         "credential_verification_failures_total",
         "0+0x10 1+0x10",

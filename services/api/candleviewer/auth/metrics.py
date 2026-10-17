@@ -3,9 +3,10 @@ security counters (`auth_login_failures_total`, `auth_lockouts_total`, `authz_de
 `auth_stepup_failures_total`).
 
 Labels are closed sets (revocation `reason` is normalised by `normalise_reason`, the denied
-`permission` by `normalise_permission`, the failed-login `method` is `LOGIN_FAILURE_METHODS`) so
-cardinality stays bounded. Only `AUTH_EXPORTED_NAMES` reaches the scraped registry; every other
-series here lands on the process-default registry that Prometheus never reads.
+`permission` by `normalise_permission`, the failed-login `method` is `LOGIN_FAILURE_METHODS`, the
+lost outcome record's `action` by `normalise_outcome_action`) so cardinality stays bounded. Only
+`AUTH_EXPORTED_NAMES` reaches the scraped registry; every other series here lands on the
+process-default registry that Prometheus never reads.
 """
 
 from __future__ import annotations
@@ -76,6 +77,23 @@ auth_csrf_refused_total = Counter(
 for _csrf_reason in (*CSRF_REFUSAL_REASONS, *CSRF_AUDIT_REASONS):
     auth_csrf_refused_total.labels(reason=_csrf_reason)
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
+#: `auth_audit_outcome_lost_total{action}` (#2914, 04-security-program.md section 8.3 rule 2): an
+#: outcome audit record that could not be written after the action was taken. The answer stands;
+#: the count and the alerts tell that the trail has a gap. Nothing increments it yet: the session
+#: routes (`api/sessions.py`) count a lost record from the next slice of #2914 (D2). `action` is a
+#: closed set (else `other`): a route that starts to write an outcome record adds its action here,
+#: and the catalogue's `max_series` (this set plus `other`) with it.
+AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
+    "auth.refresh_reuse_detected",  # the concurrent-refresh race
+    "auth.session_refreshed",  # a disabled user's refused refresh, reason `user_disabled` (#2911)
+    "auth.session_revoked",  # a session ended by sign-out
+)
+auth_audit_outcome_lost_total = Counter(
+    "auth_audit_outcome_lost_total",
+    "Outcome audit records that could not be written after the action was taken "
+    "(04-security-program.md section 8.3 rule 2), by audit action.",
+    ["action"],
+)
 # SR-125 (#2117), catalogued `live` and re-exported below. Each is incremented at the decision
 # that makes it true; none carries a user, account, IP or free-form label.
 auth_lockouts_total = Counter(
@@ -208,6 +226,20 @@ LOGIN_FAILURE_METHODS: tuple[str, ...] = ("password", *(kind.value for kind in M
 for _method in LOGIN_FAILURE_METHODS:
     auth_login_failures_total.labels(method=_method)
 
+_KNOWN_OUTCOME_ACTIONS = frozenset(AUDIT_OUTCOME_ACTIONS)
+
+
+def normalise_outcome_action(action: str) -> str:
+    """Clamp an audit action to `AUDIT_OUTCOME_ACTIONS` (else `other`), so the
+    `auth_audit_outcome_lost_total` label set stays closed whatever a caller passes."""
+    return action if action in _KNOWN_OUTCOME_ACTIONS else "other"
+
+
+# Bind every value now: a series created at its first event gives `increase()` nothing to
+# subtract, so the first loss after a restart would never fire the ticket or the page.
+for _outcome_action in (*AUDIT_OUTCOME_ACTIONS, "other"):
+    auth_audit_outcome_lost_total.labels(action=_outcome_action)
+
 
 users_invites_created_total = Counter(
     "users_invites_created_total", "Invites minted (incl. re-issues), by role.", ["role"]
@@ -227,6 +259,7 @@ users_invites_pending = Gauge(
 #: land on the library default registry, which Prometheus never scrapes.
 AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
     {
+        "auth_audit_outcome_lost_total",
         "auth_csrf_refused_total",
         "auth_session_fixation_attempts_total",
         "auth_lockouts_total",

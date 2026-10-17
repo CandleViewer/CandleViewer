@@ -2002,6 +2002,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_audit_outcome_lost_total",
+        "counter",
+        "records",
+        ("action",),
+        "Outcome audit records that could not be written after the action was taken "
+        "(04-security-program.md section 8.3 rule 2), by bounded audit action.",
+        "AuthAuditOutcomeLost (any in 15m, ticket) / AuthAuditOutcomesLostBurst (>5 in 15m, page)",
+        _L,
+        "E09",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
         "auth_session_fixation_attempts_total",
         "counter",
         "attempts",
