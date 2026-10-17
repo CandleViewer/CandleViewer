@@ -74,7 +74,7 @@ def _mac(scenario: str, payload: str = "") -> str:
 
 
 def _open(
-    log_dir: Path | None, clock: Callable[[], datetime] = lambda: NOW, **opts: Any
+    log_dir: str | Path | None, clock: Callable[[], datetime] = lambda: NOW, **opts: Any
 ) -> RequestLog:
     return RequestLog(
         log_dir, process_env=Environment.DEMO, clock=clock, pack_key_ids=KEY_IDS.values(), **opts
@@ -304,11 +304,30 @@ def test_log_refuses_a_symlinked_file_and_leaves_its_target(log_dir: Path, tmp_p
     assert (tmp_path / "elsewhere").read_text() == "untouched\n"
 
 
-def test_log_refuses_a_symlinked_directory(log_dir: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", ["", "/", "//", "/.", "/./", "/.."])
+def test_log_refuses_a_symlinked_directory(log_dir: Path, tmp_path: Path, suffix: str) -> None:
     (tmp_path / "link").symlink_to(log_dir, target_is_directory=True)
     with pytest.raises(RequestLogFileError, match="CV_ACCOUNT_FIXTURE_DIR"):
-        _open(tmp_path / "link")
-    assert list(log_dir.iterdir()) == []
+        _open(f"{tmp_path / 'link'}{suffix}")  # a trailing / or /. made the kernel follow it
+    assert list(log_dir.iterdir()) == [] == list(tmp_path.glob(f"{FILE_NAME}*"))
+
+
+def test_log_opens_its_directory_however_spelled(log_dir: Path) -> None:
+    for spelled in (f"{log_dir}//", f"{log_dir}/./"):  # Settings lets a trailing / through
+        with _open(spelled) as log:
+            _served(log)
+    assert len(_lines(log_dir)) == 2
+
+
+def test_log_refuses_a_hard_linked_file_and_leaves_its_other_name(
+    log_dir: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "elsewhere").write_text("untouched\n")
+    (tmp_path / "elsewhere").chmod(0o644)
+    (log_dir / FILE_NAME).hardlink_to(tmp_path / "elsewhere")
+    with pytest.raises(RequestLogFileError, match="one link"):
+        _open(log_dir)
+    assert stat.S_IMODE((tmp_path / "elsewhere").stat().st_mode) == 0o644
 
 
 def test_log_refuses_a_file_that_is_not_regular(log_dir: Path) -> None:
@@ -374,6 +393,11 @@ def test_log_refuses_unsafe_options(log_dir: Path, opts: dict[str, Any]) -> None
     assert list(log_dir.iterdir()) == []
 
 
-def test_log_needs_cv_account_fixture_dir() -> None:
-    with pytest.raises(RequestLogFileError, match="needs CV_ACCOUNT_FIXTURE_DIR"):
-        _open(None)
+@pytest.mark.parametrize("directory", [None, "", "."])
+def test_log_needs_cv_account_fixture_dir(
+    directory: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)  # "" and "." would name the working directory
+    with pytest.raises(RequestLogFileError, match="CV_ACCOUNT_FIXTURE_DIR"):
+        _open(directory)
+    assert list(tmp_path.iterdir()) == []

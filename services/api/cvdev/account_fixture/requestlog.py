@@ -11,10 +11,11 @@ the word "secret", which every derived pack secret holds. A line no guard may pr
 refusal names the field, never the value, and writes nothing; no field name is on the redaction
 deny-list.
 
-The directory and the file are opened with `O_NOFOLLOW`; the file is a regular file of this user,
-mode 0600, rotated at `max_bytes` into `backups` older files. The log needs `CV_ACCOUNT_FIXTURE_DIR`
-(fail closed). Writes are synchronous: one short append per answer, on a dev-only path that is not
-hot. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
+Neither the directory, however it is spelled, nor the file is opened through a symlink
+(`O_NOFOLLOW`; Settings refuses one above the directory). The file is a regular file of this user
+with one link, mode 0600, rotated at `max_bytes` into `backups` older files. The log needs
+`CV_ACCOUNT_FIXTURE_DIR` (fail closed). Writes are synchronous: one short append per answer, on a
+dev-only path that is not hot. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import PurePosixPath
 from typing import Final, Literal, get_args
 
 from candleviewer.domain.order_link import OUR_ID
@@ -177,6 +179,19 @@ def _check_against_the_guards(line: dict[str, object]) -> None:
         raise RequestLogFieldError("order is logged for an order create or amend only")
 
 
+def _open_directory(directory: str | os.PathLike[str]) -> int:
+    """`O_NOFOLLOW` guards the last component, but the kernel follows a symlink there when `/` or
+    `/.` trails it, so pathlib drops both; a last `..`, or no name (`.`, `/`, `""`), is refused."""
+    path = PurePosixPath(directory)
+    msg = "CV_ACCOUNT_FIXTURE_DIR must name an existing directory, not a symlink, '.' or '..'"
+    if path.name in ("", ".."):
+        raise RequestLogFileError(msg)
+    try:
+        return os.open(path, _DIR_FLAGS)
+    except OSError as exc:
+        raise RequestLogFileError(msg) from exc
+
+
 class RequestLog:
     """The append-only, size-capped JSONL sink; one `write` is one line."""
 
@@ -206,11 +221,7 @@ class RequestLog:
             )
         self._keys, self._process_env, self._clock = keys, process_env.value, clock
         self._max_bytes, self._backups, self._fd = max_bytes, backups, -1
-        try:
-            self._dir_fd = os.open(directory, _DIR_FLAGS)
-        except OSError as exc:
-            msg = "CV_ACCOUNT_FIXTURE_DIR must be an existing directory, not a symlink"
-            raise RequestLogFileError(msg) from exc
+        self._dir_fd = _open_directory(directory)
         try:
             self._fd = self._open_file()
         except BaseException:
@@ -296,15 +307,16 @@ class RequestLog:
 
     def _open_file(self) -> int:
         """The file, relative to the directory: never through a symlink, a regular file this user
-        owns, mode 0600 whatever the umask or an earlier mode, appended to."""
+        owns with no other link, mode 0600 whatever the umask or an earlier mode, appended to."""
         try:
             fd = os.open(FILE_NAME, _FILE_FLAGS, 0o600, dir_fd=self._dir_fd)
         except OSError as exc:
             raise RequestLogFileError(f"{FILE_NAME} must be a regular file, not a symlink") from exc
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
-                raise RequestLogFileError(f"{FILE_NAME} must be a regular file owned by this user")
+            if not stat.S_ISREG(info.st_mode) or (info.st_uid, info.st_nlink) != (os.geteuid(), 1):
+                msg = f"{FILE_NAME} must be a regular file owned by this user, with one link"
+                raise RequestLogFileError(msg)
             os.fchmod(fd, 0o600)
         except BaseException:
             os.close(fd)
