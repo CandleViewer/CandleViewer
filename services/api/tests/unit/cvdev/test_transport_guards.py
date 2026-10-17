@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import json
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final, NoReturn
 from uuid import UUID
@@ -41,11 +41,12 @@ from cvdev.account_fixture.guards import (
     DEMO_REST_HOST,
     FUND_PATH_PREFIX,
     GUARD_REASON_CODE,
+    Admission,
     stored_under,
 )
 from cvdev.account_fixture.pack import Pack, fixture_key_ids
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
-from cvdev.account_fixture.transport import MAX_BODY_BYTES, FixtureTransport
+from cvdev.account_fixture.transport import MAX_BODY_BYTES, Answer, FixtureTransport
 from tests._account_fixtures import EGRESS_IP, PACK, _payload, manifest
 from tests._signing import CREDENTIAL_ID, assemble
 from tests.unit.exchange.bybit.test_account_fixture_pack import (
@@ -92,10 +93,11 @@ def _get(
     key: str | None = None,
     signed_as: str | None = None,
     headers: Sequence[tuple[str, str]] = (),
+    payload: bytes = b"",
 ) -> httpx.Request:
-    """A signed GET: `scenario`'s key id (or `key`), signed with the secret of `signed_as`."""
+    """A signed GET: `scenario`'s key id (or `key`), with `signed_as`'s secret over `payload`."""
     key = key or _key(scenario)
-    message = f"{TS}{key}{RECV}".encode()
+    message = f"{TS}{key}{RECV}".encode() + payload
     mac = hmac.new(_secret(signed_as or scenario).encode(), message, hashlib.sha256).hexdigest()
     auth = [("X-BAPI-API-KEY", key), ("X-BAPI-TIMESTAMP", TS), ("X-BAPI-RECV-WINDOW", RECV)]
     return httpx.Request("GET", origin + path, headers=headers or [*auth, ("X-BAPI-SIGN", mac)])
@@ -135,6 +137,16 @@ def rig(tmp_path: Path) -> Iterator[Rig]:
     ) as log:
         gate = ReadOnlyGate()
         yield Rig(FixtureTransport(PACK, log=log, gate=gate), gate, log, tmp_path)
+
+
+class _Seam(FixtureTransport):
+    """S9's seam as it sees a request: `_serve` is handed the bytes guard 4 verified."""
+
+    body: bytes | None = None
+
+    async def _serve(self, request: httpx.Request, seen: Admission, body: bytes | None) -> Answer:
+        self.body = body
+        return await super()._serve(request, seen, body)
 
 
 async def _host_refused(rig: Rig, origin: str, host: str | None, env: str | None) -> None:
@@ -181,6 +193,24 @@ async def test_non_fixture_key_never_answered_and_latches(rig: Rig) -> None:
         assert value not in seen
 
 
+@pytest.mark.parametrize(
+    ("origin", "path", "outcome"),
+    [
+        ("https://api.bybit.com", KEY_INFO_PATH, "refused_host"),
+        (DEMO, f"{FUND_PATH_PREFIX}withdraw/create", "refused_fund_path"),
+    ],
+    ids=["live-host", "fund-path"],
+)
+async def test_a_non_fixture_key_trips_whichever_guard_refuses_first(
+    rig: Rig, origin: str, path: str, outcome: str
+) -> None:
+    _, events = await rig.refused(_get(origin=origin, path=path, key=NON_FIXTURE_KEY))
+    [line] = rig.lines()
+    assert _of(line, "outcome", "key_class") == (outcome, "non_fixture")
+    assert _p0(events, outcome) and events[0]["latched"] is True
+    assert rig.transport.latched and rig.gate.latched_reason_code == GUARD_REASON_CODE
+
+
 async def test_latched_transport_refuses_later_calls_and_latches_the_gate(rig: Rig) -> None:
     await rig.refused(_get(key=NON_FIXTURE_KEY))
     _, events = await rig.refused(_get("compliant"))
@@ -193,6 +223,28 @@ async def test_a_trip_keeps_the_gates_existing_latch(rig: Rig) -> None:
     rig.gate.latch(reason_code="secrets.kek_unavailable", reason_text="kek")
     await rig.refused(_get(key=NON_FIXTURE_KEY))
     assert rig.transport.latched and rig.gate.latched_reason_code == "secrets.kek_unavailable"
+
+
+async def test_a_trip_refuses_through_every_transport_on_the_gate(rig: Rig) -> None:
+    seam = _Seam(PACK, log=rig.log, gate=rig.gate)
+    other = replace(rig, transport=seam)
+
+    async def body() -> AsyncIterator[bytes]:
+        await rig.refused(_get(key=NON_FIXTURE_KEY))  # trips while `other` reads this order
+        yield b"{}"
+
+    order = httpx.Request("POST", ORDER, headers=_get(payload=b"{}").headers, content=body())
+    await other.refused(order)
+    _, events = await other.refused(_get("compliant"))
+    assert [_of(e, "log_level", "latched") for e in events] == [("error", True)]
+    assert seam.latched and seam.body == b"{}"  # only the order in flight reached _serve
+    assert [line["outcome"] for line in rig.lines()] == ["refused_key"] * 3
+
+
+async def test_another_latch_on_the_gate_leaves_the_transport_answering(rig: Rig) -> None:
+    rig.gate.latch(reason_code="secrets.kek_unavailable", reason_text="kek")
+    assert (await rig.transport.handle_async_request(_get())).status_code == 404
+    assert not rig.transport.latched
 
 
 async def test_a_trip_refuses_a_request_already_in_flight(rig: Rig) -> None:
@@ -281,6 +333,19 @@ async def test_an_unsigned_call_meets_no_key_guard_and_is_unstubbed(rig: Rig) ->
     [line] = rig.lines()
     assert _of(line, "outcome", "key_class", "verified") == ("unstubbed", "unsigned", None)
     assert not rig.transport.latched
+
+
+async def test_serve_is_handed_the_verified_body_of_a_one_shot_stream(rig: Rig) -> None:
+    order = b'{"symbol":"BTCUSDT"}'
+
+    async def once() -> AsyncIterator[bytes]:  # httpx raises StreamConsumed on a second read
+        yield order
+
+    seam = _Seam(PACK, log=rig.log, gate=rig.gate)
+    request = httpx.Request("POST", ORDER, headers=_get(payload=order).headers, content=once())
+    assert (await seam.handle_async_request(request)).status_code == 404
+    assert seam.body == order
+    assert _of(rig.lines()[0], "outcome", "verified") == ("unstubbed", True)
 
 
 def test_a_pack_without_fixture_keys_is_refused(rig: Rig, tmp_path: Path) -> None:

@@ -47,7 +47,7 @@ from cvdev.account_fixture.requestlog import HostEnv, KeyClass, Refusal
 _HOSTS: Final = ("api-demo.bybit.com", "api-testnet.bybit.com")
 DEMO_REST_HOST, TESTNET_REST_HOST = _HOSTS
 #: What the signer sends (the REST client's signed path): key id, timestamp, window, signature.
-# nosemgrep: cv-adapter-isolation,cv-bybit-vocabulary-leak reason=adr-0036 owner=@CandleViewer/security review=2027-01-31  # noqa: E501
+# nosemgrep: cv-adapter-isolation,cv-bybit-vocabulary-leak reason=adr-0036 owner=@CandleViewer/security review=2027-01-31  # noqa: E501 - fixed marker grammar (#2893)
 _AUTH_HEADERS: Final = ("X-BAPI-API-KEY", "X-BAPI-TIMESTAMP", "X-BAPI-RECV-WINDOW", "X-BAPI-SIGN")
 KEY_HEADER, TIMESTAMP_HEADER, RECV_WINDOW_HEADER, SIGN_HEADER = _AUTH_HEADERS
 FUND_PATH_PREFIX: Final = "/v5/asset/"
