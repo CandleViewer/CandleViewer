@@ -232,6 +232,11 @@ class SessionService:
 
     _MAX_TRACKED_UNLOCK_SESSIONS = 10_000
 
+    def now(self) -> datetime:
+        """The clock every session deadline is judged by: the HTTP edge reports lock
+        state and `server_time` from it (#2300, server truth, never a client clock)."""
+        return self._clock()
+
     # -- minting -------------------------------------------------------
 
     async def mint(
@@ -409,7 +414,7 @@ class SessionService:
 
     # -- per-request enforcement ------------------------------------------
 
-    async def require_active(self, session_id: str) -> SessionRecord:
+    async def require_active(self, session_id: str, *, allow_locked: bool = False) -> SessionRecord:
         """The per-request/per-WS-frame-batch backstop (ticket "Revocation
         propagation" + "Order entry is refused while locked"): every caller
         on the OMS/WS path calls this before honouring *session_id*, and it
@@ -421,6 +426,10 @@ class SessionService:
         with the session row, #2911), is revoked as `user_disabled` and refused:
         SR-029 fails closed on any session no disable revoked, and the publish
         ends its sockets with `bye user_disabled` + 4403.
+
+        *allow_locked* (#2300): an idle-locked session is returned as it is, for an
+        operation allowed while locked (`GET /auth/session` reads it); every other
+        check above still refuses.
         """
         session = await self._repository.find_by_id(session_id)
         if session is None:
@@ -454,7 +463,7 @@ class SessionService:
             await self.revoke(session_id, reason="user_disabled")
             raise SessionRevoked("user_disabled")
 
-        if session.is_idle_locked(now=now):
+        if session.is_idle_locked(now=now) and not allow_locked:
             auth_idle_locks_total.inc()
             raise SessionIdleLocked(
                 "session is idle-locked", idle_locked_at=session.idle_deadline()
