@@ -3,6 +3,6 @@
   "compilerOptions": {
     "outDir": "dist"
   },
-  "include": ["src", "test", ".storybook/**/*.ts", "tsup.config.ts"],
+  "include": ["src", "test", ".storybook/**/*.ts", ".storybook/**/*.tsx", "tsup.config.ts"],
   "exclude": ["dist", "node_modules", "coverage", "storybook-static"]
 }

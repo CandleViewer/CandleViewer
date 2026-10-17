@@ -74,15 +74,23 @@ source files themselves are exempt).
 ## Theme runtime (E05-T02)
 
 `src/theme/` owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root attributes
-that the token CSS keys off. They are written on `document.documentElement` only (never a React-owned
-wrapper), so a switch is a CSS custom-property swap with no remount. Contract and event payload:
-[`16-design-system-brief.md` §4](../../docs/plan/16-design-system-brief.md).
+(the token CSS and `theme.css` key off the first three). They are written on `document.documentElement` only
+(never a React-owned wrapper), so a switch is a CSS custom-property swap with no remount. Contract and
+event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-system-brief.md).
 
 - `createThemeStore()` — framework-free store: persistence (`localStorage["cv.theme.v1"]`), OS media
   listeners, the `candleviewer:themechange` event, an injectable analytics sink (`onAnalytics`).
+- `ThemeProvider`, `useTheme`, `useDensity`, `useReducedMotion`, `useTextScale` — React bindings over
+  `useSyncExternalStore`: only components that read a value re-render when it changes.
 - `THEME_PREPAINT_SCRIPT` + `THEME_PREPAINT_SCRIPT_SHA256` — the synchronous no-flash snippet. The shell
   embeds it byte-for-byte as its only inline script and allows it by hash (a `'sha256-…'` source in
   `script-src`), never `'unsafe-inline'`.
+- `HIGH_CONTRAST_SHORTCUT` (`Ctrl+Shift+H`) and `toggleHighContrastAnnounced` — the shortcut contract the
+  E10 hotkey registry calls; each toggle is announced through one polite live region that the provider
+  pre-renders (bootstraps without the provider, like the E10 registry, call `mountLiveRegion()` at startup).
+- `theme.css` — density pointers, the `--cv-motion-scale` hook (the motion recipes are `TODO(#3174)`) and
+  the `[data-motion="reduce"]` / `prefers-reduced-motion` blocks. Import it next to the token CSS.
+- Storybook: run `build:tokens` first; the Theme / Density / Motion toolbars drive the runtime.
 - Apps feed server-side preferences in through `store.apply(...)`; `applyAppearance` and the
   `a11y-preferences` feature should call it rather than write the attributes themselves.
 
