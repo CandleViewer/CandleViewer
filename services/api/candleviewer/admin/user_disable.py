@@ -9,17 +9,22 @@ A retry does not settle that: if the commit landed, the revoked ids died with th
 repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`). Then, in a
 shielded tracked task, never rolled back: socket close (`bye user_disabled`, 4403), a sweep of any
 session still live after the transaction (defence in depth: a mint or a refresh refuses a disabled
-user, #2992, and `require_active` revokes a survivor, #3011), one B16 REVOKE per session (R5), an
-`invited` user's open invite (R6; the invite store writes its record ahead); each await bounded,
-all by a deadline. A repeat (AC5's no-op) re-runs only the sweep (and B16 for swept sessions). S5
-adds the rule disarm."""
+user, #2992, and `require_active` revokes a survivor, #3011), one B16 REVOKE per session (R5), the
+rule engine's scope refresh (S5, O5: a failing refresh leaves its snapshot closed), B9 DISARM of
+each armed rule the user owns (S5: a rule its chart refuses fails its own run and the rest go
+on; O4 and O5 hold it until a repeat), an `invited` user's open invite (R6; the invite store
+writes its record ahead); each await bounded, all by a deadline. A repeat (AC5's no-op) re-runs
+the sweep (and B16 for swept sessions), the scope refresh and the disarm, all idempotent, so a
+failed step can be re-driven by the same DELETE. Repeats may overlap, and the disarm stays
+idempotent: its adapter runs the disarms of one rule one at a time, so the second finds the rule
+disarmed and writes nothing."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -59,7 +64,10 @@ POSITIONS_DECISION: Final = "leave"  # O2: positions and orders stay as they are
 CLOSING_TIMEOUT_S: Final = 2.0  # bounds the closing record; the writer may still be slow
 NOT_APPLIED: Final = "not_applied"  # a closing record's reason: rolled back, nothing changed
 OUTCOME_UNKNOWN: Final = "outcome_unknown"  # ... or its commit failed and may have gone through
-STEPS: Final = ("socket_close", "session_sweep", "b16_revoke", "invite_revoke")
+STEPS: Final = (
+    *("socket_close", "session_sweep", "b16_revoke", "scope_refresh", "rule_disarm"),
+    "invite_revoke",
+)
 _AUDIT_DOWN = (AuditError, RuntimeError)  # `AuditWriter` refusals; RuntimeError: not started
 
 
@@ -91,6 +99,18 @@ class SessionRevokeRecorder(Protocol):  # the process's B16 charts: `StepUpServi
 
 class InviteRevoker(Protocol):  # `InviteService`: `audit` runs only if one is open (#2793)
     async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None: ...
+
+
+class RuleDisarmer(Protocol):  # `user_cascade_wiring.RuleDisarmAdapter`: B9 DISARM, audited ahead
+    async def armed_rule_ids(self, user_id: uuid.UUID) -> Sequence[str]: ...
+
+    async def disarm(
+        self, rule_id: str, *, user_id: uuid.UUID, actor: uuid.UUID, disabled_at: datetime
+    ) -> None: ...
+
+
+class ScopeRefresher(Protocol):  # `user_cascade_wiring.ScopeRefreshAdapter`: fails closed (O5)
+    async def refresh(self, user_id: uuid.UUID) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +207,8 @@ class UserDisableService:
         chart: SessionRevokeRecorder,
         publish_revocation: RevocationSink,
         invites: InviteRevoker,
+        rules: RuleDisarmer,
+        scope: ScopeRefresher,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         count_timeout_s: float = 2.0,  # bounds each count read: a timeout is unknown (AC7)
         closing_timeout_s: float = CLOSING_TIMEOUT_S,
@@ -198,6 +220,7 @@ class UserDisableService:
         self._count_timeout_s = count_timeout_s
         self._sessions, self._rows, self._chart = sessions, session_rows, chart
         self._publish, self._invites = publish_revocation, invites
+        self._rules, self._scope = rules, scope
         self._closing_timeout_s, self._step_timeout_s = closing_timeout_s, step_timeout_s
         self._deadline_s = deadline_s
         self._cascades: set[asyncio.Task[tuple[str, ...]]] = set()  # tracked: see `drain`
@@ -375,6 +398,10 @@ class UserDisableService:
                 for session in revoked:
                     await t["b16_revoke"].run(partial(self._record_revoke, session, now))
                 log("b16_revoke")
+                await t["scope_refresh"].run(partial(self._scope.refresh, user))
+                log("scope_refresh")
+                await self._disarm_rules(t["rule_disarm"], user, actor, now)
+                log("rule_disarm")
                 if change.before == "invited":
                     await t["invite_revoke"].run(partial(self._revoke_invite, user, actor, rid))
                 log("invite_revoke")
@@ -386,6 +413,20 @@ class UserDisableService:
             if not isinstance(exc, Exception):  # a cancellation (shutdown) reaches the caller
                 raise
         return tuple(name for name in STEPS if t[name].failures)
+
+    async def _disarm_rules(
+        self, tally: _Tally, user: uuid.UUID, actor: uuid.UUID, now: datetime
+    ) -> None:
+        """S5: B9 DISARM of each armed rule the user owns, through the rule engine's interface.
+        One run lists them and one run disarms each, so rules that cannot be listed, or one the
+        chart refuses (it is evaluating or acting), fail that run and the rest still go on; a
+        rule left armed is held by O4 and O5 (C-2.21) until a repeat of this call disarms it."""
+        ids = await tally.run(partial(self._rules.armed_rule_ids, user)) or ()
+        for rule_id in ids:
+            disarm = partial(
+                self._rules.disarm, rule_id, user_id=user, actor=actor, disabled_at=now
+            )
+            await tally.run(disarm)
 
     async def _record_revoke(self, session: uuid.UUID | SessionRecord, now: datetime) -> None:
         """One B16 REVOKE; its action writes `auth.session_revoked` (R5)."""

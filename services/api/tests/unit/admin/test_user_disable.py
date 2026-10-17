@@ -1,11 +1,14 @@
-"""E42-T04 S4 (#965): `UserDisableService` over the S3 store's fake unit of work (Postgres: S3's
-integration tests). One log orders every port call; `!open` marks a call before the commit."""
+"""E42-T04 S4, S5 (#965): `UserDisableService` over the S3 store's fake unit of work (Postgres:
+S3's integration tests). One log orders every port call; `!open` marks a call before the commit.
+The rule steps (S5) run here against fakes, and against the real rule engine through the
+adapters in the last tests (`tests/unit/test_user_cascade_wiring.py` covers the adapters)."""
 
 from __future__ import annotations
 
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -27,8 +30,11 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
+from candleviewer.rules.manager import RuleError
+from candleviewer.rules.scope_state import SnapshotScopeState
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
+from candleviewer.user_cascade_wiring import ScopeRefreshAdapter
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
 from tests.conftest import RecordingAuditSink
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -43,12 +49,16 @@ from tests.unit.storage.test_user_lifecycle_sqlalchemy import (
     _Rel,
     _store,
 )
+from tests.unit.test_user_cascade_wiring import _actor, _Engine, _Source
 
 _OWNER = PrincipalSnapshot(uuid.uuid4(), frozenset({"owner"}), frozenset(Permission))
 _MANAGER = PrincipalSnapshot(uuid.uuid4(), frozenset({"manager"}), frozenset())
 _TARGET, _RID = uuid.uuid4(), uuid.uuid4()
-_POST_COMMIT = ("socket", "sweep", "b16", "invite")
-_STEPS = ("socket_close", "session_sweep", "b16_revoke", "invite_revoke")
+_POST_COMMIT = ("socket", "sweep", "b16", "scope", "rules", "disarm", "invite")
+_STEPS = (
+    *("socket_close", "session_sweep", "b16_revoke", "scope_refresh", "rule_disarm"),
+    "invite_revoke",
+)
 _AUDIT_DOWN, _INVITE = errors.LifecycleAuditUnavailableError, ("invite_revoke",)
 _OPEN, _CLOSE = ("success", None, "disabled"), ("failure", "not_applied", "active")
 _UNKNOWN = ("failure", "outcome_unknown", None)  # the commit may have gone through: no after state
@@ -59,7 +69,8 @@ def _revoked(record: SessionRecord) -> SessionRecord:
 
 
 class _World:
-    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` and `invite` raise."""
+    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` and `invite` raise.
+    The user owns the `armed` rules, and disarming one of `refuse` raises its error (S5)."""
 
     source = "not_deployed"  # the position provider's
 
@@ -72,11 +83,15 @@ class _World:
         orders: int | None = 0,
         invite: Exception | None = None,
         store: Any = None,
+        armed: tuple[str, ...] = (),
+        refuse: dict[str, Exception] | None = None,
         **ports: Any,
     ) -> None:
         self.log, self.calls = list[str](), list[dict[str, Any]]()
         self.rel, self.fail, self.invite = rel or _Rel(), fail or {}, invite
         self.positions, self.orders = positions, orders
+        self.armed, self.refuse = armed, refuse or {}
+        self.disarms = list[tuple[str, uuid.UUID, uuid.UUID, datetime]]()
         self.svc = UserDisableService(
             store or _store(self.rel),
             self,
@@ -87,6 +102,8 @@ class _World:
             chart=ports.get("chart", SimpleNamespace(revoke=self.record)),
             publish_revocation=ports.get("publish", self.publish),
             invites=ports.get("invites", SimpleNamespace(revoke=self.revoke_invite)),
+            rules=ports.get("rules", self),
+            scope=ports.get("scope", SimpleNamespace(refresh=self.refresh_scope)),
             clock=lambda: _NOW,
             **{k: v for k, v in ports.items() if k.endswith("_s")},
         )
@@ -132,6 +149,21 @@ class _World:
             raise self.invite
         await audit(user_id, "viewer")
 
+    async def refresh_scope(self, user_id: uuid.UUID) -> None:
+        self.mark("scope")
+
+    async def armed_rule_ids(self, user_id: uuid.UUID) -> tuple[str, ...]:
+        self.mark("rules")
+        return self.armed
+
+    async def disarm(
+        self, rule_id: str, *, user_id: uuid.UUID, actor: uuid.UUID, disabled_at: datetime
+    ) -> None:
+        self.mark(f"disarm:{rule_id}")
+        self.disarms.append((rule_id, user_id, actor, disabled_at))
+        if rule_id in self.refuse:
+            raise self.refuse[rule_id]
+
     async def disable(self, actor: PrincipalSnapshot = _OWNER, **kw: Any) -> DisableResult:
         return await self.svc.disable(_TARGET, actor=actor, **kw)
 
@@ -140,12 +172,14 @@ class _World:
 
 
 async def test_step_order() -> None:
-    """R7: exposure, `users.disable` before the commit, then sockets, sweep, B16 and invite."""
-    w = _World(_Rel(status="invited", sessions=(_S1, _S2)))
+    """R7: exposure, `users.disable` before the commit, then sockets, sweep, B16, the scope
+    refresh, the rule disarm (list, then each rule) and the invite."""
+    w = _World(_Rel(status="invited", sessions=(_S1, _S2)), armed=("r1", "r2"))
     assert await w.disable() == DisableResult(changed=True)
     assert w.log == [
         *("positions", "orders", "users.disable", "socket:user_disabled", "socket:user_disabled"),
-        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled", "invite"),
+        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled"),
+        *("scope", "rules", "disarm:r1", "disarm:r2", "invite"),
         "users.invite_revoked",
     ]
     (invite,) = w.of("users.invite_revoked")
@@ -411,11 +445,26 @@ async def test_invited_revokes_invite(
     assert ("invite" in w.log) == (status == "invited")
 
 
-async def test_already_disabled_is_a_noop_that_sweeps_again() -> None:
-    """AC5: a repeat needs no acknowledgement, commits nothing (`!open`), sweeps again (SR-029)."""
+async def test_already_disabled_is_a_noop_that_sweeps_and_disarms_again() -> None:
+    """AC5: a repeat needs no acknowledgement, commits nothing (`!open`), writes no record, and
+    sweeps, refreshes the scope and looks for armed rules again (SR-029): all three are idempotent
+    and keep the cascade re-drivable."""
     w = _World(_Rel(status="disabled"), positions=None)
     assert await w.disable() == DisableResult(changed=False)
-    assert w.calls == [] and w.log == ["positions", "orders", "sweep:user_disabled!open"]
+    assert w.calls == [] and w.log == [
+        *("positions", "orders", "sweep:user_disabled!open", "scope!open", "rules!open"),
+    ]
+
+
+async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
+    """R7: the first call's disarm of a rule failed (counted, alerted), so the user is disabled
+    with the rule still armed; the same DELETE again disarms it, though it is AC5's no-op."""
+    w = _World(_Rel(status="disabled"), armed=("r1",))
+    assert await w.disable() == DisableResult(changed=False)
+    assert w.disarms == [("r1", _TARGET, _OWNER.user_id, _NOW)]
+    assert w.post_commit() == [
+        *("sweep:user_disabled!open", "scope!open", "rules!open", "disarm:r1!open"),
+    ]
 
 
 async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> None:
@@ -429,7 +478,9 @@ async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> Non
     assert w.post_commit() == [] and w.calls[-1]["reason"] == "outcome_unknown"
     w.rel.rows[LOCK_USER] = [("disabled",)]  # the commit had gone through after all
     assert await w.disable() == DisableResult(changed=False)
-    assert len(w.of("users.disable")) == 2 and w.post_commit() == ["sweep:user_disabled!open"]
+    assert len(w.of("users.disable")) == 2 and w.post_commit() == [
+        *("sweep:user_disabled!open", "scope!open", "rules!open"),
+    ]
 
 
 async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
@@ -446,7 +497,9 @@ async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
         await call
     gate.set()
     await w.svc.drain()
-    assert w.post_commit() == ["sweep:user_disabled", "b16:user_disabled", "invite"]
+    assert w.post_commit() == [
+        *("sweep:user_disabled", "b16:user_disabled", "scope", "rules", "invite"),
+    ]
 
 
 async def test_cancelled_steps_are_failed_then_reraised() -> None:
@@ -497,16 +550,19 @@ def _steps(step: str, outcome: str) -> float:  # `cv_user_lifecycle_steps_total`
     [
         ({"publish": Mock(side_effect=LookupError)}, "socket_close"),
         ({"sessions": SimpleNamespace(revoke_all=Mock(side_effect=LookupError))}, "session_sweep"),
+        ({"scope": SimpleNamespace(refresh=Mock(side_effect=LookupError))}, "scope_refresh"),
+        ({"rules": SimpleNamespace(armed_rule_ids=Mock(side_effect=LookupError))}, "rule_disarm"),
     ],
-    ids=["sink", "sweep"],
+    ids=["sink", "sweep", "scope", "rules"],
 )
 async def test_port_that_raises_before_its_awaitable_fails_its_step_alone(
     ports: dict[str, Any], failed: str
 ) -> None:
     """R7: a port that raises before it returns an awaitable (a plain function) is a failed run
     of its own step, counted as failed (it was skipped, attempted 0); every other step still
-    runs, and the committed disable still answers the caller."""
-    w = _World(_Rel(status="invited", sessions=(_S1, _S2)), **ports)
+    runs (an armed rule is disarmed after a failed scope refresh), and the committed disable
+    still answers the caller."""
+    w = _World(_Rel(status="invited", sessions=(_S1, _S2)), armed=("r1",), **ports)
     counted = _steps(failed, "failed")
     with capture_logs() as logs:
         assert await w.disable() == DisableResult(True, (failed,))
@@ -564,9 +620,11 @@ async def test_hung_count_is_unknown(read: str, monkeypatch: pytest.MonkeyPatch)
         ({"publish": _hang, "step_timeout_s": 0}, _STEPS[:1]),
         ({"sessions": SimpleNamespace(revoke_all=_hang), "step_timeout_s": 0}, _STEPS[1:2]),
         ({"chart": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[2:3]),
-        ({"invites": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[3:]),
+        ({"scope": SimpleNamespace(refresh=_hang), "step_timeout_s": 0}, _STEPS[3:4]),
+        ({"rules": SimpleNamespace(armed_rule_ids=_hang), "step_timeout_s": 0}, _STEPS[4:5]),
+        ({"invites": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[5:]),
         ({"publish": _hang, "deadline_s": 0}, _STEPS),
-        ({"publish": _hang, "deadline_s": 0, "status": "active"}, _STEPS[:3]),
+        ({"publish": _hang, "deadline_s": 0, "status": "active"}, _STEPS[:5]),
         ({"rows": SimpleNamespace(find_by_id=AsyncMock(return_value=None))}, _STEPS[2:3]),
     ],
     ids=[*_STEPS, "deadline", "deadline_active", "b16_row_missing"],
@@ -576,3 +634,68 @@ async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple
     step fails alone (an `active` user has no invite step to fail)."""
     w = _World(_Rel(status=ports.get("status", "invited"), sessions=(_S1,)), **ports)
     assert await w.disable() == DisableResult(True, failed)
+
+
+async def test_refused_rule_does_not_stop_loop() -> None:
+    """R7, UL1-E3: a rule the chart refuses (B9 handles DISARM only in `armed`, `cooling_down`
+    and `paused_degraded`) fails its own run: every other rule is still tried, in order, and the
+    step is counted failed (one run to list the rules, one per rule)."""
+    refusal = RuleError(422, "illegal_transition", "A rule cannot change from armed to disabled.")
+    w = _World(armed=("r1", "r2", "r3"), refuse={"r2": refusal})
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(True, ("rule_disarm",))
+    assert [rule for rule, *_ in w.disarms] == ["r1", "r2", "r3"]
+    (line,) = [e for e in logs if e.get("step") == "rule_disarm"]
+    assert (line["attempted"], line["outcome"], line["error"]) == (4, "failed", "RuleError")
+    assert line["log_level"] == "error" and line["target_user_id"] == str(_TARGET)
+
+
+async def test_disable_disarms_the_users_armed_rules_through_b9_and_closes_their_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1, SR-029, O5: over the real rule engine (manager, store, B9 charts built by the
+    statechart factory) the cascade disarms every armed rule the user owns, audited with the
+    acting Owner, and leaves nothing of the user in the scope snapshot; another user's rule is
+    not touched. One rule is refused, as its chart does while it evaluates (the real refusal is
+    in `test_user_cascade_wiring`): it fails its own run and the step, and the rest are disarmed."""
+    engine, source = _Engine(), _Source()
+    mine = [await engine.rule(_TARGET, "t-one"), await engine.rule(_TARGET, "t-two")]
+    busy, theirs = await engine.rule(_TARGET, "t-busy"), await engine.rule(uuid.uuid4(), "other")
+    real = engine.manager.set_mode
+
+    async def refuse_busy(rule_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if rule_id == busy:
+            raise RuleError(422, "illegal_transition", "A rule cannot change from armed.")
+        return await real(rule_id, *args, **kwargs)
+
+    monkeypatch.setattr(engine.manager, "set_mode", refuse_busy)
+    state = SnapshotScopeState(source, "demo")
+    await state.refresh(_TARGET)
+    assert state.can_arm_live(_TARGET)
+    source.disabled = True  # what the store answers once the disable has committed
+    w = _World(rules=engine.adapter, scope=ScopeRefreshAdapter(lambda: state))
+    assert await w.disable() == DisableResult(True, ("rule_disarm",))
+    for rid in mine:
+        assert await engine.mode(rid) == ("disabled", "disarmed")
+        assert engine.manager.lifecycle.leaf(rid) == "disarmed"
+    assert [await engine.mode(rid) for rid in (busy, theirs)] == [("armed", None)] * 2
+    assert engine.disarmed() == sorted((rid, str(_OWNER.user_id), "DISARM") for rid in mine)
+    assert state.granted_accounts(_TARGET) == frozenset() and not state.can_arm_live(_TARGET)
+
+
+async def test_overlapping_repeats_disarm_a_rule_once_and_park_nothing() -> None:
+    """AC5, SR-029: a repeat of the DELETE can start while the first cascade still runs (a double
+    submit, a client retry), and both list the rule while it is armed. Over the real rule engine
+    the adapter runs one rule's disarms one at a time, so the second finds the rule disarmed and
+    writes nothing: one `rule.disarmed` record, no failed step, no DISARM parked on the chart, and
+    the rule arms again the first time. Unserialised, both sent DISARM: two records, one parked,
+    and the next arm refused with 422 `illegal_transition`."""
+    engine = _Engine()
+    rid = await engine.rule(_TARGET, "t-one")
+    w = _World(_Rel(status="disabled"), rules=engine.adapter)
+    first, second = await asyncio.gather(w.disable(), w.disable())
+    assert first == second == DisableResult(changed=False)
+    assert engine.disarmed() == [(rid, str(_OWNER.user_id), "DISARM")]
+    assert engine.manager.lifecycle._charts[rid].deferred_count == 0
+    await engine.manager.set_mode(rid, "armed", _actor(_TARGET), "arm-again")
+    assert await engine.mode(rid) == ("armed", None)
