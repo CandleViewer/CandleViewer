@@ -45,7 +45,11 @@ from candleviewer.admin.wiring import (
     build_secrets_service,
     export_secrets_metrics,
 )
-from candleviewer.admin_wiring import build_admin_read_models, build_system_settings
+from candleviewer.admin_wiring import (
+    build_admin_read_models,
+    build_statechart_inspector,
+    build_system_settings,
+)
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.lifecycle import AlertCharts
@@ -67,6 +71,7 @@ from candleviewer.api import (
 )
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_overview import make_admin_overview_router
+from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
 from candleviewer.api.audit_limiter import AuditQueryLimiter
@@ -1473,6 +1478,13 @@ def create_app(
             admin_settings,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )
+    # E42-T07: the statechart inspector read API behind the same audited admin-area guard.
+    inspector = build_statechart_inspector()
+    app.include_router(
+        make_statechart_router(
+            inspector, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
         )
     )
     app.state.admin_overview_metrics = export_overview_metrics(

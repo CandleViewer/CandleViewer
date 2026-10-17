@@ -15,6 +15,8 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.admin.inspector import StatechartInspector
+from candleviewer.admin.overview import slices
 from candleviewer.admin.overview.capacity import (
     PART_BUDGET_S,
     TIER_CAPS,
@@ -321,10 +323,13 @@ class SpyFan(SliceFanOut):
 
 async def test_each_service_reads_exactly_its_own_slice_names() -> None:
     overview_fan, capacity_fan = SpyFan(), SpyFan()
+    inspector_fan = SpyFan()
     await AdminOverviewService(overview_fan).overview()
     await AdminCapacityService(capacity_fan).capacity()
+    await StatechartInspector(inspector_fan, lambda *_: None, {}).listing(lambda *_: True)
     assert overview_fan.names == set(OVERVIEW_SLICES)
     assert capacity_fan.names == set(CAPACITY_SLICES)
+    assert inspector_fan.names == set(slices.INSPECTOR_SLICES)
 
 
 async def test_ingestion_is_reported_and_storage_waits_for_the_first_disk_sample() -> None:

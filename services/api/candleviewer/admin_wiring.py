@@ -1,5 +1,5 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
-`GET /admin/capacity`.
+`GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`.
 
 Real sources on the real storage backend:
 - the Postgres counts repository (users, accounts and keys, open incidents, sub-accounts in use),
@@ -37,6 +37,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Final
 
+from candleviewer.admin.inspector import StatechartInspector
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
 from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable, utc_now
 from candleviewer.admin.overview.ports import (
@@ -49,8 +50,10 @@ from candleviewer.admin.overview.ports import (
     UserCounts,
 )
 from candleviewer.admin.overview.service import AdminOverviewService
+from candleviewer.api.admin_statecharts import machine_key
 from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
+from candleviewer.statechart.lock import DEFAULT_LOCK_PATH, load_lock
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -212,3 +215,11 @@ def build_admin_read_models(
     tier = None if system_settings is None else SettingsTierReader(system_settings)
     capacity = AdminCapacityService(fan, recorder=recorder, subaccounts=counts, tier=tier, now=now)
     return overview, capacity
+
+
+def build_statechart_inspector(*, now: Callable[[], datetime] = utc_now) -> StatechartInspector:
+    """The E42-T07 inspector over the sources that exist: the chart registry and the committed lock.
+    No snapshot store or KMS-backed HMAC keys (E50-T61, #2744) and no metrics source exist yet, so
+    `snapshots` and `metrics` stay `unavailable` and the list stays empty."""
+    lock = {kind: str(entry.get("hash")) for kind, entry in load_lock(DEFAULT_LOCK_PATH).items()}
+    return StatechartInspector(SliceFanOut(now=now), machine_key, lock)

@@ -13,6 +13,7 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from candleviewer.admin.overview import slices
 from candleviewer.admin.overview.fanout import (
     _REASON_MAX,
     DEFAULT_BUDGET_S,
@@ -346,8 +347,8 @@ async def test_an_unknown_slice_name_is_refused_at_runtime() -> None:
 
 
 def test_slice_sets_are_explicit_disjoint_and_cover_the_enum() -> None:
-    assert OVERVIEW_SLICES.isdisjoint(CAPACITY_SLICES)
-    assert OVERVIEW_SLICES | CAPACITY_SLICES == set(AdminSlice)
+    sets = (OVERVIEW_SLICES, CAPACITY_SLICES, slices.INSPECTOR_SLICES)
+    assert sum(map(len, sets)) == len(set().union(*sets)) == len(AdminSlice)
 
 
 async def test_a_partial_slice_logs_its_reason_never_a_message() -> None:

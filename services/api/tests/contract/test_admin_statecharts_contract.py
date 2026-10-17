@@ -13,10 +13,12 @@ from typing import Any
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.admin_statecharts import MACHINE_KEY
 from candleviewer.statechart import Registry, export_stately, machine_hash
 from candleviewer.statechart.schema import MACHINE_SCHEMA
 from tests.contract._admin_support import (
@@ -30,6 +32,7 @@ from tests.contract._admin_support import (
     validate_example,
     x_rbac,
 )
+from tests.unit.admin.test_statechart_inspector import fleet, inspector, make_app
 
 _PATHS: dict[str, Any] = SPEC["paths"]
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
@@ -83,13 +86,24 @@ def _ws_6_4() -> tuple[dict[str, list[str]], str]:
 
 
 @pytest.mark.parametrize(("path", "codes"), list(_OPS.items()))
-def test_operations_are_owner_reads_allow_listed_until_served(path: str, codes: set[str]) -> None:
+def test_operations_are_owner_reads_and_served_ones_executed(path: str, codes: set[str]) -> None:
     operation = _PATHS[path]["get"]
     assert operation["x-rbac"] == {"permissions": ["admin:read"], "scope": "none"}
     assert codes <= set(operation["responses"])
-    row = _MATRIX["operations"][f"GET {path}"]
-    assert (row["state"], row["outcomes"]) == ("not_mounted", OWNER_ONLY)
-    assert _PENDING[f"GET {path}"]["ticket"] == "E42-T07"
+    row, served = _MATRIX["operations"][f"GET {path}"], path != _DETAIL  # the detail: next slice
+    assert (row["state"], row["outcomes"]) == ("executed" if served else "not_mounted", OWNER_ONLY)
+    assert (f"GET {path}" in _PENDING) is not served
+
+
+def test_served_responses_validate_against_the_contract() -> None:
+    client = TestClient(make_app(inspector(*fleet())))
+    for path, url in [(_LIST, _LIST), (_EXPORT, "/admin/statecharts/kill_switch/export")]:
+        body = client.get(url, headers={"x-role": "owner"}).json()
+        schema = f"/paths/{path.replace('/', '~1')}/get/responses/200/content/application~1json"
+        validate_example(f"{schema}/schema", body)
+    missing = client.get(f"/admin/statecharts/algo:{_UUID}/export", headers={"x-role": "owner"})
+    problem = "/components/responses/NotFound/content/application~1problem+json/schema"
+    validate_example(problem, missing.json())
 
 
 def test_security_program_row_48c_is_owner_only_admin_read() -> None:
@@ -202,6 +216,10 @@ def test_read_path_rules() -> None:
 )
 def test_machine_key_follows_the_entity_grammar(key: str, ok: bool) -> None:
     assert bool(re.fullmatch(_KEY, key)) is ok
+
+
+def test_the_served_key_pattern_is_the_contracts() -> None:
+    assert MACHINE_KEY == _KEY
 
 
 def test_machine_key_symbol_is_the_ws_13_symbol() -> None:
