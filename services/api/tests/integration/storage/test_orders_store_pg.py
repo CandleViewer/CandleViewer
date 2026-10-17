@@ -1,4 +1,4 @@
-"""Integration: the order stores and the M14 repositories on real Postgres 16 (E29-T01 #845 S2).
+"""Integration: the order stores and the M14 repositories on real Postgres 16 (E29-T01 #845).
 
 `testcontainers` in CI; run locally on a scratch PostgreSQL 16.2 (no docker on the laptop). The
 database is set up like production (`pg_bootstrap.sql`'s roles, the migrations as `cv_owner`) and

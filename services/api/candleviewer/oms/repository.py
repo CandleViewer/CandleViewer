@@ -1,4 +1,4 @@
-"""The OMS's order persistence (E29-T01 #845 slice 2/3): `OrderRepository`, `OrderEventRepository`.
+"""The OMS's order persistence (E29-T01 #845): `OrderRepository`, `OrderEventRepository`.
 
 M14 may not import a storage driver (ADR-0003), so the SQL lives in M10
 (`storage.repositories.orders_sqlalchemy`) behind the driver-free `OrderStore` and

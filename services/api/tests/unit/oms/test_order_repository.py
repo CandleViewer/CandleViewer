@@ -1,4 +1,4 @@
-"""M14 `OrderRepository` / `OrderEventRepository` over a stub store (E29-T01 #845 slice 2/3).
+"""M14 `OrderRepository` / `OrderEventRepository` over a stub store (E29-T01 #845).
 
 The facade's own behaviour: `DuplicateOrderLinkId` for the unique index (Gherkin "Idempotency is
 enforced by the database", unit half), the 24 Sec.8.3 rule 5 lookup the #846 allocator uses, the
