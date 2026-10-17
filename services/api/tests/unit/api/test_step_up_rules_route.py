@@ -1,7 +1,8 @@
 """#2304 on `PUT /rules/{ruleId}/mode`, the only mounted no-grace route, end to end with the
 real `StepUpService`, `SessionRulesActorResolver` and rules router: the refusal is a challenge
 the client answers by id, and the held request, re-sent unchanged with its `Idempotency-Key`,
-arms the rule once. Harness: `test_step_up_challenge_router._world`."""
+arms the rule once; the grant it earned arms nothing else. Harness:
+`test_step_up_challenge_router._world`."""
 
 from __future__ import annotations
 
@@ -52,7 +53,7 @@ async def _armable(w: _World, count: int = 1) -> tuple[list[str], list[str]]:
 
     mgr = RulesManager(InMemoryRuleStore(), default_registry(), audit=audit, broadcast=broadcast)
     resolver = SessionRulesActorResolver(
-        lambda: _TouchingSessions(w.sessions), lambda: w.auth.step_up, _Identity()
+        lambda: _TouchingSessions(w.sessions), lambda: w.auth.step_up, _Identity(), w.audit
     )
     app = w.client.app
     assert isinstance(app, FastAPI)  # the harness app, not yet serving: routes may be added
@@ -103,3 +104,22 @@ async def test_rules_refusal_states_the_step_up_text_every_challenge_states() ->
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(rules.json())
     stated = ("title", "detail")
     assert {k: rules.json()[k] for k in stated} == {k: killswitch.json()[k] for k in stated}
+
+
+async def test_rules_grant_bound_to_one_rule_refuses_to_arm_another() -> None:
+    """AC "Bound single-use grant refuses a swapped payload" on the rules route: before #2304 any
+    live arm used the session's grant, whichever rule the challenge restated."""
+    w = await _world()
+    (held, other), trail = await _armable(w, count=2)
+    denied = w.client.put(f"/rules/{held}/mode", headers=w.h(), json=_ARM)
+    challenge_id = denied.json()["challenge_id"]
+    assert w.step_up(challenge_id=challenge_id).status_code == 200
+    swapped = w.client.put(f"/rules/{other}/mode", headers=w.h(), json=_ARM)
+    assert swapped.status_code == 403
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(swapped.json())
+    assert swapped.json()["challenge_id"] != challenge_id  # a challenge for that request
+    (mismatch,) = w.of("auth.step_up_mismatch")
+    assert mismatch["object_id"] == challenge_id
+    resent = w.client.put(f"/rules/{held}/mode", headers=w.h(), json=_ARM)
+    assert resent.status_code == 200 and resent.json()["mode"] == "armed"
+    assert trail.count("rule.armed") == 1  # the held rule; the swapped request armed nothing

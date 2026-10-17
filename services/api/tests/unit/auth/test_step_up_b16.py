@@ -344,6 +344,10 @@ async def _lock_and_unlock(
     return locked
 
 
+#: Hex SHA-256 of the request a killswitch challenge refused: the grant is bound to it (#2304).
+_HELD = "a" * 64
+
+
 def _last_seen_14_minutes_ago(sessions: FakeSessionRepository, clock: _Clock) -> None:
     """`s1` idle-locks one minute from now (default 15-minute timeout)."""
     row = sessions.sessions["s1"]
@@ -360,20 +364,23 @@ async def test_unlock_of_an_idle_locked_row_drops_every_step_up_elevation() -> N
     _last_seen_14_minutes_ago(sessions, clock)
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     clock.now += timedelta(seconds=30)  # a fresh TOTP time step
-    await svc.step_up(str(user), "s1", "killswitch", _code(seed, clock), PASSWORD)
+    held = await svc.record_pending("s1", "killswitch", fingerprint=_HELD)
+    await svc.step_up(
+        str(user), "s1", None, _code(seed, clock), PASSWORD, challenge_id=held.challenge_id
+    )
     challenge = await svc.record_pending("s1", "users")
     with pytest.raises(StepUpCodeInvalid):  # a wrong code for the live challenge (#2304)
         await svc.step_up(
             str(user), "s1", None, "000000", PASSWORD, challenge_id=challenge.challenge_id
         )
     elevations = set(sessions.sessions["s1"].step_up_elevations)
-    assert elevations == {"keys", "once:killswitch", challenge.key()}
+    assert elevations == {"keys", held.key("once:"), challenge.key()}
     locked = await _lock_and_unlock(svc, clock, sessions)
     row = sessions.sessions["s1"]
     with pytest.raises(StepUpRequired):
         await svc.require_elevation("s1", "keys")
     with pytest.raises(StepUpRequired):
-        await svc.consume_single_use("s1", "killswitch")
+        await svc.consume_single_use("s1", "killswitch", fingerprint=_HELD)
     assert await svc.pending_action_class("s1") is None
     assert grace_expires_at(row.step_up_elevations, clock.now) is None  # step_up_expires_at
     assert (row.step_up_failures, row.readonly_until) == (1, None)

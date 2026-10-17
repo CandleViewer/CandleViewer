@@ -20,7 +20,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
-from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 
 from .auth_fakes import FakeUserRepository, make_user
@@ -115,20 +115,24 @@ async def test_grace_window_within_action_class() -> None:
         await svc.require_elevation("s1", "keys")
 
 
-@pytest.mark.parametrize("cls", ["live_enablement", "killswitch"])
+@pytest.mark.parametrize("cls", sorted(NO_GRACE_ACTION_CLASSES))
 async def test_grace_never_applies_to_no_grace_classes(cls: str) -> None:
     svc, clock, seed, user, _ = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     with pytest.raises(StepUpRequired):
         await svc.require_elevation("s1", cls)
     clock.now += timedelta(minutes=1)
-    grant = await svc.step_up(str(user), "s1", cls, _code(seed, clock), PASSWORD)
+    bound = "f" * 64  # #2304: the grant is bound to the challenged request
+    challenge = await svc.record_pending("s1", cls, fingerprint=bound)
+    grant = await svc.step_up(
+        str(user), "s1", cls, _code(seed, clock), PASSWORD, challenge_id=challenge.challenge_id
+    )
     assert grant.single_use
     with pytest.raises(StepUpRequired):
         await svc.require_elevation("s1", cls)
-    await svc.consume_single_use("s1", cls)  # one-shot grant honoured once
+    await svc.consume_single_use("s1", cls, fingerprint=bound)  # one-shot grant honoured once
     with pytest.raises(StepUpRequired):
-        await svc.consume_single_use("s1", cls)
+        await svc.consume_single_use("s1", cls, fingerprint=bound)
 
 
 async def test_three_failures_downgrade_to_readonly_for_five_minutes() -> None:

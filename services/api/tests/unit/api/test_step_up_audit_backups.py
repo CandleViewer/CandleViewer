@@ -3,7 +3,7 @@
 On `main` the mounted `POST /admin/audit/export` had no registry row, so an Owner
 session that was not elevated exported the audit log. `audit` keeps the 5-minute
 grace. `backups` is no-grace because a restore is irreversible: one fresh code
-authorises exactly one restore, and the guard spends it.
+authorises exactly one restore, which its handler binds and spends (#2304).
 """
 
 from __future__ import annotations
@@ -20,8 +20,9 @@ from candleviewer.auth import step_up as step_up_service
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.statechart.bindings import b16_session
 from tests.unit.api.test_invites_create_app_e2e import _h, _login
+from tests.unit.api.test_step_up_challenge_router import _world as _challenge_world
 from tests.unit.api.test_step_up_guard_create_app import _world
-from tests.unit.api.test_step_up_router import _H, _PW, _build, _code
+from tests.unit.api.test_step_up_router import _H, _build
 
 _EXPORT = {"from": "2026-09-01T00:00:00Z", "to": "2026-09-30T00:00:00Z"}
 
@@ -55,32 +56,29 @@ def _restore_route(c: TestClient) -> list[str]:
     return ran
 
 
-async def test_backup_restore_spends_one_fresh_code_per_restore() -> None:
-    c, em, seed, clock, _ = await _build()
+async def test_path_gated_backup_restore_fails_closed_until_its_handler_binds_the_request() -> None:
+    """A no-grace grant binds one request (#2304), which a path cannot name: the guard refuses
+    the restore rather than let it run on an unbound grant."""
+    c, *_ = await _build()
     ran = _restore_route(c)
-    path = f"/admin/backups/{uuid.uuid4()}/restore"
-    denied = c.post(path, headers=_H)
-    assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
-    assert denied.json()["action_class"] == "backups" and not ran
-    ok = c.post("/auth/step-up", headers=_H, json={"code": _code(seed, clock), "password": _PW})
-    assert ok.status_code == 200 and ok.json()["action_class"] == "backups"
-    assert ok.json()["single_use"] is True and ok.json()["step_up_expires_at"] is None
-    assert c.post(path, headers=_H).status_code == 200 and len(ran) == 1
-    again = c.post(path, headers=_H)  # no grace: the code was spent on the first restore
-    assert again.status_code == 403 and again.json()["action_class"] == "backups"
-    assert len(ran) == 1
-    assert em.actions().count("auth.step_up_required") == 2
+    with pytest.raises(TypeError, match="fingerprint"):
+        c.post(f"/admin/backups/{uuid.uuid4()}/restore", headers=_H)
+    assert not ran
 
 
 @pytest.mark.parametrize(("action_class", "single_use"), [("audit", False), ("backups", True)])
 async def test_step_up_accepts_the_new_classes_and_b16_records_the_grant(
     action_class: str, single_use: bool
 ) -> None:
-    c, em, seed, clock, _ = await _build()
-    body = {"code": _code(seed, clock), "password": _PW, "action_class": action_class}
-    ok = c.post("/auth/step-up", headers=_H, json=body)
+    w = await _challenge_world()
+    answer: dict[str, Any] = {"action_class": action_class}
+    if single_use:  # a no-grace class is answered by its challenge, which binds one request
+        sid = str(w.sessions["tok"].id)
+        issued = await w.auth.step_up.record_pending(sid, action_class, fingerprint="a" * 64)
+        answer = {"challenge_id": str(issued.challenge_id)}
+    ok = w.step_up(**answer)
     assert ok.status_code == 200 and ok.json()["single_use"] is single_use
-    (granted,) = [x for x in em.calls if x["action"] == "auth.step_up_granted"]
+    (granted,) = w.of("auth.step_up_granted")
     assert granted["reason"] == action_class
     # A grace class opens a window on the chart; a no-grace one never does.
     window = [] if single_use else [action_class]

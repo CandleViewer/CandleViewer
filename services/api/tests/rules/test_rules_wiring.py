@@ -20,7 +20,12 @@ from candleviewer.api.step_up import (
 )
 from candleviewer.api.step_up_challenge import request_fingerprint
 from candleviewer.app import create_app
-from candleviewer.auth.errors import SessionReadOnly, SessionRevoked, StepUpRequired
+from candleviewer.auth.errors import (
+    SessionReadOnly,
+    SessionRevoked,
+    StepUpMismatch,
+    StepUpRequired,
+)
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.rules.manager import RuleError
 
@@ -65,15 +70,21 @@ _BODY = b'{"reason": null, "mode": "armed"}'
 _HELD = request_fingerprint("PUT", b"/rules/r1/mode", {"mode": "armed", "reason": None})
 
 
-class _ChallengingStepUp:
-    """`StepUpService` with no grant for the session: it issues a `live_enablement` challenge."""
+class _BoundStepUp:
+    """`StepUpService` holding a one-shot `live_enablement` grant bound to `bound`, or none."""
 
-    def __init__(self) -> None:
+    def __init__(self, bound: str | None) -> None:
+        self.bound = bound
         self.pending: list[str | None] = []
         self.issued = StepUpChallenge(uuid.uuid4(), "live_enablement", _UNTIL + CHALLENGE_WINDOW)
 
-    async def consume_single_use(self, sid: str, cls: str) -> None:
-        raise StepUpRequired(cls)
+    async def consume_single_use(self, sid: str, cls: str, *, fingerprint: str) -> None:
+        if self.bound is None:
+            raise StepUpRequired(cls)
+        if self.bound != fingerprint:
+            raise StepUpMismatch(
+                cls, user_id=_UID, challenge_id="c", bound=self.bound, refused=fingerprint
+            )
 
     async def record_pending(
         self, sid: str, cls: str, *, fingerprint: str | None = None
@@ -82,7 +93,17 @@ class _ChallengingStepUp:
         return self.issued
 
 
-async def _arm_consume(step_up: object, body: bytes = _BODY) -> Callable[[], Awaitable[bool]]:
+class _Audit:
+    def __init__(self) -> None:
+        self.actions: list[str] = []
+
+    async def emit(self, action: str, **kwargs: object) -> None:
+        self.actions.append(action)
+
+
+async def _arm_consume(
+    step_up: object, audit: object = None, body: bytes = _BODY
+) -> Callable[[], Awaitable[bool]]:
     """`Actor.consume_step_up` of the real resolver for `PUT /rules/r1/mode` with `body`."""
     from types import SimpleNamespace
 
@@ -112,18 +133,32 @@ async def _arm_consume(step_up: object, body: bytes = _BODY) -> Callable[[], Awa
         "query_string": b"",
         "headers": [(b"authorization", b"Bearer t"), (b"content-type", b"application/json")],
     }
-    resolver = SessionRulesActorResolver(lambda: _Sessions(), lambda: step_up, _Identity())
+    resolver = SessionRulesActorResolver(lambda: _Sessions(), lambda: step_up, _Identity(), audit)
     actor = await resolver.resolve(Request(scope, receive))
     assert actor is not None and actor.consume_step_up is not None
     return actor.consume_step_up
 
 
-async def test_actor_consume_refusal_carries_the_challenge_issued_for_this_request() -> None:
-    """The hard-coded `step_up_fresh=True` is safe only because `consume` is the real check. Its
-    refusal carries the challenge issued for this request (#2304), never a bare
-    `step_up_required` that no client could answer, and the challenge records the request."""
-    step_up = _ChallengingStepUp()
-    consume = await _arm_consume(step_up)
+async def test_actor_consume_arms_with_the_grant_bound_to_this_request() -> None:
+    """The hard-coded `step_up_fresh=True` is safe only because `consume` is the real check:
+    #2304, the one-shot grant is used only by the request it is bound to."""
+    step_up, audit = _BoundStepUp(_HELD), _Audit()
+    assert await (await _arm_consume(step_up, audit))() is True
+    assert step_up.pending == [] and audit.actions == []
+
+
+@pytest.mark.parametrize(
+    ("bound", "audited"),
+    [(None, []), ("0" * 64, ["auth.step_up_mismatch"])],
+    ids=["no-grant", "bound-to-another-request"],
+)
+async def test_actor_consume_refusal_carries_the_challenge_issued_for_this_request(
+    bound: str | None, audited: list[str]
+) -> None:
+    """A refusal is the challenge issued for this request (#2304), which a no-grace step-up
+    must name; never a bare `step_up_required` that no client could answer."""
+    step_up, audit = _BoundStepUp(bound), _Audit()
+    consume = await _arm_consume(step_up, audit)
     with pytest.raises(RuleError) as refused:
         await consume()
     assert (refused.value.status, refused.value.code) == (403, "step_up_required")
@@ -134,12 +169,12 @@ async def test_actor_consume_refusal_carries_the_challenge_issued_for_this_reque
         "challenge_id": str(step_up.issued.challenge_id),
         "challenge_expires_at": step_up.issued.expires_at.isoformat(),
     }
-    assert step_up.pending == [_HELD]
+    assert step_up.pending == [_HELD] and audit.actions == audited
 
 
 async def test_actor_consume_of_a_body_that_cannot_be_bound_is_400_never_a_challenge() -> None:
-    step_up = _ChallengingStepUp()
-    consume = await _arm_consume(step_up, b'{"mode": "armed", "reason": "\\ud800"}')
+    step_up = _BoundStepUp(_HELD)
+    consume = await _arm_consume(step_up, _Audit(), b'{"mode": "armed", "reason": "\\ud800"}')
     with pytest.raises(RuleError) as refused:
         await consume()
     assert (refused.value.status, refused.value.code) == (400, "validation_failed")

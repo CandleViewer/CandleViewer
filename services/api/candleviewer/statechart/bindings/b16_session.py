@@ -78,7 +78,8 @@ async def _emit(
     session, before/after elevation state. `replay=True` events (chart
     hydration from the persisted `sessions` row) were audited when they
     first happened and are not re-recorded. A step-up challenge (#2304) is
-    the record's object."""
+    the record's object; a no-grace grant also names the SHA-256 of the
+    request it is bound to (never the request itself)."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -86,7 +87,10 @@ async def _emit(
         raise B16AuditSinkMissingError(f"B16 {action}: no audit sink wired")
     sid, uid = _identity(context)
     before = payload.get("before")
-    challenge = payload.get("challenge_id")
+    after = elevation_view(context)
+    challenge, bound = payload.get("challenge_id"), payload.get("request_sha256")
+    if isinstance(bound, str):
+        after["bound_request_sha256"] = bound
     await _SINK[0].emit(
         action,
         actor_label=uid or "system",
@@ -98,7 +102,7 @@ async def _emit(
         severity=severity,
         reason=reason,
         before_state=before if isinstance(before, dict) else None,
-        after_state=elevation_view(context),
+        after_state=after,
     )
 
 

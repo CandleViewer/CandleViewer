@@ -1,9 +1,10 @@
 """#2754: the step-up instant the session row still records (`last_step_up_at`).
 
-`StepUpService` stores `now + GRACE_WINDOW` under the action class (or `once:<class>` for a
-one-shot grant) on the session row. `last_step_up_at` reads the instant back out of that record,
-so the verified principal can carry it with no further query. These tests drive the real
-`StepUpService`, `SessionService` and B16 chart over the in-memory session fake."""
+`StepUpService` stores a grace class's window (`now + GRACE_WINDOW`) under the action class, and
+a no-grace class's one-shot grant (`now + SINGLE_USE_WINDOW`) under its bound key (#2304).
+`last_step_up_at` reads the instant back out of that record, so the verified principal can carry
+it with no further query. These tests drive the real `StepUpService`, `SessionService` and B16
+chart over the in-memory session fake."""
 
 from __future__ import annotations
 
@@ -14,10 +15,18 @@ import pytest
 from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid, StepUpRequired
 from candleviewer.auth.session_chart import to_us
 from candleviewer.auth.session_service import SessionService
-from candleviewer.auth.step_up import ACTION_CLASSES, GRACE_WINDOW, last_step_up_at
+from candleviewer.auth.step_up import (
+    ACTION_CLASSES,
+    GRACE_WINDOW,
+    NO_GRACE_ACTION_CLASSES,
+    last_step_up_at,
+)
 from candleviewer.statechart.bindings import b16_session
 
 from .test_step_up import _HASHER, _T0, PASSWORD, _code, _pw_hash, _setup
+
+#: #2304: the SHA-256 of the request a no-grace challenge refused; its grant is bound to it.
+_HELD = "a" * 64
 
 
 async def test_last_step_up_at_is_none_before_any_step_up() -> None:
@@ -45,11 +54,15 @@ async def test_last_step_up_at_follows_the_latest_step_up_of_any_class() -> None
 async def test_last_step_up_at_reads_every_action_class_however_the_row_keys_it(
     action_class: str,
 ) -> None:
-    """Grace classes sit under their name, no-grace classes under `once:<class>`; a class added
-    to `ACTION_CLASSES` is covered here the day it lands."""
+    """Grace classes sit under their name, no-grace classes under their bound `once:` key; a
+    class added to `ACTION_CLASSES` is covered here the day it lands."""
     svc, clock, seed, user, sessions = await _setup()
     clock.now = _T0 + timedelta(seconds=40)
-    await svc.step_up(str(user), "s1", action_class, _code(seed, clock), PASSWORD)
+    challenge = None
+    if action_class in NO_GRACE_ACTION_CLASSES:  # #2304: a fresh code bound to one request
+        challenge = await svc.record_pending("s1", action_class, fingerprint=_HELD)
+    cid = None if challenge is None else challenge.challenge_id
+    await svc.step_up(str(user), "s1", action_class, _code(seed, clock), PASSWORD, challenge_id=cid)
     assert last_step_up_at(sessions.sessions["s1"].step_up_elevations) == clock.now
 
 
@@ -57,9 +70,11 @@ async def test_a_spent_one_shot_grant_leaves_no_step_up_record_on_the_row() -> N
     """The row keeps a one-shot grant only until its action spends it, so an age derived from
     the row is `None` from then on (the limit of reading existing state, #2754)."""
     svc, clock, seed, user, sessions = await _setup()
-    await svc.step_up(str(user), "s1", "killswitch", _code(seed, clock), PASSWORD)
+    held = await svc.record_pending("s1", "killswitch", fingerprint=_HELD)
+    code = _code(seed, clock)
+    await svc.step_up(str(user), "s1", None, code, PASSWORD, challenge_id=held.challenge_id)
     assert last_step_up_at(sessions.sessions["s1"].step_up_elevations) == clock.now
-    await svc.consume_single_use("s1", "killswitch")
+    await svc.consume_single_use("s1", "killswitch", fingerprint=_HELD)
     assert last_step_up_at(sessions.sessions["s1"].step_up_elevations) is None
 
 

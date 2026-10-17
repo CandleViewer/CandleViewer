@@ -1623,7 +1623,12 @@ def create_app(
         broadcast=_rules_broadcast,
     )
     rules_actor = (
-        SessionRulesActorResolver(lambda: ctx.auth.sessions, lambda: ctx.auth.step_up, identity)
+        SessionRulesActorResolver(
+            lambda: ctx.auth.sessions,
+            lambda: ctx.auth.step_up,
+            identity,
+            _LazyAuditEmitter(ctx.audit),
+        )
         if identity is not None
         else None
     )
