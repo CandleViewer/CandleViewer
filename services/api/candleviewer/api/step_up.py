@@ -400,7 +400,7 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
-    # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Only the export is mounted today.
+    # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Mounted today: the export and deleteUser.
     ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser
     ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
     ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess

@@ -11,6 +11,14 @@ required (TypeError at wiring time).
 (`users:read`, no step-up: a read). RBAC runs before any lookup, so a refused caller gets one 403
 for an existing and a missing id (threat U25), audited naming the target. Its problem codes are
 the contract's `x-error-codes`. `account_access=None` fails closed with 501; the `PUT` is S9c.
+
+`DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
+written before the last: `users:write`, then a self-target (both refusals audited before any
+lookup: U25, SR-055), the step-up `users` (SR-025), the query (`purge=true` is E42-T10's: 400
+until it serves it), then the change. `user_disable` is the `UserDisableService`; None fails
+closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
+(`make_read_only_guard`) answers an un-elevated caller with the challenge before this handler
+runs, so this order is the second line: it alone decides an elevated caller.
 """
 
 from __future__ import annotations
@@ -23,11 +31,21 @@ from typing import Annotated, Any, Protocol
 
 import structlog
 from fastapi import APIRouter, Path, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
+from candleviewer.admin.errors import (
+    LastOwnerError,
+    LifecycleAuditUnavailableError,
+    LifecycleForbiddenError,
+    PositionsUnknownError,
+    UserLifecycleError,
+    UserNotFoundError,
+)
+from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
-from candleviewer.api.step_up import _AuthLike, _bearer, require_elevation_for
+from candleviewer.api.step_up import _AuthLike, _bearer, _unauthenticated, require_elevation_for
+from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
@@ -84,6 +102,20 @@ class AccountAccessStore(Protocol):
         ...
 
 
+class UserDisable(Protocol):
+    """`admin.user_disable.UserDisableService`: `authorize` is its guard alone."""
+
+    async def authorize(self, user_id: uuid.UUID, *, actor: PrincipalSnapshot) -> None: ...
+
+    async def disable(
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor: PrincipalSnapshot,
+        acknowledge_unknown_positions: bool = False,
+    ) -> DisableResult: ...
+
+
 class PermissionChangeNotifier(Protocol):
     async def roles_changed(self, user_id: uuid.UUID) -> None: ...
 
@@ -136,6 +168,31 @@ def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
         },
         media_type="application/problem+json",
     )
+
+
+def _lifecycle_problem(exc: UserLifecycleError) -> JSONResponse:
+    """A refused lifecycle call as its `x-error-codes` problem, with a detail that names no id."""
+    if isinstance(exc, LifecycleForbiddenError):
+        return _forbidden(exc.reason)
+    if isinstance(exc, UserNotFoundError):
+        return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+    if isinstance(exc, LastOwnerError):
+        return _registered(ErrorCode.CONFLICT, 409, "the last active owner cannot be disabled")
+    if isinstance(exc, PositionsUnknownError):
+        unknown = f"open-position state is unavailable (source: {exc.source})"
+        resend = "resend with acknowledge_unknown_positions=true"
+        return _registered(ErrorCode.POSITIONS_UNKNOWN, 409, f"{unknown}; {resend}")
+    if isinstance(exc, LifecycleAuditUnavailableError):
+        detail = "the audit record could not be written; nothing changed"
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+    raise exc  # a refusal this route does not know is a defect: a 500, never a guess
+
+
+def _flag(request: Request, name: str) -> bool | None:
+    """The contract's boolean query parameter: absent is false, and `true` and `false` are the
+    only values (`None` for any other, or a repeated one)."""
+    values = request.query_params.getlist(name) or ["false"]
+    return {"true": True, "false": False}.get(values[0]) if len(values) == 1 else None
 
 
 class _NamesTarget:
@@ -207,6 +264,7 @@ def make_users_router(
     *,
     auth: _AuthLike | None = None,
     account_access: AccountAccessStore | None = None,
+    user_disable: UserDisable | None = None,
 ) -> APIRouter:
     """`emitter` and `notifier` are mandatory: a role change without an
     audit record (C-2.9) or without a live-socket re-evaluation is refused
@@ -386,5 +444,58 @@ def make_users_router(
                 ErrorCode.STORE_UNAVAILABLE, 503, "the account access store is unavailable"
             )
         return JSONResponse({"items": [_grant_json(grant) for grant in grants]})
+
+    async def users_elevation(request: Request) -> JSONResponse | None:
+        """SR-025: a live `users` elevation, asked once RBAC and the self-target refusal are past
+        (no step-up cures those) and before any change: `None` when elevated, else the answer."""
+        if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no step-up service wired")
+        try:  # no bearer is an unknown token: the same refusal
+            record = await auth.sessions.authenticate_access_token(_bearer(request) or "")
+        except AuthError:
+            return _unauthenticated()
+        return await require_elevation_for(auth, str(record.id), "users")
+
+    @router.delete("/users/{userId}")
+    async def delete_user(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> Response:
+        if principal_resolver is None or user_disable is None:
+            return _problem(
+                501, "not_implemented", "Not implemented", "no principal resolver/service wired"
+            )
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
+        if principal is None:
+            return _unauthenticated()
+        try:  # before the step-up and any lookup: one 403 for an existing and a missing id (U25)
+            await user_disable.authorize(user_id, actor=principal)
+        except UserLifecycleError as exc:
+            return _lifecycle_problem(exc)
+        if (gate := await users_elevation(request)) is not None:
+            return gate
+        acknowledged = _flag(request, "acknowledge_unknown_positions")
+        purge = _flag(request, "purge")
+        if acknowledged is None or purge is None or purge:  # purge=true is E42-T10's (S14)
+            detail = "purge is not available yet"
+            if not purge:
+                detail = "acknowledge_unknown_positions and purge are each true or false"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+        try:
+            await user_disable.disable(
+                user_id, actor=principal, acknowledge_unknown_positions=acknowledged
+            )
+        except UserLifecycleError as exc:
+            return _lifecycle_problem(exc)
+        except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+            if not is_storage_outage(exc):
+                raise
+            _log().error(
+                "user disable store unavailable",
+                error=type(exc).__name__,
+                target_user_id=str(user_id),
+            )
+            return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        return Response(status_code=204)
 
     return router

@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import candleviewer.app as appmod
+from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
 from candleviewer.audit.query import VerifyPlan
@@ -47,6 +48,8 @@ from candleviewer.storage.repositories.account_access import (
     AccessUserNotFoundError,
 )
 from candleviewer.storage.repositories.alerts import Page
+from candleviewer.storage.repositories.user_lifecycle import UserStatusChange
+from candleviewer.user_cascade_wiring import NoOrderCounter
 from tests.csrf_helpers import csrf_headers
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
@@ -352,6 +355,34 @@ class AccessStore:
         return list(self.grants[user_id])
 
 
+class LifecycleStore:
+    """The S3 disable store's seam: it finds no user, so an authorised disable is observable (404)
+    and nothing changes. `calls` records each user it was asked about."""
+
+    def __init__(self) -> None:
+        self.calls: list[uuid.UUID] = []
+
+    async def disable(
+        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: Any
+    ) -> UserStatusChange | None:
+        self.calls.append(user_id)
+        return None
+
+
+def user_disable_service(lifecycle: LifecycleStore, audit: Any) -> UserDisableService:
+    """The real service (its guards are the cells' subject) over the store seam: no user is
+    found, so no cascade runs and its other ports are never reached."""
+    unreached: Any = object()
+    ports = ("sessions", "session_rows", "chart", "publish_revocation", "invites", "rules", "scope")
+    return UserDisableService(
+        lifecycle,
+        audit,
+        positions=appmod._NoPositionStore(),
+        orders=NoOrderCounter(),
+        **dict.fromkeys(ports, unreached),
+    )
+
+
 class _AuditSink:
     """Stand-in for the started `AuditWriter`; records every emitted audit action."""
 
@@ -416,6 +447,7 @@ class World:
     step_up: _StepUp = field(default_factory=_StepUp)
     users: UserStore = field(default_factory=UserStore)
     access: AccessStore = field(default_factory=AccessStore)
+    lifecycle: LifecycleStore = field(default_factory=LifecycleStore)
     rule_store: InMemoryRuleStore = field(default_factory=InMemoryRuleStore)
     purge_backend: _PurgeBackend = field(default_factory=_PurgeBackend)
     grants: dict[uuid.UUID, tuple[uuid.UUID, ...]] = field(default_factory=dict)
@@ -457,6 +489,8 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     resolver = _Resolver(spec)
     users = UserStore()
     access = AccessStore()
+    lifecycle = LifecycleStore()
+    audit = _AuditSink()
 
     async def snapshot_loader(uid: uuid.UUID) -> PrincipalSnapshot:
         actor = next(a for a, u in _USER_IDS.items() if u == uid)
@@ -487,12 +521,12 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
         principal_resolver=resolver,
         user_role_store=users,
         account_access_store=access,
+        user_disable=user_disable_service(lifecycle, audit),
         snapshot_loader=snapshot_loader,
         ws_authenticate=ws_authenticate,
     )
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
-    audit = _AuditSink()
     ctx.audit._writer = audit
     ctx.audit._query = _AuditQuery()  # the lifespan is not started; same seam tests/unit/ws uses
     ctx.auth._sessions = _Sessions()
@@ -518,7 +552,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     return World(
         app, client, audit, spec, resolver,
         scope_events=scope_events, step_up=step_up, users=users, access=access, rule_store=store,
-        purge_backend=purge_backend,
+        purge_backend=purge_backend, lifecycle=lifecycle,
     )  # fmt: skip
 
 

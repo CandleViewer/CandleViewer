@@ -142,6 +142,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # bye already ran before uvicorn's shutdown (#2546); this call then stops the sweeper.
         if ws_runtime is not None:
             await ws_runtime.stop()
+        user_disable = getattr(app.state, "user_disable", None)
+        if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
+            await user_disable.drain()  # each ends by its own deadline
         if metrics_runtime is not None:
             await metrics_runtime.stop()
         if health_registry is not None:

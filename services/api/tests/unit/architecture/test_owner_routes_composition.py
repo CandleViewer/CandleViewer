@@ -4,7 +4,8 @@ the self-scoped first-run checklist (`SqlAlchemyOnboardingStore`) through `Sessi
 every cell answers as `tests/contract/rbac/matrix.yaml` says and an authorised caller is never
 refused with the fail-closed 501/503. Only the SQL edges of those real classes, the host socket
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
-network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`) the same way."""
+network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`) the same way, and
+#965 S6 the user disable."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import candleviewer.app as appmod
+from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.onboarding_checklist import STEP_ORDER
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.account_access import AccessGrant
@@ -29,6 +31,7 @@ from candleviewer.storage.repositories.account_access_sqlalchemy import (
 )
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
+from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlchemyUserLifecycleStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
@@ -121,6 +124,8 @@ def deployed() -> Iterator[SimpleNamespace]:
         for name in ("get_roles", "count_active_owners", "apply_roles"):
             mp.setattr(SqlAlchemyUserRoleStore, name, _delegate(users, name))
         mp.setattr(SqlAlchemyAccountAccessStore, "list_grants", _delegate(access, "list_grants"))
+        lifecycle = rbac.LifecycleStore()  # finds no user: the owner's DELETE cell is a 404
+        mp.setattr(SqlAlchemyUserLifecycleStore, "disable", _delegate(lifecycle, "disable"))
         for name in _ONBOARDING_EDGES:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
@@ -269,6 +274,14 @@ def test_fake_backend_keeps_the_account_access_read_fail_closed() -> None:
         f"/users/{uuid.uuid4()}/account-access", headers={"Authorization": "Bearer tok-owner"}
     )
     assert resp.status_code == 501
+
+
+def test_the_disable_service_exists_only_on_the_real_backend(deployed: SimpleNamespace) -> None:
+    """#965 S6: the real backend builds the service the lifespan drains (its DELETE cells above
+    reach the store class: a 404 from the seam, never 501); the fake backend has none (501)."""
+    state = deployed.client.app.state
+    assert isinstance(state.user_disable, UserDisableService)
+    assert appmod.create_app(Settings()).state.user_disable is None
 
 
 def _states(resp: httpx.Response) -> dict[str, str]:
