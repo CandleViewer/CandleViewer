@@ -1,5 +1,6 @@
 """Feature-flag service of the admin module (E42-T03): the code-only registry with its
-security-control allowlist, the flag definitions, the pure resolver and the cached read path."""
+security-control allowlist, the flag definitions, the pure resolver, the cached read path and
+the write path (`FlagWriter`, its evidence rules and its store and user-directory ports)."""
 
 from __future__ import annotations
 
@@ -31,6 +32,13 @@ from candleviewer.admin.flags.store import (
     StoreUnavailableError,
     UserDirectory,
 )
+from candleviewer.admin.flags.writes import (
+    FlagConflictError,
+    FlagsWriteDenied,
+    FlagValidationError,
+    FlagWriter,
+    UnknownFlagError,
+)
 
 __all__ = [
     "DENIED",
@@ -39,20 +47,25 @@ __all__ = [
     "MAINTENANCE_KEEP_RECORDER",
     "MAINTENANCE_MODE",
     "Category",
+    "FlagConflictError",
     "FlagKind",
     "FlagList",
     "FlagRegistry",
     "FlagService",
     "FlagSpec",
     "FlagStore",
+    "FlagValidationError",
     "FlagValue",
     "FlagWrite",
+    "FlagWriter",
+    "FlagsWriteDenied",
     "Prepare",
     "Resolution",
     "ResolvedFlag",
     "StaleWriteError",
     "StoreUnavailableError",
     "StoredFlag",
+    "UnknownFlagError",
     "UnsafeFlagDefinitionError",
     "UserDirectory",
     "Visibility",
