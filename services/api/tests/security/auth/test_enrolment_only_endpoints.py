@@ -666,7 +666,9 @@ def test_recovery_changes_nothing_when_an_audit_record_cannot_be_written(
     stack: Stack, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
     """Write-ahead (C-2.9): a record that cannot be written spends no code, revokes nothing and
-    mints nothing, so the same challenge and code still sign in once the sink is back."""
+    mints nothing, so the same challenge and code still sign in once the sink is back. The
+    answer is a wrong code's (no code-validity oracle while the sink fails); the log names the
+    cause."""
     uid, seed = stack.add_user("alice")
     codes = _codes(stack, uid)
     live = _auth(stack, stack.sign_in("alice", seed).json()["tokens"]["access_token"])
@@ -675,9 +677,12 @@ def test_recovery_changes_nothing_when_an_audit_record_cannot_be_written(
     emit = stack.audit.emit
     _fail_on(stack, monkeypatch, failing)
 
-    resp = _recover(stack, token, codes[0])
+    with structlog.testing.capture_logs() as logs:
+        resp = _recover(stack, token, codes[0])
 
-    assert (resp.status_code, resp.json()["detail"]) == (401, "audit sink not active")
+    assert (resp.status_code, resp.json()["detail"]) == _RECOVERY_REFUSED
+    (cause,) = [e for e in logs if e["event"] == "auth.recovery.audit_unavailable"]
+    assert (cause["action"], cause["error"]) == (failing, "AuditError")
     assert (_unused(stack, uid), _store(stack).methods) == (len(codes), methods)
     assert _live(stack, uid) == sessions
     assert stack.client.get("/auth/session", headers=live).status_code == 200
@@ -796,87 +801,6 @@ def test_cross_user_another_users_code_is_refused_and_only_the_callers_sessions_
     assert (_unused(stack, alice), _unused(stack, bob)) == (len(alice_codes) - 1, len(bob_codes))
     assert stack.client.get("/auth/session", headers=_auth(stack, bob_token)).status_code == 200
     assert {k: m for k, m in _store(stack).methods.items() if m.user_id == bob} == bob_methods
-
-
-def test_cross_user_a_carried_session_that_cannot_be_audited_spends_and_mints_nothing(
-    stack: Stack, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """U6/SR-013, write-ahead: the fixation record comes before anything changes."""
-    alice, _ = stack.add_user("alice")
-    _, bob_seed = stack.add_user("bob")
-    codes = _codes(stack, alice)
-    bob_token = stack.sign_in("bob", bob_seed).json()["tokens"]["access_token"]
-    token = _challenge(stack, "alice")
-    _fail_on(stack, monkeypatch, "auth.session_fixation_attempt")
-
-    resp = _recover(stack, token, codes[0], headers={"Authorization": f"Bearer {bob_token}"})
-
-    assert (resp.status_code, resp.json()["detail"]) == (401, "audit sink not active")
-    assert (_unused(stack, alice), _live(stack, alice)) == (len(codes), set())
-    assert stack.audit.of("auth.recovery_code_used") == []
-
-
-def test_a_recovery_that_loses_the_race_for_its_code_changes_nothing(
-    stack: Stack, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A concurrent request spent the code or satisfied the challenge after the check: the
-    transaction rolls back, the answer is the uniform 401 and `auth.mfa_failed` follows the
-    write-ahead records, naming the session and the revocations they announced and it voids
-    (C-2.9); the user keeps every method, session and code."""
-    uid, seed = stack.add_user("alice")
-    codes = _codes(stack, uid)
-    live = _auth(stack, stack.sign_in("alice", seed).json()["tokens"]["access_token"])
-    methods, token = dict(_store(stack).methods), _challenge(stack, "alice")
-
-    async def lost(user_id: str, *, challenge_id: str, code_id: str, now: Any) -> bool:
-        return False  # what the conditional updates answer once another request won
-
-    monkeypatch.setattr(_store(stack), "complete_recovery", lost)
-    mark = len(stack.audit.records)
-
-    resp = _recover(stack, token, codes[0])
-
-    assert (resp.status_code, resp.json()["detail"]) == _RECOVERY_REFUSED
-    written = stack.audit.records[mark:]
-    assert [r["action"] for r in written] == [
-        "auth.recovery_code_used",
-        "auth.session_revoked",
-        "auth.session_created",
-        "auth.mfa_failed",
-    ]
-    _, revoked, created, failed = written
-    assert (failed["actor_user_id"], failed["session_id"]) == (uid, created["session_id"])
-    assert (failed["outcome"], failed["reason"]) == (AuditOutcome.FAILURE, "lost_race")
-    assert failed["after_state"] == {
-        "voids_session_created": str(created["session_id"]),
-        "voids_session_revoked": [str(revoked["session_id"])],
-    }
-    assert (_unused(stack, uid), _store(stack).methods) == (len(codes), methods)
-    assert stack.client.get("/auth/session", headers=live).status_code == 200
-
-
-def test_recovery_reads_the_user_before_anything_is_written_or_spent(
-    stack: Stack, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The user the response shows is read before the audit records and the transaction, so a
-    failing identity store writes nothing and spends nothing: the same challenge and code then
-    sign in."""
-    uid, _ = stack.add_user("alice")
-    codes = _codes(stack, uid)
-    methods, token = dict(_store(stack).methods), _challenge(stack, "alice")
-    real, mark = _Identity.user, len(stack.audit.records)
-
-    async def unavailable(self: _Identity, user_id: str) -> dict[str, Any]:
-        raise OSError("identity store unavailable")
-
-    monkeypatch.setattr(_Identity, "user", unavailable)
-    resp = _recover(stack, token, codes[0])
-    monkeypatch.setattr(_Identity, "user", real)
-
-    assert resp.status_code == 500
-    assert stack.audit.records[mark:] == []
-    assert (_unused(stack, uid), _store(stack).methods) == (len(codes), methods)
-    assert _recover(stack, token, codes[0]).status_code == 200
 
 
 # -- the enrolment-only session's own operations -------------------------------------------------

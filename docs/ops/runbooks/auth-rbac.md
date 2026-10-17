@@ -114,12 +114,12 @@ authentication on the `/auth` routes, `method` being the factor that failed: `pa
 per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
 `recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`, and
 per `auth.login_failed` row (reason `user_disabled`) of the same route when the code was right but
-the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`
-row of `POST /auth/mfa/recovery` and per `auth.recovery_codes_exhausted`. It does not move for an
-attempt refused while the account is locked (the `auth.account_locked` rows above), for a success,
-or for the WebSocket gateway's `auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`,
-written on the third failed `auth` frame of a connection): `cv_ws_auth_failures_total{reason}`
-counts those, one per failed frame.
+the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`,
+`auth.login_failed` (a user disabled during the sign-in) and `auth.recovery_codes_exhausted` row of
+`POST /auth/mfa/recovery`. It does not move for an attempt refused while the account is locked (the
+`auth.account_locked` rows above), for a success, or for the WebSocket gateway's `auth.login_failed`
+rows (actor `ws`, reason `ws_auth_failed`, written on the third failed `auth` frame of a
+connection): `cv_ws_auth_failures_total{reason}` counts those, one per failed frame.
 Every method is listed at 0 from process start. The `AuthLoginFailureSpike` rule reads it
 (`sum(increase(...[10m])) > 10`); `sum by (method) (increase(auth_login_failures_total[10m]))`
 shows which factor is attacked.
@@ -138,10 +138,14 @@ Expected `200` with `status: authenticated`, `tokens`, a `user` with `mfa_requir
 (#2295). The call revokes every MFA method of the user, so the lost device can never be confirmed
 again, and every other session of the user. A code is single use. A wrong or spent code, an
 expired or locked challenge and any other refusal answer the same `401` and spend nothing; five
-wrong codes lock the challenge, so sign in with the password again. Before anything changes,
-`auth.recovery_code_used`, one `auth.session_revoked` (reason `mfa_recovery`) per ended session
-and `auth.session_created` (`enrolment_only: true`, `mfa_method: recovery_code`) are written;
-`auth.recovery_codes_exhausted` is written when none remain. Re-enrolment is forced after every
+wrong codes lock the challenge, so sign in with the password again. That `401` also answers a
+user disabled since the password step (`auth.login_failed`, reason `user_disabled`) and an audit
+record that cannot be written (error log `auth.recovery.audit_unavailable` names the action).
+Before anything changes, `auth.recovery_code_used`, one `auth.session_revoked` (reason
+`mfa_recovery`) per ended session and `auth.session_created` (`enrolment_only: true`,
+`mfa_method: recovery_code`) are written; `auth.recovery_codes_exhausted` is written when none
+remain. The spend records a `system_events` row (`auth`, `security.mfa_recovery_used`) in its own
+transaction. Re-enrolment is forced after every
 recovery sign-in, however many codes remain (`auth/mfa_service.py`); there is no remaining-codes
 threshold (#2296). If the 15 minutes run out before the confirm, sign in with the password alone:
 with no method left, that sign-in is enrolment-only too.
@@ -152,9 +156,13 @@ revoked, but no session was minted: the error log `auth.recovery.completed_unmin
 be live, but while the user has no method they reach only the enrolment operations, one with more
 than 15 minutes left answers `401` except to `POST /auth/logout`, and the confirm ends them. Sign in
 with the password alone (enrolment-only) and re-enrol. A session minted while the recovery ran ends
-with the others under its own `auth.session_revoked` with `unplanned: true`. A recovery that lost a
-race to a concurrent one changes nothing and writes `auth.mfa_failed` (reason `lost_race`) naming
-the records it voids. An Owner's recovery sign-in moves
+with the others under its own `auth.session_revoked` with `unplanned: true`. A recovery whose
+transaction did not commit changes nothing, and its refusal row names the records it voids:
+`auth.mfa_failed` with reason `lost_race` (a concurrent recovery won) or `store_error` (error log
+`auth.recovery.commit_failed`), or `auth.login_failed` (`user_disabled`) when the user was disabled
+meanwhile; the status is read under the user-row lock. A user disabled after the spend gets `401`
+`account is disabled` and an `auth.login_failed` row that voids the session. An Owner's recovery
+sign-in moves
 `auth_enrolment_only_sessions_total{role="owner"}` (§2 step 4).
 
 Not available today:
