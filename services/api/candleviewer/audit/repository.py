@@ -101,6 +101,23 @@ class AuditRepository(Protocol):
         `audit_log` is empty."""
         ...
 
+    async def read_bounds(self) -> tuple[int, int] | None:
+        """Return `(first id, head id)` in one read, or `None` if `audit_log` is empty: the
+        one head read verify's range defaulting takes."""
+        ...
+
+    async def fetch_checkpoints(self, to_id: int) -> list[tuple[int, str, str | None]]:
+        """Every checkpoint with `head_id <= to_id`, in `head_id` order, as `(head_id,
+        head_hash, entry_hash)`: the stored `entry_hash` of the entry with that id, `None`
+        when no entry has it. One per checkpoint run (daily), so the list stays short."""
+        ...
+
+    async def fetch_checkpoint_above(self, head_id: int) -> int | None:
+        """Return the smallest checkpoint `head_id` above `head_id` whose entry is missing or
+        has another hash (a truncated tail, or a reused id), or `None`. A checkpoint written
+        after `head_id` was read names an existing entry with its own hash, so it is not one."""
+        ...
+
     async def count(self) -> int:
         """Total row count in `audit_log`."""
         ...

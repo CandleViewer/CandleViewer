@@ -1,4 +1,4 @@
-"""The limiter/budget defaults must match the merged contract text (#2392)."""
+"""The limiter/budget/verify defaults must match the merged contract text (#2392)."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
             "audit_read_flush_seconds",
             "audit_budget_tracked_users",
             "audit_inflight_writes",
+            "audit_verify_max_span",
         )
         if name not in text
     ]
@@ -35,4 +36,4 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
     assert (s.audit_query_timeout_ms, s.audit_record_budget_per_hour) == (4000, 120)
     assert (s.audit_record_budget_owner_per_hour, s.audit_read_flush_pages) == (600, 50)
     assert (s.audit_read_flush_seconds, s.audit_budget_tracked_users) == (300.0, 1024)
-    assert s.audit_inflight_writes == 64
+    assert (s.audit_inflight_writes, s.audit_verify_max_span) == (64, 1_000_000)

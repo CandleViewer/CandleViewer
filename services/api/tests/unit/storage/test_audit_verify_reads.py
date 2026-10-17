@@ -85,6 +85,32 @@ async def test_head_is_the_newest_entry_or_none() -> None:
     assert await _repo(_Rel()).read_head() is None
 
 
+async def test_bounds_are_the_first_and_the_head_id_in_one_statement() -> None:
+    rel = _Rel(rows=[[3, 41]])
+    assert await _repo(rel).read_bounds() == (3, 41)
+    assert "SELECT min(id), max(id) FROM audit_log" in rel.calls[1][0]
+    assert await _repo(_Rel(rows=[[None, None]])).read_bounds() is None  # an empty log
+
+
+async def test_checkpoint_above_is_the_smallest_head_id_past_the_head() -> None:
+    rel = _Rel(rows=[[57]])
+    assert await _repo(rel).fetch_checkpoint_above(41) == 57
+    read, params = rel.calls[1]
+    assert "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id > :head_id" in read
+    assert "a.entry_hash IS DISTINCT FROM c.head_hash" in read  # missing, or another hash
+    assert params == {"head_id": 41}
+    assert await _repo(_Rel(rows=[[None]])).fetch_checkpoint_above(41) is None
+
+
+async def test_checkpoints_carry_the_stored_hash_of_the_id_they_name() -> None:
+    rel = _Rel(rows=[[2, "a" * 64, "a" * 64], [4, "b" * 64, None]])
+    found = await _repo(rel).fetch_checkpoints(9)
+    assert found == [(2, "a" * 64, "a" * 64), (4, "b" * 64, None)]  # None: no entry has id 4
+    read, params = rel.calls[1]
+    assert "LEFT JOIN audit_log a ON a.id = c.head_id" in read and params == {"to_id": 9}
+    assert "WHERE c.head_id <= :to_id ORDER BY c.head_id" in read
+
+
 def _assert_no_db_error_in_chain(err: BaseException) -> None:
     assert err.__cause__ is None and err.__context__ is None and err.__suppress_context__
 

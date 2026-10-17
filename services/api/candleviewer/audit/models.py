@@ -293,15 +293,29 @@ class ChainBreakKind(StrEnum):
     PREV_HASH_MISMATCH = "prev_hash_mismatch"
     #: Its hashed fields do not recompute to its `entry_hash`: the entry was altered.
     ENTRY_HASH_MISMATCH = "entry_hash_mismatch"
+    #: A checkpoint's `head_hash` is not the `entry_hash` of the entry it names.
+    CHECKPOINT_MISMATCH = "checkpoint_mismatch"
+    #: A checkpoint names an id that no entry has.
+    CHECKPOINT_MISSING = "checkpoint_missing"
+    #: A checkpoint names an id above the head: the tail was truncated.
+    TAIL_TRUNCATED = "tail_truncated"
 
 
 class VerifyResult(BaseModel):
+    """The `verifyAuditChain` response (#2392): `from_id`/`to_id` echo the effective range
+    (null for an empty log), `anchor_hash` is the stored predecessor of `from_id` (64 zeros
+    for genesis) and `last_hash` the `entry_hash` of the last entry that passed."""
+
     model_config = ConfigDict(frozen=True)
 
     verified: bool
     entries_checked: int
     first_bad_id: int | None
     checked_at: datetime
+    from_id: int | None
+    to_id: int | None
+    anchor_hash: str
+    last_hash: str | None
     #: For the verify record (`admin.audit_verify`); not part of the response.
     kind: ChainBreakKind | None = Field(default=None, exclude=True)
 

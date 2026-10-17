@@ -22,7 +22,11 @@ from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.cursor import decode_cursor
 from candleviewer.audit.errors import AuditChainBroken
 from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity
-from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService
+from candleviewer.audit.query import (
+    VERIFY_BATCH_SIZE,
+    AuditQueryService,
+    VerifyRangeBeyondHead,
+)
 
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
@@ -290,9 +294,9 @@ async def test_verify_hashes_off_the_event_loop(
     threads: list[int] = []
     walk = query_mod._walk_batch
 
-    def spy(expected: str, rows: Any) -> Any:
+    def spy(*args: Any) -> Any:
         threads.append(threading.get_ident())
-        return walk(expected, rows)
+        return walk(*args)
 
     monkeypatch.setattr(query_mod, "_walk_batch", spy)
     assert (await AuditQueryService(repo).verify()).verified
@@ -332,12 +336,276 @@ async def test_verify_takes_checked_at_from_the_injected_clock(
     assert (await AuditQueryService(repo, clock=lambda: at).verify()).checked_at == at
 
 
-async def test_verify_an_empty_or_past_the_head_range_checks_nothing(
+async def test_verify_from_id_beyond_the_head_is_not_found(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
     await _seed(repo, 3, clock)
+    with pytest.raises(VerifyRangeBeyondHead):
+        await AuditQueryService(repo).verify(from_id=4)
+    assert repo.verify_calls == []
+
+
+async def test_verify_beyond_the_head_with_a_checkpoint_above_is_the_truncation(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """#2446: not a 404 when a checkpoint names an id above the head; the echoed range
+    has `from_id > to_id` and nothing is walked."""
+    await _seed(repo, 3, clock)
+    repo.checkpoints[6] = {"head_id": 6}
+    result = await AuditQueryService(repo).verify(from_id=5)
+    assert (result.verified, result.entries_checked, result.first_bad_id) == (False, 0, 6)
+    assert (result.from_id, result.to_id, result.kind) == (5, 3, ChainBreakKind.TAIL_TRUNCATED)
+    assert (result.anchor_hash, result.last_hash) == (repo.rows[2]["entry_hash"], None)
+    assert repo.verify_calls == []
+
+
+@pytest.mark.parametrize(("head_hash", "truncated_at"), [(None, None), ("e" * 64, 4)])
+async def test_a_checkpoint_above_the_head_read_is_a_truncation_only_if_its_entry_differs(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None, truncated_at: int | None
+) -> None:
+    """Review of #2460: the checkpoint job may name an entry written after the head was read.
+    If that entry exists with the checkpoint's hash it is no truncation (here, `from_id` past
+    the head read is then a 404); a missing entry or another hash is one."""
+    await _seed(repo, 4, clock)
+    repo.checkpoints[4] = {"head_id": 4, "head_hash": head_hash or repo.rows[3]["entry_hash"]}
+
+    async def head_read_before_id_4() -> tuple[int, int]:
+        return (1, 3)
+
+    repo.read_bounds = head_read_before_id_4  # type: ignore[method-assign]  # the race, staged
+    svc = AuditQueryService(repo)
+    if truncated_at is None:
+        with pytest.raises(VerifyRangeBeyondHead):
+            await svc.plan_verify(from_id=5, to_id=None)
+    else:
+        assert (await svc.plan_verify(from_id=5, to_id=None)).truncated_at == truncated_at
+
+
+@pytest.mark.parametrize("checkpoint", [None, 4])
+async def test_verify_an_empty_log_echoes_no_range(
+    repo: FakeAuditRepository, checkpoint: int | None
+) -> None:
+    if checkpoint is not None:
+        repo.checkpoints[checkpoint] = {"head_id": checkpoint}  # every entry is gone
+    result = await AuditQueryService(repo).verify()
+    assert (result.from_id, result.to_id, result.entries_checked) == (None, None, 0)
+    assert (result.anchor_hash, result.last_hash) == ("0" * 64, None)
+    assert (result.verified, result.first_bad_id) == (checkpoint is None, checkpoint)
+
+
+def _checkpoint(repo: FakeAuditRepository, head_id: int, head_hash: str | None = None) -> None:
+    """A checkpoint naming `head_id`, by default with that entry's stored hash."""
+    stored = next((r["entry_hash"] for r in repo.rows if r["id"] == head_id), "f" * 64)
+    repo.checkpoints[head_id] = {"head_id": head_id, "head_hash": head_hash or stored}
+
+
+async def test_verify_passes_the_checkpoints_that_match(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 6, clock)
+    for head_id in (2, 5):
+        _checkpoint(repo, head_id)
+    result = await AuditQueryService(repo).verify()
+    assert (result.verified, result.entries_checked) == (True, 6)
+
+
+@pytest.mark.parametrize(("from_id", "checked"), [(1, 3), (5, 0)])
+async def test_verify_a_checkpoint_that_does_not_match_is_a_break(
+    repo: FakeAuditRepository, clock: FakeClock, from_id: int, checked: int
+) -> None:
+    """In the range, checked after the entry's own checks (which count it); below the
+    range, the stored hash, before anything is walked."""
+    await _seed(repo, 6, clock)
+    _checkpoint(repo, 3, head_hash="e" * 64)
+    result = await AuditQueryService(repo).verify(from_id=from_id)
+    assert (result.verified, result.first_bad_id) == (False, 3)
+    assert (result.kind, result.entries_checked) == (ChainBreakKind.CHECKPOINT_MISMATCH, checked)
+    assert result.last_hash == (repo.rows[1]["entry_hash"] if checked else None)
+
+
+@pytest.mark.parametrize(("from_id", "checked"), [(1, 3), (6, 0)])
+async def test_verify_a_checkpoint_naming_no_entry_is_a_break(
+    repo: FakeAuditRepository, clock: FakeClock, from_id: int, checked: int
+) -> None:
+    await _seed(repo, 3, clock)
+    repo.burn_ids(1)  # id 4 is never written
+    await _seed(repo, 3, clock, first=3)  # ids 5-7
+    _checkpoint(repo, 4, head_hash="e" * 64)
+    result = await AuditQueryService(repo).verify(from_id=from_id)
+    assert (result.first_bad_id, result.entries_checked) == (4, checked)
+    assert result.kind is ChainBreakKind.CHECKPOINT_MISSING
+    assert all(after <= 3 for after, _, _ in repo.verify_calls)  # the walk stops below it
+
+
+async def test_verify_walks_on_past_a_matching_checkpoint_below_the_range(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 5, clock)
+    _checkpoint(repo, 2)
     result = await AuditQueryService(repo).verify(from_id=4)
-    assert (result.verified, result.entries_checked, repo.verify_calls) == (True, 0, [])
+    assert (result.verified, result.entries_checked) == (True, 2)
+
+
+async def test_verify_a_missing_checkpointed_entry_at_from_id_walks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    repo.burn_ids(1)  # id 4 is never written
+    await _seed(repo, 2, clock, first=3)  # ids 5-6
+    _checkpoint(repo, 4, head_hash="e" * 64)
+    result = await AuditQueryService(repo).verify(from_id=4)
+    assert (result.first_bad_id, result.kind) == (4, ChainBreakKind.CHECKPOINT_MISSING)
+    assert (result.entries_checked, result.last_hash, repo.verify_calls) == (0, None, [])
+
+
+async def test_verify_reports_an_entrys_own_break_before_its_checkpoint(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 4, clock)
+    _checkpoint(repo, 3, head_hash="e" * 64)
+    repo.rows[2]["reason"] = "forged"  # id 3 also fails its own hash
+    svc = AuditQueryService(repo)
+    result = await svc.verify()
+    assert (result.first_bad_id, result.kind) == (3, ChainBreakKind.ENTRY_HASH_MISMATCH)
+    repo.rows[1]["reason"] = "forged"  # id 2, before the checkpoint: first in id order
+    assert (await svc.verify()).first_bad_id == 2
+
+
+async def test_verify_a_range_ending_at_the_head_breaks_on_a_checkpoint_above_it(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 4, clock)
+    _checkpoint(repo, 9)
+    svc = AuditQueryService(repo)
+    whole = await svc.verify()
+    assert (whole.first_bad_id, whole.kind) == (9, ChainBreakKind.TAIL_TRUNCATED)
+    assert (whole.entries_checked, whole.last_hash) == (4, repo.rows[3]["entry_hash"])
+    assert (await svc.verify(to_id=3)).verified  # ends below the head: not a truncation
+
+
+async def _append_with_checkpoint(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None = None
+) -> None:
+    """The checkpoint job during a run: one more entry, then a checkpoint naming it."""
+    await _seed(repo, 1, clock, first=100 + len(repo.rows))
+    new = repo.rows[-1]
+    repo.checkpoints[new["id"]] = {
+        "head_id": new["id"],
+        "head_hash": head_hash or new["entry_hash"],
+    }
+
+
+@pytest.mark.parametrize(("head_hash", "first_bad_id"), [(None, None), ("e" * 64, 6)])
+async def test_a_checkpoint_written_during_the_walk_breaks_only_if_its_entry_differs(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None, first_bad_id: int | None
+) -> None:
+    """Review of #2460: a checkpoint naming an entry written during the run is no truncation;
+    one whose entry has another hash (a reused id) is reported."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def fetch_then_checkpoint(**kw: Any) -> list[tuple[Any, ...]]:
+        rows = await fetch(**kw)
+        if len(repo.rows) == 5:  # once, while the walk runs
+            await _append_with_checkpoint(repo, clock, head_hash)
+        return rows
+
+    repo.fetch_verify_batch = fetch_then_checkpoint  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.verified, result.first_bad_id) == (first_bad_id is None, first_bad_id)
+    assert result.kind is (None if first_bad_id is None else ChainBreakKind.TAIL_TRUNCATED)
+
+
+async def test_a_checkpoint_written_between_plan_and_run_is_no_break(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 5, clock)
+    svc = AuditQueryService(repo)
+    plan = await svc.plan_verify(from_id=None, to_id=None)
+    await _append_with_checkpoint(repo, clock)  # names id 6, past the head the plan read
+    assert (await svc.run_verify(plan)).verified
+
+
+async def test_a_checkpointed_entry_deleted_during_the_run_is_missing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2460: the last checkpointed entry, deleted once the run started, leaves no
+    next row whose link would break; the walk never visited it, so it is missing."""
+    await _seed(repo, 5, clock)
+    _checkpoint(repo, 5)
+    fetch = repo.fetch_verify_batch
+
+    async def delete_then_fetch(**kw: Any) -> list[tuple[Any, ...]]:
+        repo.rows[:] = [r for r in repo.rows if r["id"] != 5]
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = delete_then_fetch  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.first_bad_id, result.kind) == (5, ChainBreakKind.CHECKPOINT_MISSING)
+
+
+async def test_verify_beyond_the_head_reports_an_earlier_checkpoint_break_first(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    _checkpoint(repo, 2, head_hash="e" * 64)
+    _checkpoint(repo, 6)
+    result = await AuditQueryService(repo).verify(from_id=5)
+    assert (result.first_bad_id, result.kind) == (2, ChainBreakKind.CHECKPOINT_MISMATCH)
+
+
+@pytest.mark.parametrize(
+    ("from_id", "to_id", "expected"),
+    [
+        (None, None, (7, 10)),  # the newest span
+        (3, None, (3, 6)),  # filled in from `from_id`
+        (8, None, (8, 10)),  # ... clipped to the head
+        (None, 100, (7, 10)),  # `to_id` clamped to the head, then filled in
+        (None, 2, (1, 2)),  # ... clipped to the first entry
+        (2, 40, (2, 10)),  # both given: clamped only
+    ],
+)
+async def test_plan_defaults_the_range_from_one_bounds_read(
+    repo: FakeAuditRepository,
+    clock: FakeClock,
+    from_id: int | None,
+    to_id: int | None,
+    expected: tuple[int, int],
+) -> None:
+    await _seed(repo, 10, clock)
+    reads = repo.read_bounds
+    calls: list[int] = []
+
+    async def counted() -> tuple[int, int] | None:
+        calls.append(1)
+        return await reads()
+
+    repo.read_bounds = counted  # type: ignore[method-assign]  # spy on the fake
+    plan = await AuditQueryService(repo).plan_verify(from_id=from_id, to_id=to_id, max_span=4)
+    assert ((plan.from_id, plan.to_id), plan.head_id, calls) == (expected, 10, [1])
+
+
+async def test_plan_fills_in_down_to_the_first_entry_not_to_id_one(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    repo.burn_ids(2)  # the first entry is id 3
+    await _seed(repo, 3, clock)
+    plan = await AuditQueryService(repo).plan_verify(from_id=None, to_id=4, max_span=10)
+    assert (plan.from_id, plan.to_id) == (3, 4)
+
+
+async def test_verify_echoes_the_anchor_and_the_last_entry_that_passed(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 5, clock)
+    svc, hashes = AuditQueryService(repo), [r["entry_hash"] for r in repo.rows]
+    whole = await svc.verify()
+    assert (whole.from_id, whole.to_id, whole.last_hash) == (1, 5, hashes[4])
+    assert whole.anchor_hash == "0" * 64  # genesis
+    assert (await svc.verify(from_id=3)).anchor_hash == hashes[1]  # the stored predecessor
+    repo.rows[3]["reason"] = "forged"  # id 4
+    assert (await svc.verify(from_id=3)).last_hash == hashes[2]  # id 3 passed
+    assert (await svc.verify(from_id=4)).last_hash is None  # none passed
 
 
 async def test_verify_a_range_inside_an_id_gap_checks_nothing(

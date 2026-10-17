@@ -83,6 +83,20 @@ _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
 _ANCHOR_SQL = sa.text(
     "SELECT entry_hash FROM audit_log WHERE id < :before_id ORDER BY id DESC LIMIT 1"
 )
+#: The first and the head id in one statement (both ends of the primary key index).
+_BOUNDS_SQL = sa.text("SELECT min(id), max(id) FROM audit_log")
+#: A checkpoint above `:head_id` whose entry is missing or has another hash: a truncated tail.
+#: A checkpoint written after the head was read names an existing entry with its own hash.
+_CHECKPOINT_ABOVE_SQL = sa.text(
+    "SELECT min(c.head_id) FROM audit_checkpoints c LEFT JOIN audit_log a ON a.id = c.head_id "
+    "WHERE c.head_id > :head_id AND a.entry_hash IS DISTINCT FROM c.head_hash"
+)
+#: Each checkpoint up to `:to_id` with the stored `entry_hash` of the id it names (NULL when
+#: no entry has that id).
+_CHECKPOINTS_SQL = sa.text(
+    "SELECT c.head_id, c.head_hash, a.entry_hash FROM audit_checkpoints c "
+    "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id <= :to_id ORDER BY c.head_id"
+)
 #: Per-statement budget for verify's reads (the head, the anchor, each batch), client-side
 #: and as `statement_timeout`: a backstop far above one keyset batch. An overrun is 503.
 VERIFY_READ_TIMEOUT_MS = 10_000
@@ -402,6 +416,18 @@ class SqlAlchemyAuditRepository:
     async def read_head(self) -> tuple[int, str] | None:
         rows = await self._bounded_read(_HEAD_SQL, {})
         return (int(rows[0][0]), str(rows[0][1])) if rows else None
+
+    async def read_bounds(self) -> tuple[int, int] | None:
+        [(first, head)] = await self._bounded_read(_BOUNDS_SQL, {})
+        return None if head is None else (int(first), int(head))
+
+    async def fetch_checkpoints(self, to_id: int) -> list[tuple[int, str, str | None]]:
+        rows = await self._bounded_read(_CHECKPOINTS_SQL, {"to_id": to_id})
+        return [(int(h), str(hh), None if e is None else str(e)) for h, hh, e in rows]
+
+    async def fetch_checkpoint_above(self, head_id: int) -> int | None:
+        [(above,)] = await self._bounded_read(_CHECKPOINT_ABOVE_SQL, {"head_id": head_id})
+        return None if above is None else int(above)
 
     async def _bounded_read(
         self, statement: sa.TextClause, params: dict[str, Any]

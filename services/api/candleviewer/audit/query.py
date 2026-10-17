@@ -17,11 +17,13 @@ import asyncio
 import functools
 import hashlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.hashing import ChainHasher
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
@@ -35,10 +37,13 @@ from candleviewer.audit.models import (
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.context import spawn
+from candleviewer.settings import Settings
 
 _GENESIS_HASH = "0" * 64
 #: Rows per verify batch (ticket "Technical notes").
 VERIFY_BATCH_SIZE = 10_000
+#: The `audit_verify_max_span` default (#2392): the most ids one range may span.
+VERIFY_MAX_SPAN: int = Settings.model_fields["audit_verify_max_span"].default
 _PREFETCH = "audit.verify.prefetch"
 #: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
 #: (`21-database-schema.md` §3.10.1).
@@ -92,21 +97,55 @@ def _canonical_hash(prev_hash: str, row: Mapping[str, Any]) -> str:
 @dataclass(frozen=True, slots=True)
 class _Walk:
     checked: int  # rows examined, the first divergent one included
+    passed: int  # rows that passed every check
     last_hash: str  # `entry_hash` of the last row that passed (else the expected predecessor)
     bad_id: int | None = None
     kind: ChainBreakKind | None = None
+    last_id: int = 0  # the id of the last row that passed (0: none did)
 
 
-def _walk_batch(expected_prev: str, rows: Sequence[Sequence[Any]]) -> _Walk:
+_NO_CHECKPOINTS: Mapping[int, str] = MappingProxyType({})
+
+
+def _walk_batch(
+    expected_prev: str,
+    rows: Sequence[Sequence[Any]],
+    checkpoints: Mapping[int, str] = _NO_CHECKPOINTS,
+) -> _Walk:
     """Check one batch, on the hasher's thread. `rows` are `(id, prev_hash, entry_hash,
-    *renderings)` in id order; the link is checked before the hash (design §5)."""
+    *renderings)` in id order. Per row: the link, then the hash (design §5), then the
+    `head_hash` of a checkpoint naming that id (`checkpoints`, by id)."""
     for index, row in enumerate(rows):
         if row[1] != expected_prev:
-            return _Walk(index + 1, expected_prev, row[0], ChainBreakKind.PREV_HASH_MISMATCH)
+            kind = ChainBreakKind.PREV_HASH_MISMATCH
+            return _Walk(index + 1, index, expected_prev, row[0], kind)
         if _canonical_digest(expected_prev, row[3:]) != row[2]:
-            return _Walk(index + 1, expected_prev, row[0], ChainBreakKind.ENTRY_HASH_MISMATCH)
+            kind = ChainBreakKind.ENTRY_HASH_MISMATCH
+            return _Walk(index + 1, index, expected_prev, row[0], kind)
+        if checkpoints.get(row[0], row[2]) != row[2]:
+            kind = ChainBreakKind.CHECKPOINT_MISMATCH
+            return _Walk(index + 1, index, expected_prev, row[0], kind)
         expected_prev = row[2]
-    return _Walk(len(rows), expected_prev)
+    return _Walk(len(rows), len(rows), expected_prev, last_id=rows[-1][0] if rows else 0)
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyPlan:
+    """A verify range after defaulting (contract #2392/#2446). `head_id` is the one head read
+    (0 for an empty log). `from_id`/`to_id` are `None` for an empty log; `from_id > to_id`
+    only with `truncated_at`, a checkpoint `head_id` above the head found at defaulting."""
+
+    from_id: int | None
+    to_id: int | None
+    head_id: int
+    truncated_at: int | None = None
+
+
+class VerifyRangeBeyondHead(AuditError):
+    """`from_id` is past the chain head and no checkpoint names an id above it (404)."""
+
+    def __init__(self) -> None:
+        super().__init__("from_id is beyond the chain head")
 
 
 async def _discard(task: asyncio.Future[Any]) -> None:
@@ -271,6 +310,101 @@ class AuditQueryService:
             meta=AuditPageMeta(next_cursor=next_cursor, has_more=has_more, count=len(items)),
         )
 
+    async def plan_verify(
+        self, *, from_id: int | None, to_id: int | None, max_span: int = VERIFY_MAX_SPAN
+    ) -> VerifyPlan:
+        """Range defaulting (#2392/#2446). One bounds read serves the defaults, the
+        beyond-head test and the clamp. With neither bound, the newest `max_span` entries;
+        with one, the other makes a `max_span` range, clipped to the first entry and the
+        head; `to_id` past the head is clamped to it. A `from_id` past the head raises
+        `VerifyRangeBeyondHead` (404), unless a checkpoint names an id above the head: then
+        the plan carries that tail truncation. The caller checks the span of two given
+        bounds (422) first."""
+        bounds = await self._repository.read_bounds()
+        first, head = bounds if bounds is not None else (None, 0)
+        if (from_id is not None and from_id > head) or first is None:
+            above = await self._repository.fetch_checkpoint_above(head)
+            if from_id is None:  # an empty log
+                return VerifyPlan(None, None, head, above)
+            if above is None:
+                raise VerifyRangeBeyondHead
+            return VerifyPlan(from_id, head, head, above)
+        hi = head if to_id is None else min(to_id, head)
+        if from_id is None:
+            return VerifyPlan(max(hi - max_span + 1, min(first, hi), 1), hi, head)
+        if to_id is None:
+            hi = min(head, from_id + max_span - 1)
+        return VerifyPlan(from_id, hi, head)
+
+    async def run_verify(
+        self, plan: VerifyPlan, *, batch_size: int = VERIFY_BATCH_SIZE
+    ) -> VerifyResult:
+        """Check the plan's range. The first entry is checked against the stored
+        `entry_hash` of the greatest id below `from_id` (genesis when there is none): ids
+        have gaps, so `from_id - 1` may not exist (design §1 gap 10). Keyset batches of
+        `batch_size` rows, hashed off the event loop; the walk stops at the first divergence
+        (`kind` says which check failed). A database failure, a read over its time budget
+        or a full hasher raises and returns nothing; a `batch_size` below 1 is a
+        `ValueError`, never an empty "verified" walk."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        anchor = _GENESIS_HASH
+        if plan.from_id is not None:
+            anchor = await self._repository.fetch_anchor_hash(plan.from_id) or _GENESIS_HASH
+        walk = _Walk(0, 0, anchor)
+        if plan.from_id is not None and plan.to_id is not None:
+            walk = await self._check_range(plan.from_id, plan.to_id, plan, anchor, batch_size)
+        elif plan.truncated_at is not None:  # an empty log, and checkpoints name entries
+            walk = replace(walk, bad_id=plan.truncated_at, kind=ChainBreakKind.TAIL_TRUNCATED)
+        return VerifyResult(
+            verified=walk.bad_id is None,
+            entries_checked=walk.checked,
+            first_bad_id=walk.bad_id,
+            checked_at=self._clock(),
+            from_id=plan.from_id,
+            to_id=plan.to_id,
+            anchor_hash=anchor,
+            last_hash=walk.last_hash if walk.passed else None,
+            kind=walk.kind,
+        )
+
+    async def _check_range(
+        self, lo: int, hi: int, plan: VerifyPlan, anchor: str, batch_size: int
+    ) -> _Walk:
+        """The walk and the checkpoint cross-check (#2392), breaks taken in id order: every
+        checkpoint with `head_id <= hi` must name an entry whose `entry_hash` is its
+        `head_hash` (below the range, the stored hash; in it, after the entry's own
+        checks), and a range that ends at the head breaks on a checkpoint above it."""
+        checkpoints = await self._repository.fetch_checkpoints(hi)
+        missing, mismatch = ChainBreakKind.CHECKPOINT_MISSING, ChainBreakKind.CHECKPOINT_MISMATCH
+        for head_id, head_hash, stored in checkpoints:
+            if head_id >= lo:
+                break
+            if stored != head_hash:
+                return _Walk(0, 0, anchor, head_id, missing if stored is None else mismatch)
+        inside = {h: (hh, e) for h, hh, e in checkpoints if h >= lo}
+        gap = min((h for h, (_, e) in inside.items() if e is None), default=None)
+        above = plan.truncated_at
+        walk = _Walk(0, 0, anchor)
+        if above is None:  # `lo <= hi`
+            end = hi if gap is None else gap - 1
+            known = {h: hh for h, (hh, e) in inside.items() if e is not None}
+            if end >= lo:
+                walk = await self._walk(anchor, lo - 1, end, batch_size, known)
+            if walk.bad_id is not None:
+                return walk
+            if gap is not None:
+                return replace(walk, bad_id=gap, kind=missing)
+            # A checkpointed entry deleted during the run, after the last row the walk passed,
+            # leaves no next row whose link would break: it was never visited.
+            unvisited = [h for h in known if h > walk.last_id]
+            if unvisited:
+                return replace(walk, bad_id=min(unvisited), kind=missing)
+            if hi == plan.head_id:
+                above = await self._repository.fetch_checkpoint_above(hi)
+        kind = ChainBreakKind.TAIL_TRUNCATED
+        return walk if above is None else replace(walk, bad_id=above, kind=kind)
+
     async def verify(
         self,
         *,
@@ -278,38 +412,21 @@ class AuditQueryService:
         to_id: int | None = None,
         batch_size: int = VERIFY_BATCH_SIZE,
     ) -> VerifyResult:
-        """Check `[from_id, to_id]` (both inclusive; defaults: the first entry and the head).
-        The first entry is checked against the stored `entry_hash` of the greatest id below
-        `from_id` (genesis when there is none): ids have gaps, so `from_id - 1` may not
-        exist (design §1 gap 10). `to_id` is clamped to the head read when the run starts,
-        so entries appended during the run are not checked; a range past the head checks
-        nothing. Keyset batches of `batch_size` rows, hashed off the event loop; the walk
-        stops at the first divergence (`kind` says which check failed). A database failure,
-        a read over its time budget or a full hasher raises and returns nothing; a
-        `batch_size` below 1 is a `ValueError`, never an empty "verified" walk."""
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1")
-        head = await self._repository.read_head()
-        last_id = 0 if head is None else head[0]
-        if to_id is not None:
-            last_id = min(to_id, last_id)
-        first_id = 1 if from_id is None else from_id
-        walk = _Walk(0, _GENESIS_HASH)
-        if first_id <= last_id:
-            anchor = await self._repository.fetch_anchor_hash(first_id)
-            walk = await self._walk(anchor or _GENESIS_HASH, first_id - 1, last_id, batch_size)
-        return VerifyResult(
-            verified=walk.bad_id is None,
-            entries_checked=walk.checked,
-            first_bad_id=walk.bad_id,
-            checked_at=self._clock(),
-            kind=walk.kind,
-        )
+        """`plan_verify` then `run_verify`, for callers with no gate between the two."""
+        plan = await self.plan_verify(from_id=from_id, to_id=to_id)
+        return await self.run_verify(plan, batch_size=batch_size)
 
-    async def _walk(self, expected: str, after_id: int, last_id: int, batch_size: int) -> _Walk:
+    async def _walk(
+        self,
+        expected: str,
+        after_id: int,
+        last_id: int,
+        batch_size: int,
+        checkpoints: Mapping[int, str] = _NO_CHECKPOINTS,
+    ) -> _Walk:
         """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
         is hashed, and batch n+2 only after batch n is done (at most two held)."""
-        checked = 0
+        checked = passed = passed_id = 0
         pending: asyncio.Future[list[tuple[Any, ...]]] | None
         pending = spawn(self._fetch(after_id, last_id, batch_size), name=_PREFETCH)
         try:
@@ -320,12 +437,13 @@ class AuditQueryService:
                     break
                 if len(rows) == batch_size and rows[-1][0] < last_id:
                     pending = spawn(self._fetch(rows[-1][0], last_id, batch_size), name=_PREFETCH)
-                walk = await self._hasher.run(functools.partial(_walk_batch, expected, rows))
-                checked += walk.checked
+                check = functools.partial(_walk_batch, expected, rows, checkpoints)
+                walk = await self._hasher.run(check)
+                checked, passed = checked + walk.checked, passed + walk.passed
                 if walk.bad_id is not None:
-                    return _Walk(checked, walk.last_hash, walk.bad_id, walk.kind)
-                expected = walk.last_hash
-            return _Walk(checked, expected)
+                    return _Walk(checked, passed, walk.last_hash, walk.bad_id, walk.kind)
+                expected, passed_id = walk.last_hash, walk.last_id
+            return _Walk(checked, passed, expected, last_id=passed_id)
         finally:
             if pending is not None:  # a prefetch nobody read: a break, an error, a cancel
                 await _discard(pending)

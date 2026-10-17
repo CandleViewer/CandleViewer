@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 import candleviewer.app as appmod
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
+from candleviewer.audit.query import VerifyPlan
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     InviteNotFound,
@@ -279,9 +280,19 @@ class _AuditQuery:
     async def query(self, **_kw: Any) -> AuditPage:
         return AuditPage(items=[], chain_verified=True)
 
-    async def verify(self, **_kw: Any) -> VerifyResult:
+    async def plan_verify(self, **_kw: Any) -> VerifyPlan:
+        return VerifyPlan(None, None, 0)  # an empty log
+
+    async def run_verify(self, plan: VerifyPlan, **_kw: Any) -> VerifyResult:
         return VerifyResult(
-            verified=True, entries_checked=0, first_bad_id=None, checked_at=datetime.now(UTC)
+            verified=True,
+            entries_checked=0,
+            first_bad_id=None,
+            checked_at=datetime.now(UTC),
+            from_id=None,
+            to_id=None,
+            anchor_hash="0" * 64,
+            last_hash=None,
         )
 
     async def schedule_export(self, **_kw: Any) -> ExportResult:

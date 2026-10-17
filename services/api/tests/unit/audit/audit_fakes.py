@@ -163,6 +163,24 @@ class FakeAuditRepository:
     async def read_head(self) -> tuple[int, str] | None:
         return (self.rows[-1]["id"], self.rows[-1]["entry_hash"]) if self.rows else None
 
+    async def read_bounds(self) -> tuple[int, int] | None:
+        ids = [r["id"] for r in self.rows]
+        return (min(ids), max(ids)) if ids else None
+
+    async def fetch_checkpoints(self, to_id: int) -> list[tuple[int, str, str | None]]:
+        stored = {r["id"]: r["entry_hash"] for r in self.rows}
+        found = sorted((h, cp.get("head_hash", "")) for h, cp in self.checkpoints.items())
+        return [(h, head_hash, stored.get(h)) for h, head_hash in found if h <= to_id]
+
+    async def fetch_checkpoint_above(self, head_id: int) -> int | None:
+        stored = {r["id"]: r["entry_hash"] for r in self.rows}
+        differs = [  # as the SQL: the entry is missing or has another hash
+            h
+            for h, cp in self.checkpoints.items()
+            if h > head_id and (h not in stored or stored[h] != cp.get("head_hash"))
+        ]
+        return min(differs, default=None)
+
     async def count(self) -> int:
         return len(self.rows)
 
