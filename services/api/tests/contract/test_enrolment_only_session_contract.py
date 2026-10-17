@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource
@@ -33,6 +34,8 @@ from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, E
 _BASE = "urn:cv:openapi"
 _CODE = "mfa_enrollment_required"
 _PLAN = Path(__file__).resolve().parents[4] / "docs" / "plan"
+#: The reviewed RBAC matrix: its `public: false` rows are the operations that need a session.
+_MATRIX = Path(__file__).resolve().parent / "rbac" / "matrix.yaml"
 #: The only operations an enrolment-only session may call (decision on #2295).
 _ALLOWED = {
     ("post", "/auth/mfa/enroll"),
@@ -199,6 +202,22 @@ def test_contract_promises_no_undeclared_status_and_no_production_claim(
         assert "production" not in text.lower()  # C-12.2 forbids the state; #965 refuses it
     for path in ("/auth/login", "/auth/mfa/recovery"):
         assert "501" not in _op(spec, "post", path)["responses"]
+
+
+def test_every_operation_that_refuses_an_enrolment_only_session_declares_403(
+    spec: dict[str, Any],
+) -> None:
+    """C-6.2: each operation that needs a session, outside the five, answers such a session
+    `403 mfa_enrollment_required`, so it declares the status (#2295 review)."""
+    rows = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["operations"]
+    lines = (line.split(" ", 1) for line, row in rows.items() if not row["public"])
+    refused = {(method.lower(), path) for method, path in lines} - _ALLOWED
+    undeclared = sorted(
+        f"{method.upper()} {path}"
+        for method, path in refused
+        if "403" not in _op(spec, method, path)["responses"]
+    )
+    assert refused and undeclared == []
 
 
 def test_login_mints_an_enrolment_only_session_for_a_user_without_a_method(

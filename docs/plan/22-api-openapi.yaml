@@ -1703,6 +1703,7 @@ paths:
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -2940,6 +2941,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [exchange-accounts]
@@ -3114,6 +3116,7 @@ paths:
                         stale_since: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /instruments/{symbol}:
@@ -3135,6 +3138,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/InstrumentDetail" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3195,6 +3199,7 @@ paths:
                     next_funding_time: "2026-09-14T16:00:00Z"
                     ts: "2026-09-14T10:31:02.100Z"
                     stale: false
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
@@ -3532,6 +3537,7 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /market/profile:
@@ -3635,6 +3641,7 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /market/trades:
@@ -3702,6 +3709,7 @@ paths:
                           tick_direction: MinusTick,
                         }
                     meta: { next_cursor: "eyJ0cyI6MTc4OH0", has_more: true, count: 2 }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /market/orderbook:
@@ -3792,6 +3800,7 @@ paths:
                     max_value: 12.5
                     normalize: window
                     estimated: false
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /market/metrics:
@@ -3893,6 +3902,7 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /market/open-interest:
@@ -4139,6 +4149,7 @@ paths:
                           ]
                         gaps: []
                     generated_at: "2026-09-14T10:31:02.800Z"
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   # ===========================================================================
   # RECORDING
@@ -4267,6 +4278,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [recording]
@@ -4684,6 +4696,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReplaySession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [replay]
@@ -4915,6 +4928,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderWithEvents" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [trading]
@@ -5275,6 +5289,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroup" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /trade-groups/{tradeGroupId}/amend:
@@ -5523,6 +5538,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Position" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /positions/{positionId}/tpsl:
@@ -6036,6 +6052,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [rules]
@@ -6137,6 +6154,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleVersionDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /rules/{ruleId}/active-version:
@@ -6565,6 +6583,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
     put:
@@ -6840,6 +6859,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JournalTradeDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [journal]
@@ -7555,6 +7575,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ChartTemplate" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [workspaces]
@@ -9995,6 +10016,7 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /me/sessions/{sessionId}:
     parameters:
@@ -10037,6 +10059,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EffectiveLimits" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /me/keymap:
     get:
@@ -10447,6 +10470,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OnboardingChecklist" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /onboarding/checklist/dismiss:
@@ -10601,6 +10625,7 @@ paths:
                 required: [items]
                 properties:
                   items: { type: array, items: { type: object } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /users/{userId}/invite:
     parameters:
@@ -10697,6 +10722,7 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /watchlists:
     get:
@@ -10713,6 +10739,7 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Watchlist" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [workspaces]
       operationId: createWatchlist
@@ -10809,6 +10836,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/ScannerRow" } }
                   meta: { $ref: "#/components/schemas/DataMeta" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /indicators:
     get:
@@ -10832,6 +10860,7 @@ paths:
                 properties:
                   items:
                     { type: array, items: { $ref: "#/components/schemas/IndicatorDescriptor" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /layout-presets:
     get:
@@ -10886,6 +10915,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceBundle" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /orders/{orderId}/diagnostics:
@@ -10907,6 +10937,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderDiagnostics" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /trade-groups/preview:
@@ -11006,6 +11037,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DetectorConfig" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     put:
       tags: [market-data]
       operationId: setDetectorConfig
@@ -11047,6 +11079,7 @@ paths:
                 properties:
                   items:
                     { type: array, items: { $ref: "#/components/schemas/DetectorMethodology" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /market/regime/explain:
     get:
@@ -11065,6 +11098,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RegimeExplanation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /market/footprint/recompute:
     post:
@@ -11158,6 +11192,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RuleVocabulary" }
         "304": { description: Not modified (`If-None-Match` matched). }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "503":
           description: Engine offline - the registry is empty or not wired.
           content:
@@ -11176,6 +11211,7 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /rules/{ruleId}/compile:
     parameters:
@@ -11266,6 +11302,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JournalTradeContext" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /system/build:
@@ -11283,6 +11320,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BuildInfo" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/overview:
     get:
@@ -11339,6 +11377,7 @@ paths:
                       kill_switch_engaged: false
                     incidents_open: 0
                     incidents: { status: ok, generated_at: "2026-10-15T18:00:03Z", open: 0 }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/capacity:
     get:
@@ -11427,6 +11466,7 @@ paths:
                       used: 0
                       tier_source: unrecorded
                       recorded_at: null
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/capacity/subaccount-tier:
     put:
@@ -11904,6 +11944,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecuritySummary" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/keys/kek-rewrap:
     post:
