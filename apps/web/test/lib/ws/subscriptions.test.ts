@@ -457,6 +457,56 @@ describe("options too deep or too big", () => {
     expect(length()).toBe(1022);
   });
 
+  const fresh = (prefix: string, n: number) =>
+    `{${Array.from({ length: n }, (_, i) => `"${prefix}${i}":1`).join(",")}}`;
+  const keyCount = (options: object) => Object.keys(options).length;
+
+  it("two retunes of 600 fresh keys each: the second is ignored and effective keeps the first 600", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onCtlOk(ctlWith(fresh("a", 600)), LIVE);
+    registry.onCtlOk(ctlWith(fresh("b", 600)), LIVE); // 1 200 values between them: no longer options
+    expect(Object.keys(handle.effective)).toEqual(Array.from({ length: 600 }, (_, i) => `a${i}`));
+  });
+
+  it("effective never passes 1 024 values across retunes: 300 retunes of 1 000 fresh keys keep the first", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    for (let i = 0; i < 300; i += 1) {
+      registry.onCtlOk(ctlWith(fresh(`r${i}k`, 1000)), LIVE);
+      expect(keyCount(handle.effective)).toBeLessThanOrEqual(1024);
+    }
+    expect(keyCount(handle.effective)).toBe(1000);
+  });
+
+  it("retunes add up to the limit and stop there: 10 fresh keys at a time end at 1 020", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    for (let i = 0; i < 110; i += 1) registry.onCtlOk(ctlWith(fresh(`r${i}k`, 10)), LIVE);
+    expect(keyCount(handle.effective)).toBe(1020); // the root and 1 023 values would fit; the 103rd retune would make 1 030
+  });
+
+  it("counts the size of a list from its length alone: nothing of it is enumerated or read", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    const touched: (string | symbol)[] = [];
+    const list = new Proxy(new Array<number>(5000).fill(1), {
+      get: (target, key, receiver) => {
+        touched.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+      ownKeys: (target) => {
+        touched.push("ownKeys");
+        return Reflect.ownKeys(target);
+      },
+    });
+    const frame = ctlOk({});
+    Object.assign(frame.p, { effective: { v: list } });
+    registry.onCtlOk(frame, LIVE);
+    expect(handle.effective).toEqual({}); // 5 000 elements: ignored
+    expect(touched).toEqual(["length"]);
+  });
+
   it("still voids the stream when the resnapshot comes with options too deep to keep", () => {
     const { registry, handle, got } = live();
     registry.onCtlOk(ctlWith(deep(50), ',"resnapshot":true'), LIVE);

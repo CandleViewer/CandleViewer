@@ -23,19 +23,23 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 /**
  * True when `value` is not options: its containers nest deeper than `MAX_OPTIONS_DEPTH`, or it holds
  * more than `MAX_OPTIONS_NODES` values (the root, every key's value and every element count). Walked
- * level by level, without recursion, and stopped at either limit: a 4 MiB frame can nest a million
- * levels or hold a million elements, and `frozen` below copies what this lets through, so neither
- * its stack nor its heap sees more than the limits.
+ * level by level, without recursion, and stopped at either limit before a level is read: a 4 MiB
+ * frame can nest a million levels or hold a million elements, and `frozen` below copies what this
+ * lets through, so neither its stack nor its heap sees more than the limits.
  */
 function beyondOptions(value: unknown): boolean {
   let level: unknown[] = [value];
-  let nodes = 0;
+  let nodes = 1; // the root
   for (let depth = 1; ; depth += 1) {
-    nodes += level.length;
-    if (nodes > MAX_OPTIONS_NODES) return true;
     const containers = level.filter((v): v is object => typeof v === "object" && v !== null);
     if (containers.length === 0) return false;
     if (depth > MAX_OPTIONS_DEPTH) return true;
+    // A list's length and an object's keys: counted without reading what they hold.
+    nodes += containers.reduce(
+      (n, c) => n + (Array.isArray(c) ? c.length : Object.keys(c).length),
+      0,
+    );
+    if (nodes > MAX_OPTIONS_NODES) return true;
     level = containers.flatMap((c) => Object.values(c));
   }
 }
@@ -380,9 +384,10 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
 
     onCtlOk(frame, to) {
       if (frame.ch === undefined) return;
-      const retune = !beyondOptions(frame.p.effective);
       for (const rec of targets(frame.ch, to)) {
-        if (retune) rec.effective = frozen({ ...rec.effective, ...frame.p.effective });
+        // The keys of every retune add up, so the merge is held to the limits a frame is.
+        const merged = { ...rec.effective, ...frame.p.effective };
+        if (!beyondOptions(merged)) rec.effective = frozen(merged);
         if (frame.p.resnapshot !== true) continue;
         // C5: the state is void and a `snap` follows by itself (5.4): nothing to ask for, unless a
         // `d` comes first (`orphaned`). A tail of the set held now must not assemble into it.
