@@ -371,7 +371,7 @@ def test_admin_user_session_listing_declares_its_auth_and_lookup_failures(
     spec: dict[str, Any],
 ) -> None:
     responses = spec["paths"]["/users/{userId}/sessions"]["get"]["responses"]
-    assert set(responses) == {"200", "401", "403", "404"}
+    assert set(responses) == {"200", "401", "403", "404", "503"}  # 503: #2295 guard
 
 
 def test_admin_user_session_listing_needs_no_step_up_but_revoking_does(
