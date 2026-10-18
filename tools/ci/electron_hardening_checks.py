@@ -482,6 +482,13 @@ _FIELD = re.compile(r"( *)(\w+):(?: +(.*))?")
 # A list item or a plain `key:` line. js-yaml also reads tagged (`!!str key:`), quoted or
 # escaped, explicit (`? key`) and `key :` keys, which the gate would not see.
 _LINE = re.compile(r" *(?:-(?:[ \t].*)?|[A-Za-z_][\w-]*:(?:[ \t].*)?)", re.ASCII)
+# A line's head before its value (list dashes, a plain `key:`), and the value tokens that
+# open or close a quoted scalar or flow sequence, open a flow mapping or start a comment.
+_HEAD = re.compile(r" *(?:-[ \t]+)*(?:-$|[A-Za-z_][\w-]*:(?:[ \t]+|$))?", re.ASCII)
+_TOKEN = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*'|[\"'\[\]{]|[ \t]#")
+# Control characters other than tab and LF (CRLF is read as LF), U+2028 and U+2029:
+# str.splitlines() breaks lines on some that js-yaml reads as text, js-yaml on a lone CR.
+_BREAKS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
 # Plain scalars YAML does not read as a string: a boolean, null, number, date or mapping.
 _NOT_STRING = re.compile(
     r"(?i)true|false|yes|no|on|off|null|\.?\d.*|\.inf|\.nan|.*:(\s.*)?"
@@ -495,7 +502,26 @@ _SERVED = {"extraResources": WEB_DIST_TO, "extraFiles": "resources/" + WEB_DIST_
 
 
 def _uncomment(text: str) -> str:
-    return re.sub(r"(?:^|\s)#.*", "", text).strip()
+    return re.sub(r"(?:^|[ \t])#.*", "", text).strip(" \t")
+
+
+def _closed(line: str) -> bool:
+    """False when a line's value goes on past it or could: a quoted scalar or flow sequence
+    left open (js-yaml reads the next lines into it), a tag, anchor or explicit key, or a
+    flow mapping (keys the gate does not read). A plain or block scalar cannot take in a
+    column-0 key, and _block_list holds a packaging list's lines to their columns."""
+    v, depth = _HEAD.sub("", line, count=1).strip(" \t"), 0
+    if v[:1] in ("!", "&", "?", "{"):
+        return False
+    if v[:1] not in ('"', "'", "["):
+        return True
+    for m in _TOKEN.finditer(v):
+        if m[0] in ('"', "'", "{") or m[0].endswith("#"):
+            return False
+        depth += (m[0] == "[") - (m[0] == "]")
+        if depth == 0:
+            return re.fullmatch(r"(?:[ \t]+#.*)?", v[m.end() :]) is not None
+    return False
 
 
 def _scalar(text: str) -> str | None:
@@ -510,7 +536,9 @@ def _block_list(lines: list[str]) -> list[Any] | str:
     """A block list of patterns and of {from, to, filter} entries, or why it is unreadable."""
     items: list[Any] = []
     top = len(lines[0]) - len(lines[0].lstrip(" ")) if lines else 0
-    key_col, in_filter = -1, False
+    # fcol: the column of the open filter's items (-1: none yet, -2: no filter open). YAML
+    # puts a list's items in one column; js-yaml reads a deeper `- ` into a plain item.
+    key_col, fcol = -1, -2
     for line in lines:
         col, item = len(line) - len(line.lstrip(" ")), _ITEM.fullmatch(line)
         if item and col == top:
@@ -530,12 +558,13 @@ def _block_list(lines: list[str]) -> list[Any] | str:
             key, raw = field.group(2), _uncomment(field.group(3) or "")
             if key not in ("from", "to", "filter") or key in entry:
                 return f"unexpected field {key!r}"
-            in_filter = key == "filter" and raw == ""
-            val = list[str]() if in_filter or raw == "[]" else _scalar(raw)
+            fcol = -1 if key == "filter" and raw == "" else -2
+            val = list[str]() if fcol == -1 or raw == "[]" else _scalar(raw)
             if val is None:
                 return f"unreadable {key} value {raw!r}"
             entry[key] = [val] if key == "filter" and isinstance(val, str) else val
-        elif entry is not None and item and in_filter and col >= key_col:
+        elif entry is not None and item and fcol in (-1, col) and col >= key_col:
+            fcol = col
             if (value := _scalar(item.group(2))) is None:
                 return f"unreadable filter pattern {item.group(2).strip()!r}"
             entry["filter"].append(value)
@@ -544,10 +573,9 @@ def _block_list(lines: list[str]) -> list[Any] | str:
     return items
 
 
-def _packaging_lists(text: str) -> dict[str, list[Any] | str]:
+def _packaging_lists(lines: list[str]) -> dict[str, list[Any] | str]:
     """The top-level PACKAGING_KEYS of electron-builder.yml, each as its list or as the
     reason it cannot be read."""
-    lines = [ln for ln in text.splitlines() if ln.strip() and ln.lstrip()[0] != "#"]
     out: dict[str, list[Any] | str] = {}
     for i, line in enumerate(lines):
         m = re.fullmatch(r"(files|extraResources|extraFiles):(?:\s(.*))?", line)
@@ -606,15 +634,30 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
     serves, or above it: the extraResources copy of the web dist this gate scanned to
     web/dist (`from` resolves against the config's directory, the project directory of
     build:installer). extraResources and extraFiles patterns, an absent `to` and a `to` the
-    gate cannot place all count (_serves). Not seen: a tagged or escaped key inside a flow
-    mapping, a ${...} `from` that names one .map file, and files a build hook copies.
+    gate cannot place all count (_serves). Not seen: a ${...} `from` that names one .map
+    file, and files a build hook copies. Lines are split on LF, as js-yaml splits them;
+    also refused: another line break or control character but tab (_BREAKS), a value
+    that goes on past its line (_closed) and a list item off its list's column.
     """
     subject = "electron-builder.yml"
+    text = text.replace("\r\n", "\n")
+    if brk := _BREAKS.search(text):
+        n = text.count("\n", 0, brk.start()) + 1
+        msg = (
+            f"cannot read line {n}: it holds U+{ord(brk[0]):04X}; the gate reads lines "
+            "split on LF (or CRLF), so use no other line break or control character but tab"
+        )
+        return [Violation("SR-116", subject, msg)]
     vs: list[Violation] = []
-    body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-    bad = [ln for ln in body.splitlines() if ln.strip() and not _LINE.fullmatch(ln)]
+    # js-yaml's lines (YAML blanks are spaces and tabs), less blank and comment lines.
+    lines = [ln for ln in text.split("\n") if not re.match(r"[ \t]*(?:#|$)", ln)]
+    body = "\n".join(lines)
+    bad = [ln for ln in lines if not _LINE.fullmatch(ln) or not _closed(ln)]
     if bad:
-        msg = f"cannot read line {bad[0].strip()!r}: use a list item or a plain 'key:' line"
+        msg = (
+            f"cannot read line {bad[0].strip()!r}: use a list item or a plain 'key:' "
+            "line whose value ends on it, with no tag, anchor, explicit key or flow mapping"
+        )
         vs.append(Violation("SR-116", subject, msg))
     if re.search(r"(?m)^extends:", body):
         msg = "the gate does not follow 'extends': declare the packaging lists here"
@@ -627,7 +670,7 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
             "mapping or a quoted key) is not checked; declare it at the top level"
         )
         vs.append(Violation("SR-116", subject, msg))
-    lists = _packaging_lists(text)
+    lists = _packaging_lists(lines)
     writers = 0
     for key in PACKAGING_KEYS:
         items = lists.get(key) or (["**/*"] if key == "files" else [])
@@ -679,6 +722,21 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         )
         vs.append(Violation("SR-174", subject, msg))
     return vs
+
+
+def check_asset_root(index_js: str) -> list[Violation]:
+    """SR-174: the app:// handler reads the root check_packaging puts the web dist at: from
+    <resources>/app.asar/dist/main, ../../../web/dist (one createDistReader call)."""
+    root = posixpath.join("../../..", WEB_DIST_TO)
+    resolve = r"\b(\w+) = path\.resolve\(__dirname, ([\"'])" + re.escape(root) + r"\2\)"
+    m = re.search(resolve, index_js)
+    if m and re.findall(r"\bcreateDistReader\(([^)]*)\)", index_js) == [m[1]]:
+        return []
+    msg = (
+        f"the app:// handler must read one root, path.resolve(__dirname, '{root}'): "
+        f"electron-builder.yml copies the web dist to '{WEB_DIST_TO}'; change both together"
+    )
+    return [Violation("SR-174", "dist/main/index.js", msg)]
 
 
 def extract_meta_csp(html: str) -> str | None:
@@ -869,5 +927,8 @@ def run_all_checks(
         _read(desktop_dist / "preload" / "allowList.js"),
         main_js,
     )
-    vs += check_packaging(_read(builder_config), builder_config.parent, web_dist)
+    vs += check_asset_root(_read(desktop_dist / "main" / "index.js"))
+    # Bytes, so a CR reaches check_packaging (read_text would turn it into LF).
+    config = builder_config.read_bytes() if builder_config.is_file() else b""
+    vs += check_packaging(config.decode("utf-8"), builder_config.parent, web_dist)
     return vs
