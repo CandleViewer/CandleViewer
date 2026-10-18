@@ -27,17 +27,73 @@ only by `clock.advance()` once the client is parked in a backoff sleep; every wa
 with a 5 s bound. Same seed, same backoff schedule and fault trace (scenario 6 pins the trace).
 A reset crosses the proxy, `PAUSE` also holds the chunk being read, no server behind it = reset (`down`).
 
+**Flag on.** `_server.flag_on()` (fixture `stack_on`, in `conftest.py`) serves the same router with
+E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on: the default `BackpressureConfig` (8 MiB / 2 000 frames,
+the §8.4 ladder, pacing, classification and the RTT probe). Its listening socket has a fixed 32 KiB
+`SO_SNDBUF` (64 KiB once the kernel doubles it), which every accepted socket inherits, and each of
+its lanes fixes its upstream `SO_RCVBUF` at 128 KiB (`LANE_RCVBUF`, `Proxy.rcvbuf`). So a stopped
+reader's backlog reaches the gateway's budget once well under 1 MB is in flight, however bursty the
+writes, not after the megabytes loopback autotuning holds. The lane buffer has a floor: set after
+connect, as `Proxy` sets it, a receiver of 28 KiB or less that stopped reading resumes only on the
+sender's next zero-window probe, 0.5 s to seconds after `HEAL` (about 32 KiB on Linux 6.6; set
+before connect there is none), and kernels that advertise about half the buffer as window need
+twice that. 128 KiB clears it with room, and the `recovered` wait names both
+sizes if it ever stalls. uvicorn's transport keepalive (a 15 s ping, a 45 s pong timeout, then
+`1011`) is off there: it is timed on the loop's wall clock and the scenarios on the virtual one, so
+a slow run (coverage) would close a paused client mid-scenario. The §9.1 application heartbeat
+stays, on the virtual clock. Production keeps both: a reader stalled for 60 real seconds meets that
+`1011`, which this harness leaves out. `trades_step` publishes the recorded BTCUSDT tape (production
+parser) as §14.2 batches, replayed in rounds with unique ids. Client opt-ins, set before `start()`:
+the §9.1 client `ping` (`heartbeat_s`), no permessage-deflate (`deflate`), and `on_data`, which
+takes the data frames of a stream too large to keep. The flag-off scenarios use none of these.
+
 ## Catalogue
 
 | #   | Scenario (#410 AC)                                                  | This slice                                                    | Blocker for the end-to-end run                                                                                                                                                                                                                           |
 | --- | ------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Upstream kill (G3)                                                  | not run                                                       | Nothing feeds the hub: `SequencingHub.publish` / `upstream_desync` / `upstream_reconnect` (`ws/sequencing.py:621,672,675`) have no production caller; book publisher E21-T01 #604, ingestion feed                                                        |
-| 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | not run; `Fault.PAUSE` is ready                               | A flag-on server in `_server.py`: the ladder is wired behind `CV_WS_BACKPRESSURE_ENABLED` (#412, off by default); its steps count in `cv_ws_overflow_total{reason}`; the close, in `cv_ws_closes_total{reason}` (not `cv_ws_slow_consumer_closes_total`) |
-| 3   | Burst 5 000 msg/s (§8)                                              | not run                                                       | A flag-on server in `_server.py` (coalescing and pacing are wired behind `CV_WS_BACKPRESSURE_ENABLED`, #412) and #571's `cv_ws_conflated_total`                                                                                                          |
+| 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | **runs**: `test_s2_slow_consumer.py`                          | — (flag on: `_server.flag_on`. The sleeper holds `book.BTCUSDT.50` and the tape; no bar builder is wired into this harness for `bars` or `footprint`. Step 3's redrop needs a snapshot near the budget, and none is: `test_pipeline_ladder.py` pins it.) |
+| 3   | Burst 5 000 msg/s (§8)                                              | not run                                                       | #571's `cv_ws_conflated_total`; the flag-on stack it needs exists (`_server.flag_on`)                                                                                                                                                                    |
 | 4   | Restart, `shutdown_notice` (§9.4)                                   | **runs**: `test_s4_restart_shutdown_notice.py`                | —                                                                                                                                                                                                                                                        |
 | 5   | Token expiry during an outage (§4.3, §9.2)                          | **runs**: `test_s5_token_expiry_outage.py`                    | —                                                                                                                                                                                                                                                        |
 | 6   | Grant revoked mid-reconnect (E17-X02)                               | **runs**: `test_s6_revocation_reconnect_race.py`              | — (SR-189 half: #2318 merged)                                                                                                                                                                                                                            |
 | 7   | Kill switch reaches every socket <= 1 s under chaos (WS-E04, AC-26) | **runs** (gateway half): `test_s7_kill_switch_propagation.py` | Producer half: nothing calls `WsEvents.kill_switch_changed` (`app.py:1050` only builds it): #956 E39-S03                                                                                                                                                 |
+
+**Scenario 2** (C-13.6 #11, backpressure: a slow WS client). Flag on. The sleeper holds the
+reference workspace's feedable topics, `book.BTCUSDT.50` and `trades.BTCUSDT` (no bar builder is
+wired into the harness for its 1 m `bars` and 5 m `footprint` panes), behind a `PAUSE`d lane for 60
+s of virtual time. Its §9.1 pings keep the socket open; with none, the writer's first turn after
+`HEAL` finds 60 s without inbound traffic and closes it `heartbeat_timeout`, since while the writer
+is parked nothing checks the watchdog (#3100). It offers no deflate. Every 125 ms the hub publishes
+the recorded book and, after a quiet first 2 s, 250 prints of the tape (the tape starts at 2.125 s;
+2 000 prints/s, ~235 KiB/s: inside §16.3's 350 KiB/s; at K01's measured 154 KiB/s the budget would
+bind only at the pause's end). The quiet start keeps the sleeper's writer running through its
+classification at 2 s. The RTT probe it never answered makes it `saturated` there (§8.6, C6), so its
+windows (x4) hold pending bytes from then on, on every run. Pass-through spies on
+`Backpressure.check` and `drain`, and a count of `OutboundQueue.push` calls, record every budget
+check of the sleeper (ruling D8). On return, queued plus pending window bytes are within 8 MiB and
+the frames within 2 000, unless the check closed. At most one frame is pushed between two checks
+(the bounded overshoot), the counters equal the lanes and windows recounted, and the windows'
+pending bytes are in it. Step 1 fires once while asleep, the class `saturated`: both topics' frames
+and windows go, both marked `backpressure`. No snapshot is queued while asleep (the writer, parked
+in its send, runs no drain); after `HEAL`, one per drain, and the streams resume with no gap. No
+step 3: what is left can always be dropped (`cv_ws_overflow_total` `drop` +2, `resnapshot` +2; no
+close). Two healthy clients on the same topics get every update in the tick that published it: no
+class the sleeper degraded and no frame held, 0 ms added on the virtual clock, where the Gherkin
+allows 10 % on the p95. They see no gap, every print, and the same frames, byte for byte, as a run
+without the sleeper. Loop times are printed, not asserted: the proxy hop stalls ~40 ms once a
+classification interval in both runs. The test prints the D8 record (the tracemalloc peak over the
+pause, the accounted peak, their ratio); the PR keeps one run's values. `s2b`: the sleeper also
+holds account A's `orders`, updated 128 times a second, frames §8.4 never drops. Step 1 sheds the
+market topics; then the orders take the queue past 2 000 frames with nothing left to drop, so it
+closes `slow_consumer` (`close_budget` +1, `cv_ws_closes_total{reason="slow_consumer"}` +1), both
+lanes freed at once and the queued frames unsent. Step 3's `bye` carries §8.4's literals (`4429`,
+`retry_after_ms` 3000, the fixed message). As built, its `most_expensive_topics` are counted at the
+closing check, after step 1 shed the market topics, so the list is empty; #3365 ranks every topic at
+the episode's first over-budget check and freezes that ranking, and the assertion flips with its PR.
+The lane heals in the close's own synchronous turn (the feed's `until` hook, no await between),
+inside the close's 2 s flush; the client backs off (§9.2 attempt 1) and re-snapshots every topic,
+`orders` first (§9.3), no gap.
 
 **Scenario 4.** Three workspaces are connected and `server.should_exit` is set (what SIGTERM sets):
 `PlannedShutdownServer` runs `WsRuntime.stop()` before uvicorn's own shutdown. Each client gets the
@@ -90,6 +146,23 @@ broadcast skips the parked socket, whose `auth_ok.kill_switch` (§4.3; `welcome`
   `retry_after_ms`. Scenario 7: `broadcast_system` skipping a socket, re-evaluation before the
   `system` frame, `auth_ok.kill_switch` always off (or read before the `auth` load: `s7b` only), a
   1.2 s blocking call ahead of the fan-out.
+- **Scenario 2 mutation** (in memory, no file written): with tracemalloc on and off, it fails on
+  each of 16 mutants of `ws/outbound.py`, `ws/pacing.py`, `ws/pipeline.py` and `ws/gateway.py`: the
+  budget never binding; queued bytes miscounted; window bytes never coming down; the windows left
+  out of the check; no check after a control frame; step 1 dropping one topic or marking none; step
+  2 run inside the push, all at once, or never; a close after a drop that cleared the overflow; a
+  `bye` without its hint; uncounted steps or closes; a slow-consumer close that keeps its queued
+  orders; one classification shared by every connection. The kill of the windows left out of the
+  check holds when the 8 MiB crossing lands with trades batches pending, as it did in every
+  configuration measured (lane buffers from 24 to 128 KiB, traced, untraced and under coverage);
+  `test_backpressure_counts_pending_state_against_the_budget` (`test_outbound.py`) pins that
+  property regardless. Two paths lie outside this scenario and the unit suite pins them: the 50 %
+  drain gate (the woken sleeper's queue holds only control frames;
+  `test_backpressure_drain_waits_until_the_queue_is_below_half`) and the redrop close
+  (`test_three_redrops_close_with_close_redrop`).
 - **SR-189 flip:** #2318 merged (`549d9032`), and `s6b` reported `XPASS(strict)` on the rebased
   branch, as planned, so its `xfail` marker is removed and it runs as a plain test.
 - **Flake budget:** 3 consecutive gate runs plus 20 more after the flip, all green (`7 passed`).
+  With scenario 2: three runs in three seeded shuffled orders and one with `-W error` (`9 passed`),
+  and two runs of `s2` and `s2b` under the `py` lane's flags (`--cov`) with the 128 KiB lane buffer
+  (three more at the earlier 32 KiB lane buffer), all green.
