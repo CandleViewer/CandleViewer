@@ -176,6 +176,8 @@ def test_generator_toolchain_failure_reports_ci_gen_004(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def fake_run(cmd, cwd=None, env=None):
+        if cmd[:2] == ["git", "ls-files"]:  # #3299: the outputs set aside first
+            return _proc(0, stdout="")
         if cmd[:2] == ["pnpm", "generate"]:
             return _proc(1, stderr="boom")
         raise AssertionError(f"unexpected command: {cmd}")
@@ -668,11 +670,13 @@ def generated_repo(
 def test_fresh_tree_passes_and_the_local_manifest_stays_untracked(
     generated_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The real gate passes a fresh tree; the repo's .gitignore keeps the manifest out."""
+    """The real gate passes a fresh tree and leaves it clean; the repo's .gitignore
+    keeps the manifest out."""
     assert (generated_repo / _LOCAL_MANIFEST).is_file()
     assert _LOCAL_MANIFEST not in _git(generated_repo, "ls-files").splitlines()
     assert gen_gate.main([]) == 0
     assert "OK" in capsys.readouterr().out
+    assert _git(generated_repo, "status", "--porcelain") == ""
 
 
 @pytest.mark.parametrize("rel", sorted(_GENERATED))
@@ -703,6 +707,108 @@ def test_local_manifest_would_fail_ci_gen_002_if_it_were_not_ignored(
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
     assert "CI-GEN-002" in err and "packages/protocol/.cache/" in err
+
+
+# #3299: a committed file under the outputs `pnpm generate` writes that no generator
+# writes passed every check above: it is tracked (no diff, not untracked), and the local
+# manifest records whatever the directory holds. The gate removes the tracked outputs
+# from the working tree before generating, and fails CI-GEN-005 on any not written back.
+_ORPHANS = {
+    f"{_GENERATED_DIR}/orphan.ts": _HEADER + "export type HandWritten = true;\n",
+    f"{_GENERATED_DIR}/rest/extra.ts": _HEADER + "export type HandWritten = true;\n",
+    # The Python twin of the CVWB layout, once no generator writes it.
+    "services/api/candleviewer/ws/_generated/cvwb_layout.py": (
+        '"""GENERATED FILE — DO NOT EDIT BY HAND."""\n'
+    ),
+}
+
+
+def _commit_orphan(repo: Path, rel: str) -> None:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_ORPHANS[rel], encoding="utf-8", newline="\n")
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-qm", "a hand-written file posing as generated")
+
+
+@pytest.mark.parametrize("rel", sorted(_ORPHANS))
+def test_committed_file_no_generator_writes_fails_ci_gen_005(
+    generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The header does not save it, and its absence is not reported as drift."""
+    _commit_orphan(generated_repo, rel)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-005: ")
+    assert f"\n  - {rel}\n" in err
+    assert "CI-GEN-001" not in err
+
+
+def test_orphan_is_left_removed_from_the_working_tree_and_kept_in_the_index(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The gate restores nothing and says so: the generated files are back as committed,
+    the orphan is gone from the working tree only, and the report names both fixes."""
+    rel = f"{_GENERATED_DIR}/orphan.ts"
+    _commit_orphan(generated_repo, rel)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert _git(generated_repo, "status", "--porcelain") == f" D {rel}\n"
+    assert "`git rm <path>`" in err and "`git restore -- <path>`" in err
+
+
+def test_nondeterminism_is_reported_before_an_orphan(
+    generated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Determinism stays first: two runs that differ fail CI-GEN-003 even with an orphan
+    present, and the report still names the tracked file the gate left missing."""
+    rel = f"{_GENERATED_DIR}/orphan.ts"
+    _commit_orphan(generated_repo, rel)
+    hashes = iter(["run-1", "run-2"])
+    monkeypatch.setattr(gen_gate, "_hash_generated_tree", lambda roots: next(hashes))
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-003: ") and "CI-GEN-005" not in err
+    assert "1 tracked generated file(s) missing" in err and f"\n  - {rel}\n" in err
+
+
+def test_generator_failure_after_the_removal_names_what_is_missing(
+    generated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A generator that fails once the gate has removed its outputs leaves them missing;
+    the report lists them and how to get them back from the index."""
+    failing = [sys.executable, "-c", "raise SystemExit(3)"]
+    monkeypatch.setattr(gen_gate, "GENERATE_CMD", failing)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-004: ")
+    assert "2 tracked generated file(s) missing" in err
+    assert "`git restore -- <path>`" in err
+    assert "".join(f"  - {rel}\n" for rel in sorted(_GENERATED)) in err
+    removed = "".join(f" D {rel}\n" for rel in sorted(_GENERATED))
+    assert _git(generated_repo, "status", "--porcelain") == removed
+
+
+def test_orphan_check_covers_the_gated_outputs_of_pnpm_generate() -> None:
+    """GENERATE_OUTPUTS are the protocol `generate` task's outputs (pinned above to what
+    the generators write) that the gate covers. The local manifest is git-ignored, so
+    never a tracked orphan; `pnpm generate` writes neither CVWB vectors nor corpus."""
+    turbo = (_REPO_ROOT / _PROTOCOL / "turbo.json").read_text(encoding="utf-8")
+    gated = [p.as_posix() for p in gen_gate.GENERATED_PATHS]
+    covered: set[str] = set()
+    for glob in json.loads(turbo)["tasks"]["generate"]["outputs"]:
+        path = glob.removeprefix(_TURBO_ROOT)
+        if path == glob:  # relative to the package
+            path = f"{_PROTOCOL}/{glob}"
+        path = path.removesuffix("/**")
+        if any(path == g or path.startswith(f"{g}/") for g in gated):
+            covered.add(path)
+    covered.discard(_LOCAL_MANIFEST)
+    assert {p.as_posix() for p in gen_gate.GENERATE_OUTPUTS} == covered
 
 
 # #2743 acceptance 1, for the packaged contract subset: two PRs that each add a different

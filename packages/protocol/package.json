@@ -24,7 +24,7 @@
     "test:cov": "vitest run --project unit --coverage",
     "build": "tsup",
     "size": "echo \"@candleviewer/protocol: no bundle budget\"",
-    "generate": "node ./scripts/extract-ws-schema.mjs && node ./scripts/generate-rest-types.mjs && node ./scripts/generate-ws-types.mjs && node ./scripts/generate-policy-rules.mjs && node ./scripts/generate-bar-types.mjs && node ./scripts/generate-cvwb-layout.mjs && node ./scripts/update-manifest.mjs && node ./scripts/check-generated-guard.mjs",
+    "generate": "node ./scripts/extract-ws-schema.mjs && node ./scripts/generate-rest-types.mjs && node ./scripts/generate-ws-types.mjs && node ./scripts/generate-policy-rules.mjs && node ./scripts/generate-bar-types.mjs && node ./scripts/generate-cvwb-layout.mjs && node ./scripts/generate-barrel.mjs && node ./scripts/update-manifest.mjs && node ./scripts/check-generated-guard.mjs",
     "generate:check": "node ./scripts/extract-ws-schema.mjs --check && node ./scripts/check-generated-guard.mjs"
   },
   "devDependencies": {
