@@ -76,7 +76,8 @@ GOOD_WINDOWS: list[dict[str, object]] = [
     },
 ]
 # The app:// handler responses collect-hardening-facts.mjs fetches, pinned here as literals:
-# the page, a missing asset and an /api path (both 404, no SPA fallback) and a non-GET (405).
+# the page, a missing asset and an /api path (both 404, no SPA fallback), a non-GET (405) and
+# a client route the SPA fallback serves index.html for (200).
 GOOD_PROBES: list[dict[str, object]] = [
     {
         "method": method,
@@ -89,6 +90,7 @@ GOOD_PROBES: list[dict[str, object]] = [
         ("GET", "/assets/cv-hardening-probe.js", 404),
         ("GET", "/api/cv-hardening-probe", 404),
         ("POST", "/", 405),
+        ("GET", "/login", 200),
     )
 ]
 
@@ -498,8 +500,8 @@ def test_a_module_in_a_sub_directory_is_scanned(
     assert srs(vs) == {sr} and f"violated by {subject}:" in vs[0].render()
 
 
-@pytest.mark.parametrize("i", [1, 2])
-def test_a_404_without_the_csp_header_fails_sr112(tree: Tree, i: int) -> None:
+@pytest.mark.parametrize("i", range(len(GOOD_PROBES)))
+def test_a_response_without_the_csp_header_fails_sr112(tree: Tree, i: int) -> None:
     tree.probes[i]["csp"] = None
     vs = tree.violations()
     assert srs(vs) == {"SR-112"} and str(tree.probes[i]["url"]) in vs[0].render()
@@ -522,13 +524,14 @@ def test_a_405_with_a_different_csp_header_fails_sr112(tree: Tree, csp: str) -> 
 
 @pytest.mark.parametrize(
     ("i", "status"),
-    [(0, 404), (1, 200), (2, 200), (3, 200), (3, None)],
+    [(0, 404), (1, 200), (2, 200), (3, 200), (3, None), (4, 404)],
     ids=[
         "page-404",
         "missing-asset-200",
         "api-spa-fallback-200",
         "post-200",
         "no-status",
+        "client-route-404",
     ],
 )
 def test_a_handler_response_with_the_wrong_status_fails_sr112(

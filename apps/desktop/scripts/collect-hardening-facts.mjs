@@ -25,13 +25,16 @@ if (!out) {
 }
 
 // The handler responses to fetch: the page, a missing asset and an /api path (the SPA fallback
-// leaves both 404) and a non-GET method (405). Same list as APP_PROBES in
-// tools/ci/electron_hardening_checks.py, which judges each status and CSP header.
+// leaves both 404), a non-GET method (405) and a client route with no extension, which the SPA
+// fallback answers with index.html (200). Same list as APP_PROBES in
+// tools/ci/electron_hardening_checks.py, which judges each status and CSP header; a pytest in
+// scripts/tests/test_electron_hardening_gate.py reads this literal as JSON and compares the two.
 const PROBES = [
   ["GET", "app://candleviewer/"],
   ["GET", "app://candleviewer/assets/cv-hardening-probe.js"],
   ["GET", "app://candleviewer/api/cv-hardening-probe"],
   ["POST", "app://candleviewer/"],
+  ["GET", "app://candleviewer/login"],
 ];
 
 const { buildCsp } = await import(pathToFileURL(path.join(dist, "main/csp.js")).href);

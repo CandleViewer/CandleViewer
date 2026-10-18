@@ -44,12 +44,14 @@ APP_ORIGIN = "app://candleviewer"
 
 # SR-112: the app:// handler responses collect-hardening-facts.mjs fetches from the packaged
 # main process (same list there), with the status each must get: the page, a missing asset and
-# an /api path (the SPA fallback leaves both 404) and a non-GET method (405).
+# an /api path (the SPA fallback leaves both 404), a non-GET method (405) and a client route
+# with no extension, which the SPA fallback answers with index.html (200).
 APP_PROBES: dict[tuple[str, str], int] = {
     ("GET", f"{APP_ORIGIN}/"): 200,
     ("GET", f"{APP_ORIGIN}/assets/cv-hardening-probe.js"): 404,
     ("GET", f"{APP_ORIGIN}/api/cv-hardening-probe"): 404,
     ("POST", f"{APP_ORIGIN}/"): 405,
+    ("GET", f"{APP_ORIGIN}/login"): 200,
 }
 
 # SR-114: the top-level entries of apps/desktop/dist the build emits; the scans below cover both.
