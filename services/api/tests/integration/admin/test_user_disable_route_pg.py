@@ -53,6 +53,12 @@ _KEPT = sa.text(
 _SESSIONS = sa.text(
     "SELECT revoked_reason FROM sessions WHERE user_id = CAST(:id AS uuid) ORDER BY 1"
 )
+#: #2295: each user has a confirmed TOTP method, so the enrolment-only guard serves their
+#: sessions (minted as MFA-proved) as full ones and the routes' own checks decide.
+_TOTP = sa.text(
+    "INSERT INTO mfa_methods (id, user_id, kind, secret_enc, confirmed_at) "
+    "VALUES (CAST(:mid AS uuid), CAST(:id AS uuid), 'totp', '\\x00', now())"
+)
 
 
 @pytest.fixture(scope="module")
@@ -98,6 +104,7 @@ async def _seed(dsn: str) -> None:
                     _USER, {"id": str(uid), "email": f"{name}@x.invalid", "name": name}
                 )
                 await conn.execute(_ROLE, {"id": str(uid), "role": role})
+                await conn.execute(_TOTP, {"mid": str(uuid.uuid4()), "id": str(uid)})
             await conn.execute(_ACCOUNT, {"id": str(_EXCHANGE), "uid": "5702", "label": "s7"})
             grant = {"user": str(_M), "account": str(_EXCHANGE), "view": True, "trade": True}
             await conn.execute(_GRANT, grant)

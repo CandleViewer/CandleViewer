@@ -4,7 +4,8 @@
 composition root builds the disable service itself and the test pins the arguments of
 `build_user_disable_service` at its call site. Only the SQL edges are faked: the rows behind the
 S3 store's statements, the identity and scope reads (O5: only an `active` user holds a
-permission) and the rule store, under the app's own rule manager and B9 charts. The session,
+permission), the `users` read the enrolment-only guard classifies with (#2295) and the rule
+store, under the app's own rule manager and B9 charts. The session,
 step-up and B16 services are the real ones. Manager M has two live sessions, a socket on each, an
 armed rule and a frozen grant with a cap. One of the two was minted by a refresh that completed,
 and a socket that never re-authed is still on its predecessor; a refresh of a third session of M,
@@ -36,7 +37,7 @@ import candleviewer.app as appmod
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import UserDisabled
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import SessionRecord, UserStatus
+from candleviewer.auth.models import SessionRecord, UserRecord, UserStatus
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
@@ -47,13 +48,14 @@ from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifec
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED
 from tests.contract.rbac.rbac_harness import _AuditSink, load_contract, role_permissions
 from tests.csrf_helpers import csrf_headers
 from tests.rules.test_rules_manager import _active_hash, _ir
 from tests.security.auth.test_disable_user_drill import _ORIGIN, _auth_ws, _Clock, _recv
-from tests.unit.auth.auth_fakes import FakeUserRepository
+from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.test_user_cascade_wiring import _actor
@@ -318,6 +320,8 @@ def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
         for name in ("load_grants", "load_permissions"):
             mp.setattr(SqlAlchemyScopeSource, name, _delegate(w.repo, name))
         mp.setattr(SqlAlchemySessionRepository, "find_by_id", _delegate(w.repo, "find_by_id"))
+        users = _Users(w.repo)  # #2295: the `users` read the enrolment-only guard classifies with
+        mp.setattr(SqlAlchemyUserRepository, "find_by_id", _delegate(users, "find_by_id"))
         relational = "candleviewer.user_cascade_wiring.SqlAlchemyRelationalRepository"
         mp.setattr(relational, lambda *_: w.repo)  # the S3 store's unit of work
         mp.setattr(appmod, "PostgresRuleStore", lambda _relational: w.rules)
@@ -330,6 +334,20 @@ def disabled() -> Iterator[SimpleNamespace]:
     with _world() as (w, app, client):
         scenario(app, client, w, str(_OWNER), str(_M))
         yield w
+
+
+class _Users:
+    """`users` as the enrolment-only guard reads it (#2295): each row's status from `_Rows`,
+    and a confirmed TOTP method, so a session minted as MFA-proved is a full one."""
+
+    def __init__(self, rows: _Rows) -> None:
+        self._rows, self._full = rows, FullUsers()
+
+    async def find_by_id(self, user_id: str) -> UserRecord | None:
+        status = self._rows.status(user_id)
+        if status is None:
+            return None
+        return (await self._full.find_by_id(user_id)).model_copy(update={"status": status})
 
 
 @contextmanager
