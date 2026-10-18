@@ -14,6 +14,12 @@ describe("resolveDevServerUrl", () => {
     ["http://localhost:5173/", "http://localhost:5173/"],
     ["http://LOCALHOST:5173/route?tab=1", "http://localhost:5173/route?tab=1"],
     ["http://127.0.0.1:65535", "http://127.0.0.1:65535/"],
+    // Other spellings of the two hosts are accepted only as the canonical href the window loads.
+    ["http://127.1:4173", "http://127.0.0.1:4173/"],
+    ["http://0x7f.0.0.1:4173", "http://127.0.0.1:4173/"],
+    ["http://2130706433:4173", "http://127.0.0.1:4173/"],
+    ["http:\\\\127.0.0.1:4173", "http://127.0.0.1:4173/"],
+    ["http://@%6Cocalhost:04173", "http://localhost:4173/"],
   ])("accepts the loopback http origin %s in an unpackaged build", (raw, url) => {
     expect(resolveDevServerUrl(raw, false)).toEqual({ kind: "accepted", url });
   });

@@ -46,5 +46,8 @@ describe("apps/desktop e2e playwright-electron config", () => {
       throw new Error("expected exactly one webServer entry with a url");
     }
     expect(resolveDevServerUrl(server.url, false).kind).toBe("accepted");
+    // The spec's own fallback must be this url, or the shell could quietly load app:// instead.
+    const spec = readFileSync(path.join(E2E_DIR, "hotkeys.spec.ts"), "utf8");
+    expect(/CV_DEV_SERVER_URL: .*\?\? "([^"]+)"/.exec(spec)?.[1]).toBe(server.url);
   });
 });
