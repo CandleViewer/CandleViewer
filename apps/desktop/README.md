@@ -49,15 +49,20 @@ one delivery point.
 Packaged builds (#3518): `electron-builder.yml` copies `apps/web/dist`, without
 source maps (SR-116), to `<resources>/web/dist`, where the handler reads it
 (`dist/main` inside `app.asar` resolves `../../../web/dist` there). The
-electron-hardening gate fails if a packaging list could ship a `.map` file, or
-if that entry is missing or another one writes into that root. These files sit
-outside `app.asar`, so ASAR integrity does not cover them: the SR-118 startup
-check (E10) must, by packing them into `app.asar` or by checking them against
-a hash list kept there. Not yet proven: that an installer renders the app. CI
-builds no installer. The next step is to pack the unpacked app in the `build`
-job (`electron-builder --linux dir` with `electronDist` set to the Electron
-that job installs) and launch it with Playwright-Electron (`executablePath`)
-under `xvfb-run`, as `collect-hardening-facts.mjs` launches `dist/main/index.js`.
+electron-hardening gate fails if a packaging list could ship a `.map` file, if
+that entry is missing, or if anything else could write into that root. It
+fails on config forms it cannot read; `check_packaging` names the few it does
+not see. These files sit outside `app.asar`, so ASAR integrity does not cover
+them: the SR-118 startup check (#1231, E43-T02) must, by packing them into
+`app.asar` or by checking them against a hash list kept there. Not yet proven:
+that an installer renders the app. CI builds no installer. The next step, part
+of #1231's checks on the packaged artefact, is to pack the unpacked app in the
+`build` job (`electron-builder --linux dir` with `electronDist` set to the
+Electron that job installs) and launch it with Playwright-Electron
+(`executablePath`) under `xvfb-run`, as `collect-hardening-facts.mjs` launches
+`dist/main/index.js`. Run it before #1231 turns the
+`enableNodeCliInspectArguments` fuse off: Playwright attaches through
+`--inspect`.
 
 Backend connection: the web app calls `/api` relative to its page and builds
 its socket URL from `location.host`, so on `app://candleviewer` the sign-in

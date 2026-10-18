@@ -486,6 +486,12 @@ _LINE = re.compile(r" *(?:-(?:[ \t].*)?|[A-Za-z_][\w-]*:(?:[ \t].*)?)", re.ASCII
 _NOT_STRING = re.compile(
     r"(?i)true|false|yes|no|on|off|null|\.?\d.*|\.inf|\.nan|.*:(\s.*)?"
 )
+# What electron-builder expands or resolves before it uses a pattern or a path: a ${...}
+# macro, or a '..' segment ('\' separates too).
+_UNSAFE = re.compile(r"\$\{|(?:^|[/\\])\.\.(?:[/\\]|$)")
+# The served root below each list's destination: <resources> for extraResources, the
+# install folder (mac: Contents) for extraFiles; files copies into the app folder.
+_SERVED = {"extraResources": WEB_DIST_TO, "extraFiles": "resources/" + WEB_DIST_TO}
 
 
 def _uncomment(text: str) -> str:
@@ -564,19 +570,26 @@ def _packaging_lists(text: str) -> dict[str, list[Any] | str]:
 def _excludes_maps(patterns: list[str]) -> bool:
     """True when ordered patterns leave out every .map file. electron-builder applies them in
     order (minimatch: an odd count of leading '!' excludes) and an include re-adds what it
-    matches, so after the last MAP_EXCLUSION only exclusions may follow, and no ${...} macro
-    (electron-builder expands it, so '!${env.X}' can become an include)."""
+    matches, so after the last MAP_EXCLUSION only exclusions may follow. It normalises each
+    pattern first, so they may hold no macro or '..' either: '!${env.X}' or '!x/../**/*.map'
+    can become an include."""
     if MAP_EXCLUSION not in patterns:
         return False
     tail = patterns[len(patterns) - patterns[::-1].index(MAP_EXCLUSION) :]
-    return all((len(p) - len(p.lstrip("!"))) % 2 == 1 and "${" not in p for p in tail)
+    return all(
+        (len(p) - len(p.lstrip("!"))) % 2 == 1 and not _UNSAFE.search(p) for p in tail
+    )
 
 
-def _serves(to: object) -> bool:
-    """True when an extraResources `to` is web/dist, inside it or above it (absent: the
-    resources root)."""
-    t = (posixpath.normpath(to) if isinstance(to, str) else ".") + "/"
-    return t == "./" or t.startswith(WEB_DIST_TO + "/") or WEB_DIST_TO.startswith(t)
+def _serves(to: object, root: str | None) -> bool:
+    """True when `to` could write into the served root, `root` below its list's destination
+    (None: not below it): at, inside or above it (absent or empty: the destination), or an
+    absolute, drive, '..' or ${...} path; case is ignored, as on win and mac."""
+    t = posixpath.normpath(str(to or ".").replace("\\", "/")).lower()
+    if t.startswith("/") or ":" in t or _UNSAFE.search(t):
+        return True
+    t, r = t + "/", f"{root}/"
+    return root is not None and (t == "./" or t.startswith(r) or r.startswith(t))
 
 
 def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violation]:
@@ -589,11 +602,12 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
     item or a plain `key:` (_LINE). A list's patterns and each entry's filter must leave out
     every .map file (_excludes_maps); no filter, or an empty or absent `files`, packages
     everything, and an entry whose `from` is one file is copied whatever its filter says.
-    Of the extraResources entries writing to web/dist, inside it or above it, there must be
-    exactly one: the copy of the web dist this gate scanned to web/dist, the root the
-    packaged app:// handler serves (`from` resolves against the config's directory, the
-    project directory of build:installer). Not seen: a tagged or escaped key inside a flow
-    mapping, extraFiles written into resources/, and files a build hook copies.
+    One item only may write into <resources>/web/dist, the root the packaged app:// handler
+    serves, or above it: the extraResources copy of the web dist this gate scanned to
+    web/dist (`from` resolves against the config's directory, the project directory of
+    build:installer). extraResources and extraFiles patterns, an absent `to` and a `to` the
+    gate cannot place all count (_serves). Not seen: a tagged or escaped key inside a flow
+    mapping, a ${...} `from` that names one .map file, and files a build hook copies.
     """
     subject = "electron-builder.yml"
     vs: list[Violation] = []
@@ -614,6 +628,7 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         )
         vs.append(Violation("SR-116", subject, msg))
     lists = _packaging_lists(text)
+    writers = 0
     for key in PACKAGING_KEYS:
         items = lists.get(key) or (["**/*"] if key == "files" else [])
         if isinstance(items, str):
@@ -622,6 +637,8 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
             continue
         patterns = [p for p in items if isinstance(p, str)]
         entries = [e for e in items if isinstance(e, dict)]
+        writers += key in _SERVED and bool(patterns)
+        writers += sum(_serves(e.get("to"), _SERVED.get(key)) for e in entries)
         sets = [(f"{key} patterns", patterns)] if patterns else []
         sets += [
             (f"{key} entry from {e.get('from')!r}", e.get("filter", []))
@@ -631,7 +648,7 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
             if not _excludes_maps(pats):
                 msg = (
                     f"{label} could package source maps: end its patterns with "
-                    f"'{MAP_EXCLUSION}' and add no include or ${{...}} macro after it"
+                    f"'{MAP_EXCLUSION}', with no include, ${{...}} or '..' after it"
                 )
                 vs.append(Violation("SR-116", subject, msg))
         for e in entries:
@@ -644,7 +661,7 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
                 vs.append(Violation("SR-116", subject, msg))
     resources = lists.get("extraResources", [])
     if isinstance(resources, list) and (
-        sum(isinstance(e, dict) and _serves(e.get("to")) for e in resources) != 1
+        writers != 1
         or not any(
             isinstance(e, dict)
             and isinstance(e.get("from"), str)
@@ -657,7 +674,8 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         msg = (
             f"extraResources must copy the web dist this gate scanned ({web_dist}) to "
             f"'{WEB_DIST_TO}', the asset root the packaged app:// handler serves, and "
-            "no other entry may write there or above it"
+            "nothing else may write there or above it: give every other entry a plain "
+            "relative `to` outside it, and use no extraResources or extraFiles patterns"
         )
         vs.append(Violation("SR-174", subject, msg))
     return vs
