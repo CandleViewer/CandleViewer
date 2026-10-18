@@ -974,13 +974,20 @@ def _heat(t_ms: int, *, complete: bool) -> tuple[dict[str, Any], Frame]:
     return col | {"complete": complete}, Frame(HEATMAP_COLUMN, ((1, 1),), prefix=(t_ms, 1, 1))
 
 
+@pytest.mark.parametrize("coalesce", [True, False], ids=["merging", "whole_frames"])
 @pytest.mark.parametrize("encoding", ["structured", "binary"])
 @pytest.mark.parametrize("reason", ["initial", "client_resync", "backpressure"])
-def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(reason: str, encoding: str) -> None:
-    """§8.2 "Completed heatmap buckets" (#3268), flag on: the merging window after a snapshot,
-    whatever its reason, remembers the buckets that snapshot sent complete and the root fields its
-    payload carries (`estimated` included), in either encoding. An update that only repeats them
-    is discarded, and one that also touches an open bucket sends the open one only."""
+def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(
+    reason: str, encoding: str, coalesce: bool
+) -> None:
+    """§8.2 "Completed heatmap buckets" (#3268, #3423), flag on: after a snapshot, whatever its
+    reason, the merging window and the whole frames of a `coalesce: false` that is honoured (the
+    connection is healthy) both remember the buckets it sent complete, in either encoding. An
+    update that only repeats them, or differs from them, is not sent, and one that also touches an
+    open bucket sends the open one only, structured (`e: "j"`) even on a binary subscription: the
+    part it came with mirrored the dropped column. Only the merging window also remembers the root
+    fields its payload carries (`estimated` included): a whole frame left with no column is not
+    sent, whatever its root fields hold."""
     hub = SequencingHub()
     pipe, _, conn = _routed(hub)
     source = conn.emitter.source
@@ -988,7 +995,7 @@ def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(reason: str, enco
     (done, done_part), (live, live_part) = _heat(1000, complete=True), _heat(1500, complete=False)
     body = {**_HEAD, "columns": [done, live]}
     source.bodies["heatmap"] = SnapshotBody(body, (done_part, live_part), estimated=True)
-    _, sub = conn.sub({"ch": _HEATMAP, "opts": {"encoding": encoding}})
+    _, sub = conn.sub({"ch": _HEATMAP, "opts": {"encoding": encoding, "coalesce": coalesce}})
     if reason == "client_resync":
         frame = {"t": "resync", "id": "r", "ch": _HEATMAP, "p": {"reason": "manual"}}
         assert conn.emitter.client_resync(conn.authz, frame) is None
@@ -997,11 +1004,30 @@ def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(reason: str, enco
         pipe.service(0.0)
     assert [f["meta"]["reason"] for f in _queued(pipe)][-1] == reason
     head = {**_HEAD, "estimated": True}  # as the snapshot's payload carried it
-    hub.publish(_HEATMAP, {**head, "columns": [{**done, "bids": [2.0]}]})
+    hub.publish(_HEATMAP, {**head, "columns": [done]})  # the same column again
+    hub.publish(_HEATMAP, {**head, "columns": [{**done, "bids": [2.0]}]})  # a different one
     assert _queued(pipe) == []  # nothing in it is new to the client
-    hub.publish(_HEATMAP, {**head, "columns": [{**done, "bids": [2.0]}, {**live, "bids": [3.0]}]})
+    assert _pacer(pipe).lanes[sub.sub_id].queue.merging is coalesce  # the path under test
+    columns = [{**done, "bids": [2.0]}, {**live, "bids": [3.0]}]
+    hub.publish(_HEATMAP, {**head, "columns": columns}, part=live_part)
     [delta] = _queued(pipe)
     assert [col["t_ms"] for col in delta["p"]["columns"]] == [1500]
+    assert delta["e"] == "j"  # the trimmed frame lost its part, on both lanes and both encodings
+
+
+def test_a_window_of_whole_heatmap_frames_never_regresses_a_complete_bucket() -> None:
+    """§8.2 (#3423), `coalesce: false` honoured: the frames of one window leave together when it
+    closes. A column for a bucket that an earlier frame of the window completed does not leave
+    behind it, so the client is never taken from a complete column back to an open one."""
+    conn, pacer = _paced()
+    sub = _subscribed(conn, _HEATMAP, coalesce=False)
+    head = {"symbol": "BTCUSDT", "time_bucket_ms": 500}
+    pacer.offer(sub, {**head, "columns": [{**_COLUMN, "t_ms": 500, "complete": False}]})
+    assert len(conn.take()) == 1  # the leading edge: the window that follows closes at 100.5
+    for col in (_COLUMN, {**_COLUMN, "complete": False}):
+        pacer.offer(sub, {**head, "columns": [col]})
+    assert pacer.tick(100.5) == 1
+    assert [f["p"]["columns"] for f in conn.take()] == [[_COLUMN]]
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
