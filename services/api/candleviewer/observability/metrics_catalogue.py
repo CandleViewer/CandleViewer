@@ -83,6 +83,46 @@ FRAME_BYTES_HELP: Final = (
     "same frame counts under both, so do not sum kinds); sampled 1 in 32 (weighted) as the "
     "encode time."
 )
+#: E17-T06 with `CV_WS_BACKPRESSURE_ENABLED` on (#412's wiring, ruling D6): per process, no
+#: connection in any label (`ws/metrics.py` imports these). Updates per merged throttle window,
+#: from the smallest merge (2) to a whole second of chaos scenario 3's 5 000 msg/s burst.
+COALESCED_BUCKETS: Final = (2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)
+#: Probe RTT: edges on the 23 section 8.3 lines (150 ms lagging, 500 ms saturated) and at the 10 s
+#: a `pong` may take (section 9.1); a probe still unanswered then is retired and counted at its age.
+RTT_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+#: Queue depth at a classification, up to the 23 section 8.4 budget (8 MiB or 2 000 frames, which
+#: may only be lowered); the first edge, 0, counts an empty queue.
+QUEUE_BYTES_BUCKETS: Final = (0, 4096, 65536, 524288, 1048576, 2097152, 4194304, 6291456, 8388608)
+QUEUE_FRAMES_BUCKETS: Final = (0, 1, 10, 100, 250, 500, 1000, 1500, 2000)
+#: Depth and class are read at `ConnectionPipeline.service`, the connection's writer turn, so a
+#: writer parked in a send runs none: the three series that read them say so in their HELP.
+WRITER_TURN_HELP: Final = (
+    "Depth and class are read when the connection's writer runs: a writer parked in a send takes "
+    "no sample, and a stuck socket shows in cv_ws_overflow_total and cv_ws_closes_total."
+)
+CONFLATED_HELP: Final = (
+    "Source updates merged away in WS throttle windows, by family (topic): a window of n updates "
+    "that left as one frame adds n - 1 (23 section 8.2; flag on)."
+)
+COALESCED_HELP: Final = (
+    "Source updates per merged WS throttle window that left as one frame (n >= 2; flag on)."
+)
+CLASS_HELP: Final = (
+    "Open client WS connections by 23 section 8.3 class (state), from the first auth_ok to the "
+    "teardown (flag on). " + WRITER_TURN_HELP
+)
+RTT_HELP: Final = (
+    "RTT of the 23 section 9.1 probe ping, one sample per answered probe; a probe unanswered for "
+    "10 s counts its age when it is retired (flag on)."
+)
+QUEUE_BYTES_HELP: Final = (
+    "Outbound WS queue depth in bytes (queued frames plus throttle-window state), sampled per "
+    "connection at each classification (23 section 8.3, 8.4; flag on). " + WRITER_TURN_HELP
+)
+QUEUE_FRAMES_HELP: Final = (
+    "Outbound WS queue depth in frames (both lanes), sampled per connection at each "
+    "classification (23 section 8.3, 8.4; flag on). " + WRITER_TURN_HELP
+)
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (
     0.0001,
@@ -1757,6 +1797,84 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_conflated_total",
+        "counter",
+        "updates",
+        ("topic",),
+        CONFLATED_HELP,
+        "client health (feed compression per family)",
+        _L,
+        "E17",
+        max_series=9,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_coalesced_updates",
+        "histogram",
+        "updates",
+        (),
+        COALESCED_HELP,
+        "cost sizing",
+        _L,
+        "E17",
+        COALESCED_BUCKETS,
+        max_series=1,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_connection_class",
+        "gauge",
+        "connections",
+        ("state",),
+        CLASS_HELP,
+        "client health: connections not healthy",
+        _L,
+        "E17",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_rtt_seconds",
+        "histogram",
+        "seconds",
+        (),
+        RTT_HELP,
+        "client health",
+        _L,
+        "E17",
+        RTT_BUCKETS,
+        max_series=1,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_queue_bytes",
+        "histogram",
+        "bytes",
+        (),
+        QUEUE_BYTES_HELP,
+        "capacity: sampled depth near the configured budget (8 MiB by default); a parked writer "
+        "takes no sample, so alert on stuck sockets with cv_ws_overflow_total",
+        _L,
+        "E17",
+        QUEUE_BYTES_BUCKETS,
+        max_series=1,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_queue_frames",
+        "histogram",
+        "frames",
+        (),
+        QUEUE_FRAMES_HELP,
+        "capacity: sampled depth near the configured budget (2 000 frames by default); a parked "
+        "writer takes no sample, so alert on stuck sockets with cv_ws_overflow_total",
+        _L,
+        "E17",
+        QUEUE_FRAMES_BUCKETS,
+        max_series=1,
+        exported=True,
+    ),
+    _s(
         "ws_clients",
         "gauge",
         "clients",
@@ -1773,16 +1891,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Max topics subscribed by a single client.",
         "capacity",
-        _P,
-        "E17",
-    ),
-    _s(
-        "ws_conflated_total",
-        "counter",
-        "frames",
-        (),
-        "Frames conflated for slow clients.",
-        "client health",
         _P,
         "E17",
     ),

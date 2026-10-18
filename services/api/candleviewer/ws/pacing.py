@@ -26,7 +26,9 @@ worsens at once and improves only after two consecutive better samples. `Pacer.a
 `lagging` doubles throttles and forces coalescing; `saturated` and `overflowing` quadruple them and
 hold `heatmap` and `profile` to at most one frame a second. A queue depth that is not finite reads
 as a full queue, never as a healthy one (#2552). With the flag on the pipeline's writer turn runs
-the classification and sends the probe (`ws/pipeline.py`, #412).
+the classification and sends the probe (`ws/pipeline.py`, #412). E17-T06: a merged window that
+leaves as one frame of n updates adds n - 1 to `cv_ws_conflated_total{topic}` and observes n in
+`cv_ws_coalesced_updates`; each probe sample, answered or retired, is one `cv_ws_rtt_seconds`.
 
 Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's monotonic
 `TopicEmitter.clock`: `offer` reads it; `tick`, `classify` and `apply` default `now` to it.
@@ -45,8 +47,15 @@ from typing import Any, Final
 import structlog
 
 from candleviewer.ws.binary import Frame
-from candleviewer.ws.coalescing import CoalescingQueue
-from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflow_total
+from candleviewer.ws.coalescing import MERGED_FAMILIES, CoalescingQueue
+from candleviewer.ws.metrics import (
+    COALESCED_UPDATES,
+    cv_ws_conflated_total,
+    cv_ws_connection_class,
+    cv_ws_malformed_updates_total,
+    cv_ws_overflow_total,
+    cv_ws_rtt_seconds,
+)
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, TopicEmitter
 
@@ -88,6 +97,12 @@ _MULTIPLIER: Final = {
     ConnectionClass.SATURATED: 4,
     ConnectionClass.OVERFLOWING: 4,
 }
+#: E17-T06: every child bound now, so each series exists at 0 from the process start. A merged
+#: window's updates count under its family: only a family with a §8.2 merge rule that is not an
+#: append family can merge (`coalescing.MERGED_FAMILIES`); any other window leaves whole, count 1.
+CONFLATED: Final = {f: cv_ws_conflated_total.labels(topic=f) for f in sorted(MERGED_FAMILIES)}
+#: E17-T06: open connections per class; `ConnectionPipeline` moves its connection between them.
+CLASS_COUNTS: Final = {c: cv_ws_connection_class.labels(state=c.value) for c in ConnectionClass}
 
 
 def _rank(cls: ConnectionClass) -> int:
@@ -174,6 +189,7 @@ class RttProbe:
         if self._outstanding is None or self._outstanding[0] != probe:
             return False
         self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
+        cv_ws_rtt_seconds.observe(self.sample_ms / 1000)  # E17-T06: each sample, once
         self._outstanding = None
         return True
 
@@ -187,6 +203,7 @@ class RttProbe:
     def _retire(self, now: float) -> None:
         if self._outstanding is not None and now - self._outstanding[1] >= PONG_TIMEOUT_S:
             self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
+            cv_ws_rtt_seconds.observe(self.sample_ms / 1000)
             self._outstanding = None
 
 
@@ -381,14 +398,19 @@ class Pacer:
         sent = 0
         try:
             for emission in emissions:
-                sent += self.emitter.delta(
+                count = emission.coalesced_count
+                if self.emitter.delta(
                     lane.sub,
                     emission.body,
                     part=emission.part,
-                    coalesced_count=emission.coalesced_count,
+                    coalesced_count=count,
                     ts_ms=emission.ts_ms,
                     meta=emission.meta,
-                )
+                ):
+                    sent += 1
+                    if count > 1:  # E17-T06: `count` updates left as one frame
+                        CONFLATED[lane.queue.family].inc(count - 1)
+                        COALESCED_UPDATES.observe(count)
         except Exception as exc:
             self.drop(lane.sub)  # part of the window is lost: recover through a snapshot
             if self.on_error is None:
