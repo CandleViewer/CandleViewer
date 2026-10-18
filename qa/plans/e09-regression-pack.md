@@ -12,7 +12,7 @@ cd services/api
 uv run pytest -p no:randomly --no-cov -m e09_regression
 ```
 
-`e09_regression` is a pytest marker registered in `services/api/pyproject.toml`. `services/api/tests/conftest.py` applies it at collection to the paths listed under "Marker coverage" below, so a new test in one of them joins the pack. A bare `-m` replaces the repo's default `-m` expression, so the marker is never put on `perf`, `fuzz` or `harness` items. The run collects the whole tree first (about 15 s).
+`e09_regression` is a pytest marker registered in `services/api/pyproject.toml`. `services/api/tests/conftest.py` applies it at collection to the paths listed under "Marker coverage" below, so a new test in one of them joins the pack. A bare `-m` replaces the repo's default `-m` expression, so the marker is never put on `perf`, `fuzz`, `harness` or `flaky` (C-9.3 quarantine) items. The run collects the whole tree first (about 15 s).
 
 Expected result: no failure; the chaos S1b test skips without docker. Any failure is a release-gate blocker. Counts and the dated record are in section D2.
 
@@ -24,7 +24,7 @@ Time budget: automated about 10 min including setup (about 1 min 20 s wall measu
 
 ### Marker coverage
 
-The marker selects every test under these paths except the `perf`, `fuzz` and `harness` items. The list lives in `PACK_PATHS` in `services/api/tests/_e09_regression_pack.py`. `services/api/tests/qa/test_e09_regression_pack.py` compares the two lists in both directions, runs real collections to check that `-m e09_regression` over the whole tree, as QA runs it, selects exactly what the default lane selects in these paths (so a test tagged by hand outside them fails the guard), and fails when this document cites a test that `-m e09_regression` does not select (apart from the evidence in the next subsection). CI's `py` lane runs the guard but does not start on a change to `qa/` alone, so after editing this file run it yourself (command under "How to run").
+The marker selects every test under these paths except the `perf`, `fuzz`, `harness` and `flaky` items. The list lives in `PACK_PATHS` in `services/api/tests/_e09_regression_pack.py`. `services/api/tests/qa/test_e09_regression_pack.py` compares the two lists in both directions, runs real collections to check that `-m e09_regression` over the whole tree, as QA runs it, selects exactly what the default lane selects in these paths (so a test tagged by hand outside them fails the guard), and fails when this document cites a test that `-m e09_regression` does not select (apart from the evidence in the next subsection). CI's `py` lane runs the guard but does not start on a change to `qa/` alone, so after editing this file run it yourself (command under "How to run").
 
 - `tests/unit/auth/`
 - `tests/unit/audit/`

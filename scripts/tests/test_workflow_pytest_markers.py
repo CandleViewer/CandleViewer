@@ -7,23 +7,32 @@ Rule, per marker the addopts `-m` deselects: a test carrying only that marker st
 unless the call names it outside a `not` (its own lane: `-m harness`, `-m "perf and not flaky"`)
 or `ON_PURPOSE` lists it. Not modelled: a heavy test that also carries a marker the call selects
 (an integration+perf test under `-m integration`).
+#3091 (C-9.3): QUARANTINE is stricter, as a quarantined test keeps its lane markers: no mix of the
+markers a call names may select it, naming it is not a lane, and no ON_PURPOSE entry may exempt it.
+A call without its own -m, and a local run, read the addopts of the nearest pytest config at or
+above their paths. Every tracked config's addopts -m keeps QUARANTINE out under every mix of
+markers, and the root pytest.ini is that config for every suite outside services/api and scripts.
 The scan reads each step's `run:` as bash does (a comment starts only at a word that begins with
-`#`), and the command lines quoted in it (`bash -c "..."`). It fails loudly on the other ways to
-set or replace addopts' -m: a pytest command word in a string other than a `run:`, `name:` or
-`id:` (an env, matrix or action input), a `$` in a pytest call that `EXPANSIONS` does not list,
-PYTEST_ADDOPTS, UV_ENV_FILE, `--env-file`, `pytest.main`, a `-qm` cluster, `-c`/`--config-file`,
-an `addopts` override and `@file`.
-Not read: pytest run by a script that a step runs (tools/statechart/run_xstate_contract.sh)."""
+`#`), the command lines quoted in it (`bash -c "..."`) and the SCRIPTS a step runs. It fails
+loudly on the other ways to set or replace addopts' -m: a pytest command word in a string other
+than a `run:`, `name:` or `id:` (an env, matrix or action input), a `$` in a pytest call that
+`EXPANSIONS` does not list, PYTEST_ADDOPTS or UV_ENV_FILE anywhere in a workflow or a SCRIPTS
+file, `--env-file`, `pytest.main`, a `-qm` cluster, `-c`/`--config-file`, an `addopts` override
+and `@file`.
+Not read: pytest that any other script runs."""
 
 from __future__ import annotations
 
 import ast
 import re
 import shlex
+import subprocess
 import tomllib
 from collections.abc import Iterator
+from itertools import combinations
 from pathlib import Path
 
+import iniconfig
 import pytest
 import yaml
 
@@ -58,6 +67,14 @@ EXPANSIONS = {
     # on any other option, and test_py_test_lanes runs it on every lane.
     ("_job-py.yml", "py-tests"): frozenset({"${lane_paths[@]}"}),
 }
+QUARANTINE = "flaky"  # C-9.3 quarantines a test by adding it on top of the test's lane markers
+# Shell scripts a workflow step runs, read like a `run:` (#3091): the blocking xstate-contract gate.
+SCRIPTS = ("tools/statechart/run_xstate_contract.sh",)
+# The files pytest reads as its config, in the order its findpaths.locate_config tries them.
+CONFIG_NAMES = (
+    *("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"),
+    *("pyproject.toml", "tox.ini", "setup.cfg"),
+)
 
 
 def _parse(expr: str) -> ast.expr:
@@ -95,9 +112,17 @@ def _named(tree: ast.expr, negated: bool = False) -> set[str]:
 
 
 def _lets_through(expr: str, deselected: set[str]) -> set[str]:
-    """The deselected markers whose tests this `-m` runs without naming them (the #3478 defect)."""
+    """The deselected markers whose tests this `-m` runs without naming them (the #3478 defect).
+    A lane marker is tried alone; QUARANTINE with every mix of the names, and naming it is not a
+    lane."""
     tree = _parse(expr)
-    return {marker for marker in deselected - _named(tree) if _selects(tree, {marker})}
+    names = sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)})
+    through: set[str] = set()
+    for marker in deselected - (_named(tree) - {QUARANTINE}):
+        sizes = range(len(names) + 1) if marker == QUARANTINE else range(1)
+        if any(_selects(tree, {marker, *mix}) for n in sizes for mix in combinations(names, n)):
+            through.add(marker)
+    return through
 
 
 def _marker_expression(args: list[str]) -> str | None:
@@ -181,6 +206,13 @@ def _marker_expressions(run: str, expansions: frozenset[str] = frozenset()) -> I
             command = []
 
 
+def _refuse_carriers(text: str) -> None:
+    """Raise when a text names a variable that can replace addopts' -m (CARRIERS)."""
+    carrier = next((name for name in CARRIERS if name in text), None)
+    if carrier is not None:
+        raise ValueError(f"cannot read {carrier}: it can replace addopts' -m")
+
+
 def _strings(node: object, key: str = "") -> Iterator[tuple[str, str]]:
     """(key, value) for every string in a YAML tree; a list item keeps its list's key."""
     if isinstance(node, str):
@@ -196,9 +228,10 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     calls: list[tuple[str, str, str]] = []
     for path in sorted(folder.glob("*.y*ml")):
         text = path.read_text(encoding="utf-8")
-        carrier = next((name for name in CARRIERS if name in text), None)
-        if carrier is not None:
-            raise ValueError(f"{path.name}: cannot read {carrier}: it can replace addopts' -m")
+        try:
+            _refuse_carriers(text)
+        except ValueError as err:
+            raise ValueError(f"{path.name}: {err}") from err
         doc = yaml.safe_load(text) or {}
         for job, spec in (doc.get("jobs") or {}).items():
             expansions = EXPANSIONS.get((path.name, job), frozenset())
@@ -214,13 +247,77 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     return calls
 
 
+def _script_calls(root: Path = ROOT) -> list[tuple[str, str, str]]:
+    """(script, "script", `-m` expression) for every pytest call in SCRIPTS that sets its own."""
+    calls: list[tuple[str, str, str]] = []
+    for script in SCRIPTS:
+        text = (root / script).read_text(encoding="utf-8")
+        try:  # an export or a $GITHUB_ENV line in the script reaches its pytest and later steps
+            _refuse_carriers(text)
+            found = list(_marker_expressions(text))
+        except ValueError as err:
+            raise ValueError(f"{script}: {err}") from err
+        calls += [(script, "script", expr) for expr in found]
+    return calls
+
+
+def _keeps_quarantine_out(addopts: str) -> bool:
+    """Whether the addopts -m deselects a quarantined test whatever else it carries (#3091).
+    An addopts without -m deselects nothing."""
+    expr = _marker_expression(shlex.split(addopts))
+    return expr is not None and not _lets_through(expr, {QUARANTINE})
+
+
+def _config_addopts(path: Path) -> str | None:
+    """The addopts of a file that pytest reads as its config ("" when it sets none), or None when
+    pytest skips the file. Raises on a TOML-mode config, which this reader does not read. An INI
+    config is read with iniconfig, as pytest reads it: case-sensitive keys, no [DEFAULT] merge."""
+    text = path.read_text(encoding="utf-8")
+    if path.name in ("pytest.toml", ".pytest.toml"):
+        raise ValueError("cannot read a TOML mode config: write pytest.ini")
+    if path.name == "pyproject.toml":
+        table = tomllib.loads(text).get("tool", {}).get("pytest")
+        if table is None:
+            return None  # pytest skips it: the root pytest.ini is above it
+        if set(table) != {"ini_options"}:
+            raise ValueError("cannot read TOML mode [tool.pytest]: use [tool.pytest.ini_options]")
+        addopts = table["ini_options"].get("addopts", "")
+        return addopts if isinstance(addopts, str) else shlex.join(addopts)
+    sections = iniconfig.IniConfig(path, data=text).sections
+    section = "tool:pytest" if path.suffix == ".cfg" else "pytest"
+    if section in sections:
+        return sections[section].get("addopts", "")
+    return "" if path.name in ("pytest.ini", ".pytest.ini") else None  # read even when empty
+
+
+def _configs(root: Path = ROOT) -> dict[str, str]:
+    """{path: addopts} for every tracked file that pytest reads as its config."""
+    git = ["git", "ls-files", "-z", "--", *(f"*{name}" for name in CONFIG_NAMES)]
+    listing = subprocess.run(git, cwd=root, capture_output=True, text=True, check=True, timeout=60)
+    configs: dict[str, str] = {}
+    for path in filter(None, listing.stdout.split("\0")):
+        if Path(path).name not in CONFIG_NAMES:
+            continue
+        try:
+            addopts = _config_addopts(root / path)
+        except (ValueError, iniconfig.ParseError) as err:
+            raise ValueError(f"{path}: {err}") from err
+        if addopts is not None:
+            configs[path] = addopts
+    return configs
+
+
 PYPROJECT = tomllib.loads((ROOT / "services/api/pyproject.toml").read_text(encoding="utf-8"))
 ADDOPTS: str = PYPROJECT["tool"]["pytest"]["ini_options"]["addopts"]
 DESELECTED = _deselected_by(ADDOPTS)
 try:
-    CALLS, SCAN_ERROR = _marker_calls(), ""
+    CALLS, SCAN_ERROR = _marker_calls() + _script_calls(), ""
 except ValueError as err:  # an unreadable call fails a test below, not the lane's collection
     CALLS, SCAN_ERROR = [], str(err)
+try:
+    CONFIGS, CONFIG_ERROR = _configs(), ""
+except (ValueError, OSError, subprocess.SubprocessError) as err:  # fails a test below as well
+    CONFIGS, CONFIG_ERROR = {}, str(err)
 # An empty scan proves nothing: these jobs set their own -m today.
 KNOWN = {
     ("cold-cache.yml", "cold-py"),
@@ -229,11 +326,129 @@ KNOWN = {
     ("_job-py.yml", "py-perf"),
     ("_job-contract.yml", "contract"),
     ("fuzz-nightly.yml", "python"),
+    (SCRIPTS[0], "script"),
 }
 
 
 def test_addopts_deselects_the_markers_the_pin_reads() -> None:
     assert DESELECTED and all(f"not {marker}" in ADDOPTS for marker in DESELECTED)
+
+
+def test_addopts_keeps_quarantined_tests_out() -> None:
+    """#3091 (C-9.3): a call without its own -m (pr.yml's golden-upcaster run) inherits it."""
+    assert QUARANTINE in DESELECTED, f"add `and not {QUARANTINE}` to the addopts -m"
+    assert _keeps_quarantine_out(ADDOPTS), "a mix of markers lets a quarantined test through"
+
+
+@pytest.mark.parametrize(
+    ("addopts", "out"),
+    [
+        ('-m "not fuzz and not flaky" -q', True),
+        ('-m "not fuzz and (not flaky or integration)" -q', False),  # a flaky integration test
+        ('-m "not fuzz" -q', False),
+        ("-q", False),  # no -m: the call runs every test it collects
+    ],
+)
+def test_addopts_rule_tries_every_mix_of_markers(addopts: str, out: bool) -> None:
+    assert _keeps_quarantine_out(addopts) is out
+
+
+def test_config_scan_reads_every_config() -> None:
+    assert not CONFIG_ERROR, CONFIG_ERROR
+
+
+def test_a_root_config_covers_every_other_suite() -> None:
+    """pytest reads the nearest config at or above a call's paths. With one at the root, a call
+    into tests/lint_statecharts (pr.yml) or infra/*/tests reads one of CONFIGS as well."""
+    assert {"pytest.ini", "scripts/pytest.ini", "services/api/pyproject.toml"} <= set(CONFIGS)
+
+
+@pytest.mark.parametrize(("config", "addopts"), sorted(CONFIGS.items()))
+def test_every_pytest_config_keeps_quarantined_tests_out(config: str, addopts: str) -> None:
+    """#3091 (C-9.3): a call without its own -m (governance's scripts/tests run) inherits it."""
+    assert _keeps_quarantine_out(addopts), f'{config}: add -m "not {QUARANTINE}" to its addopts'
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "addopts"),
+    [
+        ("pytest.ini", '[pytest]\naddopts = -m "not flaky"\n', '-m "not flaky"'),
+        ("pytest.ini", "", ""),  # pytest reads a pytest.ini even when it is empty
+        ("tox.ini", "[tox]\nenvlist = py\n", None),
+        ("tox.ini", "[pytest]\naddopts = -q\n", "-q"),
+        ("setup.cfg", "[tool:pytest]\naddopts = -q\n", "-q"),
+        ("setup.cfg", "[metadata]\nname = x\n", None),
+        ("pyproject.toml", '[tool.pytest.ini_options]\naddopts = ["-m", "not x"]\n', "-m 'not x'"),
+        ("pyproject.toml", '[project]\nname = "x"\n', None),
+    ],
+)
+def test_config_reader_returns_the_addopts_pytest_reads(
+    tmp_path: Path, name: str, text: str, addopts: str | None
+) -> None:
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    assert _config_addopts(tmp_path / name) == addopts
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[pytest]\nAddopts = -m "not flaky"\n',  # keys are case-sensitive: not an addopts
+        '[DEFAULT]\naddopts = -m "not flaky"\n\n[pytest]\n',  # DEFAULT is a plain section
+    ],
+)
+def test_config_reader_reads_an_ini_config_as_pytest_does(tmp_path: Path, text: str) -> None:
+    """pytest reads an INI config with iniconfig: it matches an option name as written and does
+    not merge [DEFAULT] into [pytest]. Each config here lets a quarantined test run."""
+    (tmp_path / "pytest.ini").write_text(text, encoding="utf-8")
+    addopts = _config_addopts(tmp_path / "pytest.ini")
+    assert addopts == ""
+    assert not _keeps_quarantine_out(addopts)
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("pytest.toml", ""),
+        (".pytest.toml", '[pytest]\naddopts = ["-q"]\n'),
+        ("pyproject.toml", '[tool.pytest]\naddopts = ["-q"]\n'),
+    ],
+)
+def test_config_reader_fails_loudly_on_a_toml_mode_config(
+    tmp_path: Path, name: str, text: str
+) -> None:
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="TOML mode"):
+        _config_addopts(tmp_path / name)
+
+
+def test_config_scan_reads_tracked_configs_and_names_an_unreadable_one(tmp_path: Path) -> None:
+    files = {
+        "pytest.ini": '[pytest]\naddopts = -m "not flaky"\n',
+        "a/pytest.ini": "",  # pytest reads it even when it is empty
+        "b/tox.ini": "[tox]\n",  # no [pytest]: pytest skips it
+        "c/my_pytest.ini": "[pytest]\n",  # a name pytest does not look for
+        "d/pytest.toml": "",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / "e").mkdir()
+    (tmp_path / "e" / "pytest.ini").write_text("", encoding="utf-8")  # untracked
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True, timeout=60)
+    subprocess.run([*git, "add", *list(files)[:4]], check=True, timeout=60)
+    assert _configs(tmp_path) == {"pytest.ini": '-m "not flaky"', "a/pytest.ini": ""}
+    subprocess.run([*git, "add", "d/pytest.toml"], check=True, timeout=60)
+    with pytest.raises(ValueError, match=r"^d/pytest\.toml: cannot read a TOML mode config"):
+        _configs(tmp_path)
+    (tmp_path / "b" / "tox.ini").write_text("[pytest]\n  -q\n", encoding="utf-8")  # pytest fails
+    with pytest.raises(ValueError, match=r"^b/tox\.ini: .*unexpected value continuation"):
+        _configs(tmp_path)
+
+
+def test_on_purpose_never_exempts_a_quarantined_test() -> None:
+    """C-9.3 keeps a quarantined test out of every blocking lane, with no exemption."""
+    assert all(QUARANTINE not in markers for markers in ON_PURPOSE.values())
 
 
 def test_scan_reads_every_workflow() -> None:
@@ -334,6 +549,40 @@ def test_reader_and_rule_fail_loudly_on_what_they_cannot_read(run: str, error: s
 )
 def test_rule_flags_what_a_call_lets_through(expr: str, through: set[str]) -> None:
     assert _lets_through(expr, {"a", "b"}) == through
+
+
+@pytest.mark.parametrize(
+    ("expr", "through"),
+    [
+        ("integration", {QUARANTINE}),  # a quarantined integration test keeps `integration`
+        ("chaos and integration", {QUARANTINE}),
+        ("not (flaky and perf)", {QUARANTINE}),
+        ("perf or chaos and not flaky", {QUARANTINE}),  # `and` binds first: a flaky perf test runs
+        ("flaky", {QUARANTINE}),  # naming it is not a lane
+        ("integration and not perf and not flaky", set()),
+        ("(perf or chaos) and not flaky", set()),
+        ("not (chaos or flaky) and not perf", set()),
+    ],
+)
+def test_rule_keeps_a_quarantined_test_out_whatever_else_it_carries(
+    expr: str, through: set[str]
+) -> None:
+    assert _lets_through(expr, {QUARANTINE}) == through
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("uv run pytest -mx\n", "cannot read '-mx'"),
+        *[(f"export {c}=-q\nuv run pytest tests\n", f"cannot read {c}") for c in CARRIERS],
+        ('echo "PYTEST_ADDOPTS=-q" >> "$GITHUB_ENV"\n', "cannot read PYTEST_ADDOPTS"),
+    ],
+)
+def test_script_error_names_the_script(tmp_path: Path, text: str, error: str) -> None:
+    (tmp_path / SCRIPTS[0]).parent.mkdir(parents=True)
+    (tmp_path / SCRIPTS[0]).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(f"{SCRIPTS[0]}: {error}")):
+        _script_calls(tmp_path)
 
 
 def test_scan_reads_folded_and_literal_blocks(tmp_path: Path) -> None:

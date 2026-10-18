@@ -24,7 +24,7 @@ jobs:
       - name: Real-engine harness (QuestDB 8.1.1 via testcontainers; docker is preinstalled on ubuntu-latest)
         id: real
         working-directory: services/api
-        run: uv run pytest tests/integration/storage/test_storage_perf_harness.py -m "integration and perf" -p no:randomly
+        run: uv run pytest tests/integration/storage/test_storage_perf_harness.py -m "integration and perf and not flaky" -p no:randomly
       - name: Open ticket on >20% regression
         # Only a perf-gate failure (harness exit 1 / pytest exit 1) opens an issue;
         # infrastructure errors (docker, uv sync, timeouts) fail the job without a regression ticket.

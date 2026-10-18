@@ -690,6 +690,13 @@ section in the same sprint — do not just work around it and move on.
 - On a quarantine issue: mark the test `@flaky` (Python) or `.fixme`/skip
   annotation with a linked issue (TypeScript/Playwright) within 24 hours
   (C-9.3) — never silently delete a flaky test to make CI green.
+- A `flaky` mark drops the Python test from every lane: the addopts `-m` of
+  every pytest config deselects it (`services/api/pyproject.toml`,
+  `scripts/pytest.ini`, and the root `pytest.ini` for every other suite), and
+  every workflow pytest call that sets its own `-m` repeats `not flaky` (pinned
+  by `scripts/tests/test_workflow_pytest_markers.py`). To run it while fixing
+  it, add `-m flaky`: `uv run pytest -m flaky --no-cov <path>` in
+  `services/api`.
 - The quarantine issue is `priority/p1-high`, assigned to the area owner of
   the flaky test's package, and stays open until the root cause is fixed and
   the test is un-quarantined in the same PR that fixes it.

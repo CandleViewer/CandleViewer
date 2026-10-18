@@ -13,7 +13,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 cd services/api
 uv sync --frozen --all-groups
-uv run pytest tests/xstate_contract tests/xstate_upstream -q --no-cov -m "not sync_parity" \
+# The -m keeps every marker addopts deselects (scripts/tests/test_workflow_pytest_markers.py reads
+# this call): a quarantined `flaky` test runs in no lane (C-9.3, #3091).
+uv run pytest tests/xstate_contract tests/xstate_upstream -q --no-cov \
+  -m "not sync_parity and not fuzz and not perf and not harness and not flaky" \
   -W error::RuntimeWarning --durations=10 --junitxml=xstate-contract-junit.xml
 
 # Event-name coverage over every Gateway.send site (E50-T05, MUST-10). Two commands, not `a && b`:

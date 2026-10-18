@@ -100,6 +100,8 @@
 /.mcp.json                              @CandleViewer/security @CandleViewer/devsecops
 /.semgrep-fixtures/                     @CandleViewer/security @CandleViewer/devsecops
 /Makefile                               @CandleViewer/devsecops @CandleViewer/architecture
+# Root pytest config: its addopts keep C-9.3 quarantined tests out of suites with no nearer config.
+/pytest.ini                             @CandleViewer/devsecops @CandleViewer/qa
 /scripts/                               @CandleViewer/devsecops @CandleViewer/architecture
 /tools/                                 @CandleViewer/devsecops @CandleViewer/security
 # E03-T04: coverage floors/baselines/tolerance policy — QA lead is CODEOWNER

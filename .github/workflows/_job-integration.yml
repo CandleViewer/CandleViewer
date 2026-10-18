@@ -15,8 +15,9 @@ name: _job-integration
 #      ubuntu runners.
 #      `perf` wall-clock budgets run once, in `py-perf` (_job-py.yml), which
 #      has Docker too. Tests marked `flaky` are quarantined (C-9.3) and run
-#      in no lane (here, `py-perf` or the migrations job's storage step):
-#      each carries its P1 ticket and quarantine date.
+#      in no lane: addopts deselects them and every workflow -m repeats
+#      `not flaky` (scripts/tests/test_workflow_pytest_markers.py); each
+#      carries its P1 ticket and quarantine date.
 #
 # The OMS fake-exchange suite (per ADR-0012's table) has no product logic
 # to exercise yet — `oms/service.py` is an R0 scaffold with no order
@@ -60,7 +61,7 @@ jobs:
 
       - name: Fixture-driven pipeline suite (network denied except loopback)
         working-directory: services/api
-        run: uv run pytest tests/integration/pipeline -m "not integration and not fuzz and not perf and not harness" --no-cov
+        run: uv run pytest tests/integration/pipeline -m "not integration and not fuzz and not perf and not harness and not flaky" --no-cov
 
       - name: Postgres/QuestDB-backed integration suite (testcontainers, needs Docker)
         working-directory: services/api
@@ -90,7 +91,7 @@ jobs:
           docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
           docker compose -f infra/compose/docker-compose.yml --profile core ps
           cd services/api
-          uv run pytest tests/integration/security/test_sr047_listener_probe.py -m integration --no-cov -s -p no:cacheprovider
+          uv run pytest tests/integration/security/test_sr047_listener_probe.py -m "integration and not flaky" --no-cov -s -p no:cacheprovider
 
       - name: Stop compose data stores
         if: always()
@@ -120,14 +121,14 @@ jobs:
           cd services/api
           CV_PG_DSN=postgresql+asyncpg://cv:cv-chaos-ci@127.0.0.1:5432/candleviewer uv run alembic upgrade head
 
-      - name: Storage chaos scenarios (pytest -m "chaos and integration")
+      - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky")
         working-directory: services/api
         env:
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
           CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
-        run: uv run pytest tests/chaos -m "chaos and integration" --no-cov -v -p no:randomly
+        run: uv run pytest tests/chaos -m "chaos and integration and not flaky" --no-cov -v -p no:randomly
 
       # GH-3087 regression check. S2 stops Postgres and starts it again; S3b and S8 then need it up.
       # `docker compose start` once exited 0 without starting it (S2 timed out, S3b and S8 got
@@ -144,7 +145,7 @@ jobs:
           set -e  # stop at the first failing pass; not left to the runner's default `bash -e`
           for n in 1 2 3 4 5; do
             echo "== S2 -> S3b -> S8, pass ${n} of 5 =="
-            uv run pytest tests/chaos/storage/test_stack_scenarios.py -m "chaos and integration" \
+            uv run pytest tests/chaos/storage/test_stack_scenarios.py -m "chaos and integration and not flaky" \
               -k "test_s2_ or test_s3b_ or test_s8_" --no-cov -v -p no:randomly
           done
 
@@ -180,7 +181,7 @@ jobs:
           done
           if [ "$ok" != 1 ]; then docker logs cv-grafana; echo "Grafana never became healthy"; exit 1; fi
           cd services/api
-          uv run pytest ../../infra/grafana/tests/test_live_render.py -m integration --no-cov -p no:cacheprovider
+          uv run pytest ../../infra/grafana/tests/test_live_render.py -m "integration and not flaky" --no-cov -p no:cacheprovider
 
       - name: Remove Grafana container
         if: always()
@@ -232,7 +233,7 @@ jobs:
         env:
           CV_AUDIT_SPIKE: "1"
           CV_AUDIT_SPIKE_ROWS: "10000000"
-        run: uv run pytest tests/integration/audit/test_query_plan_spike.py -m "integration and perf" --no-cov -rA -s -p no:randomly
+        run: uv run pytest tests/integration/audit/test_query_plan_spike.py -m "integration and perf and not flaky" --no-cov -rA -s -p no:randomly
 
       - name: Upload audit query-plan report (E42-K01)
         if: always()

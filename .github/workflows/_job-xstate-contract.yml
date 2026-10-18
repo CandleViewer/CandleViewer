@@ -69,4 +69,4 @@ jobs:
 
       - name: SyncInterpreter parity (never gates, MUSTNOT-06)
         working-directory: services/api
-        run: uv run pytest tests/xstate_contract -q --no-cov -m sync_parity
+        run: uv run pytest tests/xstate_contract -q --no-cov -m "sync_parity and not flaky"
