@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-from typing import Any
+from inspect import signature
+from itertools import product
+from typing import Any, get_args
 
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.bars.models import Bar
+from candleviewer.bars.spec import WireBarType
 from candleviewer.ws import limits, outbound
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.bars_wire import ITEM_MAX_BYTES, bar_item
+from candleviewer.ws.bars_wire import (
+    _INTS,
+    _MAX_DEC_ADJUSTED,
+    _MAX_DEC_PLACES,
+    ITEM_MAX_BYTES,
+    TIME_KINDS,
+    bar_item,
+)
 from candleviewer.ws.codec import encode_server_frame
 from candleviewer.ws.outbound import Backpressure, LadderEvent, OutboundQueue, Queued, encode
 from candleviewer.ws.pacing import Pacer
@@ -403,15 +414,57 @@ async def test_flag_off_has_no_share_its_push_bound_is_the_control(encoding: str
     assert [(f["t"], f["s"]) for f in frames] == [("d", s) for s in range(first + 1, first + 601)]
 
 
+#: What `bar_item` emits for a snapshot item of a non-time kind (no `amended`): the keys of every
+#: item, `close_t_ms` and the ones `include_delta` adds. A time kind has no `close_t_ms`.
+_ITEM_KEYS = {
+    *"generation index t_ms o h l c v turnover trades confirm".split(),
+    *"close_t_ms delta min_delta max_delta".split(),
+}
+_KEYS_MSG = (
+    "bar_item's keys changed: widen a new key above (a Bar decimal already is) and list it in "
+    "_ITEM_KEYS; a key only some items carry needs a rule where `keys` is set, as close_t_ms has"
+)
+#: Every parameter of `bar_item`: one added later may open a path that no item below takes.
+_ITEM_PARAMS = {"bar", "generation", "bar_kind", "include_delta", "amended"}
+_PARAMS_MSG = "bar_item has a new parameter: exercise it below, then list it in _ITEM_PARAMS"
+
+
 def _widest_item_bytes() -> int:
-    """The JSON size of the widest `bars[]` item a snapshot can carry: the widest item of
-    `test_bars_wire` (every decimal at its 79 characters, every integer at its width, `close_t_ms`
-    and the `delta` fields on) without `amended`, which `BarsSnapshotSource` never sets."""
-    nines = Decimal("-" + "9" * 39 + "." + "9" * 38)  # the widest decimal `bar_item` sends
-    decimals = "open high low close volume turnover delta min_delta max_delta".split()
-    wide = {**dict.fromkeys(decimals, nines), "index": 2**64 - 1, "trade_count": 2**32 - 1}
-    wide |= {"open_time": 2**63 - 1, "close_time": 2**63 - 1}
-    bar = _bar().model_copy(update=wide)
-    size = len(_dumps(bar_item(bar, generation=2**64 - 1, bar_kind="tick", include_delta=True)))
-    assert size > 900  # 954 B today: a builder that made a narrow item would pin nothing
-    return size
+    """The JSON size of the widest `bars[]` item a snapshot can carry: a `Bar` in every state of
+    `closed`, `partial` and `gap_before` (a `synthetic` bar is refused) and of every bar kind,
+    `include_delta` on, every `Bar` decimal the sample sets at the widest `bar_item` sends (the
+    model names them, the module's bounds give the width) and every integer at its `_INTS` bound.
+    `amended` is left out: `BarsSnapshotSource` never sets it. The widest item is a forming bar's:
+    its `confirm` is a byte longer.
+
+    Not seen: a `Bar` field the sample leaves `None`, a new `Bar` flag (the three above are listed
+    by hand), and a key gated on a value (a decimal's sign, `index == 0`) or on `include_delta`
+    being off."""
+    assert set(signature(bar_item).parameters) == _ITEM_PARAMS, _PARAMS_MSG
+    sample = _bar()
+    # sign, `_MAX_DEC_ADJUSTED + 1` integer digits, a point, `_MAX_DEC_PLACES` places: 79 at 38
+    nines = Decimal("-" + "9" * (_MAX_DEC_ADJUSTED + 1) + "." + "9" * _MAX_DEC_PLACES)
+    # `Px`, `Qty` and `Notional` are type aliases, so the sample's values name the decimal fields
+    decimals = [name for name in Bar.model_fields if isinstance(getattr(sample, name), Decimal)]
+    ints = dict(_INTS)  # `generation` is an argument of `bar_item`, the other four are `Bar` fields
+    # `t_ms` and `close_t_ms` are the microsecond times floored to the millisecond
+    widest_ints = {*ints.values(), ints["open_time"] // 1000, ints["close_time"] // 1000}
+    generation = ints.pop("generation")
+    wide = {**dict.fromkeys(decimals, nines), **ints}
+    states = product((False, True), repeat=3)  # `closed`, `partial`, `gap_before`
+    bars = [_bar(closed=c, partial=p, gap_before=g).model_copy(update=wide) for c, p, g in states]
+    sizes = []
+    for bar, kind in product(bars, get_args(WireBarType)):
+        item = bar_item(bar, generation=generation, bar_kind=kind, include_delta=True)
+        keys = _ITEM_KEYS - {"close_t_ms"} if kind in TIME_KINDS else _ITEM_KEYS
+        assert set(item) == keys, _KEYS_MSG
+        # a listed key is not a widened one: every decimal and every integer is at its widest
+        assert {v for v in item.values() if isinstance(v, str)} == {format(nines, "f")}
+        assert {v for v in item.values() if type(v) is int} <= widest_ints  # not `confirm`, a bool
+        sizes.append(len(_dumps(item)))
+    plain = len(_dumps(bar_item(sample, generation=0, bar_kind="tick", include_delta=True)))
+    # only the widest item against the unwidened closed sample's: it holds with the widening off
+    # too (`generation` is passed at its bound, a forming bar's `confirm` is longer), so the
+    # equality asserts above are what prove the widening
+    assert max(sizes) > plain
+    return max(sizes)
