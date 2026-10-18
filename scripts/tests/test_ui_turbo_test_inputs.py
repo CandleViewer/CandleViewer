@@ -23,9 +23,11 @@ no future flag): ui's `test:cov` carries the lane's tag and the lane adds that s
 #3471: every other suite that spreads the preset (`@candleviewer/config/vitest`) lists the same
 runner reads, its `vitest.config.mjs`, the preset and the tsconfig chain, and keeps the root's
 `src/**`, `test/**` and `tests/**` (a package list keeps them through `$TURBO_EXTENDS$`). The
-preset was in ui's hash only: the one packages/config task the suites depend on (`^build`) hashes
-only `src/` and `package.json`. The suites are derived from the workspace globs; packages/config's
-own suite imports the preset by a relative path, so the scan leaves it out.
+preset was in ui's hash only: the suites reach packages/config through `^build`, whose hash takes
+its `src/`, its `package.json` and, through its `generate` task, its tsconfig files, but not the
+`.mjs` preset. The tsconfig entries are listed anyway, as ui's are. The suites are derived from the
+workspace globs; packages/config's own suite imports the preset by a relative path, so the scan
+leaves it out.
 
 ui's `typecheck` reads the token formats' declarations (its token-build tests import the
 formats), derived from the static imports in the files its tsconfig includes; the tsconfig chain
@@ -298,9 +300,10 @@ def test_unit_frontend_selects_the_ui_tests_by_their_inputs() -> None:
     assert _tasks(UI)["test:cov"].get("tags") == [TAG]
     turbo, manifest = _lane_filters("unit-frontend")
     assert turbo == manifest, "the coverage manifest records what the turbo run selects"
-    # The tag selector adds to the name filters and cannot replace them (#3471): tags are not
-    # hashed, a package's turbo.json and package.json are not task inputs, a changed dependency
-    # is not one of ui's inputs either, and web and desktop carry no tag.
+    # The tag selector adds to the name filters and cannot replace them (#3471): it matches a
+    # changed file against ui's `inputs` only. turbo hashes ui's turbo.json and package.json too,
+    # but they are not in `inputs`, so the tag misses a change there, as it misses a changed
+    # dependency, and web and desktop carry no tag.
     names = [f"'@candleviewer/{name}...[origin/main]'" for name in ("desktop", "ui", "web")]
     assert turbo == [*names, f"'tag:{TAG}[origin/main]'"]
 
