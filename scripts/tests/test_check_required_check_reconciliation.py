@@ -461,3 +461,27 @@ def _prove(tmp_path: Path, workflow: str, *edits: tuple[str, str], reindent: str
 def test_a_shape_the_proof_cannot_read_fails_it(tmp_path, workflow, edit, reindent, expected):
     errors = _prove(tmp_path, workflow, edit, reindent=reindent)
     assert any(expected in e for e in errors), errors
+
+
+# Review round 5 of #3103: a job of any workflow, `.yaml` too, whose name may read `ci-required`.
+@pytest.mark.parametrize(
+    "file,job",
+    [
+        ("shadow.yaml", "    name: ci-required\n    runs-on: x\n"),
+        ("shadow.yml", '    name: "ci\\x2drequired"\n    runs-on: x\n'),
+        ("shadow.yml", "    name: >-\n      ci-required\n    runs-on: x\n"),
+        ("shadow.yml", "    name: ${{ 'ci-required' }}\n    runs-on: x\n"),
+        ("shadow.yml", "    name: ci-${{ 'required' }} # an expression is any text\n    runs-on: x\n"),
+        ("shadow.yml", "      name: ci-required\n      runs-on: x\n"),
+    ],
+)
+def test_a_job_that_may_report_as_ci_required_fails_the_proof(tmp_path, file, job) -> None:
+    workflows = tmp_path / "workflows"
+    shutil.copytree(ROOT / ".github/workflows", workflows)
+    (workflows / file).write_text(f"on: [push]\njobs:\n  shadow:\n{job}", encoding="utf-8")
+    errors, _ = recon.reconcile_repo(
+        str(ROOT / ".github/branch-protection.json"),
+        str(ROOT / "CONSTITUTION.md"),
+        str(workflows / "*.yml"),
+    )
+    assert any("the check-run name of 2 jobs" in e for e in errors), errors

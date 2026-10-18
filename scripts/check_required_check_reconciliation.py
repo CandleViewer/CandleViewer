@@ -210,6 +210,28 @@ def _form_errors(path: str, text: str) -> list[str]:
     return errors
 
 
+def _keyed_at_four(lines: list[str]) -> bool:
+    """Whether a job's keys sit at 4 spaces, the only place these readers look for them."""
+    return bool(re.match(r"(?:[ \t]*(?:#.*)?\n)*    [^\s#]", "\n".join(lines)))
+
+
+def _name_pattern(job_id: str, lines: list[str]) -> str:
+    """A regex for each check-run name a job may report: its name, or its id, where an expression
+    stands for any text. A name this cannot read as one plain or quoted line (keys not at 4
+    spaces, a block scalar, an escape, a quote left open, a flow node, a tag) may be any text."""
+    named = [m[1] for m in map(re.compile(r"^    name:[ \t]*(.*?)[ \t]*$").match, lines) if m]
+    raw = re.sub(r"\s#.*", "", named[0]) if named else job_id
+    if not _keyed_at_four(lines):
+        return ".*"
+    if re.fullmatch(r"'(?:[^']|'')*'", raw):
+        raw = raw[1:-1].replace("''", "'")
+    elif re.fullmatch(r'"[^"\\]*"', raw):
+        raw = raw[1:-1]
+    elif not raw or raw[0] in "|>\"'{[!&*":
+        return ".*"
+    return ".*".join(map(re.escape, re.split(r"\$\{\{.*?\}\}", raw)))
+
+
 def _check_name(job_id: str, lines: list[str]) -> str | None:
     """A job's check-run name: its literal `name:`, else its id. None when GitHub expands it (an
     expression, or a matrix, which appends its values)."""
@@ -384,8 +406,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                     job
                     for job, block in called.items()
                     if deps[job] is None
-                    or NEVER_RE.search(job_text := "\n".join(block))
-                    or not re.match(r"(?:[ \t]*(?:#.*)?\n)*    [^\s#]", job_text)
+                    or NEVER_RE.search("\n".join(block))
+                    or not _keyed_at_four(block)
                 }
                 # GitHub skips a job whose needed job was skipped, and a skipped job passes its lane.
                 while more := {job for job, need in deps.items() if need and need & skip} - skip:
@@ -409,18 +431,21 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
 
 
 def duplicate_check_names(workflows_glob: str, contexts: set[str]) -> list[str]:
-    """Each required check that more than one job, in any workflow, reports by name (its literal
-    `name:`, else its id): GitHub matches a required check by name and app, and every Actions job
-    is the same app, so another job could pass it."""
-    names = [
-        _check_name(*job)
-        for wf_path in sorted(glob.glob(workflows_glob))
+    """Each required check that more than one job, in any workflow of the glob's folder (`.yml`
+    or `.yaml`), may report by name (`_name_pattern`): GitHub matches a required check by name and
+    app, and every Actions job is the same app, so another job could pass it."""
+    folder = os.path.dirname(workflows_glob)
+    patterns = [
+        _name_pattern(*job)
+        for wf_path in sorted(glob.glob(os.path.join(folder, "*.y*ml")))
+        if wf_path.endswith((".yml", ".yaml"))
         for job in _job_blocks(_read(wf_path)).items()
     ]
+    counts = {name: sum(bool(re.fullmatch(p, name)) for p in patterns) for name in contexts}
     return [
-        f"'{name}' is required on main and the check-run name of {names.count(name)} jobs"
-        for name in sorted(contexts)
-        if names.count(name) > 1
+        f"'{name}' is required on main and could be the check-run name of {count} jobs"
+        for name, count in sorted(counts.items())
+        if count > 1
     ]
 
 
