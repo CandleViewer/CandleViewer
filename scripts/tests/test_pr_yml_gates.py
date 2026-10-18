@@ -129,12 +129,11 @@ def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
     order += ["python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"]
     # E03-T05's acceptance criterion: the failure summary names the command `make gen`.
     # #3299: and `make gen-check`, the only command that reproduces CI-GEN-005.
-    order += ["python tools/ci/check_gen_freshness.py || {"]
-    order += [
+    gen_check = (
         'echo "Reproduce the whole gate locally with \\`make gen-check\\`. '
-        'To regenerate and review:"',
-        'echo "make gen"',
-    ]
+        'To regenerate and review:"'
+    )
+    order += ["python tools/ci/check_gen_freshness.py || {", gen_check, 'echo "make gen"']
     order += ['} >> "$GITHUB_STEP_SUMMARY"', "exit 1"]
     assert [line for line in lines if line in order] == order
     # #3299: the step name lists every code the gate reports.
