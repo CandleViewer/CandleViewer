@@ -1102,18 +1102,17 @@ def make_session_router(
                 "auth.enrolment_only.unclassified", path="/auth/session", error=type(exc).__name__
             )
             return _session_unchecked()  # the guard's `503 store_unavailable` and Retry-After
+        at = now()
         response = JSONResponse(
-            await _session_info(identity, record, now(), enrolment_only=enrolment_only)
+            await _session_info(identity, record, at, enrolment_only=enrolment_only)
         )
         # SR-041 recovery path: re-issue when absent or not verifying. An enrolment-only
         # session's cookie counts down to its unchanged expiry (#2295, Q7), as at sign-in and
-        # refresh; `_authenticate` just touched the record, so `last_seen_at` is now.
+        # refresh, from now: this read is not activity, so `last_seen_at` is not now (#3214).
         present = request.cookies.get(CSRF_COOKIE)
         if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
             max_age = (
-                remaining_lifetime_s(record, now=record.last_seen_at)
-                if enrolment_only
-                else REFRESH_EXPIRES_IN_S
+                remaining_lifetime_s(record, now=at) if enrolment_only else REFRESH_EXPIRES_IN_S
             )
             set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=max_age)
         return response
