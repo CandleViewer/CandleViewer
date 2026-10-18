@@ -42,8 +42,8 @@ _ALL = frozenset(p.value for p in Permission)
 #: `x-role` -> (user, owner flag, permission codes); `manager` lacks `admin:read`.
 ROLES = {"owner": (OWNER, True, _ALL), "reader": (OTHER, False, _ALL)}
 ROLES["manager"] = (OTHER, False, frozenset({"orders:read"}))
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:hunter2@db/cv"
 
 

@@ -35,8 +35,8 @@ _PATH = "/admin/capacity/subaccount-tier"
 _AT = datetime(2026, 10, 1, tzinfo=UTC)  # the fake store's clock: when the row was recorded
 _ERRORS = "https://candleviewer.local/errors/"
 _PROBLEM = {"$ref": "#/components/schemas/Problem", "components": load_openapi_spec()["components"]}
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:hunter2@db/cv"
 
 

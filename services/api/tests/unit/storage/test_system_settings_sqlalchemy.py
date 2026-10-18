@@ -166,8 +166,8 @@ def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> Base
     return cls("SELECT 1", None, _PgError(sqlstate))
 
 
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:pw@db"
 _OUTAGES = [
     ConnectionRefusedError(f"[Errno 111] dsn={_DSN}"),

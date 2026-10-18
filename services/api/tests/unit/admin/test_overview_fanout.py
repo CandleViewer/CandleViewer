@@ -33,8 +33,8 @@ from candleviewer.observability.metrics import CollectorRegistry
 SLICES = sorted(OVERVIEW_SLICES)
 _ERRORS = "cv_admin_overview_source_errors_total"
 _TIMED = "cv_admin_overview_source_duration_seconds_count"
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:hunter2@db/cv"
 
 

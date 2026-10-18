@@ -42,7 +42,8 @@ def test_a_url_that_is_not_printable_https_with_a_host_is_refused(url: str) -> N
 @pytest.mark.parametrize(
     "url",
     [
-        # A userinfo URL joins its scheme at run time: no secret scanner flags it here (#3482).
+        # Each user:password URL in this list joins its scheme at run time, so trufflehog's URI
+        # detector finds nothing here (#3482). Fake passwords only: real ones never go in source.
         "https" + "://user:secret@github.com/x",
         "https://user@github.com/x",
         "https://github.com/x?tab=1&access_token=secret",

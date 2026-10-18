@@ -43,8 +43,8 @@ from candleviewer.recorder.budget import project_full_at
 NOW = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
 GB = 10**9
 EST = 750_000_000
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://u:hunter2@db/x"
 
 

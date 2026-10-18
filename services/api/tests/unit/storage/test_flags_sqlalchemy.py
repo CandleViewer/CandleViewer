@@ -164,8 +164,8 @@ def test_a_read_budget_below_one_millisecond_is_refused() -> None:
         m.SqlAlchemyFlagRepository(_Rel(), read_budget_ms=0)  # type: ignore[arg-type]  # fake
 
 
-# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
-# source holds no DSN for the secret scanners to flag (#3482).
+# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:pw@db"
 _OUTAGES = [
     ConnectionRefusedError(f"[Errno 111] dsn={_DSN}"),
