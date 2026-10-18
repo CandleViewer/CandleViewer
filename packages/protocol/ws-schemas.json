@@ -599,6 +599,11 @@
               "description": "bars snapshots: the series' bar spec (SR-E12-14).",
               "pattern": "^[0-9a-f]{64}$",
               "type": "string"
+            },
+            "stale": {
+              "default": false,
+              "description": "snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.",
+              "type": "boolean"
             }
           },
           "type": "object"
