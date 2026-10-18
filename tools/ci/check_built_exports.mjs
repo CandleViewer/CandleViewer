@@ -8,7 +8,8 @@
 // (stricter than Node, which takes the first that resolves). A pattern target
 // (`./dist/tokens.*.css`) must match at least one file in its folder, so a pattern export is never
 // skipped. Only a `*` in the file name is supported: a `*` in a folder segment is reported as
-// unsupported. Every case the guard cannot prove built fails closed.
+// unsupported. Every case the guard cannot prove built fails closed, a filesystem error too: it is
+// reported with the export and its errno (ENOTDIR: a parent of the path is a file).
 //
 // Usage: node tools/ci/check_built_exports.mjs <package-dir> [<package-dir> ...]
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -23,8 +24,19 @@ function targets(node, out) {
   return out;
 }
 
+// ENOENT means "not built"; any other error (ENOTDIR, EACCES, ELOOP, ENAMETOOLONG, ...) goes up to
+// main, which reports it. Not `throwIfNoEntry: false`: from Node 24 on it hides ENOTDIR too.
+function unlessNoEntry(probe, absent) {
+  try {
+    return probe();
+  } catch (err) {
+    if (err.code === "ENOENT") return absent;
+    throw err;
+  }
+}
+
 function isFile(path) {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  return unlessNoEntry(() => statSync(path).isFile(), false);
 }
 
 function present(dir, target) {
@@ -34,10 +46,9 @@ function present(dir, target) {
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
     .replaceAll("*", ".+");
   const pattern = new RegExp(`^${escaped}$`);
-  const names = statSync(folder, { throwIfNoEntry: false })?.isDirectory()
-    ? readdirSync(folder)
-    : [];
-  return names.some((name) => pattern.test(name) && isFile(join(folder, name)));
+  const names = unlessNoEntry(() => readdirSync(folder), []).filter((name) => pattern.test(name));
+  // Every match is checked (not `some`), so an error on any of them fails in any listing order.
+  return names.map((name) => isFile(join(folder, name))).includes(true);
 }
 
 function exportsOf(dir) {
@@ -67,10 +78,19 @@ function main(dirs) {
   }
   const missing = [];
   const unsupported = [];
+  const failed = [];
   for (const dir of dirs) {
     for (const target of exportsOf(dir)) {
-      if (dirname(target).includes("*")) unsupported.push(join(dir, target));
-      else if (!present(dir, target)) missing.push(join(dir, target));
+      const file = join(dir, target);
+      if (dirname(target).includes("*")) {
+        unsupported.push(file);
+        continue;
+      }
+      try {
+        if (!present(dir, target)) missing.push(file);
+      } catch (err) {
+        failed.push(`${file}: ${err.message}`);
+      }
     }
   }
   if (unsupported.length > 0) {
@@ -86,7 +106,11 @@ function main(dirs) {
     );
     for (const file of missing) console.error(`  ${file}`);
   }
-  if (unsupported.length > 0 || missing.length > 0) process.exit(1);
+  if (failed.length > 0) {
+    console.error(`${CODE}: cannot check built exports, the filesystem returned an error:`);
+    for (const line of failed) console.error(`  ${line}`);
+  }
+  if (unsupported.length > 0 || missing.length > 0 || failed.length > 0) process.exit(1);
   console.log(`check_built_exports: OK (${dirs.join(", ")})`);
 }
 

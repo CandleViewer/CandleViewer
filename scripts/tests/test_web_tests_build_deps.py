@@ -232,3 +232,63 @@ def test_guard_reports_a_manifest_that_is_not_an_object_with_its_code(tmp_path: 
     (tmp_path / "package.json").write_text("null", encoding="utf-8")
     result = _guard(tmp_path)
     assert result.returncode == 1 and "CI-BUILD-001" in result.stderr
+
+
+def _assert_reported(result: subprocess.CompletedProcess[str], path: Path, errno: str) -> None:
+    """Exit 1 and a CI-BUILD-001 line naming the export and its errno, not a stack trace."""
+    lines = result.stderr.splitlines()
+    assert result.returncode == 1, result.stderr
+    # An uncaught error prints `Error: ...` and `Node.js v...` at column 0 and `    at` frames.
+    assert all(line.startswith(("CI-BUILD-001: ", "  ")) for line in lines), result.stderr
+    assert not any(line.lstrip().startswith("at ") for line in lines), result.stderr
+    assert any(str(path) in line and errno in line for line in lines), result.stderr
+
+
+LONG = "x" * 256  # one path segment longer than NAME_MAX (255 bytes)
+
+
+@pytest.mark.parametrize(
+    ("target", "layout", "errno"),
+    [
+        pytest.param("./dist/index.js", "file", "ENOTDIR", id="parent-is-a-file"),
+        pytest.param("./dist/tokens.*.css", "file", "ENOTDIR", id="pattern-folder-is-a-file"),
+        pytest.param("./dist/index.js", "loop", "ELOOP", id="symlink-loop"),
+        pytest.param("./dist/tokens.*.css", "loop", "ELOOP", id="pattern-symlink-loop"),
+        pytest.param("./dist/tokens.*.css", "match-loop", "ELOOP", id="pattern-match-loop"),
+        pytest.param(f"./{LONG}.js", None, "ENAMETOOLONG", id="name-too-long"),
+        pytest.param(f"./{LONG}/tokens.*.css", None, "ENAMETOOLONG", id="pattern-too-long"),
+    ],
+)
+def test_guard_reports_a_filesystem_error_with_its_errno(
+    tmp_path: Path, target: str, layout: str | None, errno: str
+) -> None:
+    dist = tmp_path / "dist"
+    if layout == "file":  # a file where the folder should be
+        dist.write_text("", encoding="utf-8")
+    elif layout == "loop":  # dist -> dist
+        dist.symlink_to("dist")
+    elif layout == "match-loop":  # one match is a file, another a symlink to itself
+        dist.mkdir()
+        (dist / "tokens.dark.css").write_text("", encoding="utf-8")
+        (dist / "tokens.loop.css").symlink_to("tokens.loop.css")
+    _assert_reported(_guard(_package(tmp_path, {".": target}, [])), tmp_path / target, errno)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores folder permissions")
+@pytest.mark.parametrize(
+    ("target", "mode"),
+    [
+        pytest.param("./dist/index.js", 0o600, id="folder-not-searchable"),
+        pytest.param("./dist/tokens.*.css", 0o300, id="pattern-folder-not-readable"),
+    ],
+)
+def test_guard_reports_a_permission_error_with_its_errno(
+    tmp_path: Path, target: str, mode: int
+) -> None:
+    built = _package(tmp_path, {".": target}, ["dist/index.js", "dist/tokens.dark.css"])
+    (built / "dist").chmod(mode)
+    try:
+        result = _guard(built)
+    finally:
+        (built / "dist").chmod(0o755)
+    _assert_reported(result, tmp_path / target, "EACCES")
