@@ -45,3 +45,6 @@ packages/fixtures/golden/cvwb/
 tests/fuzz/ws-frames/corpus.json
 # E09-Q03: hand-reviewed RBAC expectation matrix (flow-style rows, one cell set per line)
 services/api/tests/contract/rbac/matrix.yaml
+# #3362: formatted by validate.py, whose --check byte-checks *.json (the E<nn> twins + all-tickets)
+docs/plan/backlog/*.json
+docs/plan/backlog/_reconciliation-report.md
