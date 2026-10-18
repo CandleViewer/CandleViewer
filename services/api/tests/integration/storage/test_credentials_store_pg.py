@@ -1,9 +1,9 @@
 """Integration: `SqlAlchemyCredentialStore` + `CredentialBroker` on real Postgres 16 (#835).
 
 Exercises the real SQL the unit fakes stand in for: insert/get/borrow, revoke, keyset paging,
-the rewrap compare-and-set (incl. a concurrent writer) with its audit record (#2266),
-kill-and-resume over 50 rows, `kek_versions` record/re-read and `last_used_at` touch. Fixed test
-vectors only; no network beyond the local testcontainer. Not run locally (no docker); CI lane.
+the rewrap compare-and-set (incl. a concurrent writer), kill-and-resume over 50 rows,
+`kek_versions` record/re-read and `last_used_at` touch. Fixed test vectors only; no network
+beyond the local testcontainer. Not run locally (no docker); CI integration lane.
 """
 
 from __future__ import annotations
@@ -147,7 +147,6 @@ def _move(key_id: UUID, ref: str, action: str = _REWRAPPED, **cas: Any) -> dict[
 
 @pytest.fixture
 async def one_key(pg_dsn: str) -> AsyncIterator[tuple[SqlAlchemyCredentialStore, UUID]]:
-    """The store and one active demo key at v1; its pool is disposed afterwards."""
     rel, store = _store(pg_dsn)
     try:
         yield store, (await _seed(store, _account(pg_dsn), 1))[0]
@@ -440,7 +439,7 @@ async def test_a_rewrap_aborted_while_it_waits_for_the_chain_lock_moves_nothing(
 ) -> None:
     """The CAS has updated its row and waits for the chain lock, which another connection holds.
     There its backend is terminated, or its task cancelled (as M2's `_io` timeout cancels it).
-    Its transaction ends while the lock is held, nothing commits, and a rerun moves the row."""
+    Its transaction ends at once with the lock held, nothing commits, and a rerun moves the row."""
     store, key_id = one_key
     before = _wrap(pg_dsn, key_id)
     sync = pg_dsn.replace("postgresql+asyncpg", "postgresql")
@@ -453,7 +452,7 @@ async def test_a_rewrap_aborted_while_it_waits_for_the_chain_lock_moves_nothing(
         abort(pg_dsn, pids[0], cas)
         with pytest.raises(error):
             await cas
-        async with asyncio.timeout(30):  # ended: no backend waits for the lock with the row's
+        async with asyncio.timeout(5):  # ended by the abort, not the 30 s statement_timeout
             while await (await holder.execute(_WAITER)).fetchall():
                 pass
         assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []

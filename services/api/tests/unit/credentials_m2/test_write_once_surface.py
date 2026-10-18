@@ -57,7 +57,6 @@ _PLAIN_STR = frozenset({"env", "dek_ref"})
 #: `rewrap`'s `(action, fields)` (#2266) goes only to the injected audit-row builder, redacted
 #: into `audit_log`. The SQL scan below pins what an api_keys UPDATE assigns, not what it binds.
 _AUDIT_RECORD = ("audit", tuple[str, dict[str, str]])
-#: The CAS kwargs of the in-memory checks: v(n) -> v(n+1), with its row record.
 _CAS: dict[str, Any] = {"env": "demo", "audit": ("security.credential_rewrapped", {})}
 _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNORECASE)
 

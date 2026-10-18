@@ -1,8 +1,5 @@
 """The re-wrap CAS and its audit record share one transaction (#2266, C-2.9): the M10 adapter
-over a unit of work that logs each statement, the commit and the rollback. The WAL path's lock
-order: `tests/unit/audit/test_single_writer_guard.py`. On Postgres:
-`tests/integration/storage/test_credentials_store_pg.py`, `tests/integration/audit/`.
-"""
+over a unit of work that logs each statement, the commit and the rollback."""
 
 from __future__ import annotations
 
@@ -32,11 +29,15 @@ RECORD = {
 class _Tx:
     """A relational repository whose unit of work logs `UPDATE`, `LOCK` (the chain lock),
     `INSERT`, `COMMIT` and, on an exception, `ROLLBACK`; an UPDATE moves `moved` rows and an
-    INSERT writes `inserted`."""
+    INSERT writes `inserted`. Its row builder `build` logs `BUILD`."""
 
     def __init__(self, moved: int = 1, inserted: int = 1) -> None:
         self.log: list[str] = []
         self._counts = {"UPDATE": moved, "INSERT": inserted}
+
+    def build(self, action: str, fields: dict[str, str]) -> dict[str, Any]:
+        self.log.append("BUILD")
+        return _build(action, fields)
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
@@ -65,14 +66,14 @@ def _refuse(action: str, fields: dict[str, str]) -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     ("moved", "log"),
-    [(1, ["UPDATE", "LOCK", "INSERT", "COMMIT"]), (0, ["UPDATE"])],
+    [(1, ["UPDATE", "BUILD", "LOCK", "INSERT", "COMMIT"]), (0, ["UPDATE"])],
     ids=["moved", "not_moved"],
 )
-async def test_the_cas_locks_the_chain_and_inserts_its_record_iff_it_moved_the_row(
+async def test_the_cas_builds_locks_and_inserts_its_record_iff_it_moved_the_row(
     moved: int, log: list[str]
 ) -> None:
     tx = _Tx(moved=moved)
-    store = SqlAlchemyCredentialStore(cast(Any, tx), audit_row=_build)
+    store = SqlAlchemyCredentialStore(cast(Any, tx), audit_row=tx.build)
     assert await store.rewrap(KEY, **MOVE) is bool(moved) and tx.log == log
 
 

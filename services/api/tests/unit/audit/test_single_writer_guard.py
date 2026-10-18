@@ -14,8 +14,8 @@ schema-qualified names), an asyncpg bulk copy into it, a Core `insert()` on it (
 as `pg_insert` too; positional or keyword table arguments), and a table or ORM object naming
 it, an import of the schema's `audit_log` or a `.tables["audit_log"]` lookup, outside the
 two files that define one for reading. It sees SQL, not calls: the helper's callers (the
-repository's `insert` and the credential store's `rewrap`, #2266) are pinned by review, as a
-caller scan did not fit #2266 B1's size cap (PR-SIZE-001); a new caller needs that review.
+repository's `insert`, the credential store's `rewrap`) are pinned by review until a caller
+scan lands with its third caller, PR C of #2266's ruling (issuecomment-6174244911).
 """
 
 from __future__ import annotations

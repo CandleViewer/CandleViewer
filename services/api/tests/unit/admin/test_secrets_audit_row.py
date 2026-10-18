@@ -1,7 +1,4 @@
-"""The M2 audit-row builder that `admin.wiring` injects into the M10 credential store (#2266):
-the columns `secrets_audit_sink` writes, through the same mapping, with what `AuditWriter.emit`
-does to a record (validated action, redacted state, fresh `record_id`, `event_ts`) and the
-process environment."""
+"""The M2 audit-row builder `admin.wiring` injects into the M10 credential store (#2266)."""
 
 from __future__ import annotations
 

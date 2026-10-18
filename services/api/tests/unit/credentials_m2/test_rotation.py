@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from structlog.testing import capture_logs
 
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
@@ -257,8 +259,7 @@ def _cas(s: InMemoryCredentialStore, key_id: Any, **kw: Any) -> Any:
 
 
 async def test_rewrap_all_commits_one_credential_rewrapped_with_each_moved_row() -> None:
-    """#2266: the row record goes with the row's compare-and-set, never through the WAL sink; a
-    row whose new wrap fails is not moved and gets none."""
+    """#2266: the record goes with the row's CAS, not the WAL sink; a row not moved gets none."""
     s, metas, _ = await _seed(3)
     s.rows[metas[1].key_id]["dek_ref"] = "v2:" + bytes(40).hex()  # its re-wrap fails
     audit = AuditLog()
@@ -311,3 +312,21 @@ async def test_a_typed_store_refusal_is_logged_by_its_code(error: type[StorageEr
         await _rot(s).rewrap_all(2)
     event = {"event": "secrets.io_failed", "log_level": "error", "reason": "store"}
     assert logs == [event | {"error_code": error.code}]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [lambda: sa.exc.OperationalError("UPDATE api_keys", None, OSError()), TimeoutError],
+    ids=["driver_error", "timeout"],
+)
+async def test_a_driver_error_or_a_timeout_is_not_logged(error: Callable[[], Exception]) -> None:
+    """#2266: an outage adds no line per call; SQLAlchemy's errors declare a class `code` too."""
+    s, _, _ = await _seed(1)
+
+    async def fail(key_id: Any, **kw: Any) -> bool:
+        raise error()
+
+    s.rewrap = fail  # type: ignore[method-assign]
+    with capture_logs() as logs, pytest.raises(CredentialUnavailable, match="store"):
+        await _rot(s).rewrap_all(2)
+    assert "secrets.io_failed" not in [e["event"] for e in logs]

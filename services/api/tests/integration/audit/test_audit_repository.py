@@ -2,9 +2,7 @@
 Postgres 16 (testcontainers). Covers the DB-side AC: trigger-computed chain
 with 64-zero genesis, Python verifier agreeing byte-for-byte with the
 trigger, out-of-band tamper located, cv_app refused UPDATE/DELETE,
-round-trip upgrade/downgrade/upgrade, checkpoint idempotency. #2266: in-transaction inserts
-through `insert_audit_row_locked` interleave with the WAL path in one verified chain, and the
-negative control (an insert without the explicit lock) shows why the lock comes first.
+round-trip upgrade/downgrade/upgrade, checkpoint idempotency.
 
 Not run locally (no docker); exercised by the `migrations`/integration CI jobs.
 """
@@ -166,15 +164,13 @@ def _record(label: str) -> dict[str, Any]:
 
 
 async def _locked(relational: SqlAlchemyRelationalRepository, record: dict[str, Any]) -> None:
-    """An in-transaction insert through the lock-first helper (#2266)."""
     async with relational.unit_of_work() as uow:
         assert await insert_audit_row_locked(uow.session, record)
         await uow.commit()
 
 
 async def _unlocked(relational: SqlAlchemyRelationalRepository, record: dict[str, Any]) -> None:
-    """The negative control: an INSERT whose only chain lock is the trigger's, which it takes
-    after the bigserial default has drawn its id."""
+    """The negative control: an INSERT locked only by its trigger, after `nextval` drew its id."""
     insert = "INSERT INTO audit_log (record_id, actor_label, action) VALUES (:r, 'w', 'auth.login')"
     async with relational.unit_of_work() as uow:
         await uow.session.execute(sa.text(insert), {"r": uuid.UUID(record["record_id"])})
@@ -182,9 +178,8 @@ async def _unlocked(relational: SqlAlchemyRelationalRepository, record: dict[str
 
 
 async def _race(dsn: str, insert: Insert) -> tuple[int, int, VerifyResult]:
-    """`insert` starts while another connection holds the chain lock, and waits; the holder then
-    commits a row of its own, which releases the lock. Returns the waiter's id, the holder's id
-    and the verify result over the two."""
+    """`insert` waits while another connection holds the chain lock; the holder then commits a
+    row of its own. Returns the waiter's id, the holder's id and verify over the two."""
     relational = SqlAlchemyRelationalRepository(dsn)
     query = AuditQueryService(SqlAlchemyAuditRepository(relational))
     waiter, holder = _record("waiter"), _record("holder")
@@ -208,8 +203,7 @@ async def _race(dsn: str, insert: Insert) -> tuple[int, int, VerifyResult]:
 
 
 async def test_an_insert_without_the_explicit_lock_breaks_the_chain(pg_dsn: str) -> None:
-    """The waiter drew its id first but hashed after the holder's later row, so verify, which
-    walks by id, names it."""
+    """The waiter drew its id first but hashed after the holder's row; verify names it."""
     waiter, holder, result = await _race(pg_dsn, _unlocked)
     assert waiter < holder and not result.verified and result.first_bad_id == waiter
 
