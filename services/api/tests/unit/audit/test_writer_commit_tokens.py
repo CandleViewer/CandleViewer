@@ -287,6 +287,40 @@ async def test_writer_a_backlog_from_an_earlier_process_takes_no_token(tmp_path:
     _never_ahead(repo, [str(first.record_id)])
 
 
+async def test_writer_a_replayed_backlogs_commit_leaves_the_depth_at_this_processs_records(
+    tmp_path: Path,
+) -> None:
+    """`buffer_depth` counts only this process's records: committing a batch of an earlier
+    run's frames leaves this process's three uncommitted records in it (#3009 S2a2c paces on it)."""
+    clock, old = FakeClock(), AuditWal(tmp_path / "audit.wal")
+    backlog = [str(_emission(f"old{i}", clock).record_id) for i in range(10)]
+    for i, record_id in enumerate(backlog):
+        old.append(
+            json.loads(_emission(f"old{i}", clock).model_dump_json()) | {"record_id": record_id}
+        )
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path, flush_batch_size=10)  # the backlog is one batch
+    new = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
+    repo.refuse = {backlog[0]}  # Postgres stalls on the backlog
+    await w.start()
+    await asyncio.wait_for(repo.attempted.wait(), 5)
+    for record in new:
+        await w.ingest(record)
+    repo.refuse = {str(r.record_id) for r in new}  # the backlog goes in; the new records wait
+    await asyncio.wait_for(_attempted(repo, str(new[0].record_id)), 5)
+    depth = w.buffer_depth
+    repo.refuse.clear()
+    await w.flush(5)
+    await w.stop(1)
+
+    assert (depth, w.buffer_depth, w.committed_through()) == (3, 0, 3)
+
+
+async def _attempted(repo: _ObservedRepository, record_id: str) -> None:
+    while all(attempt[1] != record_id for attempt in repo.attempts):  # noqa: ASYNC110 - no event
+        await asyncio.sleep(0)
+
+
 async def test_writer_a_restart_that_rereads_confirmed_records_counts_them_once(
     tmp_path: Path,
 ) -> None:
@@ -310,7 +344,7 @@ async def test_writer_a_restart_that_rereads_confirmed_records_counts_them_once(
     repo.refuse.clear()
     await w.start()
     await w.flush(5)
-    assert w.committed_through() == 3
+    assert (w.committed_through(), w.buffer_depth) == (3, 0)  # record 1 is not counted twice
     last = w.build("auth.logout", actor_label="next")
     assert await w.ingest(last) == 4
     await w.flush(5)

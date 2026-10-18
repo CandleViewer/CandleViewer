@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -28,6 +29,7 @@ from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.lane import AuditLane
 from candleviewer.audit.models import AuditEmission, AuditOutcome, Severity
 from candleviewer.audit.redact import REDACTION_MARKER
+from candleviewer.audit.wal import encode_frame as wal_frame
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter, _lane_anomaly
 
 KEYS, LANE, WAIT_S = lj.LaneKeys(bytes(range(32))), uuid.UUID(int=7), 5.0
@@ -101,6 +103,21 @@ def after(row: dict[str, Any]) -> Any:
 
 def segments(path: Path) -> list[str]:
     return sorted(name for name in os.listdir(path) if name.startswith("seg-"))
+
+
+def capped(mp: pytest.MonkeyPatch, name: str, read: Callable[[AuditWriter], Any]) -> list[int]:
+    """`AuditWriter.<name>` read through `read`, counted: past 100,000 reads it raises, so a
+    drain that looks again without awaiting fails the test instead of hanging the event loop."""
+    looks = [0]
+
+    def counted(self: AuditWriter) -> Any:
+        looks[0] += 1
+        if looks[0] > 100_000:
+            raise AssertionError(f"the drain reads `{name}` again without awaiting")
+        return read(self)
+
+    mp.setattr(AuditWriter, name, property(counted))
+    return looks
 
 
 async def test_resumed_row_records_the_head(tmp_path: Path) -> None:
@@ -450,9 +467,7 @@ async def test_lane_hold_refuses_appends_with_held_and_writes_no_resumed_row(
     assert (path / "confirmed").exists() == (cause != "no_lane")
 
 
-async def test_lane_hold_met_while_running_stops_the_lane(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_lane_hold_met_while_running_stops_the_lane(tmp_path: Path) -> None:
     """Hold, row 12 while running: a frame under an unknown `kid` planted behind a frame the drain
     has not scanned holds the running scan: the frame before it is handed over and confirmed, the
     frames after it wait, and every append is refused `held`; a refused append wakes nothing, so
@@ -469,27 +484,22 @@ async def test_lane_hold_met_while_running_stops_the_lane(
         )
     await lane.append(logout(writer, 1))  # lands after the planted frame
     await until(lambda: lane.journal.refusal == "held" and lane.confirmed == before)
-    scans, rescan = list[lj.LaneMarker](), lane.journal.rescan
-
-    async def counted(origin: lj.LaneMarker) -> lj.LaneScan:
-        scans.append(origin)
-        return await rescan(origin)
-
-    monkeypatch.setattr(lane.journal, "rescan", counted)
     with pytest.raises(lj.LaneRefused) as refused:
         await lane.append(logout(writer, 2))
-    for _ in range(50):
-        await asyncio.sleep(0)
+    woken = lane._wake.is_set() or lane._dirty  # no scan to come: nothing marked or woke it
     await lane.close()
     await stopped(writer)
 
-    assert refused.value.reason == "held" and scans == []
+    assert refused.value.reason == "held" and not woken
     assert [(r["action"], r["object_id"]) for r in repo.rows][2:] == [("auth.logout", "0")]
 
 
-async def test_lane_waits_for_a_restart_while_the_writers_flusher_is_dead(tmp_path: Path) -> None:
+async def test_lane_waits_for_a_restart_while_the_writers_flusher_is_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Ingest step 2: while `AuditWriter.failure` is set the drain calls neither `ingest()` nor
-    anything else of the writer's flusher; once the writer runs again, everything drains."""
+    anything else of the writer's flusher, and an append makes it look again (its wait is an
+    hour here); once the writer runs again, the next append drains everything."""
     died, repo = asyncio.Event(), FakeAuditRepository()
 
     async def alarm(_reason: str) -> None:
@@ -501,20 +511,21 @@ async def test_lane_waits_for_a_restart_while_the_writers_flusher_is_dead(tmp_pa
         max_insert_attempts=1, on_alarm=alarm,
     )  # fmt: skip
     await writer.start()
-    lane = await boot(tmp_path, writer)
+    lane = await boot(tmp_path, writer, **SLOW)
     await asyncio.wait_for(died.wait(), WAIT_S)  # its first insert failed for good
-    refused = writer.refused_total
+    looks = capped(monkeypatch, "failure", vars(AuditWriter)["failure"].fget)
+    refused, seen = writer.refused_total, looks[0]
     await lane.append(logout(writer, 1))
-    for _ in range(100):
-        await asyncio.sleep(0)
+    await until(lambda: looks[0] > seen)  # the append made it look, and it waits again
     waited = writer.refused_total == refused
     repo.down = False
     await writer.start()
+    await lane.append(logout(writer, 2))
     await drained(lane)
     await lane.close()
     await stopped(writer)
 
-    assert waited and [r["action"] for r in repo.rows][-1] == "auth.logout"
+    assert waited and [r["object_id"] for r in repo.rows][-2:] == ["1", "2"]
 
 
 class Exploding(AuditWriter):
@@ -719,27 +730,33 @@ async def test_lane_boot_row_refused_all_the_same_stops_the_lane_and_start_raise
     assert (boot_row.value.reason, later.value.reason) == ("io_error", "stopped")
 
 
+@pytest.mark.parametrize("window", ["ingest", "compact"])
 async def test_lane_append_during_a_refused_iteration_cuts_its_backoff_short(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, window: str
 ) -> None:
     """Ingest step 2: the drain clears its wake at the top of an iteration, so an append that
-    lands during an iteration a refusal ends (here, inside its compaction) ends the backoff."""
-    repo, hooks = FakeAuditRepository(), ["refuse", "append"]
+    lands during an iteration a refusal ends, inside the refused hand-over or the compaction
+    after it, ends the backoff."""
+    repo, hooks = FakeAuditRepository(), ["refuse", window]
     writer = await sink(tmp_path, repo, AuditWriter)
     lane = await boot(tmp_path, writer, **SLOW)  # only an append ends a backoff
     await drained(lane)
     ingest, compact = writer.ingest, lane.journal.compact
 
+    async def landing(at: str) -> None:  # the append, once, in the window under test
+        if hooks == [at]:
+            hooks.clear()
+            await lane.append(logout(writer, 3))  # frame 5
+
     async def refusing(record: dict[str, Any]) -> int:
         if record["object_id"] == "2" and hooks[:1] == ["refuse"]:
             hooks.pop(0)
+            await landing("ingest")
             raise AuditUnavailable("the sink refuses")
         return await ingest(record)
 
     async def appending() -> int:
-        if hooks == ["append"]:
-            hooks.clear()
-            await lane.append(logout(writer, 3))  # frame 5
+        await landing("compact")
         return await compact()
 
     monkeypatch.setattr(writer, "ingest", refusing)
@@ -757,9 +774,9 @@ async def test_lane_append_during_a_refused_iteration_cuts_its_backoff_short(
 async def test_lane_append_racing_a_running_scan_is_not_left_for_the_next_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The drain clears its dirty mark before a running scan reads, and `append()` sets it once
-    the frame is durable, so neither a frame that lands just after a scan read the segment nor
-    one still on its way when a scan starts waits for another append."""
+    """The drain clears its dirty mark before a running scan reads, and `append()` sets it only
+    once the frame is durable, so neither a frame that lands just after a scan read the segment
+    nor one still on its way when a scan starts waits for another append."""
     repo = FakeAuditRepository()
     writer = await sink(tmp_path, repo, AuditWriter)
     lane = await boot(tmp_path, writer)
@@ -772,15 +789,14 @@ async def test_lane_append_racing_a_running_scan_is_not_left_for_the_next_one(
         await lane.append(logout(writer, 2))
         return result
 
-    async def slow(rec: dict[str, object]) -> int:
-        for _ in range(50):  # a drain woken before the frame lands would scan meanwhile
-            await asyncio.sleep(0)
+    async def writing(rec: dict[str, object]) -> int:
+        assert not lane._dirty  # nothing marks the lane before its frame is written
         return await append(rec)
 
     monkeypatch.setattr(lane.journal, "rescan", racing)
     await lane.append(logout(writer, 1))
     await until(lambda: len(repo.rows) == 4)
-    monkeypatch.setattr(lane.journal, "append", slow)
+    monkeypatch.setattr(lane.journal, "append", writing)
     await lane.append(logout(writer, 3))
     await until(lambda: len(repo.rows) == 5)
     await lane.close()
@@ -846,3 +862,149 @@ async def test_lane_run_is_copied_once_before_its_row_and_logged_without_its_rec
     assert calls == [poison, "quarantine", row, poison, row, "auth.logout"]
     assert [e for e in logs if e["event"] == anomaly["event"]] == [anomaly | {"seqs": (3, 3)}]
     assert "do-not-log" not in repr(logs)
+
+
+async def test_lane_drain_pauses_at_the_writers_depth_and_counts_each_pause_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Limits (`DRAIN_PAUSE_DEPTH`, 3 here): the drain hands over no unit while the writer holds
+    that many records not yet in Postgres, looks again at each poll (10 ms; a backoff would be an
+    hour here), and resumes once the depth falls; `paused_batches` counts each pause once,
+    however often the drain looks."""
+    repo, depth = FakeAuditRepository(), [3]
+    writer = await sink(tmp_path, repo, AuditWriter)
+    lane = await boot(tmp_path, writer, pause_depth=3, poll_s=0.01, **SLOW)
+    await drained(lane)
+    reads = capped(monkeypatch, "buffer_depth", lambda _: depth[0])
+    await lane.append(logout(writer, 1))  # at the depth: it waits
+    await until(lambda: reads[0] >= 5)
+    paused, held = lane.paused_batches, len(repo.rows)
+    depth[0] = 2  # the WAL drained below it: the next poll resumes
+    await until(lambda: len(repo.rows) == 3)
+    depth[0] = 3
+    await lane.append(logout(writer, 2))
+    await until(lambda: lane.paused_batches == 2)
+    depth[0] = 0
+    await until(lambda: len(repo.rows) == 4)
+    await lane.close()
+    await stopped(writer)
+
+    assert (paused, held, lane.paused_batches) == (1, 2, 2)
+
+
+async def test_lane_paused_drain_looks_again_when_an_append_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A paused drain also looks again when an append lands, not only at its poll (an hour
+    here): once the depth fell, the next append resumes the hand-over at once."""
+    repo, depth = FakeAuditRepository(), [3]
+    writer = await sink(tmp_path, repo, AuditWriter)
+    capped(monkeypatch, "buffer_depth", lambda _: depth[0])
+    lane = await boot(tmp_path, writer, pause_depth=3, poll_s=3600.0, **SLOW)
+    await until(lambda: lane.paused_batches == 1)  # the boot rows wait
+    depth[0] = 0
+    await lane.append(logout(writer, 1))
+    await until(lambda: len(repo.rows) == 3)
+    await lane.close()
+    await stopped(writer)
+
+    assert [r["object_id"] for r in repo.rows][-1] == "1"
+
+
+async def test_lane_catch_up_leaves_a_live_emit_wal_room_and_resumes_as_the_wal_drains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Limits: a backlog over `DRAIN_PAUSE_DEPTH` (3 here) goes into a WAL with room for five
+    frames in batches that stop at three, so a live `emit()` still fits while Postgres stalls;
+    as the WAL drains the drain resumes at its poll, and the sink gets every record once, in
+    order."""
+    repo, depths = Gated(), list[int]()
+    probe = AuditWriter(repo, str(tmp_path / "probe.wal"), clock=FakeClock())
+    room = 5 * len(wal_frame(json.loads(logout(probe, 1).model_dump_json())))
+    writer = AuditWriter(
+        repo, str(tmp_path / "audit.wal"), clock=FakeClock(), sleep=repo.retry_sleep,
+        max_wal_bytes=room,
+    )  # fmt: skip
+    await writer.start()
+    lane = await boot(tmp_path, writer, pause_depth=3, poll_s=0.001, **SLOW)
+    await writer.flush(WAIT_S)  # the boot rows are in Postgres and out of the WAL
+    ingest, repo.gate = writer.ingest, asyncio.Semaphore(0)  # Postgres stalls
+    capped(monkeypatch, "buffer_depth", vars(AuditWriter)["buffer_depth"].fget)
+
+    async def spied(record: AuditEmission | dict[str, Any]) -> int:
+        depths.extend([writer.buffer_depth] if isinstance(record, dict) else [])  # a lane unit
+        return await ingest(record)
+
+    monkeypatch.setattr(writer, "ingest", spied)
+    for n in range(1, 7):  # one scan, one batch: the drain sees the whole backlog at once
+        await lane.journal.append(json.loads(logout(writer, n).model_dump_json()))
+    await lane.append(logout(writer, 7))
+    await until(lambda: lane.paused_batches == 1)
+    held = writer.buffer_depth
+    await writer.emit("auth.logout", actor_label="owner", object_id="8")  # a live caller
+    gate, repo.gate = repo.gate, None
+    gate.release()
+    await until(lambda: len(repo.rows) == 10)
+    await lane.close()
+    await stopped(writer)
+
+    assert held == 3 and max(depths) < 3
+    assert [r["object_id"] for r in repo.rows[2:] if r["object_id"] != "8"] == list("1234567")
+
+
+def test_lane_pause_depth_keeps_a_catch_up_to_a_quarter_of_the_wal() -> None:
+    """Limits: `DRAIN_PAUSE_DEPTH` lane frames fit in a quarter of the writer's WAL, so live
+    `emit()` callers keep the other three quarters, and a lane paces at that depth by default."""
+    wal = inspect.signature(AuditWriter).parameters["max_wal_bytes"].default
+    pace = inspect.signature(AuditLane).parameters["pause_depth"].default
+    assert pace == lj.DRAIN_PAUSE_DEPTH and pace * lj.MAX_FRAME_BYTES <= wal // 4
+
+
+class Broken(lj.LaneFiles):
+    """A disk whose marker writes fail (`OSError`) once `broken` is set."""
+
+    broken = False
+
+    def mark(self, body: bytes) -> None:
+        if self.broken:
+            raise OSError("the disk refuses")
+        super().mark(body)
+
+
+async def test_lane_drain_that_dies_after_a_failed_write_logs_one_stop(tmp_path: Path) -> None:
+    """Failures while running: a failed marker write stops the lane and ends the drain, whose
+    death adds its own line and no second stop."""
+    files, repo = Broken(tmp_path / "lane"), FakeAuditRepository()
+    writer = await sink(tmp_path, repo, AuditWriter)
+    lane = AuditLane(lj.LaneJournal(files, KEYS), writer, **FAST)
+    await lane.start()
+    await drained(lane)
+    files.broken = True
+    with capture_logs() as logs:
+        await lane.append(logout(writer, 1))
+        await until(lambda: any(e["event"] == "audit lane drain died" for e in logs))
+    await lane.close()
+    await stopped(writer)
+    stops = [e for e in logs if e["event"] == "audit lane stopped until a restart"]
+
+    assert lane.journal.refusal == "stopped" and [e["error"] for e in stops] == ["OSError"]
+
+
+async def test_lane_start_cancelled_during_a_boot_row_stops_the_lane(tmp_path: Path) -> None:
+    """A `start()` cancelled while its boot row is being written stops the lane, like a refused
+    boot row: the frame lands (#2250), but every later append is refused and no drain runs."""
+    files = Parked(tmp_path / "lane")
+    writer = await sink(tmp_path, FakeAuditRepository(), AuditWriter)
+    lane, files.park = AuditLane(lj.LaneJournal(files, KEYS), writer, **FAST), True
+    starting = asyncio.create_task(lane.start())
+    assert await asyncio.to_thread(files.parked.wait, WAIT_S), "the write never ran"
+    starting.cancel()
+    files.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    with pytest.raises(lj.LaneRefused) as refused:
+        await lane.append(logout(writer, 1))
+    await lane.close()
+    await stopped(writer)
+
+    assert refused.value.reason == "stopped" and lane.journal.head[0] == 1
