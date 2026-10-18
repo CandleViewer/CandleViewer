@@ -7,6 +7,7 @@ outputs synthesised in-test (no network, no real scanner invocation).
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -1474,6 +1475,56 @@ def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> 
     hint = "re-key each entry to its code's line, and re-triage it if that code changed"
     assert not stale, f"{hint}: {'; '.join(stale)}"
     assert keys == set(_CODEQL_LINE_PINS)  # every pin names a live entry
+
+
+_LOGIN_SERVICE = _ROOT / "services/api/candleviewer/auth/login_service.py"
+_MFA_SERVICE = _ROOT / "services/api/candleviewer/auth/mfa_service.py"
+
+
+def _calls_of(tree: ast.Module, func: str) -> list[str]:
+    """Every call of the module-level function `func` in `tree`, unparsed."""
+    return [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == func
+    ]
+
+
+def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:
+    """The weak-hashing entries (login_service.py:60, mfa_service.py:68) are false positives
+    only while the hashed value is the MFA challenge token and that token is 256 random bits.
+    A result is keyed to its hashing line, so a new hashed value or token source would stay
+    accepted there: pin both, so such a change fails here and the entries are re-triaged."""
+    login = ast.parse(_LOGIN_SERVICE.read_text(encoding="utf-8"))
+    factory = [
+        ast.unparse(default)
+        for node in ast.walk(login)
+        if isinstance(node, ast.FunctionDef)
+        for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+        if arg.arg == "mfa_token_factory" and default is not None
+    ]
+    assert factory == ["lambda: secrets.token_urlsafe(32)"]  # 32 bytes: 256 random bits
+    stores = [
+        node
+        for node in ast.walk(login)
+        if isinstance(node, ast.Name) and node.id == "mfa_token" and isinstance(node.ctx, ast.Store)
+    ]
+    minted = [
+        ast.unparse(node.value)
+        for node in ast.walk(login)
+        if isinstance(node, ast.Assign) and any(t in stores for t in node.targets)
+    ]
+    assert len(stores) == 1 and minted == ["self._mfa_token_factory()"]
+    assert _calls_of(login, "_hash_mfa_token") == ["_hash_mfa_token(mfa_token)"]
+    mfa = ast.parse(_MFA_SERVICE.read_text(encoding="utf-8"))
+    assert _calls_of(mfa, "_hash_token") == ["_hash_token(mfa_token)"]  # the presented token
+    # Production keeps the default source: no other module names (so overrides) the factory.
+    overrides = [
+        str(p.relative_to(_ROOT))
+        for p in sorted((_ROOT / "services/api/candleviewer").rglob("*.py"))
+        if p != _LOGIN_SERVICE and "mfa_token_factory" in p.read_text(encoding="utf-8")
+    ]
+    assert not overrides, f"re-triage the weak-hashing entries: {overrides}"
 
 
 def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:
