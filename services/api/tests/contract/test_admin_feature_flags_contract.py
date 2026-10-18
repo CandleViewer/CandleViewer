@@ -11,6 +11,7 @@ import pytest
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.feature_flags import _REFUSED
 from candleviewer.audit.actions import AUDIT_ACTIONS
 
 _SPEC = load_openapi_spec()
@@ -103,6 +104,13 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears them. "
         "An `overrides[].user_id` that names no user is `422 validation_failed` (rule "
         "`unknown_user`).",
+        "`reason` and every other string field of the request (`evidence_url`, and `value` and an "
+        "override's `value` on a `variant` flag) refuse control, zero-width and bidirectional "
+        "formatting characters and lone surrogates, so that a recorded text cannot render as "
+        r"other text: U+0000 to U+001F (`\t`, `\n` and `\r` included, so a multi-line `reason` is "
+        "refused), U+007F, U+200B to U+200F (ZWNJ and ZWJ included, so an emoji ZWJ sequence is "
+        "refused), U+202A to U+202E, U+2066 to U+2069 and U+D800 to U+DFFF. The call fails `422 "
+        "validation_failed` (rule `invalid_character`) and nothing is written.",
         "Decision order: authentication; RBAC and scope, before any validation that needs a "
         "lookup, so a caller without `flags:write` learns nothing from a `422`; request "
         "validation; then, under the row lock, the step-up gate, the precondition and the write.",
@@ -286,6 +294,19 @@ _ROWS = [(doc, row) for doc, rows in _PINNED.items() for row in rows]
 @pytest.mark.parametrize(("doc", "sentence"), _ROWS, ids=[doc for doc, _ in _ROWS])
 def test_every_decision_sentence_is_pinned(doc: str, sentence: str) -> None:
     assert sentence in _TEXT[doc]
+
+
+def test_put_names_exactly_the_code_points_the_route_refuses() -> None:
+    """Widening or narrowing `feature_flags._REFUSED` (#3172 item 5) fails here until the
+    contract's `invalid_character` row says so too (C-6.1)."""
+    [row] = [r for r in _PINNED["put"] if "`invalid_character`" in r]
+    named = {
+        chr(code)
+        for first, last in re.findall(r"U\+([0-9A-F]{4})(?: to U\+([0-9A-F]{4}))?", row)
+        for code in range(int(first, 16), int(last or first, 16) + 1)
+    }
+    every_code_point = "".join(map(chr, range(0x110000)))
+    assert named == set(_REFUSED.findall(every_code_point))
 
 
 def test_put_answers_step_up_classes_conflict_and_additive_request() -> None:

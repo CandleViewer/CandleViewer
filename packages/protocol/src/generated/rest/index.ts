@@ -594,6 +594,13 @@ export interface paths {
      *     - An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears
      *       them. An `overrides[].user_id` that names no user is `422 validation_failed` (rule
      *       `unknown_user`).
+     *     - `reason` and every other string field of the request (`evidence_url`, and `value` and an
+     *       override's `value` on a `variant` flag) refuse control, zero-width and bidirectional
+     *       formatting characters and lone surrogates, so that a recorded text cannot render as
+     *       other text: U+0000 to U+001F (`\t`, `\n` and `\r` included, so a multi-line `reason` is
+     *       refused), U+007F, U+200B to U+200F (ZWNJ and ZWJ included, so an emoji ZWJ sequence is
+     *       refused), U+202A to U+202E, U+2066 to U+2069 and U+D800 to U+DFFF. The call fails `422
+     *       validation_failed` (rule `invalid_character`) and nothing is written.
      *     - Decision order: authentication; RBAC and scope, before any validation that needs a
      *       lookup, so a caller without `flags:write` learns nothing from a `422`; request
      *       validation; then, under the row lock, the step-up gate, the precondition and the write.
