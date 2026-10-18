@@ -129,8 +129,9 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   reads as on a PR, but the filters compare the group with `main`, so a group queued behind others
   can run more lanes than its PR did; `secret-scan` scans the group's own commit. A queue run is
   never cancelled; a red one drops its PR from the queue: fix and push, and the orchestrator
-  enqueues it again. The workflows that run on `pull_request` only do not run in the queue:
-  protection requires `ci-required` alone.
+  enqueues it again. The workflows that run on `pull_request` only do not run in the queue, so
+  protection must require `ci-required` alone: a required check that never reports on a merge
+  group stalls the queue. Do not apply `.github/branch-protection.json` until #3103 reconciles it.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
