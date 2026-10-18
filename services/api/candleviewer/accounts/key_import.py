@@ -14,8 +14,8 @@ C-3.2, C-3.4); `key_import_wiring` binds its ports. For the acting Owner (SR-E27
 3. `api_key.import` names the Owner and their role, the outcome and the rule codes, never key
    material (decision 12). It is written ahead: a pass before M2 stores the key, every other
    outcome (an unexpected error or a cancellation too) before it leaves; after a pass's record,
-   whatever fails gets a closing `failure` record. A record that cannot be written refuses the
-   import (`audit_unavailable`, C-2.9).
+   whatever fails gets a closing `failure` record naming the same key. A record that cannot be
+   written refuses the import (`audit_unavailable`, C-2.9).
 4. After the store M2 runs the activation: the verified columns, then the promotion from `pending`
    to `active`, `transition_key_status`'s one production caller (SR-E27-01, AC-34). If it fails, M2
    destroys the key (audited, revoked): nothing usable stays and its label is free, so the import
@@ -87,10 +87,11 @@ class KeyImportFailed(AccountsError):
     def __init__(
         self, code: str, detail: str, *, result: VerificationResult | None = None,
         errors: tuple[tuple[str, str, str], ...] = (), ret_code: int | None = None,
+        transient: bool = False,  # a refusal that clears by itself: the route never replays it
     ) -> None:  # fmt: skip
         super().__init__(code)
         self.code, self.detail, self.result = code, detail, result
-        self.errors, self.ret_code = errors, ret_code
+        self.errors, self.ret_code, self.transient = errors, ret_code, transient
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +179,7 @@ class KeyImport:
         """The imported key, or the refusal (`KeyImportFailed`, `AccountNotFoundError`,
         `AccountScopeDeniedError`, `AccountConflictError`), recorded before it is raised; any
         other error or a cancellation is recorded too and goes on as it is."""
-        passed: list[UUID] = []  # the key id of a pass's record, once it is written
+        passed: dict[str, object] = {}  # the key id of a pass's record, once it is written
         try:
             return await self._run(request, actor, passed)
         except BaseException as exc:
@@ -191,15 +192,15 @@ class KeyImport:
                 after = {"code": code, "error": type(exc).__name__}
             reason = code if result is None else result.failures[0].rule.value
             outcome = "denied" if code in _DENIED and not passed else "failure"
-            try:
-                await self._record(actor, request.account_id, outcome, reason, after)
+            try:  # a closing record names the key the pass's record named
+                await self._record(actor, request.account_id, outcome, reason, after | passed)
             except KeyImportFailed:
                 if isinstance(exc, AccountsError):
                     raise  # a refusal whose record is lost is `audit_unavailable`
             raise
 
     async def _run(
-        self, request: KeyImportRequest, actor: Importer, passed: list[UUID]
+        self, request: KeyImportRequest, actor: Importer, passed: dict[str, object]
     ) -> KeyImported:
         scope = OwnerScope(actor.user_id)
         account = await self._io(self._accounts.get_account(scope, request.account_id))
@@ -208,7 +209,7 @@ class KeyImport:
         if request.expected_uid not in (None, account.exchange_uid):
             raise KeyImportFailed(INVALID, "expected_uid is not the account's UID.", errors=(_UID,))
         if account.id in self._busy:
-            raise KeyImportFailed(CONFLICT, "An import for this account is in progress.")
+            raise KeyImportFailed(CONFLICT, "The account has an import running.", transient=True)
         self._busy.add(account.id)
         try:
             label = request.label or account.label
@@ -223,7 +224,7 @@ class KeyImport:
 
     async def _import(
         self, scope: OwnerScope, account: ExchangeAccount, label: str, request: KeyImportRequest,
-        actor: Importer, passed: list[UUID],
+        actor: Importer, passed: dict[str, object],
     ) -> KeyImported:  # fmt: skip
         now, seen, done = self._clock(), list[VerificationResult](), list[KeyImported]()
 
@@ -237,7 +238,7 @@ class KeyImport:
                 return None
             after = {**_codes(result), "key_id": str(key_id)}
             await self._record(actor, account.id, "success", None, after)  # ahead of the store
-            passed.append(key_id)
+            passed["key_id"] = str(key_id)
             return _facts(result, now)
 
         async def activate(stored: StoredKey) -> None:  # M2 destroys the key if this raises

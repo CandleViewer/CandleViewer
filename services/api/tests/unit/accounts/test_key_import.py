@@ -55,9 +55,9 @@ def account_row(env: str = "demo") -> ExchangeAccountRow:
 
 
 def key_row(key_id: UUID, status: str, label: str = "other", read_only: bool = False) -> ApiKeyRow:
-    snapshot = {"fetched_at": NOW.isoformat(), "uid": "1000001", "permissions": {}}
+    snap: dict[str, object] = {"fetched_at": NOW.isoformat(), "uid": "1000001", "permissions": {}}
     return ApiKeyRow(
-        key_id, ACCT, label, "A1b2", 1, snapshot, NOW, not read_only, False, False, read_only,
+        key_id, ACCT, label, "A1b2", 1, snap, NOW, not read_only, False, False, read_only,
         status, None, None, None, NOW, None,
     )  # fmt: skip
 
@@ -179,7 +179,7 @@ async def test_a_compliant_key_is_recorded_stored_verified_and_promoted_in_that_
     assert (imported.key.status, imported.verification.passed, imported.at) == ("active", True, NOW)
     verified = w.events[-2][2]
     assert (verified.can_trade, verified.ip_whitelist, verified.at) == (True, ("203.0.113.7",), NOW)
-    assert w.stored == verified.snapshot and w.stored["uta"] == 1  # the snapshot M2 stored
+    assert w.stored == verified.snapshot and verified.snapshot["uta"] == 1  # what M2 stored
     assert w.audit() == [{
         "action": "api_key.import", "actor_label": "user:owner", "actor_user_id": OWNER,
         "actor_ip": "198.51.100.4", "object_kind": "exchange_account", "object_id": str(ACCT),
@@ -280,18 +280,23 @@ async def test_a_second_import_for_the_account_while_one_runs_is_a_conflict() ->
     with pytest.raises(KeyImportFailed) as refused:
         await w.run(label="two")
     w.gate.set()
-    assert refused.value.code == "conflict" and (await first).key.status == "active"
+    assert (refused.value.code, refused.value.transient) == ("conflict", True)  # it clears itself
+    assert (await first).key.status == "active"
     w.keys.clear()  # the first key revoked
     assert await w.run(label="three") is not None  # the account is free again
 
 
-async def test_a_pass_whose_record_cannot_be_written_is_never_stored() -> None:
+@pytest.mark.parametrize(("state", "seen"), [
+    ({}, ["list", "hold", "key_info", "probe"]),  # a pass: never stored
+    ({"info": facts(permissions=WITHDRAW)}, ["list", "hold", "key_info"]),  # a 422 refusal
+    ({"account": None}, []),  # a 404 refusal
+], ids=["pass", "withdraw", "not_found"])  # fmt: skip
+async def test_an_import_whose_record_is_lost_is_audit_unavailable(state: Any, seen: Any) -> None:
     w = World()
-    w.audit_down = True
+    vars(w).update(state, audit_down=True)
     with pytest.raises(KeyImportFailed) as failed:
         await w.run()
-    assert failed.value.code == "audit_unavailable"
-    assert w.stored is None and w.kinds() == ["list", "hold", "key_info", "probe"]
+    assert (failed.value.code, w.stored, w.kinds()) == ("audit_unavailable", None, seen)
 
 
 @pytest.mark.parametrize(
@@ -313,7 +318,8 @@ async def test_a_failed_activation_is_undone_and_recorded_so_a_retry_succeeds(
     assert [k for k in w.kinds() if isinstance(k, tuple)] == [
         ("audit", "success"), ("audit", "failure"),  # after the pass, never `denied`
     ]  # fmt: skip
-    assert (w.audit()[1]["after_state"], w.kinds()[-2], w.keys) == ({"code": answer}, "destroy", [])
+    closing = {"code": answer, "key_id": str(KEY)}  # the key the pass's record named
+    assert (w.audit()[1]["after_state"], w.kinds()[-2], w.keys) == (closing, "destroy", [])
     w.written, w.transition_error = True, None
     assert (await w.run()).key.status == "active"  # the label is free again
 
@@ -358,7 +364,8 @@ async def test_any_error_after_the_pass_gets_a_closing_failure_record_and_goes_o
         await w.run()
     code = "cancelled" if isinstance(error, asyncio.CancelledError) else "error"
     assert (raised.value, w.stored, w.kinds()[-1]) == (error, None, ("audit", "failure"))
-    assert w.audit()[1]["after_state"] == {"code": code, "error": type(error).__name__}
+    closing = {"code": code, "error": type(error).__name__, "key_id": str(KEY)}
+    assert w.audit()[1]["after_state"] == closing
 
 
 async def test_an_unexpected_error_or_a_cancellation_before_the_pass_is_recorded_too() -> None:
