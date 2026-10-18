@@ -122,8 +122,10 @@ export interface HostCounters {
   readonly queuedFrames: number;
   /** Consumers whose queue overflowed in the worker, and were voided. */
   readonly overflows: number;
-  /** Messages from a tab that did not pass `parseClientMessage`. */
+  /** Messages from a tab the worker refused: malformed, or not served (a name taken or unknown, past a limit). */
   readonly rejectedMessages: number;
+  /** Kinds of `system` update past the few the host keeps for a tab that joins late (every tab still hears them). */
+  readonly droppedSystemKinds: number;
 }
 /** E04-S02's diagnostics: in memory, never exported (D8). */
 export interface WsDiagnostics {

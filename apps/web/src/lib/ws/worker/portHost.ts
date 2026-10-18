@@ -10,6 +10,7 @@
 import type { PaneVisibility, TokenResult, TokenSource, TopicFrame } from "../api";
 import { TOKEN_WAIT_MS, type SocketFactory } from "../core/connection";
 import { createWsEngine, type EngineSink, type WsEngine } from "../core/engine";
+import { RESYNC_WINDOW_MS } from "../core/resyncGuard";
 import { topicKey } from "../core/sequencer";
 import type { StreamHandle } from "../core/subscriptions";
 import { platformTimers, type Timers } from "../policy/timers";
@@ -69,6 +70,9 @@ export const FLUSH_MS = 8;
 export const DIAG_INTERVAL_MS = 1_000;
 export const MAX_TABS = 64;
 export const MAX_CONSUMERS_PER_TAB = 512;
+export const MAX_PANES_PER_TAB = 64;
+/** How often a tab may void one consumer in the window the gateway counts snapshots in: each costs one of the five it grants a topic, and a gap needs one too. */
+export const MAX_RESYNCS_PER_CONSUMER = 3;
 /** The latest update of each `system` kind is kept for a tab that joins late; a server that invents kinds gets no more room. */
 export const MAX_SYSTEM_KINDS = 16;
 
@@ -125,6 +129,8 @@ interface Consumer {
   /** Voided because it could not keep up: reads `resyncing` until its snapshot. */
   voided: boolean;
   told: Told | undefined;
+  /** When its tab voided it, within the last window. */
+  resyncs: number[];
 }
 
 const sameTold = (a: Told | undefined, b: Told): boolean =>
@@ -140,9 +146,15 @@ export function createPortHost(options: PortHostOptions): PortHost {
   const systemKinds = new Map<string, SystemUpdate>();
   const tokenCalls = new Map<
     number,
-    { readonly session: Session; resolve(result: TokenResult): void; readonly timer: unknown }
+    {
+      readonly session: Session;
+      resolve(result: TokenResult): void;
+      readonly timer: unknown;
+      /** It carried the order to hand out another token (the server refused the last). */
+      readonly invalidate: boolean;
+    }
   >();
-  const counters = { overflows: 0, rejectedMessages: 0 };
+  const counters = { overflows: 0, rejectedMessages: 0, droppedSystemKinds: 0 };
   let engine: WsEngine | undefined;
   let engineUrl: string | undefined;
   let state: WsState = INITIAL_WS_STATE;
@@ -184,13 +196,13 @@ export function createPortHost(options: PortHostOptions): PortHost {
         tokenCalled += 1;
         const req = tokenCalled;
         const session = asked;
-        const timer = timers.setTimeout(() => {
-          session.silent = true;
-          settle(req, { kind: "unavailable" });
-        }, TOKEN_WAIT_MS); // the connection has stopped waiting by then, and must be able to ask again
-        tokenCalls.set(req, { session, resolve, timer });
         const invalidate = invalidated;
         invalidated = false;
+        const timer = timers.setTimeout(() => {
+          session.silent = true;
+          abandon(req);
+        }, TOKEN_WAIT_MS); // the connection has stopped waiting by then, and must be able to ask again
+        tokenCalls.set(req, { session, resolve, timer, invalidate });
         post(session, { t: "tokenRequest", req, invalidate });
       }),
     invalidate: () => {
@@ -203,6 +215,11 @@ export function createPortHost(options: PortHostOptions): PortHost {
     tokenCalls.delete(req);
     timers.clearTimeout(call.timer);
     call.resolve(result);
+  }
+  /** The tab asked went silent or left: the call is given up, and the order it carried is the next call's (another tab's). */
+  function abandon(req: number): void {
+    if (tokenCalls.get(req)?.invalidate === true) invalidated = true;
+    settle(req, { kind: "unavailable" });
   }
 
   const sink: EngineSink = {
@@ -223,6 +240,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
         const { kind } = event.update;
         if (systemKinds.has(kind) || systemKinds.size < MAX_SYSTEM_KINDS)
           systemKinds.set(kind, event.update);
+        else counters.droppedSystemKinds += 1; // every tab hears it now, a tab that joins late does not
         broadcast({ t: "system", update: event.update });
       }
       scheduleFlush(); // the counters moved
@@ -240,20 +258,32 @@ export function createPortHost(options: PortHostOptions): PortHost {
     const takers = [...(byStream.get(topicKey(ch, rs)) ?? [])].filter(
       (consumer) => frame.kind === "snap" || !consumer.gated, // a newcomer holds no state a delta or a reset could change
     );
-    takers.forEach((consumer, i) => {
+    const voided: Consumer[] = [];
+    for (const [i, consumer] of takers.entries()) {
       if (frame.kind === "snap") consumer.gated = consumer.voided = false;
       const own = i === takers.length - 1 ? frame : copyFrame(frame);
-      if (consumer.queue.push(own) === "overflow") overflow(consumer);
-    });
+      if (consumer.queue.push(own) === "overflow") {
+        overflow(consumer);
+        voided.push(consumer);
+      }
+    }
+    // One snapshot is asked for, however many consumers could not keep up, and none while another is owed one (7.5: five a minute)
+    if (voided.length > 0 && !awaiting(ch, rs, voided)) engine?.rebaseline(ch, rs);
     if (takers.length > 0) scheduleFlush();
   }
 
-  /** It cannot keep up (C-2.18): what it held is gone, it is told so, and it waits for a snapshot, which the engine is asked for. */
+  /** Whether a consumer of the stream but `except` is voided and waits for a snapshot: one is asked for (or deferred by the resync guard), and it is every consumer's. */
+  function awaiting(ch: string, rs: string | undefined, except: readonly Consumer[] = []): boolean {
+    for (const consumer of byStream.get(topicKey(ch, rs)) ?? [])
+      if (consumer.voided && !except.includes(consumer)) return true;
+    return false;
+  }
+
+  /** It cannot keep up (C-2.18): what it held is gone, it is told so, and it waits for a snapshot. */
   function overflow(consumer: Consumer): void {
     counters.overflows += 1;
     consumer.gated = consumer.voided = true;
     consumer.queue.push({ kind: "reset", reason: "overflow" });
-    engine?.rebaseline(consumer.ch, consumer.rs);
   }
 
   function toldOf(consumer: Consumer): Told {
@@ -329,6 +359,19 @@ export function createPortHost(options: PortHostOptions): PortHost {
     });
   }
 
+  /** A tab describes at most `MAX_PANES_PER_TAB` panes (C-2.18), and any of them again as often as it likes. */
+  const hasRoomForPane = (session: Session, id: string): boolean =>
+    session.panes.has(id) || session.panes.size < MAX_PANES_PER_TAB;
+
+  /** Whether the tab may void this consumer now: `MAX_RESYNCS_PER_CONSUMER` in the window the gateway counts snapshots in. */
+  function mayVoid(consumer: Consumer): boolean {
+    const at = timers.now();
+    consumer.resyncs = consumer.resyncs.filter((stamp) => at - stamp < RESYNC_WINDOW_MS);
+    if (consumer.resyncs.length >= MAX_RESYNCS_PER_CONSUMER) return false;
+    consumer.resyncs.push(at);
+    return true;
+  }
+
   function drop(consumer: Consumer): void {
     consumer.handle.release();
     consumer.session.consumers.delete(consumer.id);
@@ -343,8 +386,8 @@ export function createPortHost(options: PortHostOptions): PortHost {
     session.joined = false;
     for (const consumer of [...session.consumers.values()]) drop(consumer);
     for (const id of session.panes.keys()) engine?.removePane(scoped(session, id));
-    for (const [req, call] of tokenCalls)
-      if (call.session === session) settle(req, { kind: "unavailable" });
+    session.panes.clear(); // a tab that connects again describes its panes afresh
+    for (const [req, call] of tokenCalls) if (call.session === session) abandon(req);
     if (focusOwner === session) {
       focusOwner = undefined;
       engine?.focusPane(null);
@@ -414,6 +457,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
       case "consume": {
         if (session.consumers.has(message.id) || session.consumers.size >= MAX_CONSUMERS_PER_TAB)
           return false;
+        if (!hasRoomForPane(session, message.pane)) return false;
         if (!session.panes.has(message.pane)) {
           session.panes.set(message.pane, { visibility: "visible" }); // a pane that was never described is in view
           applyPane(session, message.pane);
@@ -437,6 +481,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
           gated: true,
           voided: false,
           told: undefined,
+          resyncs: [],
         };
         session.consumers.set(message.id, consumer);
         const key = topicKey(message.ch, message.rs);
@@ -448,16 +493,20 @@ export function createPortHost(options: PortHostOptions): PortHost {
       case "resync": {
         const consumer = session.consumers.get(message.id);
         if (consumer === undefined) return false;
-        if (message.t === "release") drop(consumer);
-        else {
-          consumer.gated = consumer.voided = true; // the tab voided it: it waits for a snapshot like a newcomer
-          consumer.queue.clear();
-          engine.rebaseline(consumer.ch, consumer.rs);
-          scheduleFlush();
+        if (message.t === "release") {
+          drop(consumer);
+          return true;
         }
+        if (!mayVoid(consumer)) return false; // refused and counted: a tab that voids it over and over is not served
+        const owed = awaiting(consumer.ch, consumer.rs); // before this one is voided too
+        consumer.gated = consumer.voided = true; // the tab voided it: it waits for a snapshot like a newcomer
+        consumer.queue.clear();
+        if (!owed) engine.rebaseline(consumer.ch, consumer.rs);
+        scheduleFlush();
         return true;
       }
       case "pane": {
+        if (!hasRoomForPane(session, message.id)) return false;
         const size =
           message.cssWidth === undefined || message.dpr === undefined
             ? undefined

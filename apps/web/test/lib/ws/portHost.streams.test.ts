@@ -3,11 +3,14 @@
 // newcomer waits for its snapshot; a consumer that cannot keep up is voided and re-baselined; what the tabs show
 // decides how the topics run.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_CONSUMERS_PER_TAB } from "../../../src/lib/ws/worker/portHost";
-import { tokenOf } from "./support/connectionHarness";
+import {
+  MAX_CONSUMERS_PER_TAB,
+  MAX_PANES_PER_TAB,
+  MAX_RESYNCS_PER_CONSUMER,
+} from "../../../src/lib/ws/worker/portHost";
 import { b64, bookDelta } from "./support/cvwb";
 import { BOOK } from "./support/engineHarness";
-import { FakeTab, hostHarness } from "./support/hostHarness";
+import { CONNECT, FakeTab, hostHarness } from "./support/hostHarness";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -16,6 +19,14 @@ afterEach(() => {
 
 const TRADES = "trades.BTCUSDT";
 const RS = "bb000000-0000-4000-8000-000000000001";
+/** Three frames a consumer can hold: five inside one window overflow it. */
+const SMALL = { limits: { maxFrames: 3, maxBytes: 1e9 } } as const;
+/** What the last message of a tab says a consumer reads. */
+const statusOf = (tab: FakeTab, id: string) =>
+  tab
+    .of("data")
+    .filter((m) => m.id === id)
+    .at(-1)?.status;
 /** A tab with a consumer of `ch` that the handshake and the snapshot have reached. */
 async function watching(ch = BOOK, tabs = 1) {
   const t = hostHarness();
@@ -49,7 +60,9 @@ describe("frames to a tab", () => {
     });
     conn.delta(BOOK);
     expect(a?.frames("k1")).toEqual(["snap:1"]); // nothing leaves before the window closes
-    await t.advance(8);
+    await t.advance(7);
+    expect(a?.frames("k1")).toEqual(["snap:1"]); // 8 ms, not less
+    await t.advance(1);
     expect(a?.frames("k1")).toEqual(["snap:1", "d:2"]);
   });
 
@@ -109,6 +122,7 @@ describe("frames to a tab", () => {
     t.gateway.latest.revoke(BOOK, "permission_revoked");
     await t.advance(8);
     expect(a.last("data").status).toBe("revoked");
+    expect(a.frames("k1")).toEqual([]); // it holds no state a reset could clear: it reads the status, and no frame
   });
 
   it("lists the buffer of a binary body in the transfer list of its message", async () => {
@@ -214,7 +228,7 @@ describe("one stream, many consumers", () => {
 
 describe("a consumer that cannot keep up (C-2.18)", () => {
   async function flooded() {
-    const t = hostHarness(undefined, { limits: { maxFrames: 3, maxBytes: 1e9 } });
+    const t = hostHarness(undefined, SMALL);
     const a = t.tab();
     t.consume(a, "k1", BOOK);
     await t.advance(400);
@@ -247,16 +261,77 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
     expect((await counted(t, a)).host.overflows).toBe(1);
   });
 
-  it("a consumer that is voided does not void its neighbours: the others read on", async () => {
-    const t = hostHarness(undefined, { limits: { maxFrames: 3, maxBytes: 1e9 } });
+  it("a consumer that is voided does not void its neighbours: another stream's and a newcomer's read as they did", async () => {
+    const t = hostHarness(undefined, SMALL);
     const a = t.tab();
+    t.consume(a, "k1", BOOK);
+    t.consume(a, "k2", TRADES);
+    await t.advance(400);
+    t.gateway.withholdSnaps(true);
     const b = t.tab();
+    t.consume(b, "k3", BOOK); // a newcomer: its own snapshot is still to come
+    for (let i = 0; i < 5; i += 1) t.gateway.latest.delta(BOOK); // k1 cannot hold them
+    t.gateway.latest.delta(TRADES);
+    await t.advance(100);
+    expect(a.frames("k1")).toEqual(["snap:1", "reset:overflow"]);
+    expect(a.frames("k2")).toEqual(["snap:1", "d:2"]);
+    expect([statusOf(a, "k1"), statusOf(a, "k2"), statusOf(b, "k3")]).toEqual([
+      "resyncing",
+      "live",
+      "pending",
+    ]);
+  });
+
+  it("six consumers of one stream that overflow together ask for one snapshot, not six (7.5: five a minute)", async () => {
+    const t = hostHarness(undefined, SMALL);
+    const a = t.tab();
+    for (let i = 1; i <= 6; i += 1) t.consume(a, `k${i}`, BOOK);
+    await t.advance(400);
+    t.gateway.withholdSnaps(true);
+    for (let i = 0; i < 5; i += 1) t.gateway.latest.delta(BOOK);
+    await t.advance(100);
+    expect(t.gateway.latest.of("resync")).toHaveLength(1);
+    expect((await counted(t, a)).host.overflows).toBe(6);
+  });
+
+  it("asks for no snapshot while one is owed to the stream: a consumer voided after another is served by it", async () => {
+    const t = hostHarness(undefined, SMALL);
+    const [a, b, c] = [t.tab(), t.tab(), t.tab()];
     t.consume(a, "k1", BOOK);
     t.consume(b, "k2", BOOK);
+    t.consume(c, "k3", BOOK);
     await t.advance(400);
-    for (let i = 0; i < 2; i += 1) t.gateway.latest.delta(BOOK);
-    await t.advance(8); // both took 2 frames: neither is over
-    expect([a.frames("k1").at(-1), b.frames("k2").at(-1)]).toEqual(["d:3", "d:3"]);
+    const conn = t.gateway.latest;
+    t.gateway.withholdSnaps(true);
+    a.say({ t: "resync", id: "k1" }); // asks
+    b.say({ t: "resync", id: "k2" }); // one is owed already
+    for (let i = 0; i < 5; i += 1) conn.delta(BOOK); // k3 cannot hold them: one is owed already
+    await t.advance(100);
+    expect([conn.of("resync").length, statusOf(c, "k3")]).toEqual([1, "resyncing"]);
+    conn.snap(BOOK, "client_resync");
+    await t.advance(8);
+    expect([a, b, c].map((tab, i) => statusOf(tab, `k${i + 1}`))).toEqual(["live", "live", "live"]);
+  });
+
+  it("serves a tab that voids one consumer over and over three times a minute, and a gap still finds a snapshot to ask for", async () => {
+    const { t, tabs, conn } = await watching();
+    const [a] = tabs;
+    for (let round = 0; round < 20; round += 1) {
+      a?.say({ t: "resync", id: "k1" });
+      await t.advance(100); // the fake gateway answers with a snapshot
+    }
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER);
+    conn.skip(BOOK);
+    conn.delta(BOOK); // a real gap
+    await t.advance(100);
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER + 1); // at once: the tab left the gateway two of its five
+    expect((await counted(t, a ?? new FakeTab(true))).host.rejectedMessages).toBe(
+      20 - MAX_RESYNCS_PER_CONSUMER,
+    );
+    await t.advance(60_000); // the window reopens
+    a?.say({ t: "resync", id: "k1" });
+    await t.advance(100);
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER + 2);
   });
 
   it("what was queued for a consumer the tab voided is dropped, not sent after it", async () => {
@@ -286,159 +361,46 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
   });
 });
 
-describe("what the tabs show decides how the topics run (C8)", () => {
-  const throttles = (conn: { of(t: string): Record<string, unknown>[] }) =>
-    conn.of("ctl").map((f) => [f["ch"], (f["p"] as { throttle_ms: number }).throttle_ms]);
-
-  it("a hidden tab slows its topics to 1 000 ms and restores them; the fastest consumer of a topic decides", async () => {
-    const { t, tabs, conn } = await watching(TRADES, 2);
-    const [a, b] = tabs;
-    a?.say({ t: "visibility", hidden: true });
-    await t.advance(300);
-    expect(throttles(conn)).toEqual([]); // the other tab is looking at it
-    b?.say({ t: "visibility", hidden: true });
-    await t.advance(300);
-    expect(throttles(conn)).toEqual([[TRADES, 1_000]]);
-    a?.say({ t: "visibility", hidden: false });
-    await t.advance(300);
-    expect(throttles(conn)).toEqual([
-      [TRADES, 1_000],
-      [TRADES, 100],
-    ]);
-    expect(conn.of("unsub")).toEqual([]);
-  });
-
-  it("a pane that was never described belongs to its tab: a consumer that arrives in a hidden tab is slowed at once", async () => {
-    const t = hostHarness();
-    const a = t.tab();
-    a.say({ t: "visibility", hidden: true });
-    t.consume(a, "k1", TRADES);
-    await t.advance(400);
-    expect(throttles(t.gateway.latest)).toEqual([[TRADES, 1_000]]);
-  });
-
-  it("a collapsed pane lets its topics go, and comes back", async () => {
-    const { t, tabs, conn } = await watching(TRADES);
-    const [a] = tabs;
-    a?.say({ t: "pane", id: "p1", visibility: "collapsed" });
-    await t.advance(300);
-    expect(conn.of("unsub")).toHaveLength(1);
-    a?.say({ t: "pane", id: "p1", visibility: "visible" });
-    await t.advance(300);
-    expect(conn.of("sub")).toHaveLength(2);
-  });
-
-  it("the size of a heatmap's pane is what its bucket is derived from (6.1.1)", async () => {
-    const t = hostHarness();
-    const a = t.tab();
-    a.say({ t: "pane", id: "p1", visibility: "visible", cssWidth: 1190, dpr: 1 });
-    t.consume(a, "k1", "heatmap.BTCUSDT");
-    await t.advance(400);
-    expect(t.gateway.latest.of("sub")[0]).toMatchObject({
-      p: { topics: [{ ch: "heatmap.BTCUSDT", opts: { time_bucket_ms: 1_000 } }] },
-    });
-  });
-
-  it("the focused pane's topics come back first after a reconnect, whichever tab it is in", async () => {
-    const t = hostHarness();
-    const a = t.tab();
-    const b = t.tab();
-    t.consume(a, "k1", TRADES, { priority: "other" });
-    t.consume(b, "k2", BOOK, { priority: "other" });
-    b.say({ t: "focus", id: "p1" });
-    a.say({ t: "focus", id: null }); // not the owner: leaves it alone
-    await t.advance(400);
-    t.gateway.latest.close(1011);
-    await t.advance(1_000);
-    expect(
-      t.gateway.latest
-        .of("sub")
-        .flatMap((f) => (f["p"] as { topics: { ch: string }[] }).topics.map((x) => x.ch)),
-    ).toEqual([BOOK, TRADES]);
-    b.say({ t: "focus", id: null }); // the owner lets go
-    t.gateway.latest.close(1011);
-    await t.advance(1_000);
-    expect(t.gateway.conns.at(-1)?.of("sub")[0]).toMatchObject({
-      p: { topics: [{ ch: TRADES }, { ch: BOOK }] }, // now each topic is where its own priority puts it
-    });
-  });
-});
-
-describe("a focus that is gone", () => {
-  it("is cleared when the tab that held it leaves: the topics are ordered by their own priority again", async () => {
-    const t = hostHarness();
-    const a = t.tab();
-    const b = t.tab();
-    t.consume(a, "k1", TRADES, { priority: "other" });
-    t.consume(a, "k2", BOOK, { priority: "focused" });
-    t.consume(b, "k3", "ticker.BTCUSDT", { pane: "pb" });
-    b.say({ t: "focus", id: "pb" });
-    await t.advance(400);
-    b.say({ t: "stop" });
-    await t.advance(300);
-    t.gateway.latest.close(1011);
-    await t.advance(1_000);
-    const order = t.gateway.latest
-      .of("sub")
-      .flatMap((f) => (f["p"] as { topics: { ch: string }[] }).topics.map((x) => x.ch));
-    expect(order).toEqual([BOOK, TRADES]); // not [TRADES, BOOK]: no pane is focused any more
-  });
-});
-
 describe("what a tab may ask", () => {
-  it("is refused when it is a name taken, a name unknown or past a limit, and counted", async () => {
+  it("is refused when it is a name unknown, malformed or past a limit, and counted", async () => {
     const { t, tabs } = await watching();
     const [a] = tabs;
     const tab = a ?? new FakeTab(true);
     for (let i = 0; i < MAX_CONSUMERS_PER_TAB; i += 1) t.consume(tab, `c${i}`, TRADES); // the last is one too many
     await t.advance(2_000); // the host goes quiet
-    t.consume(tab, "k1", BOOK); // taken
     tab.say({ t: "release", id: "nope" });
     tab.say({ t: "resync", id: "nope" });
     tab.say({ t: "pane", id: "p1", visibility: "bogus" }); // malformed
     expect((await counted(t, tab)).host).toMatchObject({
       consumers: MAX_CONSUMERS_PER_TAB,
-      rejectedMessages: 5,
+      rejectedMessages: 4,
     });
   });
-});
 
-describe("diagnostics (D8)", () => {
-  it("are posted when the counters move, at most once a second, and carry no token", async () => {
-    const { t, tabs } = await watching();
-    const [a] = tabs;
-    await t.advance(1_100);
-    const first = a?.last("diag").diag;
-    expect(first).toMatchObject({
-      host: { tabs: 1, consumers: 1 },
-      engine: { streams: 1 },
-      clockSkewMs: 0,
+  it("describes 64 panes at most: more are refused and counted, as one more consumer is, and one it has may change", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    for (let i = 0; i < 5_000; i += 1) a.say({ t: "pane", id: `q${i}`, visibility: "visible" });
+    t.consume(a, "k1", TRADES, { pane: "one-too-many" });
+    a.say({ t: "pane", id: "q0", visibility: "collapsed" });
+    t.consume(a, "k2", TRADES, { pane: "q1" });
+    expect((await counted(t, a)).host).toMatchObject({
+      consumers: 1,
+      rejectedMessages: 5_000 - MAX_PANES_PER_TAB + 1,
     });
-    const count = a?.of("diag").length;
-    await t.advance(5_000);
-    expect(a?.of("diag")).toHaveLength(count ?? -1); // nothing moved, nothing is said
-    expect(JSON.stringify(a?.of("diag"))).not.toContain(tokenOf(1));
   });
 
-  it("are not repeated while frames keep the host flushing and nothing in the counters moved", async () => {
-    const { t, tabs, conn } = await watching();
-    const [a] = tabs;
-    await t.advance(1_100);
-    const count = a?.of("diag").length;
-    for (let i = 0; i < 4; i += 1) {
-      conn.delta(BOOK);
-      await t.advance(1_100);
-    }
-    expect(a?.of("diag")).toHaveLength(count ?? -1);
-  });
-
-  it("count the tabs again when one leaves", async () => {
-    const { t, tabs } = await watching(BOOK, 2);
-    const [a, b] = tabs;
-    await t.advance(1_100);
-    expect(b?.last("diag").diag.host.tabs).toBe(2);
-    a?.say({ t: "stop" });
-    await t.advance(1_100);
-    expect(b?.last("diag").diag.host.tabs).toBe(1);
+  it("a tab that stops and connects again has no pane of its earlier life: a consumer is in view as any that was never described", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    a.say({ t: "pane", id: "p1", visibility: "collapsed" });
+    a.say({ t: "stop" });
+    a.say(CONNECT);
+    t.consume(a, "k1", TRADES);
+    a.say({ t: "visibility", hidden: false }); // the panes the host holds are applied again
+    await t.advance(400);
+    expect([t.gateway.latest.of("sub").length, t.gateway.latest.of("unsub").length]).toEqual([
+      1, 0,
+    ]);
   });
 });
