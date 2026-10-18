@@ -761,11 +761,12 @@ previous entry.
 ## Credential hygiene and full-history sweep (E43-T06)
 
 - `python scripts/check_secrets_hygiene.py all` (CI `gitleaks` job, and every PR's `gates` job
-  `secret-scan` step, #3385): fixtures carry the `DUMMYKEY_`
-  prefix (SR-145), `.env` ignored and `.env.example` non-secret (SR-144), no `set -x`/env dumps in
-  workflows, in the repository shell scripts their `run:` steps invoke or in the scripts those run
-  (which forms count: `workflow_scripts` in the script; SR-146). `inventory <names.json>` and
-  `logs <paths>` back the secret-inventory (SR-140/141) and log/artefact scans.
+  `secret-scan` step, #3385): fixtures carry the `DUMMYKEY_` prefix (SR-145), `.env` ignored and
+  `.env.example` non-secret (SR-144), no command tracing (`set -x`, `set -v`, `shopt -so xtrace`,
+  `setopt xtrace`, `SHELLOPTS`, a `DEBUG` trap) or env dumps in workflows, in the repository shell
+  scripts their `run:` steps invoke or in the scripts those run (which forms count: `_SET_X` and
+  `workflow_scripts` in the script; SR-146). `inventory <names.json>` and `logs <paths>` back the
+  secret-inventory (SR-140/141) and log/artefact scans.
 - Full-history sweep (run by the owner/DevSecOps before the pen-test; gitleaks is not installed on
   agent hosts): `gitleaks detect --source . --log-opts="--all" --config .gitleaks.toml --redact -r sweep.json`
   then `gitleaks detect --no-git ...`; record ruleset version, result and per-hit disposition in

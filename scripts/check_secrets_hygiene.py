@@ -5,8 +5,9 @@ Subcommands (all offline, deterministic, exit 1 on violation):
 * ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
   and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
-* ``workflows`` - no ``set -x`` / environment dump in workflows or the repository shell scripts
-  their steps run, directly or through other scripts (``workflow_scripts``; SR-146)
+* ``workflows`` - no command tracing (``set -x``, ``set -v``, a ``DEBUG`` trap) / environment dump
+  in workflows or the repository shell scripts their steps run, directly or through other scripts
+  (``workflow_scripts``; SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
 
@@ -191,17 +192,112 @@ def check_dev_env(root: Path) -> list[str]:
 
 
 #: SR-146 tracing (#3294): the shell prints each command it runs with its values expanded. A
-#: command word follows no word character, ``.``, ``/`` or ``-`` (so not in ``reset``, ``mybash``,
-#: ``ssh``, ``zap.sh``, ``tools/sh`` or ``du -sh``), but may follow a quote or a bracket:
+#: command word follows no word character, ``.``, ``/``, ``-`` or ``:`` (so not in ``reset``,
+#: ``mybash``, ``ssh``, ``zap.sh``, ``tools/sh``, ``du -sh`` or a URL's last segment:
+#: ``wget -O- https://example.com/sh -x``), but may follow a quote or a bracket:
 #: ``bash -c "set -x; ..."``, ``eval 'set -x'``, ``(set -x)``. Quoted prose counts too.
-_WORD_START = r"(?<![\w./-])"
-#: The tracing option word: ``x`` in a ``-`` group (``-x``, ``-ex``, ``-Eeuxo``), ``-o xtrace``
-#: (``-eo xtrace``) or ``--xtrace``; ``+x`` and ``+o xtrace`` turn tracing off.
-_TRACE_WORD = r"-(?:[a-zA-Z]*(?:x|o\s+xtrace)|-xtrace)"
-#: The option words before it: ``--norc``, ``-o name``, ``-eO name``, ``-e``, ``+u``. Any other
-#: word ends them: ``set -- -x`` and ``set - -x`` (positional parameters), ``bash x.sh -x``. The
-#: lookahead ends them at the tracing word.
-_OPTION_WORDS = r"(?:(?!" + _TRACE_WORD + r")(?:--\w+|[-+][a-zA-Z]*[oO]\s+\w+|[-+][a-zA-Z]+)\s+)*"
+_WORD_START = r"(?<![\w./:-])"
+#: A word's quotes and escapes, which the shell takes off before a command reads it (#3400):
+#: ``set "-x"``, ``set -o 'xtrace'``, ``-"x"``, ``$'-x'``, ``-\x``, ``"bash" -x``, ``"$BASH" -x``.
+#: A quoted string closing on the line gives its text. A quote that does not stays, and starts a
+#: word: a ``run: |`` string may go on to the next line (``bash -c 'set "-x"; make``) or close one
+#: from the line before (``true'; set "-x"``). An escaped character gives itself; an empty ``''``,
+#: ``""``, ``$''`` or ``$""`` nothing before or after another character of its word (``-''x``,
+#: ``set'' -x``, ``bash$'' -x``), but itself as a whole word (``set "" -x`` sets ``$1``; ``''''``
+#: is one empty word). An escaped space stays: ``bash\ -x`` is one word. A name before a quote, a
+#: ``$`` and a quote, or an escape is braced, as in a double-quoted string (``_QUOTED_NAME``):
+#: ``$X''set``, ``$X$'set'`` and ``$X\bash`` read as ``${X}set`` and ``${X}bash``, a command after
+#: an expansion that may be empty, not as another name. A quoted string's words read as words, so
+#: quoted prose counts as before. One pass, each quote read to its end once (only the last one of
+#: a kind can fail to close): the rules then read the line in linear time.
+_QUOTING = re.compile(
+    r"\\(?P<esc>\S)|\$?'(?P<sq>[^']+)'|\$?\"(?P<dq>(?:[^\"\\]|\\.)+)\""
+    r"|\$?(?:''|\"\")(?=[^\s;&|()<>`])|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")"
+    r"|\$(?P<name>\w+)(?=\$?['\"]|\\)"
+)
+
+
+#: In a double-quoted string ``\\``, ``\"`` and ``\$`` give the character as its quotes come off (as
+#: a backslash before a backtick does, which no rule reads): a string an inner shell runs keeps
+#: the quotes and escapes that shell takes off (``sh -c "set \"-x\""``, ``sh -c "set \\-x"``).
+_QUOTED_ESCAPE = re.compile(r"\\([\\\"$])")
+#: A name in a double-quoted string, braced as its quotes come off so that it stays that name:
+#: ``"$X"bash`` reads as ``${X}bash`` (a shell after an expansion), not ``$Xbash`` (another name).
+_QUOTED_NAME = re.compile(r"\$(\w+)")
+
+
+def _unquote(m: re.Match[str]) -> str:
+    """A ``_QUOTING`` match as the shell reads it: its text, a braced name, or nothing."""
+    if m["dq"] is not None:
+        return _QUOTED_NAME.sub(r"${\1}", _QUOTED_ESCAPE.sub(r"\1", m["dq"]))
+    if m["name"] is not None:
+        return "${" + m["name"] + "}"
+    return m["esc"] or m["sq"] or ""
+
+
+def _unquoted(line: str) -> str:
+    """``line`` with its words' quotes and escapes taken off (``_QUOTING``)."""
+    return _QUOTING.sub(_unquote, line)
+
+
+def _option_name(name: str) -> str:
+    """Option ``name`` as zsh reads it, ending there (#3400): in any case and with ``_`` anywhere
+    (``-o XTRACE``, ``x_trace``: zshoptions(1)), ``-`` between its letters or after it
+    (``--x-trace``: zsh(1) INVOCATION reads it as ``_``). Not ``--xtrace-not`` or ``-o xtraced``,
+    which name no option. Bash takes the exact name only, so it refuses the other spellings."""
+    return r"(?i:_*" + "[-_]*".join(name) + r")(?![-_]*[a-zA-Z0-9])"
+
+
+_XTRACE = _option_name("xtrace")
+#: The options that echo commands: ``xtrace``, and ``verbose`` (#3400), which echoes each line as
+#: the shell reads it: an ``eval`` string with its values in it (bash 5.3: ``X=s; eval "echo $X"``
+#: prints ``echo s``), a step's script with its ``${{ secrets.* }}`` in it.
+_TRACING = r"(?:" + _XTRACE + r"|" + _option_name("verbose") + r")"
+#: zsh's inverted names: ``no`` before a name flips it (zshoptions(1)), so ``unsetopt noxtrace``
+#: and ``set +o noxtrace`` turn tracing on.
+_NO_TRACING = r"(?:" + _option_name("noxtrace") + r"|" + _option_name("noverbose") + r")"
+#: An expansion's default or alternate value (#3400), which the shell gives when the variable is
+#: unset (``${O:-x}``, ``${O-x}``, ``${O:=x}``) or set (``${DEBUG:+x}``): the option letters or
+#: word in it count. Not ``${O:?x}``, whose value is an error message.
+_IF_VALUE = r"\$\{\w+:?[-=+]"
+#: A letter of an option group, or an expansion giving letters: ``${NAME}`` (``set -e${X} -x``) or
+#: an ``_IF_VALUE`` (``set -e${CI:+u} -x``).
+_LETTER = r"(?:[a-zA-Z]|\$\{\w+\}|" + _IF_VALUE + r"[a-zA-Z]*\})"
+
+
+def _turning_on(sets: str, unsets: str) -> str:
+    """An option word turning tracing on, ``sets`` and ``unsets`` being the signs that set and
+    unset an option: ``x`` or ``v`` in a ``sets`` group (``-x``, ``-ex``, ``-Eeuvo``), also in an
+    ``_IF_VALUE`` (``-e${DEBUG:+x}``), ``-o xtrace`` (``-eo verbose``) or ``+o noxtrace``."""
+    setting = sets + _LETTER + r"*(?:(?:" + _IF_VALUE + r"[a-zA-Z]*)?[xv]|o\s+" + _TRACING + r")"
+    return setting + r"|" + unsets + _LETTER + r"*o\s+" + _NO_TRACING
+
+
+#: The tracing option word of ``set`` and a shell: ``_turning_on`` with ``-`` setting, or
+#: ``--xtrace``, ``--verbose``, also as an ``_IF_VALUE`` (``set ${DEBUG:+-x}``); ``+x`` and ``+o
+#: xtrace`` turn tracing off.
+_TRACE_WORD = (
+    r"(?:(?:" + _IF_VALUE + r")?(?:" + _turning_on("-", r"\+") + r"|--" + _TRACING + r"))"
+)
+#: A character of a word in the same command: not a space, a command separator, a bracket or a
+#: backtick.
+_IN_WORD = r"[^\s;&|()`]"
+#: A long option taking the next word (#3400): bash's ``--rcfile`` and ``--init-file`` (``bash
+#: --rcfile x.rc -x``; ``bash --rcfile -x ci.sh`` reads an rcfile named ``-x``), zsh's
+#: ``--emulate`` (zsh(1) INVOCATION: "followed (in a separate word) by an emulation mode").
+_LONG_ARG = r"--(?:rcfile|init-file|emulate)\s+" + _IN_WORD + r"+"
+#: A redirection, which the shell takes out of the words it passes (#3400): ``2>&1``, ``>log``,
+#: ``> log``, ``>>log``, ``>|log``, ``&>log``, ``&>>log``, ``{fd}>log``, ``</dev/null``, ``<>f``,
+#: ``<<EOF``, ``<<- EOF``, ``<<<""``. Not a process substitution: ``bash <(make) -x`` runs a
+#: file, ``-x`` its ``$1``.
+_REDIRECT = r"(?:\d+|\{\w+\})?(?:&>>?|>[>|&]?|<(?:<[<-]?|[>&])?)\s*[^\s;&|()<>`]+"
+#: The option words before it: ``--norc``, ``--rcfile x.rc``, ``-o name``, ``-eO name``, ``-e``,
+#: ``+u``, ``-e${X}``, and redirections. Any other word ends them: ``set -- -x`` and ``set - -x``
+#: (positional parameters), ``bash x.sh -x``. The lookahead ends them at the tracing word.
+_OPTION_WORDS = (
+    r"(?:(?!" + _TRACE_WORD + r")(?:" + _LONG_ARG + r"|--\w+|[-+]" + _LETTER + r"*[oO]\s+\w+"
+    r"|[-+]" + _LETTER + r"+|" + _REDIRECT + r")\s+)*"
+)
 #: Group ``on``: the tracing word after the option words, if any. Optional, so a rule matches a
 #: command word with all its option words and ``finditer`` goes on after them, reading a line in
 #: linear time. With the tracing word required, each ``sh`` in ``sh -o sh -o sh ...`` re-read the
@@ -209,32 +305,161 @@ _OPTION_WORDS = r"(?:(?!" + _TRACE_WORD + r")(?:--\w+|[-+][a-zA-Z]*[oO]\s+\w+|[-
 _TRACE_ON = r"(?P<on>" + _TRACE_WORD + r")?"
 #: ``set`` turning tracing on: ``set -x``, ``set -e -x``, ``set -o errexit -o xtrace``.
 _SET_TRACE = re.compile(_WORD_START + r"set\s+" + _OPTION_WORDS + _TRACE_ON)
-#: A path segment: word characters, ``.``, ``-`` and ``$NAME`` (``bash-5.2``, ``$TOOL``). A ``$``
-#: counts only before a name: in ``/a$/a$/...`` each ``/`` after a ``$`` would start a rule that
-#: re-reads the rest of the path.
-_SEGMENT = r"(?:\$?[\w.-])*"
+#: A path segment's piece (#3400): a character of a word (``bash-5.2``, ``bash@5``, ``gcc+x``,
+#: ``/~u/``, ``bash-5*``) but ``/``, ``:`` (no rule starts a word after one, as in
+#: ``https://example.com/sh -x``) and ``;&|()<>{}'"\`$``; or ``$NAME``, ``${NAME}``
+#: (``/opt/$TOOL/``, ``/opt/${X}y/``).
+_PIECE = r"(?:[^\s/:;&|()<>{}'\"\\`$]|\$(?:\w|\{\w+\}))"
+_SEGMENT = _PIECE + r"*"
 #: A shell's directory from ``/``, ``~``, ``~user``, ``$VAR`` or ``${VAR}``: ``/bin/``, ``//bin/``,
 #: ``$HOME/bin/``, ``/opt/$TOOL/bin/``. A relative one (``tools/``, ``./``) holds a repository
 #: file, which ``workflow_scripts`` follows if it is a shell script.
-_SHELL_DIR = r"(?:[$~]" + _SEGMENT + r")?/(?:" + _SEGMENT + r"/)*"
-#: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, rbash,
-#: dash, ksh or zsh (all read ``-x`` and ``-o xtrace``), by name or from a ``_SHELL_DIR``.
-_SHELL_TRACE = re.compile(
-    _WORD_START + r"(?:" + _SHELL_DIR + r")?(?:r?ba|da|k|z)?sh\s+" + _OPTION_WORDS + _TRACE_ON
+_SHELL_DIR = r"(?:(?=[$~])" + _SEGMENT + r")?/(?:" + _SEGMENT + r"/)*"
+#: A path naming no shell (``/usr/bin/env``, ``/opt/x+bash``) matches whole, never ``on``, and
+#: ``finditer`` goes on after it. Else a rule started again inside it, after each character
+#: ``_WORD_START`` allows, re-read the rest of the path (``/a+/a+/...``: about 5 s at 24k).
+_OTHER_PATH = r"(?=[$~/])(?:" + _PIECE + r"|/)+"
+#: ``$BASH`` (the bash running the line) or ``$SHELL`` (the login shell), also braced or with a
+#: default (#3400): ``"$BASH" -x``, ``${SHELL:-sh} -x``; not ``$SHELLCHECK`` or ``${BASH_ENV}``.
+#: A default ends at a ``$``: one going on through ``${SHELL:-${SHELL:-...`` re-read the line.
+_SHELL_VAR = r"\$(?:BASH|SHELL|\{(?:BASH|SHELL)(?::?[-=?][^\s}$]*)?\})"
+#: shellcheck's ``-s``/``--shell`` names the dialect it checks, a shell it does not run (#3400):
+#: ``shellcheck -e SC1091 -s bash -x ci.sh``. Matched through that shell name, never ``on``. The
+#: words before the option end at a word holding ``shellcheck`` (but ``.shellcheckrc``), where
+#: another such match may start, so each word is read once.
+_SHELLCHECK_DIALECT = (
+    r"shellcheck(?:\s+(?!" + _IN_WORD + r"*(?<!\.)shellcheck|-s\s|--shell[\s=])" + _IN_WORD + r"+)*"
+    r"\s+(?:-s|--shell)[\s=]\s*" + _IN_WORD + r"*"
 )
-#: The long spelling anywhere on a line, also past an option's argument (``bash --rcfile x
-#: --xtrace``). Always ``on``.
-_LONG_XTRACE = re.compile(r"(?P<on>--xtrace)")
-#: The rules reported as ``'set -x' tracing``: a match with an ``on`` group. Not reported:
-#: - quoted option words: ``set "-x"``, ``bash "-x"``, ``set -o "xtrace"``
-#: - ``shopt -so xtrace``, ``shopt -s -o xtrace``; zsh ``setopt xtrace``, ``set -o XTRACE``
-#: - option letters built by expansion: ``set -e${DEBUG:+x}``
-#: - a shell named through a variable (``"$BASH" -x``, ``$SHELL -x``) or quoted (``"bash" -x``)
-#: - a long option's argument before it: ``bash --rcfile x.rc -x``
-#: - a shell path segment with another character: ``/opt/bash@5/bin/bash -x``
-#: - ``SHELLOPTS=xtrace``, a ``DEBUG`` trap, ``set -v``
-#: Reported though not tracing: a shell name as an option's argument (``shellcheck -s bash -x``).
-_SET_X = (_SET_TRACE, _SHELL_TRACE, _LONG_XTRACE)
+#: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, rbash,
+#: dash, ksh or zsh (all read ``-x``, ``-v`` and ``-o xtrace``), by name, from a ``_SHELL_DIR`` or
+#: as ``_SHELL_VAR``. A name may follow ``${NAME}``, which may be empty (``${X}bash -x``), so it
+#: is read before ``_OTHER_PATH`` takes the word; ``$Xbash`` names another variable.
+_SHELL_ON = (
+    r"(?:(?:" + _SHELL_DIR + r")?(?:\$\{\w+\})*(?:r?ba|da|k|z)?sh|" + _SHELL_VAR + r")\s+"
+    + _OPTION_WORDS
+    + _TRACE_ON
+)
+_SHELL_TRACE = re.compile(
+    _WORD_START
+    + r"(?:(?:" + _SHELL_DIR + r")?" + _SHELLCHECK_DIALECT
+    + r"|" + _SHELL_ON
+    + r"|" + _OTHER_PATH + r")"
+)
+#: The long spelling anywhere on a line, also past a word the option words do not read (``bash -O
+#: "$opt" --xtrace``). Always ``on``. Not ``--verbose``, which many tools take.
+_LONG_XTRACE = re.compile(r"(?P<on>--" + _XTRACE + r")")
+
+
+def _words(on: str) -> str:
+    """The words to the end of a command, each read once: group ``on`` if one turns tracing on,
+    an ``-o``/``+o`` taking the word after it."""
+    return r"(?:\s+(?:(?P<on>" + on + r")|[-+][a-zA-Z]*o\s+" + _IN_WORD + r"+|" + _IN_WORD + r"+))*"
+
+
+#: ``shopt`` setting ``set -o`` names, with ``-s`` and ``-o`` in its flags in any order (#3400):
+#: ``shopt -so xtrace``, ``shopt -o -s errexit xtrace``. Not ``shopt -o xtrace`` (a query), ``-po``
+#: (a listing) or ``-uo``. Each lookahead reads only the flags, which the match then takes.
+_SHOPT_FLAGS = r"(?:\s+-[a-zA-Z-]*)*?\s+-[a-zA-Z-]*"
+_SHOPT = re.compile(
+    _WORD_START + r"shopt(?=" + _SHOPT_FLAGS + r"s)(?=" + _SHOPT_FLAGS + r"o)"
+    r"(?:\s+-[a-zA-Z-]*)*" + _words(_TRACING)
+)
+#: zsh's ``setopt`` and ``unsetopt`` (#3400; zshbuiltins(1)): ``setopt xtrace``, ``setopt -x``,
+#: ``unsetopt noxtrace``, ``unsetopt +o xtrace``: ``unsetopt`` flips each sign and each name
+#: (``bin_setopt`` in zsh's Src/options.c).
+_SETOPT = re.compile(_WORD_START + r"setopt" + _words(_turning_on("-", r"\+") + r"|" + _TRACING))
+_UNSETOPT = re.compile(
+    _WORD_START + r"unsetopt" + _words(_turning_on(r"\+", "-") + r"|" + _NO_TRACING)
+)
+#: ``SHELLOPTS`` listing xtrace or verbose (#3400): bash turns on each option it lists when it
+#: starts (``env SHELLOPTS=xtrace bash x.sh``; a job's or a step's ``env:``, ``SHELLOPTS:
+#: xtrace``). Bash refuses to assign it (readonly), dash exports it (``export
+#: SHELLOPTS=errexit:xtrace``).
+_SHELLOPTS = re.compile(
+    _WORD_START + r"SHELLOPTS\s*(?:\+?=|:)\s*(?:[\w${}-]*:)*?(?P<on>" + _TRACING + r")"
+)
+#: A ``DEBUG`` trap, run before each command (#3400): ``trap 'echo "$BASH_COMMAND"' DEBUG`` prints
+#: each command as ``set -v`` does, so any action counts (the scan cannot tell what it prints).
+#: Not ``trap - DEBUG`` or ``trap DEBUG`` (a reset), ``trap -p DEBUG`` (a listing) or ``trap ''
+#: DEBUG`` (no action). The action is one word with its quotes; a quote is read to its end. The
+#: signal word names DEBUG in any case, with quotes or escapes the shell takes off anywhere in it
+#: (``"DEBUG"``, ``\DEBUG``, ``DE''BUG``, ``$'DEBUG'``); each quote or escape is one character
+#: or a ``$`` and a quote, so a word is read once. The ``trap`` word likewise (``"trap"``,
+#: ``tr''ap``, ``\trap``), from the first of its quotes: not after a quote, a ``\`` or a ``$``
+#: (``$trap`` is a variable), so each run of them is read once.
+_TRAP_ACTION = r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|\\.|[^\s'\"\\;&|()`])+"
+_SIGNAL_QUOTING = r"(?:\$?[\"']|\\)*"
+_DEBUG_SIGNAL = (
+    r"(?i:" + _SIGNAL_QUOTING + _SIGNAL_QUOTING.join("debug") + _SIGNAL_QUOTING + r")"
+    r"(?!" + _IN_WORD + r")"
+)
+_TRAP_WORD = (
+    _WORD_START + r"(?<!['\"\\$])"
+    + _SIGNAL_QUOTING + _SIGNAL_QUOTING.join("trap") + _SIGNAL_QUOTING
+)
+_TRAP_DEBUG = re.compile(
+    _TRAP_WORD + r"\s+(?:--\s+)?(?!-|(?:''|\"\")\s)" + _TRAP_ACTION + _words(_DEBUG_SIGNAL)
+)
+#: zsh's ``TRAPDEBUG`` function is a ``DEBUG`` trap (zshmisc(1), Trap Functions).
+_TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
+#: The rules reported as ``'set -x' tracing``: a match with an ``on`` group, in a line with its
+#: quotes off (``_unquoted``) and again with a second level off, the quotes of a string an inner
+#: shell runs (``bash -c 'set "-x"'``; that view finds nearly every hit of the first, which stays
+#: as the line bash itself reads); or of ``_TRAP_DEBUG``, which reads the line with its quotes (a
+#: trap's quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
+#: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
+#:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``; or any word built from an escape in ``$'...'``,
+#:   whose quotes the scan takes off but not its escapes: ``set $'\x2dx'``, ``$'\x73et' -x``
+#: - an expansion whose value the scan cannot read, as a word before the tracing word or at its
+#:   start (it may hold ``--`` or a script's name, which end the options: ``set $X -x``, ``bash
+#:   ${X} -x ci.sh``, ``bash ${X}-x``), or in a command, option or signal word: ``s${X}et -x``,
+#:   ``--verb${X}ose``, ``DEB${X}UG``
+#: - a quoted word with a space in it, whose words the scan reads apart, as in quoted prose: a
+#:   redirection's file or an option's argument then ends the option words (``bash >"a b" -x``,
+#:   ``bash --rcfile "my rc" -x``), and a shell's path ends at the space (``"/opt/my tools/bash"
+#:   -x``)
+#: - a command as an expansion's ``-`` default: ``${X:-set -x}`` (no rule starts a word after a
+#:   ``-``, as in ``x-set``)
+#: - a command, shell or option word built by brace expansion or command substitution (#3583):
+#:   ``{set,} -x``, ``bash -{x,} ci.sh``, ``set -o xt{race,}``, ``$(echo bash) -x ci.sh``
+#: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does
+#:   not follow (#3525): ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
+#: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
+#:   with an expansion inside its name that no name follows: ``b${X}ash -x`` (but ``ba${X}sh``)
+#: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
+#:   ``mksh -x``, ``yash -x``
+#: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
+#: - a quoted word three quote levels deep (the scan takes two levels off):
+#:   ``bash -c "bash -c 'set \"-x\"'"``
+#: - a command going on to the next line (#3583): ``bash \`` then ``-x ci.sh``, or ``set -e`` then
+#:   ``-x`` in a folded ``run: >`` block, a plain multi-line scalar or a quoted one (``run: "set``
+#:   then ``-x"``, which YAML folds to ``set -x``); each line is read alone
+#: - a ``#`` inside a string opened on an earlier line (#3583), read as a comment, its line skipped:
+#:   ``X='`` then ``#'; set -x``
+#: - an escape in an inline double-quoted ``run:`` value, which YAML decodes before the shell runs
+#:   it (#3583): ``run: "set \x2dx"``
+#: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
+#:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
+#: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh
+#: -x 80``: a session named sh, 80 columns wide), ``set`` as another tool's word (``gh secret set
+#: -v all X``: gh's ``--visibility``) or as a name after a ``$`` (``$set -x``: an expansion, empty
+#: when unset, so bash runs ``-x``), a quoted string's words (``echo "use bash" -x``), a shell
+#: name after a ``+``, ``=`` or ``@`` in a word that is no path (``a+bash -x``, ``x=bash -x``; a
+#: path naming no shell is read whole: ``/opt/x+bash -x``), an rcfile named ``--xtrace``
+#: (``bash --rcfile --xtrace ci.sh``: ``_LONG_XTRACE`` reads any ``--xtrace``), and a test's
+#: ``-a`` or ``-o`` before its ``-x`` on ``$SHELL`` or ``$BASH`` (``[ -n "$SHELL" -a -x "$SHELL" ]``
+#: reads as ``$SHELL`` run with ``-a -x``).
+_SET_X = (
+    _SET_TRACE,
+    _SHELL_TRACE,
+    _LONG_XTRACE,
+    _SHOPT,
+    _SETOPT,
+    _UNSETOPT,
+    _SHELLOPTS,
+    _TRAPDEBUG,
+)
 _ENV_DUMP = re.compile(
     r"(^|[;&|]\s*|^\s*-?\s*(run:\s*)?)(printenv|env|export\s+-p|set)\s*(\||$|>)"
 )
@@ -257,7 +482,10 @@ _INVOKES = re.compile(
 )
 _SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
 #: A shebang whose options trace (``#!/bin/sh -ex``, ``#!/usr/bin/env -S bash -o xtrace``,
-#: ``#!/usr/bin/env -S zsh --xtrace``): line 1 of a scanned script.
+#: ``#!/usr/bin/env -S zsh --xtrace``): line 1 of a scanned script, with its quotes off as ``env
+#: -S`` takes them off (``#!/usr/bin/env -S bash "-x"``), unless it carries the allow marker
+#: (#3400; ``#!/usr/bin/env -S bash -x # secrets-hygiene: allow``: ``env -S`` reads a word
+#: starting with ``#`` as a comment).
 _SHEBANG_X = re.compile(r"#!.*\s" + _TRACE_WORD)
 #: Suffixes never sourced as shell: ``source|.`` follows any other repository file.
 _NOT_SHELL = re.compile(
@@ -272,7 +500,13 @@ def _sr146_hits(text: str) -> list[tuple[int, str]]:
         if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
             continue
         body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
-        if any(m["on"] for rule in _SET_X for m in rule.finditer(body)):
+        words = _unquoted(body)
+        if any(m["on"] for m in _TRAP_DEBUG.finditer(body)) or any(
+            m["on"]
+            for view in (words, _unquoted(words))
+            for rule in _SET_X
+            for m in rule.finditer(view)
+        ):
             hits.append((n, "'set -x' tracing"))
         if _ENV_DUMP.search(body):
             hits.append((n, "environment dump"))
@@ -404,7 +638,8 @@ def check_workflows(root: Path) -> list[str]:
         text = _read(root / rel)
         if text is None:
             errors.append(f"{rel}: unreadable script (SR-146 scan); {by}")
-        if _SHEBANG_X.match(text or ""):
+        line1 = (text or "").partition("\n")[0]
+        if _SHEBANG_X.match(_unquoted(line1)) and _SKIP_ALLOW not in line1:
             errors.append(f"{rel}:1: 'set -x' tracing (SR-146); {by}")
         for n, what in _sr146_hits(text or ""):
             errors.append(f"{rel}:{n}: {what} (SR-146); {by}")
