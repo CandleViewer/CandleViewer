@@ -794,18 +794,28 @@ async def test_a_shut_down_reader_refuses_a_read_typed(tmp_path: Path) -> None:
 async def test_a_scan_queued_at_shutdown_fails_its_read_typed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    submitted = _submissions(monkeypatch)
-    reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1)
-    free, held = await _occupy(reader)
-    task = _read(reader)
-    await asyncio.wait_for(submitted.wait(), 5)
+    """The dropped scan's read fails typed, and its cancelled future is never reported to the
+    loop as an error (marking it retrieved must not touch a cancelled future)."""
+    reports: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _loop, context: reports.append(context))
+    try:
+        submitted = _submissions(monkeypatch)
+        reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1)
+        free, held = await _occupy(reader)
+        task = _read(reader)
+        await asyncio.wait_for(submitted.wait(), 5)
 
-    reader.shutdown()
+        reader.shutdown()
 
-    with pytest.raises(ColdReplayReadError, match="shut down"):
-        await task
-    free.set()
-    await asyncio.wrap_future(held)
+        with pytest.raises(ColdReplayReadError, match="shut down"):
+            await task
+        free.set()
+        await asyncio.wrap_future(held)
+    finally:
+        loop.set_exception_handler(None)
+
+    assert [r["message"] for r in reports] == []
 
 
 async def test_at_most_max_concurrency_scans_run_at_once(
