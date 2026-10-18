@@ -155,11 +155,13 @@ with no method left, that sign-in is enrolment-only too.
 
 If the answer is `401` with `sign in again with your password`, the code was spent and every method
 revoked, but no session was minted: the error log `auth.recovery.completed_unminted` names the
-`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end. Those may still
-be live, but while the user has no method they reach only the enrolment operations, one with more
-than 15 minutes left answers `401` except to `POST /auth/logout`, and the confirm ends them. Sign in
-with the password alone (enrolment-only) and re-enrol. A session minted while the recovery ran ends
-with the others under its own `auth.session_revoked` with `unplanned: true`. A recovery whose
+`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end, and an
+`auth.mfa_failed` row (reason `unminted`) voids the `auth.session_created` written ahead. Those
+sessions may still be live, but while the user has no method one that proved a second factor
+answers `401` except to `POST /auth/logout`, one minted on the password alone reaches only the
+enrolment operations, and the confirm ends them. Sign in with the password alone (enrolment-only)
+and re-enrol. A session minted while the recovery ran ends with the others under its own
+`auth.session_revoked` with `unplanned: true`. A recovery whose
 transaction did not commit changes nothing, and its refusal row names the records it voids:
 `auth.mfa_failed` with reason `lost_race` (a concurrent recovery won) or `store_error` (error log
 `auth.recovery.commit_failed`), or `auth.login_failed` (`user_disabled`) when the user was disabled

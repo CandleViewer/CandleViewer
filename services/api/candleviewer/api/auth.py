@@ -680,8 +680,8 @@ def make_auth_router(
         enrolment-only session minted (15 minutes, never a full one). Every refusal spends
         nothing, is the documented 401 and counts its row (SR-125). A failure after the commit
         mints nothing: its 401 tells the client to sign in again with the password, which is
-        enrolment-only once no method is left, and the error log
-        `auth.recovery.completed_unminted` names the user and the sessions."""
+        enrolment-only once no method is left, the error log `auth.recovery.completed_unminted`
+        names the user and the sessions, and a refusal row voids the session announced."""
         # 401 is this operation's documented refusal (its 503 is #2152's `AuthUnavailable`), as on
         # `/auth/mfa/verify`: nothing is checked or spent that could not be audited and minted.
         ready = _enrolment_ready(mfa=True, status=401, title=_RECOVERY_FAILED)
@@ -800,6 +800,7 @@ def make_auth_router(
         # as the commit spent it, so no later failure can hide a use; a failing audit sink cannot
         # either, because nothing is spent without its record (written ahead above).
         auth_recovery_codes_used_total.inc()
+        created = {"session_id": new_id, "after_state": {"voids_session_created": str(new_id)}}
         try:
             revoked = await sessions.revoke_all(str(uid), reason=RECOVERED_REASON)
             for sid in [row.id for row in revoked if row.id not in ending]:  # minted since the plan
@@ -808,7 +809,6 @@ def make_auth_router(
                 str(uid), session_id=new_id, ip=ip, user_agent=request.headers.get("user-agent")
             )
         except UserDisabled:  # #2911: disabled since the commit; the code is spent, nothing minted
-            created = {"session_id": new_id, "after_state": {"voids_session_created": str(new_id)}}
             await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **mine, **created)
             return _problem(401, _RECOVERY_FAILED, "account is disabled")
         except Exception as exc:  # any failure: the committed recovery stands, nothing is minted
@@ -819,6 +819,7 @@ def make_auth_router(
                 revoked_session_ids=[str(sid) for sid in ending],
                 error=type(exc).__name__,
             )
+            await failed("auth.mfa_failed", _FAILED, reason="unminted", **mine, **created)  # C-2.9
             return _problem(401, _RECOVERY_FAILED, _UNMINTED)
         # U34 (RR-15): an Owner's enrolment-only session is to page; no rule yet (#2746).
         auth_enrolment_only_sessions_total.labels(
