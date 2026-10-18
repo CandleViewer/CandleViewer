@@ -96,98 +96,100 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
     supervisor = Supervisor(ctx)
     await supervisor.start_all()
-    feature_flags = getattr(app.state, "feature_flags", None)
+    # #3446: the boot after `start_all` runs in the `try` whose `finally` is the teardown, so what a
+    # boot step raises leaves the lifespan only once what has started is stopped, as at shutdown.
+    # Each step is bound as the boot reaches it, before its start: one that raised half-way is
+    # stopped, and one never reached stays None, which the teardown skips; `WsRuntime.stop()`, for
+    # one, would otherwise wait out its grace for a server that never served.
+    feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
+    bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
+    account_health = ws_runtime = None
+    alert_tasks: list[Any] = []
+    metrics_runtime: MetricsRuntime | None = None
     try:
         await audit_test_clock_boot(ctx)  # #2728: before serving; a failed write fails boot
         await account_fixture_record(fixture_boot, ctx.audit)  # #2893 S8: its record, likewise
+        feature_flags = getattr(app.state, "feature_flags", None)
         if feature_flags is not None:  # E42-T03: a bad `flags.read_budget_ms` refuses boot
             await feature_flags.start()
-    except BaseException:
-        await supervisor.stop_all(1.0)  # as `start_all` does: never leave modules running
-        raise
 
-    # Boot self-check (AC1 "safe binding passes", AC3 "public binding
-    # degrades"): run once, synchronously, before serving so `net_binding_safe`
-    # and the read-only gate reflect reality from the very first request.
-    await ctx.mesh_self_check.run_once()
-    if ctx.oms_read_only_gate.is_read_only:
-        logger().error(
-            "starting in read-only mode (%s): %s",
-            ctx.oms_read_only_gate.reason_code,
-            ctx.oms_read_only_gate.reason_text,
-        )
-    else:
-        logger().info("boot binding self-check passed; all listening sockets are mesh-only")
+        # Boot self-check (AC1 "safe binding passes", AC3 "public binding
+        # degrades"): run once, synchronously, before serving so `net_binding_safe`
+        # and the read-only gate reflect reality from the very first request.
+        await ctx.mesh_self_check.run_once()
+        if ctx.oms_read_only_gate.is_read_only:
+            logger().error(
+                "starting in read-only mode (%s): %s",
+                ctx.oms_read_only_gate.reason_code,
+                ctx.oms_read_only_gate.reason_text,
+            )
+        else:
+            logger().info("boot binding self-check passed; all listening sockets are mesh-only")
 
-    # Hourly re-check (AC5 "drift after resume is caught").
-    ctx.mesh_self_check.start()
-    scrub_task = getattr(app.state, "scrub_task", None)
-    if scrub_task is not None:
-        scrub_task.start()
-    audit_verify = getattr(app.state, "audit_verify_job", None)
-    if audit_verify is not None:  # #2111: after `start_all`, so the audit writer is up
-        audit_verify.start()
-    else:  # #2111: no verify runner is wired (#2966), so nothing checks the audit chain
-        logger().warning("audit.verify_job_not_wired")
-    disk_budget = getattr(app.state, "disk_budget", None)
-    if disk_budget is not None:  # E16-T07: one supervised sampling task
-        disk_budget.start()
-    rule_prune = getattr(app.state, "rule_prune_task", None)
-    if rule_prune is not None:
-        rule_prune.start()
-    funding_task = getattr(app.state, "funding_refresh_task", None)
-    if funding_task is not None:
-        funding_task.start()
-    bars_runtime = getattr(app.state, "bars_runtime", None)
-    if bars_runtime is not None:
-        await bars_runtime.start()
-    kline_refresh = getattr(app.state, "kline_boundary_refresh", None)
-    if kline_refresh is not None:  # #2060: initial load, then periodic (rules are editable)
-        await kline_refresh.load_now()
-        kline_refresh.start()
-    alert_tasks = [
-        t
+        # Hourly re-check (AC5 "drift after resume is caught").
+        ctx.mesh_self_check.start()
+        scrub_task = getattr(app.state, "scrub_task", None)
+        if scrub_task is not None:
+            scrub_task.start()
+        audit_verify = getattr(app.state, "audit_verify_job", None)
+        if audit_verify is not None:  # #2111: after `start_all`, so the audit writer is up
+            audit_verify.start()
+        else:  # #2111: no verify runner is wired (#2966), so nothing checks the audit chain
+            logger().warning("audit.verify_job_not_wired")
+        disk_budget = getattr(app.state, "disk_budget", None)
+        if disk_budget is not None:  # E16-T07: one supervised sampling task
+            disk_budget.start()
+        rule_prune = getattr(app.state, "rule_prune_task", None)
+        if rule_prune is not None:
+            rule_prune.start()
+        funding_task = getattr(app.state, "funding_refresh_task", None)
+        if funding_task is not None:
+            funding_task.start()
+        bars_runtime = getattr(app.state, "bars_runtime", None)
+        if bars_runtime is not None:
+            await bars_runtime.start()
+        kline_refresh = getattr(app.state, "kline_boundary_refresh", None)
+        if kline_refresh is not None:  # #2060: initial load, then periodic (rules are editable)
+            await kline_refresh.load_now()
+            kline_refresh.start()
         for t in (
             getattr(app.state, "alert_purge_task", None),
             getattr(app.state, "alert_gauge_task", None),
             getattr(app.state, "drawings_purge_task", None),
             getattr(app.state, "workspaces_purge_task", None),
             getattr(app.state, "incidents_purge_task", None),  # E42-T05
-        )
-        if t is not None
-    ]
-    for t in alert_tasks:
-        t.start()
-    audit_flush = getattr(app.state, "audit_budget_flush", None)
-    if audit_flush is not None:
-        audit_flush.start()
-    overrides = getattr(app.state, "log_level_overrides", None)
-    if overrides is not None:
-        overrides.start()
-    health_registry = getattr(app.state, "health_registry", None)
-    if health_registry is not None:
-        health_registry.start()
-    account_health = getattr(app.state, "account_health", None)
-    if account_health is not None:  # E27-T04 (#837): once `start_all` has brought the modules up
-        account_health.start()
-    metrics_runtime: MetricsRuntime | None = None
-    if ctx.settings.metrics_enabled:
-        # E04-T06: create_app() owns the single facade (telemetry series hang
-        # off it); fall back for apps built without one.
-        facade = getattr(app.state, "metrics_facade", None)
-        if facade is None:
-            facade = Metrics(
-                ctx.settings.environment.value,
-                registry=ctx.metrics,
-                process_collectors=True,
-            )
-        facade.add_process_collectors()
-        metrics_runtime = MetricsRuntime(facade, ctx.settings.metrics_bind)
-        metrics_runtime.start()
-    ws_runtime = getattr(app.state, "ws_runtime", None)
-    if ws_runtime is not None:
-        ws_runtime.start()
-    try:
+        ):
+            if t is not None:
+                alert_tasks.append(t)
+                t.start()
+        audit_flush = getattr(app.state, "audit_budget_flush", None)
+        if audit_flush is not None:
+            audit_flush.start()
+        overrides = getattr(app.state, "log_level_overrides", None)
+        if overrides is not None:
+            overrides.start()
+        health_registry = getattr(app.state, "health_registry", None)
+        if health_registry is not None:
+            health_registry.start()
+        account_health = getattr(app.state, "account_health", None)
+        if account_health is not None:  # E27-T04 (#837): once `start_all` has brought modules up
+            account_health.start()
+        if ctx.settings.metrics_enabled:
+            # E04-T06: create_app() owns the single facade (telemetry series hang
+            # off it); fall back for apps built without one.
+            facade = getattr(app.state, "metrics_facade", None)
+            if facade is None:
+                facade = Metrics(
+                    ctx.settings.environment.value,
+                    registry=ctx.metrics,
+                    process_collectors=True,
+                )
+            facade.add_process_collectors()
+            metrics_runtime = MetricsRuntime(facade, ctx.settings.metrics_bind)
+            metrics_runtime.start()
+        ws_runtime = getattr(app.state, "ws_runtime", None)
+        if ws_runtime is not None:
+            ws_runtime.start()
         yield
     finally:
         # #3403: each step below is isolated (`_Teardown.run`), so whatever one raises, the later
