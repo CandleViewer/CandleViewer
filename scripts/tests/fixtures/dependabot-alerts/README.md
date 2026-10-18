@@ -1,0 +1,26 @@
+# Recorded Dependabot alert listings (#3558)
+
+`test_security_gate.py` and `test_security_lane.py` run these files through
+`tools/ci/security_gate.py --tool dependabot`, the gate on the `dependabot-alerts` step of
+`_job-security.yml`'s `read-only-scans` job: C-9.1 #11's Dependabot alert gate. That step runs
+`gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100"`
+with the job token, which `vulnerability-alerts: read` lets list the alerts. `--slurp` writes
+one JSON array holding each page's array of alerts; with no open alerts it writes `[[]]`.
+Recorded 2026-10-18 with gh 2.67.0 (REST API version 2022-11-28). gh writes compact JSON with no
+final newline; `.prettierignore` keeps the files that way.
+
+- `gh-2.67.0-main.json`: the open alerts on `main` d61631fa6, one page: alert 55 (tauri 2.1.1 in
+  the bench harness's `Cargo.toml`) and alerts 35, 37, 41, 43, 45, 47 and 49 (vitest on seven
+  `package.json` files),
+  all Medium. Trimmed to the fields the gate reads or the register's reasons cite: `number`,
+  `state`, `dependency` (package, manifest path, scope, relationship), `security_advisory`
+  (GHSA id, summary, severity), `security_vulnerability` (package, severity, vulnerable range,
+  first patched version) and `html_url`. The advisories' descriptions, references and scores and
+  the alerts' timestamps are left out.
+- `gh-2.67.0-not-found.json`: what gh wrote, then exiting 1, for a repository path that does not
+  exist: an API error inside the slurp array. A token without the permission gets the same shape
+  with another message and status. The step fails on gh's exit status (CI-SEC-005), and the gate
+  fails this body too.
+
+The alerts describe the default branch, not the PR under test; `docs/ci-runbook.md` (CI-SEC-001)
+says what that means for a PR that fixes one.

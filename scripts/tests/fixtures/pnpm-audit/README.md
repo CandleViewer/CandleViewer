@@ -31,4 +31,5 @@ an empty file, which the gate fails (CI-SEC-005); the tests write that file them
 
 pnpm builds the report itself from the advisories that endpoint returns, so an answer listing
 none gives a report like `pnpm-12.5.1-clean.json`. A clean report is only as complete as the
-registry's answer: the gate cannot tell a registry that listed none from a tree with none.
+registry's answer: the gate cannot tell a registry that listed none from a tree with none. The
+`dependabot-alerts` step (#3558, `../dependabot-alerts/README.md`) is the second signal.

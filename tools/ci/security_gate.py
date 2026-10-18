@@ -2,9 +2,10 @@
 """E03-T07: security lane severity normalisation and gate policy.
 
 Every scanner in `.github/workflows/_job-security.yml` (CodeQL, Semgrep,
-Bandit, pip-audit, npm audit, gitleaks, license-scan, Trivy) reduces its
-native output to a single `Finding` shape here, so "what blocks" is defined
-exactly once (technical notes, E03-T07 ticket body) instead of per-tool.
+Bandit, pip-audit, npm audit, gitleaks, license-scan, Trivy) and the
+Dependabot alert gate reduce their native output to a single `Finding` shape
+here, so "what blocks" is defined exactly once (technical notes, E03-T07
+ticket body) instead of per-tool.
 
 Error codes (ticket "Technical notes / design"):
     CI-SEC-001  blocking finding (severity meets/exceeds the tool's policy
@@ -54,6 +55,7 @@ _KNOWN_TOOLS = frozenset(
         "bandit",
         "pip-audit",
         "npm-audit",
+        "dependabot",
         "gitleaks",
         "license-scan",
         "trivy",
@@ -69,6 +71,7 @@ _BLOCKING_THRESHOLD: dict[str, Severity | None] = {
     "bandit": "MEDIUM",  # High/Medium confidence+severity blocks (12.1 table)
     "pip-audit": "HIGH",
     "npm-audit": "HIGH",
+    "dependabot": "HIGH",  # C-9.1 #11 (sca): the Dependabot alert gate, zero high/critical
     "gitleaks": None,  # any finding blocks, handled specially
     "license-scan": None,  # handled by evaluate_licenses(), not severity
     "trivy": "HIGH",
@@ -187,8 +190,11 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
 
 
 def _find_risk(risks: list[AcceptedRisk], finding: Finding) -> AcceptedRisk | None:
+    # A Dependabot alert takes the register's entry for its GHSA whatever that entry's tool: ids
+    # are unique there (check_accepted_risk_expiry.py), so one decision also covers an advisory
+    # that pnpm, pip-audit or Trivy reports (#3558). Every other finding needs its own tool.
     for risk in risks:
-        if risk.finding_id == finding.finding_id and risk.tool == finding.tool:
+        if risk.finding_id == finding.finding_id and finding.tool in (risk.tool, "dependabot"):
             return risk
     return None
 
@@ -847,6 +853,84 @@ def parse_npm_audit(path: Path) -> list[Finding]:
     return findings
 
 
+# What the `dependabot-alerts` step writes: `gh api --paginate --slurp` of the REST endpoint that
+# lists the repository's open Dependabot alerts (API version 2022-11-28), one array per page
+# (scripts/tests/fixtures/dependabot-alerts/README.md).
+_DEPENDABOT_SEVERITY: dict[str, Severity] = {
+    "critical": "CRITICAL",
+    "high": "HIGH",
+    "medium": "MEDIUM",
+    "low": "LOW",
+}
+
+
+def _dig(obj: object, *keys: str) -> object:
+    """`obj[k1][k2]...`, or None as soon as a level is not an object."""
+    for key in keys:
+        obj = obj.get(key) if isinstance(obj, dict) else None
+    return obj
+
+
+def parse_dependabot_alerts(path: Path) -> list[Finding]:
+    """The repository's open Dependabot alerts (C-9.1 #11's alert gate, #3558) -> Findings.
+
+    One Finding per alert: its advisory's GHSA id (the id register entries use, so one entry
+    covers the advisory on every manifest), its severity, and the package and manifest it was
+    raised on. Alerts describe the default branch, not the PR under test.
+
+    Fails closed (CI-SEC-005), never zero findings: on an empty file, on anything but a non-empty
+    list of pages that are lists (gh writes an API error, such as a token without
+    `vulnerability-alerts: read`, as `[{"message": ...}]`), and on an alert that is not open or
+    has no number, no known severity, no GHSA id, no package or no manifest. No alerts at all is
+    `[[]]`.
+    """
+
+    def malformed(reason: str) -> SecurityGateError:
+        return SecurityGateError("CI-SEC-005", f"dependabot: {path} {reason}")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise malformed(f"is unreadable: {exc}") from exc
+    if not text.strip():
+        raise malformed("is empty: the alerts API call wrote nothing")
+    try:
+        pages = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise malformed(f"is not JSON: {exc}") from exc
+    if not (isinstance(pages, list) and pages and all(isinstance(p, list) for p in pages)):
+        raise malformed(f"is not a list of pages of alerts: {text[:300]}")
+
+    findings: list[Finding] = []
+    for alert in (alert for page in pages for alert in page):
+        number = _dig(alert, "number")
+        if type(number) is not int:
+            raise malformed("has an alert without a number")
+        advisory, dependency = _dig(alert, "security_advisory"), _dig(alert, "dependency")
+        severity, ghsa, summary = (_dig(advisory, k) for k in ("severity", "ghsa_id", "summary"))
+        ecosystem, name = (_dig(dependency, "package", k) for k in ("ecosystem", "name"))
+        manifest, state = _dig(dependency, "manifest_path"), _dig(alert, "state")
+        if state != "open":
+            raise malformed(f"alert {number} is {state!r}: the step lists open alerts only")
+        if not isinstance(severity, str) or severity not in _DEPENDABOT_SEVERITY:
+            raise malformed(f"alert {number} has no known severity (critical, high, medium, low)")
+        if not isinstance(ghsa, str) or not _GHSA_ID.fullmatch(ghsa):
+            raise malformed(f"alert {number} has no GHSA id")
+        if not all(isinstance(v, str) and v for v in (ecosystem, name, manifest)):
+            raise malformed(f"alert {number} has no package ecosystem, package name or manifest")
+        package = f"{ecosystem}:{name}"
+        findings.append(
+            Finding(
+                tool="dependabot",
+                finding_id=ghsa,
+                severity=_DEPENDABOT_SEVERITY[severity],
+                package=package,
+                detail=f"alert {number}, {package} in {manifest}: {summary or ''}",
+            )
+        )
+    return findings
+
+
 def parse_gitleaks(path: Path) -> list[Finding]:
     """`gitleaks detect --report-format json --redact` output -> Findings.
 
@@ -910,6 +994,7 @@ _PARSERS: dict[str, Any] = {
     "trivy": lambda p: parse_sarif(p, "trivy"),
     "pip-audit": parse_pip_audit,
     "npm-audit": parse_npm_audit,
+    "dependabot": parse_dependabot_alerts,
     "gitleaks": parse_gitleaks,
 }
 
