@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 MAX_PROPOSALS_BYTES = 64 * 1024
@@ -86,7 +87,9 @@ def _write_github_output(name: str, value: str) -> None:
         return
     with open(gh_output, "a", encoding="utf-8") as fh:
         if "\n" in value:
-            fh.write(f"{name}<<EOF\n{value}\nEOF\n")
+            # A fresh delimiter per value, as actions/toolkit writes them.
+            delimiter = f"ghadelimiter_{uuid.uuid4()}"
+            fh.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
         else:
             fh.write(f"{name}={value}\n")
 

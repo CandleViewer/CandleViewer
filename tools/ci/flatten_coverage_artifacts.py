@@ -29,11 +29,13 @@ labels). `services/api`, `packages/chart-engine`, `packages/protocol` and
 Artifacts are untrusted input (#3508): reports are read through
 `coverage_gate.read_artifact_bytes` and must parse as lcov, and a copy is only
 ever created as a new file. A refusal prints CI-COV-004 (a malformed report
-CI-COV-003) and exits 1.
+CI-COV-003), writes the same line to `--summary-out` when given (the summary
+the PR comment posts, as the gate does) and exits 1.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -106,23 +108,41 @@ def flatten(report_dir: Path) -> list[Path]:
             parse_lcov(data.decode("utf-8"))
         except UnicodeDecodeError as exc:
             raise CoverageGateError(f"{source} is not UTF-8") from exc
+        except CoverageGateError as exc:
+            raise CoverageGateError(f"{source}: {exc}") from exc
         _create_inside(report_dir, dest, data)
         written.append(dest)
 
     return written
 
 
+def _refuse(message: str, summary_out: Path | None) -> int:
+    print(message, file=sys.stderr)
+    if summary_out is not None:
+        summary_out.write_text(message + "\n", encoding="utf-8")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    report_dir = Path(argv[0]) if argv else Path("coverage-artifacts")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "report_dir", nargs="?", type=Path, default=Path("coverage-artifacts")
+    )
+    parser.add_argument(
+        "--summary-out",
+        type=Path,
+        default=None,
+        help="On a refusal, write it to this path (the PR-comment summary)",
+    )
+    args = parser.parse_args(argv)
     try:
-        written = flatten(report_dir)
+        written = flatten(args.report_dir)
     except ArtifactRefusedError as exc:
-        print(f"CI-COV-004: coverage artifact refused: {exc}", file=sys.stderr)
-        return 1
+        message = f"CI-COV-004: coverage artifact refused: {exc}"
+        return _refuse(message, args.summary_out)
     except CoverageGateError as exc:
-        print(f"CI-COV-003: unreadable coverage artifact: {exc}", file=sys.stderr)
-        return 1
+        message = f"CI-COV-003: unreadable coverage artifact: {exc}"
+        return _refuse(message, args.summary_out)
     for path in written:
         print(f"flattened -> {path}")
     return 0

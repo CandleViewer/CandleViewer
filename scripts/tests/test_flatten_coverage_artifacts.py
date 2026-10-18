@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -150,5 +151,40 @@ def test_main_rejects_a_malformed_report(
     source.parent.mkdir(parents=True)
     source.write_bytes(data)
     assert main([str(tmp_path)]) == 1
-    assert "CI-COV-003" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "CI-COV-003" in err and str(source) in err
     assert not (tmp_path / "coverage-unit-frontend" / "lcov.info").exists()
+
+
+@pytest.mark.parametrize(
+    ("case", "code"), [("malformed", "CI-COV-003"), ("oversized", "CI-COV-004")]
+)
+def test_main_writes_a_refusal_to_the_summary_the_pr_comment_posts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str, code: str
+) -> None:
+    source = tmp_path / "artifacts" / "coverage-unit-frontend" / WEB_REPORT
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "not lcov\n" if case == "malformed" else VALID_LCOV, encoding="utf-8"
+    )
+    if case == "oversized":
+        os.truncate(source, coverage_gate.MAX_REPORT_BYTES + 1)
+    summary = tmp_path / "coverage-summary.md"
+    assert main([str(tmp_path / "artifacts"), "--summary-out", str(summary)]) == 1
+    assert summary.read_text(encoding="utf-8") == capsys.readouterr().err
+    assert summary.read_text(encoding="utf-8").startswith(code)
+
+
+PR_JOB = Path(__file__).resolve().parents[2] / ".github/workflows/_job-coverage.yml"
+
+
+def test_the_pr_job_hands_flatten_the_summary_its_comment_posts() -> None:
+    doc = yaml.safe_load(PR_JOB.read_text(encoding="utf-8"))
+    steps = doc["jobs"]["coverage-thresholds"]["steps"]
+    (flatten_run,) = [
+        s["run"] for s in steps if "flatten_coverage_artifacts" in s.get("run", "")
+    ]
+    (comment,) = [s for s in steps if s.get("name") == "Post PR summary comment"]
+    assert "--summary-out coverage-summary.md" in " ".join(flatten_run.split())
+    assert "readFileSync('coverage-summary.md'" in comment["with"]["script"]
+    assert "always()" in comment["if"]

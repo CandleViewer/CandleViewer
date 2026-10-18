@@ -406,11 +406,14 @@ removing nothing.
   trips it: find what wrote the refused path. Raise a bound only in a reviewed change.
 - **`coverage-ratchet` is disabled (#3508).** It runs only for a successful push run of this
   repository's `main`, and no workflow runs the coverage lanes on a push to `main` (`pr.yml`
-  runs on pull requests). That run would cost about 45 runner-minutes per merge for the `py`
-  lane alone (medians 18.9, 14.8, 10.5 and 0.5 minutes, 26 green `pr.yml` runs on
-  2026-10-18), about 8,800 a day at the 196 merges of 2026-10-16. To re-enable it, add a
-  push-to-main workflow that uploads every coverage artifact and name it under the ratchet's
-  `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
+  runs on pull requests). Its only trigger is `workflow_dispatch`, and a manual run is expected
+  to skip its job: the job's `if:` needs a `workflow_run` event. A push-to-main coverage run
+  would cost about 45 runner-minutes per merge for the `py` lane alone (medians 18.9, 14.8,
+  10.5 and 0.5 minutes, 26 green `pr.yml` runs on 2026-10-18), about 8,800 a day at the 196
+  merges of 2026-10-16. To re-enable it, add a push-to-main workflow that uploads every
+  coverage artifact, with the JS coverage lanes unfiltered (their `...[origin/main]` filter
+  selects no package on a push to `main`, so every JS package would be N/A), and name it under
+  the ratchet's `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
   `scripts/tests/test_coverage_ratchet_yml.py` checks the producer runs on push to `main`.
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,

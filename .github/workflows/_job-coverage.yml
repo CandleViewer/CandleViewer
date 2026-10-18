@@ -9,13 +9,15 @@ name: _job-coverage
 #
 # `tools/ci/coverage_gate.py` owns the actual pass/fail decision (floor,
 # baseline-regression tolerance, missing-artifact-is-failure); this
-# workflow only downloads artifacts, runs the gate, posts the PR-comment
-# summary table, and — on `push` to `main` only — proposes baseline raises
-# via a bot PR. Out of scope (ticket): writing tests to reach the
-# thresholds, mutation testing / flake quarantine (E03-Q03).
+# workflow only downloads artifacts, runs the gate and posts the PR-comment
+# summary table. Baseline raises belong to coverage-ratchet.yml, disabled
+# until a trusted push-to-main producer exists (#3508). Out of scope
+# (ticket): writing tests to reach the thresholds, mutation testing / flake
+# quarantine (E03-Q03).
 #
 # Error codes: CI-COV-001 below floor, CI-COV-002 baseline regression,
-# CI-COV-003 missing coverage artifact.
+# CI-COV-003 missing or unreadable coverage artifact, CI-COV-004 artifact
+# refused (artifacts are untrusted input, #3508).
 
 on:
   workflow_call:
@@ -77,9 +79,12 @@ jobs:
       # `<artifact>/lcov.info` (or `coverage.xml`) path coverage_gate.py's
       # default filename lookup expects, without hand-listing every package
       # path twice (that duplication already lives once, in
-      # coverage-baselines.json's `artifact` field).
+      # coverage-baselines.json's `artifact` field). A refusal here is written
+      # to the summary file, so the PR comment below shows it.
       - name: Flatten per-package reports to coverage_gate.py's expected layout
-        run: python tools/ci/flatten_coverage_artifacts.py coverage-artifacts
+        run: >
+          python tools/ci/flatten_coverage_artifacts.py coverage-artifacts
+          --summary-out coverage-summary.md
 
       - name: Run coverage gate
         id: gate

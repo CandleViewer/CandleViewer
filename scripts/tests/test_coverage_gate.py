@@ -715,17 +715,41 @@ def test_main_refuses_a_download_with_too_many_entries(
     assert "CI-COV-004" in summary.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("case", ["file-link", "oversized"])
+def test_main_refuses_an_untrusted_report_with_ci_cov_004(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str
+) -> None:
+    report_dir = tmp_path / "artifacts"
+    report = report_dir / "coverage-unit-engine" / "lcov.info"
+    if case == "file-link":
+        report.parent.mkdir(parents=True)
+        report.symlink_to(_write(tmp_path / "outside.info", _lcov(1000, 990)))
+    else:
+        os.truncate(
+            _write(report, _lcov(1000, 990)), coverage_gate.MAX_REPORT_BYTES + 1
+        )
+    summary = tmp_path / "summary.md"
+    assert _main(tmp_path, report_dir, "--summary-out", str(summary)) == 1
+    assert "CI-COV-004" in capsys.readouterr().err
+    assert summary.read_text(encoding="utf-8").startswith("CI-COV-004")
+
+
 @pytest.mark.parametrize(
-    ("frontend", "rc", "proposed"),
+    ("frontend", "rc", "proposed", "code"),
     [
-        (None, 1, None),
-        ("not lcov\n", 1, None),
-        (_lcov(1000, 500), 0, {"packages/protocol": 99.0}),
+        (None, 1, None, "CI-COV-004"),
+        ("not lcov\n", 1, None, "CI-COV-003"),
+        (_lcov(1000, 500), 0, {"packages/protocol": 99.0}, "CI-COV-001"),
     ],
     ids=["refused", "malformed", "other-package-below-floor"],
 )
 def test_main_ratchet_proposes_only_from_a_complete_valid_download(
-    tmp_path: Path, frontend: str | None, rc: int, proposed: dict[str, float] | None
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    frontend: str | None,
+    rc: int,
+    proposed: dict[str, float] | None,
+    code: str,
 ) -> None:
     report_dir = tmp_path / "artifacts"
     _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 990))
@@ -738,3 +762,4 @@ def test_main_ratchet_proposes_only_from_a_complete_valid_download(
     out = tmp_path / "ratchet.json"
     assert _main(tmp_path, report_dir, "--ratchet", "--ratchet-out", str(out)) == rc
     assert (json.loads(out.read_text()) if out.exists() else None) == proposed
+    assert code in capsys.readouterr().err

@@ -67,6 +67,17 @@ def test_the_token_holds_only_what_the_ratchet_needs() -> None:
         }
 
 
+def test_artifacts_come_only_from_the_run_that_triggered_the_ratchet() -> None:
+    for job in _load(RATCHET)["jobs"].values():
+        downloads = [
+            s for s in job["steps"] if "download-artifact@" in s.get("uses", "")
+        ]
+        assert downloads
+        assert {s["with"]["run-id"] for s in downloads} == {
+            "${{ github.event.workflow_run.id }}"
+        }
+
+
 def test_steps_check_out_main_and_pass_no_expression_to_a_shell() -> None:
     for job in _load(RATCHET)["jobs"].values():
         uses = [s for s in job["steps"] if "actions/checkout@" in s.get("uses", "")]

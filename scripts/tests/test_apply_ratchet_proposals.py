@@ -102,6 +102,35 @@ def test_main_wrong_arg_count_returns_two() -> None:
     assert main([]) == 2
 
 
+def _multiline_outputs(path: Path) -> list[tuple[str, str]]:
+    """(delimiter, value) per `name<<delimiter` entry of a $GITHUB_OUTPUT file."""
+    entries: list[tuple[str, str]] = []
+    lines = iter(path.read_text(encoding="utf-8").splitlines())
+    for line in lines:
+        _, multiline, delimiter = line.partition("<<")
+        if multiline:
+            value = []
+            for value_line in lines:
+                if value_line == delimiter:
+                    break
+                value.append(value_line)
+            entries.append((delimiter, "\n".join(value)))
+    return entries
+
+
+def test_each_multiline_output_has_a_fresh_delimiter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gh_output = tmp_path / "gh_output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+    value = "- packages/protocol: 88.0% -> 89.4%\n- packages/ui: 80.0% -> 81.0%"
+    apply_ratchet_proposals._write_github_output("summary", value)
+    apply_ratchet_proposals._write_github_output("summary", value)
+    (first, first_value), (second, second_value) = _multiline_outputs(gh_output)
+    assert first_value == second_value == value
+    assert first != second and first not in value
+
+
 # --- Untrusted input (#3508): the proposals document is untrusted input -----
 
 
