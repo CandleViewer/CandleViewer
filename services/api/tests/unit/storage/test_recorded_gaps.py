@@ -7,12 +7,16 @@ refusals the port promises before any storage read.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     REPLAYABLE_STREAMS,
@@ -67,14 +71,73 @@ async def test_a_limit_below_one_is_refused_before_the_query(limit: int) -> None
     assert rel.calls == []
 
 
-async def test_a_stream_that_is_not_recorded_is_refused_before_the_query() -> None:
+@pytest.mark.parametrize("recorded", [(), (StreamKind.TRADES,)], ids=["alone", "among-recorded"])
+async def test_a_stream_that_is_not_recorded_is_refused_before_the_query(
+    recorded: tuple[StreamKind, ...],
+) -> None:
     repo, rel = _repo([ROW])
     derived = next(s for s in StreamKind if s not in REPLAYABLE_STREAMS)
 
     with pytest.raises(RecordedQueryRejected):
-        await repo.recording_gaps("BTCUSDT", WINDOW, streams=(derived,), limit=10)
+        await repo.recording_gaps("BTCUSDT", WINDOW, streams=(*recorded, derived), limit=10)
 
     assert rel.calls == []
+
+
+class _DriverError(Exception):
+    """A DBAPI error as asyncpg raises it: a SQLSTATE, and a message naming the server."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__('connection to server at "10.0.0.5", port 5432 failed')
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize(
+    ("failure", "sqlstate"),
+    [
+        (
+            sa.exc.OperationalError("SELECT ...", {"symbol": "BTCUSDT"}, _DriverError("08006")),
+            "08006",
+        ),
+        (sa.exc.ProgrammingError("SELECT ...", {}, _DriverError("42P01")), "42P01"),
+        (sa.exc.InterfaceError("SELECT ...", {}, Exception("closed: 10.0.0.5:5432")), None),
+        (sa.exc.InvalidRequestError("pool at 10.0.0.5:5432 is closed"), None),
+        (ConnectionRefusedError(111, "Connect call failed ('10.0.0.5', 5432)"), None),
+    ],
+    ids=["operational", "programming", "interface-no-sqlstate", "not-dbapi", "socket"],
+)
+async def test_a_database_failure_is_a_typed_error_that_names_no_server(
+    failure: Exception, sqlstate: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """24 Sec.13.7: an unreadable gap table fails the replay as one typed storage error, with
+    only the SQLSTATE: never the driver's text, whose message may name the server (RP-I02)."""
+    repo, _ = _repo([ROW])
+
+    async def fail(*_: object) -> list[dict[str, Any]]:
+        raise failure
+
+    monkeypatch.setattr(repo, "_all", fail)
+
+    with pytest.raises(StorageQueryFailed) as caught:
+        await repo.recording_gaps("BTCUSDT", WINDOW, streams=(StreamKind.TRADES,), limit=10)
+
+    assert caught.value.sqlstate == sqlstate
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert "10.0.0.5" not in str(caught.value)
+
+
+async def test_a_cancelled_gap_read_raises_the_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, _ = _repo([ROW])
+
+    async def cancelled(*_: object) -> list[dict[str, Any]]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(repo, "_all", cancelled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await repo.recording_gaps("BTCUSDT", WINDOW, streams=(StreamKind.TRADES,), limit=10)
 
 
 def test_the_adapter_and_the_fake_take_the_same_keyword_only_arguments() -> None:

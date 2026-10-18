@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Collection, Sequence
 
 import pytest
+import sqlalchemy as sa
 from prometheus_client import REGISTRY
 
 from candleviewer.replay import (
@@ -36,6 +37,7 @@ from tests.unit.replay._events import (
     ticker,
     trade,
 )
+from tests.unit.storage.test_recorder_repository_unit import _repo
 
 START, END = 10 * SECOND, 20 * SECOND
 ETH = "ETHUSDT"
@@ -293,6 +295,31 @@ async def test_an_unreadable_gap_table_fails_the_replay_rather_than_hiding_gaps(
         "STORAGE_TIER_UNAVAILABLE",
     )
     assert "/var" not in str(error) and error.__cause__ is None and error.__context__ is None
+
+
+async def test_a_postgres_outage_in_the_gap_read_reaches_the_replay_typed_without_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production gap adapter, not a double: its driver failure becomes the typed
+    `ReplaySourceUnavailable` of an unreadable gap table, and no text of it travels."""
+    adapter, _ = _repo([])
+
+    async def outage(*_: object) -> list[dict[str, object]]:
+        raise sa.exc.OperationalError("SELECT ...", {}, Exception("server at 10.0.0.5:5432 down"))
+
+    monkeypatch.setattr(adapter, "_all", outage)
+    harness = Harness(hot=[trade(SECOND)]).replace_ports(gaps=adapter)
+
+    delivered, error = await drain(harness.merge(), batch=8)
+
+    assert delivered == [] and harness.hot.reads == 0
+    assert isinstance(error, ReplaySourceUnavailable)
+    assert (error.tier, error.stream, error.reason) == (
+        "recording_gaps",
+        None,
+        "STORAGE_QUERY_FAILED",
+    )
+    assert "10.0.0.5" not in str(error) and error.__cause__ is None and error.__context__ is None
 
 
 async def test_a_gap_read_that_never_answers_times_out_as_a_typed_error() -> None:

@@ -406,6 +406,66 @@ async def test_a_coverage_lookup_the_registry_refuses_is_typed(tmp_path: Path) -
         await reader.archived("../../etc", StreamKind.TRADES, FIRST_HOUR)
 
 
+async def test_coverage_spans_every_partition_of_the_window(tmp_path: Path) -> None:
+    registry = DatasetRegistry(tmp_path / "cold")
+    registry.ensure_tree()
+    exporter = ColdExporter(registry, MemHotSource(generated_rows()), rows_per_group=64)
+    for hour in (0, 1):
+        await exporter.export_partition(
+            SYMBOL,
+            StreamKind.ORDERBOOK_DELTA,
+            TimeRange(start_us=H0 + hour * HOUR, end_us=H0 + (hour + 1) * HOUR),
+            partition_extra={"hour": f"{hour:02d}"},
+        )
+    reader = ParquetRecordedReader(registry)
+    across = TimeRange(start_us=H0 + 30 * MINUTE, end_us=H0 + 90 * MINUTE)
+    both = TimeRange(start_us=H0, end_us=H0 + 2 * HOUR)
+
+    assert await reader.archived(SYMBOL, StreamKind.ORDERBOOK_DELTA, across) == [across]
+    assert await reader.archived(SYMBOL, StreamKind.ORDERBOOK_DELTA, both) == [both]
+
+
+async def test_an_empty_coverage_window_names_nothing(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+    empty = TimeRange(start_us=H0 + 5, end_us=H0 + 5)
+
+    assert await reader.archived(SYMBOL, StreamKind.TRADES, empty) == []
+
+
+async def test_coverage_reads_its_manifests_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+    threads: list[int] = []
+    real = ManifestStore.read
+
+    def spy(self: ManifestStore, partition_dir: Path, cold_root: Path) -> list[Any]:
+        threads.append(threading.get_ident())
+        return real(self, partition_dir, cold_root)
+
+    monkeypatch.setattr(ManifestStore, "read", spy)
+
+    assert await reader.archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR) == [FIRST_HOUR]
+    assert threads and threading.get_ident() not in threads  # never the loop's thread
+
+
+@pytest.mark.parametrize("bad", ["0", None, 1.5, True, [0]], ids=repr)
+async def test_a_coverage_range_that_is_not_integral_is_a_typed_error(
+    tmp_path: Path, bad: object
+) -> None:
+    """Corrupt coverage metadata is refused typed, never a bare `TypeError` from the span
+    arithmetic, and never coverage a bool or a float happens to compare as."""
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    manifest = _trades_manifest(root)
+    doc = json.loads(manifest.read_text(encoding="utf-8"))
+    doc["entries"][0]["range_start_us"] = bad
+    manifest.write_text(json.dumps(doc), encoding="utf-8")
+
+    with pytest.raises(ColdReplayReadError):
+        await ParquetRecordedReader(registry).archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR)
+
+
 def test_the_cold_reader_is_addressed_by_stream_id_never_by_path(tmp_path: Path) -> None:
     """SR-097 / ticket AC 5: the public surface takes a registry, never a filesystem path."""
     reader = ParquetRecordedReader(DatasetRegistry(tmp_path))
@@ -977,6 +1037,95 @@ async def test_an_anchor_tie_wider_than_the_lookup_is_refused_not_guessed(tmp_pa
 
     with pytest.raises(ColdReplayReadError):
         await reader.snapshot_at(SYMBOL, 200, H0 + 120_000_000, not_before_us=H0)
+
+
+async def test_a_tie_one_row_wider_than_the_lookup_is_refused(tmp_path: Path) -> None:
+    """17 snapshots share the instant: the 16-row read cannot see them all, so it refuses."""
+    reader = await _tied(tmp_path / "cold", list(range(17)))
+
+    with pytest.raises(ColdReplayReadError, match="share one instant"):
+        await reader.snapshot_at(SYMBOL, 200, H0 + 120_000_000, not_before_us=H0)
+
+
+def _book(
+    ts: int, epoch: int, update_id: int, bids: str = '[["65000.0","1.5"]]'
+) -> dict[str, object]:
+    return {
+        "ts": ts,
+        "symbol": SYMBOL,
+        "depth": 200,
+        "epoch_id": epoch,
+        "update_id": update_id,
+        "cross_seq": None,
+        "bids": bids,
+        "asks": '[["65000.5","2"]]',
+    }
+
+
+async def test_a_full_read_spanning_two_instants_is_resolved_at_the_newest_instant(
+    tmp_path: Path,
+) -> None:
+    """15 snapshots at the newest instant and an older one fill the 16-row read: no tie, and
+    the older snapshot never wins, though its update id is the largest."""
+    newest = H0 + 2 * MINUTE
+    ids = [4, 11, 7, 2, 9, 5, 13, 1, 8, 3, 12, 6, 10, 14, 0]
+    rows = [_book(H0 + MINUTE, 99, 999), *(_book(newest, e, u) for e, u in enumerate(ids))]
+    reader = ParquetRecordedReader(await _snapshots(tmp_path / "cold", rows))
+
+    anchor = await reader.snapshot_at(SYMBOL, 200, H0 + 3 * MINUTE, not_before_us=H0)
+
+    assert anchor is not None and (anchor.ts_us, anchor.seq) == (newest, 14)
+
+
+async def test_the_anchor_lookup_reads_the_newest_rows_and_states_its_bound_once(
+    tmp_path: Path,
+) -> None:
+    """20 snapshots at distinct instants overfill the 16-row read: it must be the newest 16,
+    and the read binds the same row count the tie check counts against."""
+    rows = [_book(H0 + m * MINUTE, 0, m) for m in range(20)]
+    reader = ParquetRecordedReader(await _snapshots(tmp_path / "cold", rows))
+
+    anchor = await reader.snapshot_at(SYMBOL, 200, H0 + 30 * MINUTE, not_before_us=H0)
+
+    assert anchor is not None and (anchor.ts_us, anchor.seq) == (H0 + 19 * MINUTE, 19)
+    assert recorded_reader._ANCHOR_SQL.endswith(" LIMIT $n")  # bound: one constant, not two
+
+
+async def test_snapshots_alike_but_for_their_book_epoch_resolve_by_the_full_order_key(
+    tmp_path: Path,
+) -> None:
+    """Same instant, same update id, two book epochs: the tiebreak decides, not where each row
+    happens to sit in its part (the later epoch is written first here)."""
+    at = H0 + MINUTE
+    rows = [_book(at, 1, 7, bids='[["64999.0","3"]]'), _book(at, 0, 7)]
+    reader = ParquetRecordedReader(await _snapshots(tmp_path / "cold", rows))
+
+    anchor = await reader.snapshot_at(SYMBOL, 200, at, not_before_us=H0)
+
+    assert anchor == event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, rows[0])
+    assert anchor is not None and anchor.tiebreak == (7, 200, 1)
+
+
+async def test_of_two_exported_copies_of_the_anchor_the_later_part_is_returned(
+    tmp_path: Path,
+) -> None:
+    """A re-export leaves the snapshot in two parts: the anchor is the copy in the later part,
+    the one the merge would keep (21 Sec.5.3), never whichever the scan met first."""
+    at = H0 + MINUTE
+    old, new = _book(at, 0, 5), _book(at, 0, 5, bids='[["64999.0","3"]]')
+    registry = DatasetRegistry(tmp_path / "cold")
+    registry.ensure_tree()
+    snapshots = StreamKind.ORDERBOOK_SNAPSHOT
+    await ColdExporter(registry, MemHotSource({snapshots: [old]})).export_partition(
+        SYMBOL, snapshots, FIRST_HOUR
+    )
+    await ColdExporter(registry, MemHotSource({snapshots: [new]})).export_partition(
+        SYMBOL, snapshots, TimeRange(start_us=H0, end_us=H0 + 30 * MINUTE)  # a second part
+    )
+
+    anchor = await ParquetRecordedReader(registry).snapshot_at(SYMBOL, 200, at, not_before_us=H0)
+
+    assert anchor == event_from_row(snapshots, new) != event_from_row(snapshots, old)
 
 
 async def test_an_unreadable_partition_listing_is_a_typed_error(

@@ -79,12 +79,13 @@ _BOOK_RANGE_SQL: Final = (
     _SOURCE + _RANGE + "AND depth = $depth ORDER BY ts, filename, file_row_number LIMIT $n"
 )
 #: The anchor lookup reads the newest 16 snapshots, newest copy first, and orders those sharing
-#: the latest instant by `order_key`, as the hot tier does (24 Sec.13.7).
+#: the latest instant by `order_key`, as the hot tier does (24 Sec.13.7). The row count is bound
+#: (`$n`), so the read and the tie check count the same 16.
 _ANCHOR_ROWS: Final = 16
 _ANCHOR_SQL: Final = (
     _SOURCE + "WHERE depth = $depth AND ts >= make_timestamptz($lo::BIGINT) "
     "AND ts <= make_timestamptz($hi::BIGINT) "
-    "ORDER BY ts DESC, filename DESC, file_row_number DESC LIMIT 16"
+    "ORDER BY ts DESC, filename DESC, file_row_number DESC LIMIT $n"
 )
 #: Below the replay merge's 30 s storage deadline, so a slow scan fails here, typed, first.
 DEFAULT_TIMEOUT_S: Final = 20.0
@@ -334,6 +335,7 @@ class ParquetRecordedReader:
             "lo": not_before_us,
             "hi": at_us,
             "depth": depth,
+            "n": _ANCHOR_ROWS,
         }
         found = await self._query(_ANCHOR_SQL, params, stream)
         if len(found) == _ANCHOR_ROWS and found[0].ts_us == found[-1].ts_us:
@@ -349,11 +351,15 @@ class ParquetRecordedReader:
         return covered_parts(spans, rng)
 
     def _manifested(self, symbol: str, stream: StreamKind, rng: TimeRange) -> list[tuple[int, int]]:
-        """Worker thread: the time range of every manifest entry of the partitions of `rng`."""
+        """Worker thread: the time range of every manifest entry of the partitions of `rng`. A
+        range that is not a pair of integers is corrupt coverage, refused typed."""
         spans: list[tuple[int, int]] = []
         for paths in self._partitions(symbol, stream, rng.start_us, rng.end_us):
-            entries = ManifestStore(paths.manifests_dir).read(paths.partition_dir, paths.root)
-            spans += [(e.range_start_us, e.range_end_us) for e in entries]
+            for entry in ManifestStore(paths.manifests_dir).read(paths.partition_dir, paths.root):
+                lo, hi = entry.range_start_us, entry.range_end_us
+                if type(lo) is not int or type(hi) is not int:  # JSON can hold any value there
+                    raise ColdReplayReadError("a cold manifest's coverage range is not integral")
+                spans.append((lo, hi))
         return spans
 
     async def _files(self, symbol: str, stream: StreamKind, lo_us: int, hi_us: int) -> list[str]:

@@ -22,6 +22,7 @@ from typing import Any, Final
 import sqlalchemy as sa
 
 from candleviewer.domain.sql_names import EPOCH, ts_us_from_row
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     STREAM_BY_DB_KIND,
@@ -377,7 +378,10 @@ class SqlAlchemyRecorderRepository:
     ) -> list[RecordedGap]:
         """`RecordingGapReader` (E26-T02): gaps of `symbol` in `streams` intersecting `rng`, the
         earliest `limit` by start. A `limit` below 1 (or a bool) or a stream that is not
-        recorded is refused before the query."""
+        recorded is refused before the query. A database failure is `StorageQueryFailed`,
+        raised after the handler with only the SQLSTATE: the replay fails it as an unreadable
+        gap table, and no driver text or chain (which may name the server) goes with it
+        (24 Sec.13.7, RP-I02)."""
         if isinstance(limit, bool) or limit < 1:
             raise RecordedQueryRejected("limit must be an int >= 1")
         if any(stream not in _DB_KIND for stream in streams):
@@ -389,16 +393,24 @@ class SqlAlchemyRecorderRepository:
             "streams": sorted(_DB_KIND[stream] for stream in streams),
             "limit": limit,
         }
-        return [
-            RecordedGap(
-                symbol=symbol,
-                stream=STREAM_BY_DB_KIND[str(row["stream"])],
-                start_us=ts_us_from_row(row["gap_start"]),
-                end_us=ts_us_from_row(row["gap_end"]),
-                cause=str(row["cause"]),
+        try:
+            rows = await self._all(_REPLAY_GAPS, params)
+        except (sa.exc.SQLAlchemyError, OSError) as exc:
+            state = (
+                getattr(exc.orig, "sqlstate", None) if isinstance(exc, sa.exc.DBAPIError) else None
             )
-            for row in await self._all(_REPLAY_GAPS, params)
-        ]
+        else:
+            return [
+                RecordedGap(
+                    symbol=symbol,
+                    stream=STREAM_BY_DB_KIND[str(row["stream"])],
+                    start_us=ts_us_from_row(row["gap_start"]),
+                    end_us=ts_us_from_row(row["gap_end"]),
+                    cause=str(row["cause"]),
+                )
+                for row in rows
+            ]
+        raise StorageQueryFailed(state if isinstance(state, str) else None)  # nothing chained
 
     async def earliest_first_event(self, symbol: str) -> datetime | None:
         rows = await self._all(_EARLIEST, {"symbol": symbol})
