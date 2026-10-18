@@ -21,7 +21,7 @@ A job-level `continue-on-error`, or a job or workflow `defaults.run.shell`, woul
 pinned steps without touching them, so no scanned job may set one.
 
 #3471: a selector still picks the app with a changed-since range (`@candleviewer/web[origin/main]`,
-`{./apps/web}[origin/main]`), and a runner's own root or config flag (`--root`, `--config`, `-c`:
+`{./apps/web}[origin/main]`), and a runner's own root or config (`--root`, `-r`, `--config`, `-c`:
 `vitest --root apps/web`, `playwright test -c apps/web/e2e`) counts as a folder the command reads,
 relative to the step's folder, a `cd` folder or a `-C` folder. That flag does not move where pnpm
 runs, so a path selector next to it still resolves from the command's folder.
@@ -71,7 +71,7 @@ WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\
 # One command run in another folder (`pnpm -C apps/web`, `--dir=apps/web`, `npm --prefix`).
 DIR_FLAG = re.compile(rf"(?:^|\s)(?:-C|--dir|--prefix){VALUE}")
 # A runner's own root or config (`vitest --root apps/web`, `playwright test -c apps/web/e2e`).
-TOOL_ROOT = re.compile(rf"(?:^|\s)(?:--root|--config|-c){VALUE}")
+TOOL_ROOT = re.compile(rf"(?:^|\s)(?:--root|-r|--config|-c){VALUE}")
 # A changed-since range in a pnpm selector (`@candleviewer/web[origin/main]`).
 SINCE = re.compile(r"\[[^\]]*\]")
 CD = re.compile(rf"(?:cd|pushd)\s+(?:--\s+)?{WORD}")
@@ -302,6 +302,7 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, 'pnpm --filter "@candleviewer/web[origin/main]" run build', True),
         (None, 'pnpm --filter "{./apps/web}[origin/main]" test', True),
         (None, "npx vitest run --root apps/web", True),
+        (None, "npx vitest run -r apps/web", True),
         (None, "npx playwright test -c apps/web/e2e", True),
         (None, "pnpm -C apps/desktop exec vitest run --config=../web/vitest.config.mjs", True),
         (None, "pnpm --filter ./apps/web exec playwright test -c e2e/playwright.config.ts", True),
