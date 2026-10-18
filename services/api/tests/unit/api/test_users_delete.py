@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.admin.errors import UserLifecycleError
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.step_up import make_read_only_guard
 from candleviewer.api.users import make_users_router
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import SessionNotFound, StepUpRequired
@@ -82,8 +83,11 @@ def _principal(
     return PrincipalSnapshot(CALLER, frozenset({role}), perms, grants)
 
 
-def _client(w: _World, snap: PrincipalSnapshot | None, **wired: Any) -> TestClient:
-    """`wired` replaces the router's arguments (`user_disable=None`, `auth=_Auth(...)`, ...)."""
+def _client(
+    w: _World, snap: PrincipalSnapshot | None, *, guarded: bool = False, **wired: Any
+) -> TestClient:
+    """`wired` replaces the router's arguments (`user_disable=None`, `auth=_Auth(...)`, ...);
+    `guarded` mounts the deployed app's path guard (`make_read_only_guard`) in front."""
     args: dict[str, Any] = {
         "store": None,
         "emitter": w,
@@ -91,9 +95,11 @@ def _client(w: _World, snap: PrincipalSnapshot | None, **wired: Any) -> TestClie
         "notifier": object(),
         "auth": _Auth(w.log),
         "user_disable": w.svc,
-    }
+    } | wired
     app = FastAPI()
-    app.include_router(make_users_router(**(args | wired)))
+    if guarded:
+        app.middleware("http")(make_read_only_guard(args["auth"]))
+    app.include_router(make_users_router(**args))
     return TestClient(app, headers={"Authorization": "Bearer tok"}, raise_server_exceptions=False)
 
 
@@ -131,13 +137,18 @@ _ORDER = [  # role, target, elevated, query, status, code, log, challenges issue
     ("owner", TARGET, False, "?purge=true", 403, "step_up_required", _STEP, 1),
     ("owner", TARGET, True, "?purge=true", 400, "validation_failed", _STEP, 0),
     ("owner", TARGET, True, _BAD_ACK, 400, "validation_failed", _STEP, 0),
+    ("owner", TARGET, False, "?bogus=1", 403, "step_up_required", _STEP, 1),
+    ("owner", TARGET, True, "?purge=true&bogus=1", 422, "validation_failed", _STEP, 0),
 ]
 
 
 @pytest.mark.parametrize(
     "case",
     _ORDER,
-    ids=["role", "role-then-query", "self", "step-up", "step-up-then-query", "purge", "ack"],
+    ids=[
+        *("role", "role-then-query", "self", "step-up", "step-up-then-query", "purge", "ack"),
+        *("step-up-then-names", "names-then-values"),
+    ],
 )
 def test_guard_order_before_change(case: tuple[Any, ...], spec: dict[str, Any]) -> None:
     """UL1-S1, SR-025: `users:write`, a self-target (audited), the step-up, the query, then the
@@ -265,6 +276,23 @@ def test_purge_400_flag_off(value: str, status: int, spec: dict[str, Any]) -> No
 
 
 @pytest.mark.parametrize(
+    "query", ["?Purge=true", "?purge[]=true", "?bogus=1", "?userId=me", "?purge=false&x="]
+)
+def test_undeclared_query_key_422(query: str, spec: dict[str, Any]) -> None:
+    """SR-026 on this owner route (S7; the S6 security review's Low 8): a key `deleteUser` does
+    not declare is a 422 for any value, decided on the names after the step-up and before a value
+    is read, so nothing is disabled; a target-user key is one more undeclared key (the path names
+    the target)."""
+    w = _World()
+    r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET) + query)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    _conforms(spec, r)
+    assert w.log == ["step_up"] and _untouched(w)
+    assert {e["rule"] for e in r.json()["errors"]} == {"undeclared_parameter"}
+    assert r.json()["detail"].endswith("takes only the query parameters its operation declares.")
+
+
+@pytest.mark.parametrize(
     ("wired", "status", "code"),
     [
         ({"principal_resolver": SimpleNamespace(resolve=lambda r: None)}, 401, "unauthenticated"),
@@ -284,6 +312,18 @@ def test_unauthenticated_or_unwired_is_refused_before_any_read(
     r = _client(w, _principal("owner", spec), **wired).delete(_PATH.format(TARGET))
     assert (r.status_code, r.json()["code"]) == (status, code)
     assert _untouched(w) and w.calls == []
+
+
+def test_an_unwired_step_up_answers_as_the_deployed_guard(spec: dict[str, Any]) -> None:
+    """S7, one answer (the S6 review's Low 6): sessions wired without a step-up are a wiring
+    fault, `503 service_unavailable`, whether the deployed path guard answers it in front of the
+    route or the route's own fallback does; the bodies match and nothing is read."""
+    w, owner = _World(), _principal("owner", spec)
+    own = _client(w, owner, auth=_NoStepUp([])).delete(_PATH.format(TARGET))
+    guard = _client(w, owner, guarded=True, auth=_NoStepUp([])).delete(_PATH.format(TARGET))
+    assert (own.status_code, own.json()["code"]) == (503, "service_unavailable")
+    _conforms(spec, own)
+    assert own.json() == guard.json() and _untouched(w) and w.calls == []
 
 
 @pytest.mark.parametrize(

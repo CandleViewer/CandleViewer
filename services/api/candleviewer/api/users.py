@@ -19,10 +19,11 @@ the set the store read under its locks; unwired, 501.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
-lookup: U25, SR-055), the step-up `users` (SR-025), the query (`purge=true` is E42-T10's: 400
-until it serves it), then the change. `user_disable=None` fails closed with 501. In the deployed
-app the path-gated `DANGEROUS_ROUTES` guard (`make_read_only_guard`) answers an un-elevated caller
-first, so this order is the second line: it alone decides an elevated caller.
+lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7;
+`purge=true` is E42-T10's: 400 until it serves it), then the change. `user_disable=None` fails
+closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
+(`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
+alone decides an elevated caller.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from candleviewer.admin.errors import (
 from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.step_up import (
     _AuthLike,
     _bearer,
@@ -74,6 +76,8 @@ from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
 _RETRY_AFTER_S = 5
+#: SR-026 for an owner route (S7): `deleteUser`'s declared query parameters (22-api-openapi.yaml).
+DELETE_USER_QUERY = frozenset({"acknowledge_unknown_positions", "purge"})
 _ACK = TypeAdapter(bool)  # `acknowledge_unknown_positions`, a query parameter
 _Input = tuple[api.AccountAccessGrantInput, ...]
 #: SR-040: the PUT's body bounds. Both answer 400 `validation_failed`: the operation declares no
@@ -632,6 +636,9 @@ def make_users_router(
             return _lifecycle_problem(exc)
         if (gate := await users_elevation(request)) is not None:
             return gate
+        refusal = undeclared_query_refusal(request, DELETE_USER_QUERY, self_service=False)
+        if refusal is not None:  # the names, before any value is read
+            return refusal
         acknowledged = _flag(request, "acknowledge_unknown_positions")
         purge = _flag(request, "purge")
         if acknowledged is None or purge is None or purge:  # purge=true is E42-T10's (S14)

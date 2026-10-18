@@ -7,6 +7,7 @@ when a step runs, not when the service is built (they exist only once `AuthServi
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -36,9 +37,12 @@ def _world(mp: pytest.MonkeyPatch, rel: _Rel | None = None, **kw: Any) -> _World
     return w
 
 
+_RULE = str(uuid.UUID(int=1))  # rule ids are UUIDs: the adapter's lock is keyed by one (S7)
+
+
 def _build(w: _World, auth: Any = None, **kw: Any) -> UserDisableService:
     """The builder over the world: a rule of the user is armed, the rule engine marks the log."""
-    row = SimpleNamespace(id="r1", owner=str(_TARGET), mode="armed", deleted=False)
+    row = SimpleNamespace(id=_RULE, owner=str(_TARGET), mode="armed", deleted=False)
 
     async def all_rows() -> list[Any]:
         w.mark("rules")
@@ -49,7 +53,8 @@ def _build(w: _World, auth: Any = None, **kw: Any) -> UserDisableService:
 
     async def set_mode(rule_id: str, mode: str, actor: Any, key: str) -> None:
         assert mode == "disabled"  # a failed assert would fail the step: the result says so
-        w.mark(f"disarm:{rule_id}")
+        row.mode = mode
+        w.mark("disarm")
 
     engine: Any = SimpleNamespace(
         manager=lambda: SimpleNamespace(set_mode=set_mode),
@@ -84,7 +89,8 @@ async def test_the_real_backend_wires_every_port_to_the_service_it_names(
     assert result == DisableResult(changed=True)
     assert w.log == [
         *("positions", "users.disable", "socket:user_disabled", "sweep:user_disabled"),
-        *("b16:user_disabled", "scope", "rules", "disarm:r1", "invite", "users.invite_revoked"),
+        *("b16:user_disabled", "scope", "rules", "disarm", "rules", "invite"),
+        "users.invite_revoked",
     ]
 
 
@@ -110,7 +116,7 @@ async def test_the_auth_services_are_looked_up_when_a_step_runs_not_when_built(
     result = await _build(w, auth=object()).disable(_TARGET, actor=_OWNER, **_ACK)
     failed = ("session_sweep", "b16_revoke", "invite_revoke")
     assert result == DisableResult(changed=True, failed_steps=failed)
-    assert w.post_commit() == ["socket:user_disabled", "scope", "rules", "disarm:r1"]
+    assert w.post_commit() == ["socket:user_disabled", "scope", "rules", "disarm", "rules"]
 
 
 async def test_the_instant_is_the_apps_clock(monkeypatch: pytest.MonkeyPatch) -> None:

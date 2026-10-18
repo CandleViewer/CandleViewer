@@ -11,13 +11,13 @@ shielded tracked task, never rolled back: socket close (`bye user_disabled`, 440
 session still live after the transaction (defence in depth: a mint or a refresh refuses a disabled
 user, #2992, and `require_active` revokes a survivor, #3011), one B16 REVOKE per session (R5), the
 rule engine's scope refresh (S5, O5: a failing refresh leaves its snapshot closed), B9 DISARM of
-each armed rule the user owns (S5: a rule its chart refuses fails its own run and the rest go
-on; O4 and O5 hold it until a repeat), an `invited` user's open invite (R6; the invite store
-writes its record ahead); each await bounded, all by a deadline. A repeat (AC5's no-op) re-runs
-the sweep (and B16 for swept sessions), the scope refresh and the disarm, all idempotent, so a
-failed step can be re-driven by the same DELETE. Repeats may overlap, and the disarm stays
-idempotent: its adapter runs the disarms of one rule one at a time, so the second finds the rule
-disarmed and writes nothing."""
+each armed rule the user owns, listed again once after the disarms (S5, S7: a rule its chart
+refuses fails its own run and the rest go on; O4 and O5 hold a rule while it stays armed), an
+`invited` user's open invite (R6; the invite store writes its record ahead); each await bounded,
+all by a deadline. A repeat (AC5's no-op) re-runs the sweep (and B16 for swept sessions), the
+scope refresh and the disarm, all idempotent, so a failed step can be re-driven by the same
+DELETE. Repeats may overlap, and the disarm stays idempotent: its adapter runs the disarms of one
+rule one at a time, so the second finds the rule disarmed and writes nothing."""
 
 from __future__ import annotations
 
@@ -426,14 +426,22 @@ class UserDisableService:
     ) -> None:
         """S5: B9 DISARM of each armed rule the user owns, through the rule engine's interface.
         One run lists them and one run disarms each, so rules that cannot be listed, or one the
-        chart refuses (it is evaluating or acting), fail that run and the rest still go on; a
-        rule left armed is held by O4 and O5 (C-2.21) until a repeat of this call disarms it."""
-        ids = await tally.run(partial(self._rules.armed_rule_ids, user)) or ()
-        for rule_id in ids:
-            disarm = partial(
-                self._rules.disarm, rule_id, user_id=user, actor=actor, disabled_at=now
-            )
-            await tally.run(disarm)
+        chart refuses (it is evaluating or acting), fail that run and the rest still go on. S7:
+        the rules are listed once more after the disarms, so a rule whose arm landed after the
+        first listing (its gate passed before the commit) is disarmed too; a rule already tried
+        is not tried again. A rule left armed, or armed after the second listing, is held by O4
+        and O5 (C-2.21) while it stays armed."""
+        tried: set[str] = set()
+        for _ in range(2):  # the listing, then the one after the disarms
+            listed = await tally.run(partial(self._rules.armed_rule_ids, user))
+            if listed is None:  # unlisted, a failed run: a repeat of this call lists again
+                return
+            for rule_id in [r for r in listed if r not in tried]:
+                tried.add(rule_id)
+                disarm = partial(
+                    self._rules.disarm, rule_id, user_id=user, actor=actor, disabled_at=now
+                )
+                await tally.run(disarm)
 
     async def _record_revoke(self, session: uuid.UUID | SessionRecord, now: datetime) -> None:
         """One B16 REVOKE; its action writes `auth.session_revoked` (R5)."""
