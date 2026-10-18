@@ -16,7 +16,7 @@
     "test:cov": "vitest run --coverage",
     "build": "tsc -p tsconfig.build.json && pnpm run build:preload",
     "build:preload": "node scripts/build-preload.mjs",
-    "build:installer": "electron-builder --config electron-builder.yml",
+    "build:installer": "node scripts/require-web-dist.mjs && electron-builder --config electron-builder.yml",
     "size": "echo \"@candleviewer/desktop: no bundle budget (renderer budget lives in apps/web)\"",
     "e2e": "playwright test -c e2e/playwright.config.ts"
   },
