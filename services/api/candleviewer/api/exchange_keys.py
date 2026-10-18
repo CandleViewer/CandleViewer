@@ -15,7 +15,8 @@ the promotion. No frame here holds the pasted key in clear.
 `testApiKey` (slice 2b6) takes no step-up (04 §7.2.2 row 44) and no idempotency key: the session,
 then `keys:read` on the account (`granted_accounts`, a refusal audited as `rbac.denied` and always
 a 403: a test never answers on an audit record), then `accounts.key_test`, which reads, throttles,
-probes and has the self-check enforce the verdict (decision 11). Every failure the exchange gives
+probes and has the self-check enforce the verdict (decision 11). Its read refused by the store's
+live-owner gate (SR-051) is audited and answered the same way. Every failure the exchange gives
 is a `200` with `passed: false`; a test that probed nothing is its problem. The fake backend has
 no test: `503 store_unavailable`.
 """
@@ -36,7 +37,7 @@ from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
-from candleviewer.accounts.errors import AccountsError
+from candleviewer.accounts.errors import AccountScopeDeniedError, AccountsError
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.key_import import (
     Importer,
@@ -75,6 +76,8 @@ _SHOWN: Final = {
 }  # fmt: skip
 #: The two rules of the permission gate (step 2): the checks after it never ran.
 _GATE: Final = frozenset({Rule.WITHDRAW_PERMISSION, Rule.PERMISSION_NOT_ALLOWED})
+#: `rbac.denied`'s reason when the store's live-owner gate refuses a test (`enforce`'s shape).
+_NOT_OWNER: Final = f"not_owner:{Permission.KEYS_READ.value}:{Scope.GRANTED_ACCOUNTS.value}"
 
 
 class _Emitter(Protocol):
@@ -190,6 +193,20 @@ def _untested(exc: AccountsError) -> JSONResponse:
     return _problem(problem_code(exc), "The key was not tested.")
 
 
+async def _not_owner(audit: _Emitter, actor: Importer) -> None:
+    """`rbac.denied` for a caller the store's live-owner gate refused once `enforce` let it
+    through (SR-051), with `enforce`'s fields and its reason's shape (`audit` names the account).
+    Best-effort, as `enforce`'s record is here: a refusal whose record fails is still a 403."""
+    try:
+        await audit.emit(
+            "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,
+            actor_ip=actor.ip, session_id=None, outcome="denied", severity="warning",
+            reason=_NOT_OWNER, request_id=actor.request_id,
+        )  # fmt: skip
+    except (AuditError, RuntimeError):  # RuntimeError: the audit writer is not started
+        return
+
+
 def _actor(principal: PrincipalSnapshot, request: Request) -> Importer:
     """The acting Owner, as the audit records name them (SR-E27-09)."""
     rid, role = current_request_id(), ",".join(sorted(principal.roles))
@@ -302,6 +319,9 @@ def make_exchange_keys_router(
         include_ws = body is None or body.include_ws
         try:
             done = await tests.run(account_id, key_id, actor, include_ws=include_ws)
+        except AccountScopeDeniedError as exc:  # SR-051: the store's live-owner gate refused
+            await _not_owner(_OnAccount(audit, account_id), actor)
+            return _untested(exc)
         except AccountsError as exc:
             return _untested(exc)
         return JSONResponse(_tested(done, egress_ip))

@@ -176,22 +176,37 @@ async def test_no_verdict_is_a_200_with_the_rest_error_and_no_verification() -> 
         ("manager", _TEST, ACCT),  # no keys:read
         ("viewer", _TEST, ACCT),
         ("reader", f"/exchange-accounts/{OTHER}/keys/{KEY}/test", OTHER),  # IDOR: no grant there
-        ("reader", _TEST, None),  # granted, yet keys are the Owner's: the store's gate refuses
+        ("reader", _TEST, ACCT),  # granted, yet keys are the Owner's: the store's gate refuses
     ],
     ids=["manager", "viewer", "cross-account", "store-gate"],
 )
-async def test_only_the_owner_may_test_a_key(who: str, path: str, denied: UUID | None) -> None:
+async def test_only_the_owner_may_test_a_key(who: str, path: str, denied: UUID) -> None:
     route = Route()
     body = answer(await route.post(who, path), 403, _PROBLEM)
     records = [(e[1], e[2]["object_id"]) for e in route.w.of("audit")]
-    assert records == ([("rbac.denied", str(denied))] if denied else [])
+    assert records == [("rbac.denied", str(denied))]  # every refusal names the account (C-2.9)
     assert body["code"] == "forbidden" and route.w.built == []
 
 
-async def test_a_refusal_that_cannot_be_audited_is_still_a_403() -> None:
+async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() -> None:
+    """SR-051's gate refuses a caller `enforce` let through: the same caller's two records, one
+    per layer, differ only in the account each names and the reason, of the same shape."""
+    route = Route()
+    answer(await route.post("reader", f"/exchange-accounts/{OTHER}/keys/{KEY}/test"), 403, _PROBLEM)
+    answer(await route.post("reader"), 403, _PROBLEM)
+    by_enforce, by_store = (e[2] for e in route.w.of("audit"))
+    named = {"object_id": str(OTHER), "reason": "account_not_granted:keys:read:granted_accounts"}
+    assert by_enforce == by_store | named and by_store["actor_user_id"] == UUID(int=96)
+    assert (by_store["object_id"], by_store["reason"]) == (
+        str(ACCT), "not_owner:keys:read:granted_accounts",
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("who", ["manager", "reader"], ids=["enforce", "store-gate"])
+async def test_a_refusal_that_cannot_be_audited_is_still_a_403(who: str) -> None:
     route = Route()
     route.w.fail_audit = True  # a test never answers on an audit record
-    body = answer(await route.post("manager"), 403, _PROBLEM)
+    body = answer(await route.post(who), 403, _PROBLEM)
     assert (body["code"], route.w.built) == ("forbidden", [])
 
 
