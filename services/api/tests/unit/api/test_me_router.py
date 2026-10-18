@@ -27,6 +27,7 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpChallenge
 from candleviewer.settings import Environment, Settings
 from tests.openapi_helpers import deref
+from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _START = datetime(2026, 10, 16, 12, 0, 0, tzinfo=UTC)
@@ -643,6 +644,7 @@ async def test_the_app_gives_the_me_router_the_auth_clock_it_was_built_with(
     app = appmod.create_app(auth_clock=lambda: env.now)
     # The lifespan does not run, so the session service is wired by hand, as in the RBAC pack.
     app.state.app_context.auth._sessions = env.svc
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as a full session
     client = TestClient(app, client=("127.0.0.1", 50000))
     _, headers, minted = await env.sign_in()
     window = env.now + timedelta(minutes=4)
