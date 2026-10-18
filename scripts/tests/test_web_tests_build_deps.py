@@ -265,6 +265,18 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "pnpm --filter ./apps/web/e2e test", False),  # no package has that folder
         # The cd's `e2e` names a folder: a cd is never also scored as a web task.
         ("apps/web", "cd e2e && npx playwright install --with-deps chromium", False),
+        # #3471: one row per regex detail a mutation probe left unpinned. A workspace path drops
+        # the step's folder; `-C`, `cd` and `cd --` take more than one space; a working-directory
+        # names the workspace without inner spaces, and a script may space it on one side only;
+        # the shell's name may carry braces.
+        ("apps/desktop", 'cd "$GITHUB_WORKSPACE/apps/web" && pnpm build', True),
+        (None, "pnpm -C  apps/web test", True),
+        (None, "cd  apps/web && pnpm build", True),
+        (None, "cd --  apps/web && pnpm build", True),
+        ("${{github.workspace}}/apps/web", "pnpm run build", True),
+        (None, "cd ${{ github.workspace}}/apps/web && pnpm build", True),
+        (None, "cd ${{github.workspace }}/apps/web && pnpm build", True),
+        (None, 'cd "${GITHUB_WORKSPACE}/apps/web" && pnpm run build', True),
     ],
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
