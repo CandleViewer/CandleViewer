@@ -134,8 +134,10 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2911: the mint refuses a user disabled after the password check. Login's answer for a
-    disabled account, never a 500; nothing is minted and the refusal is audited like login's."""
+    disabled account, never a 500; nothing is minted, and the refusal is audited and counted
+    (SR-125) like login's."""
     uid = _must_enrol(stack, "alice")
+    fails = stack.scraped("auth_login_failures_total", method="password")
 
     async def disabled(*_args: Any, **_kwargs: Any) -> Any:
         raise UserDisabled("disabled")
@@ -148,6 +150,7 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
     (refused,) = stack.audit.of("auth.login_failed")
     assert (refused["reason"], refused["actor_user_id"]) == ("user_disabled", uid)
+    assert stack.scraped("auth_login_failures_total", method="password") == fails + 1
 
 
 def test_sign_in_without_mfa_required_and_without_a_method_still_fails_closed(

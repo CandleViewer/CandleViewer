@@ -420,8 +420,9 @@ def make_auth_router(
             )
         except UserDisabled:
             # #2911: disabled (or deleted) since the password check; nothing was minted. The
-            # records written ahead are followed by the refusal, audited like login's refusal of
-            # a disabled account, then login's 403 for it: never a 500.
+            # records written ahead are followed by the refusal, counted and audited like login's
+            # refusal of a disabled account (SR-125), then login's 403 for it: never a 500.
+            auth_login_failures_total.labels(method="password").inc()
             await _audit_refusal(request, user_id)
             return _problem(403, "Account disabled", "Account disabled - contact the owner")
         # U34 (RR-15): an Owner's password-only session is to page; no rule yet (#2746).
