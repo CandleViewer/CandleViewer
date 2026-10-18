@@ -76,10 +76,12 @@ and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the
 purpose: they would put seven more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`)
 on every bump. The accepted control is the nightly `a11y-nightly.yml` sweep on `main`, a named
 artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1). The Playwright suite
-has no scheduled run yet (C-9.2 asks for a nightly full matrix), so a bump that breaks it shows on
-the next PR the `e2e` filter starts. The decision covers those three files only: a backend manifest
-(`services/api/uv.lock`, `pyproject.toml`) skips `migrations`, `contract` and `rule-roundtrip` and
-no nightly covers them, an open gap with no decision recorded, not an accepted control.
+has no scheduled run yet (#3383: C-9.2 asks for a nightly full matrix), so a bump that breaks it
+shows on the next PR the `e2e` filter starts. The decision covers those three files only. A backend
+manifest (`services/api/uv.lock`, `pyproject.toml`) skips `migrations`, `contract` and
+`rule-roundtrip`. The nightly `cold-cache.yml` runs the `services/api` pytest, `tests/contract`
+included (the contract job's pytest step), but no nightly runs `make contracts`, the `migrations`
+job or `rule-roundtrip`: an open gap with no decision recorded yet (#3384), not an accepted control.
 
 ## 3. Reading the `ci-required` resolver summary
 
