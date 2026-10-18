@@ -98,7 +98,8 @@ export interface TokenSource {
 }
 
 export interface WsClient {
-  consume(spec: ConsumerSpec): TopicHandle;
+  /** `rs`: the replay session this consumer reads (C11); without one it reads the live stream. */
+  consume(spec: ConsumerSpec, rs?: string): TopicHandle;
   /** Visibility drives throttling (C8); the size drives the heatmap `time_bucket_ms` (6.1.1). */
   setPane(
     paneId: string,
