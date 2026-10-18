@@ -696,6 +696,7 @@ def test_recovery_changes_nothing_when_an_audit_record_cannot_be_written(
     assert (resp.status_code, resp.json()["detail"]) == _RECOVERY_REFUSED
     (cause,) = [e for e in logs if e["event"] == "auth.recovery.audit_unavailable"]
     assert (cause["action"], cause["error"]) == (failing, "AuditError")
+    assert set(cause) == {"event", "log_level", "action", "error"}  # never the code (C-12.6)
     assert (_unused(stack, uid), _store(stack).methods) == (len(codes), methods)
     assert _live(stack, uid) == sessions
     assert stack.client.get("/auth/session", headers=live).status_code == 200
@@ -1023,6 +1024,7 @@ def test_recovery_whose_session_step_fails_keeps_the_commit_and_says_sign_in_aga
     live_id = stack.call(stack.auth.sessions.peek_access_token, live).id
     token, mark = _challenge(stack, "alice"), len(stack.audit.records)
     real, used = getattr(stack.auth.sessions, step), _used(stack)
+    failed = stack.scraped("auth_login_failures_total", method="recovery_code")
 
     async def unavailable(*_args: Any, **_kwargs: Any) -> Any:
         raise OSError("session store unavailable")
@@ -1044,7 +1046,14 @@ def test_recovery_whose_session_step_fails_keeps_the_commit_and_says_sign_in_aga
         "error",
     }  # ids and a class name only: never the code or a token (C-12.6)
     assert (event["log_level"], event["user_id"], event["error"]) == ("error", str(uid), "OSError")
-    created = stack.audit.records[mark:][-1]
+    *_, created, void = stack.audit.records[mark:]  # C-2.9: the unminted session is voided
+    assert (created["action"], void["action"], void["reason"]) == (
+        "auth.session_created",
+        "auth.mfa_failed",
+        "unminted",
+    )
+    assert void["after_state"] == {"voids_session_created": str(created["session_id"])}
+    assert stack.scraped("auth_login_failures_total", method="recovery_code") == failed + 1
     assert (event["new_session_id"], event["revoked_session_ids"]) == (
         str(created["session_id"]),
         [str(live_id)],
