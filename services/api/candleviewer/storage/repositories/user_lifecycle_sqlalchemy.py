@@ -12,11 +12,13 @@ had started, its record may be durable, and the caller closes it. The post-commi
 REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
 statement's snapshot, but a successor that an in-flight refresh mints after it is refused: the
 mint reads `users.status` under the user-row lock (#2911), and `require_active` revokes any
-session of a disabled user on its next use (S7's AC1 test covers the window end to end).
+session of a disabled user on its next use (S7's AC1 test covers the window end to end). After a
+commit that raised, `read_back_disable` (#3445) reads in a new transaction what it left.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 
@@ -63,6 +65,11 @@ _REVOKE_GRANTS = sa.text(
     "UPDATE user_account_access SET can_view = false, can_trade = false "
     "WHERE user_id = CAST(:id AS uuid) AND exchange_account_id = ANY(CAST(:revoked AS uuid[]))"
 )
+# #3445: the sessions one disable revoked: those of the user ended at its instant, for its reason.
+_REVOKED_AT = sa.text(
+    "SELECT id FROM sessions WHERE user_id = CAST(:id AS uuid) AND revoked_at = :at "
+    "AND revoked_reason = :reason"
+)
 
 
 def _uuid(value: object) -> uuid.UUID:
@@ -99,10 +106,8 @@ class SqlAlchemyUserLifecycleStore:
         owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
         `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
-        landed, the revoked ids are lost with the exception, so no post-commit step runs for
-        those sessions, and a retry, which is AC5's no-op and returns no ids, settles them only
-        in part: the service's retry closes every socket of the user (E42-T04 S7), but no B16
-        REVOKE record is written for those sessions."""
+        landed, the revoked ids are lost with the exception; `read_back_disable` finds them
+        again (#3445). A retry is AC5's no-op and returns no ids."""
         if user_id == actor:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
@@ -135,3 +140,21 @@ class SqlAlchemyUserLifecycleStore:
             refuse_floor_violation(exc, self._owner_floor, counted, _NO_ROLES)
             raise
         return change
+
+    async def read_back_disable(
+        self, user_id: uuid.UUID, *, now: datetime
+    ) -> tuple[uuid.UUID, ...] | None:
+        """After a `disable` at `now` whose commit raised (#3445): one read in a new transaction,
+        all of it bounded by `audit_timeout_s` (`TimeoutError`). `None` unless the user reads
+        `disabled` under the user-row lock, which waits for a commit still in flight; else the
+        sorted ids of the user's sessions revoked at `now` with the disable's reason. Writes
+        nothing; raises what the driver raises."""
+        uid = str(user_id)
+        async with asyncio.timeout(self._audit_timeout_s), self._relational.unit_of_work() as uow:
+            s = uow.session
+            row = (await s.execute(LOCK_USER, {"id": uid})).first()
+            if row is None or str(row[0]) != "disabled":
+                return None
+            params = {"id": uid, "at": now, "reason": REVOKED_REASON}
+            rows = (await s.execute(_REVOKED_AT, params)).all()
+            return tuple(sorted(_uuid(r[0]) for r in rows))

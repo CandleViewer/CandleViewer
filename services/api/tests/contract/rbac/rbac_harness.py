@@ -391,6 +391,11 @@ class LifecycleStore:
     ) -> UserStatusChange | None:
         return None
 
+    async def read_back_disable(
+        self, user_id: uuid.UUID, *, now: datetime
+    ) -> tuple[uuid.UUID, ...] | None:
+        return None  # never reached: `disable` finds no user, so no commit raises (#3445)
+
 
 def user_disable_service(audit: Any) -> UserDisableService:
     """The real service (its guards are the cells' subject) over a store that finds no user."""

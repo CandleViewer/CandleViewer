@@ -116,7 +116,7 @@ class _World:
             invites=ports.get("invites", SimpleNamespace(revoke=self.revoke_invite)),
             rules=ports.get("rules", self),
             scope=ports.get("scope", SimpleNamespace(refresh=self.refresh_scope)),
-            clock=lambda: _NOW,
+            clock=ports.get("clock", lambda: _NOW),
             **{k: v for k, v in ports.items() if k.endswith("_s")},
         )
 
@@ -280,12 +280,13 @@ async def test_unapplied_record_is_closed(
     fail: list[BaseException], error: type[BaseException], records: list[Any]
 ) -> None:
     """AC8, S3: a hook that timed out (503), raised or was cancelled never reached the commit:
-    its record is closed by `not_applied`, rolled back, with the state before == after."""
+    its record is closed by `not_applied`, rolled back, with the state before == after. Nothing
+    was sent, so nothing is read back (#3445): that could only find another disable's."""
     w = _World(fail={"users.disable": list(fail)})
     with pytest.raises(error):
         await w.disable()
     assert _records(w) == records
-    assert w.post_commit() == [] and not w.rel.committed
+    assert w.post_commit() == [] and not w.rel.committed and w.rel.order().count(LOCK_USER) == 1
 
 
 @pytest.mark.parametrize(
@@ -294,8 +295,8 @@ async def test_unapplied_record_is_closed(
 async def test_commit_failure_is_closed_as_outcome_unknown(error: Exception) -> None:
     """S3, C-2.9: the hook returned, so the commit was sent; that it failed (a driver timeout is
     not `WriteAheadTimeout`, so no 503) does not say it did not apply. The record says so, with
-    the state before and no after state, and the caller still gets the error. A retry does not
-    settle it: AC5's no-op returns no ids (the store's `disable` docstring)."""
+    the state before and no after state. The read-back finds the user active (#3445), so the
+    caller still gets the error; `test_user_disable_readback.py` covers a commit that landed."""
     w = _World(_Rel(commit_error=error))
     with pytest.raises(type(error)):
         await w.disable()
@@ -305,21 +306,22 @@ async def test_commit_failure_is_closed_as_outcome_unknown(error: Exception) -> 
 
 
 async def test_cancelled_commit_is_closed_as_outcome_unknown() -> None:
-    """S3, C-2.9: a request cancelled during the commit may have committed: not `not_applied`."""
-    committing = asyncio.Event()
+    """S3, C-2.9: a request cancelled during the commit may have committed: not `not_applied`, and
+    it is not read back (#3445)."""
+    committing, read_back = asyncio.Event(), AsyncMock(return_value=(_S1,))
 
     async def commit_hangs(*_: Any, audit: Any, **__: Any) -> Any:
         await audit(UserStatusChange(_TARGET, "active", "disabled", frozenset({"manager"}), (_S1,)))
         committing.set()  # the hook returned: the store sends its commit
         return await _hang()
 
-    w = _World(store=SimpleNamespace(disable=commit_hangs))
+    w = _World(store=SimpleNamespace(disable=commit_hangs, read_back_disable=read_back))
     call = asyncio.create_task(w.disable())
     await asyncio.wait_for(committing.wait(), _GUARD_S)
     call.cancel()
     with pytest.raises(asyncio.CancelledError):
         await call
-    assert _records(w) == [_OPEN, _UNKNOWN]
+    assert _records(w) == [_OPEN, _UNKNOWN] and read_back.await_count == 0
 
 
 async def test_closing_record_that_raises_before_its_awaitable_is_a_failed_step_not_the_error(
@@ -499,8 +501,8 @@ async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
 
 
 async def test_retry_after_an_unknown_commit_closes_the_sockets_not_b16() -> None:
-    """AC5, S3, S7 (S6's Left item 7): the commit failed on the wire but had gone through
-    (`outcome_unknown`), and the ids it revoked died with the error, so the call ran no step. The
+    """AC5, S3, S7 (S6's Left item 7): the commit failed on the wire (`outcome_unknown`) and its
+    read-back did not find it (#3445: here it lands only after), so the call ran no step. The
     retry finds the user disabled: it writes no record, commits nothing and has no ids, so it
     closes every socket of the user, which ends the sockets of those two sessions, and sweeps
     (SR-029). B16 records neither session: a residual (`e42-user-lifecycle.md` §6)."""
