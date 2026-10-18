@@ -103,7 +103,8 @@ FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
 LANE_FILTERS: dict[str, frozenset[str]] = {
     **dict.fromkeys(["changed-paths", "gates", "gen", "spike-containment"], frozenset()),
     **dict.fromkeys(["commitlint", "changelog-fragment", "licence-header"], frozenset()),
-    "docs-link-check": frozenset(),
+    # #3385: every PR, a docs-only one too, gets the secret scans.
+    **dict.fromkeys(["docs-link-check", "secret-scan"], frozenset()),
     "pin-check": frozenset({"infra"}),
     **dict.fromkeys(["py", "architecture", "integration", "statechart-lint"], frozenset({"py"})),
     **dict.fromkeys(["event-coverage", "xstate-pin-attestation"], frozenset({"py"})),
