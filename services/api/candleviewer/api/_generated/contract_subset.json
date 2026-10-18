@@ -2127,6 +2127,12 @@
     },
     "/admin/backups/{backupId}/download/{token}": {
       "get": {
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
         "x-rbac": {
           "permissions": [
             "backups:read"

@@ -246,7 +246,7 @@ def test_download_token_rules_are_normative() -> None:
     for rule in (
         "access logs, traces, metrics labels and audit fields record the route template "
         "`/admin/backups/{backupId}/download/{token}`, never the token",
-        "an unknown token or another user's is `404 not_found`, so a token cannot be probed",
+        "`404 not_found` when it carries another user's; an unknown token is `404 not_found`",
         "`Problem.detail` never echoes the path",
         "sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`",
         "from a CSPRNG with at least 128 bits of entropy, is stored only as a hash",
@@ -310,6 +310,9 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
     assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
     assert "(`live_enablement`/`killswitch`/`backups`: none, fresh code each time)" in internal
     assert "never embeds `str(exc)` or raw probe output" in internal
-    assert "registers the issue and delete routes in `DANGEROUS_ROUTES`, as restore is" in internal
+    # No-grace grants bind the request their handler validated, so issue and delete register as
+    # handler-gated rows, as restore does (`test_no_path_gated_row_names_a_no_grace_class`).
+    gated = "register the issue and delete routes in `HANDLER_GATED_ROUTES`, as restore is"
+    assert gated in internal and "`DANGEROUS_ROUTES`, as restore is" not in internal
     assert "redact_text`, cut to 200 and 2000 characters" in _doc("21-database-schema.md")
     assert "There is no resolution text because nobody writes one" in _doc("21-database-schema.md")
