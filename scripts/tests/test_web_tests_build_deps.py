@@ -150,12 +150,12 @@ def test_agents_md_states_the_build_prerequisite_of_the_web_tests() -> None:
     assert f"`{BUILD}` first" in text
 
 
-def _guard(package: Path) -> subprocess.CompletedProcess[str]:
+def _guard(package: Path, *node_options: str) -> subprocess.CompletedProcess[str]:
     node = shutil.which("node")
     if node is None:  # CI must run this behavioural check
         (pytest.fail if os.environ.get("CI") else pytest.skip)("node runs the guard")
     script = ROOT / "tools" / "ci" / "check_built_exports.mjs"
-    argv = [str(node), str(script), str(package)]
+    argv = [str(node), *node_options, str(script), str(package)]
     return subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
 
 
@@ -204,6 +204,16 @@ def test_guard_fails_when_no_file_matches_a_pattern_export(tmp_path: Path, near_
     assert result.returncode == 1 and "tokens.*.css" in result.stderr
 
 
+MISSING = f"CI-BUILD-001: built exports are missing; build the workspace packages first ({BUILD}):"
+
+
+def test_guard_reports_an_unbuilt_pattern_export_as_missing(tmp_path: Path) -> None:
+    # A fresh checkout has no dist/: ENOENT on a pattern's folder is "not built", not an error.
+    result = _guard(_package(tmp_path, PATTERN, []))
+    missing = [f"  {tmp_path / 'dist' / name}" for name in ("theme.css", "tokens.*.css")]
+    assert (result.returncode, result.stderr.splitlines()) == (1, [MISSING, *missing])
+
+
 def test_guard_does_not_accept_a_directory_matching_a_pattern_export(tmp_path: Path) -> None:
     (tmp_path / "dist" / "tokens.dark.css").mkdir(parents=True)
     result = _guard(_package(tmp_path, PATTERN, ["dist/theme.css"]))
@@ -232,3 +242,80 @@ def test_guard_reports_a_manifest_that_is_not_an_object_with_its_code(tmp_path: 
     (tmp_path / "package.json").write_text("null", encoding="utf-8")
     result = _guard(tmp_path)
     assert result.returncode == 1 and "CI-BUILD-001" in result.stderr
+
+
+FS_ERROR = "CI-BUILD-001: cannot check built exports, the filesystem returned an error:"
+
+
+def _assert_reported(result: subprocess.CompletedProcess[str], path: Path, errno: str) -> None:
+    """Exit 1, the CI-BUILD-001 header, then one `<export>: <ERRNO>: ...` line: no stack trace."""
+    lines = result.stderr.splitlines()
+    assert result.returncode == 1, result.stderr
+    # Exactly two lines: an uncaught error prints `Error: ...`, `    at` frames and `Node.js v...`.
+    assert lines[:1] == [FS_ERROR] and len(lines) == 2, result.stderr
+    assert lines[1].startswith(f"  {path}: {errno}: "), result.stderr
+
+
+LONG = "x" * 256  # one path segment longer than NAME_MAX (255 bytes)
+
+
+@pytest.mark.parametrize(
+    ("target", "layout", "errno"),
+    [
+        pytest.param("./dist/index.js", "file", "ENOTDIR", id="parent-is-a-file"),
+        pytest.param("./dist/tokens.*.css", "file", "ENOTDIR", id="pattern-folder-is-a-file"),
+        pytest.param("./dist/index.js", "loop", "ELOOP", id="symlink-loop"),
+        pytest.param("./dist/tokens.*.css", "loop", "ELOOP", id="pattern-symlink-loop"),
+        pytest.param("./dist/tokens.*.css", "match-loop", "ELOOP", id="pattern-match-loop"),
+        pytest.param(f"./{LONG}.js", None, "ENAMETOOLONG", id="name-too-long"),
+        pytest.param(f"./{LONG}/tokens.*.css", None, "ENAMETOOLONG", id="pattern-too-long"),
+    ],
+)
+def test_guard_reports_a_filesystem_error_with_its_errno(
+    tmp_path: Path, target: str, layout: str | None, errno: str
+) -> None:
+    dist = tmp_path / "dist"
+    if layout == "file":  # a file where the folder should be
+        dist.write_text("", encoding="utf-8")
+    elif layout == "loop":  # dist -> dist
+        dist.symlink_to("dist")
+    elif layout == "match-loop":  # one match is a file, another a symlink to itself
+        dist.mkdir()
+        (dist / "tokens.dark.css").write_text("", encoding="utf-8")
+        (dist / "tokens.loop.css").symlink_to("tokens.loop.css")
+    _assert_reported(_guard(_package(tmp_path, {".": target}, [])), tmp_path / target, errno)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores folder permissions")
+@pytest.mark.parametrize(
+    ("target", "mode"),
+    [
+        pytest.param("./dist/index.js", 0o600, id="folder-not-searchable"),
+        pytest.param("./dist/tokens.*.css", 0o300, id="pattern-folder-not-readable"),
+    ],
+)
+def test_guard_reports_a_permission_error_with_its_errno(
+    tmp_path: Path, target: str, mode: int
+) -> None:
+    built = _package(tmp_path, {".": target}, ["dist/index.js", "dist/tokens.dark.css"])
+    (built / "dist").chmod(mode)
+    try:
+        result = _guard(built)
+    finally:
+        (built / "dist").chmod(0o755)
+    _assert_reported(result, tmp_path / target, "EACCES")
+
+
+def test_guard_keeps_the_stack_of_an_error_that_has_no_code(tmp_path: Path) -> None:
+    # Only an error with a code (ENOTDIR, EACCES, ...) is reported as a CI-BUILD-001 line: a bug
+    # in the guard, such as a TypeError, keeps its stack and still exits 1.
+    bug = tmp_path / "bug.cjs"  # preloaded with --require: statSync throws a code-less TypeError
+    bug.write_text(
+        'require("node:fs").statSync = () => { throw new TypeError("bug"); };\n'
+        'require("node:module").syncBuiltinESMExports();\n',
+        encoding="utf-8",
+    )
+    result = _guard(_package(tmp_path, CONDITIONAL, []), "--require", str(bug))
+    assert result.returncode == 1
+    assert "TypeError: bug" in result.stderr and "\n    at " in result.stderr
+    assert "CI-BUILD-001" not in result.stderr
