@@ -12,6 +12,15 @@ recorded on the commit before this slice.
 The real router runs on the test's own loop behind a fake socket (`_Wire`): no threads, no
 sleeps, every wait bounded. Frames are queued in one synchronous turn when a test needs the writer
 not to drain them meanwhile.
+
+The `system` frames these tests broadcast through `rig.hub` are production's (#3198): `rig.hub` is
+a `GatewayHub` whose `broadcast_system` frames nothing itself, so each body reaches
+`_Connection.push_system`, the one place that frames and queues it. The bodies are of kinds that
+§15.9 does not list (`tick`, `big`), which SR-188's per-role filter would drop; the hub lets those
+past the filter while it broadcasts, and nothing else. The frames that `_d("system", ...)` builds
+are another thing: inputs a test pushes straight into a `ConnectionPipeline`, which the gateway
+does not frame. `test_pipeline_rig_system_frames` pins the first, and that the rig's classes
+(`_Hub`, `_Rig`, `_Wire`) build no `system` frame of their own.
 """
 
 from __future__ import annotations
@@ -22,9 +31,10 @@ import hashlib
 import inspect
 import json
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
+from unittest.mock import patch
 
 import msgpack
 import pytest
@@ -64,6 +74,7 @@ from candleviewer.ws.pipeline import (
 )
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES, SequencingHub, SnapshotBody
+from candleviewer.ws.system_filter import NEUTRAL_FIELDS, FlagVisible, system_view
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.ws._seq_support import ACC_A, USER, Book, Source
 from tests.unit.ws.test_frame_metrics import _Ticks, _writer
@@ -80,16 +91,30 @@ async def _no_sleep(_s: float) -> None:
     return None
 
 
+def _unlisted_kinds_pass(
+    body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
+) -> Mapping[str, Any] | None:
+    """`system_view` for the rig's broadcasts: a body of a kind that §15.9 does not list passes
+    whole; any other gets the cut the filter gives its principal."""
+    if (
+        isinstance(body, Mapping)
+        and isinstance(kind := body.get("kind"), str)
+        and kind not in NEUTRAL_FIELDS
+    ):
+        return body
+    return system_view(body, principal, flag_visible=flag_visible)
+
+
 class _Hub(GatewayHub):
-    """These tests feed the writer arbitrary `system` bodies, which SR-188's filter would drop."""
+    """The production hub. These tests broadcast `system` bodies of kinds that §15.9 does not list
+    (`tick`, `big`, ...), which SR-188's per-role filter drops (deny by default). `broadcast_system`
+    lets such a body past the filter while it runs and nothing else, so `_Connection.push_system`
+    still frames and queues every frame and the pinned transcripts pin production's framing. Any
+    other `system` frame (the shutdown notice, a `connection_quality` notice) takes the real cut."""
 
     def broadcast_system(self, body: dict[str, Any]) -> int:
-        conns = self._authenticated()
-        for conn in conns:
-            conn.system_seq += 1
-            frame = {"t": "d", "ch": "system", "s": conn.system_seq, "ts": conn.wall_ms(), "e": "j"}
-            conn.push(frame | {"p": body})
-        return len(conns)
+        with patch.object(gateway, "system_view", _unlisted_kinds_pass):
+            return super().broadcast_system(body)
 
 
 class _Wire:
@@ -160,7 +185,8 @@ class _Wire:
 
 
 class _Rig:
-    """The real `/ws` router, a `SequencingHub` with a book source, and an audit sink."""
+    """The real `/ws` router, a `SequencingHub` with a book source, and an audit sink. `hub`
+    broadcasts through the production `_Connection.push_system` (see `_Hub`)."""
 
     def __init__(
         self,
@@ -289,7 +315,9 @@ def _normalised(payload: str | bytes, connection_id: str) -> str:
 @_ENCODINGS
 async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
     """Flag off is byte-for-byte the gateway before #412 S2a: the transcript's digest was recorded
-    on 731f4820f, before S2a touched the gateway."""
+    on 731f4820f, before S2a touched the gateway. Its `system` frames (the `tick`, the shutdown
+    notice) are framed by `_Connection.push_system`, so a change of production's framing of them
+    moves the digest too (#3198)."""
     transcript = await _flag_off_session(encoding)
     digest = hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest()
     kinds = {kind for _, sends, _, _ in transcript for kind, _ in sends}
