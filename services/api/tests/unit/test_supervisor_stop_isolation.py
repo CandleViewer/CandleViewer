@@ -130,9 +130,11 @@ class _Raising:
 
 
 def _failed_stops(logs: list[MutableMapping[str, Any]]) -> list[tuple[object, ...]]:
-    """The module, level and traceback flag of every failed-stop log line, in order."""
+    """The module, level, traceback flag and exception type of every failed-stop log line, in
+    order: the type tells a cancellation or an exit request passing through a stop from the
+    module's own failure (#3403)."""
     return [
-        (e["module"], e["log_level"], e.get("exc_info"))
+        (e["module"], e["log_level"], e.get("exc_info"), e.get("exc_type"))
         for e in logs
         if e["event"] == "supervisor: module stop failed"
     ]
@@ -153,14 +155,15 @@ async def test_stop_each_logs_a_base_exception_that_is_not_an_exception_and_stil
     """Logged as `audit`'s failed stop, with its traceback, and `secrets` stops after it with
     its own bound. An `except Exception` lets each of these leave the loop before
     `secrets.stop()`, and fails it."""
+    exc = make()
     events: list[str] = []
-    ctx = SimpleNamespace(audit=_Raising(events, "audit", make()), secrets=_Secrets(events))
+    ctx = SimpleNamespace(audit=_Raising(events, "audit", exc), secrets=_Secrets(events))
     supervisor = Supervisor(cast(AppContext, ctx))
     with capture_logs() as logs:
         await asyncio.wait_for(supervisor._stop_each(["audit", "secrets"], _GRACE_S), 5)
     assert events == ["audit.stop(0.05)", "secrets.stop(0.05)"]
     assert bounds == [pytest.approx(0.15), pytest.approx(0.15)]
-    assert _failed_stops(logs) == [("audit", "error", True)]
+    assert _failed_stops(logs) == [("audit", "error", True, type(exc).__name__)]
 
 
 @pytest.mark.parametrize(
@@ -189,7 +192,7 @@ async def test_stop_each_reraises_a_cancellation_or_process_exit_once_secrets_ha
     assert raised.value is exc
     assert events == ["audit.stop(0.05)", "secrets.stop(0.05)"]
     assert bounds == [pytest.approx(0.15), pytest.approx(0.15)]
-    assert _failed_stops(logs) == [("audit", "error", True)]
+    assert _failed_stops(logs) == [("audit", "error", True, type(exc).__name__)]
 
 
 async def test_stop_each_reraises_the_first_of_two_and_logs_both(
@@ -210,7 +213,10 @@ async def test_stop_each_reraises_the_first_of_two_and_logs_both(
     assert raised.value is first
     assert events == ["ws.stop(0.05)", "oms.stop(0.05)", "secrets.stop(0.05)"]
     assert bounds == [pytest.approx(0.15)] * 3
-    assert _failed_stops(logs) == [("ws", "error", True), ("oms", "error", True)]
+    assert _failed_stops(logs) == [
+        ("ws", "error", True, "KeyboardInterrupt"),
+        ("oms", "error", True, "SystemExit"),
+    ]
 
 
 # --- #3361: an outside cancellation of the task running `stop_all` ---------------------------
@@ -232,7 +238,7 @@ def unbounded(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
     return asked
 
 
-async def test_an_outside_cancellation_of_stop_all_propagates_once_every_later_module_stopped(
+async def test_stop_all_cancelled_from_outside_propagates_after_every_later_stop(
     unbounded: list[float | None],
 ) -> None:
     """The task running `stop_all` is cancelled while the first module it stops hangs. The
@@ -271,4 +277,4 @@ async def test_an_outside_cancellation_of_stop_all_propagates_once_every_later_m
     assert task.cancelled()
     assert events == [order[0], "cancelled", *order[1:]]
     assert unbounded == [pytest.approx(0.15)] * len(order)
-    assert _failed_stops(logs) == [(order[0], "error", True)]
+    assert _failed_stops(logs) == [(order[0], "error", True, "CancelledError")]

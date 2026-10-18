@@ -816,7 +816,10 @@ class Supervisor:
 
     async def stop_all(self, grace_s: float = TEARDOWN_BUDGET_S) -> None:
         """Stop every module in reverse start order. The default grace is the teardown term of
-        the container stop budget (`Settings.api_stop_budget_s`, #2565)."""
+        the container stop budget (`Settings.api_stop_budget_s`, #2565). An outer
+        `asyncio.timeout` or `wait_for` around it no longer cuts the teardown short (#3361): the
+        cancellation it causes is re-raised only after the remaining stops, each within its own
+        bound."""
         await self._stop_each(reversed(_SUPERVISOR_ORDER), grace_s)
 
     async def _stop_each(self, names: Iterable[str], grace_s: float) -> None:
@@ -831,7 +834,10 @@ class Supervisor:
         stop has run. The later stops keep their own bounds, so a cancellation never makes the
         teardown longer than it would have been, and never ends it before the KEK zeroing;
         `start_all` and the lifespan likewise finish their stops before they re-raise. Each
-        bound is cooperative: see `Settings._refuse_unfittable_stop_budget`."""
+        bound is cooperative: see `Settings._refuse_unfittable_stop_budget`.
+
+        The failed-stop log line carries the exception's type (`exc_type`, #3403), so a
+        cancellation or an exit request passing through a stop is not read as its own failure."""
         propagate: BaseException | None = None
         for name in names:
             try:
@@ -839,7 +845,7 @@ class Supervisor:
                     await getattr(self._ctx, name).stop(grace_s)
             except BaseException as exc:  # incl. TimeoutError, the bound's cut
                 structlog.get_logger("candleviewer.app").exception(
-                    "supervisor: module stop failed", module=name
+                    "supervisor: module stop failed", module=name, exc_type=type(exc).__name__
                 )
                 if propagate is None and _stop_propagates(exc):
                     propagate = exc
