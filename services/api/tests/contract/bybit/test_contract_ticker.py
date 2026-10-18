@@ -106,6 +106,18 @@ def test_hostile_ticker_frames_are_rejected(frame: str) -> None:
         parse_ticker_frame(frame)
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_a_ticker_symbol_ending_in_a_newline_is_rejected(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took `tickers.BTCUSDT\\n`.
+    The frame is a recorded snapshot with that one change."""
+    msg = json.loads(frames(FULL)[0])
+    legal = parse_ticker_frame(json.dumps(msg))
+    assert legal is not None and legal.symbol == "BTCUSDT"
+    msg["topic"] += tail
+    with pytest.raises(ValueError, match="invalid symbol"):
+        parse_ticker_frame(json.dumps(msg))
+
+
 def test_foreign_and_truncated_frames_are_ignored() -> None:
     assert parse_ticker_frame("") is None
     assert parse_ticker_frame(frames(FULL)[0][:50]) is None

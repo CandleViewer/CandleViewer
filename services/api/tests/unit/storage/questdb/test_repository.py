@@ -141,6 +141,21 @@ async def test_read_trades_rejects_symbol_with_quote_character() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_read_trades_rejects_a_symbol_ending_in_a_newline(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` let it clear the allowlist;
+    with the fix no query is built for it."""
+    reader = _FakeReader()
+    repo = QuestDbMarketDataRepository(_FakeWriter(), reader)  # type: ignore[arg-type]
+    rng = TimeRange(start_us=0, end_us=1)
+    assert await repo.read_trades("BTCUSDT", rng) == []
+    reader.last_builder = None
+    with pytest.raises(SymbolNotAllowed):
+        await repo.read_trades("BTCUSDT" + tail, rng)
+    assert reader.last_builder is None
+
+
+@pytest.mark.asyncio
 async def test_read_trades_passes_symbol_only_as_bind_parameter() -> None:
     reader = _FakeReader(
         canned=[

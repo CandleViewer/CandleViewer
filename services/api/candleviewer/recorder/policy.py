@@ -85,7 +85,7 @@ def user_actor(user_id: str | None) -> Actor:
 
 
 def _valid(symbol: str) -> str:
-    if not _SYMBOL_RE.match(symbol):
+    if not _SYMBOL_RE.fullmatch(symbol):
         raise InvalidRecordedSymbolError("symbol must match [A-Z0-9]{2,30}")
     return symbol
 

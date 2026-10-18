@@ -93,7 +93,7 @@ async def fetch_funding_page(
     limit: int = MAX_PAGE_LIMIT,
 ) -> FundingPage:
     """One page (newest first) of settlements within `[start_us, end_us]`."""
-    if not _SYMBOL_RE.match(symbol):
+    if not _SYMBOL_RE.fullmatch(symbol):
         raise FundingRowRejected("funding history: invalid symbol")
     if not 1 <= limit <= MAX_PAGE_LIMIT:
         raise ValueError(f"limit must be within 1..{MAX_PAGE_LIMIT}")

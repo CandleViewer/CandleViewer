@@ -88,7 +88,7 @@ def parse_trade_frame(frame: str) -> list[TradePrint] | None:
         return None
     symbol = topic[len(TOPIC_PREFIX) :]
     data = msg.get("data")
-    if not _SYMBOL_RE.match(symbol) or not isinstance(data, list):
+    if not _SYMBOL_RE.fullmatch(symbol) or not isinstance(data, list):
         raise ValueError("trade frame carries an invalid symbol or data")
     if len(data) > MAX_PRINTS_PER_BATCH:
         raise ValueError("trade frame exceeds batch cap")

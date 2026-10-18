@@ -79,7 +79,7 @@ class Topic(BaseModel):
     def _no_wildcards_or_empties(cls, value: str | None) -> str | None:
         if value is None:
             return value
-        if not _SEGMENT_RE.match(value):
+        if not _SEGMENT_RE.fullmatch(value):
             from candleviewer.bus.errors import InvalidTopicError
 
             raise InvalidTopicError(

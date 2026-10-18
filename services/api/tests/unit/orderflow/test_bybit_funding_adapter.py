@@ -91,3 +91,21 @@ async def test_fetch_is_public_market_data_and_bounds_params() -> None:
     assert q["limit"] == "200" and q["category"] == "linear"
     assert seen[0].url.path == "/v5/market/funding/history"
     assert "X-BAPI-API-KEY" not in seen[0].headers
+
+
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_fetch_refuses_a_symbol_ending_in_a_newline_before_any_request(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` let such a symbol through."""
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json=rest("rest/funding_history_BTCUSDT_8h.json"))
+
+    cfg = RestClientConfig(base_url="https://api-demo.bybit.com")
+    async with BybitRestClient(cfg, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(FundingRowRejected, match="invalid symbol"):
+            await fetch_funding_page(client, "BTCUSDT" + tail, start_us=0, end_us=1)
+        assert seen == []
+        assert len(await fetch_funding_page(client, "BTCUSDT", start_us=0, end_us=1)) == 4
+    assert [dict(r.url.params)["symbol"] for r in seen] == ["BTCUSDT"]

@@ -211,6 +211,20 @@ def test_hostile_book_frames_are_rejected_not_crashed(frame: str) -> None:
         parse_book_frame(frame, tick_of)
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_a_book_symbol_ending_in_a_newline_is_rejected(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took `orderbook.200.BTCUSDT\\n`.
+    The frame is a recorded snapshot whose topic and `data.s` carry that symbol. The symbol
+    pattern refuses it here; without that, the snapshot model refused it later, with its own
+    error."""
+    msg = json.loads(frames(BTC)[0])
+    assert isinstance(parse_book_frame(json.dumps(msg), tick_of), BookSnapshot)
+    msg["topic"] += tail
+    msg["data"]["s"] += tail
+    with pytest.raises(ValueError, match="invalid symbol"):
+        parse_book_frame(json.dumps(msg), tick_of)
+
+
 def test_truncated_frame_is_ignored_and_unknown_tick_is_rejected() -> None:
     assert parse_book_frame(frames(BTC)[1][:60], tick_of) is None
     with pytest.raises(ValueError, match="tick"):

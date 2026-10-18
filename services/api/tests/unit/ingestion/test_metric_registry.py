@@ -168,6 +168,25 @@ def test_symbol_label_unbound_caps_distinct_values() -> None:
     assert reg.symbol_label("SYM0USDT") == "SYM0USDT"  # admitted values stay stable
 
 
+_TAILS = pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+
+
+@_TAILS
+def test_symbol_label_unbound_a_symbol_ending_in_a_newline_folds_to_other(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` made it a label of its own.
+    Nothing else is in play: the cap is far off and no universe is bound."""
+    assert reg.symbol_label("BTCUSDT") == "BTCUSDT"
+    assert reg.symbol_label("ETHUSDT" + tail) == reg.OTHER_SYMBOL
+
+
+@_TAILS
+def test_bind_symbol_universe_drops_a_symbol_ending_in_a_newline(tail: str) -> None:
+    """#3555: the universe is built with the same pattern; a bound universe answers only from it."""
+    reg.bind_symbol_universe(["BTCUSDT", "ETHUSDT" + tail])
+    assert reg.symbol_label("BTCUSDT") == "BTCUSDT"
+    assert reg.symbol_label("ETHUSDT" + tail) == reg.OTHER_SYMBOL
+
+
 @given(st.text(max_size=64))
 def test_symbol_label_free_form_input_never_becomes_a_label(raw: str) -> None:
     reg.reset_symbol_universe()

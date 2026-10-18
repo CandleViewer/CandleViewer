@@ -29,6 +29,18 @@ def test_topic_construction_rejects_empty_segment() -> None:
         Topic(env="demo", domain="")
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("field", ["env", "domain", "symbol", "detail"])
+def test_topic_construction_rejects_a_segment_ending_in_a_newline(field: str, tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took it, and the dotted key built
+    from the topic then carried the newline. Each of the four segments is read."""
+    legal = {"env": "demo", "domain": "md", "symbol": "BTCUSDT", "detail": "trade"}
+    assert Topic(**legal).key == "demo.md.BTCUSDT.trade"
+    with pytest.raises(ValidationError) as info:
+        Topic(**{**legal, field: legal[field] + tail})
+    assert [e["loc"] for e in info.value.errors()] == [(field,)]
+
+
 def test_topic_parse_round_trips_key() -> None:
     key = "demo.md.BTCUSDT.trade"
     assert Topic.parse(key).key == key

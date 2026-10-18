@@ -113,6 +113,18 @@ async def test_pinned_dominant_consumer_is_named_and_no_path_leaks() -> None:
     assert [(s.symbol, s.pinned) for s in report.symbols] == [("BTCUSDT", True), ("SOLUSDT", False)]
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_a_measured_name_ending_in_a_newline_is_no_recorded_symbol(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` kept the name, and the report's
+    `SymbolUsage` (the same pattern, read whole by pydantic) then failed the whole sample."""
+    symbols = {"BTCUSDT": 280 * GB, "SOLUSDT": 20 * GB, "ETHUSDT" + tail: 999 * GB}
+    budget, _, _ = make_budget(FakeMeter(used=300 * GB, symbols=symbols))
+    await budget.sample_once()
+    report = budget.report()
+    assert report is not None
+    assert [s.symbol for s in report.symbols] == ["BTCUSDT", "SOLUSDT"]
+
+
 async def test_bus_sees_one_autostop_engagement_while_usage_oscillates_89_91() -> None:
     meter, clock = FakeMeter(), UsClock(NOW)
     budget, _, bus = make_budget(meter, clock=clock)
