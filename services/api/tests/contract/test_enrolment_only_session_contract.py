@@ -533,3 +533,20 @@ def test_security_program_records_the_enrolment_window_with_owner_and_review_dat
     assert re.search(r"review-by \d{4}-\d{2}-\d{2}", accepted)
     assert "queued on #2701" in accepted  # the open owner queue, as RR-08..RR-14 say
     assert "#1778" not in accepted  # that decision queue is closed
+
+
+#: main-orchestrator's sentence (#2295 slice 3 review, 2026-10-18), in the contract and in U34.
+_LOCKED_ENDS = (
+    "An enrolment-only session that locks ends by sign-out; unlock is not among its allowed "
+    "operations"
+)
+
+
+def test_an_idle_locked_enrolment_only_session_ends_by_sign_out(spec: dict[str, Any]) -> None:
+    """#2300's lock allows unlock, logout and the session read; only two are in the allow-list."""
+    text: str = spec["info"]["description"]
+    start = text.index("### Idle lock")
+    assert _LOCKED_ENDS in _flat(text[start : text.index("\n### ", start)])
+    doc = (_PLAN / "04-security-program.md").read_text(encoding="utf-8")
+    area = _between(doc, "### 5.6 Area 6", "### 5.7 Area 7")
+    assert _LOCKED_ENDS in next(line for line in area.splitlines() if line.startswith("| U34 "))

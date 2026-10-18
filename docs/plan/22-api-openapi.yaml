@@ -154,9 +154,10 @@ info:
     `refresh_token_invalid`, and rotates nothing. The client then shows the unlock screen
     (SCR-005), not sign-in.
 
-    A locked session can always be unlocked or signed out. The access token is memory-only and
-    lasts 12 minutes (ADR-0020 decisions 1 and 3), and refresh is refused while locked, so a long
-    lock or a reload leaves the client without one. The three operations allowed while locked
+    A locked session can always be unlocked or signed out. An enrolment-only session that locks
+    ends by sign-out; unlock is not among its allowed operations. The access token is memory-only
+    and lasts 12 minutes (ADR-0020 decisions 1 and 3), and refresh is refused while locked, so a
+    long lock or a reload leaves the client without one. The three operations allowed while locked
     therefore accept either credential (`bearerAuth` or `refreshCookie`): an access token inside
     its lifetime identifies the session, else the `cv_refresh` cookie does, but only while it is
     that session's current refresh token. A rotated-away or never-issued cookie is
