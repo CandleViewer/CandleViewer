@@ -150,8 +150,7 @@ def test_the_combined_regex_is_portable_ere_for_the_merge_guard(
     assert s.main(["--print-regex"]) == 0
     assert capsys.readouterr().out == pattern + "\n"
     grep = shutil.which("grep")
-    if not grep:
-        pytest.skip("grep -E proves the same regex matches the same paths outside Python")
+    assert grep, "grep -E proves the same regex matches the same paths outside Python"
     paths = "\n".join([*SECURITY, *NOT_SECURITY, ""])
     run = subprocess.run([grep, "-E", pattern], input=paths, capture_output=True, text=True)
     assert run.stdout.splitlines() == SECURITY
@@ -243,6 +242,42 @@ def test_it_fails_closed_when_the_label_or_the_file_list_is_unsure(
     api = FakeApi([AUTH], **UNSURE[case])
     assert s.main([], api) == 1
     assert "CI-GATE-004" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("page", "changed"), [({}, 0), ({"message": "Moved Permanently"}, 1)])
+def test_a_files_page_that_is_not_a_list_fails_closed(
+    page: object, changed: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An empty object would otherwise read as an empty page: no files, nothing to label.
+    class ObjectPage(FakeApi):
+        def get(self, path: str) -> Any:
+            return super().get(path) if path == "/pulls/7" else page
+
+    api = ObjectPage([], changed=changed)
+    assert (s.main([], api), api.posts()) == (1, [])
+    assert "page 1 is not a list" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("name", "value"), [("GITHUB_REPOSITORY", None), ("GH_TOKEN", "")])
+def test_without_a_repository_or_a_token_it_fails_closed_before_any_call(
+    name: str,
+    value: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("GH_TOKEN", "t")
+    if value is None:
+        monkeypatch.delenv(name)
+    else:
+        monkeypatch.setenv(name, value)
+
+    def no_client(*args: object) -> None:  # the real client would call the network
+        raise AssertionError("a client was built without a repository and a token")
+
+    monkeypatch.setattr(s, "GitHubApi", no_client)
+    assert s.main([]) == 1
+    assert "GITHUB_REPOSITORY and GH_TOKEN are required" in capsys.readouterr().err
 
 
 def test_over_3000_files_reads_no_page_and_passes_only_if_already_labelled() -> None:
@@ -349,8 +384,7 @@ def test_the_job_runs_mains_rule_with_only_the_write_it_needs() -> None:
 def test_until_main_has_the_script_the_job_labels_every_pr(tmp_path: Path) -> None:
     # The job's step in a checkout of a `main` that has no script yet; `gh` is a recorder.
     bash = shutil.which("bash")
-    if not bash:
-        pytest.skip("bash runs the job's step")
+    assert bash, "bash runs the job's step"
     (tmp_path / "bin").mkdir()
     gh = tmp_path / "bin" / "gh"
     gh.write_text('#!/usr/bin/env bash\necho "$@" > "$(dirname "$0")/gh.args"\n', encoding="utf-8")
