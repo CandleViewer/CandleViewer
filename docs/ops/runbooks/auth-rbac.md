@@ -299,11 +299,12 @@ E42-T10 serves it; neither changes anything.
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the
-sweep, the scope refresh and the disarm. The disarm lists the user's armed rules again after its
-disarms, so a rule armed meanwhile is disarmed too. A rule its chart refuses (evaluating, acting,
-pending confirmation or spent) stays armed with no grant and no permission to act on (O4, O5); a
-repeat disarms it once it is back in `armed`, which a rule pending confirmation or spent reaches
-only through its confirmation or `RESET_ONCE` (#3226).
+sockets, the sweep, the scope refresh and the disarm. The socket step ends every socket of the user
+with `bye` `user_disabled` and `4403`, one still on a session that a refresh rotated included. The
+disarm lists the user's armed rules again after its disarms, so a rule armed meanwhile is disarmed
+too. A rule its chart refuses (evaluating, acting, pending confirmation or spent) stays armed with
+no grant and no permission to act on (O4, O5); a repeat disarms it once it is back in `armed`, which
+a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
 
 What the cascade builds on, and what to read afterwards:
 
@@ -433,23 +434,20 @@ supported way to activate it (#2710). Do not edit `users` by hand: escalate to t
 as §3 says, and record it. On testnet, `services/api/scripts/seed_fixture_user.py` seeds an `active`
 Owner and audits it.
 
-What the cascade does not reach (#2710):
-
-- A socket whose session a refresh claimed just before the disable (the row reads `rotated`, and the
-  refresh is then refused) is closed by no step. It stays open, on the access it had, until its
-  access token expires (12 min at most), and nothing logs it.
-- When the commit of a disable fails on the wire, the call answers `503 store_unavailable`, and the
-  `users.disable` record is followed by a `failure` record with reason `outcome_unknown`: the user
-  may be disabled. Repeat the DELETE, which is safe either way: a repeat of a committed disable
-  answers `204`, writes no record and re-runs the sweep, the scope refresh and the disarm. The
-  sockets of the sessions that commit revoked then end only when their access tokens expire (12 min
-  at most), and B16 records none of those sessions.
+**A commit lost on the wire (#2710).** When the commit of a disable fails on the wire, the call
+answers `503 store_unavailable`, and the `users.disable` record is followed by a `failure` record
+with reason `outcome_unknown`: the user may be disabled, and no step after the commit has run.
+Repeat the DELETE, which is safe either way: a repeat of a committed disable answers `204`, writes
+no record, ends every socket of the user and re-runs the sweep, the scope refresh and the disarm.
+B16 records none of the sessions that commit revoked (no `auth.session_revoked` for them); the two
+`users.disable` records are the trail. This residual awaits the Owner's sign-off in
+`docs/security/threat-models/e42-user-lifecycle.md` §6.
 
 Proven end to end in process on the deployed app
 (`services/api/tests/security/auth/test_disable_user_e2e.py`) and on Postgres
-(`services/api/tests/integration/admin/test_user_disable_route_pg.py`). The staging drill (E09-X04,
-#2494) has not run; `services/api/tests/security/auth/test_disable_user_drill.py` drives the
-primitives only.
+(`services/api/tests/integration/admin/test_user_disable_route_pg.py`), sockets on `rotated`
+sessions included. The staging drill (E09-X04, #2494) has not run;
+`services/api/tests/security/auth/test_disable_user_drill.py` drives the primitives only.
 
 ## 5. Audit-chain verification failure
 
@@ -785,7 +783,7 @@ sign-out in the alert runbook entry (row 7) is the check.
 | Scheduled audit-chain verifier                                            | #2111                |
 | Disable-user drill on staging (SR-029)                                    | #2494, #300          |
 | Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
-| A socket on a session rotated just before a disable outlives it (12 min)  | #2710                |
+| No B16 record of the sessions that a lost disable commit revoked          | #2710                |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
