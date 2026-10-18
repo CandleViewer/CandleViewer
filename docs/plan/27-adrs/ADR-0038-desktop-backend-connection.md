@@ -11,12 +11,12 @@
   the last on `main`. The E42 admin model says the E42-T06 ADR takes the next free number when it is
   written (`docs/security/threat-models/e42-admin.md:61-64`), so this record takes 0038 and that one the
   next free number. The model's "ADR-0038 at the time of writing" (`:63-64`) is then out of date (F4).
-- Related: #3519 (this record is its slice 0), #3410 and #3529 (the `app://` load path), #3411 and PR #3609
-  (open: `resolveDevServerUrl`), #3600 (merged: the E10-X02 gate asserts the `app://` CSP and window URLs
+- Related: #3519 (this record is its slice 0), #3410 and #3529 (the `app://` load path), #3411 and #3609
+  (merged: `resolveDevServerUrl`), #3600 (merged: the E10-X02 gate asserts the `app://` CSP and window URLs
   at runtime), #2712 (SPA access-token client), #2711 (TOTP step on the login screen), #2490 (real-backend
   auth E2E); ADR-0010, ADR-0011 (proposed: the shell is built on Electron meanwhile), ADR-0020; SR-006,
   SR-012, SR-041, SR-042, SR-049, SR-111, SR-112, SR-113, SR-173, SR-174, SR-181, SR-183.
-- Evidence: every `file:line` holds on `main` at `800986068`. Unless a full path is given, web paths are
+- Evidence: every `file:line` holds on `main` at `474f36339`. Unless a full path is given, web paths are
   under `apps/web/src/`, shell paths under `apps/desktop/src/` and backend paths under
   `services/api/candleviewer/`.
 
@@ -70,8 +70,8 @@ screen does a full navigation (`features/auth/LoginScreen.tsx:56-57`).
 set and silently falls back to `http://127.0.0.1:8000` (`main/csp.ts:12-13`, `23-53`). Checked with
 Node's `URL` on 2026-10-18: `foo://127.0.0.1:8000` gives `connect-src 'self' null null`;
 `ws://127.0.0.1:8000` is taken as the HTTP origin; userinfo, path and query are silently dropped. That is
-the #3519 note. The CSP is built once at startup (`main/index.ts:253-258`), and navigation is confined to
-the app origin (`main/index.ts:78-97`, `164-179`; SR-113). The preload exposes three functions over three
+the #3519 note. The CSP is built once at startup (`main/index.ts:266-271`), and navigation is confined to
+the app origin (`main/index.ts:80-100`, `182-197`; SR-113). The preload exposes three functions over three
 allow-listed channels (`preload/index.ts:21-25`, `preload/allowList.ts:11-15`). The web
 `CvBridge` type declares twelve (`shell/ElectronShellAdapter.ts:21-34`).
 
@@ -124,12 +124,12 @@ necessary but not sufficient.
   reverses #3410 (SR-174, SR-173), makes the shell render remote content, ties the desktop UI to the
   backend's deploy, and leaves nothing to render while the backend is down.
 - **D. A non-cookie desktop client**, holding a refresh token taken from response bodies.
-  `POST /auth/refresh` already accepts `RefreshRequest.refresh_token` (`22-api-openapi.yaml:14292-14296`,
+  `POST /auth/refresh` already accepts `RefreshRequest.refresh_token` (`22-api-openapi.yaml:14299-14303`,
   `api/sessions.py:921-928`). Rejected:
   - It puts the long-lived credential in memory that script can read, against SR-012 and ADR-0020
     decision 1.
   - Every reload would lose the session, and sign-in itself reloads (`LoginScreen.tsx:57`).
-  - The `cookie_auth:false` flag that one description mentions (`22-api-openapi.yaml:14197`) is defined
+  - The `cookie_auth:false` flag that one description mentions (`22-api-openapi.yaml:14204`) is defined
     by no request schema; see F1.
 - **E. Header-only CSRF for the desktop** (a synchronizer token checked against the bearer's session).
   Rejected: a second server code path, and one client class would lose SR-041's double-submit. It also does
@@ -150,16 +150,19 @@ necessary but not sufficient.
   `connect-src` and the page's address are always the same value.
 - **1b. Validation: refuse, never strip and never fall back.**
   - Unset or empty means the default, `http://127.0.0.1:8000` (`main/csp.ts:12`).
+  - A value with any character outside printable ASCII is refused before parsing, because the URL parser
+    silently drops tabs and newlines. `resolveDevServerUrl` already does this for the dev-server URL
+    (`main/devServer.ts:16-20`, `52`).
   - The value must parse as a WHATWG URL, and its protocol must be exactly `http:` or `https:`. This refuses
     `ws:`, `app:`, `file:` and every non-special scheme, so the `null` origin of the #3519 note cannot
     occur.
   - No username or password, no path other than `/`, no query and no fragment.
   - The parsed, normalised hostname is checked, and the normalised origin is what is used:
 
-    | Build            | `http:` hosts                     | `https:` hosts                    |
-    | ---------------- | --------------------------------- | --------------------------------- |
-    | Unpackaged (dev) | `127.0.0.1`, `localhost`, `[::1]` | `127.0.0.1`, `localhost`, `[::1]` |
-    | Packaged         | `127.0.0.1` only (SR-049, D5)     | `127.0.0.1` only (until D1)       |
+    | Build            | `http:` hosts                 | `https:` hosts              |
+    | ---------------- | ----------------------------- | --------------------------- |
+    | Unpackaged (dev) | `127.0.0.1`, `localhost`      | `127.0.0.1`, `localhost`    |
+    | Packaged         | `127.0.0.1` only (SR-049, D5) | `127.0.0.1` only (until D1) |
 
   - The WS origin is derived, never configured: `http:` gives `ws:` and `https:` gives `wss:`, with the
     same host and port.
@@ -167,8 +170,11 @@ necessary but not sufficient.
   Plain `http:` is accepted for loopback hosts only, in every build. A non-loopback host (SR-112's tailnet
   host) is refused in every build until owner decision D1 records it, and even then only with `https:`,
   so its WS is `wss:`. The `app://` page is a secure context, and SR-049 requires TLS off loopback. D1's
-  record is the explicit `connect-src` widening the ticket asks for. "Packaged" is `app.isPackaged`, as
-  PR #3609 uses it for the dev-server URL.
+  record is the explicit `connect-src` widening the ticket asks for. "Packaged" is `app.isPackaged`,
+  passed in as `resolveDevServerUrl` takes it (`main/index.ts:147`, `main/devServer.ts:42-49`). The dev
+  hosts are the closed set `devServer.ts` uses (`main/devServer.ts:9-14`), so the shell has one loopback
+  set. `[::1]`, which `csp.ts` accepts today (`main/csp.ts:13`), is dropped, as #3609 dropped it for the
+  dev server.
 
 - **1c. A refused value fails closed.** There is no fallback to the default: a silent fallback could connect
   a trader to a different backend from the one configured. `connect-src` becomes `'self'` alone, and the
@@ -185,7 +191,7 @@ necessary but not sufficient.
     tests against it.
   - The handler answers only the main window's top frame on the app origin (the dev-server origin when
     unpackaged), checked through `event.senderFrame`. The three existing handlers do not check their
-    sender (`main/index.ts:237-241`); this one does.
+    sender (`main/index.ts:250-254`); this one does.
   - The web app re-validates the shape (`http(s)` origin, the matching `ws(s)` origin, the same host and
     port) and treats anything else as refused, so both sides validate (SR-111).
 - **1e. Use in the web app.** When `window.cv` is present (the signal `createShellPort` already uses,
@@ -211,19 +217,19 @@ necessary but not sufficient.
   listed, the existing checks admit the desktop unchanged: unsafe HTTP (`api/csrf.py:213-227`), the cookie
   refresh (`api/sessions.py:367-375`) and the WS upgrade (`ws/lifecycle.py:256-278`). Per D4, the dev
   compose default gains the entry. The runbook (`docs/ops/runbooks/auth-rbac.md:738-743`) and
-  `apps/desktop/README.md:47-51` are updated.
+  `apps/desktop/README.md:53-57` are updated.
 - **2b. CORS, from the same allow-list.** Starlette's `CORSMiddleware` (part of Starlette, so no new
   dependency), configured as follows:
   - `allow_origins` is `Settings.allowed_origin_set`, with credentials on, no regex and never `*`.
   - Methods: `GET, HEAD, POST, PUT, PATCH, DELETE`.
   - Allowed request headers: `Authorization`, `Content-Type` and the contract's header parameters, today
     `X-CSRF-Token`, `Idempotency-Key`, `If-Match` and `X-Reauth-Password` (`22-api-openapi.yaml:1216`,
-    `12627-12654`).
+    `12634-12661`).
   - Exposed response headers: every response header the contract declares, both in `components.headers`
-    (`RateLimit-*`, `Retry-After`, `ETag`, `Idempotency-Replayed`; `22-api-openapi.yaml:12907-12922`) and
+    (`RateLimit-*`, `Retry-After`, `ETag`, `Idempotency-Replayed`; `22-api-openapi.yaml:12914-12929`) and
     inline on operations (for example `Server-Timing` on `POST /auth/login`, `:957`; `Content-Disposition`
     and `Repr-Digest` on the audit export, `:8926`, `:8932`; `Content-Disposition` on the backup
-    download, `:9916`). The CORS-safelisted headers and `Set-Cookie`, which script never reads, are left
+    download, `:9923`). The CORS-safelisted headers and `Set-Cookie`, which script never reads, are left
     out. Added to them: `X-Correlation-Id` (`observability/correlation.py:19`) and `X-CSRF-Token`
     (decision 3). `Retry-After` matters because the lockout screen reads it
     (`features/auth/authApi.ts:32-37`) and it is not a CORS-safelisted header.
@@ -264,7 +270,7 @@ necessary but not sufficient.
   not client authentication. Access still needs a password and TOTP to get a bearer (ADR-0010, ADR-0020),
   and every unsafe request still needs the session-bound token. On the shell side, only the shell's own
   pages run in its session: navigation and new windows are confined to the app origin (SR-113,
-  `main/index.ts:78-97`, `164-179`), and `default-src 'self'` covers frames (`main/csp.ts:42`).
+  `main/index.ts:80-100`, `182-197`), and `default-src 'self'` covers frames (`main/csp.ts:42`).
 
 ### 3. The CSRF token path for the `app://` page (the double-submit stays)
 
@@ -380,7 +386,7 @@ necessary but not sufficient.
 | A6  | `BroadcastChannel` works between the app's windows                                                                                                                                                             | Windows fall back to the recovery path (3d)                                                                                                                                                                                                                                                                                                      |
 | A7  | A cross-site expiry removes a desktop cookie when it carries the same `SameSite=None; Secure` (and `Partitioned`, if 4c adds it), and a `SameSite=Strict` expiry does not                                      | D3; until then a leftover cookie names a revoked session (4b)                                                                                                                                                                                                                                                                                    |
 | A8  | The secure `app://` page (`main/appProtocol.ts:24-25`) may fetch `http://127.0.0.1` and open `ws://127.0.0.1`, because loopback counts as potentially trustworthy, so neither is blocked as mixed content      | D3 (TLS on loopback)                                                                                                                                                                                                                                                                                                                             |
-| A9  | Chromium's local-network access rules let the page reach the loopback backend with no permission (the shell refuses every permission request, `main/index.ts:230-234`) and no private-network preflight answer | A preflight: S3 turns on the locked Starlette's `allow_private_network`, which only a passing, listed-origin preflight returns. A permission: S5 grants that one permission to the main window on the app origin only and keeps refusing every other request (`security-review`); `connect-src` still limits the page to the backend origin (4f) |
+| A9  | Chromium's local-network access rules let the page reach the loopback backend with no permission (the shell refuses every permission request, `main/index.ts:243-247`) and no private-network preflight answer | A preflight: S3 turns on the locked Starlette's `allow_private_network`, which only a passing, listed-origin preflight returns. A permission: S5 grants that one permission to the main window on the app origin only and keeps refusing every other request (`security-review`); `connect-src` still limits the page to the backend origin (4f) |
 | A10 | The telemetry transport's keep-alive JSON `POST` (`lib/telemetry/aggregator.ts:127-138`) is sent cross-origin with its preflight                                                                               | On the desktop, S6 sends it without `keepalive`; at most the batch in flight at unload is lost                                                                                                                                                                                                                                                   |
 | A11 | A shared worker the page starts runs under the frozen `app:` privileges (`main/appProtocol.ts:18-29`)                                                                                                          | The E17-T04 wiring slice opens the desktop's socket another way; the privileges are not widened without a dated amendment here                                                                                                                                                                                                                   |
 
@@ -395,7 +401,7 @@ rely on them (S3 to S7 and S9) merge. S2 tells a blocked request (A8, A9) apart 
 | ----- | ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | BC-S1 | S      | A page in the user's ordinary browser makes the backend act for a signed-in desktop user      | It cannot send a listed `Origin` (2d); cross-site cookies exist only in the shell's own session (4b); double-submit unchanged (3a)                                                                                               | Low                                                                                    |
 | BC-S2 | S      | A local program presents `Origin: app://candleviewer`                                         | `Origin` is not client identity (2d); a session still needs password, TOTP and the session-bound token; the backend is loopback/mesh only (`net/cidr.py:21`)                                                                     | Accepted: a program running as the same OS user is outside the app's control (B1, B2)  |
-| BC-T1 | T      | A tampered `CV_BACKEND_ORIGIN` points the shell at another host or injects CSP tokens         | One parser, an exact scheme set, refusal of userinfo, path and query, loopback-only packaged builds, fail closed; the CSP comes only from the resolved value (1a to 1c)                                                          | Low                                                                                    |
+| BC-T1 | T      | A tampered `CV_BACKEND_ORIGIN` points the shell at another host or injects CSP tokens         | One parser, printable ASCII only, an exact scheme set, refusal of userinfo, path and query, loopback-only packaged builds, fail closed; the CSP comes only from the resolved value (1a to 1c)                                    | Low                                                                                    |
 | BC-T2 | T      | Script in the renderer redirects API calls to another host                                    | The address comes from the main process at startup, and `connect-src` admits only that origin (4f)                                                                                                                               | Low                                                                                    |
 | BC-R1 | R      | Desktop requests cannot be attributed                                                         | No new path: the existing records (`auth.csrf_refused`, `auth.ws_origin_refused`, session events) cover them, within their budgets                                                                                               | None new                                                                               |
 | BC-I1 | I      | The CSRF token in a response header reaches another origin, a log or a cache                  | CORS exposes it only to listed origins (2b); it is a session-bound MAC; the redaction filter and `no-store` keep it out of logs and caches, and proxies and access logs treat it as sensitive (3b)                               | Low                                                                                    |
@@ -467,7 +473,7 @@ Each slice is one PR of at most 400 changed lines (C-4.8), with its tests. Produ
 | D2  | Desktop-origin cookies get `SameSite=None` (4b), on every `Set-Cookie` of the two cookies, expiry included. This refines ADR-0010 decisions 2 and 3 and the SR-012 and SR-041 wording, for exactly `app://candleviewer`, as a dated amendment section in ADR-0010 that S1 carries with the SR and E09 U5 rows (4b). | Yes: without it the desktop cannot hold a session at all                                                                                                   |
 | D3  | If S2 shows that `Secure` cookies (A3, A7) or loopback requests (A8) are not honoured over plain `http://127.0.0.1`: TLS on loopback, or re-open this record                                                                                                                                                        | TLS on loopback (SR-049's local CA)                                                                                                                        |
 | D4  | `app://candleviewer` in the dev compose default allow-list, and how production lists it. After S3 every listed origin can also read credentialed responses, the default's four Vite origins included (Consequences).                                                                                                | Dev default: yes, and the Vite entries stay (they are this web app in dev). Production: the operator lists it explicitly, as with the tailnet origin today |
-| D5  | Packaged builds also accept `http://localhost` and `[::1]`                                                                                                                                                                                                                                                          | No: `127.0.0.1` only, as SR-049 names it; dev keeps all three (`main/csp.ts:13`)                                                                           |
+| D5  | Packaged builds also accept `http://localhost`                                                                                                                                                                                                                                                                      | No: `127.0.0.1` only, as SR-049 names it. Dev builds accept `127.0.0.1` and `localhost` (1b)                                                               |
 | D6  | The Done-when proof runs nightly and on dispatch, not per PR, with a Python step added to the `e2e-electron` job                                                                                                                                                                                                    | Accept; making it a required check would be a separate C-9.1 amendment                                                                                     |
 
 ## Consequences
@@ -536,7 +542,7 @@ The record's end-to-end validation is S9.
 
 ## Follow-ups (not this ticket's scope)
 
-- **F1.** `22-api-openapi.yaml:14197` describes a `cookie_auth:false` login flag that no request schema
+- **F1.** `22-api-openapi.yaml:14204` describes a `cookie_auth:false` login flag that no request schema
   defines. This needs a contract clean-up issue.
 - **F2.** The web `CvBridge` declares twelve functions, while the preload exposes three
   (`shell/ElectronShellAdapter.ts:21-34`, `preload/index.ts:21-25`). S5 adds the new function to both
