@@ -543,7 +543,8 @@ jobs:
   # adds and judges: a label added with GITHUB_TOKEN starts no other run. It is the only job here
   # that can write to the PR, so it checks out `main` and runs main's script, never the PR's code
   # (SR-132). Until main has the script (the PR adding it), it labels every PR: never fewer reviews.
-  # It never removes a label; a merge group has no PR, so it passes there.
+  # It never removes a label. A merge group has no PR to label (its PR's own run labelled it before
+  # it could be enqueued), so the step runs on pull requests only and the job passes there (#3433).
   security-review-label:
     name: security-review-label
     runs-on: ubuntu-latest
@@ -557,6 +558,8 @@ jobs:
           ref: main
           persist-credentials: false
       - name: Label the PR security-review if it touches a C-10.2 path (main's rule)
+        id: label
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -566,7 +569,7 @@ jobs:
           set -euo pipefail
           if [ -f tools/ci/security_review_label.py ]; then
             python3 -I tools/ci/security_review_label.py
-          elif [ "$EVENT_NAME" = pull_request ]; then
+          else
             echo "::warning title=security-review-label::main has no tools/ci/security_review_label.py yet: labelling the PR"
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" -f 'labels[]=security-review' --silent
           fi

@@ -131,8 +131,9 @@ class GitHubApi:
 
     def _call(self, method: str, path: str, data: bytes | None) -> Any:
         url = f"https://api.github.com/repos/{self._repo}{path}"  # a fixed https host, nothing else
+        headers = self._headers | ({} if data is None else {"Content-Type": "application/json"})
         with urllib.request.urlopen(
-            urllib.request.Request(url, data, self._headers, method=method), timeout=30
+            urllib.request.Request(url, data, headers, method=method), timeout=30
         ) as resp:
             return json.load(resp)
 

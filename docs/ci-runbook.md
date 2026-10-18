@@ -34,7 +34,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
 ├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
-│                                      by main's tools/ci/security_review_label.py (CI-GATE-004)
+│                                      by main's tools/ci/security_review_label.py (CI-GATE-004);
+│                                      a merge group has no PR, so its step is skipped (#3433)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined

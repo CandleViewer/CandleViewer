@@ -102,7 +102,8 @@ def _c10_2() -> str:
 def test_the_rules_follow_the_c10_2_clause_verbatim() -> None:
     clause = _c10_2()
     spans = re.findall(r"`([^`]+)`", clause)
-    assert {m[1] for x in spans if (m := re.fullmatch(r"services/api/(\w+)/", x))} == set(s.MODULES)
+    prefix = r"services/api/(?:candleviewer/)?(\w+)/"  # either spelling, so an amendment can fix it
+    assert {m[1] for x in spans if (m := re.fullmatch(prefix, x))} == set(s.MODULES)
     assert {m[1] for x in spans if (m := re.fullmatch(r"\*(\w+)\*", x))} == set(s.WORDS)
     assert f"The `{s.LABEL}` label is applied **automatically**" in clause
     for phrase in ("anything under `infra/`", "authentication/session code in `apps/web`"):
@@ -317,6 +318,10 @@ def test_the_live_client_sends_the_token_only_as_a_header(monkeypatch: pytest.Mo
     assert get.full_url == "https://api.github.com/repos/o/r/pulls/7/files?page=1"
     assert (get.get_method(), post.get_method()) == ("GET", "POST")
     assert json.loads(post.data) == {"labels": ["x"]}
+    assert (get.get_header("Content-type"), post.get_header("Content-type")) == (
+        None,
+        "application/json",
+    )
     assert get.get_header("Authorization") == "Bearer t0k" and "t0k" not in get.full_url
 
 
@@ -334,28 +339,34 @@ def test_the_job_runs_mains_rule_with_only_the_write_it_needs() -> None:
     assert checkout["uses"].startswith("actions/checkout@")
     assert checkout["with"] == {"ref": "main", "persist-credentials": False}  # never the PR's tree
     assert "python3 -I tools/ci/security_review_label.py" in step["run"]
+    # A merge group has no PR to label: the step is skipped there and the job passes (#3433).
+    assert (step["id"], step["if"]) == ("label", "github.event_name == 'pull_request'")
     assert set(step["env"]) == {"GH_TOKEN", "GITHUB_REPOSITORY", "EVENT_NAME", "PR_NUMBER"}
     text = json.dumps(JOB)
     assert "secrets." not in text and "pull_request.head" not in text
 
 
-def _bootstrap(bash: str, tmp_path: Path, event: str) -> tuple[int, str]:
-    """The job's step in a checkout of a `main` that has no script yet; `gh` is a recorder."""
-    (tmp_path / "bin").mkdir(parents=True)
-    gh = tmp_path / "bin" / "gh"
-    gh.write_text('#!/usr/bin/env bash\necho "$@" > "$(dirname "$0")/gh.args"\n', encoding="utf-8")
-    gh.chmod(0o755)
-    env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "EVENT_NAME": event}
-    env |= {"GITHUB_REPOSITORY": "o/r", "PR_NUMBER": "7", "GH_TOKEN": "t"}
-    run = subprocess.run([bash, "-c", JOB["steps"][1]["run"]], cwd=tmp_path, env=env, timeout=60)
-    args = tmp_path / "bin" / "gh.args"
-    return run.returncode, args.read_text(encoding="utf-8") if args.exists() else ""
-
-
 def test_until_main_has_the_script_the_job_labels_every_pr(tmp_path: Path) -> None:
+    # The job's step in a checkout of a `main` that has no script yet; `gh` is a recorder.
     bash = shutil.which("bash")
     if not bash:
         pytest.skip("bash runs the job's step")
+    (tmp_path / "bin").mkdir()
+    gh = tmp_path / "bin" / "gh"
+    gh.write_text('#!/usr/bin/env bash\necho "$@" > "$(dirname "$0")/gh.args"\n', encoding="utf-8")
+    gh.chmod(0o755)
+    env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "EVENT_NAME": "pull_request"}
+    env |= {"GITHUB_REPOSITORY": "o/r", "PR_NUMBER": "7", "GH_TOKEN": "t"}
+    run = subprocess.run([bash, "-c", JOB["steps"][1]["run"]], cwd=tmp_path, env=env, timeout=60)
     labels = "api --method POST repos/o/r/issues/7/labels -f labels[]=security-review --silent\n"
-    assert _bootstrap(bash, tmp_path / "pr", "pull_request") == (0, labels)
-    assert _bootstrap(bash, tmp_path / "group", "merge_group") == (0, "")
+    assert (run.returncode, (tmp_path / "bin" / "gh.args").read_text(encoding="utf-8")) == (
+        0,
+        labels,
+    )
+
+
+def test_dependabot_labels_its_prs_up_front() -> None:
+    # Every ecosystem it updates is a C-10.2 path (manifests, infra/, workflows), so its PRs carry
+    # the label from the start and never wait on what a Dependabot-triggered token may write.
+    doc = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
+    assert [u["package-ecosystem"] for u in doc["updates"] if s.LABEL not in u["labels"]] == []
