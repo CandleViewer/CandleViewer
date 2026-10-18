@@ -210,6 +210,24 @@ def _account_fixture_refusal(
     return None
 
 
+def key_file_path_refusal(value: str) -> str | None:
+    """ADR-0037 decision 6 (`24-internal-schemas.md` §15.6): why a key file path is refused, as
+    a rule, or None. The rules of `CV_TEST_CLOCK_FILE` (#2728): absolute, without `..`, and
+    neither the file nor a directory above it a symlink. A path it may not inspect (under a
+    directory it may not search) is left to the open, whose `O_NOFOLLOW` also guards the last
+    component against a swap after this check."""
+    path = Path(value)
+    if not path.is_absolute():
+        return "must be an absolute path"
+    if ".." in path.parts:
+        return "must not contain '..'"
+    if os.path.islink(path):
+        return "must not be a symlink"
+    if os.path.realpath(path) != str(path):
+        return "must not be under a symlinked directory"
+    return None
+
+
 class Settings(BaseSettings):
     """Root application settings, populated from the environment only.
 
@@ -355,6 +373,21 @@ class Settings(BaseSettings):
     # volume so tail truncation is detectable even if Postgres data is lost.
     audit_wal_path: str = "var/audit/audit.wal"
     audit_checkpoint_path: str = "var/audit/checkpoints.ndjson"
+    # ADR-0037 decision 6 (#3009): the audit lane's key files, read once at boot by the composition
+    # root (`candleviewer.audit_lane_wiring`). The key makes every lane frame, marker and note; the
+    # previous key, set during a rotation, only verifies. Paths, not secrets: their names stay
+    # clear of the redaction pattern and `repr()` shows them; the aliases keep the documented
+    # variables, and are also the keywords `Settings(...)` takes. An explicit value is checked at
+    # load like `CV_TEST_CLOCK_FILE`; the default only by the loader (`BaseSettings` validates
+    # defaults unless told not to), so no boot changes here.
+    audit_lane_mac_file: str = Field(
+        default="/run/secrets/cv_audit_lane_key",
+        alias="CV_AUDIT_LANE_KEY_FILE",
+        validate_default=False,
+    )
+    audit_lane_previous_mac_file: str | None = Field(
+        default=None, alias="CV_AUDIT_LANE_PREVIOUS_KEY_FILE"
+    )
 
     # E42-T02 (contract #2392): per-user limits for `GET /admin/audit`.
     audit_query_rate_per_minute: int = Field(default=60, ge=1)
@@ -657,6 +690,20 @@ class Settings(BaseSettings):
             raise ValueError("CV_BARS_STATE_ROOT must not be a symlink")
         object.__setattr__(self, "bars_state_root", str(root.resolve()))
         return self
+
+    @field_validator("audit_lane_mac_file", "audit_lane_previous_mac_file")
+    @classmethod
+    def _check_audit_lane_key_files(cls, value: str | None, info: ValidationInfo) -> str | None:
+        """ADR-0037 decision 6: an explicit key file path obeys `key_file_path_refusal`; a blank
+        one counts as unset (a compose passthrough), as an empty `CV_TEST_CLOCK_FILE` does. A
+        field validator, so a refusal carries only this field's input (#2728, C-12.6)."""
+        field = cls.model_fields[str(info.field_name)]
+        if value is None or not value.strip():
+            return field.default if isinstance(field.default, str) else None
+        refusal = key_file_path_refusal(value)
+        if refusal is not None:
+            raise ValueError(f"{field.alias} {refusal}")
+        return value
 
     def test_clock_refusal(self) -> str | None:
         """#2086: why the server test clock may not run here, or None on a keyless testnet."""

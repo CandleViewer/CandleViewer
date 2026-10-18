@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from candleviewer.audit.lane_journal import key_id
 from candleviewer.audit.models import Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
@@ -62,6 +63,7 @@ __all__ = [
     "SecretsBundle",
     "SecretsHandle",
     "SecretsMeta",
+    "audit_lane_key_id",
     "audit_writer_sink",
     "build_audit_service",
     "build_audit_verify_job",
@@ -145,6 +147,12 @@ def system_event_redactor() -> Callable[[dict[str, Any] | None], dict[str, Any] 
     15.4, `21-database-schema.md` 12), for the event writers the composition root builds: they
     may not import M19 themselves (C-3.3). No I/O."""
     return redact
+
+
+def audit_lane_key_id(key: bytes) -> str:
+    """The audit lane key's id (`24-internal-schemas.md` §15.6 `kid`), safe to log, for the
+    composition root's key loader, which may not import M19 itself (C-3.3). No I/O."""
+    return key_id(key)
 
 
 def _before(data: dict[str, str]) -> dict[str, Any] | None:
