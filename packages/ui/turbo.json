@@ -43,6 +43,10 @@
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/tools/style-dictionary/**"
       ]
+    },
+    "typecheck": {
+      "tags": ["typecheck"],
+      "inputs": ["$TURBO_EXTENDS$", "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"]
     }
   }
 }

@@ -26,6 +26,26 @@
         "$TURBO_ROOT$/packages/fixtures/golden/policy/rules.json",
         "$TURBO_ROOT$/services/api/candleviewer/ws/_generated/cvwb_layout.py"
       ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "vitest.config.mjs",
+        "tsconfig.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.node.json",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+      ]
+    },
+    "test:cov": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "vitest.config.mjs",
+        "tsconfig.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.node.json",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+      ]
     }
   }
 }

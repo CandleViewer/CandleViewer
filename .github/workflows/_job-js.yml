@@ -112,8 +112,16 @@ jobs:
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: node tools/ci/run-allowed-postinstall.mjs
+      # The name filter maps each changed file to the package that holds it, and tools/ is in none:
+      # a change only to the token formats' declarations, which ui's tests import, selected no
+      # package. The tag selector matches the changed files against the inputs of the typecheck
+      # tasks tagged `typecheck` (packages/ui/turbo.json lists them), so it selects ui's (#3471).
       - name: Turbo typecheck --filter=...[origin/main] (tsc annotates errors inline)
-        run: pnpm turbo run typecheck --filter='...[origin/main]' --summarize
+        run: >
+          pnpm turbo run typecheck
+          --filter='...[origin/main]'
+          --filter='tag:typecheck[origin/main]'
+          --summarize
       - name: Record lane duration in job summary
         if: always()
         run: node tools/ci/write-turbo-summary.mjs typecheck >> "$GITHUB_STEP_SUMMARY"

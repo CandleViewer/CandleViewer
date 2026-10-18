@@ -21,6 +21,8 @@
         "golden/**",
         "bybit/**",
         "accounts/**",
+        "vitest.config.mjs",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ]
     },
@@ -33,6 +35,8 @@
         "golden/**",
         "bybit/**",
         "accounts/**",
+        "vitest.config.mjs",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ],
       "outputs": ["coverage/**"]
