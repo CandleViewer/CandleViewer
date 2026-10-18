@@ -6,9 +6,9 @@ concurrency group per merge group that is never cancelled; the `change` step tha
 paths-filter `main` and the group's head, so a group's lanes cover the entries ahead of it too (a
 PR's own diff stays on the API path); the PR-metadata gates, not applicable on a merge group only,
 while every other lane resolves as before; every pull-request read in pr.yml and the lanes it
-calls, guarded to pull_request or given a merge_group fallback, and every condition there that reads
-the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, which ignore a
-queue run."""
+calls, guarded to pull_request or given a merge_group fallback, and every condition or value there
+that reads the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, which
+ignore a queue run."""
 
 from __future__ import annotations
 
@@ -31,13 +31,15 @@ BASE, HEAD = "1" * 40, "2" * 40
 #: The gates that read PR metadata (the title, the body, the PR's own commits).
 PR_ONLY = {"commitlint", "changelog-fragment"}
 #: Pull-request context, empty or null on a merge group, in dot or index form. A whole-event read
-#: counts too: a script could take a PR field from it.
+#: counts too (github-script's `context.payload` and `context.issue` included): a script could take
+#: a PR field from it.
 PR_READ = re.compile(
     r"github\.event\.(?:pull_request|number)\b|github\.(?:head|base)_ref\b"
     r"|github\.event\[\s*['\"](?:pull_request|number)['\"]|github\[\s*['\"](?:head|base)_ref"
     r"|\bGITHUB_(?:HEAD_REF|BASE_REF|EVENT_PATH)\b|toJSON\(\s*github\.event\s*\)"
+    r"|\bcontext\.(?:payload|issue)\b"
 )
-#: The event in any form: a job or step condition that reads it can skip on a merge group.
+#: The event in any form: a condition or value that reads it can skip or weaken a queue run's check.
 EVENT_READ = re.compile(
     PR_READ.pattern + r"|github\.(?:event|event_name|actor|triggering_actor|ref|ref_name)\b"
     r"|\bGITHUB_(?:EVENT_NAME|REF|REF_NAME|ACTOR)\b|\boutputs\.pr\b"
@@ -87,6 +89,21 @@ FALSE_ON_A_MERGE_GROUP = {
         "_job-e2e.yml:e2e-electron",
     )
 }
+#: Every other value that reads the event where a merge group runs it (any key, `run:` text too),
+#: by job: a value can weaken a check there as a condition can (a `continue-on-error`, a lane's
+#: input, a shell test of the event), so a new or changed one is reviewed here first.
+EVENT_VALUES = [
+    ("pr.yml", "github.event.merge_group.head_sha || github.head_ref"),
+    ("pr.yml", "github.event_name == 'pull_request'"),
+    ("pr.yml:changed-paths", "steps.change.outputs.pr"),
+    ("pr.yml:changed-paths", "github.event_name"),
+    ("pr.yml:changed-paths", "github.event.merge_group.base_ref"),
+    ("pr.yml:changed-paths", "github.event.merge_group.head_sha"),
+    ("pr.yml:gates", "github.event.pull_request.base.sha || github.event.merge_group.base_sha"),
+    ("pr.yml:gates", "github.event.pull_request.head.sha || github.event.merge_group.head_sha"),
+    ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
+    ("_job-migrations.yml:migrations", "github.base_ref || github.event.merge_group.base_ref"),
+]
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"
 FAIL = "CI-GATE-001: %s required and not successful (result: %s)"
@@ -139,10 +156,11 @@ def _render(template: object, context: dict[str, str]) -> str:
     return EXPRESSION.sub(evaluate, str(template))
 
 
-def _queue(pr: int) -> dict[str, str]:
-    """A merge group's context: no head_ref; the group's own ref (the PR and its base SHA)."""
+def _queue(pr: int, head: str) -> dict[str, str]:
+    """A merge group's context: no head_ref; its ref (the PR and its base SHA) and its head."""
+    group = "github.event.merge_group"
     ref = f"refs/heads/gh-readonly-queue/main/pr-{pr}-{BASE}"
-    return {"github.event_name": "merge_group", "github.event.merge_group.head_ref": ref}
+    return {"github.event_name": "merge_group", f"{group}.head_ref": ref, f"{group}.head_sha": head}
 
 
 PULL = {"github.event_name": "pull_request", "github.head_ref": "chore/e03-x"}
@@ -164,11 +182,13 @@ def test_concurrency_cancels_superseded_pr_runs_and_never_a_queue_run() -> None:
     group, cancel = PR["concurrency"]["group"], PR["concurrency"]["cancel-in-progress"]
     # A PR keeps one group per branch, and a push still cancels the branch's last run.
     assert (_render(group, PULL), _render(cancel, PULL)) == ("pr-chore/e03-x", "true")
-    # Each merge group runs in its own group (an empty head_ref would put every queue run in `pr-`)
-    # and is never cancelled: the queue would read the cancelled check as a failure.
-    groups = [_render(group, _queue(pr)) for pr in (7, 8)]
-    assert len(set(groups)) == 2 and not {"pr-", "pr-chore/e03-x"} & set(groups)
-    assert {_render(cancel, _queue(pr)) for pr in (7, 8)} == {"false"}
+    # Each merge group build runs in its own group (an empty head_ref would put every queue run in
+    # `pr-`), even a PR enqueued again on the same base, whose queue ref is the same, and is never
+    # cancelled: the queue would read the cancelled check as a failure.
+    builds = [_queue(7, "3" * 40), _queue(7, "4" * 40), _queue(8, "5" * 40)]
+    groups = {_render(group, build) for build in builds}
+    assert len(groups) == 3 and not {"pr-", "pr-chore/e03-x"} & groups
+    assert {_render(cancel, build) for build in builds} == {"false"}
 
 
 def _change_step() -> dict[str, Any]:
@@ -332,25 +352,34 @@ def _places(name: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any]]]:
             yield f"{name}:{job_id}:{step.get('id') or step.get('name')}", step, job
 
 
+def _owned(name: str) -> Iterator[tuple[str, dict[str, Any], bool]]:
+    """(place, its own keys, whether a PR guard keeps it off a merge group) for workflow `name`
+    (minus `on` and `jobs`) and each of its jobs and steps (minus a job's `steps`)."""
+    top = {key: value for key, value in _load(name).items() if key not in ("jobs", True)}
+    yield name, top, False
+    for where, node, job in _places(name):
+        own = {key: value for key, value in node.items() if key != "steps"}
+        yield where, own, _guards(job.get("if")) or _guards(node.get("if"))
+
+
+def _parts(node: object) -> Iterator[str]:
+    """Each `${{ }}` expression in `node`'s strings, and each line of text outside one (a shell
+    read, a bare `if:`), whitespace folded."""
+    for text in _strings(node):
+        for part in [*EXPRESSION.findall(text), *EXPRESSION.sub("", text).splitlines()]:
+            yield " ".join(part.split())
+
+
 def _unguarded_reads() -> set[tuple[str, str]]:
     """(place, read) for each pull-request read in pr.yml or a lane it calls with neither a PR
-    guard on its step or job nor a merge_group fallback in the same `a || b`. Text outside
-    `${{ }}` (a shell read, a bare `if:`) is read line by line."""
-    found: set[tuple[str, str]] = set()
-
-    def scan(where: str, node: object, guarded: bool) -> None:
-        for text in _strings(node):
-            for part in [*EXPRESSION.findall(text), *EXPRESSION.sub("", text).splitlines()]:
-                if PR_READ.search(part) and not guarded and not _has_fallback(part):
-                    found.add((where, " ".join(part.split())))
-
-    for name in dict.fromkeys(_called("pr.yml")):
-        doc = _load(name)
-        scan(name, {key: value for key, value in doc.items() if key not in ("jobs", True)}, False)
-        for where, node, job in _places(name):
-            own = {key: value for key, value in node.items() if key != "steps"}
-            scan(where, own, _guards(job.get("if")) or _guards(node.get("if")))
-    return found
+    guard on its step or job nor a merge_group fallback in the same `a || b`."""
+    return {
+        (where, part)
+        for name in dict.fromkeys(_called("pr.yml"))
+        for where, own, guarded in _owned(name)
+        for part in _parts(own)
+        if PR_READ.search(part) and not guarded and not _has_fallback(part)
+    }
 
 
 @pytest.mark.parametrize(
@@ -370,7 +399,13 @@ def test_a_pr_guard_counts_only_as_a_top_level_and_term(condition: str, guarded:
 
 @pytest.mark.parametrize(
     "read",
-    ["github.event['pull_request'].head.sha", 'github["base_ref"]', "$GITHUB_EVENT_PATH"],
+    [
+        "github.event['pull_request'].head.sha",
+        'github["base_ref"]',
+        "$GITHUB_EVENT_PATH",
+        "issue_number: context.issue.number,",  # github-script
+        "const { pull_request: pr } = context.payload;",
+    ],
 )
 def test_the_scan_finds_pull_request_context_in_any_form(read: str) -> None:
     assert PR_READ.search(read)
@@ -384,14 +419,19 @@ def test_every_pull_request_read_is_guarded_or_has_a_merge_group_fallback() -> N
     assert _unguarded_reads() == FALSE_ON_A_MERGE_GROUP
 
 
-def test_every_condition_that_reads_the_event_is_reviewed() -> None:
-    found = {}
+def test_every_condition_and_value_that_reads_the_event_is_reviewed() -> None:
+    conditions, values = {}, []
     for name in dict.fromkeys(_called("pr.yml")):
-        for where, node, _job in _places(name):
-            condition = " ".join(str(node.get("if", "")).split())
+        for where, own, guarded in _owned(name):
+            condition = " ".join(str(own.get("if", "")).split())
             if EVENT_READ.search(condition):
-                found[where] = condition
-    assert found == EVENT_CONDITIONS
+                conditions[where] = condition
+            if not guarded:  # a guarded job or step never runs on a merge group
+                job = ":".join(where.split(":")[:2])
+                rest = {key: value for key, value in own.items() if key != "if"}
+                values += [(job, part) for part in _parts(rest) if EVENT_READ.search(part)]
+    assert conditions == EVENT_CONDITIONS
+    assert sorted(values) == sorted(EVENT_VALUES)
 
 
 @pytest.mark.parametrize("base_ref", ["main", "refs/heads/main"], ids=["pr", "merge-group"])
