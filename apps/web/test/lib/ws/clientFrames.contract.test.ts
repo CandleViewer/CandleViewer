@@ -6,6 +6,7 @@ import * as F from "../../../src/lib/ws/protocol/frames";
 import { validateClientFrame } from "./support/schemaHarness";
 
 const NOW = 1_789_132_261_980;
+const RS = "bb000000-0000-4000-8000-000000000001";
 const PRE_AUTH_CAP_BYTES = 8 * 1024;
 const bytes = (f: F.ClientFrame): number => new TextEncoder().encode(encodeFrame(f)).byteLength;
 const topics = (n: number) => Array.from({ length: n }, () => ({ ch: "orders" }));
@@ -23,6 +24,12 @@ const FRAMES: Record<string, F.ClientFrame> = {
   unsub: F.unsub("c-4", ["book.BTCUSDT.50"]),
   ctl: F.ctl("c-5", "heatmap.BTCUSDT", { time_bucket_ms: 1000 }),
   resync: F.resync("c-6", "book.BTCUSDT.50", { last_seq: 1002, reason: "sequence_gap" }),
+  "resync of a replay stream": F.resync(
+    "c-6",
+    "book.BTCUSDT.50",
+    { last_seq: null, reason: "client_restart" },
+    RS,
+  ),
   ping: F.ping("c-7", NOW),
   pong: F.pong("c-8", NOW),
 };
@@ -39,6 +46,11 @@ describe("client frames validate against the generated WS schemas (C1)", () => {
     expect(validateClientFrame(subWith(topics(51))).join()).toMatch(/more than 50 items/);
     expect(validateClientFrame(longId).join()).toMatch(/more than 64 characters/);
     expect(validateClientFrame(subWith(topics(50)))).toEqual([]);
+  });
+
+  it("a resync carries the replay session in its envelope, and a live one carries none", () => {
+    expect(FRAMES["resync of a replay stream"]).toMatchObject({ rs: RS });
+    expect(FRAMES["resync"]).not.toHaveProperty("rs");
   });
 
   it("ctl needs at least one property: the type refuses what ctl.schema.json refuses (minProperties 1)", () => {

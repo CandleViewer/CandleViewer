@@ -335,6 +335,18 @@ describe("malformed data (C10)", () => {
     registry.onData(snap(60, { id: "b", ...binary(bookSnapshot()) }), 1); // b3, the last
     expect([registry.heldBytes, got()]).toEqual([0, ["reset:malformed"]]);
   });
+
+  it("a first chunk the codec refuses refuses the rest of its set, which is never a snapshot", () => {
+    const { registry, got } = live();
+    const refused = decodeFrame(
+      wire({ t: "snap", id: "b", ch: BOOK, s: null, ts: 1, e: "b64", p: "not base64!" }),
+    );
+    if (refused.t !== "decode_error") throw new Error("the codec took it");
+    registry.onDecodeError(refused);
+    registry.onData(snap(null, { id: "b", ...binary(bookSnapshot(FLAG_PARTIAL)) }), 1); // b2
+    registry.onData(snap(60, { id: "b", ...binary(bookSnapshot()) }), 1); // b3, the last
+    expect([registry.heldBytes, got()]).toEqual([0, ["reset:malformed"]]);
+  });
 });
 
 describe("options (C4) and server strings", () => {
@@ -938,6 +950,63 @@ describe("resync budget (7.5)", () => {
     expect(host.resync).toHaveBeenCalledTimes(6);
   });
 
+  describe("a live and a replay stream of one ch that both wait", () => {
+    /** Both streams hold a baseline; the budget of the `ch` is spent; then each loses data in the same window. */
+    function bothWait() {
+      const t = live();
+      const twin = t.registry.consume(spec(), RS);
+      t.registry.onData(snap(1, { rs: RS }), 1);
+      const base = gaps(t.registry, 5);
+      t.registry.onData(delta(base + 2), 1); // the live stream: a gap, the sixth resync waits
+      t.registry.onData(delta(3, { rs: RS }), 1); // the replay stream: a gap too, in the same window
+      expect(t.host.resync).toHaveBeenCalledTimes(5);
+      return { ...t, twin, base };
+    }
+    const asks = (host: { resync: { mock: { calls: unknown[][] } } }) =>
+      host.resync.mock.calls.slice(5).map(([, rs, p]) => [rs, p]);
+
+    it("both are asked for, oldest first, each by its own name and sequence (the later no longer replaces the earlier)", () => {
+      const { registry, host, handle, twin, base } = bothWait();
+      expect([registry.counters.resyncsDeferred, handle.status, twin.status]).toEqual([
+        2,
+        "resyncing",
+        "resyncing",
+      ]);
+      vi.advanceTimersByTime(61_000);
+      expect(asks(host)).toEqual([
+        [undefined, { last_seq: base, reason: "sequence_gap" }],
+        [RS, { last_seq: 1, reason: "sequence_gap" }],
+      ]);
+      registry.onData(snap(base + 50), 1);
+      registry.onData(snap(2, { rs: RS }), 1);
+      expect([handle.status, twin.status]).toEqual(["live", "live"]);
+    });
+
+    it("releasing the one that came later cancels only its own resync: nothing names a stream that is gone", () => {
+      const { host, handle, twin, base } = bothWait();
+      twin.release();
+      vi.advanceTimersByTime(120_000);
+      expect(asks(host)).toEqual([[undefined, { last_seq: base, reason: "sequence_gap" }]]);
+      expect(handle.status).toBe("resyncing"); // its own resync was sent, and its snap is awaited
+    });
+
+    it("releasing the one that came first cancels only its own resync, and the other still goes", () => {
+      const { host, handle, twin } = bothWait();
+      handle.release();
+      vi.advanceTimersByTime(120_000);
+      expect(asks(host)).toEqual([[RS, { last_seq: 1, reason: "sequence_gap" }]]);
+      expect(twin.status).toBe("resyncing");
+    });
+
+    it("a snap repairs only its own stream's wait", () => {
+      const { registry, host, handle, twin } = bothWait();
+      registry.onData(snap(2, { rs: RS }), 1); // the gateway sent the replay stream a baseline anyway (7.4)
+      vi.advanceTimersByTime(120_000);
+      expect(asks(host).map(([rs]) => rs)).toEqual([undefined]);
+      expect([handle.status, twin.status]).toEqual(["resyncing", "live"]);
+    });
+  });
+
   it("a released stream takes the gateway's resync window with it, unless a twin of the ch is left", () => {
     const { registry, host, handle } = live();
     const twin = registry.consume(spec(), RS);
@@ -955,5 +1024,132 @@ describe("resync budget (7.5)", () => {
     expect(host.resync).toHaveBeenCalledTimes(6);
     vi.advanceTimersByTime(120_000);
     expect(host.resync).toHaveBeenCalledTimes(6);
+  });
+});
+
+describe("what the engine asks of the registry", () => {
+  describe("a disconnect (9.3)", () => {
+    it("voids every stream: consumers clear, the old connection's frames apply to nothing, a new snap starts afresh", () => {
+      const { registry, handle, got } = live();
+      registry.onSubOk(subOk({ throttle_ms: 50 }), { rs: undefined });
+      expect([handle.subId, handle.effective]).toEqual(["s_01", { throttle_ms: 50 }]);
+      registry.onDisconnect();
+      expect(got()).toEqual(["reset:reconnect"]);
+      expect([handle.status, handle.subId, handle.effective]).toEqual(["pending", undefined, {}]);
+      registry.onData(delta(101), 1); // in flight from the connection that died
+      expect(got()).toEqual([]);
+      registry.onData(snap(7), 1); // the new connection counts from its own number
+      registry.onData(delta(8), 1);
+      expect(got()).toEqual(["snap:7", "d:8"]);
+      expect(handle.status).toBe("live");
+    });
+
+    it("does not reset a stream that never had a baseline, nor revive an ended one", () => {
+      const { registry, got, host } = setup();
+      const waiting = registry.consume(spec({ ch: "ticker.BTCUSDT" }));
+      const ended = registry.consume(spec());
+      registry.onRevoked(revoked("session_revoked"));
+      registry.onDisconnect();
+      expect([waiting.status, ended.status]).toEqual(["pending", "revoked"]);
+      expect([got("ticker.BTCUSDT"), got()]).toEqual([[], ["reset:revoked"]]);
+      expect(host.resync).not.toHaveBeenCalled();
+    });
+
+    it("forgets a chunk set it refused: the same id on the next connection is a new set", () => {
+      const { registry, got } = setup();
+      registry.consume(spec());
+      registry.onData(snap(9, { id: "set-1" }), 1); // the last chunk of a set it never held: refused
+      registry.onData(snap(null, { id: "set-1" }), 1); // the rest of the refused set
+      registry.onDisconnect();
+      registry.onData(snap(null, { id: "set-1" }), 1);
+      registry.onData(snap(9, { id: "set-1" }), 1);
+      expect(got()).toEqual(["reset:malformed", "snap:9"]); // only the first refusal is a loss
+    });
+
+    it("forgets a snapshot the server still owed: a delta before the new snap asks for nothing", () => {
+      const { registry, host } = live();
+      registry.onCtlOk(ctlOk({}, true), LIVE); // the server owes a snap
+      registry.onDisconnect();
+      for (let s = 101; s <= 110; s += 1) registry.onData(delta(s), 1); // in flight, or from before the new snap
+      expect(host.resync).not.toHaveBeenCalled();
+    });
+
+    it("gives a snapshot that passed the cap twice a fresh start on the new connection", () => {
+      const part = (s: number | null, p: object, id = "set-1") => snap(s, { id, p });
+      const cost = part(null, { n: 1 }).size * JSON_HEAP_FACTOR + FRAME_OVERHEAD_BYTES;
+      const { registry, host } = live({ maxHeldBytes: 2 * cost });
+      const tooBig = (id: string) => {
+        for (const n of [1, 2, 3]) registry.onData(part(null, { n }, id), 1);
+      };
+      tooBig("a");
+      tooBig("b"); // out of asks: the server would send the same one again
+      expect(host.resync).toHaveBeenCalledTimes(1);
+      registry.onDisconnect();
+      registry.onData(part(null, { n: 1 }, "c"), 1); // the first snapshot of the next connection starts
+      registry.onData(delta(101), 1); // and a delta amid its chunks says the server went on without them
+      expect(host.resync).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives the new connection a new resync window", () => {
+      const { registry, host } = setup();
+      registry.consume(spec());
+      for (let i = 0; i < 5; i += 1) {
+        registry.onData(snap(1), 1);
+        registry.onData(delta(3), 1); // a gap: a resync each time
+      }
+      expect(host.resync).toHaveBeenCalledTimes(5);
+      registry.onDisconnect();
+      registry.onData(snap(1), 1);
+      registry.onData(delta(3), 1);
+      expect(host.resync).toHaveBeenCalledTimes(6); // not deferred: the window is the connection's
+    });
+  });
+
+  describe("a frame that did not decode", () => {
+    it("voids the streams of the ch it names, and asks for a snapshot", () => {
+      const { registry, handle, host, got } = live();
+      const error = decodeFrame(wire({ t: "d", ch: BOOK, s: "x", ts: 1, p: {} }));
+      if (error.t !== "decode_error") throw new Error("it decoded");
+      registry.onDecodeError(error);
+      expect(got()).toEqual(["reset:malformed"]);
+      expect(handle.status).toBe("resyncing");
+      resynced(host, 100, "decode_error");
+    });
+
+    it("voids nothing when it names no ch", () => {
+      const { registry, handle, host, got } = live();
+      const error = decodeFrame("not json");
+      if (error.t !== "decode_error") throw new Error("it decoded");
+      registry.onDecodeError(error);
+      expect([got(), handle.status, host.resync.mock.calls.length]).toEqual([[], "live", 0]);
+    });
+  });
+
+  describe("a baseline that is overdue", () => {
+    it("reads stale until a baseline comes, and says nothing of a stream that has one", () => {
+      const { registry, host } = setup();
+      const waiting = registry.consume(spec());
+      const held = registry.consume(spec({ ch: "ticker.BTCUSDT" }));
+      registry.onData(snap(1, { ch: "ticker.BTCUSDT" }), 1);
+      registry.markOverdue(BOOK);
+      registry.markOverdue("ticker.BTCUSDT");
+      registry.markOverdue("nobody.BTCUSDT");
+      expect([waiting.status, held.status]).toEqual(["stale", "live"]);
+      registry.onData(snap(2), 1);
+      expect(waiting.status).toBe("live");
+      registry.onDisconnect(); // a new connection starts clean
+      registry.markOverdue(BOOK);
+      registry.onDisconnect();
+      expect(waiting.status).toBe("pending");
+      expect(host.resync).not.toHaveBeenCalled();
+    });
+
+    it("leaves an ended stream ended", () => {
+      const { registry } = setup();
+      const handle = registry.consume(spec());
+      registry.onRevoked(revoked("session_revoked"));
+      registry.markOverdue(BOOK);
+      expect(handle.status).toBe("revoked");
+    });
   });
 });

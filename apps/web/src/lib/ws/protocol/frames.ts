@@ -61,7 +61,8 @@ export type ClientFrame =
   | Frame<"sub", SubPayload>
   | Frame<"unsub", UnsubPayload>
   | ChannelFrame<"ctl", CtlPayload>
-  | ChannelFrame<"resync", ResyncPayload>
+  /** `rs` names a replay stream (7.5), and the payload's `sub_id` pins the subscription the `ch` and `rs` name. */
+  | (ChannelFrame<"resync", ResyncPayload> & { readonly rs?: string })
   | Frame<"ping" | "pong", HeartbeatPayload>;
 
 /** `c-<n>` ids, unique per source. A factory, not a module counter: no shared mutable state. */
@@ -107,11 +108,17 @@ export const ctl = (id: string, ch: string, p: CtlPayload): ClientFrame => ({
   ch,
   p,
 });
-export const resync = (id: string, ch: string, p: ResyncPayload): ClientFrame => ({
+export const resync = (
+  id: string,
+  ch: string,
+  p: ResyncPayload,
+  rs?: string | undefined,
+): ClientFrame => ({
   t: "resync",
   id,
   ch,
   p,
+  ...(rs !== undefined && { rs }),
 });
 export const ping = (id: string, ms: number): ClientFrame => ({
   t: "ping",

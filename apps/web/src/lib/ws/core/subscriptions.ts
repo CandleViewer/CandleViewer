@@ -7,7 +7,13 @@
 // and fan-out to tabs belong to the layer that owns the consumers. No sockets, timers or wall clock
 // of its own: the host, the guard and the clock are injected.
 import type { ConsumerSpec, ResetReason, TopicFrame, TopicHandle } from "../api";
-import { validateCvwb, type ControlOf, type DataBody, type DataFrame } from "../protocol/codec";
+import {
+  validateCvwb,
+  type ControlOf,
+  type DataBody,
+  type DataFrame,
+  type WsDecodeError,
+} from "../protocol/codec";
 import type { ResyncPayload } from "../protocol/frames";
 import type { TopicStatus } from "../state/types";
 import { createResyncGuard, type ResyncGuard } from "./resyncGuard";
@@ -142,6 +148,22 @@ export interface SubscriptionRegistry {
   onRevoked(frame: ControlOf<"revoked">): void;
   /** A `snap` or `d` that decoded. `decodeMs` is the caller's decode time; the CVWB check here is added. */
   onData(frame: DataFrame, decodeMs: number): void;
+  /**
+   * A frame failed to decode. One that names a `ch` (the codec keeps only a well-formed topic name)
+   * voids that `ch`'s streams like a bad body does: what it carried is unknown, so no state built
+   * across it can be trusted. One that names none voids nothing.
+   */
+  onDecodeError(error: WsDecodeError): void;
+  /**
+   * The socket ended: every stream forgets what that connection taught it (baseline, held chunks,
+   * `sub_id`, options, the resync window: all of it is per connection, and a refused chunk-set id
+   * can repeat on the next one) and is pending again, with a `reset` for consumers that held state.
+   * The consumers stay, and so do their handles; an ended stream stays ended. The engine subscribes
+   * again from the specs it holds (9.3).
+   */
+  onDisconnect(): void;
+  /** No baseline came in time (the engine's deadline): the stream reads `stale` until one does. */
+  markOverdue(ch: string, rs?: string | undefined): void;
   readonly counters: Readonly<StreamCounters>;
   /** Bytes held for incomplete chunk sets across every stream (bounded by `maxHeldBytes`). */
   readonly heldBytes: number;
@@ -164,6 +186,8 @@ interface Rec {
   overflows: number;
   /** The server owes the `snap` that `resnapshot` promised: a `d` first says it went on without one. */
   snapDue: boolean;
+  /** `markOverdue`: no baseline arrived in time. Cleared by the next one. */
+  overdue: boolean;
   /** A `reset` was delivered and no `snap` since: consumers already hold nothing, so none repeats it. */
   voided: boolean;
   /** Sticky until the next baseline: a frame that says replay makes the stream replay (C11). */
@@ -195,11 +219,10 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     named(ch).filter((rec) => rec.rs === to.rs);
   const send = (rec: Rec, frame: TopicFrame): void => host.deliver(rec.ch, rec.rs, frame);
   const reset = (rec: Rec, reason: ResetReason): void => send(rec, { kind: "reset", reason });
-  /** A resync is owed while a stream of this `ch` has lost its baseline. */
-  const owed = (ch: string): boolean => named(ch).some((rec) => seq.state(rec.key) === "resyncing");
 
   function statusOf(rec: Rec): TopicStatus {
     if (rec.revoked) return "revoked";
+    if (rec.overdue) return "stale";
     const state = seq.state(rec.key);
     if (state !== "live") return state;
     return rec.stale ? "stale" : "live";
@@ -211,7 +234,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
       counters.resyncsSent += 1;
       host.resync(rec.ch, rec.rs, { last_seq: seq.lastSeq(rec.key), reason }, rec.subId);
     };
-    if (guard.request(rec.ch, go) === "deferred") counters.resyncsDeferred += 1;
+    if (guard.request(rec.ch, rec.key, go) === "deferred") counters.resyncsDeferred += 1;
   }
 
   /** The stream's state is void: nothing applies until the next complete `snap`, which is asked for unless the server sends it anyway. */
@@ -229,12 +252,12 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     lose(rec, "malformed", "decode_error");
   }
 
-  /** The stream is gone: its state, and with the last stream of the `ch` the gateway's resync window, which is per subscription. */
+  /** The stream is gone: its state and the resync it waits for, and with the last stream of the `ch` the gateway's resync window, which is per subscription. */
   function forget(rec: Rec): void {
     seq.forget(rec.key);
     assembler.forget(rec.key);
     if (named(rec.ch).length === 0) guard.forget(rec.ch);
-    else if (!owed(rec.ch)) guard.cancel(rec.ch);
+    else guard.cancel(rec.ch, rec.key); // the twins' requests stay
   }
 
   /** The server ended the subscription (or refused it): nothing more comes, and nothing is asked for. */
@@ -298,13 +321,14 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     }
     seq.baseline(rec.key, result.seq);
     rec.stale = result.bodies.some(isStale);
+    rec.overdue = false;
     rec.replay = replay;
     rec.voided = false;
     rec.overflows = 0;
     const { ts, sp, meta } = frame;
     const { seq: snapSeq, bodies, decodeMs: total } = result;
     send(rec, { kind: "snap", seq: snapSeq, ts, sp, decodeMs: total, meta, bodies });
-    if (!owed(rec.ch)) guard.cancel(rec.ch);
+    guard.cancel(rec.ch, rec.key); // it recovered by itself: its own wait is over, a twin's is not
   }
 
   function handleFor(rec: Rec): StreamHandle {
@@ -353,6 +377,7 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
           stale: false,
           overflows: 0,
           snapDue: false,
+          overdue: false,
           voided: false,
           replay: false,
         };
@@ -445,6 +470,33 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
       }
       if (frame.t === "d") applyDelta(rec, frame, ms, replay);
       else applySnap(rec, frame, ms, replay, partial);
+    },
+
+    onDecodeError(error) {
+      if (error.ch === undefined) return;
+      // A chunk the codec refused names its set: the rest of it must not assemble into a snapshot.
+      for (const rec of named(error.ch)) malformed(rec, error.id);
+    },
+
+    onDisconnect() {
+      guard.reset();
+      for (const rec of records.values()) {
+        const held = seq.state(rec.key) === "live";
+        seq.forget(rec.key);
+        assembler.forget(rec.key);
+        rec.subId = undefined;
+        rec.effective = NO_OPTIONS;
+        rec.overdue = false;
+        rec.snapDue = false; // a snapshot the server owed on the old connection is not owed on the next
+        rec.overflows = 0; // and a snapshot too big for the caps is a new one on it
+        if (held) reset(rec, "reconnect"); // consumers that hold state clear it; the rest hold none
+        rec.voided = true;
+      }
+    },
+
+    markOverdue(ch, rs) {
+      const rec = records.get(topicKey(ch, rs));
+      if (rec !== undefined && seq.state(rec.key) !== "live") rec.overdue = true;
     },
 
     counters,
