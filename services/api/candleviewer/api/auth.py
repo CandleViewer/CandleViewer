@@ -820,7 +820,7 @@ def make_auth_router(
                 error=type(exc).__name__,
             )
             return _problem(401, _RECOVERY_FAILED, _UNMINTED)
-        # U34 (RR-15): an Owner's enrolment-only session is the series an alert pages on.
+        # U34 (RR-15): an Owner's enrolment-only session is to page; no rule yet (#2746).
         auth_enrolment_only_sessions_total.labels(
             role=normalise_role(profile.get("roles") or ())
         ).inc()
