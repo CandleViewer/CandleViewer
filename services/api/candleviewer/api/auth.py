@@ -424,7 +424,7 @@ def make_auth_router(
             # a disabled account, then login's 403 for it: never a 500.
             await _audit_refusal(request, user_id)
             return _problem(403, "Account disabled", "Account disabled - contact the owner")
-        # U34 (RR-15): an Owner's password-only session is the series an alert pages on.
+        # U34 (RR-15): an Owner's password-only session is to page; no rule yet (#2746).
         role = normalise_role(user.get("roles") or ())
         auth_enrolment_only_sessions_total.labels(role=role).inc()
         return _signed_in(minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True))

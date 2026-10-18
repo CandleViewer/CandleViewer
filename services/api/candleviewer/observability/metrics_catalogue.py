@@ -2668,7 +2668,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "sessions",
         ("role",),
         "Enrolment-only sessions minted on the password alone (#2295), by the user's role.",
-        'role="owner" increase > 0: page (rule: E09-X03; U34, RR-15); audited as '
+        'role="owner" increase > 0 is to page (U34, RR-15): no rule yet (#2746); audited as '
         "auth.session_created with enrolment_only",
         _L,
         "E09",
