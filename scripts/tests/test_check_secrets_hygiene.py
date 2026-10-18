@@ -236,7 +236,10 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
     [("#!/bin/bash -x", 1), ("#!/bin/sh -ex", 1), ("#!/usr/bin/env -S bash -x", 1)]
     + [("#!/usr/bin/env -S bash -o xtrace", 1), ("#!/usr/bin/env -S bash +o xtrace", 0)]
     + [("#!/usr/bin/env -S zsh --xtrace", 1), ("#!/opt/my-xtool/bin/bash", 0)]
-    + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)],
+    + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)]
+    # #3400: a longer option name; the allow marker (`env -S` reads a `#` word as a comment).
+    + [("#!/usr/bin/env -S zsh --xtrace-not", 0)]
+    + [("#!/usr/bin/env -S bash -x # secrets-hygiene: allow", 0)],
 )
 def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
     _write(tmp_path, WF, _runs("./tools/x.sh"))
@@ -355,6 +358,10 @@ TRACED = [
     "/opt/my-tools/bash -x ci.sh",
     "/usr/local/bash-5.2/bin/bash -x ci.sh",
     "/opt/$TOOL/bin/bash -x ci.sh",
+    # #3400: the shellcheck exception ends with its command; zsh drops `-` and `_` from a long
+    # option's name (zsh(1) INVOCATION, zshoptions(1)).
+    "shellcheck -s bash ci.sh && bash -x ci.sh",
+    "zsh --xtrace- ci.sh",
 ]
 NOT_TRACED = [
     "set -e",
@@ -386,6 +393,15 @@ NOT_TRACED = [
     "bin/bash -x ci.sh",
     "du -sh -x /var",
     "# set -o xtrace; bash -x ci.sh",
+    # #3400: the dialect shellcheck checks, a URL's last segment, an option name xtrace only starts.
+    "shellcheck -s bash -x ci.sh",
+    "shellcheck --shell=sh -x ci.sh",
+    "shellcheck -e SC1091 --rcfile .shellcheckrc --shell bash -x ci.sh",
+    "/usr/bin/shellcheck -s dash -x ci.sh",
+    "wget -O- https://example.com/sh -x",
+    "curl https://x/bash -x y",
+    "zsh --xtrace-not ci.sh",
+    "set -o xtraced",
 ]
 VIA = ["run", "script"]
 
@@ -438,9 +454,15 @@ def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None
         # A shell's path: all slashes, and a `$` before each `/` (a rule start after each `$`).
         "/" * 96000 + "sh -e",
         "/a$" * 32000,
+        # #3400: shellcheck words, each starting a dialect match that reads the words after it.
+        "shellcheck " * 20000,
+        "shellcheck " + "-a " * 70000,
+        "x=shellcheck -a " * 14000,
+        "/a/shellcheck " * 16000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
-    + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"],
+    + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
+    + ["shellcheck-words", "shellcheck-options", "shellcheck-mid-word", "shellcheck-paths"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time

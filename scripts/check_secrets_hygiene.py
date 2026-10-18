@@ -191,13 +191,18 @@ def check_dev_env(root: Path) -> list[str]:
 
 
 #: SR-146 tracing (#3294): the shell prints each command it runs with its values expanded. A
-#: command word follows no word character, ``.``, ``/`` or ``-`` (so not in ``reset``, ``mybash``,
-#: ``ssh``, ``zap.sh``, ``tools/sh`` or ``du -sh``), but may follow a quote or a bracket:
+#: command word follows no word character, ``.``, ``/``, ``-`` or ``:`` (so not in ``reset``,
+#: ``mybash``, ``ssh``, ``zap.sh``, ``tools/sh``, ``du -sh`` or a URL's last segment:
+#: ``wget -O- https://example.com/sh -x``), but may follow a quote or a bracket:
 #: ``bash -c "set -x; ..."``, ``eval 'set -x'``, ``(set -x)``. Quoted prose counts too.
-_WORD_START = r"(?<![\w./-])"
+_WORD_START = r"(?<![\w./:-])"
+#: The option name ``xtrace``, ending there (#3400): not ``--xtrace-not`` or ``-o xtraced``, which
+#: name no option, but ``--xtrace-`` and ``-o xtrace_``: zsh drops ``_`` from option names and
+#: reads ``-`` in a ``--`` name as ``_`` (zsh(1) INVOCATION, zshoptions(1)).
+_XTRACE = r"xtrace(?![-_]*[a-zA-Z0-9])"
 #: The tracing option word: ``x`` in a ``-`` group (``-x``, ``-ex``, ``-Eeuxo``), ``-o xtrace``
 #: (``-eo xtrace``) or ``--xtrace``; ``+x`` and ``+o xtrace`` turn tracing off.
-_TRACE_WORD = r"-(?:[a-zA-Z]*(?:x|o\s+xtrace)|-xtrace)"
+_TRACE_WORD = r"-(?:[a-zA-Z]*(?:x|o\s+" + _XTRACE + r")|-" + _XTRACE + r")"
 #: The option words before it: ``--norc``, ``-o name``, ``-eO name``, ``-e``, ``+u``. Any other
 #: word ends them: ``set -- -x`` and ``set - -x`` (positional parameters), ``bash x.sh -x``. The
 #: lookahead ends them at the tracing word.
@@ -217,14 +222,26 @@ _SEGMENT = r"(?:\$?[\w.-])*"
 #: ``$HOME/bin/``, ``/opt/$TOOL/bin/``. A relative one (``tools/``, ``./``) holds a repository
 #: file, which ``workflow_scripts`` follows if it is a shell script.
 _SHELL_DIR = r"(?:[$~]" + _SEGMENT + r")?/(?:" + _SEGMENT + r"/)*"
+#: A character of a word in the same command: not a space, a command separator, a bracket or a
+#: backtick.
+_IN_WORD = r"[^\s;&|()`]"
+#: shellcheck's ``-s``/``--shell`` names the dialect it checks, a shell it does not run (#3400):
+#: ``shellcheck -e SC1091 -s bash -x ci.sh``. Matched through that shell name, never ``on``. The
+#: words before the option end at a word holding ``shellcheck`` (but ``.shellcheckrc``), where
+#: another such match may start, so each word is read once.
+_SHELLCHECK_DIALECT = (
+    r"shellcheck(?:\s+(?!" + _IN_WORD + r"*(?<!\.)shellcheck|-s\s|--shell[\s=])" + _IN_WORD + r"+)*"
+    r"\s+(?:-s|--shell)[\s=]\s*" + _IN_WORD + r"*"
+)
 #: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, rbash,
 #: dash, ksh or zsh (all read ``-x`` and ``-o xtrace``), by name or from a ``_SHELL_DIR``.
+_SHELL_ON = r"(?:r?ba|da|k|z)?sh\s+" + _OPTION_WORDS + _TRACE_ON
 _SHELL_TRACE = re.compile(
-    _WORD_START + r"(?:" + _SHELL_DIR + r")?(?:r?ba|da|k|z)?sh\s+" + _OPTION_WORDS + _TRACE_ON
+    _WORD_START + r"(?:" + _SHELL_DIR + r")?(?:" + _SHELLCHECK_DIALECT + r"|" + _SHELL_ON + r")"
 )
 #: The long spelling anywhere on a line, also past an option's argument (``bash --rcfile x
 #: --xtrace``). Always ``on``.
-_LONG_XTRACE = re.compile(r"(?P<on>--xtrace)")
+_LONG_XTRACE = re.compile(r"(?P<on>--" + _XTRACE + r")")
 #: The rules reported as ``'set -x' tracing``: a match with an ``on`` group. Not reported:
 #: - quoted option words: ``set "-x"``, ``bash "-x"``, ``set -o "xtrace"``
 #: - ``shopt -so xtrace``, ``shopt -s -o xtrace``; zsh ``setopt xtrace``, ``set -o XTRACE``
@@ -233,7 +250,8 @@ _LONG_XTRACE = re.compile(r"(?P<on>--xtrace)")
 #: - a long option's argument before it: ``bash --rcfile x.rc -x``
 #: - a shell path segment with another character: ``/opt/bash@5/bin/bash -x``
 #: - ``SHELLOPTS=xtrace``, a ``DEBUG`` trap, ``set -v``
-#: Reported though not tracing: a shell name as an option's argument (``shellcheck -s bash -x``).
+#: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh
+#: -x 80``: a session named sh, 80 columns wide).
 _SET_X = (_SET_TRACE, _SHELL_TRACE, _LONG_XTRACE)
 _ENV_DUMP = re.compile(
     r"(^|[;&|]\s*|^\s*-?\s*(run:\s*)?)(printenv|env|export\s+-p|set)\s*(\||$|>)"
@@ -257,7 +275,9 @@ _INVOKES = re.compile(
 )
 _SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
 #: A shebang whose options trace (``#!/bin/sh -ex``, ``#!/usr/bin/env -S bash -o xtrace``,
-#: ``#!/usr/bin/env -S zsh --xtrace``): line 1 of a scanned script.
+#: ``#!/usr/bin/env -S zsh --xtrace``): line 1 of a scanned script, unless it carries the allow
+#: marker (#3400; ``#!/usr/bin/env -S bash -x # secrets-hygiene: allow``: ``env -S`` reads a word
+#: starting with ``#`` as a comment).
 _SHEBANG_X = re.compile(r"#!.*\s" + _TRACE_WORD)
 #: Suffixes never sourced as shell: ``source|.`` follows any other repository file.
 _NOT_SHELL = re.compile(
@@ -404,7 +424,8 @@ def check_workflows(root: Path) -> list[str]:
         text = _read(root / rel)
         if text is None:
             errors.append(f"{rel}: unreadable script (SR-146 scan); {by}")
-        if _SHEBANG_X.match(text or ""):
+        line1 = (text or "").partition("\n")[0]
+        if _SHEBANG_X.match(line1) and _SKIP_ALLOW not in line1:
             errors.append(f"{rel}:1: 'set -x' tracing (SR-146); {by}")
         for n, what in _sr146_hits(text or ""):
             errors.append(f"{rel}:{n}: {what} (SR-146); {by}")
