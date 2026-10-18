@@ -664,7 +664,7 @@ scope on the open tickets named above.
 - **Contingent Low:** WS-D01, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
   E17-T04); re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
   behind `CV_WS_BACKPRESSURE_ENABLED`, which is off by default (#412), so its Low stays contingent until the flag is
-  on, after the gates `23-ws-protocol.md` §8.6 lists (#3268, #3297, #3100, #413, #571, #410, #568; #2900
+  on, after the gates `23-ws-protocol.md` §8.6 lists (#3268, #3353, #3297, #3100, #413, #571, #410, #568; #2900
   removes the flag); with the flag off, the 1 024-frame push bound is the control in force. WS-E02 was Low
   contingent on SR-189, which is implemented (#2318), so it is Low as built.
   **RSK-064** (continuous authorisation) is Mitigating in `32-risk-register.md`.
@@ -708,3 +708,4 @@ scope on the open tickets named above.
 | 2026-10-17 | author (agent; PR for #2293)                      | SR-193 built: WS-D03/D16 controls (all three paths), WS-D16 Low; §1/§10 status, §3.7, §6 and §8 rows, AC-30 note                             |
 | 2026-10-17 | author (agent; PR for #3218)                      | WS-D03 per stream (#3218): a replay twin keeps its own 5 resyncs within the connection's 400, rating kept; WS-R02 names the subscription     |
 | 2026-10-18 | author (agent; PR for #3262)                      | WS-D01: #3262 built, out of the §10 flag gates; a re-snapshot build that raises is contained per subscription; no rating or count changes    |
+| 2026-10-18 | author (agent; PR for #3268 slice A)              | §10: #3353 joins the flag's gates (`23-ws-protocol.md` §8.6, S5 between windows now built: D18); no rating or count changes                  |

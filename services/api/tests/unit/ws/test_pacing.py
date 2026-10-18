@@ -349,6 +349,24 @@ def test_pacer_class_change_re_times_a_pending_window() -> None:
     assert pacer.tick(100.1) == 1
 
 
+def test_pacer_a_ctl_re_times_no_open_window() -> None:
+    """A `ctl` that lowers `throttle_ms` leaves an open window's close as it was armed: an update
+    into it after the new value would have made it due still waits, and arms nothing (one heap
+    entry per window, C-2.18). The next window takes the new value."""
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50", throttle_ms=500)
+    pacer.offer(sub, _bid("100"))  # leaves at once
+    pacer.offer(sub, _bid("101"))  # a window closing at 100.5
+    assert conn.authz.ctl(sub.ch, {"throttle_ms": 50}) == ({"throttle_ms": 50}, False)
+    conn.clock.now = 100.1
+    pacer.offer(sub, _bid("102"))
+    assert (len(conn.take()), len(pacer._dues), pacer.next_due()) == (1, 1, 100.5)
+    conn.clock.now = 100.5
+    assert pacer.tick() == 1
+    pacer.offer(sub, _bid("103"))
+    assert pacer.next_due() == pytest.approx(100.55)
+
+
 def test_pacer_saturated_holds_a_fast_heatmap_to_one_frame_a_second() -> None:
     conn, pacer = _conn()
     heatmap = _sub(conn, "heatmap.BTCUSDT", time_bucket_ms=100)
