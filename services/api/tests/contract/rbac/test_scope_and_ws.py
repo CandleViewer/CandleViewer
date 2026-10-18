@@ -255,6 +255,21 @@ def test_active_version_on_an_accountless_owner_rule_is_the_unseen_404(
     assert refused == [("set_active_version", "rule_not_visible")], refused
 
 
+def test_active_version_by_an_owner_without_grants_is_refused_as_no_grants(world: World) -> None:
+    """#3334: ownership passes and the grant check still refuses (no vacuous pass): a manager's
+    own account-less rule, once they hold no grant, cannot switch version: 403 audited."""
+    scope = {"level": "symbol", "symbols": ["BTCUSDT"]}
+    rid, old = _rule_with_old_version(world, scope, "manager_with_grant")
+    world.rule_store._rows[rid].owner = str(user_id_of("manager_without_grant"))
+    world.audit.records.clear()
+    resp = _activate(world, "manager_without_grant", rid, old)
+    assert resp.status_code == 403 and resp.json()["code"] == "forbidden", resp.text
+    refused = [
+        (r["op"], r["reason"]) for r in world.audit.records if r["action"] == "rule.scope_refused"
+    ]
+    assert refused == [("set_active_version", "no_grants")], refused
+
+
 def test_update_naming_an_ungranted_account_on_an_unseen_rule_is_the_unseen_404(
     world: World,
 ) -> None:

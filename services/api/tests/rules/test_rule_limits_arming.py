@@ -572,3 +572,19 @@ def test_put_mode_armed_above_the_cap_is_a_422_rule_invalid_problem() -> None:
     r = e.mode(rid, "armed", "arm")
     assert (r.status_code, r.json()["code"]) == (422, "rule_invalid")
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
+
+
+async def test_put_mode_armed_on_a_rule_armed_above_the_cap_disarms_it_and_is_a_422() -> None:
+    """The arming pre-check presents the rule as a read does: one armed before the caps existed
+    is disarmed first, so arming it again is refused like any rule above the cap."""
+    e = _Env()
+    rid = e.create(limits={DAY: LIMIT_CAPS[DAY]})
+    e.ready(rid)
+    assert e.mode(rid, "armed", "arm").status_code == 200
+    row = await e.mgr._row(rid)
+    row.versions[0].ir["limits"][DAY] = LIMIT_CAPS[DAY] + 1  # stored before the caps existed
+    row.versions[0].ir_hash = ir_hash(Rule.model_validate(row.versions[0].ir))
+    r = e.mode(rid, "armed", "rearm")
+    assert (r.status_code, r.json()["code"]) == (422, "rule_invalid")
+    assert [p["reason"] for a, p in e.audits if a == "rule.disarmed"] == ["limits_above_cap"]
+    assert e.c.get(f"/rules/{rid}").json()["mode"] == "disabled"

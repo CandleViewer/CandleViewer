@@ -1,9 +1,8 @@
 """#3334 (04 §7.2.2 rows 24 and 25, 24 §15.2): a rule is reached through its owner.
 
-The Owner role sees and changes every rule. Anyone else sees and changes only a rule they own, and
-only while every account any version of it names is granted to them: another user's rule is never
-theirs through grants alone, and a rule that names no account is no one else's. A refused change
-is audited once, as `rule.scope_refused`.
+The Owner role reaches every rule; anyone else only a rule they own, and only while every account
+any version of it names is granted to them. Grants alone never reach another user's rule, whether
+it names accounts or none. A refused change is audited once, as `rule.scope_refused`.
 """
 
 from __future__ import annotations
@@ -21,8 +20,7 @@ A1 = "11111111-1111-4111-8111-111111111111"
 PERMS = frozenset({"rules:read", "rules:write"})
 OWNER = Actor("owner", "s0", PERMS, is_owner=True)
 MANAGER = Actor("mgr", "s1", PERMS, frozenset({A1}))
-#: What a Manager with one grant might be taken for entitled to: a rule naming no account, and one
-#: whose every account is granted to them.
+#: A rule naming no account, and one whose every account is granted to the Manager.
 KINDS = {
     "accountless": {"level": "symbol", "symbols": ["BTCUSDT"]},
     "fully_granted": {"level": "account", "account_ids": [A1]},
@@ -94,14 +92,20 @@ async def test_get_of_a_rule_the_manager_does_not_own_is_a_404_without_a_record(
     assert (await m.get(rid, OWNER))["id"] == rid
 
 
-async def test_get_of_another_managers_rule_on_a_shared_grant_is_a_404() -> None:
+@pytest.mark.parametrize(("theirs", "mine"), [("mgr-2", "mgr"), ("mgr", "mgr-2")])
+async def test_read_and_update_of_another_managers_rule_on_a_shared_grant_are_404s(
+    theirs: str, mine: str
+) -> None:
+    """Ownership is equality of user ids, not a prefix or a substring of one."""
     m, _ = _mgr()
-    rid, _ = await _seed(m, "fully_granted", MANAGER)
-    peer = Actor("peer", "s2", PERMS, frozenset({A1}))
-    assert (await m.list_rules(peer))["items"] == []
-    with pytest.raises(RuleError) as refused:
-        await m.get(rid, peer)
-    assert refused.value.status == 404
+    rid, _ = await _seed(m, "fully_granted", Actor(theirs, "s2", PERMS, frozenset({A1})))
+    me = Actor(mine, "s3", PERMS, frozenset({A1}))
+    assert (await m.list_rules(me))["items"] == []
+    with pytest.raises(RuleError) as on_get:
+        await m.get(rid, me)
+    with pytest.raises(RuleError) as on_update:
+        await m.update(rid, _EDITED, 1, me)
+    assert on_get.value.status == on_update.value.status == 404
 
 
 @_KIND
@@ -125,21 +129,14 @@ async def test_change_of_a_rule_the_manager_does_not_own_is_refused_and_audited_
 
 @_KIND
 @_OP
-async def test_change_by_the_owner_role_of_a_rule_it_does_not_own_goes_through(
-    kind: str, name: str
+@pytest.mark.parametrize("actor", [OWNER, MANAGER], ids=["owner_role", "own_rule"])
+async def test_change_by_one_who_reaches_the_rule_goes_through(
+    kind: str, name: str, actor: Actor
 ) -> None:
+    """The Owner role, and a Manager on a rule they own: nothing is refused."""
     m, audits = _mgr()
     rid, vid = await _seed(m, kind, MANAGER, armed=name == "disarm")
-    await _OPS[name][1](m, rid, vid, OWNER)
-    assert "rule.scope_refused" not in [a for a, _ in audits]
-
-
-@_KIND
-@_OP
-async def test_change_by_the_manager_of_a_rule_it_owns_goes_through(kind: str, name: str) -> None:
-    m, audits = _mgr()
-    rid, vid = await _seed(m, kind, MANAGER, armed=name == "disarm")
-    await _OPS[name][1](m, rid, vid, MANAGER)
+    await _OPS[name][1](m, rid, vid, actor)
     assert "rule.scope_refused" not in [a for a, _ in audits]
 
 
@@ -178,3 +175,14 @@ def test_route_of_a_rule_the_manager_does_not_own_is_the_unseen_404(kind: str, r
     refused = [(p["op"], p["reason"]) for a, p in owner.audits if a == "rule.scope_refused"]
     assert refused == ([(op, "rule_not_visible")] if op else [])
     assert owner.c.get(f"/rules/{rid}").json()["mode"] == "disabled"
+
+
+@pytest.mark.parametrize("shape", ["tight", None, ["a"]], ids=["str", "none", "list"])
+async def test_arm_with_a_stored_scope_that_is_not_a_mapping_is_a_422(shape: Any) -> None:
+    """The arming pre-check reads the stored scope without trusting its shape: an unreadable rule
+    is the 422 of any unreadable rule, never a 500."""
+    e = _Env()
+    rid = e.create()
+    (await e.mgr._row(rid)).versions[0].ir["scope"] = shape
+    resp = e.mode(rid, "armed", "k")
+    assert (resp.status_code, resp.json()["code"]) == (422, "rule_invalid")

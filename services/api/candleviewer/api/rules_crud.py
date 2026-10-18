@@ -5,9 +5,7 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 `actor_resolver` returns the caller's `Actor` (permissions, granted accounts, owner flag,
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
-manager's synchronous arming check (statecharts record, code enforces - C-2.21). A rule is
-reached through its owner (24 §15.2): each route looks at the stored rule before it weighs the
-scope the request itself names.
+manager's synchronous arming check (statecharts record, code enforces - C-2.21).
 """
 
 from __future__ import annotations

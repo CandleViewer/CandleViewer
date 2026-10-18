@@ -422,11 +422,14 @@ class RulesManager:
         await self._visible_row(rule_id, actor, op)
 
     async def active_scope(self, rule_id: str, actor: Actor, op: str) -> dict[str, Any]:
-        """Scope of the version that would run, for the route's arming pre-check; the stored rule
-        is looked at first, as `require_visible` does."""
+        """Scope of the version that would run, for the route's arming pre-check: the stored rule
+        is looked at first, as `require_visible` does, then presented as a read presents it (an
+        armed rule above a cap is disarmed here, so arming it again is refused like any other)."""
         row = await self._visible_row(rule_id, actor, op)
+        await self._present(row)
         active = next((v for v in row.versions if v.id == row.active_version_id), None)
-        return dict(active.ir.get("scope", {})) if active is not None else {}
+        scope = active.ir.get("scope") if active is not None else None
+        return dict(scope) if isinstance(scope, dict) else {}  # unreadable: the arm answers 422
 
     def _view(self, row: RuleRow) -> dict[str, Any]:
         active = next((v for v in row.versions if v.id == row.active_version_id), None)
