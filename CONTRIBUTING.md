@@ -121,24 +121,9 @@ rules are enforced server-side by CI and cannot be weakened by `--no-verify`.
 `packages/protocol/src/generated/**`.
 
 The `gen` gate (the last `gates` step in `.github/workflows/pr.yml`) is an always-on required check.
-If it fails:
-
-1. **`CI-GEN-003` (codegen is not deterministic)** — the generator itself is flaky; this is a bug in
-   `packages/protocol/scripts/*`, not something you can fix by regenerating again. Reproduce locally
-   with `make gen && make gen` and diff the tree; file it against the protocol package before retrying.
-2. **`CI-GEN-001` (drift)** — run `make gen` locally, review the diff under `packages/protocol`, and
-   commit it in the same PR as the schema change.
-3. **`CI-GEN-002` (untracked output)** — `make gen` produced a new file CI can see via `git status` but
-   `git diff` couldn't. Check `.gitignore` hasn't accidentally swallowed a new generated path, then `git
-add` and commit it.
-4. **`CI-GEN-004` (generator toolchain failure)** — the generator command itself errored (missing
-   dependency, syntax error in the schema, pinned tool version mismatch); the job summary and step log
-   carry the underlying stdout/stderr.
-5. **`CI-GEN-005` (committed file no generator writes)** — a tracked file under
-   `packages/protocol/src/generated` (or the Python twin of the CVWB layout) did not come back when
-   the gate removed it from the working tree and regenerated. A GENERATED header does not make a
-   hand-written file generated: delete it (`git rm`), or add the generator that writes it. The gate
-   leaves it removed; `git restore -- <path>` brings it back.
+If it fails, its step log names a `CI-GEN-*` code. What each code means and how to fix it is in the
+`CI-GEN-*` entries of [`docs/ci-runbook.md`](docs/ci-runbook.md) §4; this file does not duplicate
+them.
 
 Run the same check locally before pushing: `make gen-check` (wraps
 `tools/ci/check_gen_freshness.py`).

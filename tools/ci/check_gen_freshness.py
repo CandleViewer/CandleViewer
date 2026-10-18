@@ -119,7 +119,8 @@ GENERATE_OUTPUTS: tuple[Path, ...] = (
 # job does not install, and each writes a fixed set of files, so the gate compares what
 # git tracks there with this table. Tests pin each entry to its generator's own output
 # paths: scripts/tests/test_check_gen_freshness.py, and for generate_cvwb_vectors.py,
-# which imports the backend, services/api/tests/unit/ws/test_cvwb_binary.py.
+# which imports the backend, services/api/tests/unit/ws/test_cvwb_binary.py. Step 7 judges
+# names only: each file's content is checked by its generator's --check or by a test.
 FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
     "tools/contracts/gen_ws_constants.py": (
         "packages/protocol/generated/ws_constants.py",
@@ -481,10 +482,11 @@ def check_fixed_outputs() -> None:
     if orphans:
         raise GenGateError(
             "CI-GEN-006",
-            "committed file(s) that no generator writes, in a directory only "
-            "generators write: FIXED_OUTPUTS in tools/ci/check_gen_freshness.py names "
-            "every file each generator writes there. A hand-written file must not pose "
-            "as generated (C-4.16), GENERATED header or not.\n"
+            "committed file(s) that no generator writes, in a directory where only "
+            "generators write, apart from the files HAND_KEPT names: FIXED_OUTPUTS in "
+            "tools/ci/check_gen_freshness.py names every file each generator writes "
+            "there. A hand-written file must not pose as generated (C-4.16), GENERATED "
+            "header or not.\n"
             + _bullets(orphans)
             + "Delete them all with:\n"
             + f"  {_git_command('rm', orphans)}\n"
