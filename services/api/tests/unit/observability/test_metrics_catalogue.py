@@ -488,3 +488,12 @@ def test_user_lifecycle_series_are_bound_at_import_and_served_with_env() -> None
     app = create_app(Settings(environment=Environment.DEMO))
     scraped = generate_latest(app.state.app_context.metrics).decode()
     assert all(f"# HELP {name} " in scraped for name in lm.EXPORTED_NAMES)
+
+
+def test_user_lifecycle_binding_leaves_no_loop_names_in_the_module() -> None:
+    """The import-time binding runs in a private function, so the namespace that `app.py` and
+    both writers import holds the declarations and helpers only, not the loops' variables."""
+    from candleviewer.admin import lifecycle_metrics as lm
+
+    loop_names = {"_action", "_results", "_result", "_step", "_outcomes", "_outcome"}
+    assert not loop_names & vars(lm).keys()

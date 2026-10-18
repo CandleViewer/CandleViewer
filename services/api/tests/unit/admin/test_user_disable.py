@@ -21,6 +21,7 @@ from structlog.testing import capture_logs
 from candleviewer.admin import errors
 from candleviewer.admin.lifecycle_metrics import (
     ACTION_RESULTS,
+    STEP_OUTCOMES,
     export_user_lifecycle_metrics,
     user_lifecycle_steps_total,
     user_lifecycle_total,
@@ -42,7 +43,11 @@ from candleviewer.rules.scope_state import SnapshotScopeState
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
 from candleviewer.user_cascade_wiring import ScopeRefreshAdapter
-from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
+from candleviewer.ws.revocation import (
+    CLOSE_USER_DISABLED,
+    RevocationHub,
+    auth_revocation_latency_seconds,
+)
 from tests.conftest import RecordingAuditSink
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_step_up import _T0 as _NOW
@@ -203,8 +208,15 @@ async def test_step_order() -> None:
     assert (invite["reason"], invite["after_state"]) == ("user_disabled", {"role": "viewer"})
 
 
+def _closes_timed() -> float:  # observations of the hub's close-latency histogram, as a delta
+    (family,) = auth_revocation_latency_seconds.collect()
+    return next(s.value for s in family.samples if s.name.endswith("_count"))
+
+
 async def test_b16_revoke_per_session(b16_audit: RecordingAuditSink) -> None:
-    """R5 on the real B16 chart and hub: one `auth.session_revoked` and one 4403 per session."""
+    """R5 on the real B16 chart and hub: one `auth.session_revoked` and one 4403 per session.
+    #965 Observability: each session's close is timed once, on the hub's close-latency histogram
+    (`ws_session_revocation_close_seconds`); the cascade adds no histogram of its own."""
     repo, hub, closed = FakeSessionRepository(), RevocationHub(), dict[str, tuple[str, int]]()
     rows = [_revoked(_session(_TARGET)), _revoked(_session(_TARGET)), _session(_TARGET)]
     for row in rows:
@@ -221,11 +233,13 @@ async def test_b16_revoke_per_session(b16_audit: RecordingAuditSink) -> None:
     sessions = SessionService(repo, Hasher(), clock=lambda: _NOW, publish_revocation=publish)
     rel = _Rel(sessions=[r.id for r in rows[:2]])
     w = _World(rel, sessions=sessions, rows=repo, chart=SessionChart(), publish=publish)
+    timed = _closes_timed()
     assert await w.disable() == DisableResult(changed=True)
     assert sorted((c["action"], c["session_id"], c["reason"]) for c in b16_audit.calls) == sorted(
         ("auth.session_revoked", str(r.id), "user_disabled") for r in rows
     )
     assert closed == {str(r.id): ("user_disabled", CLOSE_USER_DISABLED) for r in rows}
+    assert _closes_timed() - timed == len(rows)
 
 
 @pytest.mark.parametrize(
@@ -859,17 +873,24 @@ async def test_cancelled_steps_are_counted_failed() -> None:
     assert [_steps(s, "failed") - before[s] for s in _STEPS] == [1] * len(_STEPS)
 
 
-@pytest.mark.parametrize(
-    ("fail", "outcome"),
-    [([TimeoutError()], "ok"), ([TimeoutError(), AuditUnavailable("down")], "failed")],
-    ids=["closed", "closing_failed"],
-)
+#: (the `users.disable` emits that fail, in order; the closing record's outcome): the write-ahead
+#: record times out, so nothing commits, then the record that closes it is written or refused.
+_CLOSINGS = [([TimeoutError()], "ok"), ([TimeoutError(), AuditUnavailable("down")], "failed")]
+
+
+def test_the_closing_record_counts_only_its_two_outcomes() -> None:
+    """`_close` writes the record in one attempt, so it is `ok` or `failed`, never `skipped`: the
+    cases below are every outcome its series declares."""
+    assert [outcome for _, outcome in _CLOSINGS] == list(STEP_OUTCOMES["closing_record"])
+
+
+@pytest.mark.parametrize(("fail", "outcome"), _CLOSINGS, ids=["closed", "closing_failed"])
 async def test_closing_record_is_counted_and_a_failed_one_alerts(
     fail: list[BaseException], outcome: str
 ) -> None:
     """C-2.9, R7: the record closing a `users.disable` whose change never committed counts as
     the step `closing_record`; one that could not be written is `failed` and logged at error."""
-    before = {o: _steps("closing_record", o) for o in ("ok", "failed")}
+    before = {o: _steps("closing_record", o) for o in STEP_OUTCOMES["closing_record"]}
     with capture_logs() as logs, pytest.raises(_AUDIT_DOWN):
         await _World(fail={"users.disable": list(fail)}).disable()
     moved = {o: _steps("closing_record", o) - n for o, n in before.items()}

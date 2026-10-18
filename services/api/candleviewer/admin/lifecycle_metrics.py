@@ -20,17 +20,19 @@ ACTION_RESULTS: Final[Mapping[str, tuple[str, ...]]] = {
         *("last_owner", "audit_unavailable", "error"),
     ),
 }
-#: `step` -> its `outcome`s. The cascade's steps after the commit (`user_disable.STEPS`) and the
-#: closing record of a change that did not commit: every run passed, one failed, or none ran.
-#: Then the grants push: done, still running when the request stopped waiting, or failed.
+#: `step` -> its `outcome`s. The cascade's steps after the commit (`user_disable.STEPS`): every
+#: run passed, one failed, or none ran. The closing record of a change that did not commit is
+#: written in one attempt, so it passed or failed and is never skipped. Then the grants push:
+#: done, still running when the request stopped waiting, or failed.
 STEP_OUTCOMES: Final[Mapping[str, tuple[str, ...]]] = {
     **dict.fromkeys(
         (
             *("socket_close", "session_sweep", "b16_revoke", "scope_refresh", "rule_disarm"),
-            *("invite_revoke", "closing_record"),
+            "invite_revoke",
         ),
         ("ok", "failed", "skipped"),
     ),
+    "closing_record": ("ok", "failed"),
     "grants_push": ("pushed", "timeout", "failed"),
 }
 
@@ -44,14 +46,20 @@ user_lifecycle_steps_total = Counter(
     "User lifecycle steps by outcome (R7): disable cascade, closing record, grants push.",
     ["step", "outcome"],
 )
-# Bind every value now: a series created at its first event gives `increase()` nothing to
-# subtract, so the first failure after every restart would never alert.
-for _action, _results in ACTION_RESULTS.items():
-    for _result in _results:
-        user_lifecycle_total.labels(action=_action, result=_result)
-for _step, _outcomes in STEP_OUTCOMES.items():
-    for _outcome in _outcomes:
-        user_lifecycle_steps_total.labels(step=_step, outcome=_outcome)
+
+
+def _bind_every_series() -> None:
+    """Bind every value now: a series created at its first event gives `increase()` nothing to
+    subtract, so the first failure after every restart would never alert."""
+    for action, results in ACTION_RESULTS.items():
+        for result in results:
+            user_lifecycle_total.labels(action=action, result=result)
+    for step, outcomes in STEP_OUTCOMES.items():
+        for outcome in outcomes:
+            user_lifecycle_steps_total.labels(step=step, outcome=outcome)
+
+
+_bind_every_series()
 
 EXPORTED_NAMES: Final = frozenset({"cv_user_lifecycle_total", "cv_user_lifecycle_steps_total"})
 

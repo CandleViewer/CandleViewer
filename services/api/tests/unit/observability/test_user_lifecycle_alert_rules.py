@@ -36,14 +36,14 @@ ADMITS = {
 LOG_LINE = {"UserLifecycleStepFailed": "users.disable.step", "UserGrantsPushFailed": "access push"}
 _SELECTOR = re.compile(rf"sum by \(env\) \(increase\({_SERIES}\{{(.*)\}}\[15m\]\)\) > 0")
 _MATCHER = re.compile(r'(step|outcome)(=~|!=|=)"([^"]*)"')
+#: The runbook's read for a night event once a Prometheus restart has dropped the hold (element 7).
+_NIGHT = re.compile(rf"increase\({_SERIES}\{{([^}}]*)\}}\[10h\]\)")
 
 
-def _admitted(expr: str) -> set[tuple[str, str]]:
-    """The (step, outcome) pairs of the closed sets that the selector's matchers admit."""
-    selector = _SELECTOR.fullmatch(expr)
-    assert selector is not None, expr
-    matchers = _MATCHER.findall(selector[1])
-    assert ",".join(f'{k}{op}"{v}"' for k, op, v in matchers) == selector[1]  # nothing else
+def _pairs(selector: str) -> set[tuple[str, str]]:
+    """The (step, outcome) pairs of the closed sets that a selector's matchers admit."""
+    matchers = _MATCHER.findall(selector)
+    assert ",".join(f'{k}{op}"{v}"' for k, op, v in matchers) == selector  # nothing else
 
     def holds(op: str, pattern: str, value: str) -> bool:
         if op == "=~":
@@ -58,9 +58,25 @@ def _admitted(expr: str) -> set[tuple[str, str]]:
     }
 
 
+def _admitted(expr: str) -> set[tuple[str, str]]:
+    """The pairs that a rule's selector admits."""
+    selector = _SELECTOR.fullmatch(expr)
+    assert selector is not None, expr
+    return _pairs(selector[1])
+
+
 @pytest.mark.parametrize("name", ADMITS)
 def test_the_ticket_reads_exactly_its_share_of_the_closed_sets(name: str) -> None:
     assert _admitted(_rule(name)["expr"]) == ADMITS[name]
+
+
+@pytest.mark.parametrize("name", ADMITS)
+def test_the_runbooks_night_event_read_admits_what_the_ticket_reads(name: str) -> None:
+    """Element 7's read stands in for the rule once the hold is gone, so it reads the rule's
+    share: a failed grants push never reads as a failed cascade step. (A Markdown table cell
+    escapes the `|` of a regex matcher.)"""
+    (night,) = _NIGHT.findall(_runbook_section(_rule(name)))
+    assert _pairs(night.replace("\\|", "|")) == ADMITS[name]
 
 
 @pytest.mark.parametrize("name", ADMITS)
