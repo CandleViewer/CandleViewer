@@ -229,7 +229,7 @@ Residual risk: all rows Low after controls and findings land. **Until E35-FR-10 
 
 RE-E10 keeps one accepted residual (#3232, decision 9): a rule that a Manager armed above a default but under its hard cap before the caps existed keeps running until it is re-armed, when the Owner check applies. Managers reach only demo and testnet scopes, and no rule action runs until the action executor (E35-S03, #863) lands. The coordinator accepted it in the rulings on #3232; the cap values are interim until the Owner ratifies them (#2701).
 
-RE-E10 gives the built-in system rules (RE-E8) no exemption from the caps (#3232): E35-T05 seeds them within the caps and tests that, since a built-in above a cap could be neither armed nor re-armed after a kill. One found armed above a cap, which only an out-of-band write can cause, is disarmed like any rule, audited with the reason `limits_above_cap`, and `verify_system_rules` reports it as tampered at the next start (`test_a_protected_system_rule_above_the_cap_is_disarmed_then_reported_tampered`).
+RE-E10 gives the built-in system rules (RE-E8) no exemption from the caps (#3232). A built-in above a cap could be neither armed nor re-armed after a kill, so seeding them within the caps, with a test, is a requirement recorded on E35-T05 (#944, issuecomment-6243717970). It is not built yet: nothing seeds a built-in today. One found armed above a cap, which only an out-of-band write can cause, is disarmed like any rule, audited with the reason `limits_above_cap`, and `verify_system_rules` reports it as tampered at the next start (`test_a_protected_system_rule_above_the_cap_is_disarmed_then_reported_tampered`).
 
 ## 10. Boundary notes
 
