@@ -322,7 +322,7 @@ def make_enrolment_only_guard(
             or match_operation(method, path, free_patterns) in free_templates
         )
 
-    async def guard(request: Request, call_next: CallNext) -> Response:
+    async def enrolment_only_guard(request: Request, call_next: CallNext) -> Response:
         path = get_route_path(request.scope)
         token = _bearer(request)
         if (
@@ -359,7 +359,7 @@ def make_enrolment_only_guard(
         await refusals.refused(record, channel="http", method=method, path=template, ip=ip)
         return _problem(_REFUSED)
 
-    return guard
+    return enrolment_only_guard
 
 
 __all__ = [
