@@ -103,6 +103,7 @@ const REPLY_OF: Readonly<Record<string, "sub_ok" | "unsub_ok" | "ctl_ok" | undef
 };
 const FAMILY_THROTTLE: Readonly<Record<string, number>> = { book: 50, trades: 100 };
 const MAX_WINDOW_SECONDS = 300;
+const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const familyOf = (ch: string): string => ch.split(".", 1)[0] ?? ch;
 const keyOf = (ch: string, rs?: string): string => `${ch}#${rs ?? "live"}`;
 const asJson = (v: unknown): Json => (typeof v === "object" && v !== null ? (v as Json) : {});
@@ -205,10 +206,38 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
             ...(sub.rs !== undefined && { rs: sub.rs }),
             ...extra,
           });
-    /** The live subscription of a `ch`, else the first: what `ctl` and `resync`, which name no replay session, reach (#572). */
-    const find = (ch: unknown): Sub | undefined => {
-      const named = [...subs.values()].filter((sub) => sub.ch === ch);
-      return named.find((sub) => sub.rs === undefined) ?? named[0];
+    /** The replay session a request names, as 7.5 reads it: none (or `null`) is the live stream, a uuid is that session, anything else is refused. */
+    const sessionOf = (frame: Json): { rs: string | undefined } | undefined => {
+      const rs = frame["rs"];
+      if (rs === undefined || rs === null) return { rs: undefined };
+      return typeof rs === "string" && UUID.test(rs) ? { rs: rs.toLowerCase() } : undefined;
+    };
+    /** What names the stream in a reply (5.2 to 5.4): its `sub_id`, and `rs` on a replay one. */
+    const namedBy = (sub: Sub): Json => ({ ...(sub.rs !== undefined && { rs: sub.rs }) });
+    /**
+     * `ctl` and `resync` reach the subscription of their `ch` in the session they name, or the live one (since #3218 the
+     * gateway never falls back to a replay one): a bad `rs` is `invalid_options`, a stream that is not there
+     * `not_subscribed`, and a `resync` pinned to another stream's `sub_id` too; the error carries the `ch` and a uuid `rs`.
+     */
+    const resolve = (frame: Json): Sub | undefined => {
+      const session = sessionOf(frame);
+      const ch = frame["ch"];
+      if (session === undefined) {
+        reply(
+          "err",
+          { ch, p: { code: "invalid_options", message: "rs", field: "rs" } },
+          frame["id"],
+        );
+        return undefined;
+      }
+      const sub = subs.get(keyOf(String(ch), session.rs));
+      const pin = asJson(frame["p"])["sub_id"];
+      if (sub === undefined || (pin !== undefined && pin !== null && pin !== sub.id)) {
+        const echo = session.rs === undefined ? {} : { rs: session.rs };
+        reply("err", { ch, ...echo, p: { code: "not_subscribed", message: "no" } }, frame["id"]);
+        return undefined;
+      }
+      return sub;
     };
     const open1 = (ch: string, rs: string | undefined, opts: Json): Sub => {
       const sub: Sub = {
@@ -257,6 +286,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           ch,
           ok: true,
           sub_id: sub.id,
+          ...namedBy(sub),
           snapshot_pending: true,
           effective: sub.effective,
           ...(options.forceSnapshots === true && { snapshot_forced: true }),
@@ -267,7 +297,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         for (const sub of made) emitSnap(sub, "initial");
       });
     };
-    /** 5.3: one `unsub` ends every subscription of a `ch`, live and replay alike; `system` stays. */
+    /** 5.3 (#3218): an `unsub` ends the stream of each entry's `ch` in the session it names, or the live one; `system` stays. */
     const onUnsub = (frame: Json) => {
       if (unsubsToFail > 0) {
         unsubsToFail -= 1; // a malformed unsub is refused whole, and nothing is unsubscribed (5.3)
@@ -277,23 +307,27 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           frame["id"],
         );
       }
+      const session = sessionOf(frame);
+      if (session === undefined) {
+        return reply(
+          "err",
+          { p: { code: "invalid_options", message: "rs", field: "rs" } },
+          frame["id"],
+        );
+      }
       const chs = asJson(frame["p"])["topics"] as string[];
       const results = chs.map((ch) => {
         if (ch === "system") return { ch, ok: false };
-        const gone = [...subs.values()].filter((sub) => sub.ch === ch);
-        for (const sub of gone) subs.delete(keyOf(sub.ch, sub.rs));
-        return gone.length > 0 ? { ch, ok: true } : { ch, ok: true, noop: true };
+        const sub = subs.get(keyOf(ch, session.rs));
+        if (sub === undefined) return { ch, ok: true, noop: true };
+        subs.delete(keyOf(ch, session.rs));
+        return { ch, ok: true, ended: [{ sub_id: sub.id, ...namedBy(sub) }] };
       });
       answer("unsub_ok", { p: { results } }, frame["id"]);
     };
     const onCtl = (frame: Json) => {
-      const sub = find(frame["ch"]);
-      if (sub === undefined)
-        return reply(
-          "err",
-          { ch: frame["ch"], p: { code: "not_subscribed", message: "no" } },
-          frame["id"],
-        );
+      const sub = resolve(frame);
+      if (sub === undefined) return;
       const asked = asJson(frame["p"]);
       const rebucketed =
         asked["time_bucket_ms"] !== undefined &&
@@ -305,7 +339,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         return later("ctl_ok", () =>
           reply(
             "err",
-            { ch: sub.ch, p: { code: "resync_rate_limited", message: "budget" } },
+            { ch: sub.ch, ...namedBy(sub), p: { code: "resync_rate_limited", message: "budget" } },
             frame["id"],
           ),
         );
@@ -320,20 +354,20 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         "ctl_ok",
         {
           ch: sub.ch,
-          p: { effective: Object.fromEntries(echoed), ...(rebucketed && { resnapshot: true }) },
+          ...namedBy(sub),
+          p: {
+            sub_id: sub.id,
+            effective: Object.fromEntries(echoed),
+            ...(rebucketed && { resnapshot: true }),
+          },
         },
         frame["id"],
       );
       if (rebucketed) emitSnap(sub, "reconfigure");
     };
     const onResync = (frame: Json) => {
-      const sub = find(frame["ch"]);
-      if (sub === undefined)
-        return reply(
-          "err",
-          { ch: frame["ch"], p: { code: "not_subscribed", message: "no" } },
-          frame["id"],
-        );
+      const sub = resolve(frame);
+      if (sub === undefined) return;
       const at = performance.now();
       sub.resyncs.push(at);
       if (sub.resyncs.filter((stamp) => at - stamp < 60_000).length > 5)
@@ -479,13 +513,17 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         if (sub !== undefined) emitSnap(sub, reason, extra, true);
       },
       revoke(ch, reason, extra = {}) {
-        send({ t: "revoked", ch, p: { reason, message: reason, ...extra } });
         const narrowed =
           reason === "account_scope_changed" && extra["resubscribe_allowed"] === true;
-        if (narrowed) return;
-        for (const sub of [...subs.values()]) {
-          if (sub.ch === ch && (reason !== "replay_session_ended" || sub.rs !== undefined))
-            subs.delete(keyOf(sub.ch, sub.rs));
+        const hit = [...subs.values()].filter(
+          (sub) => sub.ch === ch && (reason !== "replay_session_ended" || sub.rs !== undefined),
+        );
+        // one frame for each stream it reaches, naming it (5.2); one with no name for a `ch` nobody holds
+        if (hit.length === 0) send({ t: "revoked", ch, p: { reason, message: reason, ...extra } });
+        for (const sub of hit) {
+          const p = { reason, message: reason, sub_id: sub.id, ...extra };
+          send({ t: "revoked", ch, ...namedBy(sub), p });
+          if (!narrowed) subs.delete(keyOf(sub.ch, sub.rs));
         }
       },
     };
