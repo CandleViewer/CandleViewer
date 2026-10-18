@@ -22,12 +22,14 @@ from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.idempotency import IdempotencyCache
+from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH
+from candleviewer.key_import_wiring import KeyImports
 from candleviewer.secrets import CredentialUnavailable, KekUnavailable
 from tests.contract._admin_support import validate_example
-from tests.unit.accounts.test_key_import import ACCT, OWNER, World, account_row
+from tests.unit.accounts.test_key_import import ACCT, OTHER, OWNER, World, account_row, key_row
 from tests.unit.accounts.test_key_selfcheck import EGRESS
 from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET
 from tests.unit.test_key_import_wiring import Refusing, Rig
@@ -40,9 +42,11 @@ _SHORT = "s3cr"  # shorter than the schema's 8 characters
 _GRANT = (AccountGrant(ACCT, True, True, False),)  # the manager's: still no `keys:manage`
 _TWO, _CREATED, _REJECTED = str(UUID(int=2)), "ApiKeyWithVerification", "KeyRejectedProblem"
 _ELSEWHERE = f"/exchange-accounts/{UUID(int=5)}/keys"
+_READ = frozenset({Permission.KEYS_READ})  # `listApiKeys`' right alone, never `keys:manage`
 PEOPLE = {
     "owner": PrincipalSnapshot(OWNER, frozenset({"owner"}), frozenset(Permission)),
     "manager": PrincipalSnapshot(UUID(int=98), frozenset({"manager"}), frozenset(), _GRANT),
+    "reader": PrincipalSnapshot(UUID(int=96), frozenset({"manager"}), _READ, _GRANT),
     "viewer": PrincipalSnapshot(UUID(int=97), frozenset({"viewer"}), frozenset()),
 }
 
@@ -55,12 +59,15 @@ class Resolver:
 class Route:
     """The router over `world`'s flow (`None`: the fake backend), with `world` as audit sink."""
 
-    def __init__(self, world: Any, *, wired: bool = True, raises: bool = False) -> None:
+    def __init__(
+        self, world: Any, *, wired: bool = True, raises: bool = False, resolved: bool = True
+    ) -> None:
         self.world, self.replays, app = world, IdempotencyCache(), FastAPI()
+        self.imports: Any = KeyImports(world.flow, lambda: asyncio.sleep(0)) if wired else None
         install_error_redaction(app)
         app.include_router(
             make_exchange_keys_router(
-                world.flow if wired else None, world, Resolver(), egress_ip=EGRESS,
+                self.imports, world, Resolver() if resolved else None, egress_ip=EGRESS,
                 rotation=KeyRotationPolicy(), replays=self.replays,
             )
         )  # fmt: skip
@@ -164,7 +171,9 @@ async def test_no_answer_in_time_is_a_503_with_retry_after_and_no_exchange_membe
     assert "exchange" not in body
 
 
-@pytest.mark.parametrize(("who", "status"), [("manager", 403), ("viewer", 403), ("nobody", 401)])
+@pytest.mark.parametrize(
+    ("who", "status"), [("manager", 403), ("reader", 403), ("viewer", 403), ("nobody", 401)]
+)
 async def test_only_the_owner_may_import_even_a_manager_granted_on_the_account(
     who: str, status: int
 ) -> None:
@@ -174,6 +183,25 @@ async def test_only_the_owner_may_import_even_a_manager_granted_on_the_account(
     shown = [(r["action"], r["object_kind"], r["object_id"]) for r in route.world.audit()]
     assert shown == denied and route.world.sent == []  # the refusal names the account (C-2.9)
     assert body.get("required_permissions", ["keys:manage"]) == ["keys:manage"]
+
+
+@pytest.mark.parametrize("error", [AuditError("down"), RuntimeError("writer not started")])
+async def test_a_refusal_that_cannot_be_audited_is_a_503_that_imports_nothing(
+    error: Exception,
+) -> None:
+    route = await booted()
+
+    async def down(action: str, **_fields: Any) -> None:
+        raise error
+
+    route.world.emit = down  # `rbac.denied` cannot be written: fail closed
+    body = answer(await route.post("manager"), 503, "KeyExchangeProblem")
+    assert (body["code"], route.world.sent, route.world.m2.rows) == ("audit_unavailable", [], {})
+
+
+async def test_with_no_principal_resolver_every_call_is_a_501() -> None:
+    route = Route(World(), resolved=False)
+    assert answer(await route.post(), 501, "Problem")["code"] == "not_implemented"
 
 
 async def test_an_account_of_another_environment_answers_as_a_missing_one() -> None:
@@ -287,7 +315,7 @@ async def test_a_cancelled_request_leaves_its_import_to_end_and_to_be_replayed()
         await first
     busy = answer(await route.post(), 409, "Problem")  # still importing, under the same key
     stall.set()
-    (work,) = [task for task in asyncio.all_tasks() if task.get_name() == "create-api-key"]
+    (work,) = route.imports._running  # tracked: the lifespan's drain waits for it too
     assert busy["code"] == "idempotency_in_flight" and (await work).status_code == 201
     replay = await route.post()
     assert (replay.status_code, replay.headers["idempotency-replayed"]) == (201, "true")
@@ -303,3 +331,35 @@ async def test_no_frame_of_a_failing_import_holds_the_pasted_pair_in_clear() -> 
     shown = repr([frame.locals for frame in ours])
     assert "create_api_key" in {frame.name for frame in ours}
     assert API_KEY not in shown and API_SECRET not in shown
+
+
+async def test_a_conflict_with_an_import_still_running_is_never_kept_for_replay() -> None:
+    world = World()
+    world.gate.clear()
+    route = Route(world)
+    first = asyncio.create_task(route.post())
+    async with asyncio.timeout(5):  # a lost request fails the test instead of hanging it
+        await world.entered.wait()
+    busy = answer(await route.post(once=_TWO), 409, "Problem")  # the account's import runs
+    world.gate.set()
+    assert (await first).status_code == 201
+    again = answer(await route.post(once=_TWO), 409, "Problem")  # judged afresh: a key is active
+    assert (busy["detail"], again["detail"]) == (
+        "The account has an import running.", "The account has an active key; rotate it.",
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("state", "status"),
+    [({"account": None}, 404), ({"keys": [key_row(OTHER, "active")]}, 409)],
+    ids=["not_found", "conflict"],
+)
+async def test_a_missing_account_or_a_conflict_with_stored_state_is_replayed(
+    state: dict[str, Any], status: int
+) -> None:
+    world = World()
+    vars(world).update(state)
+    route = Route(world)
+    first, again = await route.post(), await route.post()
+    assert (first.status_code, again.status_code, again.content) == (status, status, first.content)
+    assert again.headers["idempotency-replayed"] == "true"

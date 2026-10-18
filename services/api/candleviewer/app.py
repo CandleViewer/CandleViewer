@@ -1697,9 +1697,12 @@ def create_app(
     # started `AccountsService` before the app serves (real backend only).
     wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
     # E27-T03 (#836): `createApiKey`; its flow holds M2's candidate capability (real backend only).
+    # The lifespan drains its imports before `stop_all` stops audit and M2, then frees its pool.
+    key_imports = wire_key_import(ctx, bundle.candidate_keys, _LazyAuditEmitter(ctx.audit))
+    app.state.key_imports = key_imports
     app.include_router(
         make_exchange_keys_router(
-            wire_key_import(ctx, bundle.candidate_keys, _LazyAuditEmitter(ctx.audit)),
+            key_imports,
             _LazyAuditEmitter(ctx.audit),
             owner_resolver,
             egress_ip=resolved.egress_ip,

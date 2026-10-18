@@ -5,10 +5,12 @@ the closed body (the shared `422`, no value echoed); then the session (401), `ke
 `rbac.denied` audited: 403), the required `Idempotency-Key` (400) and the import, which audits.
 The key binds only after those admission checks (#2304). Its fingerprint holds the path, the label,
 `read_only`, `expected_uid` and `api_key` as an HMAC under a per-process key, never `api_secret`
-(SR-E27-20). A `201`, `404`, `409` or `422` is kept for replay; a `403`, `502` or `503` never is, so
-its re-send is a first submission. The fake backend has no import flow: `503 store_unavailable`.
-An import runs in a task of its own to its end, its answer kept as above, so a cancelled request
-never stops it between M2's store and the promotion. No frame here holds the pasted key in clear.
+(SR-E27-20). A `201`, `404`, `409` or `422` is kept for replay; a `403`, `502` or `503` never is,
+nor a `409` that clears by itself (an import of the account still running, as E42-T05's), so its
+re-send is a first submission. The fake backend has no import flow: `503 store_unavailable`. An
+import runs to its end in a task of its own (`key_import_wiring.KeyImports`, which the lifespan
+drains), its answer kept as above, so a cancelled request never stops it between M2's store and
+the promotion. No frame here holds the pasted key in clear.
 """
 
 from __future__ import annotations
@@ -20,9 +22,9 @@ import inspect
 import json
 import os
 import uuid
+from collections.abc import Coroutine
 from typing import Annotated, Any, Final, Protocol
 
-import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -44,7 +46,7 @@ from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, enforce
-from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.observability.context import current_request_id
 from candleviewer.observability.secret_type import Secret
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
@@ -67,6 +69,15 @@ _GATE: Final = frozenset({Rule.WITHDRAW_PERMISSION, Rule.PERMISSION_NOT_ALLOWED}
 
 class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
+
+
+class _Imports(Protocol):
+    """`key_import_wiring.KeyImports`: the flow, and the task each import runs to its end in."""
+
+    @property
+    def flow(self) -> KeyImport: ...
+
+    def run(self, work: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]: ...
 
 
 class _OnAccount:
@@ -136,33 +147,28 @@ def _refused(exc: AccountsError, egress_ip: str | None) -> JSONResponse:
 
 
 def make_exchange_keys_router(
-    imports: KeyImport | None, audit: _Emitter, resolver: SnapshotResolver | None, *,
+    imports: _Imports | None, audit: _Emitter, resolver: SnapshotResolver | None, *,
     egress_ip: str | None, rotation: KeyRotationPolicy, replays: IdempotencyCache | None = None,
 ) -> APIRouter:  # fmt: skip
     """The key routes. `resolver=None` (no identity wired): 501 for every call."""
     router, running = APIRouter(tags=["exchange-accounts"]), set[tuple[str, str]]()
     replays, mac_key = replays if replays is not None else IdempotencyCache(), os.urandom(32)
-    importing: set[asyncio.Task[Response]] = set()  # each import runs to its end, tracked here
 
     async def answer(
         flow: KeyImport, wanted: KeyImportRequest, actor: Importer, held: tuple[str, str], fp: str
     ) -> Response:
-        """The import and its answer, kept for replay as the contract says."""
+        """The import and its answer, kept for replay as the contract says (module docstring)."""
+        kept = True
         try:
             out = JSONResponse(_created(await flow.run(wanted, actor), egress_ip, rotation), 201)
         except AccountsError as exc:
             out = _refused(exc, egress_ip)
+            kept = not (isinstance(exc, KeyImportFailed) and exc.transient)
         finally:
             running.discard(held)
-        if out.status_code in _REPLAYED:
+        if kept and out.status_code in _REPLAYED:
             replays.put(*held, StoredResponse(fp, out.status_code, bytes(out.body), None))
         return out
-
-    def settled(task: asyncio.Task[Response]) -> None:
-        """A raise is logged here too: once the request is gone, no one awaits the import."""
-        importing.discard(task)
-        if not task.cancelled() and (exc := task.exception()) is not None:
-            structlog.get_logger(__name__).error("key_import_failed", error=type(exc).__name__)
 
     @router.post("/exchange-accounts/{accountId}/keys", status_code=201)  # nosem: audit-write-required,no-raw-account-id reason=audited-in-accounts.key_import-api_key.import-write-ahead-and-OwnerScope-store-gate-#836 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def create_api_key(
@@ -216,9 +222,7 @@ def make_exchange_keys_router(
             expected_uid=body.expected_uid,
         )
         running.add((owner, once))
-        work = spawn(answer(imports, wanted, actor, (owner, once), digest), name="create-api-key")
-        importing.add(work)
-        work.add_done_callback(settled)
+        work = imports.run(answer(imports.flow, wanted, actor, (owner, once), digest))
         return await asyncio.shield(work)
 
     return router

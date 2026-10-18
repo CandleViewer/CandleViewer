@@ -214,6 +214,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             user_disable = getattr(app.state, "user_disable", None)
             if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
                 await teardown.run("user_disable", user_disable.drain)  # each ends by its deadline
+            key_imports = getattr(app.state, "key_imports", None)
+            if key_imports is not None:  # #836: an import in flight writes through audit and M2
+                # bounded; then it releases the import's Postgres pool
+                await teardown.run("key_imports", key_imports.drain)
             if feature_flags is not None:  # its maintenance poll, before the audit writer stops
                 await teardown.run("feature_flags", feature_flags.stop)
             if metrics_runtime is not None:
