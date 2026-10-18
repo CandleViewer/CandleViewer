@@ -9593,7 +9593,9 @@ paths:
         A run is a `backup` job whose id is the `Backup.id` of the `202` body (E42-T05): poll
         `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. The run is audited as
         `backup.run` ahead of the response. While a backup or a restore is running, a new run is
-        `409 conflict` with rule `backup_or_restore_running` and starts nothing.
+        `409 conflict` with rule `backup_or_restore_running` and starts nothing. A run that
+        cannot take the backups admission lock (`deleteBackup`) within its wait is
+        `503 store_unavailable` with `Retry-After`, before any record, and starts nothing.
         Records (E42-T05): `backup.run` is written with `after_state.stage: requested` before the
         `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing
         starts) and again with `stage: finished` when the run ends, carrying the outcome,
@@ -9684,6 +9686,11 @@ paths:
         three conflicts are evaluated and the row marked under the backups admission lock, one
         delete at a time. The backups admission lock is the one process-wide lock that admits a
         run, a verification, a restore and a delete one at a time (#966 Q6; BK-7 builds it).
+        An admission that cannot take that lock within its wait is `503 store_unavailable` with
+        `Retry-After`. A run or a verification then writes no record and starts nothing; a delete
+        or a restore is refused after its grant is spent, so the grant is gone, its failure record
+        (`backup.deleted` or `backup.restore`, `outcome: failure`) is written first, and the
+        operator steps up again to retry.
         The challenge's `action_summary` template is
         `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the
         `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact
