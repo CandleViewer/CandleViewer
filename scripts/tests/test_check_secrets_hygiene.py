@@ -765,12 +765,14 @@ def test_listed_over_report_is_flagged(tmp_path: Path, line: str) -> None:
         "|\n          bash \\\n            -x ci.sh",
         ">\n          set -e\n          -x",
         "bash\n          -x ci.sh",
+        '"set\n          -x"',
+        "'set\n          -x'",
     ],
 )
 def test_command_going_on_to_the_next_line_is_not_read_whole(tmp_path: Path, run: str) -> None:
     # #3400: listed beside _SET_X as not reported, though each traces (bash 5.3; YAML folds the
-    # last two into `set -e -x` and `bash -x ci.sh`): each line is read alone. Pinned until the
-    # scan joins them first (#3583).
+    # last four into `set -e -x`, `bash -x ci.sh` and `set -x` twice): each line is read alone.
+    # Pinned until the scan joins them first (#3583).
     _write(tmp_path, WF, _runs(run))
     assert h.check_workflows(tmp_path) == []
 

@@ -433,7 +433,8 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - a quoted word three quote levels deep (the scan takes two levels off):
 #:   ``bash -c "bash -c 'set \"-x\"'"``
 #: - a command going on to the next line (#3583): ``bash \`` then ``-x ci.sh``, or ``set -e`` then
-#:   ``-x`` in a folded ``run: >`` block or a plain multi-line scalar (each line is read alone)
+#:   ``-x`` in a folded ``run: >`` block, a plain multi-line scalar or a quoted one (``run: "set``
+#:   then ``-x"``, which YAML folds to ``set -x``); each line is read alone
 #: - a ``#`` inside a string opened on an earlier line (#3583), read as a comment, its line skipped:
 #:   ``X='`` then ``#'; set -x``
 #: - an escape in an inline double-quoted ``run:`` value, which YAML decodes before the shell runs
