@@ -215,8 +215,8 @@ async def test_lifespan_stops_every_module_when_the_test_clock_audit_fails() -> 
 
 
 async def test_lifespan_stops_every_module_when_the_test_clock_audit_is_cancelled() -> None:
-    """#2728: `except BaseException`, as `Supervisor.start_all` does: a cancellation during the
-    boot record also stops every started module before it propagates."""
+    """#2728: a cancellation during the boot record also stops every started module before it
+    propagates; since #3446 through the lifespan's teardown, which never swallows it."""
     app = FastAPI()
     ctx = _test_clock_ctx(_FakeAudit(failure=asyncio.CancelledError()))
     app.state.app_context = ctx
