@@ -25,6 +25,12 @@ of one `ch` together.
    subscription whose `backpressure` snapshot is dropped `MAX_REDROPS` times in a row, each time
    before it was sent (a snapshot larger than the budget), ends in the same close.
 
+`bars` has its own share of the budget, `BARS_SHARE_PCT` of each limit (SR-E12-07): its queued
+`d` and `snap` frames, live and replay, are also counted apart (its windows are not). A check
+that finds the share over and the budget not runs step 1 for `bars` alone (`drop_share`), and
+step 2 passes over a `bars` snapshot while those frames hold half the share or more. A redrop
+close fired by a share check names only `bars` topics in its `bye.hint`.
+
 Every step counts in `cv_ws_overflow_total{reason}` (step 4, `LadderEvent.reason`) and comes back
 as a `LadderEvent`; the caller writes the warning audit entry when step 3 fires (with the close's
 `trigger`) and performs the close. A close fires and counts once, and `check` and `drain` return
@@ -51,6 +57,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from candleviewer.ws.limits import BARS_SHARE_PCT
 from candleviewer.ws.metrics import cv_ws_overflow_total
 from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
@@ -65,6 +72,8 @@ MOST_EXPENSIVE: Final = 5
 MAX_REDROPS: Final = 3
 #: The families whose `d` / `snap` frames ride the priority lane, with every control frame (D1).
 PRIORITY_FAMILIES: Final = frozenset({"orders", "executions", "system"})
+#: SR-E12-07: the family whose queued frames have their own share of the budget.
+SHARE_FAMILY: Final = "bars"
 _DATA_FRAMES: Final = frozenset({"d", "snap"})
 
 #: A subscription's frames: `(ch, replay_session_id)` (D13).
@@ -144,7 +153,7 @@ class LadderEvent:
     """One §8.4 step that fired: `drop`, `resnapshot` or `close`, and the topics it concerned
     (for `close`, the most expensive ones). A `close` names its step-3 `trigger`: `budget` (still
     over budget after the drop) or `redrop` (`MAX_REDROPS`), for the metric label and the audit
-    entry."""
+    entry; a `drop` of the `bars` topics alone, over their share, names `share` (SR-E12-07)."""
 
     action: str
     topics: tuple[str, ...]
@@ -153,7 +162,7 @@ class LadderEvent:
     @property
     def reason(self) -> str:
         """The `cv_ws_overflow_total{reason}` label: `drop`, `resnapshot`, `close_budget` or
-        `close_redrop` (§8.4 step 4)."""
+        `close_redrop` (§8.4 step 4), or `drop_share` (SR-E12-07)."""
         return self.action if self.trigger is None else f"{self.action}_{self.trigger}"
 
 
@@ -172,6 +181,11 @@ class OutboundQueue:
         self.max_bytes = max_bytes
         self.max_frames = max_frames
         self.bytes = 0
+        #: SR-E12-07: the queued `bars` frames (droppable, so on the normal lane), live and
+        #: replay, against their share, fixed here: `BARS_SHARE_PCT` of each limit, at least 1.
+        self.share_bytes = self.share_frames = 0
+        self.share_max_bytes = max(1, max_bytes * BARS_SHARE_PCT // 100)
+        self.share_max_frames = max(1, max_frames * BARS_SHARE_PCT // 100)
         #: Set while a frame is waiting; the writer awaits it.
         self.ready = asyncio.Event()
         self._priority: deque[Queued] = deque()
@@ -187,12 +201,17 @@ class OutboundQueue:
     def push(self, frame: Queued) -> None:
         lane = self._priority if frame.priority else self._normal
         lane.append(frame)
-        self.bytes += frame.size
+        size = frame.size
+        self.bytes += size
         key = frame.key
         if key is not None and not frame.priority:  # droppable
-            self._key_bytes[key] = self._key_bytes.get(key, 0) + frame.size
+            self._key_bytes[key] = self._key_bytes.get(key, 0) + size
             if frame.resnap:
                 self._resnaps[key] = self._resnaps.get(key, 0) + 1
+            # one compare per droppable frame (fan-out hot path, budget #6)
+            if frame.family == SHARE_FAMILY:
+                self.share_bytes += size
+                self.share_frames += 1
         self.ready.set()
 
     def pop(self) -> Queued | None:
@@ -207,10 +226,11 @@ class OutboundQueue:
         return frame
 
     def _forget(self, frame: Queued) -> None:
-        self.bytes -= frame.size
+        size = frame.size
+        self.bytes -= size
         key = frame.key
         if key is not None and not frame.priority:  # droppable
-            left = self._key_bytes[key] - frame.size
+            left = self._key_bytes[key] - size
             if left:
                 self._key_bytes[key] = left
             else:
@@ -220,6 +240,9 @@ class OutboundQueue:
                     self._resnaps[key] -= 1
                 else:
                     del self._resnaps[key]
+            if frame.family == SHARE_FAMILY:
+                self.share_bytes -= size
+                self.share_frames -= 1
 
     def pct(self, pending_bytes: int = 0) -> float:
         """Depth as a share of the budget: the larger of the byte and frame fractions (§8.3)."""
@@ -228,6 +251,15 @@ class OutboundQueue:
 
     def over_budget(self, pending_bytes: int = 0) -> bool:
         return self.bytes + pending_bytes > self.max_bytes or len(self) > self.max_frames
+
+    def share_over(self) -> bool:
+        """SR-E12-07: the queued `bars` frames are past their share, strictly, as the budget."""
+        return self.share_bytes > self.share_max_bytes or self.share_frames > self.share_max_frames
+
+    def share_pct(self) -> float:
+        """The queued `bars` frames as a share of theirs: the larger fraction, as `pct`."""
+        by_bytes = self.share_bytes / self.share_max_bytes
+        return 100 * max(by_bytes, self.share_frames / self.share_max_frames)
 
     def resnap_queued(self, key: Key) -> bool:
         """Whether any frame of a `backpressure` snapshot of `key` is still waiting."""
@@ -262,6 +294,7 @@ class OutboundQueue:
         self._normal.clear()
         self._key_bytes.clear()  # droppable frames ride the normal lane only
         self._resnaps.clear()
+        self.share_bytes = self.share_frames = 0
         if not normal_only:
             dropped += len(self._priority)
             self._priority.clear()
@@ -309,11 +342,12 @@ class Backpressure:
 
     def check(self, subs: Iterable[Subscription]) -> list[LadderEvent]:
         """Steps 1 and 3, when the connection is over its budget. `subs` is the connection's full
-        subscription set."""
+        subscription set. Over the `bars` share alone, step 1 sheds `bars` only (SR-E12-07)."""
         if self._draining:
             self._deferred = list(subs)
             return []
-        if self._closed or not self.over_budget():
+        over = self.over_budget()
+        if self._closed or not (over or self.queue.share_over()):
             return []
         subs = list(subs)
         self._settle()
@@ -322,11 +356,12 @@ class Backpressure:
             del self._redrops[sub_id]
         for sub_id in [s for s in self._snapped if s not in current]:
             del self._snapped[sub_id]
-        hint = self._most_expensive(subs)
+        shed = subs if over else [s for s in subs if s.topic.family.family == SHARE_FAMILY]
+        hint = self._most_expensive(shed, shared=not over)
         queued = self.queue.key_bytes().keys()
         offending = [
             sub
-            for sub in subs
+            for sub in shed
             if not sub.topic.family.never_throttled
             and not sub.snapshot_pending
             and not _paused(sub)
@@ -338,12 +373,14 @@ class Backpressure:
         # Frames of a topic awaiting another snapshot, paused (D16: no mark, its resume
         # re-snapshots it), or no longer subscribed, go too. That drop is not a redrop:
         # `_settle` forgets its record and the count starts afresh.
-        self.queue.drop({key for key in queued if key not in live} | {_key(s) for s in offending})
-        for sub in subs:
+        stale = {key for key in queued if key not in live and (over or _shared(key))}
+        self.queue.drop(stale | {_key(s) for s in offending})  # over the share: `bars` only
+        for sub in shed:
             self.pacer.shed(sub)  # a window that predates a pending `snap`, or a paused one
         events = []
         if offending:
-            events.append(LadderEvent("drop", tuple(sorted(sub.ch for sub in offending))))
+            topics = tuple(sorted(sub.ch for sub in offending))
+            events.append(LadderEvent("drop", topics, None if over else "share"))
         if self.over_budget():
             events.append(LadderEvent("close", hint, "budget"))
         elif self._looping(offending):
@@ -355,12 +392,13 @@ class Backpressure:
         lane = self.pacer.lanes.get(sub.sub_id)
         return lane is not None and lane.queue.pending
 
-    def _most_expensive(self, subs: list[Subscription]) -> tuple[str, ...]:
+    def _most_expensive(self, subs: list[Subscription], *, shared: bool) -> tuple[str, ...]:
         """Topics by queued plus pending bytes, largest first (`bye.hint`): a live and a replay
-        subscription of one topic count together."""
+        subscription of one topic count together; `shared`: the `bars` topics only (SR-E12-07)."""
         costs: dict[str, int] = {}
-        for (ch, _), size in self.queue.key_bytes().items():
-            costs[ch] = costs.get(ch, 0) + size
+        for key, size in self.queue.key_bytes().items():
+            if not shared or _shared(key):
+                costs[key[0]] = costs.get(key[0], 0) + size
         for sub in subs:
             lane = self.pacer.lanes.get(sub.sub_id)
             if lane is not None and lane.queue.pending_bytes:
@@ -406,6 +444,8 @@ class Backpressure:
                 continue  # paused: no `s` until its resume (§5.4); parked: until a retry
             if self.queue.pct(self.pacer.pending_bytes) >= DRAIN_PCT:
                 break
+            if sub.topic.family.family == SHARE_FAMILY and self.queue.share_pct() >= DRAIN_PCT:
+                continue  # SR-E12-07: below half its share only; the next topic goes on
             self._parked.discard(sub_id)  # parked again below if it does not queue
             self._draining = True
             try:
@@ -450,3 +490,8 @@ def _paused(sub: Subscription) -> bool:
 
 def _key(sub: Subscription) -> Key:
     return (sub.ch, sub.replay_session_id)
+
+
+def _shared(key: Key) -> bool:
+    """A key of the family with its own share (SR-E12-07), as `encode` reads a family."""
+    return key[0].split(".", 1)[0] == SHARE_FAMILY
