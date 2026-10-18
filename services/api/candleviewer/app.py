@@ -79,6 +79,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api.admin_backups import make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
@@ -151,6 +152,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
+from candleviewer.backups_wiring import build_admin_backups
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
@@ -1813,6 +1815,15 @@ def create_app(
         Path(resolved.parquet_root).parent,
         admin_jobs,
         metrics_facade.get("cv_admin_jobs_lost_on_restart_total").child(),
+    )
+    # E42-T05 (#966 BK-4): the backup catalogue reads, `backups:read` on the audited admin router;
+    # `501 not_implemented` until a backup engine records runs (`BACKUPS_CATALOGUED`).
+    app.include_router(
+        make_admin_backups_router(
+            build_admin_backups(resolved, system_settings=admin_settings),
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+        )
     )
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
