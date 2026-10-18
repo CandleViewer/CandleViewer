@@ -106,10 +106,10 @@ const optional = (v: unknown, ok: (x: unknown) => boolean): boolean => v === und
 // Server-controlled strings are bounded here, before anything keys a map with them, logs them or
 // sends them back in a `resync` (C-12.6). Length first, so a huge string never reaches a regex.
 const TOPIC = /^[a-z_]+(\.[A-Za-z0-9:_-]+)*$/; // 13.1 `topic`: this pattern, `maxLength 120`
-const isTopic = (v: unknown): v is string =>
+export const isTopic = (v: unknown): v is string =>
   isStr(v) && v.length > 0 && v.length <= 120 && TOPIC.test(v);
 const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const isUuid = (v: unknown): v is string => isStr(v) && v.length === 36 && UUID.test(v);
+export const isUuid = (v: unknown): v is string => isStr(v) && v.length === 36 && UUID.test(v);
 const SPAN = /^(?!0{16}$)[0-9a-f]{16}$/; // W3C span id: 16 hex digits, never all zeros
 const isSpan = (v: unknown): v is string => isStr(v) && v.length === 16 && SPAN.test(v);
 /** 13.1 `error.message` and `bye.message`: `maxLength 1000`. They reach the log (`errorHandler`), so the bound is checked. */
