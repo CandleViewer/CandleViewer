@@ -119,7 +119,7 @@ def test_b_the_two_shapes_of_a_family_share_one_default_throttle(family: str, ms
 def test_c_no_topic_takes_params() -> None:
     opts = {"metrics": ["adx"], "params": {"adx": {"period": 14}}}
     (result,) = _sub(_owner(), {"ch": "metrics.BTCUSDT", "opts": opts})
-    assert _refusal(result) == (False, "invalid_options", "params")
+    assert _refusal(result) == (False, "invalid_options", "opts")  # no option name: §5.1, #3479
 
 
 _SCOPED: Final = ("orders", "positions", "executions", "wallet", "trade_groups", "rules")

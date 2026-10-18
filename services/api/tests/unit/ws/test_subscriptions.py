@@ -161,7 +161,7 @@ def test_sub_clamping_is_reported() -> None:
 def test_sub_unknown_option_is_rejected_and_nothing_created() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     (r,) = _sub(conn, {"ch": "footprint.BTCUSDT.time.5", "opts": {"min_stak": 3}})
-    assert r["error"]["code"] == "invalid_options" and r["error"]["field"] == "min_stak"
+    assert (r["error"]["code"], r["error"]["field"]) == ("invalid_options", "opts")  # §5.1, #3479
     assert conn.by_id == {}
 
 
