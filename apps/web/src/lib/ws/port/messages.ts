@@ -1,11 +1,15 @@
-// E17-T04 S5b (ADR-0005, D13; 23 4.3, 3.6): the port protocol between a tab and the shared worker, versioned,
-// in both directions. Whatever arrives on a port is untrusted input (any same-origin script can connect to a
-// shared worker and post to it), so `parseClientMessage` returns a new object holding only the fields it
-// checked, or nothing, and the tab checks what the worker posts the same way. The access token crosses in one
-// message, `token`, from the tab to the worker's memory; no other message carries it and none is logged.
+// E17-T04 S5b (ADR-0005, D13; 23 4.3, 3.6): the port protocol between a tab and the shared worker. Whatever
+// arrives on a port is untrusted input (any same-origin script can connect to a shared worker and post to it),
+// so `parseClientMessage` returns a new object holding only the fields it checked, or nothing. The version is
+// named by the tab's `connect` only (a tab of another build is refused there); what the worker posts back is
+// checked for its shape and handed on as it is, which is all a tab of the same worker can need. The access
+// token crosses in one message, `token`, from the tab to the worker's memory; no other message carries it and
+// none is logged. The value of an option, a fault command and the frames of a `data` message are not checked
+// here: the server refuses an unknown option, the fault channel checks its commands, and the engine made the frames.
 import type { PaneVisibility, TokenResult, TopicFrame } from "../api";
+import { MAX_TOKEN_LENGTH } from "../core/connection";
 import type { EngineCounters } from "../core/engine";
-import { isTopic, isUuid, type DataBody } from "../protocol/codec";
+import { isTopic, isUuid } from "../protocol/codec";
 import type { HelloPayload, SubOptions, SystemUpdate } from "../protocol/frames";
 import type { TopicStatus, WsState } from "../state/types";
 import type { SubscriptionPriority } from "../../../shell/bootstrap/subscriptionOrder";
@@ -145,25 +149,43 @@ const isNat = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isBoundedPositive = (v: unknown, max: number): v is number =>
   typeof v === "number" && Number.isFinite(v) && v > 0 && v <= max;
-const smallJson = (v: unknown, max: number): boolean => {
+/**
+ * A copy of the record `v` made through its JSON text, so what was measured is what is kept (a getter
+ * is read once) and a key such as `__proto__` is a plain own property of the copy, never its prototype.
+ * What is not a record, a cyclic value (structured clone keeps cycles), a BigInt and a text over `max`
+ * characters are refused.
+ */
+const jsonCopy = (v: unknown, max: number): Rec | undefined => {
   try {
-    return JSON.stringify(v).length <= max; // a cyclic value (structured clone keeps cycles) throws
+    const text = JSON.stringify(v); // `undefined` for a function: its `length` throws
+    const copy: unknown = text.length <= max ? JSON.parse(text) : undefined;
+    return isRec(copy) ? copy : undefined; // a list, a text, null: and a `toJSON` may make any of them
   } catch {
-    return false;
+    return undefined;
   }
 };
 
 const MAX_ID = 64;
 const MAX_URL = 512;
-/** `auth` takes 20 to 4 096 characters (13.4) and the connection checks that; the port only keeps a string from being unbounded. */
-const MAX_TOKEN = 8192;
 const MAX_OPTS_JSON = 4096;
 const MAX_PANE_PX = 100_000;
 const MAX_DPR = 16;
-const SHELLS: readonly Shell[] = ["electron", "browser", "other"];
-const VISIBILITIES: readonly PaneVisibility[] = ["visible", "offscreen", "collapsed"];
-const PRIORITIES: readonly SubscriptionPriority[] = ["private", "focused", "other"];
-const STATUSES: readonly TopicStatus[] = ["pending", "live", "resyncing", "stale", "revoked"];
+/**
+ * The members of a closed union, each named once: `Record<T, true>` needs every key and refuses any
+ * other, so a member added to `T` stops compiling here instead of being refused at run time.
+ */
+const membersOf = <T extends string>(all: Readonly<Record<T, true>>): readonly T[] =>
+  Object.keys(all) as T[]; // cast: the keys of a `Record<T, true>` are exactly the members of `T`
+const SHELLS = membersOf<Shell>({ electron: true, browser: true, other: true });
+const VISIBILITIES = membersOf<PaneVisibility>({ visible: true, offscreen: true, collapsed: true });
+const PRIORITIES = membersOf<SubscriptionPriority>({ private: true, focused: true, other: true });
+const STATUSES = membersOf<TopicStatus>({
+  pending: true,
+  live: true,
+  resyncing: true,
+  stale: true,
+  revoked: true,
+});
 
 /** A socket URL the worker may open: `ws(s)`, with no userinfo, query or fragment, so a token can never ride on it. */
 export function isWsUrl(v: unknown): v is string {
@@ -190,7 +212,8 @@ function parseConsume(m: Rec): ConsumeMessage | undefined {
   const { id, ch, rs, opts, pane, priority } = m;
   if (!isText(id, MAX_ID) || !isTopic(ch) || !isText(pane, MAX_ID)) return undefined;
   if (!oneOf(PRIORITIES, priority) || (rs !== undefined && !isUuid(rs))) return undefined;
-  if (opts !== undefined && !(isRec(opts) && smallJson(opts, MAX_OPTS_JSON))) return undefined;
+  const copy = opts === undefined ? undefined : jsonCopy(opts, MAX_OPTS_JSON);
+  if (opts !== undefined && copy === undefined) return undefined;
   return {
     t: "consume",
     id,
@@ -198,8 +221,9 @@ function parseConsume(m: Rec): ConsumeMessage | undefined {
     pane,
     priority,
     ...(rs !== undefined && { rs }),
-    // cast: the server checks every option and refuses an unknown one (S12); the worker only keeps it small
-    ...(opts !== undefined && { opts: { ...opts } as SubOptions }),
+    // cast: the server checks every option and refuses an unknown one (S12), so the values are not
+    // checked here, only kept small and plain: a `__proto__` or `constructor` key is data of the copy
+    ...(copy !== undefined && { opts: copy as SubOptions }),
   };
 }
 
@@ -214,44 +238,52 @@ function parsePane(m: Rec): PaneMessage | undefined {
 
 function parseTokenResult(r: unknown): TokenResult | undefined {
   if (!isRec(r)) return undefined;
-  if (r["kind"] === "locked" || r["kind"] === "unavailable") return { kind: r["kind"] };
-  const { accessToken, expiresAtMs } = r;
-  const ok = r["kind"] === "ok" && isText(accessToken, MAX_TOKEN);
-  if (!ok || typeof expiresAtMs !== "number" || !Number.isFinite(expiresAtMs)) return undefined;
-  return { kind: "ok", accessToken, expiresAtMs };
+  const { kind, accessToken, expiresAtMs } = r; // each read once: what is checked is what is returned
+  if (kind === "locked" || kind === "unavailable") return { kind };
+  // `auth` takes 20 to 4 096 characters (13.4): the connection checks the least, and the port the most it takes
+  if (kind !== "ok" || !isText(accessToken, MAX_TOKEN_LENGTH)) return undefined;
+  if (typeof expiresAtMs !== "number" || !Number.isFinite(expiresAtMs)) return undefined;
+  return { kind, accessToken, expiresAtMs };
 }
 
-/** `undefined` for anything that is not exactly one message of the protocol; the result holds the fields checked and no others. */
+/**
+ * `undefined` for anything that is not exactly one message of the protocol; the result holds the fields
+ * checked and no others. Each field is read once, so what was checked is what is returned.
+ */
 export function parseClientMessage(data: unknown): ClientMessage | undefined {
   if (!isRec(data)) return undefined;
-  switch (data["t"]) {
+  const { t } = data;
+  switch (t) {
     case "connect":
       return parseConnect(data);
     case "consume":
       return parseConsume(data);
     case "release":
-    case "resync":
-      return isText(data["id"], MAX_ID) ? { t: data["t"], id: data["id"] } : undefined;
+    case "resync": {
+      const { id } = data;
+      return isText(id, MAX_ID) ? { t, id } : undefined;
+    }
     case "pane":
       return parsePane(data);
     case "focus": {
-      const id = data["id"];
-      return id === null || isText(id, MAX_ID) ? { t: "focus", id } : undefined;
+      const { id } = data;
+      return id === null || isText(id, MAX_ID) ? { t, id } : undefined;
     }
-    case "visibility":
-      return typeof data["hidden"] === "boolean"
-        ? { t: "visibility", hidden: data["hidden"] }
-        : undefined;
+    case "visibility": {
+      const { hidden } = data;
+      return typeof hidden === "boolean" ? { t, hidden } : undefined;
+    }
     case "token": {
-      const result = parseTokenResult(data["result"]);
-      return isNat(data["req"]) && result !== undefined
-        ? { t: "token", req: data["req"], result }
-        : undefined;
+      const { req, result } = data;
+      const checked = parseTokenResult(result);
+      return isNat(req) && checked !== undefined ? { t, req, result: checked } : undefined;
     }
     case "stop":
-      return { t: "stop" };
-    case "fault":
-      return { t: "fault", command: data["command"] };
+      return { t };
+    case "fault": {
+      const { command } = data;
+      return { t, command };
+    }
     default:
       return undefined;
   }
@@ -283,16 +315,20 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
     }
     case "system": {
       const update = data["update"];
+      // cast: the host posts the engine's own `SystemUpdate`; the tab refuses what is not a record with a kind, and no more
       return isRec(update) && typeof update["kind"] === "string"
         ? { t: "system", update: update as unknown as SystemUpdate }
         : undefined;
     }
-    case "tokenRequest":
-      return isNat(data["req"]) && typeof data["invalidate"] === "boolean"
-        ? { t: "tokenRequest", req: data["req"], invalidate: data["invalidate"] }
+    case "tokenRequest": {
+      const { req, invalidate } = data;
+      return isNat(req) && typeof invalidate === "boolean"
+        ? { t: "tokenRequest", req, invalidate }
         : undefined;
+    }
     case "diag": {
       const diag = data["diag"];
+      // cast: the host builds `WsDiagnostics`; the tab refuses what is not a record holding the two counter records
       return isRec(diag) && isRec(diag["engine"]) && isRec(diag["host"])
         ? { t: "diag", diag: diag as unknown as WsDiagnostics }
         : undefined;
@@ -300,36 +336,4 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
     default:
       return undefined;
   }
-}
-
-// Moving frames between threads. A transferred buffer is detached at the sender (ADR-0005: zero-copy) and
-// reaches one receiver only, so the first consumer of a frame takes the buffers themselves and every other
-// one a copy, made before the first is sent.
-
-const copyBody = (body: DataBody): DataBody =>
-  body.e === "b64" ? { e: "b64", bytes: body.bytes.slice(0) } : body;
-
-/** The same frame with buffers of its own. A structured body is data nobody mutates, and a `reset` has none. */
-export function copyFrame(frame: TopicFrame): TopicFrame {
-  switch (frame.kind) {
-    case "snap":
-      // cast: `map` keeps the length, which is at least one
-      return { ...frame, bodies: frame.bodies.map(copyBody) as [DataBody, ...DataBody[]] };
-    case "d":
-      return { ...frame, body: copyBody(frame.body) };
-    case "reset":
-      return frame;
-  }
-}
-
-/** The buffers `postMessage` is to transfer with `frames`, each once. */
-export function transferListOf(frames: readonly TopicFrame[]): ArrayBuffer[] {
-  const buffers = new Set<ArrayBuffer>();
-  for (const frame of frames) {
-    if (frame.kind === "reset") continue;
-    for (const body of frame.kind === "snap" ? frame.bodies : [frame.body]) {
-      if (body.e === "b64") buffers.add(body.bytes);
-    }
-  }
-  return [...buffers];
 }
