@@ -1479,8 +1479,11 @@ def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> 
     assert keys == set(_CODEQL_LINE_PINS)  # every pin names a live entry
 
 
-_LOGIN_SERVICE = _ROOT / "services/api/candleviewer/auth/login_service.py"
-_MFA_SERVICE = _ROOT / "services/api/candleviewer/auth/mfa_service.py"
+_PRODUCT = _ROOT / "services/api/candleviewer"
+_LOGIN_SERVICE = _PRODUCT / "auth/login_service.py"
+_MFA_SERVICE = _PRODUCT / "auth/mfa_service.py"
+# The hash helper on each weak-hashing entry's line -> the module that defines it.
+_TOKEN_HASHERS = {"_hash_mfa_token": _LOGIN_SERVICE, "_hash_token": _MFA_SERVICE}
 
 
 def _calls_of(tree: ast.Module, func: str) -> list[str]:
@@ -1489,6 +1492,19 @@ def _calls_of(tree: ast.Module, func: str) -> list[str]:
         ast.unparse(node)
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == func
+    ]
+
+
+def _refs_of(tree: ast.Module, name: str) -> list[str]:
+    """Every reference to `name` in the code of `tree`, unparsed: a name, an attribute, an
+    import, or a string equal to it (as getattr takes). Prose that mentions it never counts."""
+    return [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.alias) and node.name == name)
+        or (isinstance(node, ast.Constant) and node.value == name)
     ]
 
 
@@ -1519,15 +1535,28 @@ def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> Non
     assert len(stores) == 1  # the token is bound once
     assert minted == ["self._mfa_token_factory()"]
     assert _calls_of(login, "_hash_mfa_token") == ["_hash_mfa_token(mfa_token)"]
+    assert _refs_of(login, "_hash_mfa_token") == ["_hash_mfa_token"]  # that call only
     mfa = ast.parse(_MFA_SERVICE.read_text(encoding="utf-8"))
     assert _calls_of(mfa, "_hash_token") == ["_hash_token(mfa_token)"]  # the presented token
-    # Production keeps the default source: no other module names (so overrides) the factory.
-    overrides = [
-        str(p.relative_to(_ROOT))
-        for p in sorted((_ROOT / "services/api/candleviewer").rglob("*.py"))
-        if p != _LOGIN_SERVICE and "mfa_token_factory" in p.read_text(encoding="utf-8")
-    ]
-    assert not overrides, f"re-triage the weak-hashing entries: {overrides}"
+    assert _refs_of(mfa, "_hash_token") == ["_hash_token"]  # that call only
+
+
+def test_repo_register_mfa_token_hash_helpers_are_not_reached_from_other_modules() -> None:
+    """No other product module may override the token factory or reach a hash helper: one
+    that imports a helper could hash another value on the accepted line, and that result
+    would carry the accepted id. Tests are not product code and may import the helpers."""
+    found: list[str] = []
+    for path in sorted(_PRODUCT.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(_ROOT)
+        if path != _LOGIN_SERVICE and "mfa_token_factory" in text:
+            found.append(f"{rel}: mfa_token_factory")
+        named = [name for name, home in _TOKEN_HASHERS.items() if path != home and name in text]
+        if named:
+            tree = ast.parse(text)
+            found.extend(f"{rel}: {ref}" for name in named for ref in _refs_of(tree, name))
+    hint = "re-triage the weak-hashing entries (or give an unrelated helper another name)"
+    assert not found, f"{hint}: {found}"
 
 
 def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:
