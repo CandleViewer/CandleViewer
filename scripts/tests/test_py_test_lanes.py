@@ -52,26 +52,57 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(step.get("run", "") for step in job["steps"])
 
 
-def _marker_expressions(job: dict[str, Any]) -> list[str | None]:
-    """The -m expression of each pytest call in the job's steps; None for a call with no -m, which
-    runs the pyproject addopts selection (it keeps `flaky` tests)."""
-    found: list[str | None] = []
-    for step in job["steps"]:
-        for line in step.get("run", "").replace("\\\n", " ").splitlines():
-            words = shlex.split(line, comments=True) if "pytest" in line else []
-            if "pytest" in words:
-                args = words[words.index("pytest") + 1 :]
-                found.append(args[args.index("-m") + 1] if "-m" in args else None)
+def _pytest_calls(run: str) -> list[list[str]]:
+    """The arguments of each pytest call in a step's script. Continuation lines are joined and each
+    line is split at the shell's control operators, so `pytest a && pytest b` is two calls."""
+    calls: list[list[str]] = []
+    for line in run.replace("\\\n", " ").splitlines():
+        if "pytest" not in line:
+            continue
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)  # drops `#` comments
+        lexer.whitespace_split = True
+        command: list[str] = []
+        for word in [*lexer, ";"]:
+            core = word.strip("()")  # a subshell or a `$(...)` stays inside its command
+            if not core or core.strip(";&|"):
+                command.append(word)
+                continue
+            names = [Path(each).name for each in command]  # `pytest`, `.venv/bin/pytest`
+            if "pytest" in names:
+                calls.append(command[names.index("pytest") + 1 :])
+            command = []
+    return calls
+
+
+def _marker_expressions(args: list[str]) -> list[str]:
+    """Every marker expression of a pytest call, in each spelling (`-m X`, `-mX`, `--markexpr X`,
+    `--markexpr=X`). pytest applies the last one, so the pin checks them all."""
+    found: list[str] = []
+    for arg, following in zip(args, [*args[1:], ""], strict=True):
+        if arg in ("-m", "--markexpr"):
+            found.append(following)
+        elif arg.startswith("--markexpr="):
+            found.append(arg.removeprefix("--markexpr="))
+        elif arg.startswith("-m"):
+            found.append(arg.removeprefix("-m"))
     return found
 
 
 def _leaves_flaky_out(expression: str) -> bool:
     """True when `not flaky` is an operand of the expression's outermost `and`: pytest then
     deselects every `flaky` test, whatever its other marks."""
-    top = " ".join(expression.split())
-    while (flat := re.sub(r"\([^()]*\)", "group", top)) != top:  # drop parenthesised groups
+    top = expression
+    while (flat := re.sub(r"\([^()]*\)", " group ", top)) != top:  # drop parenthesised groups
         top = flat
+    top = " ".join(top.split())  # pytest splits words at parentheses as well as at spaces
     return " or " not in top and "not flaky" in top.split(" and ")
+
+
+def _keeps_flaky_out(args: list[str]) -> bool:
+    """A pytest call deselects `flaky` tests. With no marker expression it runs the pyproject
+    addopts selection, which keeps them."""
+    expressions = _marker_expressions(args)
+    return bool(expressions) and all(_leaves_flaky_out(each) for each in expressions)
 
 
 def _fake_api(tmp_path: Path, files: list[str]) -> Path:
@@ -137,11 +168,14 @@ def test_each_lane_runs_the_ci_selection_on_its_own_paths_with_coverage() -> Non
 def test_no_py_job_runs_a_test_quarantined_as_flaky() -> None:
     """C-9.3 (#3091): a test quarantined with the `flaky` marker runs in no job of this required
     workflow, so a known-flaky test cannot turn the `py` check red."""
-    calls = {name: _marker_expressions(job) for name, job in _jobs().items()}
+    calls = {
+        name: [args for step in job["steps"] for args in _pytest_calls(step.get("run", ""))]
+        for name, job in _jobs().items()
+    }
     assert calls["py-tests"] and calls["py-perf"], calls  # the lane step and the perf budgets
-    for name, expressions in calls.items():
-        for expression in expressions:
-            assert expression is not None and _leaves_flaky_out(expression), (name, expression)
+    for name, job_calls in calls.items():
+        for args in job_calls:
+            assert _keeps_flaky_out(args), (name, args)
 
 
 def test_py_job_combines_every_lane_and_keeps_the_floor_and_the_gate_artifact() -> None:
@@ -232,8 +266,11 @@ def test_collects_rejects_options_other_than_ignore() -> None:
     [
         ("perf and not flaky", True),
         ("not (chaos or harness) and not flaky", True),
+        ("(perf)and not flaky", True),
         ("not exchange_smoke and not perf", False),
         ("perf or chaos and not flaky", False),  # `and` binds first: a flaky perf test still runs
+        ("perf or(chaos) and not flaky", False),  # pytest splits words at parentheses too
+        ("(perf)or chaos and not flaky", False),
         ("not (flaky and perf)", False),
     ],
 )
@@ -241,6 +278,26 @@ def test_leaves_flaky_out_needs_not_flaky_under_the_outermost_and(
     expression: str, leaves_out: bool
 ) -> None:
     assert _leaves_flaky_out(expression) is leaves_out
+
+
+@pytest.mark.parametrize(
+    ("run", "kept_out"),
+    [
+        ('uv run pytest -p no:cacheprovider -m "perf and not flaky" \\\n  --no-cov tests', [True]),
+        ("# pytest -m perf", []),
+        ('lanes=$(python tools/ci/py_test_lanes.py pytest-args "$LANE")', []),
+        ('pytest -m "perf and not flaky" tests -m perf', [False]),  # pytest applies the last -m
+        ('pytest -m "not flaky" a --markexpr=perf', [False]),
+        ('pytest -m "not flaky" a && pytest b', [True, False]),  # b runs the addopts selection
+        ('python -m pytest -m"not flaky" a; .venv/bin/pytest --markexpr "perf" b', [True, False]),
+        ('pytest -m "not flaky" $(cat paths) -m perf', [False]),
+        ('(cd a && pytest -m "not flaky" t)&&pytest b', [True, False]),
+    ],
+)
+def test_the_flaky_pin_reads_every_pytest_call_and_marker_expression(
+    run: str, kept_out: list[bool]
+) -> None:
+    assert [_keeps_flaky_out(args) for args in _pytest_calls(run)] == kept_out
 
 
 @pytest.mark.parametrize(
