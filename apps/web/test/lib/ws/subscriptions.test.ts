@@ -346,6 +346,8 @@ describe("options (C4) and server strings", () => {
     expect([handle.effective, handle.subId]).toEqual([{}, undefined]);
     registry.onSubOk(subOk("not an object", BOOK, { sub_id: "" }), LIVE); // 1 to 64 characters: no id either
     expect(handle.subId).toBeUndefined();
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "s" }), LIVE); // the shortest one is kept
+    expect(handle.subId).toBe("s");
     registry.onSubOk(subOk({}, BOOK, { sub_id: "s".repeat(64) }), LIVE); // the longest one kept
     expect(handle.subId).toBe("s".repeat(64));
     registry.onSubOk(subOk({ throttle_ms: 50, encoding: "binary" }), LIVE);
