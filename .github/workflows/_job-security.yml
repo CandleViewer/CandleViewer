@@ -73,9 +73,6 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install gate helper deps (PyYAML for security_gate.py)
-        run: pip install -r scripts/requirements-ci.txt
-
       - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: ${{ env.CV_CODEQL_LANGUAGES }}
@@ -90,6 +87,16 @@ jobs:
         with:
           output: ${{ runner.temp }}/codeql-results
           upload: false # gate on our normalised policy first, then upload
+
+      # #3337: installed only after analyze, so nothing a PR names is installed before init or
+      # analyze. Code run here could still reach the SARIF before the gate and the upload, so this
+      # takes only the wheel whose sha256 the file pins: no build step, no other package.
+      # always(): the gate below always runs, and with its module it fails closed with a message.
+      - name: Install gate helper deps (hash-pinned PyYAML wheel for security_gate.py)
+        if: always()
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all: --no-deps
+          -r tools/ci/requirements-security-gate.txt
 
       # security_gate.py reads `security-severity` / `level` from the rule
       # descriptor when the result omits them (CodeQL always does) — see the

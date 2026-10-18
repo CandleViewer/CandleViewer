@@ -16,8 +16,9 @@ Error codes (ticket "Technical notes / design"):
     CI-SEC-005  scanner infrastructure failure (never silently treated as a
                 clean run)
 
-Stdlib + PyYAML only (`scripts/requirements-ci.txt` pins PyYAML for the CI
-image); no network access performed by this module itself.
+Stdlib + PyYAML only: `scripts/requirements-ci.txt` pins PyYAML for the CI
+image, and `tools/ci/requirements-security-gate.txt` pins it by hash for the
+codeql job (#3337). No network access performed by this module itself.
 """
 
 from __future__ import annotations
@@ -488,6 +489,36 @@ def _suppression_problem(
     return last
 
 
+def _sarif_runs(runs: object, path: Path, tool: str) -> list[dict[str, Any]]:
+    """Return the document's runs once each one names its `tool.driver` (#3337).
+
+    Every scanner that reaches this gate (CodeQL, Semgrep, Bandit, Trivy) writes
+    one run per scan, clean or not, and SARIF requires `tool.driver.name`. A
+    document with no run records no scan, and a run with no driver is malformed:
+    both are CI-SEC-005, never a clean scan or findings without a severity.
+    """
+
+    def malformed(reason: str) -> SecurityGateError:
+        return SecurityGateError("CI-SEC-005", f"{tool}: {path} {reason}")
+
+    if not isinstance(runs, list):
+        raise malformed("is not a SARIF document ('runs' is not a list)")
+    if not runs:
+        raise malformed("has no runs, so it records no scan")
+    for i, run in enumerate(runs):
+        if not isinstance(run, dict):
+            raise malformed(f"run {i} is not an object")
+        component = run.get("tool")
+        driver = component.get("driver") if isinstance(component, dict) else None
+        name = driver.get("name") if isinstance(driver, dict) else None
+        if not isinstance(name, str) or not name:
+            raise malformed(
+                f"run {i} has no tool.driver with a name (a malformed run, "
+                "not findings without a severity)"
+            )
+    return runs
+
+
 def parse_sarif(
     path: Path,
     tool: str,
@@ -509,6 +540,9 @@ def parse_sarif(
     alone silently downgraded every CodeQL High to MEDIUM (never blocking),
     which is how PRs with a GitHub-reported High CodeQL alert passed this
     gate (CI-SEC-001 regression, fixed under ci/e03-codeql-job-fix).
+
+    A document without runs, or with a run that names no `tool.driver`, is a
+    scanner-infrastructure failure (CI-SEC-005, `_sarif_runs`), for every tool.
     """
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
@@ -521,7 +555,7 @@ def parse_sarif(
         raise SecurityGateError("CI-SEC-005", f"{tool}: {path} is not a SARIF document (no 'runs')")
 
     findings: list[Finding] = []
-    for run in doc.get("runs", []):
+    for run in _sarif_runs(doc["runs"], path, tool):
         by_id, components = _sarif_rule_index(run)
         for result in run.get("results", []):
             rule_id = result.get("ruleId", "unknown-rule")
