@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -192,6 +192,45 @@ def test_revocation_hub_keeps_the_default_cap_of_4096_revoked_ids(
     client, _ = world
     hub = client.app.state.revocation_hub  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
     assert hub.max_remembered == 4096
+
+
+def test_registry_remembers_a_disabled_user_for_one_access_token_lifetime(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#3413: the composition root sizes the disabled-user memory to `ACCESS_TOKEN_TTL`."""
+    client, _ = world
+    registry = client.app.state.ws_registry  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert registry.disabled_memory_s == ACCESS_TOKEN_TTL.total_seconds()
+
+
+def test_registry_dates_a_token_by_the_access_token_lifetime(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#3413: the lifetime a token's expiry is dated by is the one the session service issues
+    tokens with, `ACCESS_TOKEN_TTL`: a smaller one would let a token issued before a disable in."""
+    client, _ = world
+    registry = client.app.state.ws_registry  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert registry.access_token_ttl_s == ACCESS_TOKEN_TTL.total_seconds()
+
+
+def test_registry_keeps_the_default_cap_of_1024_disabled_users(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#3413: `create_app` passes the registry no cap, so the default is the cap production runs
+    with."""
+    client, _ = world
+    registry = client.app.state.ws_registry  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert registry.max_disabled == 1024
+
+
+def test_create_app_reads_both_registry_spans_from_the_access_token_lifetime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3413: the spans are read from `ACCESS_TOKEN_TTL` where the app is built, not defaults that
+    happen to match it: another lifetime there (5 minutes here) reaches the registry."""
+    monkeypatch.setattr("candleviewer.app.ACCESS_TOKEN_TTL", timedelta(minutes=5))
+    registry = create_app(_settings()).state.ws_registry
+    assert (registry.access_token_ttl_s, registry.disabled_memory_s) == (300.0, 300.0)
 
 
 def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill]) -> None:

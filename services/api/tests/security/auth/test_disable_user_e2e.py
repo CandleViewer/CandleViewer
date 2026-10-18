@@ -10,7 +10,8 @@ armed rule and a frozen grant with a cap. One of the two was minted by a refresh
 and a socket that never re-authed is still on its predecessor; a refresh of a third session of M,
 with a socket, has claimed it and waits to mint (#2911). So two of M's four sockets are on a session
 no id list names (S7). The Owner disables M, once. Postgres: `test_user_disable_route_pg.py`.
-A second world holds a new socket's `auth` of M across the disable (#2739).
+A second world holds a new socket's `auth` of M across the disable (#2739), and a third holds one
+across the disable and a refresh (#3413).
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import UserDisabled
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord, UserStatus
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.rules.manager import InMemoryRuleStore
@@ -338,6 +340,8 @@ def deployed(
     `w.repo` as `AuthService.start()` starts it, and the audit writer's stand-in. Shared."""
     wall = functools.partial(make_ws_router, wall_ms=lambda: int(w.clock.now.timestamp() * 1e3))
     mp.setattr(appmod, "make_ws_router", wall)  # the gateway's expiry check on the test clock
+    # The registry's clock too: it stamps a disable, compared with the tokens' issue (#3413).
+    mp.setattr(appmod, "_now_ms", lambda: int(w.clock.now.timestamp() * 1e3))
     app = appmod.create_app(settings, auth_clock=w.clock)
     ctx = app.state.app_context
     ctx.audit._writer = _AuditSink()
@@ -406,9 +410,11 @@ def test_data_retained(disabled: SimpleNamespace) -> None:
 def test_an_auth_in_flight_across_the_disable_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     """#2739, SR-029: a new socket of M whose `auth` passed `authenticate` before the disable
     committed, and registers only after it, gets `bye user_disabled` and 4403, never `auth_ok`.
-    The per-user close ran before it registered and its principal is read after the commit, so
-    what refuses it is the hub's memory of M's revoked session, which only the call site's
-    `publish_revocation` feeds: a no-op there fails this test (the S7 review's Low)."""
+    The per-user close ran before it registered and its principal is read after the commit. The
+    hub's memory of M's revoked session, which only the call site's `publish_revocation` feeds,
+    refuses it, and the test pins that memory directly (`was_revoked`): since #3413 the registry's
+    own memory of M refuses this socket too, so the refusal alone no longer fails a no-op there
+    (the S7 review's Low)."""
     with _world() as (w, app, client):
         portal = client.portal
         assert portal is not None  # inside the client's `with`
@@ -433,9 +439,77 @@ def test_an_auth_in_flight_across_the_disable_is_refused(monkeypatch: pytest.Mon
                 run(functools.partial(asyncio.wait_for, passed.wait(), _GUARD_S))
                 path = f"/users/{_M}?acknowledge_unknown_positions=true"
                 status = client.delete(path, headers=headers).status_code
+                named = app.state.revocation_hub.was_revoked(str(s.session_id))
             finally:
                 run(release.set)
             bye, code = _ended(ws)
-    assert status == 204
+    assert (status, named) == (204, True)
+    p = bye["p"]
+    assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
+
+
+def _hold_first_read(
+    mp: pytest.MonkeyPatch, registry: Any, user: uuid.UUID
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """`user`'s next principal read on the deployed registry completes, then waits: `read` is set
+    once it has its principal, which it returns once `release` is set. Later reads run through."""
+    load, read, release = registry._resolve, asyncio.Event(), asyncio.Event()
+
+    async def held(uid: uuid.UUID) -> PrincipalSnapshot:
+        principal: PrincipalSnapshot = await load(uid)
+        if uid == user and not read.is_set():
+            read.set()
+            await release.wait()
+        return principal
+
+    mp.setattr(registry, "_resolve", held)
+    return read, release
+
+
+def _count_closes(mp: pytest.MonkeyPatch, registry: Any) -> list[int]:
+    """What each `registry.user_disabled` closed, in order: the disable cascade's per-user close
+    (`WsEvents.user_disabled`) finds the registry through this attribute at each call."""
+    closed: list[int] = []
+    user_disabled = registry.user_disabled
+
+    async def counted(user: uuid.UUID) -> int:
+        count: int = await user_disabled(user)
+        closed.append(count)
+        return count
+
+    mp.setattr(registry, "user_disabled", counted)
+    return closed
+
+
+def test_late_registration_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#3413 (SR-029, UL1-E2), the round-2 review's reproduction on the deployed app. A new socket
+    of M passes `authenticate` and reads M's principal before the disable, and its `auth` is held
+    there. M's own refresh rotates the session it presented, so the disable never names that
+    session and the hub does not know it, and the per-user close the DELETE runs (S7) finds no
+    socket of M. Released, the socket registers and gets `bye user_disabled` and 4403, never
+    `auth_ok`; the `sub` on `positions` it sent first gets no `sub_ok`."""
+    with _world() as (w, app, client):
+        assert client.portal is not None  # inside the client's `with`
+        run, sessions = client.portal.call, app.state.app_context.auth.sessions
+        headers, s = _owner_headers(app, run, w, str(_OWNER)), run(sessions.mint, str(_M))
+        read, release = _hold_first_read(monkeypatch, app.state.ws_registry, _M)
+        closes = _count_closes(monkeypatch, app.state.ws_registry)
+        positions = {"ch": "positions", "opts": {"exchange_account_ids": [str(_ACCOUNT)]}}
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            ws.send_json({"t": "hello", "id": "h"})
+            assert _recv(ws)["t"] == "welcome"
+            ws.send_json({"t": "auth", "id": "a", "p": {"access_token": s.access_token}})
+            ws.send_json({"t": "sub", "id": "s", "p": {"topics": [positions]}})
+            try:
+                run(functools.partial(asyncio.wait_for, read.wait(), _GUARD_S))
+                w.clock.now += timedelta(seconds=1)  # the refresh and the disable come after it
+                run(sessions.refresh, s.refresh_token)  # rotates the presented session
+                path = f"/users/{_M}?acknowledge_unknown_positions=true"
+                status = client.delete(path, headers=headers).status_code
+                named = app.state.revocation_hub.was_revoked(str(s.session_id))
+            finally:
+                run(release.set)
+            bye, code = _ended(ws)
+    assert (status, named, closes) == (204, False, [0])
     p = bye["p"]
     assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE

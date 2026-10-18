@@ -306,8 +306,11 @@ too. A rule its chart refuses (evaluating, acting, pending confirmation or spent
 no grant and no permission to act on (O4, O5); a repeat disarms it once it is back in `armed`, which
 a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
 A new socket whose `auth` completes around the commit, on a session the user's own refresh rotated,
-can register after the socket step and stream until its access token expires, 12 minutes at most
-(UL1-E2's residual in `docs/security/threat-models/e42-user-lifecycle.md` §6; follow-up #3413).
+can register after the socket step. The registry remembers the disabled user for one access-token
+lifetime, so that socket gets `bye` `user_disabled` and `4403`, never `auth_ok` (#3413). Only once
+1024 other users are disabled within those 12 minutes is the user forgotten, and the socket then gets
+`auth_ok` on the deny-all principal, with no private topic, until its token expires (UL1-E2's
+residual in `docs/security/threat-models/e42-user-lifecycle.md` §6).
 
 What the cascade builds on, and what to read afterwards:
 
@@ -853,7 +856,6 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 | Disable-user drill on staging (SR-029)                                    | #2494, #300          |
 | Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
 | No B16 record of the sessions that a lost disable commit revoked          | #2710                |
-| A disabled user's new socket can register after the socket step (UL1-E2)  | #3413                |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
