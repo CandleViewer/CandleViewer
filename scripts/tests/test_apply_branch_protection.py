@@ -232,3 +232,65 @@ def test_diff_merge_queue_detects_drift() -> None:
     diff = abp.diff_merge_queue(live_params, desired)
     assert not diff.is_empty()
     assert diff.changed["merge_method"] == ("MERGE", "SQUASH")
+
+
+# --- Refusals (#3103): never write a weaker or a lockout configuration ------
+
+
+def _stronger_live() -> dict:
+    """Live protection stronger than the file: what E01-Q01 cases 1.1-1.2 guard."""
+    live = abp.compare_view(_valid_desired_state())
+    live["required_status_checks"] = {"strict": True, "checks": [{"context": "lint", "app_id": 1}]}
+    live["required_pull_request_reviews"].update(
+        required_approving_review_count=2, require_code_owner_reviews=True
+    )
+    return live
+
+
+def test_weakening_changes_names_each_weaker_setting() -> None:
+    changes = abp.weakening_changes(_stronger_live(), abp.compare_view(_valid_desired_state()))
+    assert len(changes) == 4, changes
+    for fragment in ("strict", "drops", "review_count: 2 -> 0", "code_owner_reviews"):
+        assert any(fragment in change for change in changes), fragment
+
+
+def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: dict, *flags: str) -> tuple:
+    writes: list = []
+    monkeypatch.setenv("CV_TEST_TOKEN", "not-a-real-token")
+    monkeypatch.setattr(abp, "fetch_live_state", lambda *a: _stronger_live())
+    monkeypatch.setattr(abp, "apply_state", lambda *a: writes.append(a))
+    path = tmp_path / "desired.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    argv = ["--desired-state", str(path), "--repo", "o/r", "--token-env", "CV_TEST_TOKEN"]
+    argv += ["--workflows-glob", str(ROOT / ".github/workflows/*.yml"), *flags]
+    return abp.main(argv), writes
+
+
+def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch, capsys) -> None:
+    data = {k: v for k, v in _valid_desired_state().items() if k != "merge_queue"}
+    assert _run(tmp_path, monkeypatch, data) == (1, [])
+    assert "refusing: weaker than live" in capsys.readouterr().err
+    assert _run(tmp_path, monkeypatch, data, "--allow-weaken") == (0, [])  # a dry run by default
+    code, writes = _run(tmp_path, monkeypatch, data, "--allow-weaken", "--apply")
+    assert code == 0 and writes[0][2] == abp.to_api_payload(data)
+
+
+@pytest.mark.parametrize(
+    "mutation,message_fragment",
+    [
+        # A reusable workflow's job reports as `<caller> / <job>`: a bare `lint` never arrives.
+        (
+            lambda d: d["required_status_checks"].update(checks=[{"context": "lint", "app_id": 1}]),
+            "'lint'",
+        ),
+        # No workflow listens to merge_group until #3433: a queue would hold every PR.
+        (lambda d: None, "no merge_group workflow reports required check 'ci-required'"),
+    ],
+)
+def test_main_refuses_a_lockout_before_any_api_call(
+    tmp_path, monkeypatch, capsys, mutation, message_fragment
+) -> None:
+    data = _valid_desired_state()
+    mutation(data)
+    assert _run(tmp_path, monkeypatch, data, "--allow-weaken", "--apply") == (1, [])
+    assert message_fragment in capsys.readouterr().err

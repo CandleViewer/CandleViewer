@@ -3,16 +3,17 @@
 GitHub repository's `main` branch protection (CONSTITUTION.md C-9.1, C-10.1;
 docs/plan/01-sdlc-and-branching.md §6.1, §7).
 
-Refuses a missing or unknown key (`x-` keys too: nothing is stripped and sent)
-and a value below a floor.
+A dry run unless given --apply. Refuses a missing or unknown key (`x-` keys too:
+nothing is stripped and sent), a floor crossed, a lockout, and, without
+--allow-weaken, any change weaker than the live state.
 
 This script never runs automatically from a PR-triggered workflow (see the
 break-glass runbook in CONTRIBUTING.md) — it is invoked manually by an admin
 or via `workflow_dispatch` with an environment approval, using a credential
 scoped to repository administration only.
 
-Exit codes: 0 success / no-op, 1 desired-state validation failed or apply
-failed, 2 internal error (network/auth not configured).
+Exit codes: 0 success / no-op / clean dry run, 1 desired-state validation
+failed, refused or apply failed, 2 internal error (network/auth not configured).
 Stdlib only (urllib), so it runs before any package manager is scaffolded.
 """
 
@@ -26,6 +27,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+
+from check_required_check_reconciliation import load_workflow_job_names
 
 DEFAULT_DESIRED_STATE_PATH = ".github/branch-protection.json"
 API_BASE = "https://api.github.com"
@@ -56,6 +59,20 @@ SETTINGS: dict[str, Any] = {
 META_KEYS = frozenset({"branch", "merge_queue", "pending_checks"})
 # Compared with live, never sent: it has its own endpoint, not the protection PUT.
 CHECK_ONLY_KEYS = frozenset({"required_signatures"})
+# Dotted setting -> the value that protects `main` more; a change away from it weakens protection.
+PROTECTIVE: dict[str, bool] = {
+    "enforce_admins": True,
+    "required_linear_history": True,
+    "required_conversation_resolution": True,
+    "block_creations": True,
+    "required_signatures": True,
+    "allow_force_pushes": False,
+    "allow_deletions": False,
+    "required_status_checks.strict": True,
+    "required_pull_request_reviews.require_code_owner_reviews": True,
+    "required_pull_request_reviews.dismiss_stale_reviews": True,
+    "required_pull_request_reviews.require_last_push_approval": True,
+}
 
 
 class DesiredStateError(Exception):
@@ -115,8 +132,8 @@ def _shape_problems(obj: dict[str, Any], schema: dict[str, Any], where: str = ""
 
 
 def validate_desired_state(data: dict[str, Any]) -> None:
-    """Shape, then floors no file may cross. The review settings are not floors: the file
-    describes the live state, and C-10.1's reviews are enforced outside GitHub."""
+    """Shape, then floors no file may cross (the review settings are weakening-checked against
+    live instead: see `weakening_changes`)."""
     problems = _shape_problems(data, SETTINGS)
     if problems:
         raise DesiredStateError("; ".join(problems))
@@ -151,6 +168,45 @@ def compare_view(desired: dict[str, Any]) -> dict[str, Any]:
 def to_api_payload(desired: dict[str, Any]) -> dict[str, Any]:
     """Exactly what the GitHub REST API's PUT .../branches/main/protection endpoint accepts."""
     return {k: v for k, v in compare_view(desired).items() if k not in CHECK_ONLY_KEYS}
+
+
+def _at(state: Any, path: str) -> Any:
+    for part in path.split("."):
+        state = state.get(part) if isinstance(state, dict) else None
+    return state
+
+
+def weakening_changes(live: dict[str, Any], desired: dict[str, Any]) -> list[str]:
+    """Each way `desired` protects `main` less than `live` (both shaped by compare_view)."""
+    out = [
+        f"{path}: {json.dumps(safe)} -> {json.dumps(_at(desired, path))}"
+        for path, safe in PROTECTIVE.items()
+        if _at(live, path) is safe and _at(desired, path) is not safe
+    ]
+    count = "required_pull_request_reviews.required_approving_review_count"
+    if (_at(desired, count) or 0) < (_at(live, count) or 0):
+        out.append(f"{count}: {_at(live, count)} -> {_at(desired, count)}")
+    kept = _at(desired, "required_status_checks.checks") or []
+    out += [
+        f"required_status_checks.checks: drops {json.dumps(check)}"
+        for check in _at(live, "required_status_checks.checks") or []
+        if check not in kept
+    ]
+    if live.get("restrictions") is not None and desired.get("restrictions") is None:
+        out.append("restrictions: removed")
+    return out
+
+
+def lockout_reasons(desired: dict[str, Any], workflows_glob: str) -> list[str]:
+    """Settings that would stop every merge: a required check no pull_request workflow reports,
+    or a merge queue whose required checks no merge_group workflow reports (#3433)."""
+    events = ["pull_request", "merge_group"] if desired.get("merge_queue") else ["pull_request"]
+    return [
+        f"no {event} workflow reports required check '{check['context']}'"
+        for event in events
+        for check in desired["required_status_checks"]["checks"]
+        if check["context"] not in load_workflow_job_names(workflows_glob, event)
+    ]
 
 
 def fetch_live_state(repo: str, token: str, branch: str = "main") -> dict:
@@ -413,6 +469,7 @@ def apply_merge_queue_ruleset(repo: str, token: str, desired: dict, branch: str 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--desired-state", default=DEFAULT_DESIRED_STATE_PATH)
+    parser.add_argument("--workflows-glob", default=".github/workflows/*.yml")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument(
         "--token-env",
@@ -423,7 +480,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the diff between live and desired state; change nothing",
+        help="the default: print the diff between live and desired state; change nothing",
+    )
+    parser.add_argument("--apply", action="store_true", help="write the desired state")
+    parser.add_argument(
+        "--allow-weaken",
+        action="store_true",
+        help="permit changes weaker than the live state (only on an owner decision)",
     )
     args = parser.parse_args(argv)
 
@@ -431,6 +494,11 @@ def main(argv: list[str] | None = None) -> int:
         desired = load_desired_state(args.desired_state)
     except DesiredStateError as exc:
         print(f"apply-branch-protection: invalid desired state: {exc}", file=sys.stderr)
+        return 1
+    lockouts = lockout_reasons(desired, args.workflows_glob)
+    for reason in lockouts:
+        print(f"apply-branch-protection: refusing, lockout: {reason}", file=sys.stderr)
+    if lockouts:
         return 1
 
     payload = compare_view(desired)
@@ -464,8 +532,18 @@ def main(argv: list[str] | None = None) -> int:
         if not mq_diff.is_empty():
             print("apply-branch-protection: merge-queue ruleset diff (live -> desired):")
             print(mq_diff.render())
-        if args.dry_run:
-            print("apply-branch-protection: --dry-run set, not applying")
+        refusals = [f"live has {key}, which the file does not declare" for key in diff.removed]
+        refusals += [
+            f"{key} has its own endpoint" for key in CHECK_ONLY_KEYS if key in diff.changed
+        ]
+        if not args.allow_weaken:
+            refusals += [f"weaker than live: {w}" for w in weakening_changes(live, payload)]
+        for reason in refusals:
+            print(f"apply-branch-protection: refusing: {reason}", file=sys.stderr)
+        if refusals:
+            return 1
+        if not args.apply:
+            print("apply-branch-protection: dry run, not applying (pass --apply)")
             return 0
         if not diff.is_empty():
             apply_state(args.repo, token, to_api_payload(desired), args.branch)
