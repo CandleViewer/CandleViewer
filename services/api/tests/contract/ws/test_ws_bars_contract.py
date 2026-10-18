@@ -5,17 +5,19 @@ the snapshot source on the conformance world's hub, and a lease service that rec
 client validates every frame on receipt, under `cv.v1.json` and `cv.v1.msgpack`. Stored rows and
 emissions come from the recorded BTCUSDT tape (C-13.5), built by the real builders.
 
-Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; a client resync
-after a lost delta; a generation swap (C14); the structured fallback of a binary subscription, of a
-snapshot and of deltas (C15, C17, C19); the scales of each kind-4 frame (C16); a dotted `param`;
-no `marketdata:read`, at subscribe and mid-stream."""
+Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; scenario 3, with
+`CV_WS_BACKPRESSURE_ENABLED` on (40 updates in one 250 ms window, a close beside the next open) and
+off (every update a frame); a client resync after a lost delta; a generation swap (C14); the
+structured fallback of a binary subscription, of a snapshot and of deltas (C15, C17, C19); the
+scales of each kind-4 frame (C16); a dotted `param`; no `marketdata:read`, at subscribe and
+mid-stream."""
 
 from __future__ import annotations
 
 import functools
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, NamedTuple
 
 import pytest
 from fastapi import FastAPI, Request
@@ -24,6 +26,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.market import MarketDataPrincipal
 from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.bars.activity_builders import TickBarBuilder
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarReader, row_key
@@ -32,6 +35,7 @@ from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.time_builder import TimeBarBuilder
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws_wiring import SnapshotRouter
@@ -54,6 +58,20 @@ _STRUCTURED_ONLY: Final = frozenset({"close_t_ms", "min_delta", "max_delta"})
 _DECIMALS: Final = ("o", "h", "l", "c", "v", "turnover", "delta", "min_delta", "max_delta")
 _MINUTE: Final = ("time", "1")
 CH: Final = "bars.BTCUSDT.time.1"
+#: What the builder returned for one trade: one source event of a series.
+_Emission = list[BarUpdate]
+#: A bar as scenario 3 reads it: index, closed, close price, trades.
+_State = tuple[int, bool, Decimal, int]
+#: `CV_WS_BACKPRESSURE_ENABLED` on: the gateway pipeline with its 250 ms windows (§8.1, §8.2).
+_ON: Final = BackpressureConfig()
+#: (bar type, param, trades built and not published, trades inside the one window): 40 trades
+#: updating a tick bar, then the boundary trade of a time bar (its close and the next open are one
+#: emission) and of a tick bar (two emissions: the close, then the open).
+_SCRIPTS: Final = {
+    "forty_updates": ("tick", "100", 0, 40),
+    "boundary_in_one_emission": ("time", "1", 0, 2),
+    "boundary_in_two_emissions": ("tick", "100", 97, 3),
+}
 
 
 class _Storage:
@@ -91,10 +109,16 @@ async def _no_rebuild(*_: object) -> None: ...
 
 class _Rig:
     """The conformance world with the bars wiring of `create_app` over `rows` (`bar_param` ->
-    stored rows). `scales` is the instrument catalogue's answer (`None`: symbol not listed)."""
+    stored rows). `scales` is the instrument catalogue's answer (`None`: symbol not listed). With
+    a `backpressure` config the gateway runs with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4)."""
 
-    def __init__(self, rows: dict[str, list[dict[str, object]]]) -> None:
-        self.w = h.World()
+    def __init__(
+        self,
+        rows: dict[str, list[dict[str, object]]],
+        *,
+        backpressure: BackpressureConfig | None = None,
+    ) -> None:
+        self.w, self.paced = h.World(backpressure=backpressure), backpressure is not None
         self.scales: tuple[int, int] | None = (1, 3)
         self.reader = BarReader(_Storage(rows), _no_rebuild, now_us=lambda: _NOW)
         self.store = SeriesStore(self.reader.read_tail, release_grace_s=0.0, clock=lambda: 0.0)
@@ -110,6 +134,23 @@ class _Rig:
 
     def emit(self, spec: BarSpec, *updates: BarUpdate, generation: int = 0) -> None:
         self.w.call(self.router.emit, spec, updates, generation)
+
+    def play(
+        self, c: h.Client, mine: _Series, spec: BarSpec, windows: list[list[_Emission]]
+    ) -> list[dict[str, Any]]:
+        """Publish `windows` on the fake clock and apply the `d` frames they cause: each window's
+        emissions 1 ms before it closes (the first, at 0, leaves at once), then the close. One
+        frame a window with the flag on, else one an emission; the caller asserts their `s`."""
+        frames: list[dict[str, Any]] = []
+        for n, window in enumerate(windows):
+            self.w.clock.now = 0.25 * n - 0.001 if n else 0.0
+            for emission in window:
+                self.emit(spec, *emission)
+            self.w.clock.now = 0.25 * n
+            for _ in range(1 if self.paced else len(window)):
+                frames.append(c.next_of("d"))
+                mine.apply(frames[-1])
+        return frames
 
     def rest(self, bar_type: str, param: str, **query: object) -> list[dict[str, Any]]:
         """`GET /market/bars` over the same reader (a non-time kind also needs the tape's trade
@@ -195,6 +236,49 @@ def _up(kind: Literal["open", "update", "close"], bar: Bar, *, amended: bool = F
     )
 
 
+class _Script(NamedTuple):
+    ch: str
+    spec: BarSpec
+    windows: list[list[_Emission]]
+
+
+def _script(name: str) -> _Script:
+    """`_SCRIPTS[name]`: the recorded tape through the real builder, cut into the three windows a
+    connection's pacer sees (§8.1): the trade at `skip`, the first after a quiet spell, which
+    leaves at once; the `inside` trades after it, one window; and two trades after that, a second
+    window. The `skip` trades before it are built and not published: the series starts mid-bar,
+    with no history."""
+    bar_type, param, skip, inside = _SCRIPTS[name]
+    spec = _SERIES[bar_type, param]
+    builder: Any = (TimeBarBuilder if bar_type == "time" else TickBarBuilder)(spec, "BTCUSDT")
+    ems = [
+        [*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE[: skip + inside + 3]
+    ]
+    windows = [ems[skip : skip + 1], ems[skip + 1 : skip + 1 + inside], ems[skip + 1 + inside :]]
+    return _Script(f"bars.BTCUSDT.{bar_type}.{param}", spec, windows)
+
+
+def _last_bars(window: list[_Emission]) -> list[Bar]:
+    """The bars a window leaves, in index order: each as its last update in the window left it."""
+    return list({u.bar.index: u.bar for emission in window for u in emission}.values())
+
+
+def _bar_state(bar: Bar) -> _State:
+    return bar.index, bar.closed, bar.close, bar.trade_count
+
+
+def _item_state(item: dict[str, Any]) -> _State:
+    return item["index"], item["confirm"], Decimal(item["c"]), item["trades"]
+
+
+def _ends(rig: _Rig, spec: BarSpec, mine: _Series) -> tuple[list[_State], list[_State]]:
+    """The client's series and the store's (its closed bars, then the forming one)."""
+    latest = rig.store.latest("BTCUSDT", spec.spec_hash, 1000)
+    assert latest is not None
+    held = [*latest.closed, *([latest.forming] if latest.forming else [])]
+    return [_item_state(i) for _, i in sorted(mine.bars.items())], [_bar_state(b) for b in held]
+
+
 def _rest_item(bar: dict[str, Any], bar_type: str, *, flow: bool) -> dict[str, Any]:
     """A REST bar in the §14.3 item form, decimals as `Decimal`: what a snapshot item must equal."""
     item: dict[str, Any] = {
@@ -273,6 +357,81 @@ def test_contract_bars_forming_bar_is_unconfirmed_in_every_frame_and_confirmed_e
 
 
 @pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_40_updates_in_one_window_leave_as_one_coalesced_d_with_the_latest_state(
+    mode: str,
+) -> None:
+    """Scenario 3, first half, with `CV_WS_BACKPRESSURE_ENABLED` on (§8.1, §8.2): a bar opens, 40
+    trades update it inside one 250 ms window, two more follow in the next. The open leaves at
+    once, the 40 as ONE `d` with the bar's latest state, `coalesced` and `coalesced_count` 40, the
+    two as the next window's, which counts its own. A binary subscription gets a merged window
+    structured today (#3353), and C15 has its client accept either encoding: for it, `coalesced`,
+    the bar and `s` are asserted."""
+    script = _script("forty_updates")
+    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
+    with h.connect(rig.w) as c:
+        c.sub({"ch": script.ch, "opts": {"encoding": mode, "include_delta": True}})
+        assert mine.apply(c.next_of("snap"))
+        frames = rig.play(c, mine, script.spec, script.windows)
+        client, store = _ends(rig, script.spec, mine)
+    merged = frames[1]
+    assert [f["s"] for f in frames] == [2, 3, 4]  # 43 updates, three frames
+    assert [h.structured_of(f)["coalesced"] for f in frames] == [False, True, True]
+    if mode == "structured":  # kind 4 has no slot for the count (§3.4)
+        assert [f["p"].get("coalesced_count") for f in frames] == [None, 40, 2]
+    want = [_bar_state(b) for b in _last_bars(script.windows[1])]
+    assert [_item_state(i) for i in h.structured_of(merged)["bars"]] == want  # the 40th's state
+    assert merged["meta"] == {"include_delta": True}  # a window carries its last update's echo
+    assert client == store
+
+
+@pytest.mark.parametrize("script", ["boundary_in_one_emission", "boundary_in_two_emissions"])
+@pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_a_close_and_the_next_open_in_one_window_both_arrive_the_close_once(
+    mode: str, script: str
+) -> None:
+    """Scenario 3, second half, flag on: a bar closes and the next one opens inside one window.
+    The window's `d` carries both, the close with `confirm: true` and the open with `confirm:
+    false`, and the close is delivered once, in no later window's frame. A time bar's boundary
+    trade is one emission, a tick bar's two; the bars and `s` are asserted on both encodings
+    (#3353, as above)."""
+    s = _script(script)
+    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
+    with h.connect(rig.w) as c:
+        c.sub({"ch": s.ch, "opts": {"encoding": mode}})
+        assert mine.apply(c.next_of("snap"))
+        frames = rig.play(c, mine, s.spec, s.windows)
+        client, store = _ends(rig, s.spec, mine)
+    window = h.structured_of(frames[1])["bars"]
+    assert [f["s"] for f in frames] == [2, 3, 4]
+    assert [(i["index"], i["confirm"]) for i in window] == [(0, True), (1, False)]
+    closes = [i["index"] for f in frames for i in h.structured_of(f)["bars"] if i["confirm"]]
+    assert closes == [0]  # in the window's frame, in none after it
+    assert client == store
+
+
+@pytest.mark.parametrize("script", list(_SCRIPTS))
+@pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_without_the_flag_every_update_is_a_frame_and_the_series_ends_the_same(
+    mode: str, script: str
+) -> None:
+    """The same emissions with `CV_WS_BACKPRESSURE_ENABLED` off (§8.4): no window, one `d` per
+    emission, none coalesced, `s` contiguous. The client's series ends equal to the store's and to
+    the one the flag-on windows leave, so the two paths agree on it."""
+    s, ends = _script(script), []
+    for backpressure in (_ON, None):
+        rig, mine = _Rig({}, backpressure=backpressure), _Series(binary=mode == "binary")
+        with h.connect(rig.w) as c:
+            c.sub({"ch": s.ch, "opts": {"encoding": mode}})
+            assert mine.apply(c.next_of("snap"))
+            frames = rig.play(c, mine, s.spec, s.windows)  # the second pass's: flag off
+            ends.append(_ends(rig, s.spec, mine))
+    assert [f["s"] for f in frames] == list(range(2, 2 + sum(map(len, s.windows))))
+    assert not any(h.structured_of(f)["coalesced"] for f in frames)
+    (on_client, on_store), (off_client, off_store) = ends
+    assert on_client == on_store == off_client == off_store
+
+
+@pytest.mark.parametrize("mode", h.MODES)
 def test_contract_bars_a_client_that_lost_a_delta_resyncs_to_a_snapshot_holding_every_bar(
     mode: str,
 ) -> None:
@@ -312,16 +471,23 @@ def test_contract_bars_a_generation_change_is_a_swap_snapshot_never_a_delta(mode
         assert mine.apply(c.next_of("snap")) and sorted(mine.bars) == [(0, 0), (0, 1), (0, 2)]
         rig.emit(spec, _up("open", bars[3]))
         assert mine.apply(c.next_of("d"))  # s 2
-        # up, then back down: each snapshot takes the next `s`
-        for generation, seq in [(1, 3), (0, 4)]:
-            rig.emit(spec, _up("open", bars[0]), generation=generation)  # index 0 again
+        # Up, then back down. Each swap emits a bar above the newest close the store holds (the
+        # hydrated index 2, then the 4 closed in generation 1), so the store's restart rule (a bar
+        # at or below its newest close clears it) cannot fire: only the swap's own reset can drop
+        # the old bars.
+        for generation, seq, bar in [(1, 3, bars[4]), (0, 5, bars[5])]:
+            rig.emit(spec, _up("open", bar), generation=generation)
             swap = c.recv()  # the first frame the emission causes: a `snap`, not a `d`
             meta = swap["meta"]
             assert (swap["t"], swap["s"], meta["previous_seq"]) == ("snap", seq, seq - 1)
             assert meta["reason"] == "generation_swap" and mine.apply(swap)
-            assert sorted(mine.bars) == [(generation, 0)]  # replaced: nothing of the old series
+            assert {g for g, _ in mine.bars} == {generation}  # replaced, never merged
+            assert sorted(mine.bars) == [(generation, bar.index)]  # nothing of the old series
+            rig.emit(spec, _up("close", bar), generation=generation)  # a close for the next swap
+            # the close's own `d` comes next: the swap emission sent no delta after its snapshot
+            assert mine.apply(c.next_of("d")) and mine.bars[generation, bar.index]["confirm"]
         c.send({"t": "ping", "id": "p"})
-        assert c.recv()["t"] == "pong"  # and no `d` followed either snapshot
+        assert c.recv()["t"] == "pong"  # and none followed the last one either
 
 
 def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c15_c17() -> None:
