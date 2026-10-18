@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib
 import inspect
 import json
 import os
 import sys
 import threading
+from collections.abc import Callable
+from concurrent.futures import Executor, Future
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from candleviewer.observability.context import executor_future
 from candleviewer.storage.cold import recorded_reader
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
@@ -239,6 +243,13 @@ def _trades_manifest(root: Path, symbol: str = SYMBOL) -> Path:
     return root / "_manifests" / "trades" / f"symbol={symbol}" / "dt=2026-10-01.json"
 
 
+def _swap_for_valid_parquet(part: Path) -> None:
+    """Rewrite `part` as valid Parquet of the same schema whose sizes all differ."""
+    table = pq.read_table(part)
+    sizes = pa.array([9.0] * table.num_rows)
+    pq.write_table(table.set_column(table.schema.get_field_index("size"), "size", sizes), part)
+
+
 async def test_a_part_swapped_for_other_valid_parquet_is_refused_and_quarantined(
     tmp_path: Path,
 ) -> None:
@@ -246,12 +257,10 @@ async def test_a_part_swapped_for_other_valid_parquet_is_refused_and_quarantined
     root = tmp_path / "cold"
     registry = await _export(root, generated_rows())
     part = _part(root)
-    table = pq.read_table(part)
-    sizes = pa.array([9.0] * table.num_rows)
-    pq.write_table(table.set_column(table.schema.get_field_index("size"), "size", sizes), part)
+    _swap_for_valid_parquet(part)
     events = _Events()
 
-    with pytest.raises(ColdReplayReadError):
+    with pytest.raises(ColdReplayReadError, match="failed verification"):
         await ParquetRecordedReader(registry, events=events).read(
             SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10
         )
@@ -276,10 +285,34 @@ async def test_a_manifest_that_disagrees_with_an_intact_part_is_refused(
     entry[field] = "0" * 64 if field == "sha256" else entry[field] + 1
     manifest.write_text(json.dumps(doc), encoding="utf-8")
 
-    with pytest.raises(ColdReplayReadError):
+    with pytest.raises(ColdReplayReadError, match="failed verification"):
         await ParquetRecordedReader(registry).read(
             SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10
         )
+
+
+async def test_every_swapped_part_is_refused_by_verification_never_served(tmp_path: Path) -> None:
+    """Verification stops at a partition's first bad part, so the next read verifies again and
+    refuses the second, rather than serve it as if the failed pass had cleared it."""
+    root = tmp_path / "cold"
+    rows = generated_rows()
+    registry = await _export(root, rows)
+    half_hour = TimeRange(start_us=H0, end_us=H0 + 1_800_000_000)  # another range: a second part
+    await ColdExporter(registry, MemHotSource(rows)).export_partition(
+        SYMBOL, StreamKind.TRADES, half_hour
+    )
+    parts = sorted((root / "trades").rglob("part-*.parquet"))
+    assert len(parts) == 2
+    for part in parts:
+        _swap_for_valid_parquet(part)
+    events = _Events()
+    reader = ParquetRecordedReader(registry, events=events)
+
+    for _ in parts:
+        with pytest.raises(ColdReplayReadError, match="failed verification"):
+            await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+
+    assert [detail["reason"] for _, _, detail in events.emitted] == ["sha256", "sha256"]
 
 
 def _count_verifications(monkeypatch: pytest.MonkeyPatch) -> list[ColdPaths]:
@@ -440,12 +473,17 @@ async def test_a_manifest_naming_a_missing_part_is_refused(tmp_path: Path) -> No
 
 
 def test_a_duckdb_failure_is_a_typed_cold_read_error(tmp_path: Path) -> None:
-    scan = recorded_reader._Scan(tmp_path)
+    """DuckDB's own text may name a path (RP-I02): the typed error holds neither it nor a
+    chain."""
+    files: dict[str, object] = {"files": [(tmp_path / "gone" / "part-0000.parquet").as_posix()]}
 
-    with pytest.raises(ColdReplayReadError):
-        scan.run("SELECT nope FROM nowhere", {}, StreamKind.TRADES)
+    with pytest.raises(ColdReplayReadError) as caught:
+        recorded_reader._Scan(tmp_path).run(
+            "SELECT * FROM read_parquet($files)", files, StreamKind.TRADES
+        )
 
-    assert scan.ended.is_set()
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    assert str(tmp_path) not in str(caught.value)
 
 
 def test_the_scan_connection_may_open_nothing_outside_the_cold_root(tmp_path: Path) -> None:
@@ -471,6 +509,15 @@ def test_a_scan_connection_is_memory_and_thread_bounded() -> None:
     assert threads is not None and int(threads[0]) == 2
 
 
+def test_no_statement_of_a_scan_can_loosen_its_bounds(tmp_path: Path) -> None:
+    """The scan's configuration is locked once it is confined: raising the memory limit is
+    refused (unlocked, the SET would pass and only the row mapping would fail)."""
+    with pytest.raises(ColdReplayReadError):
+        recorded_reader._Scan(tmp_path).run(
+            "SET memory_limit = '8GiB'; SELECT 1 AS ts", {}, StreamKind.TRADES
+        )
+
+
 class _Con:
     """A DuckDB connection stand-in for the scan machinery. Like DuckDB, it drops an
     `interrupt()` unless a statement is running. Its main statement ends with rows, its own
@@ -480,6 +527,7 @@ class _Con:
         self.outcome = outcome
         self.statements: list[str] = []
         self.reached = threading.Event()  # the worker is at the main statement
+        self.arrivals = threading.Semaphore(0)  # released once per main statement reached
         self.go = threading.Event()  # the main statement may start running
         self.go.set()
         self.interrupted = threading.Event()
@@ -494,6 +542,7 @@ class _Con:
         if sql.startswith("SET "):
             return self
         self.reached.set()
+        self.arrivals.release()
         assert self.go.wait(timeout=5), "the test never let the statement start"
         if self.outcome == "rows":
             return self
@@ -591,6 +640,21 @@ async def test_a_scan_failing_by_itself_is_typed_and_closed_by_its_worker(
     assert con.closed_on is not None and con.closed_on != threading.get_ident()
 
 
+async def test_a_duckdb_failure_at_connect_is_typed_and_frees_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def out_of_memory() -> duckdb.DuckDBPyConnection:
+        raise duckdb.OutOfMemoryException("Out of Memory Error: could not allocate a block")
+
+    monkeypatch.setattr(recorded_reader, "_connect", out_of_memory)
+    reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1)
+
+    with pytest.raises(ColdReplayReadError):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+
+    assert not reader._sem.locked()
+
+
 async def test_a_cancelled_read_holds_its_slot_until_the_scan_has_ended(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -660,26 +724,88 @@ async def test_a_read_stopped_before_its_scan_starts_never_runs_the_statement(
     assert con.closed_on is not None and con.closed_on != threading.get_ident()
 
 
-async def test_a_directly_cancelled_scan_task_holds_the_slot_until_its_worker_ends(
+def _submissions(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Set once the reader hands a scan to its pool."""
+    submitted = asyncio.Event()
+    real = executor_future
+
+    def spy(pool: Executor, fn: Callable[..., Any], /, *args: Any) -> asyncio.Future[Any]:
+        job = real(pool, fn, *args)
+        submitted.set()
+        return job
+
+    monkeypatch.setattr(recorded_reader, "executor_future", spy)
+    return submitted
+
+
+async def _occupy(reader: ParquetRecordedReader) -> tuple[threading.Event, Future[None]]:
+    """Take the reader's only pool thread until the returned event is set."""
+    busy, free = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        busy.set()
+        assert free.wait(timeout=5)
+
+    held = reader._pool.submit(hold)
+    assert await asyncio.to_thread(busy.wait, 5)
+    return free, held
+
+
+async def test_a_scan_queued_when_its_read_is_cancelled_runs_stops_and_frees_the_slot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A supervisor or `asyncio.run` teardown may cancel the scan's own task: the read still
-    stops the scan and waits for its worker, and never closes the connection on the loop."""
-    con = _Con()
-    _with_con(monkeypatch, con)
-    con.linger.clear()
-    task = _read(ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1))
-    assert await asyncio.to_thread(con.reached.wait, 5)
+    """A scan still waiting for a thread when its read is cancelled (by a supervisor, or by
+    event-loop teardown, which cancels every task) is never lost: once a thread frees it runs,
+    sees the stop and returns without connecting, and the read holds its slot until then."""
+    connected: list[int] = []
 
-    (scan_task,) = [t for t in asyncio.all_tasks() if t.get_name() == "cold-replay"]
-    scan_task.cancel()
-    assert await asyncio.to_thread(con.interrupted.wait, 5)
-    await asyncio.sleep(0)
-    assert not task.done()
-    con.linger.set()
+    def connect() -> duckdb.DuckDBPyConnection:
+        connected.append(threading.get_ident())
+        return duckdb.connect(":memory:")
+
+    monkeypatch.setattr(recorded_reader, "_connect", connect)
+    submitted = _submissions(monkeypatch)
+    reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1)
+    free, held = await _occupy(reader)
+    task = _read(reader)
+    await asyncio.wait_for(submitted.wait(), 5)
+
+    task.cancel()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not task.done()  # holds its slot: the queued scan has not run yet
+    free.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert con.closed_on is not None and con.closed_on != threading.get_ident()
+
+    assert connected == []
+    assert not reader._sem.locked()
+    await asyncio.wrap_future(held)
+
+
+async def test_a_shut_down_reader_refuses_a_read_typed(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _registry(tmp_path))
+    reader.shutdown()
+
+    with pytest.raises(ColdReplayReadError, match="shut down"):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+
+
+async def test_a_scan_queued_at_shutdown_fails_its_read_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    submitted = _submissions(monkeypatch)
+    reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=1)
+    free, held = await _occupy(reader)
+    task = _read(reader)
+    await asyncio.wait_for(submitted.wait(), 5)
+
+    reader.shutdown()
+
+    with pytest.raises(ColdReplayReadError, match="shut down"):
+        await task
+    free.set()
+    await asyncio.wrap_future(held)
 
 
 async def test_at_most_max_concurrency_scans_run_at_once(
@@ -691,7 +817,8 @@ async def test_at_most_max_concurrency_scans_run_at_once(
     reader = ParquetRecordedReader(await _registry(tmp_path), max_concurrency=2)
     reads = [_read(reader) for _ in range(3)]
 
-    await started.reach(2)
+    for _ in range(2):  # two scans run at once: each has reached its statement
+        assert await asyncio.to_thread(con.arrivals.acquire, True, 5)
     for _ in range(20):
         await asyncio.sleep(0)
     assert len(started) == 2  # the third read waits for a slot
@@ -717,6 +844,27 @@ async def test_a_cancel_while_a_timed_out_scan_stops_is_re_raised(
     con.linger.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_a_stopped_scan_leaves_no_unretrieved_error_for_the_loop_to_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stopped scan fails in its thread, and the read reports its own error instead: the
+    scan's is marked retrieved, so the loop never logs it as one nobody retrieved."""
+    reports: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _loop, context: reports.append(context))
+    try:
+        _with_con(monkeypatch, _Con())
+        reader = ParquetRecordedReader(await _registry(tmp_path), timeout_s=0.05)
+        with pytest.raises(ColdReplayReadTimeout) as caught:
+            await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+        del caught  # its traceback holds the read's frame, and with it the scan's future
+        gc.collect()
+    finally:
+        loop.set_exception_handler(None)
+
+    assert [r["message"] for r in reports] == []
 
 
 def _all_resolved(files: list[str]) -> bool:

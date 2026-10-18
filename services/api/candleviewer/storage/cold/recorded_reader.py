@@ -11,15 +11,18 @@ whenever a file's size, mtime or ctime changes (ctime: a rewrite that restores s
 still shows). A failure fails the read with a typed error, never a silently partial window, and
 a window spanning more partitions than one read may open is refused before any is listed.
 
-DuckDB runs in a worker thread under a semaphore (C-2.18) with a memory limit; the worker opens
-and closes its connection, so the event loop never blocks on DuckDB (C-2.17). On the scan's
-deadline (below the replay merge's), a cancellation or any failure, the read stops the scan and
-holds its slot until the worker has ended: a stop flag the worker checks before each statement,
-and an interrupt repeated until the worker ends, since DuckDB drops one that arrives before a
-statement starts. Abandoned scans never pile up. Rows map through `event_from_row`, the mapping
-the hot tier shares, inside the worker. They come back ordered by `ts`, then part file, then
-row: the storage order the replay merge's "copy read last wins" dedup relies on when a
-re-export left a row in two parts (21 Sec.5.3).
+DuckDB runs on the reader's own pool of `max_concurrency` threads, under a semaphore with as
+many slots (C-2.18), with a memory limit; the worker opens and closes its connection, so the
+event loop never blocks on DuckDB (C-2.17). The read waits on the pool's plain future, which
+nothing but the read can cancel, so neither cancelling the read nor event-loop teardown can lose
+a scan still queued for a thread. On the scan's deadline (below the replay merge's) or a
+cancellation, the read stops the scan and holds its slot until the scan's thread has returned: a
+stop flag the worker checks before connecting and before the statement, and an interrupt
+repeated until then, since DuckDB drops one that arrives before a statement starts. Abandoned
+scans never pile up. `shutdown()` refuses new scans and drops queued ones, whose reads fail
+typed. Rows map through `event_from_row`, the mapping the hot tier shares, inside the worker.
+They come back ordered by `ts`, then part file, then row: the storage order the replay merge's
+"copy read last wins" dedup relies on when a re-export left a row in two parts (21 Sec.5.3).
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import asyncio
 import re
 import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,7 +40,7 @@ from typing import Final
 import duckdb
 
 from candleviewer.domain.sql_names import EPOCH
-from candleviewer.observability import spawn
+from candleviewer.observability.context import executor_future
 from candleviewer.storage.cold.kline_reader import months_between
 from candleviewer.storage.cold.layout import (
     ColdPaths,
@@ -77,7 +81,7 @@ _ANCHOR_SQL: Final = (
 )
 #: Below the replay merge's 30 s storage deadline, so a slow scan fails here, typed, first.
 DEFAULT_TIMEOUT_S: Final = 20.0
-#: How often a stopping read interrupts its scan again until the worker has ended.
+#: How often a stopping read interrupts its scan again until the scan's thread has returned.
 _STOP_POLL_S: Final = 0.1
 _US_PER_DAY: Final = 24 * _US_PER_HOUR
 
@@ -191,17 +195,16 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
 
 class _Scan:
-    """One DuckDB scan run in a worker thread, and the read's handle on it.
+    """One DuckDB scan, run on a pool thread, and the read's handle on it.
 
     The worker connects, locks the connection down to the cold root, runs the statement, maps
-    the rows and closes the connection; `ended` is set once it has returned or raised. The read
-    stops it with `stop` (checked before each statement) and `interrupt()` (repeated, never
-    blocking the event loop)."""
+    the rows and closes the connection. The read stops it with `stop` (checked before
+    connecting and before the statement) and `interrupt()` (repeated, never blocking the event
+    loop)."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.stop = threading.Event()
-        self.ended = threading.Event()
         self._lock = threading.Lock()
         self._con: duckdb.DuckDBPyConnection | None = None
 
@@ -222,9 +225,10 @@ class _Scan:
             raise ColdReplayReadError("cold replay read stopped")
 
     def run(self, sql: str, params: dict[str, object], stream: StreamKind) -> list[RecordedEvent]:
-        """Worker thread: the scan, start to end."""
+        """Worker thread: the scan, start to end. A DuckDB failure, at connect too, is typed
+        and carries no chain: its text may name a path."""
+        self._checkpoint()
         try:
-            self._checkpoint()
             con = _connect()
             with self._lock:
                 self._con = con
@@ -235,41 +239,41 @@ class _Scan:
                 con.execute("SET lock_configuration = true")
                 self._checkpoint()
                 rows = con.execute(sql, params).to_arrow_table().to_pylist()
-            except duckdb.Error as exc:
-                raise ColdReplayReadError(f"cold replay read failed: {type(exc).__name__}") from exc
             finally:
                 with self._lock:
                     self._con = None
                 con.close()
-            return [event_from_row(stream, row) for row in rows]
-        finally:
-            self.ended.set()
+        except duckdb.Error as exc:
+            raise ColdReplayReadError(f"cold replay read failed: {type(exc).__name__}") from None
+        return [event_from_row(stream, row) for row in rows]
 
 
-async def _stop(scan: _Scan) -> None:
-    """Stop `scan` and wait until its worker has ended, interrupting it again every
+async def _stop(scan: _Scan, job: asyncio.Future[list[RecordedEvent]]) -> None:
+    """Stop `scan` and wait until its thread has returned, interrupting it again every
     `_STOP_POLL_S` (DuckDB drops an interrupt that arrives before a statement starts), through
-    further cancellations: the last is re-raised once the worker has ended."""
+    further cancellations: the last is re-raised once the thread has returned. A scan still
+    queued for a thread runs, sees `stop` and returns without connecting."""
     scan.stop.set()
     cancelled: asyncio.CancelledError | None = None
-    while not scan.ended.is_set():
+    while not job.done():
         scan.interrupt()
         try:
-            await asyncio.sleep(_STOP_POLL_S)
+            await asyncio.wait([job], timeout=_STOP_POLL_S)  # never cancels the job
         except asyncio.CancelledError as exc:
             cancelled = exc
     if cancelled is not None:
         raise cancelled
 
 
-def _retrieve(task: asyncio.Task[list[RecordedEvent]]) -> None:
-    """Mark a scan task's outcome as seen: the read raises its own error for it."""
-    if not task.cancelled():
-        task.exception()
+def _retrieve(job: asyncio.Future[list[RecordedEvent]]) -> None:
+    """Mark a scan's outcome as seen: the read raises its own error for it."""
+    if not job.cancelled():
+        job.exception()
 
 
 class ParquetRecordedReader:
-    """Cold-tier `RecordedStreamReader`: Parquet partitions under `CV_COLD_ROOT`, via DuckDB."""
+    """Cold-tier `RecordedStreamReader`: Parquet partitions under `CV_COLD_ROOT`, via DuckDB.
+    Its owner calls `shutdown()` when the process stops."""
 
     def __init__(
         self,
@@ -282,8 +286,15 @@ class ParquetRecordedReader:
         self._registry = registry
         self._events: SystemEventSink = events or LoggingSystemEventSink()
         self._timeout_s = timeout_s
-        self._sem = asyncio.Semaphore(max(1, max_concurrency))
+        workers = max(1, max_concurrency)
+        self._sem = asyncio.Semaphore(workers)
+        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cv-cold-replay")
         self._verified: dict[Path, tuple[int, int, int]] = {}
+
+    def shutdown(self) -> None:
+        """Refuse new scans and drop queued ones, whose reads fail typed; a running scan
+        finishes, or is stopped by its read on a deadline or a cancellation."""
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
     async def read(
         self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
@@ -360,18 +371,23 @@ class ParquetRecordedReader:
     ) -> list[RecordedEvent]:
         async with self._sem:
             scan = _Scan(self._registry.root)
-            task = spawn(asyncio.to_thread(scan.run, sql, params, stream), name="cold-replay")
-            task.add_done_callback(_retrieve)
+            try:
+                job = executor_future(self._pool, scan.run, sql, params, stream)
+            except RuntimeError:  # the pool is shut down
+                raise ColdReplayReadError("the cold reader is shut down") from None
+            job.add_done_callback(_retrieve)
             try:
                 async with asyncio.timeout(self._timeout_s):
-                    return await asyncio.shield(task)
+                    await asyncio.wait([job])  # never cancels the job
             except BaseException as exc:
-                # Deadline, cancellation (of this read or of the scan task itself) or failure:
-                # stop the scan and wait for its worker, so this slot (and DuckDB's memory) is
-                # freed only once the scan has ended.
-                await _stop(scan)
+                # Deadline or cancellation: stop the scan and wait for its thread, so this slot
+                # (and DuckDB's memory) is freed only once the scan has ended.
+                await _stop(scan, job)
                 if isinstance(exc, TimeoutError):
                     raise ColdReplayReadTimeout(
                         f"cold replay read exceeded {self._timeout_s}s"
                     ) from exc
                 raise
+            if job.cancelled():  # a queued scan that `shutdown()` dropped
+                raise ColdReplayReadError("the cold reader is shut down")
+            return job.result()
