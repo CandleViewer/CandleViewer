@@ -20,9 +20,12 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+import sqlalchemy as sa
 from psycopg import sql
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.admin.wiring import secrets_audit_row
+from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
@@ -37,6 +40,15 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SNAP: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
+_REWRAPPED = "security.credential_rewrapped"
+_CHAIN_LOCK = "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
+_TERMINATE = "SELECT pg_terminate_backend(%s)"
+#: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
+_WAITER = (
+    "SELECT w.pid FROM pg_locks w JOIN pg_locks r ON r.pid = w.pid "
+    "WHERE w.locktype = 'advisory' AND NOT w.granted "
+    "AND r.relation = 'api_keys'::regclass AND r.mode = 'RowExclusiveLock' AND r.granted"
+)
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +109,7 @@ def store_dsn(store: SqlAlchemyCredentialStore) -> str:
 
 def _store(dsn: str) -> tuple[SqlAlchemyRelationalRepository, SqlAlchemyCredentialStore]:
     rel = SqlAlchemyRelationalRepository(dsn)
-    store = SqlAlchemyCredentialStore(rel)
+    store = SqlAlchemyCredentialStore(rel, audit_row=secrets_audit_row("demo"))
     _DSNS[id(store)] = dsn
     return rel, store
 
@@ -106,6 +118,40 @@ def _activate(dsn: str, ids: list[UUID], status: str = "active") -> None:
     with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql"), autocommit=True) as c:
         for k in ids:
             c.execute("UPDATE api_keys SET status = %s::key_status WHERE id = %s", (status, k))
+
+
+def _sql(dsn: str, query: str, *params: object) -> list[tuple[Any, ...]]:
+    with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql"), autocommit=True) as c:
+        cur = c.execute(query, params)
+        return cur.fetchall() if cur.description else []
+
+
+def _wrap(dsn: str, key_id: UUID) -> tuple[Any, ...]:
+    return _sql(dsn, "SELECT kek_version, dek_ref FROM api_keys WHERE id = %s", key_id)[0]
+
+
+def _records(dsn: str, key_id: UUID) -> list[tuple[Any, ...]]:
+    """`(action, env, after_state)` of every audit record about `key_id`."""
+    query = "SELECT action, env::text, after_state FROM audit_log WHERE object_id = %s ORDER BY id"
+    return _sql(dsn, query, str(key_id))
+
+
+def _move(key_id: UUID, ref: str, action: str = _REWRAPPED, **cas: Any) -> dict[str, Any]:
+    """`rewrap` kwargs of a run's v1 -> v2 compare-and-set of `key_id`, with its row record."""
+    fields = {"key_id": str(key_id), "actor_kind": "system", "actor_role": "secrets"}
+    fields |= cas.pop("fields", {})
+    return {"env": "demo", "from_version": 1, "dek_ref": ref, "kek_version": 2, **cas} | {
+        "audit": (action, fields)
+    }
+
+
+@pytest.fixture
+async def one_key(pg_dsn: str) -> AsyncIterator[tuple[SqlAlchemyCredentialStore, UUID]]:
+    rel, store = _store(pg_dsn)
+    try:
+        yield store, (await _seed(store, _account(pg_dsn), 1))[0]
+    finally:
+        await rel.dispose()
 
 
 async def _borrow(b: CredentialBroker, key_id: UUID) -> str:
@@ -167,6 +213,10 @@ async def test_rewrap_kill_resume_and_keyset_over_50_rows(pg_dsn: str) -> None:
             2, batch=7
         )
         assert (rep.rewrapped, rep.remaining) == (30, 0)
+        per_key = (
+            "SELECT count(DISTINCT object_id), count(*) FROM audit_log WHERE object_id = ANY(%s)"
+        )
+        assert _sql(pg_dsn, per_key, [str(k) for k in ids]) == [(50, 50)]  # one per moved row
         only_v2 = CredentialBroker(store, _audit, _kek(100, 2))
         for k in ids:
             rec = await store.get(k, "demo")
@@ -183,12 +233,12 @@ async def test_rewrap_cas_with_concurrent_writer(pg_dsn: str) -> None:
         rec = await store.get(key_id, "demo")
         assert rec is not None
         results = await asyncio.gather(
-            store.rewrap(key_id, from_version=1, dek_ref=rec["dek_ref"], kek_version=2),
-            store.rewrap(key_id, from_version=1, dek_ref=rec["dek_ref"], kek_version=2),
+            store.rewrap(key_id, **_move(key_id, rec["dek_ref"])),
+            store.rewrap(key_id, **_move(key_id, rec["dek_ref"])),
         )
-        assert sorted(results) == [False, True]
+        assert sorted(results) == [False, True] and len(_records(pg_dsn, key_id)) == 1
         await store.mark_revoked(key_id)
-        assert not await store.rewrap(key_id, from_version=2, dek_ref="x", kek_version=3)
+        assert not await store.rewrap(key_id, **_move(key_id, "x", from_version=2, kek_version=3))
     finally:
         await rel.dispose()
 
@@ -321,3 +371,90 @@ async def test_a_kek_rewrap_moves_a_row_whose_snapshot_was_edited_and_every_othe
     rotating = CredentialBroker(store, _audit, _kek(8, 6), prev_kek=_kek(7, 5))
     assert (await rotating.rewrap_all(6)).failed == ()
     assert [(await store.get(k, "demo") or {}).get("kek_version") for k in ids] == [6, 6, 6]
+
+
+async def test_rewrap_commits_the_row_and_its_audit_record_together(
+    pg_dsn: str, one_key: tuple[SqlAlchemyCredentialStore, UUID]
+) -> None:
+    store, key_id = one_key
+    assert await store.rewrap(key_id, **_move(key_id, "v1:moved", fields={"to": "2"})) is True
+    assert _wrap(pg_dsn, key_id) == (2, "v1:moved")
+    [(action, env, after)] = _records(pg_dsn, key_id)
+    assert (action, env, after["key_id"], after["to"]) == (_REWRAPPED, "demo", str(key_id), "2")
+
+
+@pytest.mark.parametrize(
+    ("change", "move"),
+    [
+        ("UPDATE api_keys SET label = label WHERE id = %s", {"from_version": 2}),
+        ("UPDATE api_keys SET revoked_at = now() WHERE id = %s", {}),
+        ("UPDATE api_keys SET status = 'revoked' WHERE id = %s", {}),
+        ("UPDATE api_keys SET label = label WHERE id = %s", {"env": "live"}),
+    ],
+    ids=["stale", "revoked_at", "status_revoked", "other_environment"],
+)
+async def test_a_cas_that_moves_nothing_writes_no_audit_record(
+    pg_dsn: str, one_key: tuple[SqlAlchemyCredentialStore, UUID], change: str, move: dict[str, Any]
+) -> None:
+    """Either revocation signal fences the row, as do a stale version and another environment."""
+    store, key_id = one_key
+    before = _wrap(pg_dsn, key_id)
+    _sql(pg_dsn, change, key_id)
+    assert await store.rewrap(key_id, **_move(key_id, "v1:moved", **move)) is False
+    assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
+
+
+@pytest.mark.parametrize(
+    ("action", "fields", "error"),
+    [
+        ("security.not_registered", {}, UnknownAuditAction),  # the row builder refuses it
+        (_REWRAPPED, {"actor_user_id": str(UUID(int=1))}, sa.exc.IntegrityError),  # no such user
+    ],
+    ids=["builder", "insert"],
+)
+async def test_a_failed_audit_record_rolls_the_cas_back(
+    pg_dsn: str,
+    one_key: tuple[SqlAlchemyCredentialStore, UUID],
+    action: str,
+    fields: dict[str, str],
+    error: type[Exception],
+) -> None:
+    store, key_id = one_key
+    before = _wrap(pg_dsn, key_id)
+    with pytest.raises(error):
+        await store.rewrap(key_id, **_move(key_id, "v1:moved", action, fields=fields))
+    assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
+
+
+@pytest.mark.parametrize(
+    ("abort", "error"),
+    [
+        (lambda dsn, pid, cas: _sql(dsn, _TERMINATE, *pid), sa.exc.DBAPIError),
+        (lambda dsn, pid, cas: cas.cancel(), asyncio.CancelledError),
+    ],
+    ids=["killed", "cancelled"],
+)
+async def test_a_rewrap_aborted_while_it_waits_for_the_chain_lock_moves_nothing(
+    pg_dsn: str, one_key: tuple[SqlAlchemyCredentialStore, UUID], abort: Any, error: Any
+) -> None:
+    """The CAS has updated its row and waits for the chain lock, which another connection holds.
+    There its backend is terminated, or its task cancelled (as M2's `_io` timeout cancels it).
+    Its transaction ends at once with the lock held, nothing commits, and a rerun moves the row."""
+    store, key_id = one_key
+    before = _wrap(pg_dsn, key_id)
+    sync = pg_dsn.replace("postgresql+asyncpg", "postgresql")
+    async with await psycopg.AsyncConnection.connect(sync) as holder:
+        await holder.execute(_CHAIN_LOCK)
+        cas = asyncio.ensure_future(store.rewrap(key_id, **_move(key_id, "v1:moved")))
+        async with asyncio.timeout(30):  # fails a missed wait fast
+            while not (pids := await (await holder.execute(_WAITER)).fetchall()):
+                pass
+        abort(pg_dsn, pids[0], cas)
+        with pytest.raises(error):
+            await cas
+        async with asyncio.timeout(5):  # ended by the abort, not the 30 s statement_timeout
+            while await (await holder.execute(_WAITER)).fetchall():
+                pass
+        assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
+    assert await store.rewrap(key_id, **_move(key_id, "v1:moved")) is True
+    assert _wrap(pg_dsn, key_id) == (2, "v1:moved") and len(_records(pg_dsn, key_id)) == 1

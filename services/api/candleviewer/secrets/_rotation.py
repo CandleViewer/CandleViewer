@@ -3,6 +3,8 @@ and the resumable, verified DEK re-wrap (e27-kek.md §5). Private to M2."""
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from cryptography.exceptions import InvalidTag
 
 from candleviewer.secrets import _envelope as env
@@ -55,8 +57,9 @@ class RotatingBroker(CredentialBroker):
         """Re-wrap every DEK at `new_kek_version - 1` under the current KEK (e27-kek.md §5).
 
         Ciphertext/nonces untouched; each new wrap is verified by opening `secret_enc` before
-        the compare-and-set. Keyset paging terminates; failures are audited as they occur;
-        `kek_rotated` only when nothing is left, otherwise `kek_rotation_incomplete`.
+        the compare-and-set, which commits the row's `security.credential_rewrapped` with it.
+        Keyset paging terminates; failures are audited as they occur; `kek_rotated` only when
+        nothing is left, otherwise `kek_rotation_incomplete`.
         """
         kek, prev = self._require_kek(), self._prev
         if prev is None or kek.version != new_kek_version or prev.version != kek.version - 1:
@@ -76,6 +79,9 @@ class RotatingBroker(CredentialBroker):
             **({"actor_user_id": user} if user else {}),
         }
         await self._audit("security.kek_rotation_started", {**base, "rows": str(total)})
+        # Each moved row's record, committed with its compare-and-set (#2266).
+        per_row = {"run_id": str(uuid4()), "env": self._env, "from": base["from"], "to": base["to"]}
+        per_row |= {k: v for k, v in base.items() if k.startswith("actor_")}
         done, failed, after = 0, [], None
         try:
             while ids := await self._io(
@@ -94,8 +100,18 @@ class RotatingBroker(CredentialBroker):
                             {**base, "key_id": str(row.id), "done": str(done)},
                         )
                         continue
+                    fields = {
+                        **per_row,
+                        "key_id": str(row.id),
+                        "exchange_account_id": str(row.exchange_account_id),
+                    }
                     cas = self._store.rewrap(
-                        row.id, from_version=prev.version, dek_ref=out[0], kek_version=kek.version
+                        row.id,
+                        env=self._env,
+                        from_version=prev.version,
+                        dek_ref=out[0],
+                        kek_version=kek.version,
+                        audit=("security.credential_rewrapped", fields),
                     )
                     if await self._io(cas, "store"):
                         done += 1

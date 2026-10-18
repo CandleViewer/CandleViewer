@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
+from structlog.testing import capture_logs
 
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
 from candleviewer.secrets.errors import (
+    CredentialUnavailable,
     KekLoadError,
     KekUnavailable,
 )
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten, StorageError
 from tests.unit.credentials_m2._helpers import _borrow, _store
 from tests.unit.credentials_m2._vectors import (
     ACCOUNT,
@@ -242,3 +247,86 @@ async def test_rotation_ignores_other_environment_rows() -> None:
     assert audit.actions()[-1] == "security.kek_rotated"
     assert s.rows[lm.key_id]["kek_version"] == 1  # live row untouched
     del metas
+
+
+_REWRAPPED = "security.credential_rewrapped"
+
+
+def _cas(s: InMemoryCredentialStore, key_id: Any, **kw: Any) -> Any:
+    """The compare-and-set of a run moving `key_id` from v1 to v2, with its row record."""
+    args: dict[str, Any] = {"env": "demo", "from_version": 1, "dek_ref": "v1:00", "kek_version": 2}
+    return s.rewrap(key_id, **(args | kw), audit=(_REWRAPPED, {"key_id": str(key_id)}))
+
+
+async def test_rewrap_all_commits_one_credential_rewrapped_with_each_moved_row() -> None:
+    """#2266: the record goes with the row's CAS, not the WAL sink; a row not moved gets none."""
+    s, metas, _ = await _seed(3)
+    s.rows[metas[1].key_id]["dek_ref"] = "v2:" + bytes(40).hex()  # its re-wrap fails
+    audit = AuditLog()
+    await _rot(s, audit).rewrap_all(2, actor=("user", "owner", "u-1"), batch=2)
+    moved = sorted(str(k) for k, row in s.rows.items() if row["kek_version"] == 2)
+    assert len(moved) == 2 and sorted(f["key_id"] for _, f in s.rewrap_audit) == moved
+    (run_id,) = {f["run_id"] for _, f in s.rewrap_audit}
+    row = {"run_id": run_id, "key_id": str(metas[0].key_id), "exchange_account_id": str(ACCOUNT)}
+    who = {"actor_kind": "user", "actor_role": "owner", "actor_user_id": "u-1"}
+    expected = {**row, "env": "demo", "from": "1", "to": "2", **who}
+    assert (_REWRAPPED, expected) in s.rewrap_audit and _REWRAPPED not in audit.actions()
+
+
+async def test_rewrap_cas_writes_its_record_iff_it_moves_the_row() -> None:
+    s, metas, _ = await _seed(1)
+    key = metas[0].key_id
+    assert not await _cas(s, key, from_version=2)  # stale
+    assert not await _cas(s, key, env="live")  # not the process's environment
+    assert s.rewrap_audit == []
+    assert await _cas(s, key) is True
+    assert not await _cas(s, key)  # a replay: the row has moved on
+    assert s.rewrap_audit == [(_REWRAPPED, {"key_id": str(key)})]
+
+
+@pytest.mark.parametrize(
+    "revoked", [{"revoked": True}, {"status": "revoked"}], ids=["revoked_at", "status"]
+)
+async def test_rewrap_cas_on_a_revoked_row_moves_nothing_and_writes_nothing(
+    revoked: dict[str, Any],
+) -> None:
+    """Either revocation signal fences the row, as the Postgres CAS predicate does."""
+    s, metas, _ = await _seed(1)
+    key = metas[0].key_id
+    s.rows[key].update(revoked)
+    before = dict(s.rows[key])
+    assert not await _cas(s, key)
+    assert s.rows[key] == before and s.rewrap_audit == []
+
+
+@pytest.mark.parametrize("error", [RewrapAuditNotWired, RewrapAuditNotWritten])
+async def test_a_typed_store_refusal_is_logged_by_its_code(error: type[StorageError]) -> None:
+    """#2266: not as an outage. `_io` logs the error's class `code`, never its message."""
+    s, _, _ = await _seed(1)
+
+    async def refuse(key_id: Any, **kw: Any) -> bool:
+        raise error("a message M2 never logs")
+
+    s.rewrap = refuse  # type: ignore[method-assign]
+    with capture_logs() as logs, pytest.raises(CredentialUnavailable, match="store"):
+        await _rot(s).rewrap_all(2)
+    event = {"event": "secrets.io_failed", "log_level": "error", "reason": "store"}
+    assert logs == [event | {"error_code": error.code}]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [lambda: sa.exc.OperationalError("UPDATE api_keys", None, OSError()), TimeoutError],
+    ids=["driver_error", "timeout"],
+)
+async def test_a_driver_error_or_a_timeout_is_not_logged(error: Callable[[], Exception]) -> None:
+    """#2266: an outage adds no line per call; SQLAlchemy's errors declare a class `code` too."""
+    s, _, _ = await _seed(1)
+
+    async def fail(key_id: Any, **kw: Any) -> bool:
+        raise error()
+
+    s.rewrap = fail  # type: ignore[method-assign]
+    with capture_logs() as logs, pytest.raises(CredentialUnavailable, match="store"):
+        await _rot(s).rewrap_all(2)
+    assert "secrets.io_failed" not in [e["event"] for e in logs]

@@ -15,6 +15,8 @@ from candleviewer.storage.errors import (
     IlpRowError,
     InvalidSymbol,
     MissingDesignatedTimestamp,
+    RewrapAuditNotWired,
+    RewrapAuditNotWritten,
     StorageDiskCritical,
     StorageError,
     StorageExportVerifyFailed,
@@ -54,6 +56,8 @@ def test_error_codes_are_stable_and_unique() -> None:
         AuditEntryTooLarge: "STORAGE_AUDIT_ENTRY_TOO_LARGE",
         HotReplayReadError: "HOT_REPLAY_READ_ERROR",
         HotReplayReadTimeout: "HOT_REPLAY_READ_TIMEOUT",
+        RewrapAuditNotWired: "STORAGE_REWRAP_AUDIT_NOT_WIRED",
+        RewrapAuditNotWritten: "STORAGE_REWRAP_AUDIT_NOT_WRITTEN",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 

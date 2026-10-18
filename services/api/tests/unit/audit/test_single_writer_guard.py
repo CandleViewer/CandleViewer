@@ -1,11 +1,11 @@
 """Single-writer guard for `audit_log` (design §5, "Ordering assumption").
 
 `verify` walks the chain in id order. Chain order equals id order only because the one
-writer path, `SqlAlchemyAuditRepository.insert`, takes `pg_advisory_xact_lock` *before* its
+writer path, `insert_audit_row_locked` (#2266), takes `pg_advisory_xact_lock` *before* its
 INSERT, so `nextval` runs under the lock. An INSERT that bypasses it takes the lock only
 inside the BEFORE trigger, after `nextval`: two concurrent bypassing INSERTs can chain out
 of id order, and `verify` would then report a break that is not one. So no code under
-`candleviewer/` (migrations aside) may write to `audit_log` except that repository.
+`candleviewer/` (migrations aside) may write to `audit_log` but through that helper.
 
 The scan reads the parsed code (`ast`), not raw text: string constants arrive with adjacent
 literals merged and escapes decoded, and SQL comments are dropped before matching. It flags
@@ -13,7 +13,9 @@ a statement that writes to `audit_log` (`INSERT INTO`, `COPY`, `MERGE INTO`; quo
 schema-qualified names), an asyncpg bulk copy into it, a Core `insert()` on it (aliases such
 as `pg_insert` too; positional or keyword table arguments), and a table or ORM object naming
 it, an import of the schema's `audit_log` or a `.tables["audit_log"]` lookup, outside the
-two files that define one for reading.
+two files that define one for reading. It sees SQL, not calls: the helper's callers (the
+repository's `insert`, the credential store's `rewrap`) are pinned by review until a caller
+scan lands with its third caller, PR C of #2266's ruling (issuecomment-6174244911).
 """
 
 from __future__ import annotations
@@ -145,8 +147,9 @@ async def test_the_writer_takes_the_chain_lock_before_its_insert() -> None:
     class _Relational:
         @asynccontextmanager
         async def unit_of_work(self) -> AsyncIterator[Any]:
-            async def execute(stmt: Any, _params: Any = None) -> None:
+            async def execute(stmt: Any, _params: Any = None) -> Any:
                 statements.append(" ".join(str(stmt).split()))
+                return SimpleNamespace(rowcount=1)
 
             async def commit() -> None:
                 statements.append("COMMIT")

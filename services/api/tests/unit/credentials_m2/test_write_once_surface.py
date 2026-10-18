@@ -54,6 +54,10 @@ _PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 _TABLE_USERS = frozenset({Path("db/models.py")})
 #: `str` parameters a non-insert port method may take; any other `str` could carry ciphertext.
 _PLAIN_STR = frozenset({"env", "dek_ref"})
+#: `rewrap`'s `(action, fields)` (#2266) goes only to the injected audit-row builder, redacted
+#: into `audit_log`. The SQL scan below pins what an api_keys UPDATE assigns, not what it binds.
+_AUDIT_RECORD = ("audit", tuple[str, dict[str, str]])
+_CAS: dict[str, Any] = {"env": "demo", "audit": ("security.credential_rewrapped", {})}
 _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNORECASE)
 
 
@@ -89,7 +93,8 @@ def _ciphertext_carriers(method: Callable[..., Any]) -> list[str]:
     carriers = []
     for name in inspect.signature(method).parameters:
         kinds = _classes(hints.get(name, typing.Any))
-        plain = kinds <= {UUID, int} or (kinds == {str} and name in _PLAIN_STR)
+        audit = (name, hints.get(name)) == _AUDIT_RECORD
+        plain = audit or kinds <= {UUID, int} or (kinds == {str} and name in _PLAIN_STR)
         if name != "self" and (name in CIPHERTEXT_PARAMS or not plain):
             carriers.append(name)
     return carriers
@@ -145,7 +150,7 @@ def test_public_surface_check_sees_an_inherited_member() -> None:
 )
 def test_port_rewrap_moves_only_the_wrap(surface: type) -> None:
     params = list(inspect.signature(vars(surface)["rewrap"]).parameters)
-    assert params == ["self", "key_id", "from_version", "dek_ref", "kek_version"]
+    assert params == ["self", "key_id", "env", "from_version", "dek_ref", "kek_version", "audit"]
 
 
 # -- The M10 adapter's SQL
@@ -211,7 +216,7 @@ async def test_in_memory_store_mutators_leave_ciphertext_unchanged(
 ) -> None:
     key_id = (await _store(broker)).key_id
     before = _protected(store.rows[key_id])
-    await store.rewrap(key_id, from_version=1, dek_ref="v1:00", kek_version=2)
+    await store.rewrap(key_id, from_version=1, dek_ref="v1:00", kek_version=2, **_CAS)
     store.activate(key_id, "rotating")
     await store.touch_last_used(key_id)
     await store.mark_revoked(key_id)
@@ -225,7 +230,9 @@ async def _apply(store: InMemoryCredentialStore, key_id: UUID, op: str, n: int) 
         case "revoke":
             await store.mark_revoked(key_id)
         case "rewrap":
-            await store.rewrap(key_id, from_version=n, dek_ref=f"v1:{n:02x}", kek_version=n + 1)
+            await store.rewrap(
+                key_id, from_version=n, dek_ref=f"v1:{n:02x}", kek_version=n + 1, **_CAS
+            )
         case "touch":
             await store.touch_last_used(key_id)
         case _:

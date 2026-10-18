@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, final
 from uuid import UUID, uuid4
 
+import structlog
 from cryptography.exceptions import InvalidTag
 
 from candleviewer.observability.context import spawn
@@ -166,7 +167,14 @@ class CredentialBroker:
                 return await aw
         except (SecretsError, asyncio.CancelledError):
             raise
-        except Exception:
+        except Exception as exc:
+            # A typed refusal of another of our modules (an M10 `StorageError`, #2266) is not an
+            # outage: log its class `code`, a constant, never its message (C-12.6).
+            error_code = getattr(type(exc), "code", None)
+            if type(exc).__module__.startswith("candleviewer.") and isinstance(error_code, str):
+                structlog.get_logger(__name__).error(
+                    "secrets.io_failed", reason=code, error_code=error_code
+                )
             raise CredentialUnavailable(code) from None
 
     async def _audit(self, action: str, fields: dict[str, str]) -> None:
