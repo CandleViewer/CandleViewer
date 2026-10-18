@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -254,10 +255,20 @@ def test_weakening_changes_names_each_weaker_setting() -> None:
         assert any(fragment in change for change in changes), fragment
 
 
-def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: dict, *flags: str) -> tuple:
+def _no_api_call() -> dict:
+    raise AssertionError("fetch_live_state was called")
+
+
+def _run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    data: dict,
+    *flags: str,
+    live: Callable[[], dict] = _stronger_live,
+) -> tuple:
     writes: list = []
     monkeypatch.setenv("CV_TEST_TOKEN", "not-a-real-token")
-    monkeypatch.setattr(abp, "fetch_live_state", lambda *a: _stronger_live())
+    monkeypatch.setattr(abp, "fetch_live_state", lambda *a: live())
     monkeypatch.setattr(abp, "apply_state", lambda *a: writes.append(a))
     path = tmp_path / "desired.json"
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -273,6 +284,8 @@ def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch,
     assert _run(tmp_path, monkeypatch, data, "--allow-weaken") == (0, [])  # a dry run by default
     code, writes = _run(tmp_path, monkeypatch, data, "--allow-weaken", "--apply")
     assert code == 0 and writes[0][2] == abp.to_api_payload(data)
+    with pytest.raises(SystemExit):  # --dry-run never writes, so it cannot be combined with --apply
+        _run(tmp_path, monkeypatch, data, "--dry-run", "--apply")
 
 
 @pytest.mark.parametrize(
@@ -292,5 +305,28 @@ def test_main_refuses_a_lockout_before_any_api_call(
 ) -> None:
     data = _valid_desired_state()
     mutation(data)
-    assert _run(tmp_path, monkeypatch, data, "--allow-weaken", "--apply") == (1, [])
+    flags = ("--allow-weaken", "--apply")
+    assert _run(tmp_path, monkeypatch, data, *flags, live=_no_api_call) == (1, [])
     assert message_fragment in capsys.readouterr().err
+
+
+# Security review of #3103: a lane that calls a reusable workflow reports `<lane> / <job>` while
+# it runs, and its own name only as a skipped placeholder, so requiring `contract` would hold PRs.
+@pytest.mark.parametrize(
+    "context,refusals", [("contract", 1), ("architecture", 0), ("pr-metadata", 0)]
+)
+def test_lockout_reasons_refuse_a_name_no_pull_request_check_run_carries(context, refusals) -> None:
+    data = {k: v for k, v in _valid_desired_state().items() if k != "merge_queue"}
+    data["required_status_checks"]["checks"].append({"context": context, "app_id": 15368})
+    reasons = abp.lockout_reasons(data, str(ROOT / ".github/workflows/*.yml"))
+    assert len(reasons) == refusals, reasons
+
+
+def test_main_exits_2_when_a_called_workflow_is_missing(tmp_path, monkeypatch, capsys) -> None:
+    (tmp_path / "pr.yml").write_text(
+        "on: [pull_request]\njobs:\n  lane:\n    uses: ./.github/workflows/_gone.yml\n",
+        encoding="utf-8",
+    )
+    flags = ("--workflows-glob", str(tmp_path / "*.yml"))
+    assert _run(tmp_path, monkeypatch, _valid_desired_state(), *flags, live=_no_api_call) == (2, [])
+    assert "_gone.yml" in capsys.readouterr().err

@@ -28,7 +28,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from check_required_check_reconciliation import load_workflow_job_names
+from check_required_check_reconciliation import ReconciliationError, load_workflow_job_names
 
 DEFAULT_DESIRED_STATE_PATH = ".github/branch-protection.json"
 API_BASE = "https://api.github.com"
@@ -477,12 +477,13 @@ def main(argv: list[str] | None = None) -> int:
         help="environment variable holding the repo-administration-scoped token",
     )
     parser.add_argument("--branch", default="main")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dry-run",
         action="store_true",
         help="the default: print the diff between live and desired state; change nothing",
     )
-    parser.add_argument("--apply", action="store_true", help="write the desired state")
+    mode.add_argument("--apply", action="store_true", help="write the desired state")
     parser.add_argument(
         "--allow-weaken",
         action="store_true",
@@ -495,7 +496,11 @@ def main(argv: list[str] | None = None) -> int:
     except DesiredStateError as exc:
         print(f"apply-branch-protection: invalid desired state: {exc}", file=sys.stderr)
         return 1
-    lockouts = lockout_reasons(desired, args.workflows_glob)
+    try:
+        lockouts = lockout_reasons(desired, args.workflows_glob)
+    except ReconciliationError as exc:
+        print(f"apply-branch-protection: {exc}", file=sys.stderr)
+        return 2
     for reason in lockouts:
         print(f"apply-branch-protection: refusing, lockout: {reason}", file=sys.stderr)
     if lockouts:
