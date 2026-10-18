@@ -74,14 +74,6 @@
       "reason": "contract-first operation; implementation lands with E42-T02",
       "ticket": "E42-T02"
     },
-    "GET /admin/backups": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "GET /admin/backups/{backupId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /admin/backups/{backupId}/download/{token}": {
       "reason": "contract-first operation (E42-T05 contract slice); the incidents and backups route slices serve it",
       "ticket": "E42-T05"

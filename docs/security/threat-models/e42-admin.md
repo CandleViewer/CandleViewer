@@ -205,8 +205,8 @@ checks the permission in the route itself. Paths in the control column are under
 | `listFeatureFlags` | `GET /admin/feature-flags` | `flags:read` | — | I; C (owner-only keys) | contract-only (m:117, a:89) | Per-flag visibility (`admin/flags/registry.py:110-112`); planned G (E42-T03) |
 | `setFeatureFlag` | `PUT /admin/feature-flags/{flagKey}` | `flags:write` (dangerous) | `flags`, `killswitch` or `live_enablement`, chosen under the row lock (yaml:8862-8872), handler-gated (`api/step_up.py:455-457`) | C, integrity (live gate, kill switches, maintenance) | contract-only (m:124, a:549) | Registry refusal (§3.2); `flags.change` written ahead (yaml:8890-8898); a pending handler gate since #3160 (§3.3) |
 | **Backups and restore (P7)** | | | | | | |
-| `listBackups` | `GET /admin/backups` | `backups:read` | — | C (paths, sizes, coverage) | contract-only (m:47, a:77) | Planned (E42-T05) |
-| `getBackup` | `GET /admin/backups/{backupId}` | `backups:read` | — | C | contract-only (m:61, a:81) | Planned (E42-T05) |
+| `listBackups` | `GET /admin/backups` | `backups:read` | — | C (paths, sizes, coverage) | served, 501 until `BACKUPS_CATALOGUED` (m:47; `api/admin_backups.py:76`) | Planned (E42-T05) |
+| `getBackup` | `GET /admin/backups/{backupId}` | `backups:read` | — | C | served, 501 until `BACKUPS_CATALOGUED` (m:60; `api/admin_backups.py:92`) | Planned (E42-T05) |
 | `createBackup` | `POST /admin/backups` | `backups:write` | none by design (registry test :46) | SA | contract-only (m:54, a:381) | Planned (E42-T05) |
 | `verifyBackup` | `POST /admin/backups/{backupId}/verify` | `backups:write` | none by design (registry test :47) | SA | contract-only (m:96, a:393) | Planned (E42-T05) |
 | `deleteBackup` | `DELETE /admin/backups/{backupId}` | `backups:write` | `backups`, no grace (yaml:9092-9094); no row yet | SA | contract-only (m:68, a:17) | Inside the tripwire (registry test :398) |

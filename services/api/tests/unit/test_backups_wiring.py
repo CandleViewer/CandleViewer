@@ -1,21 +1,26 @@
-"""Unit (E42-T05, #966 BK-7): the backups composition: stable job codes (C-12.6), unknown
-positions."""
+"""Unit (E42-T05, #966): the backups composition. BK-7: stable job codes (C-12.6), unknown
+positions. BK-4: the catalogue reads answer `501` on every backend until `BACKUPS_CATALOGUED` is
+set (Q3); once it is, what each backend serves."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import cast
-from uuid import uuid4
+from typing import Any, Literal, cast
+from uuid import UUID, uuid4
 
 import pytest
 from structlog.testing import capture_logs
 
+import candleviewer.backups_wiring as wiring
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
-from candleviewer.admin.errors import PositionsUnknownError
+from candleviewer.admin.errors import OpsNotWired, PositionsUnknownError
 from candleviewer.api.recorder_admin import AdminJobStore
 from candleviewer.backups_wiring import AdminJobRunner, UnknownOpenPositions
+from candleviewer.settings import Settings
+from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
+from tests.unit.admin._backup_fakes import Store, row
 
 _PATH = "/srv/cv/backups/2026-10-18/pg_dump.age"
 
@@ -75,3 +80,58 @@ async def test_a_failing_logger_never_replaces_the_closed_code(
 async def test_unknown_positions_are_none_never_zero() -> None:
     positions: OpenPositions = UnknownOpenPositions()
     assert (positions.source, await positions.count_open()) == ("not_deployed", None)
+
+
+@pytest.fixture
+def engines(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The engine each `SqlAlchemyBackups` stand-in was built on; each serves backup 1."""
+    built: list[Any] = []
+
+    def store(relational: Any) -> Store:
+        built.append(relational)
+        return Store([row(1)])
+
+    monkeypatch.setattr(wiring, "SqlAlchemyBackups", store)
+    monkeypatch.setattr(wiring, "SqlAlchemyRelationalRepository", lambda dsn, suffix: suffix)
+    return built
+
+
+@pytest.fixture
+def catalogued(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the engine's PR sets: something now records runs in the catalogue."""
+    monkeypatch.setattr(wiring, "BACKUPS_CATALOGUED", True)
+
+
+@pytest.mark.parametrize("backend", ["fake", "real"])
+async def test_backups_answer_501_on_every_backend_until_catalogued(
+    backend: Literal["fake", "real"], engines: list[Any]
+) -> None:
+    # Manual backups exist outside the catalogue: an empty page would read as "no backups".
+    catalogue = wiring.build_admin_backups(Settings(storage_backend=backend), system_settings=None)
+    with pytest.raises(OpsNotWired):
+        await catalogue.page(kind=None, status=None, cursor=None, limit=1)
+    with pytest.raises(OpsNotWired):
+        await catalogue.get(UUID(int=1))
+    assert engines == []  # no reader and no engine were even built
+
+
+@pytest.mark.usefixtures("catalogued")
+async def test_the_fake_backend_never_has_a_catalogue(engines: list[Any]) -> None:
+    catalogue = wiring.build_admin_backups(Settings(storage_backend="fake"), system_settings=None)
+    with pytest.raises(OpsNotWired):
+        await catalogue.get(UUID(int=1))
+    assert engines == []
+
+
+@pytest.mark.usefixtures("catalogued")
+async def test_the_real_backend_reads_the_catalogue_on_the_admin_engine(engines: list[Any]) -> None:
+    catalogue = wiring.build_admin_backups(Settings(storage_backend="real"), system_settings=None)
+    assert (await catalogue.get(UUID(int=1)), engines) == (row(1), ["admin"])
+
+
+@pytest.mark.usefixtures("catalogued")
+def test_the_real_backend_shares_the_settings_stores_engine(engines: list[Any]) -> None:
+    shared: Any = object()
+    store = SqlAlchemySystemSettings(shared)
+    wiring.build_admin_backups(Settings(storage_backend="real"), system_settings=store)
+    assert engines == [shared]  # not a second engine
