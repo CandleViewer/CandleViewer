@@ -43,8 +43,8 @@ _OWNER = user_id_of("owner")
 
 
 class _EnrolmentSessions:
-    """The pack's session seam; the owner's sessions get the 15-minute lifetime of a session
-    minted enrolment-only (Q7)."""
+    """The pack's session seam; the owner's sessions are minted enrolment-only: on the password
+    alone, for 15 minutes (Q7)."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
@@ -53,7 +53,8 @@ class _EnrolmentSessions:
         record: SessionRecord = await self._inner.authenticate_access_token(token, **kw)
         if record.user_id != _OWNER:
             return record
-        return record.model_copy(update={"expires_at": record.issued_at + ENROLMENT_ONLY_LIFETIME})
+        expires_at = record.issued_at + ENROLMENT_ONLY_LIFETIME
+        return record.model_copy(update={"expires_at": expires_at, "mfa_satisfied_at": None})
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
