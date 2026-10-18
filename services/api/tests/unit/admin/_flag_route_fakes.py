@@ -56,9 +56,9 @@ def client(
     return TestClient(app), audit
 
 
-def put(c: TestClient, body: object, key: str = KEY, role: str = "owner") -> Any:
+def put(c: TestClient, body: object, key: str = KEY, role: str = "owner", query: str = "") -> Any:
     data = body if isinstance(body, bytes) else json.dumps(body).encode()
-    return c.put(f"/admin/feature-flags/{key}", content=data, headers={"x-role": role})
+    return c.put(f"/admin/feature-flags/{key}{query}", content=data, headers={"x-role": role})
 
 
 def write(**fields: Any) -> dict[str, Any]:

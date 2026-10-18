@@ -70,6 +70,17 @@ def test_a_write_answers_the_committed_flag_after_its_audit() -> None:
     assert [kw["after_state"].get("phase") for kw in _changes(audit)] == ["intent", "outcome"]
 
 
+@pytest.mark.parametrize("query", ["?a=1", "?b=%7E&a=1"], ids=["query", "query-as-received"])
+def test_the_step_up_binds_to_the_request_target_as_received_query_string_included(
+    query: str,
+) -> None:
+    c, _ = client(step_up=(step_up := FakeStepUp()))
+    body = write()
+    assert put(c, body, query=query).status_code == 200
+    target = f"/admin/feature-flags/{KEY}{query}".encode()  # never `request.url.path` alone
+    assert step_up.fingerprints == [request_fingerprint("PUT", target, body)]
+
+
 @pytest.mark.parametrize(
     ("key", "role", "object_id"),
     [
@@ -117,12 +128,12 @@ def test_the_body_cap_is_exact_and_past_it_is_422_body_too_large() -> None:
             "duplicate_user",
         ),
         (write(reason="a\x00b"), "", "invalid_character"),
-        *((write(reason=f"a{c}b"), "", "invalid_character") for c in "\n\x7f\u200b\u202e\u2066"),
         (write(value="a\x00"), "", "invalid_character"),
         (write(evidence_url="https://x.example/\x00"), "", "invalid_character"),
         (write(overrides=[{"user_id": str(KNOWN), "value": "\x00"}]), "", "invalid_character"),
         (write(**{"a\x00": 1}), "", "invalid_character"),  # in a key
         (_with('"\\ud800"'), "", "invalid_character"),  # a lone surrogate: no UTF-8
+        (_with('"\\udfff"'), "", "invalid_character"),  # ...at the other edge of its range
         *((_with(c), "", "json_invalid") for c in ("NaN", "Infinity", "-Infinity", "1e999")),
         (_with("[" * 8 + "]" * 8), "value", "kind_mismatch"),  # as deep as the walk goes
         *((_with("[" * n + "]" * n), "", "json_invalid") for n in (9, 1000, 8000)),
@@ -139,6 +150,22 @@ def test_a_body_the_contract_refuses_is_422_and_audited(
         [{"field": field, "rule": rule}],
     )
     assert _changes(audit)[-1]["reason"] == rule
+
+
+#: `api.feature_flags._REFUSED` at both edges of each of its ranges, and DEL; with the characters
+#: the contract names: `\t`, `\n` and `\r` (a multi-line reason), ZWNJ and ZWJ (an emoji sequence).
+_REFUSED_CHARS = "\x00\t\n\r\x1f\x7f\u200b\u200c\u200d\u200f\u202a\u202e\u2066\u2069"
+
+
+@pytest.mark.parametrize("char", _REFUSED_CHARS, ids=lambda char: f"U+{ord(char):04X}")
+def test_a_control_zero_width_or_bidi_character_in_the_reason_is_422_and_audited(char: str) -> None:
+    c, audit = client()
+    response = put(c, write(reason=f"a{char}b"))
+    assert (response.status_code, response.json()["errors"]) == (
+        422,
+        [{"field": "", "rule": "invalid_character"}],
+    )
+    assert _changes(audit)[-1]["reason"] == "invalid_character"
 
 
 @pytest.mark.parametrize(
