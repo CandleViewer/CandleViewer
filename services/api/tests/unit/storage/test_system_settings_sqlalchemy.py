@@ -166,7 +166,7 @@ def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> Base
     return cls("SELECT 1", None, _PgError(sqlstate))
 
 
-# A DSN with a fake password, which must never be echoed. Its scheme is joined at run time, so
+# A DSN with a fake password, which must never be echoed. It is never written whole in source, so
 # trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
 _DSN = "postgresql" + "://cv:pw@db"
 _OUTAGES = [
