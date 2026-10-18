@@ -74,6 +74,7 @@ jobs:
               # postinstall allow-list one of them reads (#3182).
               - '.github/workflows/_job-js.yml'
               - '.nvmrc'
+              - '.npmrc' # pnpm's config: every pnpm install reads it
               - 'tools/ci/check-node-version.mjs'
               - 'tools/ci/run-allowed-postinstall.mjs'
               - 'tools/ci/allowed-postinstall.json'
@@ -129,6 +130,7 @@ jobs:
               - 'docs/plan/23-ws-protocol.md'
               # The contract job, its `make contracts` recipe and the recipe's scripts (#3182).
               - '.github/workflows/_job-contract.yml'
+              - '.npmrc' # pnpm's config: every pnpm install reads it
               - 'Makefile'
               - 'tools/contracts/**'
               - 'tools/errorcodes/**'
@@ -175,6 +177,7 @@ jobs:
               # The e2e job and the guards its steps run (#3182). Dependency manifests stay out:
               # the nightly a11y sweep is their accepted control (docs/ci-runbook.md section 2).
               - '.github/workflows/_job-e2e.yml'
+              - '.npmrc' # pnpm's config: every pnpm install reads it
               - 'tools/ci/check_demo_rest_only_tag.mjs'
               - 'tools/ci/check_built_exports.mjs'
             rules:

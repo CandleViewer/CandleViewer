@@ -33,7 +33,8 @@ the machine-hash lock, the xstate-contract script) skipped the gate built to che
 below from run lines and `with:` inputs, so a new script or config needs a filter entry) and the
 files they read (READ_INPUTS); js also the token formats packages/ui imports, py the a11y gate logic
 and the fixture corpus. Every lane's `if:` and resolver entry read the same filters, from
-`steps.filter`.
+`steps.filter`. Pytest targets are not followed: contract's and migrations' suites, outside their
+filters, run in the py and integration lanes too.
 """
 
 from __future__ import annotations
@@ -371,7 +372,7 @@ def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() ->
     for pattern in PY_INPUTS:
         assert pattern in py and any(ROOT.glob(pattern)), pattern
     corpus = (ROOT / "services" / "api" / "tests" / "_corpus.py").read_text(encoding="utf-8")
-    assert '/ "packages" / "fixtures" /' in corpus
+    assert re.search(r"^CORPUS_ROOT\b.*\bpackages\W+fixtures\b", corpus, re.MULTILINE)
 
 
 @pytest.mark.parametrize(("lane", "reader", "path"), READ_INPUTS)
@@ -391,6 +392,8 @@ _MODULE = re.compile(r"\bpython3?\s+-m\s+((?:tools|scripts)(?:\.\w+)+)")
 #: `make <target>` as a command, not inside an echoed hint.
 _MAKE = re.compile(r"(?:^|[;(]|&&|\|\|)\s*make\s+([\w-]+)", re.MULTILINE)
 _REQUIREMENTS = re.compile(r"\bpip3?\s+install\b[^\n]*?\s-[rc]\s*([\w./-]+)")
+#: pnpm reads the repo's .npmrc on every install, though no run line names it.
+_PNPM_INSTALL = re.compile(r"\bpnpm\s+install\b")
 #: `with:` keys that name a cache key or an artifact path, not a file the action reads.
 _WITH_UNREAD = frozenset({"cache-dependency-glob", "cache-dependency-path", "path"})
 _PY_IMPORT = re.compile(
@@ -443,7 +446,8 @@ def _imports(file: str, source: str) -> list[str | None]:
 
 def _executed(cwd: str, run: str) -> set[str]:
     """Repo files a `run:` executes: the scripts it calls (also through `make` and `bash`), the
-    modules those import and the files `pip install -r` reads. Shell comments are skipped."""
+    modules those import, the files `pip install -r` reads and the .npmrc `pnpm install` reads.
+    Shell comments are skipped."""
     files: set[str] = set()
     shells = [(cwd, run)]
     while shells:
@@ -453,6 +457,8 @@ def _executed(cwd: str, run: str) -> set[str]:
             files.add("Makefile")
             shells.append((".", _recipe(target)))
         files.update(p for p in (_repo_file(where, r) for r in _REQUIREMENTS.findall(text)) if p)
+        if _PNPM_INSTALL.search(text):
+            files.add(".npmrc")
         modules = [module.replace(".", "/") + ".py" for module in _MODULE.findall(text)]
         pending = [_repo_file(where, call) for call in _CALL.findall(text) + modules]
         while pending:
@@ -524,6 +530,7 @@ def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
         ("security", ".github/codeql/codeql-config.yml"),  # a `with:` config file
         ("security", "scripts/requirements-ci.txt"),  # `pip install -r`
         ("js", ".nvmrc"),  # `node-version-file`
+        ("e2e", ".npmrc"),  # `pnpm install` reads it; no run line names it
     ],
 )
 def test_pr_yml_lane_inputs_are_derived_through_each_way_a_step_runs_a_file(
