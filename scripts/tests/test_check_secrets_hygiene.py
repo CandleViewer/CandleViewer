@@ -436,6 +436,21 @@ TRACED = [
     'bash </dev/null -x -c "make test"',
     "bash <<'EOF' -x",
     'bash <<<"" -x ci.sh',
+    # #3400: a shell's path with any character a word keeps in a segment, and $NAME or ${NAME}
+    # (bash 5.3 ran each through a link to bash); option letters, or a whole option word, as an
+    # expansion's default or alternate value (`set -e${DEBUG:+x}` traces once DEBUG is set).
+    "/opt/bash@5/bin/bash -x ci.sh",
+    "/opt/gcc+x/bin/bash -x ci.sh",
+    "/~u/bash -x ci.sh",
+    "/opt/${X}y/bin/bash -x ci.sh",
+    "/opt/a%2C,b=1/bin/bash -x ci.sh",
+    "/opt/bash-5*/bin/bash -x ci.sh",
+    "set -e${DEBUG:+x}",
+    "set -eu${TRACE:+x}o pipefail",
+    "set -e${O:-v}",
+    "set -e${CI:+u} -x",
+    "set ${DEBUG:+-x}",
+    "bash ${DEBUG:+-o xtrace} ci.sh",
 ]
 NOT_TRACED = [
     "set -e",
@@ -511,6 +526,14 @@ NOT_TRACED = [
     "$SHELLCHECK -x ci.sh",
     "echo ${BASH_VERSION} -x",
     "bash <(make) -x",
+    # #3400: a path naming no shell (`x+bash` is a file in /opt); an expansion giving x only as
+    # its error message (`${O:?x}` stops the shell when O is unset). Not reported though they
+    # trace: an option the scan cannot read (FLAGS may hold x), a `:` in a shell's path (a rule
+    # starts no word after a `:`, as in a URL: `https://example.com/sh -x`).
+    "/opt/x+bash -x ci.sh",
+    "set -e${O:?x}",
+    "set -e$FLAGS",
+    "/opt/a:b/bin/bash -x ci.sh",
 ]
 VIA = ["run", "script"]
 
@@ -609,6 +632,14 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         "$SHELL " * 13000,
         "${SHELL:-" * 10000,
         "${SHELL:-a" * 9000,
+        # #3400: path segments a rule may start in (after a `+`, a `}` or a `@` before a `~`),
+        # each read once as one path naming no shell; letters from expansions, an unclosed one.
+        "/a+" * 32000,
+        "${X}" * 24000,
+        "@~" * 48000,
+        "set -" + "${A}" * 20000,
+        "set -e${A:+" + "a" * 90000,
+        "set " + "${A:+-e} " * 12000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -618,7 +649,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
     + ["trap-words", "trap-quotes", "trap-escapes"]
     + ["single-quotes", "mixed-quotes", "escaped-quotes", "quote-escapes", "ansi-c-quotes"]
     + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
-    + ["shell-vars", "shell-defaults", "shell-default-runs"],
+    + ["shell-vars", "shell-defaults", "shell-default-runs"]
+    + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
+    + ["value-words"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
