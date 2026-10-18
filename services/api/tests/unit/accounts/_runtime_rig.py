@@ -136,15 +136,16 @@ class FakeWs:
 
 
 class Rig:
-    """The runtime `create_app` builds, on a fake clock and sleeper, with `accounts` (`ACC` by
-    default) tracked by `boot()`. `rest` swaps the production REST port (every read unavailable)
-    for the fake. The socket feeds the runtime through `ctx.accounts.account_health`, the path the
-    E29-T05 consumer will use."""
+    """The runtime `create_app` builds, on a fake clock and sleeper, tracking `accounts` (`ACC` by
+    default) through a fake source. The REST port is a fake only when `rest` is set; otherwise it
+    is the production one, which answers every read as unavailable. The socket feeds the runtime
+    through `ctx.accounts.account_health`, the path the E29-T05 consumer will use."""
 
     def __init__(
         self,
         *accounts: UUID,
         rest: bool = False,
+        source: bool = True,
         settings: Settings | None = None,
         metrics: Metrics | None = None,
     ) -> None:
@@ -155,6 +156,10 @@ class Rig:
         self.metrics = metrics or Metrics("demo")
         self.accounts = AccountsService()
         self.wanted: frozenset[UUID] = frozenset(accounts or (ACC,))
+        self.read_error: Exception | None = None  # the tracking source fails with this
+        self.read_hangs = False  # or never answers
+        self.released: list[str] = []  # the repository's pool, released when the runtime stops
+        self.release_hangs = False
         self.runtime: AccountHealthRuntime = wire_account_health(
             settings or Settings(),
             self.metrics,
@@ -162,9 +167,23 @@ class Rig:
             sleep=self.sleeper.sleep,
             dms=self.dms,
             rest=self.rest if rest else None,
+            monitored=self._monitored if source else None,
+            release=self._release if source else None,
         )
         self.accounts.attach_account_health(self.runtime.feed)
         self.ws = FakeWs(self.accounts.account_health, self.sleeper)
+
+    async def _monitored(self) -> frozenset[UUID]:
+        if self.read_hangs:
+            await asyncio.Event().wait()
+        if self.read_error is not None:
+            raise self.read_error
+        return self.wanted
+
+    async def _release(self) -> None:
+        if self.release_hangs:
+            await asyncio.Event().wait()
+        self.released.append("pool")
 
     def track(self) -> None:
         for account in self.wanted:
@@ -172,8 +191,8 @@ class Rig:
             self.runtime.wallets.track(account)
 
     async def boot(self) -> None:
-        """Track the accounts, then start the loops, as the lifespan will."""
-        self.track()
+        """What the lifespan does: start the loops. The tracking loop's first pass, which runs at
+        once, makes `accounts` tracked (the fake backend, `source=False`, tracks none)."""
         self.runtime.start()
         await settle()
 

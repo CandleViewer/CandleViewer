@@ -1,19 +1,21 @@
 """Composition-root wiring (not a module) for account health and the wallet cache (E27-T04, #837).
 
 `wire_account_health` builds the health monitor, the wallet cache and its REST reconciler from the
-settings; `AccountHealthRuntime` runs them in two loops that the lifespan starts once the modules
-are up and stops, draining the dead-man's-switch calls, before they stop. `create_app` attaches the
-runtime's `feed` to `ctx.accounts`, which serves the private-WS consumer (E29-T05, #848) its
-evidence calls and wallet feed, so no module imports this file. The monitor and the cache read the
-boot-time clock, and the loops sleep on the event loop's: a wall-clock step moves nothing.
+settings; `AccountHealthRuntime` runs them in two or three loops that the lifespan starts once the
+modules are up and stops, draining the dead-man's-switch calls, before they stop. `create_app`
+attaches the runtime's `feed` to `ctx.accounts`, which serves the private-WS consumer (E29-T05,
+#848) its evidence calls and wallet feed, so no module imports this file. The monitor and the cache
+read the boot-time clock, and the loops sleep on the event loop's: a wall-clock step moves nothing.
 
 - `account-health-tick` calls `tick()` every `TICK_S` (at least once a second), so a lapsed account
   commits its transition and calls the dead-man's switch with or without evidence. It does no I/O,
   and the wallet reads run on their own loop, so a hung read cannot delay it.
 - `account-health-reconcile` reads what the wallet reconciler finds due, every `TICK_S`.
-
-Nothing is tracked yet, so both loops are idle in production: the next slice of #837 tracks the
-enabled accounts that hold a signable key. An untracked account reads `None`; the gate refuses it.
+- `account-health-tracking` makes the tracked accounts those the repository reports, every
+  `TRACKING_REFRESH_S`: the enabled accounts of the process environment that hold a signable key.
+  A read that fails keeps the set and is a failed pass. An untracked account has no state
+  (`current()` is `None`, which the order-entry gate refuses). The fake backend has no repository,
+  so it runs no such loop and tracks none.
 
 A pass that raises is logged by its error type (a message may echo exchange text, C-12.6) and the
 next one runs. A loop that ends, or whose passes keep failing, is a fault: `AccountsService`
@@ -30,7 +32,7 @@ import asyncio
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
 import structlog
@@ -57,6 +59,11 @@ from candleviewer.accounts.wallet import (
 )
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics_catalogue import register_r0
+from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
+from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
 
 if TYPE_CHECKING:
     from candleviewer.accounts.service import AccountHealthFeed
@@ -66,18 +73,34 @@ if TYPE_CHECKING:
 #: `tick()` and the reconciler's `run_due()` run this often: at least once a second (`health.py`),
 #: and a wallet read that is due waits no longer than this for its pass.
 TICK_S: Final = 0.5
-#: The bound on each step of a stop. `AccountHealthMonitor.drain()` ends within twice the hook
-#: timeout, so this only cuts a monitor that breaks that guarantee, or a loop that will not end.
+#: How often the tracked accounts are read from the repository: a new account is monitored within
+#: one interval, and a failed read is retried after one.
+TRACKING_REFRESH_S: Final = 15.0
+#: The bound on one repository read.
+READ_TIMEOUT_S: Final = 10.0
+#: The bound on each of the first two steps of a stop, the loops and the drain.
+#: `AccountHealthMonitor.drain()` ends within twice the hook timeout, so this only cuts a monitor
+#: that breaks that guarantee, or a loop that will not end.
 STOP_TIMEOUT_S: Final = 2 * DMS_HOOK_TIMEOUT_S + 1.0
+#: The bound on the third, releasing the repository's pool: a dispose takes well under a second,
+#: and the three steps together stay inside the default stop budget (`api_stop_budget_s`).
+RELEASE_TIMEOUT_S: Final = 3.0
 #: How long a loop's passes may keep failing before it is a fault (`fault`, so a degraded
 #: `accounts` check). The health tick is what calls the dead-man's switch, and a pass that always
 #: fails never does: 5 s, ten passes at `TICK_S`.
 FAULT_AFTER_S: Final = 5.0
+#: The tracking loop's: a repository that cannot be read leaves a new account untracked (the gate
+#: refuses it) and a removed one tracked. A minute is four reads, long enough that a restart of the
+#: database is no fault.
+TRACKING_FAULT_AFTER_S: Final = 60.0
 #: A failing loop logs its first failure and then once in this long, not every pass: the failures
 #: are still counted, and `fault` still reports them.
 LOG_EVERY_S: Final = 60.0
 #: The catalogue's counter of sizing decisions taken on a snapshot older than the period.
 OLD_SNAPSHOT_DECISIONS: Final = "cv_wallet_sizing_old_snapshot_total"
+
+MonitoredAccounts = Callable[[], Awaitable[frozenset[UUID]]]
+Release = Callable[[], Awaitable[None]]
 
 
 def logger() -> Any:
@@ -150,8 +173,11 @@ class AccountHealthRuntime:
     consumer gets `feed` through `ctx.accounts.account_health` (`AccountHealthFeed`): the evidence
     calls of the monitor, and the wallet cache's `apply` as `wallet_pushed`. `wallet_pushed` does
     not bound a frame's `updated_at`: the consumer refuses a frame dated ahead of the host clock
-    before it gets here (a dated-ahead snapshot would block every later refresh). Meant for one
-    event loop, the one that runs the loops and the hook calls."""
+    before it gets here (a dated-ahead snapshot would block every later refresh).
+
+    `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
+    tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped.
+    Meant for one event loop, the one that runs the loops and the hook calls."""
 
     def __init__(
         self,
@@ -159,11 +185,15 @@ class AccountHealthRuntime:
         wallets: WalletCache,
         rest: WalletRestPort,
         rejections: CredentialRejections,
+        monitored: MonitoredAccounts | None,
         *,
+        release: Release | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.monitor, self.wallets = monitor, wallets
+        self._monitored, self._release = monitored, release
         self._sleep = sleep
+        self._tracked: set[UUID] = set()
         self._tasks: list[asyncio.Task[None]] = []
         self._loops: dict[str, _Loop] = {}
         self._failures: dict[str, int] = {}  # passes failed in a row, by loop
@@ -216,6 +246,14 @@ class AccountHealthRuntime:
             _Loop("account-health-tick", self._tick, TICK_S, FAULT_AFTER_S),
             _Loop("account-health-reconcile", self._reconcile, TICK_S, FAULT_AFTER_S),
         ]
+        if self._monitored is not None:
+            tracking = _Loop(
+                "account-health-tracking",
+                self.refresh_tracking,
+                TRACKING_REFRESH_S,
+                TRACKING_FAULT_AFTER_S,
+            )
+            loops.append(tracking)
         for loop in loops:
             self._loops[loop.name] = loop
             task = spawn(self._loop(loop), name=loop.name)
@@ -224,9 +262,10 @@ class AccountHealthRuntime:
 
     async def stop(self) -> None:
         """Stop the loops, then wait for the dead-man's-switch calls in flight (the monitor logs
-        the ones still owed). Each step is bounded by `STOP_TIMEOUT_S` and logged when it fails, and
+        the ones still owed), then release the repository's pool. Each step is bounded (the first
+        two by `STOP_TIMEOUT_S`, the third by `RELEASE_TIMEOUT_S`) and logged when it fails, and
         nothing is raised: a loop that swallows its cancellation does not keep the drain from
-        running."""
+        running, nor a drain that hangs the release."""
         self._stopping = True
         tasks, self._tasks = self._tasks, []
         self._failures.clear()
@@ -235,6 +274,9 @@ class AccountHealthRuntime:
         if tasks:
             await self._within("loops", STOP_TIMEOUT_S, lambda: asyncio.wait(tasks))
         await self._within("drain", STOP_TIMEOUT_S, self.monitor.drain)
+        release, self._release = self._release, None
+        if release is not None:
+            await self._within("release", RELEASE_TIMEOUT_S, release)
 
     @staticmethod
     async def _within(step: str, timeout_s: float, wait: Callable[[], Awaitable[object]]) -> None:
@@ -243,6 +285,34 @@ class AccountHealthRuntime:
                 await wait()
         except Exception as exc:  # TimeoutError included; cancellation propagates
             logger().error("account_health.stop_step_failed", step=step, error=type(exc).__name__)
+
+    async def refresh_tracking(self) -> None:
+        """Make the tracked accounts the ones the repository reports; with no repository, do
+        nothing. A read that fails or times out raises, and the set stays as it was: an account is
+        never untracked on a failed read, and the loop counts the pass as failed. An account that
+        leaves the set while a dead-man's-switch call is still owed for it stays tracked until the
+        call has returned, so that its episode is not dropped."""
+        if self._monitored is None:
+            return
+        async with asyncio.timeout(READ_TIMEOUT_S):
+            wanted = await self._monitored()
+        owed = {episode.account_id for episode in self.monitor.owed()}
+        added = wanted - self._tracked
+        removed = {account_id for account_id in self._tracked - wanted if account_id not in owed}
+        for account_id in added:
+            self.monitor.track(account_id)
+            self.wallets.track(account_id)
+        for account_id in removed:
+            self.monitor.untrack(account_id)
+            self.wallets.untrack(account_id)
+        self._tracked = (self._tracked - removed) | added
+        if added or removed:
+            logger().info(
+                "account_health.tracking_changed",
+                tracked=len(self._tracked),
+                added=len(added),
+                removed=len(removed),
+            )
 
     # -- the loops
 
@@ -306,6 +376,44 @@ class _Feed:
         return self._runtime.wallet_pushed(account_id, snapshot)
 
 
+class _UsableKeys(Protocol):
+    """The one call of the stored-key self-check's port that the runtime makes. Typing the store
+    as this lets mypy refuse a write; the pin in
+    `tests/unit/architecture/test_key_selfcheck_store_callers.py` refuses any mention of one."""
+
+    async def targets(self) -> tuple[SelfCheckTargetRow, ...]: ...
+
+
+def _repository_source(settings: Settings) -> tuple[MonitoredAccounts | None, Release | None]:
+    """The real backend's tracking source: the usable-key read of the stored-key self-check, on a
+    store of its own bound to the process environment (C-2.11), reduced to the ids of the enabled
+    accounts. The runtime never holds a row, and the store is typed as the read alone. The fake
+    backend has none."""
+    if settings.storage_backend != "real":
+        return None, None
+    env = settings.environment.value
+    relational = SqlAlchemyRelationalRepository(
+        settings.pg_dsn.get_secret_value(), "account-health"
+    )
+    store: _UsableKeys = SqlAlchemyKeySelfCheckStore(relational, env=env)
+    foreign_said = 0  # the rows of another environment the last read said it found
+
+    async def monitored() -> frozenset[UUID]:
+        nonlocal foreign_said
+        rows = await store.targets()
+        foreign = sum(row.account.env != env for row in rows)
+        if foreign and foreign != foreign_said:
+            # the store filters on `env`: a row of another environment is a bug, said once per
+            # change, not at every read
+            logger().error("account_health.env_mismatch", rows=foreign)
+        foreign_said = foreign
+        return frozenset(
+            r.account.id for r in rows if r.account.is_enabled and r.account.env == env
+        )
+
+    return monitored, relational.dispose
+
+
 def wire_account_health(
     settings: Settings,
     metrics: Metrics,
@@ -315,11 +423,15 @@ def wire_account_health(
     rest: WalletRestPort | None = None,
     dms: DeadMansSwitch | None = None,
     rejections: CredentialRejections | None = None,
+    monitored: MonitoredAccounts | None = None,
+    release: Release | None = None,
 ) -> AccountHealthRuntime:
     """Build the runtime; `create_app` calls it with nothing but the settings and its metrics. The
     rest are the seams of the bindings that land later and of the tests: the clock, the loops'
-    sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39) and the place a
-    credential rejection goes (the key standing). No I/O."""
+    sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39), the place a
+    credential rejection goes (the key standing) and the tracking source with the release of its
+    pool (`monitored` is the repository read; with neither given, the real backend's). A `release`
+    without the `monitored` it frees is refused. No I/O."""
     clock = clock or SystemClock()
     monitor = AccountHealthMonitor(
         clock, dms or LoggingDeadMansSwitch(), HealthThresholds.from_settings(settings)
@@ -329,10 +441,16 @@ def wire_account_health(
         WalletThresholds.from_settings(settings),
         old_snapshot_decisions=register_r0(metrics)[OLD_SNAPSHOT_DECISIONS],
     )
+    if monitored is None:
+        if release is not None:
+            raise ValueError("a release frees what `monitored` reads: pass both or neither")
+        monitored, release = _repository_source(settings)
     return AccountHealthRuntime(
         monitor,
         wallets,
         rest or UnavailableWalletRest(),
         rejections or LoggingCredentialRejections(),
+        monitored,
+        release=release,
         sleep=sleep,
     )
