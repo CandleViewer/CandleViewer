@@ -394,6 +394,9 @@ def test_a_link_dies_with_its_session_or_its_user() -> None:
     issue, fetch = _desc("issueBackupDownload"), _desc("downloadBackup")
     gone = text(_operation("downloadBackup")["responses"]["410"]["description"])
     assert "into its successors (its family): a rotation does not end the link" in issue
+    # R3-F1: the binding itself (to the session and to that session's user), not only its effects.
+    bound = "The link is bound to the session that issued it and to that session's user, and "
+    assert bound + "follows that session across the rotations a refresh or a step-up makes" in issue
     assert "family across rotation (`issueBackupDownload`), so a rotation does not end it" in fetch
     ends = "with the events that end the grant that minted it, not with the grant's 60-second "
     ends += "expiry or its use: after the family's session "
@@ -414,10 +417,14 @@ def test_a_link_dies_with_its_session_or_its_user() -> None:
 
 
 def test_a_410_names_no_cause_and_a_replayed_link_is_recorded_once() -> None:
-    """R2-02: whatever the cause, a `410` carries the `used` body. R2-03 (the coordinator may
-    veto it): the first return of a spent link is recorded, by its link id, once per link."""
-    gone = text(_operation("downloadBackup")["responses"]["410"]["description"])
+    """R2-02: whatever the cause, a `410` carries the `used` body. R2-03 (confirmed by the
+    coordinator): the first return of a spent link is recorded, by its link id, once per link."""
+    response = _operation("downloadBackup")["responses"]["410"]
+    gone = text(response["description"])
+    # R3-F2: the expiry and use causes lead the description, and `used` is its only example.
+    assert gone.startswith("The link expired or was already used, or it ended with the events")
     assert "Every cause gets the same body, the `used` example; only the record's `reason`" in gone
+    assert list(response["content"]["application/problem+json"]["examples"]) == ["used"]
     served = _desc("downloadBackup")
     assert "Every `410` has the same body (the `used` example) whatever its cause" in served
     replay = "the first time a spent token is presented again, a `backup.downloaded` record with "
@@ -439,7 +446,31 @@ def test_misses_spend_a_per_source_budget_that_never_limits_a_matching_token() -
     budget += "`stage: served`, `outcome: denied` and `reason: rate_limited`"
     served = _desc("downloadBackup")
     assert budget in served
-    assert "flags a scanner; it never limits a matching token" in served
+    # SR-BK0-R3-01 (C-12.6, C-12.8): the path of a miss is the sender's, so none of it is recorded.
+    assert "naming the address and no backup or link taken from the path" in served
+    guess = "A token cannot be guessed, so this budget only bounds log and audit volume and "
+    assert guess + "flags a scanner; it never limits a matching token" in served
+
+
+def test_a_spent_link_first_presented_after_its_expiry_is_still_recorded_as_reused() -> None:
+    """R3-F3: the link was spent first, so a spent token first presented again after its 5 minutes
+    is a spent token presented again (`link_reused`); only a link that expired unspent writes
+    none."""
+    unspent = "The expired link that writes none is one that expired unspent: a token that was "
+    unspent += "spent and is first presented again after its 5 minutes writes the record, since "
+    assert unspent + "the link was spent first." in _desc("downloadBackup")
+
+
+def test_a_replay_or_source_record_that_cannot_be_written_is_a_503_and_not_used_up() -> None:
+    """SR-BK0-R3-02, R3-F3 (C-2.9): both records are written before the answer, so one that cannot
+    be written answers `503 audit_unavailable` in place of the `410` or the per-source `429`,
+    and does not use up the one record per link, or per address and minute."""
+    unwritten = "When the `link_reused` record or the per-source `rate_limited` record cannot be "
+    unwritten += "written (write-ahead, C-2.9), the answer is `503 audit_unavailable` instead of "
+    unwritten += "the `410` or of the per-source `429`, and a record that was not written does not "
+    unwritten += "use up the one record per link (or per address and minute): the next "
+    unwritten += "presentation of that link, or the next refused miss from that address in the "
+    assert unwritten + "minute, writes it." in _desc("downloadBackup")
 
 
 @pytest.mark.parametrize(
