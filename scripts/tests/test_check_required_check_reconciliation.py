@@ -459,6 +459,21 @@ def _prove(tmp_path: Path, workflow: str, *edits: tuple[str, str], reindent: str
     return errors
 
 
+# Review round 7 of #3103: a neutralised job drops its lane's own name, but a sibling job whose id
+# is the C-9.1 name and which does that check's work can still fail the lane, so it credits it.
+@pytest.mark.parametrize(
+    "workflow,old,new",
+    [
+        ("_job-integration.yml", "\n  audit-query-plan:\n", "$&    if: false\n"),
+        ("_job-contract.yml", "\n  contract:\n", SPARE),
+    ],
+)
+def test_a_neutralised_sibling_of_the_check_s_own_job_keeps_it_credited(
+    tmp_path, workflow, old, new
+) -> None:
+    assert _prove(tmp_path, workflow, (old, new)) == []
+
+
 # Review round 4 of #3103: valid YAML whose shape the proof misread. A resolver call inside an
 # action step's block scalar, with no real resolver step; a called job whose keys sit at 6 spaces.
 @pytest.mark.parametrize(
