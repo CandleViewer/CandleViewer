@@ -262,7 +262,8 @@ class RecordedStreamReader(Protocol):
         """Events of `(symbol, stream)` with `rng.start_us <= ts_us < rng.end_us`, at most
         `limit` of them (earliest first when the cap binds; callers pass `cap + 1` to detect
         truncation). Book streams are filtered to `depth`; other streams ignore it. A `limit`
-        below 1 (or a bool) raises `RecordedQueryRejected` before storage is read.
+        below 1 (or a bool) raises `RecordedQueryRejected` before storage is read, and so does
+        one above a tier's own read ceiling (the hot tier's `MAX_READ_ROWS`, 4 194 304 rows).
 
         Rows come in storage order, which does not order equal timestamps. The cold tier may
         repeat a row a re-export appended (21 Sec.5.3 "dedup on read"); re-exported duplicates

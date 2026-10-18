@@ -208,6 +208,13 @@ class AuditEntryTooLarge(StorageError):
         self.entry_id = entry_id
 
 
+class HotReplayReadError(StorageTierUnavailable):
+    """QuestDB could not serve a replay read (connection lost, backoff, server error): typed, so
+    a replay surfaces a datastore outage as one error (chaos scenario 10)."""
+
+    code = "HOT_REPLAY_READ_ERROR"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -230,4 +237,5 @@ ERROR_CODES: dict[type[StorageError], str] = {
     UnknownIlpTable: UnknownIlpTable.code,
     StorageRecordInvalid: StorageRecordInvalid.code,
     AuditEntryTooLarge: AuditEntryTooLarge.code,
+    HotReplayReadError: HotReplayReadError.code,
 }

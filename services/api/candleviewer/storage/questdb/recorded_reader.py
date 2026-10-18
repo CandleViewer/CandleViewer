@@ -6,8 +6,8 @@ dataset id, so no caller text ever reaches SQL: symbol, time bounds and book dep
 parameters (SR-047), and only the validated integer row limit is inlined, because QuestDB's
 PGWire has no `LIMIT $n` slot (#2168). Each template filters `symbol` by equality, bounds `ts` on
 both sides and orders by the designated timestamp only (the Sec.13.2 query lint). Every fetch is
-time-bounded, and driver failures become one typed `HotReplayReadError` with no chained cause
-(a driver's text may name the server's host and port, RP-I02).
+time-bounded, and driver failures become one typed `HotReplayReadError` that holds neither a
+cause nor a context (a driver's text may name the server's host and port, RP-I02).
 
 Rows arrive as the driver's read-only records (`LazyPgWire.fetch_records`), never copied into
 dicts on the event loop, and map through `event_from_row`, the mapping the cold tier shares, in
@@ -17,6 +17,7 @@ a worker thread: a read's whole row cap of mapping stays off the loop the OMS sh
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Final, Protocol
@@ -24,7 +25,7 @@ from typing import Final, Protocol
 import asyncpg
 
 from candleviewer.domain.sql_names import assert_bind_count, ts_param
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import HotReplayReadError
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.reader import QueryBuilder
 from candleviewer.storage.repositories.recorded import (
@@ -77,13 +78,6 @@ MAX_READ_ROWS: Final = 4_194_304
 #: Below the replay merge's 30 s storage deadline, so a slow query fails here, typed, first.
 DEFAULT_TIMEOUT_S: Final = 20.0
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{1,32}$")
-
-
-class HotReplayReadError(StorageTierUnavailable):
-    """QuestDB could not serve the read (connection lost, backoff, server error): typed, so a
-    replay surfaces a datastore outage as one error (chaos scenario 10)."""
-
-    code = "HOT_REPLAY_READ_ERROR"
 
 
 #: Driver and connection failures a PGWire fetch can raise (timeouts stay `TimeoutError`).
@@ -139,6 +133,8 @@ class QuestDbRecordedReader:
     """Hot-tier `RecordedStreamReader`: QuestDB over PGWire (`RecordFetcher`)."""
 
     def __init__(self, connection: RecordFetcher, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> None:
+        if not (math.isfinite(timeout_s) and timeout_s > 0):  # `asyncio.timeout(nan)` never fires
+            raise ValueError("timeout_s must be a positive, finite number of seconds")
         self._conn = connection
         self._timeout_s = timeout_s
 
@@ -158,10 +154,14 @@ class QuestDbRecordedReader:
         return max(found, key=order_key, default=None)
 
     async def _fetch(self, query: QueryBuilder) -> Sequence[Mapping[str, object]]:
+        """The query's rows, or `HotReplayReadError` naming only the failure's type. It is raised
+        after the handler, so neither its cause nor its context holds the driver's text, which
+        may name the server's host and port (RP-I02). A cancellation passes through."""
         try:
             async with asyncio.timeout(self._timeout_s):
                 return await self._conn.fetch_records(query.sql, *query.params)
         except TimeoutError:
             raise
         except _DRIVER_ERRORS as exc:
-            raise HotReplayReadError(f"hot replay read failed: {type(exc).__name__}") from None
+            failed = type(exc).__name__
+        raise HotReplayReadError(f"hot replay read failed: {failed}")

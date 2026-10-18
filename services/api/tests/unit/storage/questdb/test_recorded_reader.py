@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import re
 import threading
 from collections.abc import Mapping, Sequence
@@ -13,6 +14,7 @@ import asyncpg
 import pytest
 
 from candleviewer.domain.sql_names import ts_param
+from candleviewer.storage.errors import HotReplayReadError
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
 from candleviewer.storage.questdb import recorded_reader
@@ -21,7 +23,6 @@ from candleviewer.storage.questdb.recorded_reader import (
     ANCHOR_SQL,
     MAX_READ_ROWS,
     RANGE_SQL,
-    HotReplayReadError,
     QuestDbRecordedReader,
     build_read_recorded,
     build_snapshot_anchor,
@@ -55,7 +56,12 @@ class FakePgWire:
 
 
 class StuckPgWire(FakePgWire):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parked = asyncio.Event()  # set once a fetch is waiting for its answer
+
     async def fetch_records(self, sql: str, *params: object) -> list[Mapping[str, object]]:
+        self.parked.set()
         await asyncio.Event().wait()  # never answers
         return []
 
@@ -186,8 +192,36 @@ async def test_snapshot_at_maps_the_one_row_or_returns_none() -> None:
 async def test_a_fetch_that_never_answers_times_out() -> None:
     reader = QuestDbRecordedReader(StuckPgWire(), timeout_s=0.01)
 
-    with pytest.raises(TimeoutError):
-        await reader.read("BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5)
+    async with asyncio.timeout(5):  # without the reader's own deadline this fails, never hangs
+        with pytest.raises(TimeoutError):
+            await reader.read("BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5)
+
+
+@pytest.mark.parametrize("timeout_s", [0.0, -1.0, math.inf, math.nan])
+def test_a_deadline_that_could_never_fire_is_refused(timeout_s: float) -> None:
+    with pytest.raises(ValueError, match="timeout_s"):
+        QuestDbRecordedReader(FakePgWire(), timeout_s=timeout_s)
+
+
+@pytest.mark.parametrize("call", ["read", "snapshot_at"])
+async def test_a_cancelled_read_raises_the_cancellation_to_its_awaiter(call: str) -> None:
+    """Readers propagate `CancelledError` (C-2.18): never an empty result, never a typed read
+    error in its place."""
+    wire = StuckPgWire()
+    reader = QuestDbRecordedReader(wire, timeout_s=30.0)
+    task: asyncio.Task[object]
+    if call == "read":
+        task = asyncio.create_task(
+            reader.read("BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5)
+        )
+    else:
+        task = asyncio.create_task(reader.snapshot_at("BTCUSDT", 200, 2_000, not_before_us=0))
+    await asyncio.wait_for(wire.parked.wait(), 5)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 def test_the_reader_is_addressed_by_stream_id_never_by_path() -> None:
@@ -284,5 +318,5 @@ async def test_driver_failures_become_a_typed_hot_read_error(error: Exception) -
             "BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5
         )
 
-    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
     assert "8812" not in str(caught.value) and "10.0.0.5" not in str(caught.value)
