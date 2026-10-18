@@ -130,12 +130,14 @@ _INDEXES = (
 
 
 def _doc_ddl() -> str:
-    """Sec.3.10.2a's and Sec.3.10.3's ```sql blocks, each to its fence."""
+    """Every ```sql block of Sec.3.10.2a and Sec.3.10.3 (0028's tables, then 0032's columns), each
+    to its fence; a section ends at the next heading of any level."""
     text = _DOC.read_text(encoding="utf-8")
-    return "\n".join(
-        text.split(heading, 1)[1].split("```sql", 1)[1].split("```", 1)[0]
+    sections = [
+        re.split(r"\n#{1,4} ", text.split(heading, 1)[1], maxsplit=1)[0]
         for heading in ("#### 3.10.2a `incidents`", "#### 3.10.3 `backups`")
-    )
+    ]
+    return "\n".join(b.split("```", 1)[0] for s in sections for b in s.split("```sql")[1:])
 
 
 def _catalog(c: Conn, schema: str) -> list[Any]:

@@ -151,6 +151,11 @@
       "path": "services/api/candleviewer/migrations/versions/0031_policy_disarm.py",
       "sha256": "02d7cf196704e4f476cbca646cb7e3ac284655e8b55de3d627ca6b2f1e69b3ee",
       "down_revision": "0030_auth_keys"
+    },
+    "0032_backups_write_once": {
+      "path": "services/api/candleviewer/migrations/versions/0032_backups_write_once.py",
+      "sha256": "845e88750c04fb82b5a3db76c2d2ca3f6fb70e381c43c7449412df9142d94fd1",
+      "down_revision": "0031_policy_disarm"
     }
   }
 }

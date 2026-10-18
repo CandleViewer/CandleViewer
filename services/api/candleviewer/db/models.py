@@ -1852,6 +1852,10 @@ backups = Table(
     Column("started_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("finished_at", TIMESTAMP(timezone=True)),
     Column("retention_until", TIMESTAMP(timezone=True)),
+    # 0032_backups_write_once (E42-T05 BK-2): a deleted artefact keeps its row (Q4 on #966). The
+    # write-once trigger and cv_app's revoked DELETE are pinned by the 0032 tests, not autogenerate.
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    Column("deleted_by", ForeignKey("users.id", ondelete="SET NULL")),
     CheckConstraint(
         "triggered_by IN ('schedule','manual','pre_migration','pre_release','pre_restore')",
         name="bk_trigger",
@@ -1861,6 +1865,7 @@ backups = Table(
         "('restore_smoke','checksum','pg_verifybackup','duckdb_scan')",
         name="bk_verify",
     ),
+    CheckConstraint("deleted_by IS NULL OR deleted_at IS NOT NULL", name="bk_deleted"),
     Index("ix_backups_kind_time", "kind", text("started_at DESC")),
     Index("ix_backups_failed", text("started_at DESC"), postgresql_where=text("status = 'failed'")),
 )
