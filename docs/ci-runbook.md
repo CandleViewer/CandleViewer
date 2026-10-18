@@ -200,8 +200,8 @@ here, or the check fails the `governance` lane.
 
 The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
 It first removes the tracked files under the outputs `pnpm generate` writes in full
-(`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
-tree, never the index, then generates. It restores nothing. A CI-GEN-005 report prints one
+(`GENERATE_OUTPUTS` in `tools/ci/check_gen_freshness.py`) from the working tree, never the
+index, then generates. It restores nothing. A CI-GEN-005 report prints one
 `git --literal-pathspecs rm -- <paths>` command for the files it names; any other failed run, a
 traceback or Ctrl-C included, lists the tracked files it leaves missing, if it leaves any, and
 prints one `git --literal-pathspecs restore -- <paths>` command that brings them all back. git
@@ -214,8 +214,8 @@ removing nothing.
   `packages/protocol/src/generated`.
 - **CI-GEN-002** (untracked generated output): codegen produced files `git diff` cannot see
   because they were never tracked. `git add` them in the same commit as the schema change that
-  introduced them. Reproduce with `make gen && git status --porcelain -- packages/protocol`; if a
-  file the report names does not show up there, a local ignore rule hides it from you
+  introduced them. Reproduce with `make gen` and the `git status --porcelain` command the report
+  prints; if a file the report names does not show up there, a local ignore rule hides it from you
   (`.git/info/exclude`, a global excludes file or an uncommitted `.gitignore` edit): fix the
   rule, or `git add -f` the file.
 - **CI-GEN-003** (non-deterministic generation): running the generator twice
@@ -237,16 +237,14 @@ removing nothing.
   `git --literal-pathspecs rm -- <paths>` command the report prints, or add the generator that
   writes each one to the `generate` script in `packages/protocol/package.json`.
 - **CI-GEN-006** (committed file no generator writes, in a directory `pnpm generate` does not
-  write): `packages/protocol/generated`, `packages/fixtures/golden/cvwb`, `tests/fuzz/ws-frames`
-  and `services/api/candleviewer/{api,ws}/_generated`. Their generators run in `make gen` or
-  need the backend venv, so the gate does not regenerate them: it compares the index with
-  `FIXED_OUTPUTS` in `tools/ci/check_gen_freshness.py`, every file each generator writes there
-  (tests pin each entry to the generator's own output paths), and `HAND_KEPT`, the files kept
-  there by hand on purpose with their reasons (today only `tests/fuzz/ws-frames/msgpack-client.json`,
-  the SR-185 corpus). Delete the named files with the one `git --literal-pathspecs rm -- <paths>`
-  command the report prints. If a generator does write one, add it to that generator's
-  `FIXED_OUTPUTS` entry (and to the generator test that pins it). A file kept by hand belongs
-  outside these directories, or in `HAND_KEPT` with its reason.
+  write): the directories are `FIXED_OUTPUT_DIRS` in `tools/ci/check_gen_freshness.py`, derived
+  from its `FIXED_OUTPUTS` table (every file each generator writes there; tests pin each entry to
+  the generator's own output paths) and its `HAND_KEPT` table (the files kept there by hand on
+  purpose, each with its reason). Their generators run in `make gen`, so the gate does not
+  regenerate them: it compares the index with those two tables. Delete the named files with the
+  one `git --literal-pathspecs rm -- <paths>` command the report prints. If a generator does write
+  one, add it to that generator's `FIXED_OUTPUTS` entry (and to the generator test that pins it).
+  A file kept by hand belongs outside these directories, or in `HAND_KEPT` with its reason.
 
 ### CI-CON-* — contract conformance
 

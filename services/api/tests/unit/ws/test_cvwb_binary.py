@@ -400,7 +400,10 @@ def test_the_gen_gate_names_every_file_the_vectors_script_writes() -> None:
     written = sorted(path.relative_to(REPO).as_posix() for path in script.TARGETS)
     entry = gate.FIXED_OUTPUTS["services/api/scripts/generate_cvwb_vectors.py"]
     assert sorted(entry) == written
-    assert sorted(_COMMITTED_RENDERS) == written  # and the test above byte-checks each one
+    # #3452: the test above byte-checks each one with the renderer the script uses for it,
+    # which is all the script's --check compares, so no CI lane runs that --check.
+    renders = {path.relative_to(REPO).as_posix(): fn for path, fn in script.TARGETS.items()}
+    assert renders == _COMMITTED_RENDERS
 
 
 def test_fuzz_corpus_every_seed_behaves_as_declared() -> None:

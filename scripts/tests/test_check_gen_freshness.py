@@ -141,8 +141,10 @@ def _cvwb_targets() -> set[str]:
 # writes, read from the generator's own output paths (for generate_cvwb_vectors.py, from
 # its source; services/api/tests/unit/ws/test_cvwb_binary.py also pins its evaluated
 # TARGETS). The tracked files in those directories are those files, the CVWB layout twin
-# (step 3's) and one corpus kept by hand (SR-185).
+# (step 3's) and one corpus kept by hand (SR-185). #3452: docs/generated, where only
+# scripts/keymap_lint.py writes (the governance job runs its --check-docs).
 _GATED_DIRS = {
+    "docs/generated",
     "packages/fixtures/golden/cvwb",
     "packages/protocol/generated",
     "services/api/candleviewer/api/_generated",
@@ -152,7 +154,9 @@ _GATED_DIRS = {
 _CONSTANTS = _load_script("tools/contracts/gen_ws_constants.py")
 _ERROR_CODES = _load_script("tools/errorcodes/generate.py")
 _MODELS = _load_script("services/api/scripts/generate_protocol_models.py")
+_KEYMAP = _load_script("scripts/keymap_lint.py")
 _WRITES: dict[str, set[str]] = {
+    "scripts/keymap_lint.py": {_rel(_KEYMAP.DOCS_OUT)},
     "tools/contracts/gen_ws_constants.py": {_rel(_CONSTANTS.OUT)},
     "tools/errorcodes/generate.py": {
         _rel(_ERROR_CODES.OUT_PY),
@@ -723,14 +727,18 @@ def test_generate_outputs_keep_every_repo_level_file_the_generators_write() -> N
 # this gate alone must catch a committed hand edit of a generated file: regenerating
 # overwrites the edit and `git diff` reports it (CI-GEN-001). These scenarios run the
 # real gate against a throwaway git repository with the repo's own .gitignore; only
-# `pnpm generate` is replaced, by a stand-in that rewrites two generated files and
+# `pnpm generate` is replaced, by a stand-in that rewrites the generated files below and
 # the git-ignored local manifest (no node toolchain, no network). The contract
-# subset pair is the autouse `contract_pair`.
+# subset pair is the autouse `contract_pair`. #3452: like `pnpm generate`, it also writes
+# the instrument-policy goldens (tools/gen/export_instrument_policy_{rules,corpus}.py).
 _HEADER = "// GENERATED FILE — DO NOT EDIT BY HAND.\n"
 _GENERATED_DIR = "packages/protocol/src/generated"
+_POLICY_DIR = "packages/fixtures/golden/policy"
 _GENERATED = {
     f"{_GENERATED_DIR}/rest/index.ts": _HEADER + "export type Rest = 1;\n",
     f"{_GENERATED_DIR}/ws/index.ts": _HEADER + "export type Ws = 1;\n",
+    f"{_POLICY_DIR}/corpus.json": '{"cases": []}\n',
+    f"{_POLICY_DIR}/rules.json": '{"violation_codes": []}\n',
 }
 _LOCAL_MANIFEST = "packages/protocol/.cache/generated-manifest.json"
 _GENERATOR = f"""
@@ -827,6 +835,20 @@ def test_committed_hand_edit_of_a_generated_file_fails_ci_gen_001(
     assert f"a/{rel}" in err and "-export type HandEdited = true;" in err
 
 
+def test_policy_golden_git_does_not_track_fails_ci_gen_002(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#3452: the policy goldens are gated paths: one `pnpm generate` writes that was
+    never committed is untracked output, as under packages/protocol."""
+    rel = f"{_POLICY_DIR}/rules.json"
+    _git(generated_repo, "rm", "-q", "--cached", "--", rel)
+    _git(generated_repo, "commit", "-qm", f"untrack {rel}")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-002: ")
+    assert f"\n?? {rel}" in err
+
+
 def test_local_manifest_would_fail_ci_gen_002_if_it_were_not_ignored(
     generated_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -850,6 +872,8 @@ _ORPHANS = {
     "services/api/candleviewer/ws/_generated/cvwb_layout.py": (
         '"""GENERATED FILE — DO NOT EDIT BY HAND."""\n'
     ),
+    # #3452: beside the instrument-policy goldens.
+    f"{_POLICY_DIR}/hand_written.json": '{"violation_codes": ["HAND_WRITTEN"]}\n',
 }
 
 
@@ -942,7 +966,7 @@ def test_generator_failure_after_the_removal_names_what_is_missing(
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
     assert err.startswith("CI-GEN-004: ")
-    assert "2 tracked generated file(s) missing" in err
+    assert f"{len(_GENERATED)} tracked generated file(s) missing" in err
     assert "".join(f"  - {rel}\n" for rel in sorted(_GENERATED)) in err
     removed = "".join(f" D {rel}\n" for rel in sorted(_GENERATED))
     assert _git(generated_repo, "status", "--porcelain") == removed
@@ -981,7 +1005,7 @@ def test_a_removal_that_fails_partway_names_every_file_it_removed(
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
     assert err.startswith(f"CI-GEN-004: cannot remove {stuck} before generating: ")
-    assert "2 tracked generated file(s) missing" in err
+    assert f"{len(removed)} tracked generated file(s) missing" in err
     assert "".join(f"  - {rel}\n" for rel in removed) in err
     deleted = _git(generated_repo, "ls-files", "-z", "--deleted").split("\0")
     assert [rel for rel in deleted if rel] == removed
@@ -1026,6 +1050,8 @@ def test_the_restore_command_leaves_a_file_it_does_not_name_alone(
     _git(generated_repo, "add", f":(literal){globbed}")
     _git(generated_repo, "commit", "-qm", "a generated name with a glob character")
     stuck = f"{_GENERATED_DIR}/rest/index.ts"
+    tracked = sorted([globbed, *_GENERATED])  # the order step 1 removes them in
+    removed = tracked[: tracked.index(stuck)]
     unlink = Path.unlink
 
     def unlink_or_fail(path: Path, missing_ok: bool = False) -> None:
@@ -1036,7 +1062,8 @@ def test_the_restore_command_leaves_a_file_it_does_not_name_alone(
     monkeypatch.setattr(Path, "unlink", unlink_or_fail)
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
-    assert "note: 1 tracked generated file(s) missing" in err
+    assert f"note: {len(removed)} tracked generated file(s) missing" in err
+    assert "".join(f"  - {rel}\n" for rel in removed) in err
     assert f"\n  - {globbed}\n" in err
     (generated_repo / stuck).write_text("// edited after the run\n", encoding="utf-8")
     _paste_restore_command(generated_repo, err)
@@ -1081,7 +1108,7 @@ def test_an_uncoded_failure_after_the_removal_propagates_after_the_note(
     with pytest.raises(raised):
         gen_gate.main([])
     err = capsys.readouterr().err
-    assert err.startswith("note: 2 tracked generated file(s) missing")
+    assert err.startswith(f"note: {len(_GENERATED)} tracked generated file(s) missing")
     assert "".join(f"  - {rel}\n" for rel in sorted(_GENERATED)) in err
     _paste_restore_command(generated_repo, err)
     assert _git(generated_repo, "status", "--porcelain") == ""
@@ -1136,8 +1163,10 @@ def test_a_tracked_name_that_is_not_utf8_fails_ci_gen_004(
 
 def test_orphan_check_covers_the_gated_outputs_of_pnpm_generate() -> None:
     """GENERATE_OUTPUTS are the protocol `generate` task's outputs (pinned above to what
-    the generators write) that the gate covers. The local manifest is git-ignored, so
-    never a tracked orphan; `pnpm generate` writes neither CVWB vectors nor corpus."""
+    the generators write) that the gate covers, each under exactly one entry; a directory
+    entry stands for the outputs it holds (#3452: both policy goldens). The local manifest
+    is git-ignored, so never a tracked orphan; `pnpm generate` writes neither CVWB vectors
+    nor corpus."""
     turbo = (_REPO_ROOT / _PROTOCOL / "turbo.json").read_text(encoding="utf-8")
     gated = [p.as_posix() for p in gen_gate.GENERATED_PATHS]
     covered: set[str] = set()
@@ -1149,7 +1178,15 @@ def test_orphan_check_covers_the_gated_outputs_of_pnpm_generate() -> None:
         if any(path == g or path.startswith(f"{g}/") for g in gated):
             covered.add(path)
     covered.discard(_LOCAL_MANIFEST)
-    assert {p.as_posix() for p in gen_gate.GENERATE_OUTPUTS} == covered
+    entries = [p.as_posix() for p in gen_gate.GENERATE_OUTPUTS]
+    under = {
+        path: [e for e in entries if path == e or path.startswith(f"{e}/")]
+        for path in sorted(covered)
+    }
+    counts = {path: len(found) for path, found in under.items()}
+    assert counts == dict.fromkeys(under, 1)  # each output under exactly one entry
+    assert sorted({found[0] for found in under.values()}) == sorted(entries)
+    assert {f"{_POLICY_DIR}/corpus.json", f"{_POLICY_DIR}/rules.json"} <= covered
 
 
 # #3392: step 7. In the gated directories `pnpm generate` does not write, a committed
@@ -1174,6 +1211,25 @@ def test_fixed_outputs_name_what_each_generator_writes_there() -> None:
     assert fixed == _FIXED_OUTPUTS
     assert list(gen_gate.HAND_KEPT) == [_HAND_KEPT]
     assert "SR-185" in gen_gate.HAND_KEPT[_HAND_KEPT]
+
+
+def _make_recipe(target: str) -> list[str]:
+    makefile = (_REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    recipe = rf"^{re.escape(target)}:.*\n((?:\t.*(?:\n|$))*)"
+    found = re.search(recipe, makefile, re.MULTILINE)
+    assert found, f"no Makefile target {target!r}"
+    return [line.strip() for line in found.group(1).splitlines()]
+
+
+def test_make_gen_runs_pnpm_generate_then_every_generator_step_7_names() -> None:
+    """#3452: `make gen` regenerates every file the gate judges: first `pnpm generate`,
+    the run the gate repeats, then each generator FIXED_OUTPUTS names (the gate runs
+    none of those)."""
+    recipe = _make_recipe("gen")
+    assert recipe[0] == "pnpm generate"
+    args = [arg for line in recipe[1:] for arg in shlex.split(line)]
+    scripts = {arg for arg in args if arg.endswith(".py")}
+    assert sorted(set(gen_gate.FIXED_OUTPUTS) - scripts) == []
 
 
 def test_the_model_package_inits_hold_what_their_generator_writes() -> None:
@@ -1266,6 +1322,21 @@ def test_the_checkout_passes_step_7(
     generator's, the CVWB layout twin or the hand-kept corpus."""
     monkeypatch.chdir(_REPO_ROOT)
     gen_gate.check_fixed_outputs()
+
+
+def test_the_runbook_names_the_gate_tables_instead_of_copying_them() -> None:
+    """#3452 (C-16.5): docs/ci-runbook.md's CI-GEN entries point at the gate's tables, which
+    exist, and copy no directory step 7 judges and no hand-kept file, so a table edit cannot
+    leave a stale copy there."""
+    runbook = (_REPO_ROOT / "docs/ci-runbook.md").read_text(encoding="utf-8")
+    start = runbook.index("### CI-GEN-*")
+    section = runbook[start : runbook.index("\n### ", start + 1)]
+    tables = ("GENERATE_OUTPUTS", "FIXED_OUTPUTS", "FIXED_OUTPUT_DIRS", "HAND_KEPT")
+    assert [name for name in tables if f"`{name}`" not in section] == []
+    assert all(hasattr(gen_gate, name) for name in tables)
+    dirs = [path.as_posix() for path in gen_gate.FIXED_OUTPUT_DIRS]
+    copied = [path for path in [*dirs, *gen_gate.HAND_KEPT] if path in section]
+    assert copied == []
 
 
 # #2743 acceptance 1, for the packaged contract subset: two PRs that each add a different
