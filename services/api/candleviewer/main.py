@@ -51,12 +51,15 @@ class _Teardown:
     KEK (C-2.7, C-12.2), from running. A failed step is logged with its name and exception type.
     An `Exception` goes no further. Anything else, a cancellation, `KeyboardInterrupt` or
     `SystemExit` included, is never swallowed: the first one is held and re-raised, unchanged,
-    once `stop_all` has run, as `Supervisor.start_all` re-raises only after its stops.
+    once `stop_all` has run, as `Supervisor.start_all` re-raises only after its stops. Only a
+    `GeneratorExit` leaves at once: the coroutine is being closed, so the later steps are skipped
+    and only the `finally` still tries `stop_all`.
 
     No step gets a new time bound. The two that can run long, `BarsRuntime` and the metrics
     listener's drain, are #2878's to bound together with the stop budget (see
     `Settings._refuse_unfittable_stop_budget`); one bound on every step here would cut the WS
-    grace and the bars drain short."""
+    grace and the bars drain short. The others bound themselves, cancel their own task or are
+    short closes; one that hangs still holds `stop_all` until the SIGKILL (WS-D17)."""
 
     def __init__(self) -> None:
         self._held: BaseException | None = None
@@ -66,6 +69,8 @@ class _Teardown:
         `Exception` is held as well."""
         try:
             return await stop()
+        except GeneratorExit:
+            raise
         except BaseException as exc:  # an `Exception` ends here; anything else is held as well
             logger().exception(
                 "lifespan: teardown step failed", step=step, exc_type=type(exc).__name__
@@ -76,8 +81,12 @@ class _Teardown:
 
     def raise_held(self) -> None:
         """Re-raise the first held exception, if any: call it once `stop_all` has run."""
-        if self._held is not None:
-            raise self._held
+        held, self._held = self._held, None
+        if held is not None:
+            try:
+                raise held
+            finally:
+                del held  # its traceback holds this frame: no reference cycle back to it
 
 
 @asynccontextmanager

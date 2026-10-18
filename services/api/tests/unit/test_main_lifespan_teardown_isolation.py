@@ -4,8 +4,9 @@
 `main.py`'s lifespan teardown stops its runtimes, tasks, pools and drains one after another, then
 calls `stop_all`. These tests run the real `_lifespan` over a fake for each of those steps and for
 every supervised module, each recording its stop under its name, and make one step raise, or hang
-until the task running the teardown is cancelled. Nothing sleeps or reads a clock: the fakes never
-suspend, except the hung one, which is cancelled once it has started. Each test compares the stops
+until the task running the teardown is cancelled, or make `stop_all` itself raise. Nothing sleeps
+or reads a clock: the fakes never suspend, except the hung one, which is cancelled once it has
+started. Each test compares the stops
 with those of a teardown in which nothing failed, so the order the teardown's comments name
 (`audit_budget_flush` and `account_health` before the modules, `stop_all` last) is kept as it is.
 """
@@ -22,8 +23,9 @@ from fastapi import FastAPI
 from structlog.testing import capture_logs
 
 from candleviewer import main
-from candleviewer.app import _SUPERVISOR_ORDER
+from candleviewer.app import _SUPERVISOR_ORDER, Supervisor
 from candleviewer.main import _lifespan
+from candleviewer.settings import TEARDOWN_BUDGET_S
 
 #: Every step the teardown runs before `stop_all`, in that order, by its `app.state` attribute,
 #: or the lifespan's own name for the metrics runtime and the mesh self-check. A failure is logged
@@ -294,3 +296,64 @@ async def test_lifespan_teardown_when_a_failure_cannot_be_logged_still_runs_stop
         await lifespan.__aexit__(None, None, None)
     modules = [r for r in ran if r.startswith("module:")]
     assert modules == [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
+
+
+def _stop_all_raising(fail: BaseException) -> type[Supervisor]:
+    """The real supervisor, whose `stop_all` raises `fail` once it has stopped every module."""
+
+    class _Supervisor(Supervisor):
+        async def stop_all(self, grace_s: float = TEARDOWN_BUDGET_S) -> None:
+            await super().stop_all(grace_s)
+            raise fail
+
+    return _Supervisor
+
+
+async def test_lifespan_teardown_when_stop_all_raises_after_a_held_exception_reraises_the_held_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`stop_all` runs through the same isolation: its own failure is logged, and the exception a
+    step raised first still wins. `stop_all` awaited bare fails it."""
+    unfailed = await _unfailed(monkeypatch)
+    ran: list[str] = []
+    app, steps = _app(ran, monkeypatch)
+    first = steps["ws_runtime"].fail = KeyboardInterrupt()
+    monkeypatch.setattr(main, "Supervisor", _stop_all_raising(SystemExit(3)))
+    with capture_logs() as logs, pytest.raises(KeyboardInterrupt) as raised:
+        await _run(app)
+    assert raised.value is first
+    assert ran == unfailed
+    assert _failed_steps(logs) == [
+        ("ws_runtime", "KeyboardInterrupt", "error", True),
+        ("supervisor.stop_all", "SystemExit", "error", True),
+    ]
+
+
+async def test_lifespan_teardown_when_stop_all_raises_an_error_logs_it_and_goes_no_further(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An `Exception` out of `stop_all` is logged like a step's and ends there."""
+    unfailed = await _unfailed(monkeypatch)
+    ran: list[str] = []
+    app, _ = _app(ran, monkeypatch)
+    monkeypatch.setattr(main, "Supervisor", _stop_all_raising(RuntimeError("stop_all failed")))
+    with capture_logs() as logs:
+        await _run(app)
+    assert ran == unfailed
+    assert _failed_steps(logs) == [("supervisor.stop_all", "RuntimeError", "error", True)]
+
+
+async def test_lifespan_teardown_after_a_step_raised_generator_exit_skips_later_steps_not_stop_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `GeneratorExit` means the coroutine is being closed, so no later step may await: it
+    leaves at once, unlogged and unchanged, and only the `finally` still runs `stop_all`. Held
+    like any other `BaseException`, it fails."""
+    ran: list[str] = []
+    app, steps = _app(ran, monkeypatch)
+    exc = steps["ws_runtime"].fail = GeneratorExit()
+    with capture_logs() as logs, pytest.raises(GeneratorExit) as raised:
+        await _run(app)
+    assert raised.value is exc
+    assert ran == ["ws_runtime", *(f"module:{name}" for name in reversed(_SUPERVISOR_ORDER))]
+    assert _failed_steps(logs) == []
