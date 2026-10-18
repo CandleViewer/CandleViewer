@@ -6,7 +6,8 @@ dataset id, so no caller text ever reaches SQL: symbol, time bounds and book dep
 parameters (SR-047), and only the validated integer row limit is inlined, because QuestDB's
 PGWire has no `LIMIT $n` slot (#2168). Each template filters `symbol` by equality, bounds `ts` on
 both sides and orders by the designated timestamp only (the Sec.13.2 query lint). Every fetch is
-time-bounded, and driver failures become one typed `HotReplayReadError`.
+time-bounded, and driver failures become one typed `HotReplayReadError` with no chained cause
+(a driver's text may name the server's host and port, RP-I02).
 
 Rows arrive as the driver's read-only records (`LazyPgWire.fetch_records`), never copied into
 dicts on the event loop, and map through `event_from_row`, the mapping the cold tier shares, in
@@ -163,4 +164,4 @@ class QuestDbRecordedReader:
         except TimeoutError:
             raise
         except _DRIVER_ERRORS as exc:
-            raise HotReplayReadError(f"hot replay read failed: {type(exc).__name__}") from exc
+            raise HotReplayReadError(f"hot replay read failed: {type(exc).__name__}") from None

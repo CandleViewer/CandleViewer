@@ -273,11 +273,16 @@ async def test_lazy_pgwire_hands_the_driver_records_over_without_a_dict_copy() -
     [
         ConnectionError("questdb pg-wire in reconnect backoff"),
         asyncpg.InterfaceError("connection is closed"),
+        ConnectionRefusedError(111, "Connect call failed ('10.0.0.5', 8812)"),
     ],
 )
 async def test_driver_failures_become_a_typed_hot_read_error(error: Exception) -> None:
-    """Chaos scenario 10: a datastore outage reaches the replay as one typed storage error."""
-    with pytest.raises(HotReplayReadError):
+    """Chaos scenario 10: a datastore outage reaches the replay as one typed storage error,
+    holding neither the driver's text (it may name the host, RP-I02) nor a chain."""
+    with pytest.raises(HotReplayReadError) as caught:
         await QuestDbRecordedReader(FailingPgWire(error)).read(
             "BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5
         )
+
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    assert "8812" not in str(caught.value) and "10.0.0.5" not in str(caught.value)
