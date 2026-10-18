@@ -409,7 +409,7 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                     or NEVER_RE.search("\n".join(block))
                     or not _keyed_at_four(block)
                 }
-                # GitHub skips a job whose needed job was skipped, and a skipped job passes its lane.
+                # GitHub skips a job whose needed job was skipped; a skipped job passes its lane.
                 while more := {job for job, need in deps.items() if need and need & skip} - skip:
                     skip |= more
                 lanes.update(f"{lane}/{job}" for job in set(called) - skip)

@@ -234,6 +234,9 @@ JS_OUT = "      js: ${{ steps.filter.outputs.js }}\n"
 PR_OUT = "      pr: ${{ steps.change.outputs.pr }}\n"
 CONTRACT = "    uses: ./.github/workflows/_job-contract.yml\n"
 MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
+REMOTE = CONTRACT.replace("./", "o/r/").replace(".yml", ".yml@" + "0" * 40)
+ARCH_RUN = "the architecture contract)\n"
+ARCH_NAME = "    name: architecture\n"
 
 
 @pytest.mark.parametrize(
@@ -381,9 +384,9 @@ MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
         ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: 0", "trivy"),
         ("_job-js.yml", "    name: lint\n", "$&    if: FALSE\n", "no judged js/lint"),
         ("pr.yml", "        id: filter\n", "$&        if: False\n", "'changed-paths' must"),
-        ("pr.yml", "the architecture contract)\n", "$&        if: ${{ 0 }}\n", "'architecture' must"),
-        ("pr.yml", "the architecture contract)\n", "$&        if: null\n", "'architecture' must"),
-        ("pr.yml", "    name: architecture\n", '$&    defaults: {"run":{"shell":"sh"}}\n', "a flow"),
+        ("pr.yml", ARCH_RUN, "$&        if: ${{ 0 }}\n", "'architecture' must"),
+        ("pr.yml", ARCH_RUN, "$&        if: null\n", "'architecture' must"),
+        ("pr.yml", ARCH_NAME, '$&    defaults: {"run":{"shell":"sh"}}\n', "a flow mapping"),
         # ... and a called job that needs a job that never runs is skipped, which passes its lane.
         ("_job-js.yml", INSTALL, "$&    if: false\n", "§9 check 'unit-frontend' is missing"),
         ("_job-js.yml", NODE_CHECK, "$&    if: false\n", "§9 check 'unit-engine' is missing"),
@@ -393,7 +396,7 @@ MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
             ("$&    if: false\n", "    name: unit-engine\n    needs:\n    - install # a list\n"),
             "§9 check 'unit-engine' is missing",
         ),
-        ("_job-js.yml", UNIT_ENGINE, "    name: unit-engine\n    needs: >-\n      install\n", "'unit-e"),
+        ("_job-js.yml", UNIT_ENGINE, UNIT_ENGINE.replace(" i", " >-\n      i"), "'unit-engine' is"),
         # ... and changed-paths, which decides which lanes apply: each output a FILTER_ name reads
         # comes from the step that sets it, and nothing in the job runs on a condition.
         ("pr.yml", PY_OUT, "      py: 'false'\n", "lane 'py' reads ['FILTER_PY']"),
@@ -402,8 +405,8 @@ MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
         ("pr.yml", "        id: filter\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
         ("pr.yml", "        id: change\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
         # ... and a lane credited by name calls a workflow of this repository the proof reads.
-        ("pr.yml", CONTRACT, CONTRACT.replace("./", "o/r/").replace("\n", "@" + "0" * 40 + "\n"), "calls"),
-        ("pr.yml", MIGRATIONS, MIGRATIONS.replace("./", '"./').replace("\n", '"\n'), "'migrations' calls"),
+        ("pr.yml", CONTRACT, REMOTE, "lane 'contract' calls"),
+        ("pr.yml", MIGRATIONS, MIGRATIONS.replace("./", '"./').replace("\n", '"\n'), "calls"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
@@ -471,7 +474,7 @@ def test_a_shape_the_proof_cannot_read_fails_it(tmp_path, workflow, edit, reinde
         ("shadow.yml", '    name: "ci\\x2drequired"\n    runs-on: x\n'),
         ("shadow.yml", "    name: >-\n      ci-required\n    runs-on: x\n"),
         ("shadow.yml", "    name: ${{ 'ci-required' }}\n    runs-on: x\n"),
-        ("shadow.yml", "    name: ci-${{ 'required' }} # an expression is any text\n    runs-on: x\n"),
+        ("shadow.yml", "    name: ci-${{ 'required' }} # any text\n    runs-on: x\n"),
         ("shadow.yml", "      name: ci-required\n      runs-on: x\n"),
     ],
 )
