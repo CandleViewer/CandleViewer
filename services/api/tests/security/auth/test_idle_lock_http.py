@@ -161,11 +161,13 @@ _LOCKED_OR_NOT = pytest.mark.parametrize(
 )
 
 
-def _fail_the_gates_check(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The store raises under the request's first `authenticate_access_token` call, the gate's,
-    and answers every later one, so a route reached after it would find the session."""
+def _fail_the_gates_check(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, error: type[Exception] = RuntimeError
+) -> None:
+    """The store raises *error* under the request's first `authenticate_access_token` call, the
+    gate's, and answers every later one, so a route reached after it would find the session."""
     real = stack.auth.sessions.authenticate_access_token
-    pending = [RuntimeError(_STORE_FAILURE)]
+    pending = [error(_STORE_FAILURE)]
 
     async def once(*args: Any, **kwargs: Any) -> Any:
         if pending:
@@ -223,6 +225,22 @@ def test_a_store_failing_under_the_gate_never_runs_the_kill_switch(
         "/trading/kill-switch", headers=_headers(stack, minted), json={"action": "engage"}
     )
     assert (r.status_code, _code(r)) == (503, "store_unavailable")
+    assert calls == [] and stack.audit.records == []
+
+
+def test_a_store_error_other_than_a_runtime_error_is_500_and_never_runs_the_kill_switch(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate catches `RuntimeError` only, as `GET /me` does (#3300): a Postgres outage's
+    `OSError` under its check reaches the boundary handler, `500 internal_error`, and the stub
+    still never runs (fail closed)."""
+    calls = _kill_switch_stub(stack)
+    minted = _session(stack, "owner-outage")
+    _fail_the_gates_check(stack, monkeypatch, OSError)
+    r = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, minted), json={"action": "engage"}
+    )
+    assert (r.status_code, _code(r)) == (500, "internal_error") and _STORE_FAILURE not in r.text
     assert calls == [] and stack.audit.records == []
 
 

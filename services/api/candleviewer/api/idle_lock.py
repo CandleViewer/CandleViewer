@@ -18,11 +18,12 @@ lifetime, session neither revoked nor past its absolute lifetime). Any other
 refusal passes through untouched, so the route answers its own uniform `401`
 (no session oracle), and an expired access token stays `unauthenticated`. A
 store failing under the call (`RuntimeError`) leaves the lock unchecked: the gate
-fails closed with `GET /me`'s `503 store_unavailable` and log line (#3300). It
-does not gate the operations allowed while locked, nor the ones the contract does
-not authenticate with a bearer (public ones, and `POST /auth/refresh`, which
-refuses a locked session itself). Those match their exact path; anything else
-is gated (fail closed).
+fails closed with `GET /me`'s `503 store_unavailable` and log line (#3300), which
+also names the route; any other store error reaches the boundary handler (`500`),
+as for `GET /me`. No route runs either way. It does not gate the operations
+allowed while locked, nor the ones the contract does not authenticate with a
+bearer (public ones, and `POST /auth/refresh`, which refuses a locked session
+itself). Those match their exact path; anything else is gated (fail closed).
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from candleviewer.api.csrf import route_path
+from candleviewer.api.csrf import _compile_operations, bounded_method, match_operation, route_path
+from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.models import SessionRecord
 
@@ -166,15 +168,16 @@ class IdleLockMiddleware:
         app: ASGIApp,
         *,
         sessions: Callable[[], SessionsLike | None],
-        ungated: frozenset[tuple[str, str]],
+        spec: dict[str, Any],
     ) -> None:
         self._app = app
         self._sessions = sessions
-        self._ungated = ungated
+        self._ungated = ungated_operations(spec)
+        self._operations = _compile_operations(frozenset(declared_operations(spec)))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and not self._is_ungated(scope):
-            refusal = await self._idle_lock_refusal(Headers(scope=scope))
+            refusal = await self._idle_lock_refusal(scope)
             if refusal is not None:
                 await refusal(scope, receive, send)
                 return
@@ -183,10 +186,10 @@ class IdleLockMiddleware:
     def _is_ungated(self, scope: Scope) -> bool:
         return (str(scope["method"]).upper(), route_path(scope["path"])) in self._ungated
 
-    async def _idle_lock_refusal(self, headers: Headers) -> JSONResponse | None:
+    async def _idle_lock_refusal(self, scope: Scope) -> JSONResponse | None:
         """The `session_idle_locked` 401 when the bearer's own authentication refuses
         it as idle-locked (`require_active` counts `auth_idle_locks_total`)."""
-        token = _bearer(headers)
+        token = _bearer(Headers(scope=scope))
         sessions = self._sessions()
         if token is None or sessions is None:
             return None
@@ -199,8 +202,11 @@ class IdleLockMiddleware:
         except RuntimeError as exc:
             # Fail closed (C-12.4): a store failing under the call leaves the lock unchecked, so
             # no route runs. `GET /me`'s answer and log line (#3300, #3053 item 2): the class name
-            # and a traceback, which the redaction filter scans; the message gets no field.
-            _log().error("auth.me.session_backend_error", error=type(exc).__name__, exc_info=exc)
+            # and a traceback, which the redaction filter scans; the message gets no field. The
+            # route is its contract template, never the raw path (a path may carry a credential).
+            path = match_operation(scope["method"], route_path(scope["path"]), self._operations)
+            log = _log().bind(method=bounded_method(scope["method"]), path=path)
+            log.error("auth.me.session_backend_error", error=type(exc).__name__, exc_info=exc)
             return store_unavailable_problem()
         return None
 

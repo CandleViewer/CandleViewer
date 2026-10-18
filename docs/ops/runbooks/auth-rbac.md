@@ -333,8 +333,10 @@ it (login refuses `disabled` only):
   As deployed, `IdleLockMiddleware` (#2300) first authenticates the bearer of every route but the
   operations allowed while idle-locked with `authenticate_access_token`, which ends in
   `require_active`, so `DELETE /me/sessions/{sessionId}` meets the backstop there before its own
-  code runs, and only `POST /auth/logout` skips it; a session store failing under that call is
-  answered `503 store_unavailable`, and no route runs.
+  code runs, and only `POST /auth/logout` skips it. A `RuntimeError` from the session store under
+  that call is answered `503 store_unavailable`; any other store error (the deployed SQLAlchemy
+  repository raises `DBAPIError`, `OSError` or `TimeoutError` on a Postgres outage) reaches the
+  boundary handler as `500 internal_error`. Either way no route runs (fail closed).
 - Each such revocation increments `auth_disabled_user_sessions_revoked_total` once (no label; on the
   metrics registry: the private listener `127.0.0.1:9108`) and logs a `WARNING`
   `auth.disabled_user_session_revoked` with `session_id`, `user_id` and `user_status` (`None`: the

@@ -641,9 +641,6 @@ class SessionService:
                 # Only once the revoke committed: a failed or cancelled revoke keeps the
                 # count, so the next wrong password revokes (#2389 gap I).
                 self._unlock_failures.pop(session_id, None)
-                if revoked is not None:  # as `revoke()`; None: already revoked, and counted then
-                    auth_sessions_active.dec()
-                    auth_session_revocations_total.labels(reason="unlock_attempts_exceeded").inc()
                 await self._publish_row(revoked, "unlock_attempts_exceeded")
                 raise SessionRevoked("unlock_attempts_exceeded")
             await _write_ahead(write_ahead, UnlockOutcome.FAILED)

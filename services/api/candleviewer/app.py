@@ -98,7 +98,7 @@ from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
-from candleviewer.api.idle_lock import IdleLockMiddleware, ungated_operations
+from candleviewer.api.idle_lock import IdleLockMiddleware
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
@@ -1439,7 +1439,7 @@ def create_app(
     app.add_middleware(
         IdleLockMiddleware,
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
-        ungated=ungated_operations(spec),
+        spec=spec,
     )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(

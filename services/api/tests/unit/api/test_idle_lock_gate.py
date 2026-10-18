@@ -78,7 +78,7 @@ class Gate:
         app.add_middleware(
             IdleLockMiddleware,
             sessions=lambda: self.sessions if wired else None,
-            ungated=ungated_operations(_spec()),
+            spec=_spec(),
         )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="https://testserver"
@@ -227,13 +227,17 @@ async def test_revoked_expired_unknown_and_missing_credentials_pass_to_the_route
 
 #: A stopping session store's failure text: never in an answer or a log field of its own.
 _STORE_FAILURE = "session store stopped"
+#: A credential in a path (`downloadBackup`'s link): logs name the route template, never this.
+_IN_PATH = "from-an-issued-download-link"
 
 
-def _stop_the_store(gate: Gate, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The store raises `RuntimeError` under every `authenticate_access_token` call."""
+def _stop_the_store(
+    gate: Gate, monkeypatch: pytest.MonkeyPatch, error: type[Exception] = RuntimeError
+) -> None:
+    """The store raises *error* under every `authenticate_access_token` call."""
 
     async def stopped(*_args: Any, **_kwargs: Any) -> Any:
-        raise RuntimeError(_STORE_FAILURE)
+        raise error(_STORE_FAILURE)
 
     monkeypatch.setattr(gate.sessions, "authenticate_access_token", stopped)
 
@@ -252,21 +256,37 @@ async def test_a_store_failing_under_the_check_is_503_and_no_route_runs(
     assert gate.reached == [] and _STORE_FAILURE not in r.text
 
 
-async def test_a_store_failure_under_the_check_is_logged_with_its_class_and_a_traceback(
+async def test_a_store_failure_under_the_check_is_logged_with_its_class_route_and_a_traceback(
     gate: Gate, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The broad catch must not hide a defect: one error line, `GET /me`'s
-    `auth.me.session_backend_error`, names the class and carries the exception, which the
-    processor chain renders as a traceback and then redacts (#3300)."""
+    `auth.me.session_backend_error`, names the class and the route (the method and the contract
+    template, never the raw path) and carries the exception, which the processor chain renders
+    as a traceback and then redacts (#3300)."""
     minted = await gate.mint()
     _stop_the_store(gate, monkeypatch)
     with capture_logs() as logs:
-        await gate.send("GET", "/auth/sessions", minted)
+        await gate.send("GET", f"/api/v1/admin/backups/b1/download/{_IN_PATH}", minted)
     (entry,) = logs
-    expected = ("auth.me.session_backend_error", "error", "RuntimeError")
-    assert (entry["event"], entry["log_level"], entry["error"]) == expected
+    expected = ("auth.me.session_backend_error", "error", "RuntimeError", "GET")
+    assert (entry["event"], entry["log_level"], entry["error"], entry["method"]) == expected
+    assert entry["path"] == "/admin/backups/{backupId}/download/{token}"
     assert isinstance(entry["exc_info"], RuntimeError)
-    assert _STORE_FAILURE not in repr({k: v for k, v in entry.items() if k != "exc_info"})
+    fields = repr({k: v for k, v in entry.items() if k != "exc_info"})
+    assert _STORE_FAILURE not in fields and _IN_PATH not in fields
+
+
+async def test_a_store_error_that_is_not_a_runtime_error_is_not_answered_503(
+    gate: Gate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The catch names `RuntimeError` only, as `GET /me`'s (#3300): a Postgres outage's `OSError`
+    is not hidden behind the 503 but reaches the boundary handler (`500 internal_error` in
+    `create_app()`), and still no route runs."""
+    minted = await gate.mint()
+    _stop_the_store(gate, monkeypatch, OSError)
+    with pytest.raises(OSError, match=_STORE_FAILURE):
+        await gate.send("POST", "/orders", minted)
+    assert gate.reached == []
 
 
 async def test_without_a_session_backend_the_gate_passes() -> None:
