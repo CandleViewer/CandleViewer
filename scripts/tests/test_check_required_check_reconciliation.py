@@ -247,6 +247,10 @@ NAMED_LANES = [
 ]
 SPARE = "\n  spare:\n    if: false\n    runs-on: x\n    steps:\n      - run: echo$&"
 FILTER_STEP = "one step `filter`, which uses dorny/paths-filter pinned"
+# The pin itself, read from pr.yml so that an action bump needs no edit here.
+FILTER_PIN = recon.FILTER_ACTION_RE.findall(
+    (ROOT / ".github/workflows/pr.yml").read_text(encoding="utf-8")
+)[0]
 NESTED = "    uses: ./.github/workflows/_job-a11y.yml\n"
 NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
 
@@ -429,7 +433,7 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         ("_job-engine-bench.yml", "\n  engine-bench-stub:\n", SPARE, "'engine-bench' is missing"),
         # ... and the step whose outputs decide which lanes apply is the pinned paths filter.
         ("pr.yml", "dorny/paths-filter@", "other/paths-filter@", FILTER_STEP),
-        ("pr.yml", "filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d", "filter@v4", FILTER_STEP),
+        ("pr.yml", FILTER_PIN, "dorny/paths-filter@v4", FILTER_STEP),
         # Review round 7 of #3103, second pass: a judged lane's job that calls a workflow hides
         # that workflow's jobs from the proof, so it is refused and credits nothing.
         ("_job-contract.yml", "\njobs:\n", "$&  nested:\n" + NESTED, NESTED_ERROR),

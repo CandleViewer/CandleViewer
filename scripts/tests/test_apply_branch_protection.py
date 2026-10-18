@@ -258,8 +258,11 @@ def test_fetch_branch_rules_reads_every_rule_with_one_get(monkeypatch) -> None:
     }
     url = "https://api.github.com/repos/o/r/rules/branches/main?per_page=100"
     assert [(r.get_method(), r.full_url) for r in seen] == [("GET", url)]
-    assert _fetch_rules(monkeypatch, [])[0] == {}
-    assert len(_fetch_rules(monkeypatch, [{"type": "deletion"}] * 99)[0]) == 99  # the bound
+
+
+@pytest.mark.parametrize("count", [0, 99])  # the bound: 100 or more fail closed (below)
+def test_fetch_branch_rules_accepts_fewer_than_100_rules(monkeypatch, count) -> None:
+    assert len(_fetch_rules(monkeypatch, [{"type": "deletion"}] * count)[0]) == count
 
 
 @pytest.mark.parametrize(
