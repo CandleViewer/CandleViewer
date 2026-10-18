@@ -11,13 +11,14 @@
 - Numbering note: 0031 is reserved by E45-K01 (`ADR-0031-resilience-and-chaos`, not on `main`) and 0037 is
   the last on `main`. The E42 admin model says the E42-T06 ADR takes the next free number when it is
   written (`docs/security/threat-models/e42-admin.md:61-64`), so this record takes 0038 and that one the
-  next free number. The model's "ADR-0038 at the time of writing" (`:63-64`) is then out of date (F4).
+  next free number. The model's "ADR-0038 at the time of writing" (`:63-64`, `716`, `1223`) is then out
+  of date (F4).
 - Related: #3519 (this record is its slice 0), #3410 and #3529 (the `app://` load path), #3411 and #3609
   (merged: `resolveDevServerUrl`), #3600 (merged: the E10-X02 gate asserts the `app://` CSP and window URLs
   at runtime), #2712 (SPA access-token client), #2711 (TOTP step on the login screen), #2490 (real-backend
   auth E2E); ADR-0010, ADR-0011 (proposed: the shell is built on Electron meanwhile), ADR-0020; SR-006,
   SR-012, SR-041, SR-042, SR-049, SR-111, SR-112, SR-113, SR-173, SR-174, SR-181, SR-183.
-- Evidence: every `file:line` holds on `main` at `85960908a`. Unless a full path is given, web paths are
+- Evidence: every `file:line` holds on `main` at `86c4e2096`. Unless a full path is given, web paths are
   under `apps/web/src/`, shell paths under `apps/desktop/src/` and backend paths under
   `services/api/candleviewer/`.
 
@@ -39,13 +40,13 @@ reaches the backend.
 
 - One SR-042 allow-list, `CV_ALLOWED_ORIGINS` (`settings.py:336-342`, `668-672`), each entry validated as
   a serialised origin at startup (`settings.py:175-193`, `1042-1055`). It feeds the CSRF guard
-  (`api/csrf.py:213-227`, mounted at `app.py:2072-2081`), the cookie refresh (`api/sessions.py:367-375`,
-  `app.py:1316`) and the WS upgrade (`ws/lifecycle.py:256-278`, `app.py:1381`). `app://candleviewer` is
+  (`api/csrf.py:213-227`, mounted at `app.py:2078-2087`), the cookie refresh (`api/sessions.py:367-375`,
+  `app.py:1320`) and the WS upgrade (`ws/lifecycle.py:256-278`, `app.py:1385`). `app://candleviewer` is
   already a valid entry: `is_serialised_origin("app://candleviewer")` returns true (checked 2026-10-18).
   The dev compose file lists only the Vite origins (`infra/compose/docker-compose.dev.yml:19-22`).
   Production leaves the list empty, which fails closed.
 - No CORS layer. The stack is HttpDuration → Correlation → MeshOnly → Csrf → IdleLock → the inner guards
-  (`app.py:2066-2095`), and the Correlation → MeshOnly → Csrf adjacency is pinned by
+  (`app.py:2072-2101`), and the Correlation → MeshOnly → Csrf adjacency is pinned by
   `services/api/tests/security/auth/test_csrf_double_submit.py:452-455`. A cross-origin page can read no
   response, and its preflighted requests (JSON bodies, `Authorization`, `X-CSRF-Token`) fail.
 - CSRF is double-submit: the header and the cookie must both be present and equal, and the token's MAC must
@@ -231,7 +232,7 @@ credential that outlives the page.
   - The WS URL also feeds the E17-T04 client in `lib/ws`, which is not yet wired into `main.tsx`
     (`lib/ws/README.md:3-5`). Its shared worker opens the socket at the `wsUrl` a tab sends in its connect
     message, and `isSocketAllowed` admits `wss:` anywhere and `ws:` on loopback only
-    (`lib/ws/worker/portHost.ts:85-95`, `435-444`), which every accepted endpoint satisfies. That `wsUrl`
+    (`lib/ws/worker/portHost.ts:81-91`, `439-448`), which every accepted endpoint satisfies. That `wsUrl`
     comes from `lib/http/backend.ts` too: whichever of S6b and the E17-T04 wiring slice lands second routes
     it there, so there is still one derivation.
 - **1f. The dev server.** With `CV_DEV_SERVER_URL` the page still uses the bridge, so dev runs the desktop
@@ -245,7 +246,7 @@ credential that outlives the page.
   There is no code default, and the empty default stays fail-closed (`settings.py:336-342`). Once it is
   listed, the existing checks admit the desktop unchanged: unsafe HTTP (`api/csrf.py:213-227`), the cookie
   refresh (`api/sessions.py:367-375`) and the WS upgrade (`ws/lifecycle.py:256-278`). Per D4, the dev
-  compose default gains the entry. The runbook (`docs/ops/runbooks/auth-rbac.md:738-743`) and
+  compose default gains the entry. The runbook (`docs/ops/runbooks/auth-rbac.md:756-761`) and
   `apps/desktop/README.md:53-57` are updated.
 - **2b. CORS, from the same allow-list.** Starlette's `CORSMiddleware` (part of Starlette, so no new
   dependency), configured in a new `api/cors.py`. That file is inside the `api` module, and `api` already
@@ -293,7 +294,7 @@ credential that outlives the page.
     response, and that an unlisted origin gets no `Access-Control-Allow-Origin` from either.
   - The alternative placements are under "Why not the alternatives".
   - An unhandled exception's 500 comes from Starlette's outermost error middleware, outside every layer
-    here, and `app.py` registers no handler for it (`app.py:1127-1128`). So it carries no CORS headers,
+    here, and `app.py` registers no handler for it (`app.py:1131-1132`). So it carries no CORS headers,
     and the desktop page sees a network error and shows `unreachable` (`features/auth/authApi.ts:17`).
     Accepted; S3 pins it with a test.
 - **2d. What the Origin header proves, and what it does not.** A browser engine sets `Origin` to the
@@ -533,10 +534,10 @@ CSRF, CORS, preload or CSP rules. S6a, S6b, S7, S8 and S9b match those rules (th
     refused, and an unsafe request would be refused as `cross_origin`), and the WS upgrade is refused
     (counted as `origin_forbidden` by the backend);
   - with a refused `CV_BACKEND_ORIGIN`, no request leaves the page.
-- **The backend (S9a's launcher).** The production `create_app` (`app.py:1081-1100`), so the middleware
+- **The backend (S9a's launcher).** The production `create_app` (`app.py:1085-1104`), so the middleware
   order and the guards that the negative cases prove are the ones that ship. A bare `create_app` cannot
   sign anyone in: without real storage `build_auth_service` returns a bare `AuthService()`
-  (`app.py:522-523`), and the session routes answer 503 (`api/sessions.py:1040-1041`). So the launcher
+  (`app.py:523-524`), and the session routes answer 503 (`api/sessions.py:1040-1041`). So the launcher
   does what `services/api/tests/security/auth/_stack.py:194-219` does: it patches `build_auth_service`
   with an `AuthService` over the in-memory fakes and fixed test keys, patches `build_identity_provider`
   with a double, keeps the real `make_ws_router` on the shared clock, seeds one user with a fixed
@@ -615,13 +616,13 @@ refusals their own CORS headers, which come from the one shared policy (2c).
 
 - Between HttpDuration and Correlation. One layer would make every refusal readable, and the pinned trio
   would stay adjacent (`test_csrf_double_submit.py:446-455` checks only the trio). Rejected: off-mesh
-  peers would get CORS answers before MeshOnly refuses them, so MeshOnly (`app.py:2082-2088`) would no
+  peers would get CORS answers before MeshOnly refuses them, so MeshOnly (`app.py:2088-2094`) would no
   longer be the first gate every request meets. Preflight answers would also carry no correlation id,
-  against `app.py:2089-2090`.
+  against `app.py:2095-2096`.
 - Outermost, outside HttpDuration: the same objections, and preflights would no longer be timed
-  (`app.py:2092-2094`, #2421).
+  (`app.py:2098-2100`, #2421).
 - Between Correlation and MeshOnly, or between MeshOnly and Csrf: it breaks the adjacency that
-  `app.py:2092-2093` and the test pin.
+  `app.py:2098-2099` and the test pin.
 
 **For decision 3 (the token path):**
 
@@ -646,9 +647,9 @@ table. The record's end-to-end validation is S9a and S9b.
   sides; the existing gap is not this record's.
 - **F3.** Invite links are built from `window.location.origin` (`features/invites/AdminInviteScreen.tsx:50`,
   `65`), so on the desktop they would be `app://` links. This needs a separate ticket.
-- **F4.** The E42 admin model forecasts "ADR-0038" for the E42-T06 record
-  (`docs/security/threat-models/e42-admin.md:63-64`). This record takes 0038, so that line needs the next
-  free number when E42-T06 is written; the E42 owner updates it, not this PR.
+- **F4.** The E42 admin model forecasts "ADR-0038" for the E42-T06 record in three places
+  (`docs/security/threat-models/e42-admin.md:63-64`, `716`, `1223`). This record takes 0038, so those
+  lines need the next free number when E42-T06 is written; the E42 owner updates them, not this PR.
 - **F5.** The contract's issue list names seven operations that issue the CSRF token
   (`22-api-openapi.yaml:121-128`), while code issues it at three (`api/auth.py:479`,
   `api/sessions.py:1035`, `1055`). This needs a contract or code clean-up issue (3f).
