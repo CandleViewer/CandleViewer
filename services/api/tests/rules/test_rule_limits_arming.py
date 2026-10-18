@@ -393,6 +393,20 @@ async def test_a_stale_armed_row_sends_nothing_to_a_chart_that_left_armed(
     assert (await m.set_mode(rid, "armed", OWNER, "arm"))["mode"] == "armed"
 
 
+async def test_a_stale_row_does_not_disarm_a_rule_the_owner_rearmed_within_the_budget() -> None:
+    """Read armed above the cap before the Owner fixed and re-armed it: the stored row decides."""
+    m, rec = _mgr()
+    rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, mode="armed")
+    stale = replace(await m._row(rid))
+    await _demoted(m, rid)
+    await m.set_mode(rid, "armed", OWNER, "rearm")
+    fixed = replace(await m._row(rid))
+    rec.audits.clear()
+    view = await m._present(stale)
+    assert (rec.audits, m.lifecycle.leaf(rid), await m._row(rid)) == ([], "armed", fixed)
+    assert view == m._view(fixed)
+
+
 @pytest.mark.parametrize(("mode", "reason"), [("simulate", None), ("disabled", "disarmed")])
 async def test_reading_a_rule_above_the_cap_that_is_not_armed_changes_nothing(
     mode: str, reason: str | None

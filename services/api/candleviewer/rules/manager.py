@@ -42,8 +42,7 @@ IDEM_CACHE_MAX = 4096
 #: How long `set_mode` waits for a refusal's own audit record (C-2.9): `api.csrf.AUDIT_TIMEOUT_S`,
 #: which `rules` may not import (a test pins them equal).
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
-#: How long one disarm of an armed rule above a hard cap waits for its record (#3232). It runs
-#: beside the evaluator tick, never inside it; a miss is logged and the next tick tries again.
+#: Bound on one disarm of a rule armed above a hard cap, run beside the evaluator tick (#3232).
 TICK_DISARM_TIMEOUT_S: Final = 2.0
 _ORDER_ACTIONS = frozenset(
     {
@@ -231,6 +230,18 @@ def _capped_limits(rule: Rule) -> dict[str, Any]:
     return {"limits_above_cap": {f: {"cap": LIMIT_CAPS[f], "value": v} for f, v in over.items()}}
 
 
+def _disarm_cause(row: RuleRow) -> tuple[str, dict[str, Any]] | None:
+    """Why an armed rule must not run, as (reason, audit detail): its active version is corrupt,
+    or above a hard cap (#3232, decision 9: disarmed, never clamped). None otherwise."""
+    active = next((v for v in row.versions if v.id == row.active_version_id), None)
+    if row.mode != "armed" or active is None:
+        return None
+    if quarantine_path(active.ir):
+        return "quarantined", {}
+    capped = _capped_limits(Rule.model_validate(active.ir))
+    return ("limits_above_cap", capped) if capped else None
+
+
 class RulesManager:
     def __init__(
         self,
@@ -253,7 +264,7 @@ class RulesManager:
         self._sim_window: dict[str, tuple[str, int]] = {}
         #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
-        #: Forced disarms run one at a time, so their re-check of the chart holds (#3232).
+        #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
 
     def set_hooks(self, *, audit: Audit | None = None, broadcast: Broadcast | None = None) -> None:
@@ -263,8 +274,7 @@ class RulesManager:
             self._bc = broadcast
 
     async def stop(self) -> None:
-        """Cancel the tick disarms in flight, then stop the B9 charts. A cancelled disarm leaves
-        its rule armed in the store, and the evaluator skips the rule until it is disarmed."""
+        """Cancel the tick disarms in flight (their rules stay armed, skipped), then the charts."""
         tasks = list(self._tick_disarms.values())
         for task in tasks:
             task.cancel()
@@ -428,29 +438,24 @@ class RulesManager:
         return out
 
     async def _present(self, row: RuleRow) -> dict[str, Any]:
-        """`_view` + a force-disarm recorded through the B9 chart (`DISARM`) of an armed rule
-        the engine must not run, so it is never left armed in the store or the engine: a corrupt
-        one, or one above a hard cap (#3232, decision 9: disarmed, never clamped)."""
-        active = next((v for v in row.versions if v.id == row.active_version_id), None)
-        if row.mode == "armed" and active is not None:
-            if quarantine_path(active.ir):
-                await self._force_disarm(row, "quarantined", {})
-            elif capped := _capped_limits(Rule.model_validate(active.ir)):
-                await self._force_disarm(row, "limits_above_cap", capped)
+        """`_view`, after a forced disarm of an armed rule the engine must not run."""
+        if _disarm_cause(row):
+            row = await self._force_disarm(row)
         return self._view(row)
 
-    async def _force_disarm(self, row: RuleRow, reason: str, detail: dict[str, Any]) -> None:
-        """B9 `DISARM` of an armed rule, audited as `rule.disarmed` with `reason` and `detail`
-        (no actor: the server does it); the `rules` broadcast carries the reason only. Presenters
-        race and `row` may be stale, so forced disarms run one at a time and send DISARM only to a
-        chart that still handles it: one that does not would park it (`onUnhandled: "defer"`) and
-        replay it into the rule's next transition."""
+    async def _force_disarm(self, row: RuleRow) -> RuleRow:
+        """B9 `DISARM`, audited as `rule.disarmed` with its cause (no actor: the server does it);
+        the `rules` broadcast carries the reason only. `row` may be stale, so forced disarms run
+        one at a time on the row read again (returned), only while it still has a cause and its
+        chart still takes DISARM (one that does not would park it: `onUnhandled: "defer"`)."""
         async with self._disarming:
-            handled = await self.lifecycle.handled_event(
+            row = await self._s.get(row.id) or row
+            cause = _disarm_cause(row)
+            if cause is None or not await self.lifecycle.handled_event(
                 row.id, row.mode, row.disabled_reason, "disabled"
-            )
-            if handled is None:
-                return
+            ):
+                return row
+            reason, detail = cause
             leaf = await self._leaf(row)
             payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
             payload |= {"b9_from": leaf, "b9_event": "DISARM", "reason": reason}
@@ -458,6 +463,7 @@ class RulesManager:
                 row, "DISARM", "rule.disarmed", payload | detail, reason=reason
             ):
                 await self._bc({"topic": "rules", **payload})
+        return row
 
     @staticmethod
     def _version_view(v: VersionRow, full: bool = False) -> dict[str, Any]:
@@ -713,29 +719,28 @@ class RulesManager:
                 rule = Rule.model_validate({**v.ir, **_owner_field(row.owner), "rule_id": row.id})
             except ValidationError:
                 continue
-            if row.mode == "armed" and (capped := _capped_limits(rule)):
-                self._disarm_beside_tick(row, capped)
+            if row.mode == "armed" and _capped_limits(rule):
+                self._disarm_beside_tick(row)
                 continue
             out.append(rule)
         return out
 
-    def _disarm_beside_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
+    def _disarm_beside_tick(self, row: RuleRow) -> None:
         """The tick has skipped the rule, so it never waits for the disarm: that runs as a
         tracked task, at most one per rule, and a stalled or failing writer holds no tick."""
         rid = row.id
         if rid in self._tick_disarms:
             return
-        task = spawn(self._disarm_on_tick(row, capped), name="rule-limits-disarm")
+        task = spawn(self._disarm_on_tick(row), name="rule-limits-disarm")
         self._tick_disarms[rid] = task
         task.add_done_callback(lambda _done: self._tick_disarms.pop(rid, None))
 
-    async def _disarm_on_tick(self, row: RuleRow, capped: dict[str, Any]) -> None:
-        """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`: a failed or timed-out one is logged
-        and leaves the row armed, and the next tick starts another (at least once: an append the
-        writer finishes after the bound is recorded again by that attempt)."""
+    async def _disarm_on_tick(self, row: RuleRow) -> None:
+        """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out one is logged,
+        the row stays armed and the next tick retries; a late append can be recorded twice."""
         try:
             async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
-                await self._force_disarm(row, "limits_above_cap", capped)
+                await self._force_disarm(row)
         except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
             _log().error("rules.limits_disarm_failed", rule_id=row.id, error=type(lost).__name__)
 
