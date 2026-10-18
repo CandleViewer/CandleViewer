@@ -39,6 +39,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_created",
         "auth.session_refreshed",
         "auth.session_revoked",
+        # #3120 (C-2.9): `SessionService.require_active` revoked a disabled or deleted user's
+        # surviving session on use (SR-029); written through the port `AuthService` attaches.
+        "auth.disabled_user_session_revoked",
         "auth.idle_locked",
         # #2300 (E09-D06 ruling): named by the `POST /auth/unlock` and
         # `POST /auth/session/extend` contracts; the routes that emit them ship in that

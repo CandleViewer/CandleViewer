@@ -108,6 +108,7 @@ from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_r
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import make_session_router
 from candleviewer.api.step_up import (
@@ -1249,6 +1250,10 @@ def create_app(
     revocation_hub = RevocationHub(remember_s=ACCESS_TOKEN_TTL.total_seconds())
     app.state.revocation_hub = revocation_hub
     ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))  # every revoke path (#2272)
+    # The `require_active` backstop's audit record (C-2.9, #3120), in flight under the shared cap.
+    ctx.auth.attach_backstop_audit(
+        SessionBackstopAudit(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits)
+    )
     app.include_router(
         make_session_router(
             ctx.auth,
