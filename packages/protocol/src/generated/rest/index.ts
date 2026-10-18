@@ -1983,16 +1983,56 @@ export interface paths {
      *        entry must be the configured deployment egress IP itself (SR-030a). An empty list is
      *        `key_ip_whitelist_missing`; a wildcard, a range or any other address is
      *        `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
-     *     6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
-     *        is attached.
+     *     6. Expiry, if set, must be in the future (SR-030a): an expired key, or one the exchange
+     *        itself refuses as expired, is rejected with `validation_failed` / `key_expired`. A key
+     *        that expires within 14 days is accepted, with the `key_expiring_soon` warning.
      *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
      *        with return code 0 within the `recv_window`, which also validates clock sync
-     *        (`key_probe_failed`).
+     *        (`key_probe_failed` when the exchange refuses the probe; a probe it cannot answer in
+     *        time gives no verdict, see **No verdict**).
      *
      *     The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
      *     keyring / age-encrypted file) before it touches disk; the plaintext exists only in
      *     request-scoped memory. The full verification result is stored as
      *     `permission_snapshot` and re-checked at start-up and hourly (C-12.2).
+     *
+     *     **Verdict.** The exchange refusing the key itself ends a check with a verdict whichever
+     *     call it refuses: an unknown key, a missing right, an address the key's whitelist does not
+     *     hold and an expired key are the rules of steps 1, 3, 5 and 6 (`key_wrong_environment`,
+     *     `key_missing_scopes`, `key_ip_whitelist_mismatch`, `key_expired`), and a refused signed
+     *     probe is `key_probe_failed`. Every rejection is a `422` that carries the `verification`
+     *     the pipeline reached (`KeyRejectedProblem`): `passed` is false, `egress_ip` is the
+     *     address to add to the key's IP whitelist at the exchange, and the fields of a check that
+     *     did not run are left out. A key the exchange refuses before its rights are read has no
+     *     check to show (`KeyVerificationNotRead`): `passed` and `egress_ip` only, and never
+     *     `withdraw_enabled`, since a withdrawal check that did not run is not a pass and is not
+     *     sent as `false` (C-2.8). A `422` is stored for replay like any other answer, so the
+     *     resend after the key is put right takes a new `Idempotency-Key`.
+     *
+     *     **No verdict.** A signed call can end without saying anything about the key: the exchange
+     *     gave no answer, or answered with an error that is not a refusal of the key (a refused
+     *     signature, a clock outside the `recv_window`, a rate limit, an outage, a reply that
+     *     cannot be read). The pipeline then has no verdict: nothing is stored, no stored key or
+     *     account changes, and the import may be sent again. `transport_error` and `timeout`,
+     *     where the exchange gave no answer, give `503 exchange_unavailable` with `Retry-After`;
+     *     an error answer gives `502 exchange_error`. Neither answer echoes exchange text
+     *     (`KeyExchangeProblem`): `Problem.exchange` holds `ret_code` only (omitted when the
+     *     exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any other exchange
+     *     text, header, URL or request fragment (SR-E27-08). A `502` or `503` of an import is
+     *     never stored for replay: the identical request re-sent with the same `Idempotency-Key`
+     *     is a first submission, which verifies again (no `Idempotency-Replayed`).
+     *
+     *     **Other statuses.** `404` is an account that does not exist. `409` is an `Idempotency-Key`
+     *     first used with a different request (`idempotency_key_reuse`) or still being processed
+     *     (`idempotency_in_flight`), or a request that conflicts with stored state (`conflict`).
+     *     The replay fingerprint holds `api_key` only as a server-keyed HMAC, so another key under
+     *     the same `Idempotency-Key` is `idempotency_key_reuse` and never the first key's answer,
+     *     and it never holds `api_secret`, which is not hashed, stored or logged for it
+     *     (SR-E27-20). A `503` also answers when the import cannot be made or recorded, and
+     *     nothing is stored then: `exchange_unavailable` when signing is unavailable,
+     *     `audit_unavailable` when the write-ahead audit record of the import cannot be written
+     *     (C-2.9) and `store_unavailable` when the relational store is unavailable. A KEK that is
+     *     unavailable is refused with `403 kek_unavailable` instead (ADR-0009 Amendment 1).
      */
     post: operations["createApiKey"];
     delete?: never;
@@ -6692,6 +6732,12 @@ export interface components {
       /** Format: uuid */
       rule_id?: string | null;
     };
+    /** @description The `502` and `503` problems of a key operation: the problem body whose `exchange` member holds the exchange's return code only, never `ret_msg`, `endpoint`, `request_id` or any other exchange text (SR-E27-08): the text of a refused signature can echo the signed request, key id included. This schema alone refuses the other members: the generated Python class re-declares `exchange` with the type of `Problem`, which also admits `ret_msg`, `endpoint` and `request_id`, so a body built from that class type-checks while it leaks exchange text. A route builds `exchange` from the return code alone, and its provider test validates the real `502` and `503` against this schema. */
+    KeyExchangeProblem: components["schemas"]["Problem"] & {
+      exchange?: {
+        ret_code?: number;
+      };
+    };
     /**
      * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or request fragment is echoed.
      * @enum {string}
@@ -6706,6 +6752,13 @@ export interface components {
       | "transport_error"
       | "timeout"
       | "exchange_unknown";
+    /** @description The `422` problem of a key operation (`createApiKey`; `rotateApiKey` can reuse it): the problem body plus, when the verification pipeline refused the key, the `verification` it reached. Exactly then `errors` names a rule of the pipeline (`key_*`), `verification` is required and `verification.passed` is false, and otherwise it is not allowed. A request that fails its schema is the same problem with the validation types in `errors` and no `verification`. The fields of a check that did not run are left out of `verification`, and no exchange text is echoed (SR-E27-08). */
+    KeyRejectedProblem: components["schemas"]["Problem"] & {
+      /** @constant */
+      code?: "validation_failed";
+      verification?:
+        components["schemas"]["KeyVerification"] | components["schemas"]["KeyVerificationNotRead"];
+    };
     /**
      * @description Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.
      * @enum {string}
@@ -6747,8 +6800,14 @@ export interface components {
       /** @description From the key-info `uta` field; the deprecated `unified` field is never read. */
       uta?: boolean;
       warnings?: components["schemas"]["KeyVerificationWarning"][];
-      /** @description Must be false; a true value causes rejection. */
+      /** @description Must be false; a true value causes rejection. Sent only once the key's rights were read, never as a default (`KeyVerificationNotRead`). */
       withdraw_enabled: boolean;
+    };
+    /** @description The verification of a key whose rights were never read: the exchange refused the key-info call (step 1 of `createApiKey`: an unknown key, the egress IP, a right or an expiry), so no check of steps 2 to 7 ran. It carries `passed: false` and `egress_ip` only, never `withdraw_enabled`: a withdrawal check that did not run is not a pass, so no `false` is sent for it (C-2.8), and a client shows each check as not checked, never as ok. The rule that failed is in `errors` (`createApiKey`) or `rest.error` (`testApiKey`). It is never the verification of a stored key (`KeyVerificationPassed`). */
+    KeyVerificationNotRead: {
+      egress_ip?: components["schemas"]["EgressIp"];
+      /** @constant */
+      passed: false;
     };
     /** @description A `KeyVerification` of a key that passed every check: the one verification a stored key has, and the only one a `201` carries (`ApiKeyWithVerification`). A failed check is never shown in it. */
     KeyVerificationPassed: components["schemas"]["KeyVerification"] & {
@@ -9422,6 +9481,34 @@ export interface components {
       content: {
         "application/problem+json":
           components["schemas"]["Problem"] | components["schemas"]["TradingDisabledProblem"];
+      };
+    };
+    /** @description An import whose signed call got an error answer that is not a refusal of the key: no verdict, nothing stored (`exchange_error`). `exchange` holds `ret_code` only (`KeyExchangeProblem`). */
+    KeyExchangeError: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["KeyExchangeProblem"];
+      };
+    };
+    /** @description The verification pipeline refused the key, so nothing was stored (`validation_failed`; `errors[].rule` names each failed check). The body also carries `verification`, the result as far as the pipeline got, so a client lists the checks and shows `egress_ip` to copy (`createApiKey`, SCR-126). A key the exchange refused before its rights were read carries `KeyVerificationNotRead`. A request that fails its schema is the same `422` with the validation types in `errors` and no `verification`. A call that ends without a verdict is a `502` or `503`, never this `422`. */
+    KeyRejected: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["KeyRejectedProblem"];
+      };
+    };
+    /** @description An import that could not be made or recorded, so nothing was stored (`createApiKey`). `exchange` holds `ret_code` only (`KeyExchangeProblem`); the exchange sent none when it gave no answer. `audit_unavailable` is the import's alone: a test never fails on its audit record. */
+    KeyServiceUnavailable: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["KeyExchangeProblem"];
       };
     };
     /** @description Resource not found (or hidden by scope). */
@@ -12831,16 +12918,11 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
-      /** @description Key rejected by the verification pipeline. */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/problem+json": components["schemas"]["Problem"];
-        };
-      };
-      502: components["responses"]["ExchangeError"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["KeyRejected"];
+      502: components["responses"]["KeyExchangeError"];
+      503: components["responses"]["KeyServiceUnavailable"];
     };
   };
   revokeApiKey: {
