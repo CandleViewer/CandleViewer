@@ -42,9 +42,11 @@ class HealthState(StrEnum):
 
 #: `AccountHealth.reason`: a closed set of codes, never exchange-supplied text.
 HealthReason = Literal["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"]
+#: REST `ExchangeAccount.connection_state`: a closed set (22-api-openapi.yaml).
+ConnectionState = Literal["pending", "connected", "degraded", "disconnected", "disabled"]
 
 #: REST `ExchangeAccount.connection_state` per state (decision Q2 on #837).
-CONNECTION_STATE: Final[Mapping[HealthState, str]] = {
+CONNECTION_STATE: Final[Mapping[HealthState, ConnectionState]] = {
     HealthState.HEALTHY: "connected",
     HealthState.DEGRADED: "degraded",
     HealthState.DOWN: "disconnected",
