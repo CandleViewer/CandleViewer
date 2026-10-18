@@ -61,6 +61,14 @@ async def test_gap_rows_become_recorded_gaps_read_over_the_window_streams_and_li
     assert sql.endswith("ORDER BY gap_start, id LIMIT :limit")
 
 
+async def test_a_limit_of_one_is_read() -> None:
+    repo, rel = _repo([ROW])
+
+    got = await repo.recording_gaps("BTCUSDT", WINDOW, streams=(StreamKind.FUNDING_RATES,), limit=1)
+
+    assert len(got) == 1 and rel.calls[-1][1]["limit"] == 1
+
+
 @pytest.mark.parametrize("limit", [0, -1, True])
 async def test_a_limit_below_one_is_refused_before_the_query(limit: int) -> None:
     repo, rel = _repo([ROW])
