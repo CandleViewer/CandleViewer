@@ -329,11 +329,19 @@ if entrypoint == "git":
     sys.exit(0)
 tool = "GITLEAKS" if "gitleaks" in image else "TRUFFLEHOG"
 report = os.environ.get(tool + "_REPORT", "[]")
+code = int(os.environ.get(tool + "_EXIT", "0"))
+find = os.environ.get("GITLEAKS_FIND") if tool == "GITLEAKS" else None
+if find:  # gitleaks 8.30.1 reads `git log -p -U0` plus --log-opts split on spaces
+    (opts,) = [a.split("=", 1)[1] for a in rest if a.startswith("--log-opts=")]
+    git = ["git", "-C", mounts["/repo"], "log", "-p", "-U0", *opts.split(" ")]
+    log = subprocess.run(git, capture_output=True, text=True, check=True).stdout.splitlines()
+    if any(line[:1] == "+" and find in line for line in log):
+        report, code = json.dumps([{"RuleID": "github-pat", "File": "README.md"}]), 3
 if tool == "GITLEAKS" and report != "none":
     with open(os.path.join(mounts["/out"], "gitleaks.json"), "w", encoding="utf-8") as f:
         f.write(report)
 print(os.environ.get(tool + "_OUT", ""))
-sys.exit(int(os.environ.get(tool + "_EXIT", "0")))
+sys.exit(code)
 """
 # No venv or pip in a test; -B: no bytecode written into the repository's scripts.
 FAKE_PYTHON = '#!/bin/sh\ncase "$1 $2" in "-m venv"|"-m pip") exit 0 ;; esac\nexec "%s" -B "$@"\n'
@@ -342,6 +350,7 @@ GIT += ["-c", "commit.gpgsign=false"]
 LEAK = json.dumps([{"RuleID": "github-pat", "File": "docs/x.md", "StartLine": 3}])
 ANNOTATION = "::warning file=docs/x.md,line=3,endLine=3::Found unverified Github result"
 BLOCKS = "::error title=Committed secret blocks merge::"
+MERGE_LINE = "a line only the merge commit adds"
 
 
 def _scan() -> dict[str, Any]:
@@ -349,9 +358,17 @@ def _scan() -> dict[str, Any]:
     return step
 
 
-def _scan_run(tmp_path: Path, base: str | None = None, **fake: str) -> tuple[int, str, list[Any]]:
+def _scan_run(
+    tmp_path: Path,
+    base: str | None = None,
+    *,
+    merged: bool = False,
+    gitignore: str = ".env\n",
+    **fake: str,
+) -> tuple[int, str, list[Any]]:
     """Run the step's script as the runner does, in a checkout of two commits (the base, then a
-    docs commit), with the fakes first on PATH: its exit code, its output and the docker calls."""
+    docs commit), with the fakes first on PATH: its exit code, its output and the docker calls.
+    `merged`: the PR then merges a later base commit, adding MERGE_LINE only while resolving it."""
     if not (shutil.which("bash") and shutil.which("git")):  # CI must run these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash and git run the step")
     ws, temp, bin_dir = tmp_path / "ws", tmp_path / "runner-temp", tmp_path / "bin"
@@ -359,15 +376,33 @@ def _scan_run(tmp_path: Path, base: str | None = None, **fake: str) -> tuple[int
         d.mkdir(parents=True)
     env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path)}
     env |= {"GIT_CONFIG_NOSYSTEM": "1", "RUNNER_TEMP": str(temp)}
+
+    def git(*args: str) -> str:
+        done = subprocess.run([*GIT, *args], cwd=ws, env=env, capture_output=True, check=False)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.decode().strip()
+
     (ws / "README.md").write_text("docs\n", encoding="utf-8")
-    commands = [["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]]
-    commands += [["add", "README.md"], ["commit", "-q", "-m", "docs"]]
-    for args in commands:
-        subprocess.run([*GIT, *args], cwd=ws, env=env, check=True, timeout=60)
-    listing = subprocess.run([*GIT, "rev-list", "HEAD"], cwd=ws, env=env, capture_output=True)
-    head, first = listing.stdout.decode().split()
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "base")
+    first = git("rev-parse", "HEAD")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "docs")
+    head = git("rev-parse", "HEAD")
+    if merged:
+        git("checkout", "-q", "-b", "base-moved", first)
+        (ws / "NEWS.md").write_text("base\n", encoding="utf-8")
+        git("add", "NEWS.md")
+        git("commit", "-q", "-m", "base moved")
+        first = git("rev-parse", "HEAD")
+        git("checkout", "-q", head)
+        git("merge", "-q", "--no-ff", "--no-commit", "base-moved")
+        (ws / "README.md").write_text(f"docs\n{MERGE_LINE}\n", encoding="utf-8")
+        git("add", "README.md")
+        git("commit", "-q", "-m", "merge the base")
+        head = git("rev-parse", "HEAD")
     # What security_gate.py and the hygiene gate read beside the repository's own scripts.
-    (ws / ".gitignore").write_text(".env\n", encoding="utf-8")
+    (ws / ".gitignore").write_text(gitignore, encoding="utf-8")
     (ws / ".env.example").write_text("# no settings\n", encoding="utf-8")
     (ws / "security" / "accepted-risks.yaml").write_text("entries: []\n", encoding="utf-8")
     for name in ("tools", "scripts"):
@@ -409,12 +444,15 @@ def test_secret_scan_runs_both_scanners_offline_over_the_prs_commits(tmp_path: P
     base, head = subprocess.run(git, capture_output=True, text=True, check=True).stdout.split()
     ro = ["run", "--rm", "--network", "none", "-v", f"{os.path.realpath(tmp_path / 'ws')}:/repo:ro"]
     out = f"{tmp_path / 'runner-temp' / 'secret-scan'}:/out"
+    # gitleaks diffs a merge commit against its first parent, and the image's git proves first
+    # that it reads the range with that option (a git without it would make gitleaks pass blind).
+    merges = "--diff-merges=first-parent"
     assert calls == [
         ["pull", "--quiet", gitleaks],
         ["pull", "--quiet", trufflehog],
-        [*ro, "--entrypoint", "git", gitleaks, "-C", "/repo", "rev-list", "--count"]
+        [*ro, "--entrypoint", "git", gitleaks, "-C", "/repo", "rev-list", "--count", merges]
         + [f"{base}..{head}"],
-        [*ro, "-v", out, gitleaks, "git", "/repo", f"--log-opts={base}..{head}"]
+        [*ro, "-v", out, gitleaks, "git", "/repo", f"--log-opts={merges} {base}..{head}"]
         + ["--config=/repo/.gitleaks.toml", "--redact", "--no-banner", "--no-color"]
         + ["--exit-code=3", "--report-format=json", "--report-path=/out/gitleaks.json"],
         # --github-actions prints file:line annotations, never a value. The image's entrypoint
@@ -433,9 +471,11 @@ def test_secret_scan_runs_both_scanners_offline_over_the_prs_commits(tmp_path: P
         ({"TRUFFLEHOG_EXIT": "183", "TRUFFLEHOG_OUT": ANNOTATION}, ["CI-SEC-001: trufflehog"]),
         ({"GITLEAKS_EXIT": "1", "GITLEAKS_REPORT": "none"}, ["CI-SEC-005: gitleaks"] * 2),
         ({"TRUFFLEHOG_EXIT": "2"}, ["CI-SEC-005: trufflehog exited 2"]),
+        # A scanner that failed is never a clean scan, even beside a clean (empty) report.
+        ({"GITLEAKS_EXIT": "1"}, ["CI-SEC-005: gitleaks exited 1"]),
     ],
     ids=["gitleaks-finding", "gitleaks-exit", "trufflehog-finding", "gitleaks-failed"]
-    + ["trufflehog-failed"],
+    + ["trufflehog-failed", "gitleaks-failed-empty-report"],
 )
 def test_secret_scan_fails_on_any_finding_or_scanner_failure(
     tmp_path: Path, fake: dict[str, str], codes: list[str]
@@ -474,3 +514,21 @@ def test_secret_scan_checks_what_the_scanners_print_for_secret_shapes(tmp_path: 
     shaped = "gh" + "p_" + "Ab1" * 12  # built here, so this file holds no secret shape
     code, output, _ = _scan_run(tmp_path, TRUFFLEHOG_OUT=shaped)
     assert (code, "token-shape in log/artefact (SR-146)" in output) == (1, True), output
+
+
+def test_secret_scan_reads_a_line_only_a_merge_commit_adds(tmp_path: Path) -> None:
+    # A PR that merged its base instead of rebasing (C-4.12) can add a line only while resolving
+    # the merge, and `git log -p` prints no patch for a merge commit. The fake gitleaks reads the
+    # `git log` the real one runs, so the step must ask for merges diffed against a parent.
+    code, output, _ = _scan_run(tmp_path, merged=True, GITLEAKS_FIND=MERGE_LINE)
+    assert (code, "CI-SEC-001: gitleaks found" in output, BLOCKS in output) == (1, True, True)
+    clean, output, _ = _scan_run(tmp_path / "clean", merged=True, GITLEAKS_FIND="not added")
+    assert clean == 0, output
+
+
+def test_secret_scan_fails_on_a_credential_hygiene_violation(tmp_path: Path) -> None:
+    # SR-144 to SR-146: the step runs check_secrets_hygiene.py all, so a docs-only PR is held to
+    # the hygiene gate too; here the checkout no longer ignores `.env`.
+    code, output, _ = _scan_run(tmp_path, gitignore="")
+    assert (code, "FAIL .gitignore: '.env' is not ignored" in output) == (1, True), output
+    assert (BLOCKS in output, "CI-SEC-" in output) == (False, False), output
