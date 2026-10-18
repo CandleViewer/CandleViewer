@@ -229,7 +229,7 @@ def test_dependabot_ignores_majors_on_pinned_runtime_sensitive_packages() -> Non
     # only minor/patch flow automatically; no stale npm-major group may re-raise the bundle
     assert set(npm["groups"]) == {"npm-minor-patch"}
     assert npm["groups"]["npm-minor-patch"]["update-types"] == ["minor", "patch"]
-    (pip,) = [u for u in _dependabot_updates() if u["package-ecosystem"] == "pip"]
+    (pip,) = [u for u in _dependabot_updates() if u["directory"] == "/services/api"]
     assert "xstate-statemachine" in {i["dependency-name"] for i in pip["ignore"]}
 
 

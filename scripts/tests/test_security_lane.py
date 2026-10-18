@@ -192,6 +192,23 @@ def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:
     assert SEMGREP_TIMEOUT_THRESHOLD == 3
 
 
+def test_dependabot_proposes_updates_of_the_semgrep_lock() -> None:
+    # #3549 (C-12.3): CI's pip-audit reads only the services/api export, so Dependabot is how
+    # an advisory or a release for the lock's pins turns into a PR.
+    doc = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    (entry,) = [u for u in doc["updates"] if u["directory"] == "/tools/ci"]
+    assert entry["package-ecosystem"] == "pip"
+    assert entry["directory"] == "/" + Path(SEMGREP_LOCK).parent.as_posix()
+    assert {"dependencies", "security", "security-review", "area/infra-devops"} <= set(
+        entry["labels"]
+    )
+    # Every other .txt in the directory is no lock, and pip would read its lines as packages.
+    listed = {p.name for p in (ROOT / "tools" / "ci").iterdir() if p.suffix in (".txt", ".in")}
+    locks = {name for name in listed if name.startswith("requirements-")}
+    assert Path(SEMGREP_LOCK).name in locks
+    assert sorted(listed - locks) == sorted(entry["exclude-paths"])
+
+
 @pytest.mark.parametrize("job", sorted(SCANS))
 def test_verdict_runs_last_and_no_folded_step_uses_failure(job: str) -> None:
     verdict = _steps(job)[-1]

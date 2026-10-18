@@ -106,3 +106,26 @@ updates:
       # removes this entry. Patch and digest updates of the 3.12 line still flow.
       - dependency-name: "python"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # #3549: the security lane's hash locks in tools/ci (requirements-semgrep.txt: Semgrep and
+  # every dependency; requirements-security-gate.txt: the gate's PyYAML). CI's pip-audit reads
+  # only the services/api export, so these PRs are how a Semgrep advisory or release shows up.
+  # A bump whose new pins need other dependencies: regenerate with the command in the lock.
+  - package-ecosystem: "pip"
+    directory: "/tools/ci"
+    exclude-paths:
+      - "security-sensitive-tables.txt" # table names, one per line: pip would read packages
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      security-lane:
+        patterns: ["*"]
+    labels:
+      - "dependencies"
+      - "area/infra-devops"
+      - "security"
+      - "security-review" # what the security lane installs and runs (AGENTS.md §8)
+      - "sla/7d" # SR-134
+    commit-message:
+      prefix: "chore(infra-devops)"
