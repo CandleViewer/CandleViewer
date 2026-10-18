@@ -11,6 +11,7 @@ import {
   isAppUrl,
   resolveAppRequest,
 } from "./appProtocol.js";
+import { resolveDevServerUrl, type DevServerUrl } from "./devServer.js";
 import { logStartup, logAuditEvent } from "./logger.js";
 import { applyGpuFlags, probeGpu } from "./gpu.js";
 import { getKekHandle } from "./keychain.js";
@@ -70,12 +71,13 @@ export function safeOriginOf(url: string): string {
 
 /**
  * Returns true only if `url` is on the app origin: without a dev server, the
- * `app:` scheme with its one fixed host (served by the app:// handler); in
- * dev, exactly the dev server's origin. Compares parsed URL fields, never a
- * string prefix, so a lookalike host (e.g. "http://localhost:5173.evil.test")
+ * `app:` scheme with its one fixed host (served by the app:// handler); with
+ * an accepted dev server (devServer.ts: unpackaged build, loopback http
+ * only), exactly its origin. Compares parsed URL fields, never a string
+ * prefix, so a lookalike host (e.g. "http://localhost:5173.evil.test")
  * cannot pass, and no `file:` URL is ever allowed.
  */
-export function isNavigationAllowed(url: string, devServerUrl: string | undefined): boolean {
+export function isNavigationAllowed(url: string, devServerUrl: DevServerUrl | undefined): boolean {
   let target: URL;
   try {
     target = new URL(url);
@@ -135,7 +137,22 @@ export function isExternalLinkAllowed(url: string): boolean {
   );
 }
 
+/**
+ * The dev server the main window may load (#3411), or undefined for the
+ * shell's own bundle. A set value the shell does not honour is logged by
+ * reason only, never echoed: it may carry anything (C-12.6).
+ */
+function acceptedDevServerUrl(): DevServerUrl | undefined {
+  const resolution = resolveDevServerUrl(process.env["CV_DEV_SERVER_URL"], app.isPackaged);
+  if (resolution.kind === "ignored") {
+    logAuditEvent("dev-server-url-ignored", { reason: resolution.reason });
+  }
+  return resolution.kind === "accepted" ? resolution.url : undefined;
+}
+
 export function createMainWindow(): BrowserWindow {
+  // Decided once per window, so the load and both navigation guards agree.
+  const devServerUrl = acceptedDevServerUrl();
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -162,7 +179,7 @@ export function createMainWindow(): BrowserWindow {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isExternalLinkAllowed(url) && !isNavigationAllowed(url, process.env["CV_DEV_SERVER_URL"])) {
+    if (isExternalLinkAllowed(url) && !isNavigationAllowed(url, devServerUrl)) {
       logAuditEvent("external-link-opened", { url: safeOriginOf(url) });
       void shell.openExternal(url);
     } else {
@@ -172,18 +189,13 @@ export function createMainWindow(): BrowserWindow {
   });
 
   win.webContents.on("will-navigate", (event, url) => {
-    if (!isNavigationAllowed(url, process.env["CV_DEV_SERVER_URL"])) {
+    if (!isNavigationAllowed(url, devServerUrl)) {
       logAuditEvent("navigation-denied", { url: safeOriginOf(url) });
       event.preventDefault();
     }
   });
 
-  const devServerUrl = process.env["CV_DEV_SERVER_URL"];
-  if (devServerUrl) {
-    void win.loadURL(devServerUrl);
-  } else {
-    void win.loadURL(APP_ENTRY_URL);
-  }
+  void win.loadURL(devServerUrl ?? APP_ENTRY_URL);
 
   return win;
 }

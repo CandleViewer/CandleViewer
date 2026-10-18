@@ -21,6 +21,12 @@ because ADR-0011 (Electron vs Tauri) is `proposed`, not decided.
 `will-navigate` restricted to the app origin. `e2e/hardening.spec.ts` fails
 if any flag drifts.
 
+Dev server hook: `CV_DEV_SERVER_URL` is honoured only in an unpackaged build
+and only for `http://127.0.0.1:<port>` or `http://localhost:<port>`, checked
+on the parsed URL (`src/main/devServer.ts`, #3411). Otherwise the shell loads
+its own bundle and logs one `dev-server-url-ignored` line naming the reason
+(`unpackaged-only`, `not-loopback-http` or `malformed`), never the value.
+
 ## Load path: `app://candleviewer`, not `file://` (#3410)
 
 Without `CV_DEV_SERVER_URL`, the main window loads `app://candleviewer/`. A
