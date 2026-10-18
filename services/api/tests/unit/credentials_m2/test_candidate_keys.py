@@ -105,6 +105,58 @@ async def test_a_pass_stores_the_pair_pending_with_the_snapshot_and_the_owner(ri
     assert await _borrow(svc._require(), meta.key_id) == (API_KEY, API_SECRET)
 
 
+async def test_the_activation_runs_on_the_stored_key_once_the_pair_is_dropped(rig: Rig) -> None:
+    seen: list[Any] = []
+    ran: list[CandidateSigner] = []
+
+    async def activate(stored: Any) -> None:
+        sign = attrgetter("_CandidateSigner__sign")(ran[0])
+        for wrapper in inspect.getclosurevars(sign).nonlocals["pair"]:
+            with pytest.raises(RuntimeError, match="invalidated"):
+                wrapper.reveal()
+        seen.append(stored)
+
+    meta = await run(mint_candidate_keys(rig[0]), signing(SNAPSHOT, ran), activate=activate)
+    assert seen == [meta] and not rig[1].rows[meta.key_id]["revoked"]
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("promotion lost"), asyncio.CancelledError()], ids=["error", "cancelled"]
+)
+async def test_a_failed_activation_destroys_the_stored_key_and_its_error_goes_on(
+    rig: Rig, error: BaseException
+) -> None:
+    async def activate(stored: Any) -> None:
+        raise error
+
+    with pytest.raises(type(error)) as raised:
+        await run(mint_candidate_keys(rig[0]), signing(SNAPSHOT), activate=activate)
+    ((key_id, row),) = rig[1].rows.items()
+    assert raised.value is error and row["revoked"]  # it signs nothing; its label is free
+    action, fields = rig[2].records[-1]  # fenced, audited with the Owner, then revoked
+    assert action == "security.credential_destroyed"
+    assert fields.items() >= {"key_id": str(key_id), "actor_user_id": OWNER}.items()
+
+
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [(RuntimeError("store down"), CredentialUnavailable), (asyncio.CancelledError(), None)],
+    ids=["error", "cancelled"],
+)
+async def test_an_activation_whose_key_cannot_be_destroyed_says_so_unless_cancelled(
+    rig: Rig, error: BaseException, raised: Any
+) -> None:
+    async def activate(stored: Any) -> None:
+        rig[2].fail = True  # the destroy's record is refused, so the key is not revoked
+        raise error
+
+    with pytest.raises(raised or type(error)) as failed:
+        await run(mint_candidate_keys(rig[0]), signing(SNAPSHOT), activate=activate)
+    ((_, row),) = rig[1].rows.items()
+    assert raised is None or str(failed.value) == "candidate_not_removed"
+    assert failed.value.__cause__ is None and not row["revoked"]
+
+
 async def test_the_candidate_signs_exactly_as_the_stored_key_would(rig: Rig) -> None:
     signed = []
 

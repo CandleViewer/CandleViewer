@@ -5,8 +5,8 @@ the verification columns of any key, with no principal. `accounts.selfcheck` is 
 the M10 port its one definition, the Postgres adapter its one implementation and the composition
 root's `key_selfcheck_wiring` the one place that builds it for the job. Key import (#836 slice
 2b4) also writes the verified columns, of the one key its own request stored under the id M2
-minted, after the route's RBAC (`keys:manage`): `accounts.key_import` calls `record_pass` only.
-A reference anywhere else in
+minted, after the route's RBAC (`keys:manage`): `accounts.key_import` calls `record_pass` only,
+and `key_import_wiring` builds its store. A reference anywhere else in
 `candleviewer` (an `api/` router, a WS topic, the `AccountsRepository` facade) fails here and must
 be reviewed as an RBAC bypass first (C-12.4, SR-051), as for the row counts in
 `test_accounts_row_counts_callers.py`.
@@ -54,6 +54,7 @@ ALLOWED = frozenset(
         "key_selfcheck_wiring.py",
         "account_health_wiring.py",
         "accounts/key_import.py",
+        "key_import_wiring.py",
     }
 )
 
