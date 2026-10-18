@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -61,17 +62,18 @@ def _apply_bars(state: State, body: Mapping[str, Any]) -> None:
 def _apply_footprint(state: State, body: Mapping[str, Any]) -> None:
     _root(state, body)
     for bar in body["bars"]:
-        entry = state.setdefault("bars", {}).setdefault(bar["t_ms"], {"fields": {}, "cells": {}})
+        key = (bar["generation"], bar["index"])  # the §8.2 bar key, never `t_ms`
+        entry = state.setdefault("bars", {}).setdefault(key, {"fields": {}, "cells": {}})
         entry["fields"].update((k, v) for k, v in bar.items() if k != "cells")
         for cell in bar["cells"]:
             cur = entry["cells"].setdefault(Decimal(cell["price"]), {})
-            for key, value in cell.items():
-                if key in ("bid_volume", "ask_volume", "delta", "total_volume"):
-                    cur[key] = cur.get(key, Decimal(0)) + Decimal(value)  # increments (§8.2)
-                elif key == "trades":
-                    cur[key] = cur.get(key, 0) + value
+            for field, value in cell.items():
+                if field in ("bid_volume", "ask_volume", "delta", "total_volume"):
+                    cur[field] = cur.get(field, Decimal(0)) + Decimal(value)  # increments (§8.2)
+                elif field == "trades":
+                    cur[field] = cur.get(field, 0) + value
                 else:
-                    cur[key] = value
+                    cur[field] = value
 
 
 def _keyed(field: str, key: Callable[[Body], Any], *, newer: bool = False) -> Callable[..., None]:
@@ -161,17 +163,21 @@ _cell = st.builds(
     st.sampled_from(["1", "2.75", "0.00000003"]),
     st.integers(0, 3),
 )
+#: Every bar opens at one `t_ms`, as non-time bars may: only `(generation, index)` tells them apart.
 _footprint = st.builds(
-    lambda t_ms, poc, cells: {
+    lambda g, i, poc, cells: {
         "symbol": "BTCUSDT",
-        "bar_type": "time",
-        "param": "1m",
-        "bars": [{"t_ms": t_ms, "poc_price": poc, "cells": cells}],
+        "bar_type": "tick",
+        "param": "1000",
+        "bars": [{"generation": g, "index": i, "t_ms": 0, "poc_price": poc, "cells": cells}],
     },
-    st.sampled_from([0, 60_000]),
+    st.integers(0, 1),
+    st.integers(0, 2),
     _PRICE,
     st.lists(_cell, max_size=3),
 )
+#: A footprint bar's key and open time (§14.4).
+_FP_BAR = {"generation": 0, "index": 0, "t_ms": 0}
 
 
 def _heatmap(ops: list[tuple[int, bool, int]]) -> list[Body]:
@@ -538,8 +544,8 @@ def test_coalescer_book_level_bound_refuses_until_cleared() -> None:
         ),
         (
             "footprint",
-            {"bars": [{"t_ms": 0, "cells": []}]},
-            {"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}]},
+            {"bars": [{**_FP_BAR, "cells": []}]},
+            {"bars": [{**_FP_BAR, "cells": [{"price": "1", "bid_volume": "1"}]}]},
         ),
         ("ticker", {"tickers": [{"symbol": "A"}]}, {"tickers": [{"symbol": "B"}]}),
         ("positions", {"positions": [], "removed": ["p1"]}, {"positions": [], "removed": ["p2"]}),
@@ -565,7 +571,9 @@ def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown
         ("book", {"bids": [["NaN", "1"]], "asks": []}),
         ("book", {"bids": [["100", "1", "2"]], "asks": []}),
         ("bars", {"bars": [{"index": 0, "confirm": False}]}),
-        ("footprint", {"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "x"}]}]}),
+        ("footprint", {"bars": [{**_FP_BAR, "cells": [{"price": "1", "bid_volume": "x"}]}]}),
+        ("footprint", {"bars": [{"index": 0, "t_ms": 0, "cells": []}]}),  # §14.4: both keys
+        ("footprint", {"bars": [{"generation": 0, "t_ms": 0, "cells": []}]}),
         ("wallet", {"balances": [{"coin": "USDT"}]}),
         ("wallet", {"balances": [], "health": [{"state": "down"}]}),
         ("trades", {"trades": 7}),
@@ -821,9 +829,9 @@ def test_coalescer_heatmap_sent_memory_is_bounded() -> None:
 def test_coalescer_footprint_sums_cells_exactly_within_a_bar_only() -> None:
     queue = CoalescingQueue("footprint")
     cell = {"price": "100", "bid_volume": "0.00000001", "ask_volume": "1.5", "trades": 1}
-    queue.offer({"bars": [{"t_ms": 0, "poc_price": "100", "cells": [cell]}]})
-    queue.offer({"bars": [{"t_ms": 0, "poc_price": "101", "cells": [cell]}]})
-    queue.offer({"bars": [{"t_ms": 60_000, "cells": [cell]}]})
+    queue.offer({"bars": [{**_FP_BAR, "poc_price": "100", "cells": [cell]}]})
+    queue.offer({"bars": [{**_FP_BAR, "poc_price": "101", "cells": [cell]}]})
+    queue.offer({"bars": [{**_FP_BAR, "index": 1, "cells": [cell]}]})  # the same open time
     [frame] = queue.take()
     first, second = frame.body["bars"]
     assert first["poc_price"] == "101"
@@ -979,8 +987,8 @@ def test_coalescer_footprint_update_without_bars_changes_nothing() -> None:
 def test_coalescer_footprint_absurd_exponent_is_refused() -> None:
     queue = CoalescingQueue("footprint")
     cell = {"price": "1", "bid_volume": "1E+999999"}
-    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [cell]}]})
-    assert queue.overflowed
+    assert not queue.offer({"bars": [{**_FP_BAR, "cells": [cell]}]})
+    assert queue.overflowed and queue.error == "ValueError"
 
 
 @pytest.mark.parametrize("body", [["x"], None, "bids"])
@@ -1025,19 +1033,43 @@ def test_coalescer_whole_frame_take_never_raises(family: str, body: dict[str, An
     queue.take()  # refused or emitted, never an exception
 
 
-def test_coalescer_footprint_refuses_two_bars_with_one_open_time() -> None:
-    """Non-time bars can share an open time (§8.2 "Bar key"): refuse rather than fuse them."""
+def test_coalescer_footprint_keys_bars_by_generation_and_index_never_by_open_time() -> None:
+    """§8.2 "Bar key", §14.4: bars that share an open time stay apart and leave in key order;
+    two items of one bar merge, even in one update (#3297). Generation 1 here exercises the key's
+    other half only: the coalescer does not police generations, and a swap is a `snap` (§7.4)."""
     queue = CoalescingQueue("footprint")
-    bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}
-    assert not queue.offer({"bars": [bar, dict(bar)]})
-    assert queue.refusal == "unmergeable"  # re-snapshotted, not a producer bug (#2529)
+    cell = {"price": "1", "bid_volume": "1"}
+    bar = {**_FP_BAR, "cells": [cell]}
+    assert queue.offer({"bars": [{**bar, "index": 1}, {**bar, "index": 1}]})
+    assert queue.offer({"bars": [bar, {**bar, "generation": 1}]})
+    [frame] = queue.take()
+    assert [(b["generation"], b["index"], b["cells"]) for b in frame.body["bars"]] == [
+        (0, 0, [cell]),
+        (0, 1, [{"price": "1", "bid_volume": "2"}]),
+        (1, 0, [cell]),
+    ]
+
+
+@pytest.mark.parametrize("missing", ["generation", "index"])
+def test_coalescer_footprint_whole_frame_without_its_key_is_malformed(missing: str) -> None:
+    """`coalesce: false` queues whole frames, yet every bar item is checked for its key (§14.4):
+    one without it, here between two keyed items, is refused as malformed at entry, as the merge
+    path refuses it."""
+    keyless = {k: v for k, v in _FP_BAR.items() if k != missing}
+    first, last = {**_FP_BAR, "cells": []}, {**_FP_BAR, "index": 1, "cells": []}
+    queue = CoalescingQueue("footprint", coalesce=False)
+    assert not queue.offer({"bars": [first, {**keyless, "cells": []}, last]})
+    assert (queue.refusal, queue.error) == ("malformed", "KeyError")
 
 
 def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window() -> None:
+    """A confirmed footprint bar is final (§8.2): an update to it in its window breaks the merge
+    rule (`unmergeable`, a producer bug), while the next bar, at the same open time, merges."""
     queue = CoalescingQueue("footprint")
     cells = [{"price": "1", "bid_volume": "1"}]
-    assert queue.offer({"bars": [{"t_ms": 0, "confirm": True, "cells": cells}]})
-    assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
+    assert queue.offer({"bars": [{**_FP_BAR, "confirm": True, "cells": cells}]})
+    assert queue.offer({"bars": [{**_FP_BAR, "index": 1, "cells": cells}]})
+    assert not queue.offer({"bars": [{**_FP_BAR, "confirm": False, "cells": cells}]})
     assert queue.refusal == "unmergeable"
 
 
@@ -1046,8 +1078,8 @@ def test_coalescer_footprint_a_truthy_confirm_counts_as_confirmed() -> None:
     the next update to the bar unmergeable (a re-snapshot), not a merge into a confirmed bar."""
     queue = CoalescingQueue("footprint")
     cells = [{"price": "1", "bid_volume": "1"}]
-    assert queue.offer({"bars": [{"t_ms": 0, "confirm": 1, "cells": cells}]})
-    assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
+    assert queue.offer({"bars": [{**_FP_BAR, "confirm": 1, "cells": cells}]})
+    assert not queue.offer({"bars": [{**_FP_BAR, "confirm": False, "cells": cells}]})
     assert queue.refusal == "unmergeable"
 
 
@@ -1058,14 +1090,14 @@ def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
     fits = _EXACT.prec - whole  # fraction digits that still fit beside them
     big = {"price": "1", "bid_volume": f"1E+{_MAX_EXPONENT}"}
     queue = CoalescingQueue("footprint")
-    queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
-    queue.offer({"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": f"1E-{fits}"}]}]})
+    queue.offer({"bars": [{**_FP_BAR, "cells": [big]}]})
+    queue.offer({"bars": [{**_FP_BAR, "cells": [{"price": "1", "bid_volume": f"1E-{fits}"}]}]})
     [frame] = queue.take()
     exact = "1" + "0" * _MAX_EXPONENT + "." + "0" * (fits - 1) + "1"
     assert frame.body["bars"][0]["cells"][0]["bid_volume"] == exact
     over = {"price": "1", "bid_volume": f"1E-{fits + 1}"}  # `_EXACT.prec` + 1 digits: inexact
-    queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
-    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [over]}]})
+    queue.offer({"bars": [{**_FP_BAR, "cells": [big]}]})
+    assert not queue.offer({"bars": [{**_FP_BAR, "cells": [over]}]})
     assert queue.overflowed and queue.error == "Inexact"
 
 
@@ -1136,6 +1168,37 @@ def test_coalescer_any_error_a_payload_raises_is_refused_as_malformed(
     queue = CoalescingQueue(family)
     assert not queue.offer(body)
     assert (queue.refusal, queue.error, queue.pending_bytes) == ("malformed", "RuntimeError", 0)
+
+
+def _cancelled(*_: Any) -> Any:
+    raise asyncio.CancelledError
+
+
+@pytest.mark.parametrize(
+    ("hook", "coalesce", "step"),
+    [
+        ("merge", True, lambda queue: queue.offer(_level("1"))),
+        ("validate", False, lambda queue: queue.offer(_level("1"))),
+        ("merge", False, lambda queue: queue.set_coalesce(True)),
+        ("emitted", True, lambda queue: queue.take()),
+    ],
+    ids=["offer-merge", "offer-validate", "set-coalesce-fold", "take-emitted"],
+)
+def test_coalescer_cancellation_inside_a_step_reaches_the_caller_unrefused(
+    monkeypatch: pytest.MonkeyPatch,
+    hook: str,
+    coalesce: bool,
+    step: Callable[[CoalescingQueue], object],
+) -> None:
+    """A `CancelledError` raised inside a coalescing step (here by a merge rule or validation
+    hook) reaches the caller: it is never swallowed, nor counted as a refused update (#3297)."""
+    queue = CoalescingQueue("book", coalesce=coalesce)
+    if hook != "validate":
+        assert queue.offer(_level("0"))  # pending: a merge, or a whole frame for the fold
+    monkeypatch.setattr(queue._merge, hook, _cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        step(queue)
+    assert (queue.refusal, queue.error) == (None, None)
 
 
 def test_coalescer_take_refuses_a_frame_it_cannot_record_as_sent() -> None:

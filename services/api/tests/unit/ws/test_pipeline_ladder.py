@@ -22,7 +22,9 @@ from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline, slow_consumer_bye
 from candleviewer.ws.sequencing import SnapshotBody
 from tests.unit.ws._seq_support import ACC_A, Book, Conn, Source
+from tests.unit.ws.test_coalescing import _apply_footprint, _state
 from tests.unit.ws.test_lifecycle_socket import BASE_MS
+from tests.unit.ws.test_pacing import _refusals
 from tests.unit.ws.test_pipeline_outbound import (
     _BOOK,
     _DEADLINE_S,
@@ -179,6 +181,38 @@ async def test_overflow_steps_are_counted_once() -> None:
         early.push({"t": "pong", "ts": 1, "p": {}})
     assert [reason for reason, _ in early_asked] == ["slow_consumer"]
     assert _counts(before) == [1, 1, 2, 0]
+
+
+def test_footprint_bars_sharing_an_open_time_merge_in_every_window() -> None:
+    """#3297, flag on: footprint bars are keyed by `(generation, index)` (§8.2, §14.4). A producer
+    whose bars all open in one millisecond, each closing as the next opens, merges window after
+    window: no update is refused `unmergeable`, no `backpressure` snapshot is queued, and a client
+    keyed like the coalescer holds every source update applied."""
+    ch = "footprint.BTCUSDT.tick.1000"
+    series = {"symbol": "BTCUSDT", "bar_type": "tick", "param": "1000"}
+    pipe, _, conn = _attached(classify_interval_ms=60_000)  # no probe frames in between
+    source = conn.emitter.source
+    assert isinstance(source, Source) and pipe.ladder is not None
+    source.bodies["footprint"] = SnapshotBody({**series, "bars": []})
+    sub = _structured(conn, ch)
+    _queued(pipe)  # the initial snap
+    before = _refusals("footprint")
+    cell = {"price": "100", "bid_volume": "1", "ask_volume": "0.5", "trades": 1}
+    sent: list[dict[str, Any]] = []
+    frames: list[dict[str, Any]] = []
+    for n in range(40):  # 40 windows of 250 ms; the very first update leaves at once (D12)
+        bar = {"generation": 0, "index": n, "t_ms": 7, "cells": [cell]}
+        nxt = {**bar, "index": n + 1}
+        for bars in ([bar], [{**bar, "confirm": True}, nxt], [nxt]):
+            sent.append({**series, "bars": bars})
+            assert pipe.delta(sub, sent[-1])
+        conn.clock.now += 0.25
+        pipe.service(conn.clock.now)
+        frames += _queued(pipe)
+    assert (_refusals("footprint"), pipe.ladder.pacer.resnapshot_required) == (before, {})
+    assert {(f["t"], f["ch"]) for f in frames} == {("d", ch)} and len(frames) == 41
+    assert sum(f["p"].get("coalesced_count", 1) for f in frames) == len(sent)
+    assert _state(_apply_footprint, [f["p"] for f in frames]) == _state(_apply_footprint, sent)
 
 
 # -- through the router --------------------------------------------------------------------------
