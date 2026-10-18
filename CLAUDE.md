@@ -195,8 +195,8 @@ scoped to assigned accounts); redaction filter on logs; demo/live isolation (C-2
 an ADR). Suspected vulnerability ⇒ follow `SECURITY.md`, never a public issue.
 
 **NEVER** (full list with rationale: `AGENTS.md` §8 — violations are incidents):
-force-push/direct-push `main` · edit a merged migration · touch `secrets/`, `auth/`, `audit/`, `infra/`,
-CI workflows or dependency manifests without `security-review` · skip/weaken any check (`--no-verify`,
+force-push/direct-push `main` · edit a merged migration · touch a C-10.2 security path without
+`security-review` · skip/weaken any check (`--no-verify`,
 bare `noqa`/`eslint-disable`/`type: ignore`, `.skip`/`.only`, lowering coverage, moving a bench
 baseline) · widen scope · handle real credentials · call a live exchange from tests/CI/dev defaults ·
 bypass a safety invariant (native SL, RBAC/risk, audit, withdrawal check, rate reserve, demo/live

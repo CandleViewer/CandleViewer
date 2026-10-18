@@ -48,6 +48,7 @@ updates:
       - "dependencies"
       - "area/backend-platform"
       - "security"
+      - "security-review" # manifests are a C-10.2 path (#2892)
       - "sla/48h" # SR-134: backend carries the order path / key handling
     commit-message:
       prefix: "chore(backend-platform)"
@@ -68,6 +69,7 @@ updates:
       - "dependencies"
       - "area/frontend-platform"
       - "security"
+      - "security-review" # manifests are a C-10.2 path (#2892)
       - "sla/7d" # SR-134
     commit-message:
       prefix: "chore(frontend-platform)"
@@ -92,6 +94,7 @@ updates:
       - "dependencies"
       - "area/infra-devops"
       - "security"
+      - "security-review" # infra/ is a C-10.2 path (#2892)
       - "sla/7d" # SR-134
     commit-message:
       prefix: "chore(infra-devops)"

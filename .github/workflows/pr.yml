@@ -12,7 +12,8 @@ name: pr
 #
 # CV-ERR codes surfaced by the resolver: CI-GATE-001 (applicable lane not
 # successful), CI-GATE-002 (gate misconfiguration: applicable lane skipped),
-# CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py).
+# CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py);
+# by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892).
 
 on:
   pull_request:
@@ -537,6 +538,42 @@ jobs:
           failed = [gate for gate, outcome in outcomes.items() if outcome not in ("success", "skipped")]
           raise SystemExit(f"gates not successful: {', '.join(failed)}" if failed else 0)
 
+  # --- C-10.2 (#2892): a PR that touches a security path gets `security-review`; red (CI-GATE-004) if
+  # the label cannot be added, or the changed files cannot all be read while it is missing. One job
+  # adds and judges: a label added with GITHUB_TOKEN starts no other run. It can write to the PR,
+  # so it checks out `main` and runs main's script, never the PR's code (SR-132). Until main has
+  # the script (the PR adding it), it labels every PR: never fewer reviews.
+  # It never removes a label. A merge group has no PR to label (its PR's own run labelled it before
+  # it could be enqueued), so the step runs on pull requests only and the job passes there (#3433).
+  security-review-label:
+    name: security-review-label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Label the PR security-review if it touches a C-10.2 path (main's rule)
+        id: label
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -f tools/ci/security_review_label.py ]; then
+            python3 -I tools/ci/security_review_label.py
+          else
+            echo "::warning title=security-review-label::main has no tools/ci/security_review_label.py yet: labelling the PR"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" -f 'labels[]=security-review' --silent
+          fi
+
   # --- Path-filtered lanes ---------------------------------------------------
   # Each callee is a `workflow_call` stub in this Task (echoes a placeholder
   # conclusion); its owning ticket replaces the body without changing this
@@ -660,6 +697,7 @@ jobs:
     needs:
       - changed-paths
       - gates
+      - security-review-label
       - js
       - py
       - architecture
@@ -696,6 +734,7 @@ jobs:
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
           RESULT_GATES: ${{ needs.gates.result }}
           RESULT_SECRET_SCAN: ${{ needs.gates.outputs.secret-scan }}
+          RESULT_SECURITY_REVIEW_LABEL: ${{ needs.security-review-label.result }}
           RESULT_PIN_CHECK: ${{ needs.gates.outputs.pin-check }}
           RESULT_SPIKE_CONTAINMENT: ${{ needs.gates.outputs.spike-containment }}
           RESULT_COMMITLINT: ${{ needs.gates.outputs.commitlint }}
@@ -728,6 +767,7 @@ jobs:
               "changed-paths": { applicable: true, result: process.env.RESULT_CHANGED_PATHS },
               gates: { applicable: true, result: process.env.RESULT_GATES },
               "secret-scan": { applicable: true, result: process.env.RESULT_SECRET_SCAN },
+              "security-review-label": { applicable: true, result: process.env.RESULT_SECURITY_REVIEW_LABEL },
               "pin-check": { applicable: isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK },
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
               commitlint: { applicable: process.env.FILTER_PR !== "false", result: process.env.RESULT_COMMITLINT },

@@ -59,6 +59,9 @@ EVENT_CONDITIONS = {
         ["pr.yml:gates:changelog-fragment", "pr.yml:gates:commitlint"],
         "${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}",
     ),
+    # #2892: the C-10.2 label. A merge group has no PR to label, and its PR's own run labelled it
+    # before it could be enqueued; the job still runs, so its always-applicable lane passes.
+    "pr.yml:security-review-label:label": "github.event_name == 'pull_request'",
     # The a11y baseline's PR citation, the PR base checkout only that step reads (#3449), and the
     # coverage comment: nothing else reads any of them.
     **dict.fromkeys(

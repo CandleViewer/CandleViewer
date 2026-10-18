@@ -37,6 +37,7 @@ GATES: dict[str, int | str] = {
 }
 OTHER_LANES = ["changed-paths", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
+OTHER_LANES += ["security-review-label"]  # #2892: its own job, applicable on every PR
 # The blocking statechart contract run, defined once (#3104); it starts with `uv sync`.
 SCRIPT = "tools/statechart/run_xstate_contract.sh"
 # The script's commands, verbatim: the old job's steps (_job-xstate-contract.yml at 59bec409), so
@@ -190,6 +191,9 @@ GEN_RED = {FAIL % ("gen", "failure"), FAIL % ("gates", "failure")}
 DOCS_ONLY = set(JOBS["changed-paths"]["outputs"]) - {"docs"}
 SECRET_FAILED = {"needs.gates.outputs.secret-scan": "failure", "needs.gates.result": "failure"}
 SECRET_RED = {FAIL % ("secret-scan", "failure"), FAIL % ("gates", "failure")}
+# #2892: the C-10.2 label job is judged on every PR, a docs-only one too.
+LABEL_FAILED = {"needs.security-review-label.result": "failure"}
+LABEL_SKIPPED = {"needs.security-review-label.result": "skipped"}
 
 
 @pytest.mark.parametrize(
@@ -208,9 +212,12 @@ SECRET_RED = {FAIL % ("secret-scan", "failure"), FAIL % ("gates", "failure")}
         (DOCS_ONLY, {}, set()),
         (DOCS_ONLY, SECRET_FAILED, SECRET_RED),
         (DOCS_ONLY, {"needs.gates.outputs.secret-scan": "skipped"}, {SKIP % "secret-scan"}),
+        (set(), LABEL_FAILED, {FAIL % ("security-review-label", "failure")}),
+        (DOCS_ONLY, LABEL_SKIPPED, {SKIP % "security-review-label"}),
     ],
     ids=["green", "failed", "filtered", "misconfigured", "never-ran", "arch-failed", "arch-no-py"]
-    + ["xstate-failed", "xstate-no-py", "gen-failed", "docs-only", "docs-secret", "docs-no-scan"],
+    + ["xstate-failed", "xstate-no-py", "gen-failed", "docs-only", "docs-secret", "docs-no-scan"]
+    + ["label-failed", "docs-no-label"],
 )
 def test_resolver_step_judges_each_gate_as_its_old_job(
     off: set[str], context: dict[str, str], expected: set[str]
@@ -258,7 +265,8 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
     # scans into one job and bandit into semgrep's (4 / 18 / 18 / 37), then runs xstate-contract
     # in `gates` (4 / 17 / 17 / 36), then `gen` (3 / 16 / 16 / 35); the third PR's own run is 16.
     # #3385 runs the secret scans as a `gates` step, so a docs-only PR still starts three jobs.
-    [("docs", 3), ("py", 16), ("py,infra", 16), ("all", 35)],
+    # #2892 adds `security-review-label` to every run (4 / 17 / 17 / 36).
+    [("docs", 4), ("py", 17), ("py,infra", 17), ("all", 36)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

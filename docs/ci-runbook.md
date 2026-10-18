@@ -33,6 +33,9 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
+├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
+│                                      by main's tools/ci/security_review_label.py (CI-GATE-004);
+│                                      a merge group has no PR, so its step is skipped (#3433)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
@@ -201,6 +204,12 @@ here, or the check fails the `governance` lane.
 - **CI-GATE-003** (unpinned action / unsafe trigger): `tools/ci/check_action_pins.py`
   names the offending `uses:` line; replace the tag with the commit SHA
   GitHub shows for that release and keep the `# vX.Y.Z` comment.
+- **CI-GATE-004** (C-10.2 security path, label not added): `security-review-label` lists each
+  matched file and its rule, then could not add `security-review` (a fork's token cannot write: a
+  maintainer adds the label and re-runs the job), or could not read every changed file while the
+  label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
+  the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
+  merge guard is the backstop.
 
 ### CI-JS-* — JS/TS lane
 
