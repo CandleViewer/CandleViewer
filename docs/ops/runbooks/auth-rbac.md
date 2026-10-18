@@ -720,8 +720,11 @@ enrolment-only session; no alert rule reads it yet (#2746). By `reason`:
   (4403). The audit row is `auth.mfa_enrollment_required` (denied, warning; `after_state` names
   the channel, method and route template, and the row has the source address), at most 20 a
   minute per user. The log line is `auth.enrolment_only.refused`, with `session_id` and `user_id`.
-- `expired`: the session is past its 15 minutes, or its expiry lies further ahead (it was not
-  minted as one): 401, or a failed WS `auth`, and no audit row (log `auth.enrolment_only.expired`).
+- `expired`: the session was not minted enrolment-only (its expiry lies more than 15 minutes
+  ahead, or it proved a second factor its user no longer has): 401, or a failed WS `auth`, and no
+  audit row (log `auth.enrolment_only.expired`). A session past its expiry is refused before it is
+  classified (401, revoked as `expired`) and is not counted here, except by a `POST /auth/refresh`
+  that is the first request to present it after its expiry.
 - `unclassified`: the session or its user could not be read, or a session store is wired without
   the user store: `503 store_unavailable`, or a failed WS `auth`. The error line
   `auth.enrolment_only.unclassified` names the exception type, and the `session_id` and `user_id`

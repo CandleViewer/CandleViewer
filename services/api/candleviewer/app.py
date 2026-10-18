@@ -918,11 +918,12 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
 
     #2295: only a full session is served. An enrolment-only one is refused with `AuthRefused`
     (`bye mfa_enrollment_required`, 4403), counted and audited through *refusals*, with the
-    source address the gateway supplies, as the HTTP guard's 403 is. One past or beyond its 15
-    minutes (Q7), any other verdict (deny by default, C-12.4) and a classification that fails
-    raise like any failed `auth` (as an expired token does, `23-ws-protocol.md` §4.3), so HTTP
-    (401) and the socket (`auth_failed`) both lead to a new sign-in. A user disabled or deleted
-    since `require_active` read the session (`USER_INACTIVE`) fails it too, uncounted: #2911's
+    source address the gateway supplies, as the HTTP guard's 403 is. One not minted as such
+    (overlong, Q7, or it proved a second factor), any other verdict (deny by default, C-12.4)
+    and a classification that fails raise like any failed `auth` (as an expired token does,
+    `23-ws-protocol.md` §4.3), so HTTP (401) and the socket (`auth_failed`) both lead to a new
+    sign-in; one past its expiry fails the lookup first. A user disabled or deleted since
+    `require_active` read the session (`USER_INACTIVE`) fails it too, uncounted: #2911's
     refusal, not an enrolment one."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
