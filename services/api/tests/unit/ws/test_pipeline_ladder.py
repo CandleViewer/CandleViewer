@@ -7,16 +7,17 @@ sleeps: every wait is on a frame or an event, bounded by `asyncio.timeout`.
 from __future__ import annotations
 
 import asyncio
-import itertools
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from fastapi import WebSocket
 from structlog.testing import capture_logs
 
 from candleviewer.audit.models import Severity
 from candleviewer.ws.backpressure_config import BackpressureConfig
+from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.lifecycle import bye_frame
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline, slow_consumer_bye
@@ -55,24 +56,21 @@ def _attached(
     levels: int = 2, max_frame_bytes: int | None = None, now: float = 0.0, **config: Any
 ) -> tuple[ConnectionPipeline, list[str], Conn]:
     """A pipeline attached to a `Conn` (a book of `levels` bids) whose emitter pushes into it,
-    with a close that takes the terminal slot as `_Connection.close_with` does, and a `notify`
-    that queues a `connection_quality` notice on `system` as `_Connection.push_system` does for a
-    principal with a role (§8.3). It attaches at `now` on the conn's clock."""
+    with a close that takes the terminal slot as `_Connection.close_with` does, and, as `run_auth`
+    attaches it, `push_system` of a bare `_Connection` as its `notify`: a `connection_quality`
+    notice (§8.3) is framed, cut for the principal's role and queued by production (SR-188,
+    #3537), not by this module. It attaches at `now` on the conn's clock."""
     source = Source()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         source.books[symbol] = Book(symbol)
         source.books[symbol].apply([[str(100 + i), "1"] for i in range(levels)], [])
     conn = Conn(source, ACC_A, max_frame_bytes=max_frame_bytes)
     asked: list[str] = []
-    system = itertools.count(1)
 
     def close(reason: str, *, bye: dict[str, Any] | None = None) -> None:
         asked.append(reason)
         frame = bye or bye_frame(reason, now_ms=BASE_MS)
         pipe.close(frame, int(frame["p"]["code"]), flush=reason != "slow_consumer")
-
-    def notify(body: dict[str, Any]) -> None:
-        pipe.push({"t": "d", "ch": "system", "s": next(system), "ts": BASE_MS, "e": "j", "p": body})
 
     pipe = ConnectionPipeline(
         encoding="cv.v1.json",
@@ -81,8 +79,17 @@ def _attached(
         wall_ms=lambda: BASE_MS,
         connection_id="ws_test",
     )
+    shell = _Connection(
+        cast(WebSocket, None),  # `push_system` queues the frame: no socket, no writer
+        encoding="cv.v1.json",
+        clock=conn.clock,
+        wall_ms=lambda: BASE_MS,
+        auth_timeout_s=10.0,
+    )
+    # what `run_auth` and the handler give the connection: the principal and the pipeline
+    shell.authz, shell.pipeline = conn.authz, pipe
     conn.clock.now = now
-    pipe.attach(conn.authz, conn.emitter, notify)
+    pipe.attach(conn.authz, conn.emitter, shell.push_system)
     conn.emitter.push = pipe.push
     return pipe, asked, conn
 
