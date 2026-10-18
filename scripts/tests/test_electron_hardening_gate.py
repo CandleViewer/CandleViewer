@@ -255,6 +255,12 @@ def test_bypass_csp_on_any_privileged_scheme_fails_sr112(tree: Tree) -> None:
     assert srs(vs) == {"SR-112", "SR-174"} and "bypassCSP" in vs[0].render()
 
 
+@pytest.mark.parametrize("key", ['"bypassCSP"', "'bypassCSP'", '["bypassCSP"]'])
+def test_bypass_csp_under_a_quoted_key_fails_sr112(tree: Tree, key: str) -> None:
+    tree.files["desktop/main/csp.js"] = f"const extra = {{ {key}: !0 }};\n"
+    assert srs(tree.violations()) == {"SR-112"}
+
+
 @pytest.mark.parametrize(
     "privileges",
     [
@@ -400,6 +406,43 @@ def test_window_loading_a_file_url_fails_sr174(tree: Tree, load: str) -> None:
     tree.files["desktop/main/index.js"] = GOOD_MAIN + load
     vs = tree.violations()
     assert srs(vs) == {"SR-174"} and "file: URL" in vs[0].render()
+
+
+@pytest.mark.parametrize(
+    ("name", "use"),
+    [
+        (
+            "loadURL",
+            'const load = win.loadURL.bind(win);\nvoid load("file:///x.html");',
+        ),
+        ("loadURL", 'void win.loadURL.call(win, "file:///x.html");'),
+        ("loadURL", 'void Reflect.apply(win.loadURL, win, ["file:///x.html"]);'),
+        ("loadURL", 'void win.loadURL?.("file:///x.html");'),
+        ("loadURL", "const { loadURL } = win;"),
+        (
+            "registerSchemesAsPrivileged",
+            (
+                "const reg = protocol.registerSchemesAsPrivileged.bind(protocol);\n"
+                'reg([{ scheme: "x", privileges: { supportFetchAPI: true } }]);'
+            ),
+        ),
+    ],
+)
+def test_a_checked_call_used_other_than_directly_fails_sr174(
+    tree: Tree, name: str, use: str
+) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + use
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"}
+    assert f"{name} is used other than by a direct call" in vs[0].render()
+
+
+def test_direct_calls_spelled_with_brackets_or_spaces_pass(tree: Tree) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + (
+        'void win["loadURL"](APP_ENTRY_URL);\n'
+        "void win.webContents.loadURL (APP_ENTRY_URL);\n"
+    )
+    assert tree.violations() == []
 
 
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:

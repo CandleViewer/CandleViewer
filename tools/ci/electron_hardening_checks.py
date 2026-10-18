@@ -166,14 +166,17 @@ def check_app_scheme(main_js: str) -> list[Violation]:
     (one call, passing the constant itself, not a copy or a spread). No window loads from a
     file: URL (a file: page is outside the handler's asset root).
     These are text heuristics over the compiled main process, comments included, so a comment
-    that names a checked call or `loadFile` turns the gate red. The file: check sees any
-    `loadFile` and a quoted `file:` literal or `pathToFileURL` anywhere in a `loadURL`
-    argument; it does not see a file: URL built elsewhere and passed in a variable, or a
-    literal split across strings. The unit tests in apps/desktop/test pin the real call
-    arguments and that the constant is frozen.
+    that names a checked call or `loadFile` can turn the gate red. `loadURL` and
+    `registerSchemesAsPrivileged` may appear only as direct calls, so an alias,
+    bind/call/apply or an optional call fails. The file: check sees any `loadFile` and a
+    quoted `file:` literal or `pathToFileURL` anywhere in a `loadURL` argument. It does not
+    see a file: URL built elsewhere and passed in a variable, a name or literal assembled
+    from parts (`win["load" + "URL"]`, `"fi" + "le:"`), or a write through Object.assign or
+    defineProperty, which the freeze makes throw. The unit tests in apps/desktop/test pin
+    the real call arguments and that the constant is frozen.
     """
     vs: list[Violation] = []
-    if re.search(r"\bbypassCSP\s*:\s*(?:true|!0)", main_js):
+    if re.search(r"\bbypassCSP(?:[\"'`]\s*\]?)?\s*:\s*(?:true|!0)", main_js):
         vs.append(
             Violation(
                 "SR-112",
@@ -242,6 +245,21 @@ def check_app_scheme(main_js: str) -> list[Violation]:
                 "a window loads a file: URL; serve the web app through the app:// handler",
             )
         )
+    for name, subject in (
+        ("registerSchemesAsPrivileged", "main registerSchemesAsPrivileged"),
+        ("loadURL", "main window load"),
+    ):
+        # Not followed by `(` or `"](`: the checks above only read direct calls.
+        if re.search(r"\b" + name + r"\b(?!\s*\(|[\"'`]\s*\]\s*\()", main_js):
+            vs.append(
+                Violation(
+                    "SR-174",
+                    subject,
+                    f"{name} is used other than by a direct call (an alias, "
+                    f"bind/call/apply or an optional call); call it directly so its "
+                    f"arguments are checked",
+                )
+            )
     return vs
 
 
