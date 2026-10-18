@@ -91,7 +91,8 @@ async def test_auto_reads_one_tier_by_manifest_coverage_on_real_questdb_and_parq
         await writer.stop()
         await hot_tier.wait_for_row_count(conn, "trades", 361)
         await hot_tier.wait_for_row_count(conn, "orderbook_deltas", 481)
-        settings = Settings(
+        settings = Settings(  # type: ignore[call-arg]  # pydantic-settings kwarg
+            _env_file=None,
             storage_backend="real",
             questdb_pg=f"{host}:{pg_port}",
             parquet_root=str(tmp_path / "cold"),

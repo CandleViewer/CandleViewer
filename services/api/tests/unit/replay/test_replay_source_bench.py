@@ -11,6 +11,10 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
+from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
+
 
 def _load_bench() -> ModuleType:
     path = Path(__file__).resolve().parents[3] / "bench" / "replay_source.py"
@@ -21,8 +25,18 @@ def _load_bench() -> ModuleType:
     return module
 
 
-async def test_the_bench_replays_every_event_through_both_tiers(tmp_path: Path) -> None:
+async def test_the_bench_replays_every_event_through_both_tiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     bench = _load_bench()
+    shut: list[ParquetRecordedReader] = []
+    real = ParquetRecordedReader.shutdown
+
+    def shutdown(self: ParquetRecordedReader) -> None:
+        shut.append(self)
+        real(self)
+
+    monkeypatch.setattr(ParquetRecordedReader, "shutdown", shutdown)
 
     report = await bench.run(2_000, 40, 1, tmp_path)
 
@@ -30,3 +44,4 @@ async def test_the_bench_replays_every_event_through_both_tiers(tmp_path: Path) 
     rates = report["events_per_s_p50"]
     assert rates["in_memory"] > 0
     assert rates["cold_parquet"] > 0
+    assert len(shut) == 1  # the cold reader's scan pool is released

@@ -484,8 +484,9 @@ async def test_coverage_reads_its_manifests_off_the_event_loop(
 
 
 @pytest.mark.parametrize("bad", ["0", None, 1.5, True, [0]], ids=repr)
+@pytest.mark.parametrize("field", ["range_start_us", "range_end_us"])
 async def test_a_coverage_range_that_is_not_integral_is_a_typed_error(
-    tmp_path: Path, bad: object
+    tmp_path: Path, field: str, bad: object
 ) -> None:
     """Corrupt coverage metadata is refused typed, never a bare `TypeError` from the span
     arithmetic, and never coverage a bool or a float happens to compare as."""
@@ -493,7 +494,7 @@ async def test_a_coverage_range_that_is_not_integral_is_a_typed_error(
     registry = await _export(root, generated_rows())
     manifest = _trades_manifest(root)
     doc = json.loads(manifest.read_text(encoding="utf-8"))
-    doc["entries"][0]["range_start_us"] = bad
+    doc["entries"][0][field] = bad
     manifest.write_text(json.dumps(doc), encoding="utf-8")
 
     with pytest.raises(ColdReplayReadError):

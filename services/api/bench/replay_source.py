@@ -151,22 +151,23 @@ async def run(delta_rows: int, trades: int, runs: int, workdir: Path) -> dict[st
     await exporter.export_partition(
         "BTCUSDT", StreamKind.ORDERBOOK_DELTA, minute, partition_extra={"hour": "00"}
     )
+    reader = ParquetRecordedReader(registry)
     cold = ReplayTiers(
-        hot=memory,
-        cold=ParquetRecordedReader(registry),
-        coverage=StaticManifestCoverage(),
-        gaps=StaticGapReader(),
+        hot=memory, cold=reader, coverage=StaticManifestCoverage(), gaps=StaticGapReader()
     )
     results: dict[str, list[float]] = {"in_memory": [], "cold_parquet": []}
-    for _ in range(runs):
-        for label, tiers, tier in (
-            ("in_memory", in_memory, "questdb"),
-            ("cold_parquet", cold, "parquet"),
-        ):
-            count, seconds = await _drain(tiers, tier)
-            if count != len(events):
-                raise RuntimeError(f"{label} replayed {count} of {len(events)} events")
-            results[label].append(count / seconds)
+    try:
+        for _ in range(runs):
+            for label, tiers, tier in (
+                ("in_memory", in_memory, "questdb"),
+                ("cold_parquet", cold, "parquet"),
+            ):
+                count, seconds = await _drain(tiers, tier)
+                if count != len(events):
+                    raise RuntimeError(f"{label} replayed {count} of {len(events)} events")
+                results[label].append(count / seconds)
+    finally:
+        reader.shutdown()  # its scan pool, as `ReplayWiring.aclose()` does at app stop
     return {
         "events": len(events),
         "events_per_s_p50": {k: round(statistics.median(v)) for k, v in results.items()},
