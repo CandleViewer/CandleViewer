@@ -369,7 +369,10 @@ removing nothing.
   or advisories that disagree with its `metadata.vulnerabilities` counts.
   pnpm still counts an advisory on an `auditConfig` ignore list but leaves it
   out of the report, so remove the ignore: an exception belongs in
-  `security/accepted-risks.yaml`.
+  `security/accepted-risks.yaml`. A report that passes is only as complete as
+  the registry's answer: pnpm builds it from the advisories the registry's
+  audit endpoint returns, so the gate cannot tell a registry that listed none
+  from a tree with none.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

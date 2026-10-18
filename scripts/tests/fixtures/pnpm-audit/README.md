@@ -28,3 +28,7 @@ When pnpm 12.5.1 cannot get an answer from the registry's audit endpoint (connec
 an HTTP error status, or a body that is not JSON) it exits 1, prints
 `ERR_PNPM_AUDIT_BAD_RESPONSE` on stderr and writes nothing to stdout. The step's report is then
 an empty file, which the gate fails (CI-SEC-005); the tests write that file themselves.
+
+pnpm builds the report itself from the advisories that endpoint returns, so an answer listing
+none gives a report like `pnpm-12.5.1-clean.json`. A clean report is only as complete as the
+registry's answer: the gate cannot tell a registry that listed none from a tree with none.
