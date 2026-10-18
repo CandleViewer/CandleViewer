@@ -60,6 +60,9 @@ jobs:
     permissions:
       contents: read
       security-events: write # required to upload SARIF to code scanning
+    env:
+      # The one language list: init analyses these and the gate needs a SARIF for each (#3261).
+      CODEQL_LANGUAGES: javascript-typescript,python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,16 +77,17 @@ jobs:
 
       - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
-          languages: javascript-typescript,python
+          languages: ${{ env.CODEQL_LANGUAGES }}
           config-file: ./.github/codeql/codeql-config.yml
 
-      # analyze's own outcome does not gate: the gate step below judges its
-      # SARIF and fails CI-SEC-005 when there is none (a crash before any
-      # SARIF is written never passes; one SARIF per language is #3261).
+      # analyze writes one <language>.sarif per language under runner.temp, which the job starts
+      # empty and no commit can reach, so only SARIF from this run counts. Its own outcome does
+      # not gate: the gate step below fails CI-SEC-005 for each configured language without a
+      # SARIF (a crash after the first language's file never passes) and judges every one.
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         continue-on-error: true
         with:
-          output: codeql-results
+          output: ${{ runner.temp }}/codeql-results
           upload: false # gate on our normalised policy first, then upload
 
       # security_gate.py reads `security-severity` / `level` from the rule
@@ -95,25 +99,47 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          files=(codeql-results/*.sarif)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "CI-SEC-005: codeql produced no SARIF output under codeql-results/ — scanner infrastructure failure" >&2
+          IFS=', ' read -ra langs <<< "${CODEQL_LANGUAGES:-}"
+          if [ "${#langs[@]}" -eq 0 ]; then
+            echo "CI-SEC-005: CODEQL_LANGUAGES names no language — nothing to judge" >&2
             exit 1
           fi
-          for f in "${files[@]}"; do
-            python tools/ci/security_gate.py --tool codeql --report "$f"
+          status=0
+          for lang in "${langs[@]}"; do
+            # analyze names the file after the CodeQL language (javascript-typescript is analysed
+            # as javascript, run 39070557384); any other alias expects a file that never appears,
+            # so it fails closed until it is mapped here.
+            case "$lang" in javascript-typescript) name=javascript ;; *) name="$lang" ;; esac
+            f="$RUNNER_TEMP/codeql-results/$name.sarif"
+            if [ ! -f "$f" ]; then
+              echo "CI-SEC-005: codeql produced no SARIF for $lang ($f) — scanner infrastructure failure" >&2
+              status=1
+            elif ! python tools/ci/security_gate.py --tool codeql --report "$f"; then
+              status=1
+            fi
           done
+          exit "$status"
+
+      # hashFiles() sees only the workspace, so this step tells the upload whether analyze wrote
+      # any SARIF. It never gates: continue-on-error, and the gate above has already decided.
+      - name: Find the CodeQL SARIF for the upload
+        id: sarif
+        if: always()
+        continue-on-error: true
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP/codeql-results/"*.sarif)
+          if [ "${#files[@]}" -gt 0 ]; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Gate decided above. The upload feeds GitHub's informational "CodeQL"
         # check run (github-advanced-security app; PR-scoped alerts, not a
         # C-9.1 required check) — it must agree with the gate, never replace
         # it, and an upload outage must never mask the gate result.
-        if: always() && hashFiles('codeql-results/*.sarif') != ''
+        if: always() && steps.sarif.outputs.found == 'true'
         continue-on-error: true
         with:
-          sarif_file: codeql-results
+          sarif_file: ${{ runner.temp }}/codeql-results
           category: codeql
 
   # ---------------------------------------------------------------------
