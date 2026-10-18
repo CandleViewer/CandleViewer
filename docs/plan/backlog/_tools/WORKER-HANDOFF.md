@@ -86,7 +86,7 @@ merges `security-review` PRs personally; the orchestrator (Agent B's session, pe
 3. Learn "green" on `main` first. Commands are owned by `AGENTS.md` §4 — never invent one.
    Backend gate: `ruff check . && ruff format --check . && black --check . && mypy --strict . &&
 lint-imports && pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration)
-and not roundtrip and not fuzz and not harness and not perf"`. JS/TS: `pnpm verify`.
+and not roundtrip and not fuzz and not harness and not perf and not flaky"`. JS/TS: `pnpm verify`.
    Semgrep custom rules: run each `.semgrep/cv-*.yml` as its own `--config` on your touched files;
    0 findings, and **never add `nosemgrep`/`noqa`/`type: ignore` without a coded, justified reason**.
 4. Known quirks (both other laptops hit all of these):
