@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import socket
 from enum import StrEnum
 
 HOST = "127.0.0.1"
@@ -23,8 +24,12 @@ class Fault(StrEnum):
 
 
 class Proxy:
-    def __init__(self, upstream_port: int) -> None:
+    def __init__(self, upstream_port: int, rcvbuf: int | None = None) -> None:
         self.upstream_port = upstream_port
+        #: Each upstream socket's `SO_RCVBUF`, fixed so autotuning cannot grow it: what a `PAUSE`d
+        #: link holds stays bounded however bursty the server's writes. None: the kernel's. Too
+        #: small, and a link stalls after `HEAL` (the floor: `_server.LANE_RCVBUF`).
+        self.rcvbuf = rcvbuf
         self.port = 0  # the port clients dial, once started
         self.trace: list[tuple[str, int]] = []
         self.refusing = False
@@ -76,6 +81,9 @@ class Proxy:
             return
         try:
             up_reader, up_writer = await asyncio.open_connection(HOST, self.upstream_port)
+            if self.rcvbuf is not None:
+                up = up_writer.get_extra_info("socket")
+                up.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.rcvbuf)
         except OSError:  # no server behind the proxy (a restart): reset the client at once
             self.trace.append(("down", n))
             writer.transport.abort()

@@ -7,6 +7,7 @@ reconnecting once the token is within 60 s of expiry or after a `4401`, §9.1 `p
 every frame, close code and §7.1 sequence gap (a `d` whose `s` is not the last `s` + 1 on that
 channel and connection, with no `snap` in between). Each test-side wait is bounded. It models
 §16.1 C12: order entry is off after a `shutdown_notice` or an engaged kill switch (`auth_ok` too).
+Opt-in: the §9.1 client `ping`, no permessage-deflate, and data frames handed to `on_data`.
 """
 
 from __future__ import annotations
@@ -14,9 +15,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import itertools
 import json
 import random
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
@@ -32,6 +34,7 @@ from tests.contract.ws._support import ORIGIN
 #: §9.2 (delay, jitter) per attempt; attempt 6 and later reuse the last row.
 BACKOFF = ((0.5, 0.25), (1.0, 0.5), (2.0, 1.0), (5.0, 2.0), (10.0, 5.0), (30.0, 10.0))
 PRIVATE = frozenset({"orders", "positions", "executions", "wallet"})
+DATA = frozenset({"d", "snap"})
 NO_RECONNECT = frozenset({1002, 4400, 4403})
 REFRESH_MARGIN_MS = 60_000
 TIMEOUT_S = 5.0
@@ -73,6 +76,13 @@ class Client:
         self.log: list[tuple[Any, ...]] = []
         self.backoffs: asyncio.Queue[float] = asyncio.Queue()
         self.seq: dict[str, int] = {}  # last `s` per channel on the current connection
+        #: Opt-in, set before `start()`. §9.1: the client's own `ping` every this many seconds of
+        #: virtual time. §3.5: whether it offers permessage-deflate (the library's default).
+        self.heartbeat_s: float | None = None
+        self.deflate = True
+        #: Takes every `d` and `snap` of a topic, decoded and as received, in place of `frames`
+        #: (`system` frames stay there): for a stream too large to keep, read as it arrives.
+        self.on_data: Callable[[dict[str, Any], str | bytes], None] | None = None
         self._tick = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
 
@@ -108,7 +118,8 @@ class Client:
         if (due or self.must_refresh) and not await self._refresh():
             return None
         try:
-            async with _dial(self.url) as ws:
+            dial = _dial(self.url, compression="deflate" if self.deflate else None)
+            async with dial as ws, self._beating(ws):
                 self._note("open")
                 await self._session(ws)
         except ConnectionClosed as exc:
@@ -139,13 +150,35 @@ class Client:
         hello = {"client": "chaos", "client_version": "1.0.0", "protocol": "cv.v1"}
         await ws.send(json.dumps({"t": "hello", "id": "h", "p": hello}))
         while True:
-            frame: dict[str, Any] = json.loads(await ws.recv(decode=True))  # text, <= max_size
-            self.frames.append(frame)
-            self.rx_at.append(asyncio.get_running_loop().time())
+            text = await ws.recv(decode=True)  # text, <= max_size
+            frame: dict[str, Any] = json.loads(text)
+            if self.on_data is None or frame["t"] not in DATA or frame["ch"] == "system":
+                self.frames.append(frame)
+                self.rx_at.append(asyncio.get_running_loop().time())
+            else:
+                self.on_data(frame, text)
             reply = self._on(frame)
             if reply is not None:
                 await ws.send(json.dumps(reply))
             self._tick.set()
+
+    @contextlib.asynccontextmanager
+    async def _beating(self, ws: ClientConnection) -> AsyncIterator[None]:
+        """§9.1, opt-in: a `ping` every `heartbeat_s` of virtual time while `ws` is open, so a
+        socket whose reads stalled still has inbound traffic (`heartbeat_timeout`: 45 s of none)."""
+        beat = None if self.heartbeat_s is None else spawn(self._beat(ws), name="chaos-ws-beat")
+        try:
+            yield
+        finally:
+            if beat is not None:
+                beat.cancel()
+                await asyncio.gather(beat, return_exceptions=True)
+
+    async def _beat(self, ws: ClientConnection) -> None:
+        for n in itertools.count(1):
+            await self.clock.sleep(self.heartbeat_s or 0.0)
+            ms = int(self.clock.wall_s() * 1000)
+            await ws.send(json.dumps({"t": "ping", "id": f"c-hb-{n}", "p": {"client_ms": ms}}))
 
     def _on(self, f: dict[str, Any]) -> dict[str, Any] | None:
         t, ch = f["t"], f.get("ch", "")

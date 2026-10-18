@@ -11,11 +11,20 @@ The book is the recorded BTCUSDT corpus (C-13.5). Clients reach the server only 
 Served as production serves it: `PlannedShutdownServer`, so a stop (`should_exit`) runs the §9.4
 planned shutdown, its grace slept on the virtual clock. `restart()` boots a second server
 process behind the same proxies; the stores above survive it, as a database and the exchange do.
+
+`flag_on()` is the same stack with E17-T03's `CV_WS_BACKPRESSURE_ENABLED` on: the router gets the
+default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts has a fixed
+`SEND_BUFFER`, and each of its lanes a fixed upstream receive buffer (`LANE_RCVBUF`), so a stopped
+reader's backlog reaches that budget once well under 1 MB is in flight (the sockets', the
+transport's and the proxy's buffers), not after the megabytes loopback autotuning holds. Its
+transport keepalive is off (`_boot`): it runs on wall time. `trades_step` replays the recorded
+tape.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import socket
 import uuid
@@ -29,16 +38,18 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService, access_token_expires_at
+from candleviewer.exchange.base.trade_print import TradePrint
 from candleviewer.observability.context import spawn
 from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
 from candleviewer.settings import Settings
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, window_delta
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import KillSwitchView, WsEvents, WsRuntime
-from tests._corpus import frames
+from tests._corpus import frames, normalize
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.chaos.ws._client import TIMEOUT_S, Client
 from tests.chaos.ws._proxy import HOST, Proxy
@@ -63,6 +74,17 @@ WORKSPACES: list[list[Topic]] = [
 # §9.4: the documented grace and expected downtime (the CV_WS_SHUTDOWN_* defaults)
 GRACE_MS, DOWNTIME_MS = 5_000, 20_000
 GRACE_S = GRACE_MS / 1000
+#: The flag-on stack's `SO_SNDBUF` (the kernel doubles it), set on the listening socket, which
+#: every accepted socket inherits; fixed, so autotuning cannot grow it (`flag_on`).
+SEND_BUFFER = 32 * 1024
+#: The `SO_RCVBUF` of a flag-on lane's upstream sockets (`Proxy.rcvbuf`), fixed for the same
+#: reason. It has a floor: set after connect, as `Proxy` sets it, a receiver of 28 KiB or less
+#: that stopped reading resumes only on the sender's next zero-window probe, 0.5 s to seconds
+#: after `HEAL` (about 32 KiB on Linux 6.6; set before connect there is none), and kernels that
+#: advertise about half the buffer as window need twice that. 128 KiB clears it.
+LANE_RCVBUF = 128 * 1024
+#: The two sizes as set (the kernel doubles them), for a failure message to name.
+BUFFERS = f"lane SO_RCVBUF {LANE_RCVBUF} B, server SO_SNDBUF {SEND_BUFFER} B, as set"
 
 
 async def _no_wait(_seconds: float) -> None:
@@ -83,7 +105,12 @@ class _Hub(GatewayHub):
 
 
 class Stack:
-    def __init__(self, clock: VirtualClock, *accounts: uuid.UUID) -> None:
+    def __init__(
+        self,
+        clock: VirtualClock,
+        *accounts: uuid.UUID,
+        backpressure: BackpressureConfig | None = None,
+    ) -> None:
         self.clock = clock
         self.sessions = SessionService(FakeSessionRepository(), Hasher(), clock=self.now)
         self.granted = set(accounts)  # the grant store the principal loader reads
@@ -95,6 +122,10 @@ class Stack:
         self.book = self.source.books[SYM] = Book(SYM)
         self.book.apply(corpus[0]["b"], corpus[0]["a"])
         self._deltas = iter(corpus[1:])
+        tape = [p for f in frames("ws/clean_publicTrade_BTCUSDT.jsonl") for p in normalize(f)]
+        self._tape = [p for p in tape if isinstance(p, TradePrint)]
+        self._printed = itertools.count()
+        self.backpressure = backpressure  # E17-T03's flag: on with a config (`flag_on`)
         self.clients: list[Client] = []
         self.lanes: list[Proxy] = []
         self._boot()
@@ -121,6 +152,7 @@ class Stack:
                 wall_ms=self.wall_ms,
                 tick_s=0.005,
                 kill_switch=self.events.kill_switch.snapshot,  # `auth_ok.kill_switch`, as app.py
+                backpressure=self.backpressure,
             )
         )
         app.add_api_route("/auth/refresh", self._refresh, methods=["POST"])
@@ -130,10 +162,20 @@ class Stack:
         # A short drain: the harness's clients are closed by the test itself. Set on the dict, so it
         # holds whether or not `uvicorn_kwargs` carries its own drain bound (#2565 adds one).
         kw["timeout_graceful_shutdown"] = 2
+        if self.backpressure is not None:
+            # Two clocks: uvicorn's transport keepalive (`ws_ping_interval` 15 s, then
+            # `ws_ping_timeout` 45 s and a 1011) is timed on the loop's wall clock, the scenarios on
+            # the virtual one. A paused client meets it 60 real seconds in, whatever the virtual
+            # time, so a slow run (coverage) would close it mid-scenario. Off for the flag-on stack
+            # only; the §9.1 application heartbeat stays on, on the virtual clock (production keeps
+            # both).
+            kw["ws_ping_interval"] = None
         # Merged as a dict, so it holds whether or not `uvicorn_kwargs` already sets `log_config`.
         conf = uvicorn.Config(app, **{**kw, "lifespan": "off", "log_config": None})
         self.server = PlannedShutdownServer(conf)
         self._sock = socket.create_server((HOST, 0))
+        if self.backpressure is not None:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
         self.port: int = self._sock.getsockname()[1]
 
     def client(self, minted: MintedSession, seed: int = SEED, via: Proxy | None = None) -> Client:
@@ -145,7 +187,7 @@ class Stack:
 
     async def lane(self) -> Proxy:
         """A second path to the server: a fault on it hits only the clients dialled through it."""
-        lane = Proxy(self.port)
+        lane = Proxy(self.port, None if self.backpressure is None else LANE_RCVBUF)
         await lane.start()
         self.lanes.append(lane)
         return lane
@@ -192,6 +234,17 @@ class Stack:
         body = {"symbol": SYM, "bids": window_delta(b0, b1), "asks": window_delta(a0, a1)}
         return self.hub.publish(BOOK, body)
 
+    def trades_step(self, n: int) -> int:
+        """Publish the next `n` prints of the recorded BTCUSDT tape (production parser) as one
+        §14.2 batch, stamped with the virtual time. The tape is replayed in rounds; a round
+        suffixes the recorded id, so every print published is unique."""
+        now, size, batch = self.wall_ms(), len(self._tape), list[dict[str, Any]]()
+        for i in itertools.islice(self._printed, n):
+            p = self._tape[i % size]
+            item = {"id": f"{p.trade_id}.{i // size}", "ts_ms": now, "price": str(p.price)}
+            batch.append(item | {"size": str(p.qty), "side": p.side})
+        return self.hub.publish(TRADES["ch"], {"symbol": SYM, "trades": batch})
+
     def private(self, family: str, account: uuid.UUID) -> int:
         """One account-scoped event (a §15 sample body re-keyed to `account`)."""
         item = {**SAMPLES[family][1][family][0], "exchange_account_id": str(account)}
@@ -232,3 +285,8 @@ class Stack:
         self.server.should_exit = True
         await self.clock.advance(GRACE_S)  # frees a grace a failed test left parked
         await self.until_stopped()
+
+
+def flag_on() -> Stack:
+    """A stack with E17-T03's flag on (module docstring), accounts A and B granted."""
+    return Stack(VirtualClock(), ACC_A, ACC_B, backpressure=BackpressureConfig())
