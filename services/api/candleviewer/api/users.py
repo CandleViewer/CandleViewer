@@ -13,9 +13,10 @@ for an existing and a missing id (threat U25), audited naming the target. Its pr
 the contract's `x-error-codes`. `account_access=None` fails closed with 501.
 
 `PUT /users/{userId}/account-access` (S9c): `users:write` and SR-055 refused as the GET refuses;
-then the step-up, the closed body (at most 64 KiB and 256 grants, SR-040) and
-`AccountAccessService.replace`, whose store refusals map to the design's codes. It answers with
-the set the store read under its locks; unwired, 501.
+then the step-up, `acknowledge_unknown_positions` (`true` or `false`, once, as the DELETE reads
+it), the closed body (at most 64 KiB and 256 grants, SR-040) and `AccountAccessService.replace`,
+whose store refusals map to the design's codes. It answers with the set the store read under its
+locks; unwired, 501.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
@@ -38,7 +39,7 @@ from typing import Annotated, Any, Final, Protocol
 import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from candleviewer.admin.account_access import AccountAccessService, GrantStore
 from candleviewer.admin.errors import (
@@ -71,14 +72,12 @@ from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_id
 from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories import account_access as aa
-from candleviewer.storage.repositories.account_access import AccessGrant, AccessUserNotFoundError
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
 _RETRY_AFTER_S = 5
 #: SR-026 for an owner route (S7): `deleteUser`'s declared query parameters (22-api-openapi.yaml).
 DELETE_USER_QUERY = frozenset({"acknowledge_unknown_positions", "purge"})
-_ACK = TypeAdapter(bool)  # `acknowledge_unknown_positions`, a query parameter
 _Input = tuple[api.AccountAccessGrantInput, ...]
 #: SR-040: the PUT's body bounds. Both answer 400 `validation_failed`: the operation declares no
 #: 413, and the contract is not this slice's to change (C-6.1). 256 grants take about 20 KiB. The
@@ -94,7 +93,11 @@ _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessUnknownAccountError: (ErrorCode.NOT_FOUND, 404, "an exchange account was not found"),
     aa.AccessUserNotActiveError: (ErrorCode.CONFLICT, 409, "the user is not active"),
     aa.AccessBusyError: (ErrorCode.CONFLICT, 409, "the grants are being changed; retry"),
-    aa.AccessPositionsUnknownError: (ErrorCode.POSITIONS_UNKNOWN, 409, "positions are unknown"),
+    aa.AccessPositionsUnknownError: (
+        ErrorCode.POSITIONS_UNKNOWN,
+        409,
+        "open-position state is unavailable; resend with acknowledge_unknown_positions=true",
+    ),
     aa.AccessAuditUnavailableError: (ErrorCode.AUDIT_UNAVAILABLE, 503, "change not audited"),
 }
 _REFUSALS = tuple(_REFUSED)
@@ -156,7 +159,7 @@ class UserRoleStore(Protocol):
 
 
 class AccountAccessStore(GrantStore, Protocol):  # its writes go through `AccountAccessService`
-    async def list_grants(self, user_id: uuid.UUID) -> list[AccessGrant]:
+    async def list_grants(self, user_id: uuid.UUID) -> list[aa.AccessGrant]:
         """The user's live grants of live accounts. Raises `AccessUserNotFoundError` (missing or
         deleted user), `StorageQueryFailed` or the driver's `OSError` (database down)."""
         ...
@@ -296,7 +299,7 @@ async def _read_capped(request: Request) -> bytes | None:
     return bytes(raw)
 
 
-def _grant_json(grant: AccessGrant) -> dict[str, Any]:
+def _grant_json(grant: aa.AccessGrant) -> dict[str, Any]:
     """One `AccountAccessGrant` (`granted_by` left out once its user is gone; no `granted_at`)."""
     shown = api.AccountAccessGrant.model_validate(
         {
@@ -311,17 +314,19 @@ def _grant_json(grant: AccessGrant) -> dict[str, Any]:
 
 
 async def _elevated(auth: _AuthLike | None, request: Request) -> JSONResponse | uuid.UUID:
-    """SR-025 after RBAC and SR-055, as `put_user_roles`: the elevated session's id, which the
-    change's audit records name (C-2.9), else the problem."""
-    if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
-        return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "step-up is not wired")
-    try:
+    """SR-025, for a handler that has already decided RBAC and the self-target: the id of the
+    session holding a live `users` elevation, which the change's audit records name (C-2.9), else
+    the answer. No session service is 501 (the fake backend: nothing authenticates); sessions
+    without a step-up service are a wiring fault, 503 as `require_session_elevation` answers it."""
+    if auth is None or not auth.sessions_is_active:
+        return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no session service wired")
+    try:  # no bearer is an unknown token: the same refusal
         record: SessionRecord = await auth.sessions.authenticate_access_token(
             _bearer(request) or ""
         )
     except AuthError:
-        return _registered(ErrorCode.UNAUTHENTICATED, 401, "authentication required")
-    gate = await require_elevation_for(auth, str(record.id), "users")
+        return _unauthenticated()
+    gate = await require_session_elevation(auth, record.id, "users")  # 503: no step-up wired
     return record.id if gate is None else gate
 
 
@@ -525,7 +530,7 @@ def make_users_router(
             return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
         try:
             grants = await account_access.list_grants(user_id)
-        except AccessUserNotFoundError:  # a deleted user and a missing one answer alike
+        except aa.AccessUserNotFoundError:  # a deleted user and a missing one answer alike
             return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
         except (StorageQueryFailed, OSError) as exc:
             _log().error(
@@ -572,15 +577,15 @@ def make_users_router(
             return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
         if isinstance(session := await _elevated(auth, request), JSONResponse):
             return session
+        if (acknowledged := _flag(request, "acknowledge_unknown_positions")) is None:
+            detail = "acknowledge_unknown_positions is true or false, given once"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
         if (raw := await _read_capped(request)) is None:  # never held whole, nor echoed
             return _registered(
                 ErrorCode.VALIDATION_FAILED, 400, f"the body exceeds {_MAX_BODY_BYTES} bytes"
             )
         try:
             body = _ReplaceBody.model_validate_json(raw)
-            ack = _ACK.validate_python(
-                request.query_params.get("acknowledge_unknown_positions", "false")
-            )
         except ValidationError:  # nothing of the input is echoed
             return _registered(
                 ErrorCode.VALIDATION_FAILED, 400, "the request does not match its schema"
@@ -590,7 +595,7 @@ def make_users_router(
                 user_id,
                 {g.exchange_account_id: g.level for g in body.grants},
                 actor_user_id=principal.user_id,
-                acknowledge_unknown_positions=ack,
+                acknowledge_unknown_positions=acknowledged,
                 actor_ip=ip,
                 session_id=session,
             )
@@ -608,16 +613,6 @@ def make_users_router(
             )
         return JSONResponse({"items": [_grant_json(grant) for grant in change.granted]})
 
-    async def users_elevation(request: Request) -> JSONResponse | None:
-        """SR-025: `None` when the session holds a live `users` elevation, else the answer."""
-        if auth is None or not auth.sessions_is_active:  # the fake backend: nothing authenticates
-            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no session service wired")
-        try:  # no bearer is an unknown token: the same refusal
-            record = await auth.sessions.authenticate_access_token(_bearer(request) or "")
-        except AuthError:
-            return _unauthenticated()
-        return await require_session_elevation(auth, record.id, "users")  # 503: no step-up wired
-
     @router.delete("/users/{userId}")  # nosem: audit-write-required reason=audited-below-the-handler-in-UserDisableService-users.disable-ahead-and-rbac.denied-refusals-#965 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def delete_user(
         request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
@@ -634,7 +629,7 @@ def make_users_router(
             await user_disable.authorize(user_id, actor=principal)
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
-        if (gate := await users_elevation(request)) is not None:
+        if isinstance(gate := await _elevated(auth, request), JSONResponse):
             return gate
         refusal = undeclared_query_refusal(request, DELETE_USER_QUERY, self_service=False)
         if refusal is not None:  # the names, before any value is read

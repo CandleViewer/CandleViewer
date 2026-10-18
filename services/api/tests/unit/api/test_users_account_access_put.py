@@ -96,7 +96,12 @@ class _World(svc._World):
         return TestClient(app, client=_PEER, headers=token)
 
     def put(
-        self, body: Any, *, target: uuid.UUID = TARGET, ack: str | None = None, **kw: Any
+        self,
+        body: Any,
+        *,
+        target: uuid.UUID = TARGET,
+        ack: str | list[str] | None = None,
+        **kw: Any,
     ) -> Any:
         params = {} if ack is None else {"acknowledge_unknown_positions": ack}
         return self.client(**kw).put(g._PATH.format(target), params=params, json=body)
@@ -145,8 +150,10 @@ def test_records_name_the_request(bound: str, recorded: uuid.UUID | None) -> Non
 
 
 def test_self_target_403() -> None:
-    """F7, SR-055: refused before any lookup or step-up, audited once naming the target."""
+    """F7, SR-055: refused before any lookup or step-up, audited once naming the target. No
+    elevation is live, so a handler that asked for one first would answer `step_up_required`."""
     w = _World()
+    w.step_up.elevated = False
     r = w.put(_body((_A, "trade")), target=CALLER)
     assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "self_target"}
     (record,) = w.emitter.calls
@@ -178,6 +185,24 @@ def test_forbidden_manager_viewer_audited(role: str, held: Any, target: uuid.UUI
     (record,) = w.emitter.calls
     assert record["action"] == "rbac.denied" and record["object_id"] == str(target)
     assert REGISTRY.get_sample_value("authz_denied_total", labels) == before + 1
+    assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
+
+
+@pytest.mark.parametrize(
+    ("role", "held"),
+    [("manager", ()), ("manager", _HELD), ("viewer", ())],
+    ids=["manager-without-grant", "manager-with-grant", "viewer"],
+)
+def test_forbidden_caller_without_a_step_up_is_refused_not_challenged(role: str, held: Any) -> None:
+    """RBAC decides before the step-up (SR-025 comes after RBAC and SR-055): a Manager or Viewer
+    holding no live elevation gets the audited 403 `forbidden`. Asked for the step-up first, the
+    handler would challenge a caller RBAC refuses and leave no `rbac.denied` record."""
+    w = _World()
+    w.step_up.elevated = False
+    r = w.put(_body((_A, "trade")), role=role, held=held)
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
+    (record,) = w.emitter.calls
+    assert (record["action"], record["object_id"]) == ("rbac.denied", str(TARGET))
     assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
 
 
@@ -231,6 +256,16 @@ def test_stepup_and_audit_503() -> None:
     assert not w.rel.committed and not w.notifier.pushes
 
 
+def test_unwired_step_up_is_503_service_unavailable() -> None:
+    """Sessions wired without a step-up service are a wiring fault, answered as `DELETE
+    /users/{userId}` and `require_session_elevation` answer it (503 `service_unavailable`),
+    not 501: after RBAC and the self-target, before anything is read."""
+    w = _World()
+    r = w.put(_body((_A, "trade")), wired=False)
+    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+    assert w.rel.log == [] and w.positions.asked == [] and w.emitter.calls == [] and w.unchanged()
+
+
 @pytest.mark.parametrize("rel", [{"unknown": frozenset({_C})}, {"status": None}])
 def test_unknown_account_404(rel: dict[str, Any]) -> None:
     """I1, I2: the whole set is refused, a deleted account or user like a missing one."""
@@ -255,11 +290,21 @@ def test_busy_409() -> None:
     assert r.status_code == 409 and r.json()["code"] == "conflict" and w.unchanged()
 
 
-def test_last_grant_needs_ack() -> None:
-    """AC7: the open-position count is unknown (and no open-order count exists yet)."""
+@pytest.mark.parametrize("ack", [None, "false"], ids=["absent", "false"])
+def test_last_grant_needs_ack(ack: str | None) -> None:
+    """AC7: the open-position count is unknown (and no open-order count exists yet); an explicit
+    `false` is no acknowledgement, as an absent parameter is none."""
     w = _World()
-    r = w.put(_body())
+    r = w.put(_body(), ack=ack)
     assert r.status_code == 409 and r.json()["code"] == "positions_unknown" and w.unchanged()
+
+
+def test_positions_unknown_detail_says_how_to_resend() -> None:
+    """The grant editor needs no hard-coded rule: the detail names the parameter to resend with,
+    as `DELETE /users/{userId}` words it."""
+    r = _World().put(_body())
+    assert r.status_code == 409 and r.json()["code"] == "positions_unknown"
+    assert r.json()["detail"].endswith("resend with acknowledge_unknown_positions=true")
 
 
 def test_partial_removal_needs_ack() -> None:
@@ -290,6 +335,22 @@ def test_body_rejects_freeze_cap_and_duplicate_fields_400(body: Any, ack: str | 
     r = w.put(body, ack=ack)
     assert r.status_code == 400 and r.json()["code"] == "validation_failed"
     assert w.rel.log == [] and w.positions.asked == []
+
+
+@pytest.mark.parametrize(
+    "ack",
+    ["1", "yes", "on", "TRUE", "True", "0", "", ["false", "true"], ["true", "true"]],
+    ids=["1", "yes", "on", "TRUE", "True", "0", "empty", "false-then-true", "true-twice"],
+)
+def test_acknowledgement_is_true_or_false_given_once_else_400(ack: str | list[str]) -> None:
+    """SR-040: the contract's one boolean is `true` or `false`, once, as `DELETE /users/{userId}`
+    reads it. A lax parse reads '1', 'yes', 'on' and 'TRUE' as true and a repeat by its last value,
+    so a removal would be acknowledged that the caller never chose to: each is a 400 that changes
+    nothing."""
+    w = _World()
+    r = w.put(_body((_B, "trade")), ack=ack)
+    assert r.status_code == 400 and r.json()["code"] == "validation_failed"
+    assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
 
 
 def _spaced(size: int) -> bytes:
@@ -361,12 +422,11 @@ def test_grant_past_the_256th_is_400_and_reads_nothing() -> None:
 
 
 def test_unauthenticated_or_unwired_put_fails_closed() -> None:
-    """F5: no session is 401; no service, or no step-up after RBAC, is 501. None reads."""
+    """F5: no session is 401; no service is 501. None reads."""
     w = _World()
     assert w.put(_body(), role=None).json()["code"] == "unauthenticated"
     gone = {"Authorization": "Bearer tok-gone"}  # the session ended after the resolver read it
     assert w.client().put(g._PATH.format(TARGET), json=_body(), headers=gone).status_code == 401
-    assert w.put(_body(), wired=False).status_code == 501
     app = FastAPI()
     app.include_router(make_users_router(None, w.emitter, g._Resolver(None), g._Notifier()))
     assert TestClient(app).put(g._PATH.format(TARGET), json=_body()).status_code == 501

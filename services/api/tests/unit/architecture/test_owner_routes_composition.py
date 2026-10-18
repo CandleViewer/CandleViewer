@@ -4,7 +4,8 @@ the self-scoped first-run checklist (`SqlAlchemyOnboardingStore`) through `Sessi
 every cell answers as `tests/contract/rbac/matrix.yaml` says and an authorised caller is never
 refused with the fail-closed 501/503. Only the SQL edges of those real classes, the host socket
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
-network). #2648 adds the account-access read (`SqlAlchemyAccountAccessStore`), #965 the disable."""
+network). #2648 adds the account-access read and write (`SqlAlchemyAccountAccessStore` under
+`AccountAccessService`), #965 the disable."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import candleviewer.app as appmod
+from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.onboarding_checklist import STEP_ORDER
 from candleviewer.settings import Settings
@@ -283,7 +285,18 @@ def test_the_disable_service_exists_only_on_the_real_backend(deployed: SimpleNam
     assert appmod.create_app(Settings()).state.user_disable is None
 
 
-def test_deployed_app_demands_a_live_step_up_before_the_grant_change(deployed: Any) -> None:
+def test_the_access_service_exists_only_on_the_real_backend(deployed: SimpleNamespace) -> None:
+    """#2648 S9c: the real backend builds the service the lifespan drains, and `main.py` finds it
+    on `app.state` by name (a `getattr`, so a rename drops the drain with no failure); the fake
+    backend has none (501)."""
+    state = deployed.client.app.state
+    assert isinstance(state.account_access_service, AccountAccessService)
+    assert appmod.create_app(Settings()).state.account_access_service is None
+
+
+def test_deployed_app_demands_a_live_step_up_before_the_grant_change(
+    deployed: SimpleNamespace,
+) -> None:
     """F3 (#2648 S9c): without a live step-up the path guard refuses first, so the handler never
     runs; with one, a manager gets the handler's audited 403 (the matrix cells above)."""
     step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/u/account-access"
