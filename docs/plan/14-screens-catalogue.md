@@ -2672,7 +2672,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Restore wizard states:** choose backup → impact preview (what is overwritten, that trading is halted during restore, that exchange state is untouched) → typed confirm + step-up → progress → verification → summary.
 - **Validation:** restore is blocked while any position is open unless the owner explicitly acknowledges ("You have 2 open positions. A restore does not change anything on Bybit. Continue?"); downloading a backup containing encrypted secrets warns about handling.
 - **A11y:** the wizard is a stepper; progress has text percentages.
-- **Audit:** `backup.run|verified|restored|downloaded` (restore and download are high severity).
+- **Audit:** `backup.run|verified|restore|downloaded|deleted` (restore and download are high severity).
 - **Sign-off:** [ ] restore impact copy reviewed by security [ ] drill record surfaced [ ] failure states designed. **Stories:** US-ADMIN-013..015.
 - **Performance:** Backups run server-side on a schedule; the screen reports job state and never performs the work in the browser. A restore is a long-running job with staged progress and an explicit maintenance-mode requirement.
 - **Components:** CMP-023 Progress Bar, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-049 Table, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
