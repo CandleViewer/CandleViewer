@@ -6,8 +6,11 @@ type ThemedEngine = Pick<EngineHandle, "setTheme">;
 /** Live engine instances mounted by the chart host adapter (WebGL surfaces). */
 const engines = new Set<ThemedEngine>();
 
-/** Root attributes whose change must repaint every canvas (theme, HC, palette, convention). */
-const THEME_ATTRS = ["data-theme", "data-high-contrast", "data-palette", "data-convention"];
+/**
+ * Root attributes whose change must repaint every canvas. High contrast is no attribute of its
+ * own: the theme runtime reports it as `data-theme="high-contrast"`.
+ */
+const THEME_ATTRS = ["data-theme", "data-palette", "data-convention"];
 
 let observer: MutationObserver | undefined;
 

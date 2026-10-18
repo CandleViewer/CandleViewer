@@ -49,6 +49,8 @@ export interface ThemeSettings {
 /** What `ThemeStore.apply` accepts: any subset of the preferences. */
 export type ThemePatch = { -readonly [K in keyof ThemePreferences]?: ThemePreferences[K] };
 
+type Accessibility = NonNullable<Settings["accessibility"]>;
+
 /** `Settings.appearance.font_scale` bounds in the contract (a factor: 1 is 100 percent). */
 const MIN_FONT_SCALE = 0.75;
 const MAX_FONT_SCALE = 2;
@@ -120,4 +122,31 @@ export function themeFromSettings(settings: ThemeSettings | undefined): ThemePat
   if (motionOverride !== undefined) patch.motionOverride = motionOverride;
 
   return patch;
+}
+
+/**
+ * `ThemeSettings` for a change of the two accessibility preferences that feed the runtime (reduced
+ * motion and increased contrast): those two plus their appearance twins (`reduce_motion` and
+ * `high_contrast`), which they are combined with. Nothing else is sent, so a change of one of them
+ * (or of any other accessibility preference) never re-applies the theme, density or text scale the
+ * bootstrap loaded, which would undo what the user changed in this session.
+ */
+export function accessibilityThemeSettings(
+  accessibility: Required<Pick<Accessibility, "reduced_motion" | "increased_contrast">>,
+  appearance: Settings["appearance"],
+): ThemeSettings {
+  return {
+    appearance: {
+      ...(appearance?.high_contrast === undefined
+        ? {}
+        : { high_contrast: appearance.high_contrast }),
+      ...(appearance?.reduce_motion === undefined
+        ? {}
+        : { reduce_motion: appearance.reduce_motion }),
+    },
+    accessibility: {
+      reduced_motion: accessibility.reduced_motion,
+      increased_contrast: accessibility.increased_contrast,
+    },
+  };
 }

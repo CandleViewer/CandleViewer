@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { resetSharedThemeStores } from "@candleviewer/ui";
 import {
   AccessibilitySettingsScreen,
   PreferencesProvider,
@@ -32,7 +33,13 @@ function stubMedia(reduce: boolean): void {
   );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetSharedThemeStores(); // each test stubs its own OS media, which the shared store reads once
+  for (const name of ["data-theme", "data-density", "data-motion", "data-text-scale"]) {
+    document.documentElement.removeAttribute(name);
+  }
+});
 
 describe("pure model", () => {
   it("resolves tri-state: system follows media, override wins", () => {
@@ -101,7 +108,8 @@ describe("AccessibilitySettingsScreen (SCR-117)", () => {
         accessibility: { reduced_motion: "off" },
       }),
     );
-    await waitFor(() => expect(document.documentElement.dataset["reducedMotion"]).toBe("false"));
+    // The runtime owns the attribute: the explicit "off" wins over the OS preference stubbed above.
+    await waitFor(() => expect(document.documentElement.getAttribute("data-motion")).toBe("safe"));
   });
 
   it("restores persisted preferences on load", async () => {

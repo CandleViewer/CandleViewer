@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  accessibilityThemeSettings,
   themeFromSettings,
   type ThemeSettings,
 } from "../../../src/shell/bootstrap/themeFromSettings.js";
@@ -174,5 +175,47 @@ describe("themeFromSettings: whole payloads", () => {
       accessibility: Object.freeze({ reduced_motion: "on" as const }),
     });
     expect(() => themeFromSettings(input)).not.toThrow();
+  });
+});
+
+describe("accessibilityThemeSettings: what a change of the accessibility preferences may touch", () => {
+  const accessibility = { reduced_motion: "off", increased_contrast: "on" } as const;
+
+  it("carries the two accessibility inputs and the appearance twins they combine with, nothing else", () => {
+    const settings = accessibilityThemeSettings(accessibility, {
+      theme: "dark",
+      density: "spacious",
+      font_scale: 1.5,
+      high_contrast: true,
+      reduce_motion: true,
+    });
+    expect(settings).toStrictEqual({
+      appearance: { high_contrast: true, reduce_motion: true },
+      accessibility: { reduced_motion: "off", increased_contrast: "on" },
+    });
+  });
+
+  it("never yields theme, density or text scale, so a change cannot undo what the user did in this session", () => {
+    const patch = themeFromSettings(
+      accessibilityThemeSettings(accessibility, {
+        theme: "light",
+        density: "compact",
+        font_scale: 1.25,
+      }),
+    );
+    expect(Object.keys(patch).sort()).toStrictEqual(["highContrast", "motionOverride"]);
+  });
+
+  it("leaves out the twins the bootstrap did not load", () => {
+    expect(accessibilityThemeSettings(accessibility, undefined)).toStrictEqual({
+      appearance: {},
+      accessibility: { reduced_motion: "off", increased_contrast: "on" },
+    });
+    expect(
+      accessibilityThemeSettings(accessibility, { theme: "dark", reduce_motion: false }),
+    ).toStrictEqual({
+      appearance: { reduce_motion: false },
+      accessibility: { reduced_motion: "off", increased_contrast: "on" },
+    });
   });
 });
