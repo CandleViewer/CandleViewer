@@ -23,7 +23,7 @@ from candleviewer.replay import (
     ReplayTiers,
     ReplayTierStraddle,
 )
-from candleviewer.replay_wiring import build_replay_tiers
+from candleviewer.replay_wiring import ReplayWiring, build_replay_wiring
 from candleviewer.settings import Settings
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetRegistry
@@ -78,6 +78,7 @@ async def test_auto_reads_one_tier_by_manifest_coverage_on_real_questdb_and_parq
 ) -> None:
     host, pg_port, ilp_port = questdb_container
     conn = await hot_tier._connect(host, pg_port)
+    wiring: ReplayWiring | None = None
     try:
         await run_migrations(hot_tier._AsyncpgExecutor(conn), hot_tier.DDL_DIR)
         rows = generated_rows()
@@ -96,8 +97,9 @@ async def test_auto_reads_one_tier_by_manifest_coverage_on_real_questdb_and_parq
             parquet_root=str(tmp_path / "cold"),
         )
         DatasetRegistry(settings.parquet_root).ensure_tree()
-        tiers = build_replay_tiers(settings, StaticGapReader())
-        assert tiers is not None
+        wiring = build_replay_wiring(settings, StaticGapReader())
+        assert wiring is not None
+        tiers = wiring.tiers
         pg = hot_tier._AsyncpgExecutor(conn)
         exporter = ColdExporter(DatasetRegistry(settings.parquet_root), QuestDbHotTierSource(pg))
 
@@ -114,4 +116,6 @@ async def test_auto_reads_one_tier_by_manifest_coverage_on_real_questdb_and_parq
         assert len(from_questdb) == len(from_parquet) == 840
         assert digest(from_questdb) == digest(from_parquet) == EXPECTED_DIGEST
     finally:
+        if wiring is not None:
+            await wiring.aclose()
         await conn.close()
