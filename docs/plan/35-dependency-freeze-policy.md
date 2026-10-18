@@ -150,3 +150,19 @@ The freeze-manifest `pnpm-graph` hash mismatch (defect 2) is only mitigated here
   `git tag -a pentest-freeze-<yyyymmdd> <sha> -m "pen-test freeze; manifest <sha256 of freeze-manifest.sha256>"`
   and `git push origin pentest-freeze-<yyyymmdd>`; the tag sha + manifest hash go into the
   evidence pack (E43-X07). Retest uses `pentest-retest-<yyyymmdd>` the same way.
+
+### 8.4 npm-audit gate fix and SCA triage (2026-10-18, #3494)
+
+The `npm-audit` step's gate read npm's `vulnerabilities` schema, but the step feeds it
+`pnpm audit --json`, which writes `advisories` + `metadata`, so the gate saw no findings. It now
+reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `main` (d77138f07)
+`pnpm audit` reported 2 Critical, 2 High, 6 Moderate and 1 Low; the overrides below (in
+`pnpm-workspace.yaml`, each floored at the first patched release) leave 1 High (EX-06),
+6 Moderate and 1 Low, which the gate's High threshold passes.
+
+| Package                     | Advisory                                                           | Path                                        | Area            | Decision                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------ | ------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| tinypool 1.1.1 (2 Critical) | GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr                           | transitive, vitest 3.2.7                    | test-only       | **Fixed**: `overrides: tinypool >=2.1.2 <3` (2.2.0); every vitest suite passes on it. Remove with vitest 4 (#1819)                                                 |
+| source-map-js 1.2.1 (High)  | GHSA-68fv-2mgg-jv7q                                                | transitive, postcss and magicast            | build/test-time | **Fixed**: `overrides: source-map-js >=1.2.2 <2` (1.2.2); the ui and web builds pass                                                                               |
+| braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | Unchanged: EX-06 (`security/accepted-risks.yaml`), expires 2026-12-31                                                                                              |
+| 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | Below the gate's High threshold. The R0 quality gate (`30-release-roadmap.md` §4.4) wants a dated accepted-risk entry per Medium: an owner decision, not made here |

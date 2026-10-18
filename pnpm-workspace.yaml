@@ -18,6 +18,14 @@ allowBuilds:
 # E43-T05 (SR-130/SR-156): force patched transitive `tar` (electron-builder >
 # app-builder-lib, build-time only) past GHSA-23hp-3jrh-7fpw and the other
 # tar advisories. Remove once electron-builder ships tar>=7.5.21 itself.
+# #3494 (35-dependency-freeze-policy.md §8.4): each floor is the first patched release.
+# - tinypool, vitest 3.2's worker pool (test-only), past GHSA-5gmw-xhrv-c9v3 and
+#   GHSA-85c8-ppgw-ccpr (Critical, no 1.x fix). tinypool 2.0 only drops Node 18, and every
+#   vitest suite passes on it. Remove when the vitest 4 major (#1819) brings tinypool 2 itself.
+# - source-map-js (postcss and magicast, build/test-time) past GHSA-68fv-2mgg-jv7q (High).
+#   Remove once both require >=1.2.2.
 overrides:
   tar: ">=7.5.21"
   http-cache-semantics: ">=4.3.0 <5"
+  tinypool: ">=2.1.2 <3"
+  source-map-js: ">=1.2.2 <2"
