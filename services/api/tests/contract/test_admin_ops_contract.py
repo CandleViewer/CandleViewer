@@ -246,7 +246,7 @@ def test_download_token_rules_are_normative() -> None:
     for rule in (
         "access logs, traces, metrics labels and audit fields record the route template "
         "`/admin/backups/{backupId}/download/{token}`, never the token",
-        "an unknown token or another user's is `404 not_found`, so a token cannot be probed",
+        "`404 not_found` when it carries another user's; an unknown token is `404 not_found`",
         "`Problem.detail` never echoes the path",
         "sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`",
         "from a CSPRNG with at least 128 bits of entropy, is stored only as a hash",
