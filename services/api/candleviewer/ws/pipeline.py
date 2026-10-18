@@ -22,9 +22,10 @@ and its throttle window go before it is queued; its priority-lane frames stay, a
 The pipeline is also the connection's hub sink (`sequencing.Sink`, S3): the hub's deltas go
 through the attached `Pacer` (§8.1, §8.2), `orders` and `executions` frame by frame, the rest in
 windows the writer's `service` closes on time (its wait cut to the next, `wait_s`); `check` runs
-after every routed update too (O(1)). An update, a window or a flushed snapshot's build that
-raises is contained to its subscription (D9, §10.1). A paced frame's fan-out span runs from its
-release to the send (D7); a producer's own `coalesced_count` is not carried through a window.
+after every routed update too (O(1)). An update, a window or a snapshot's build (flushed, or the
+hub's re-snapshot, §7.4) that raises is contained to its subscription (D9, §10.1). A paced frame's
+fan-out span runs from its release to the send (D7); a producer's own `coalesced_count` is not
+carried through a window.
 
 From `attach` the writer's `service` also classifies the connection (§8.3, #412) once per
 `classify_interval_ms`, on a drift-free schedule (a late turn takes one classification, not the
@@ -70,8 +71,8 @@ A frame its encoder refuses is a server fault (§10.1). After `attach`, a droppa
 `snap` of a throttled topic the connection subscribes) drops its topic to a `backpressure`
 re-snapshot: its queued frames go, the ladder's `drain` will snapshot it, the rest of its chunk set
 is never queued, and it counts as a malformed update, logged at `warning` at most once per family
-per `classify_interval_ms`; the connection stays open. Any other fails closed: `internal_error`.
-A NaN or an infinity is refused on both
+per `classify_interval_ms`; the connection stays open. Any other fails closed: `internal_error`,
+before its log line (one that raises skips no close). A NaN or an infinity is refused on both
 subprotocols, a producer bug either way (§10.1): JSON refuses it as it encodes, and
 `msgpack_payload` after packing, as a `ValueError` too. The log line names the frame's type,
 family and error class, never its payload or the error's text (C-12.6). Whatever the encoder
@@ -295,8 +296,11 @@ class ConnectionPipeline:
         except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
             if self._recovers(frame, exc):
                 return
-            _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
-            self._close("internal_error")
+            self._close("internal_error")  # first: a log line that raises skips no close
+            with contextlib.suppress(Exception):  # nor reaches the caller (`_failed`'s guard)
+                _log().error(
+                    "ws frame unencodable", **self._fields(frame), error=type(exc).__name__
+                )
             return
         if received is not None:  # E17-T06: the stamped frame's encode time and wire bytes
             seconds, size = self._cost
@@ -452,7 +456,14 @@ class ConnectionPipeline:
         return sent
 
     def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
-        return self._paced().emitter.snapshot(sub, reason)
+        """The hub's re-snapshot of `sub` (§7.4): a build that raises is `_failed`, as in
+        `flush_pending` (#3262)."""
+        pacer = self._paced()
+        try:
+            return pacer.emitter.snapshot(sub, reason)
+        except Exception as exc:  # contained to `sub`: the fan-out goes on
+            self._failed("snapshot", pacer, sub, exc)
+            return False
 
     def flush_pending(self, subs: Iterable[Subscription]) -> int:
         """The emitter's, one subscription at a time: a build that raises is `_failed`."""
