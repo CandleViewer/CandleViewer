@@ -24,5 +24,5 @@
 | F7  | Info     | SR-012/§7.3 | `guards.ts`                     | Route guards are client-side UX only; server-side RBAC remains authoritative; denial logs carry route id and reason only.                                                                                                                                                                                            | No action.                                                                                                                                                                                       | —                   |
 
 No Critical or High finding is open. Every finding above has a severity, an SR reference and an
-owner. F1 and F2 are accepted-risk pending the dated Owner sign-off; F3-F5 are to be filed as
-follow-up issues by the orchestrator (out of scope for this record-only change).
+owner. F1 and F2 are accepted-risk pending the dated Owner sign-off; F3 and F4 are fixed (#3608);
+F5 is still to be filed as a follow-up issue by the orchestrator.
