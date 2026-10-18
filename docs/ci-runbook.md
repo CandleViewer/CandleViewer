@@ -205,8 +205,9 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-BUILD-001** (a workspace package's built exports are missing): a lane that
   builds or tests `apps/web` with pnpm, vitest, vite or Playwright directly must build
   the packages `apps/web` imports first, because turbo's `^build` does not apply there
-  (#3244, #3272). Those lanes are `_job-e2e.yml`'s `e2e-web`, `e2e-staging` and
-  `a11y-axe`, `_job-a11y.yml`'s `a11y`, `a11y-nightly.yml`, `_job-js.yml`'s `build`
+  (#3244, #3272). Those lanes are `_job-e2e.yml`'s `e2e-web`, `e2e-staging`,
+  `a11y-axe` and `e2e-electron` (#3366), `_job-a11y.yml`'s `a11y`,
+  `a11y-nightly.yml`, `_job-js.yml`'s `build`
   (before its Electron-hardening step) and `cold-cache.yml`;
   `scripts/tests/test_web_tests_build_deps.py` finds every such job and fails when one
   lacks the build and guard steps. Check that the lane's
