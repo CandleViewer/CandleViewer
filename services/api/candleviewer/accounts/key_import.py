@@ -193,7 +193,7 @@ class KeyImport:
             reason = code if result is None else result.failures[0].rule.value
             outcome = "denied" if code in _DENIED and not passed else "failure"
             try:  # a closing record names the key the pass's record named
-                await self._record(actor, request.account_id, outcome, reason, after | passed)
+                await self._audit_row(actor, request.account_id, outcome, reason, after | passed)
             except KeyImportFailed:
                 if isinstance(exc, AccountsError):
                     raise  # a refusal whose record is lost is `audit_unavailable`
@@ -237,7 +237,7 @@ class KeyImport:
             if not result.passed:
                 return None
             after = {**_codes(result), "key_id": str(key_id)}
-            await self._record(actor, account.id, "success", None, after)  # ahead of the store
+            await self._audit_row(actor, account.id, "success", None, after)  # ahead of the store
             passed["key_id"] = str(key_id)
             return _facts(result, now)
 
@@ -288,7 +288,7 @@ class KeyImport:
             _log().error("key_import_store_failed", error=type(exc).__name__, sqlstate=sqlstate)
             raise KeyImportFailed(STORE, "The relational store is unavailable.") from None
 
-    async def _record(
+    async def _audit_row(
         self, actor: Importer, account_id: UUID, outcome: str, reason: str | None,
         after: dict[str, object],
     ) -> None:  # fmt: skip
