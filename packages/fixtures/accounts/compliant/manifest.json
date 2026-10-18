@@ -87,7 +87,7 @@
     }
   },
   "expected": {
-    "outcome": "Key verified and stored: passed true, withdraw_enabled false, unified true (the contract's name for the UTA verdict, from uta 1; plan DC-33), ip_whitelist_matches_egress true, probe_ret_code 0 and no warnings (an expiry 365 days ahead is compliant under every source, plan DC-27); the account is green (healthy) with a freshness timestamp; with no position or order, a margin-mode switch succeeds (TC-419). Switched back to it, a save that failed on a 5xx answers 201 (TC-122), the stale badge clears and risk-based sizing returns (TC-405), and a red account turns green with order entry re-enabled (TC-412).",
+    "outcome": "Key verified and stored: passed true, withdraw_enabled false, uta true (the contract's field for the UTA verdict, read from uta 1; the deprecated unified is never read, plan DC-33), ip_whitelist_matches_egress true, probe_ret_code 0 and no warnings (an expiry 365 days ahead is compliant under every source, plan DC-27); the account is green (healthy) with a freshness timestamp; with no position or order, a margin-mode switch succeeds (TC-419). Switched back to it, a save that failed on a 5xx answers 201 (TC-122), the stale badge clears and risk-based sizing returns (TC-405), and a red account turns green with order entry re-enabled (TC-412).",
     "verification": "passed",
     "health": "healthy",
     "cases": [

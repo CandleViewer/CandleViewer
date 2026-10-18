@@ -10,9 +10,11 @@ SR-E27-08, SR-E27-18):
 - Fund rights (C-2.8, D6): the shared deny-list predicate first, then an allow-list. A withdraw
   or transfer right fails `key_withdraw_permission` (so does a value the deny-list cannot judge:
   fail closed); every other right outside the allow-list fails `key_permission_not_allowed`.
-  Withdraw failures come first. `withdraw_enabled` is true when the key holds any right that moves
-  funds: one the deny-list refuses, or one of a fiat or card group (`FUND_GROUPS`: neither word
-  is in their names). A `Spot` right leaves it false.
+  Withdraw failures come first. `withdraw_enabled` is true, fail closed, when the key holds any
+  right that may move funds: one the deny-list refuses, any right of `Wallet` or of a fiat or card
+  group (`FUND_GROUPS`: neither word is in their names), or a group or right named for a withdrawal
+  or transfer in a spelling the deny-list misses; names are compared folded (case, padding,
+  spacing, full-width forms). A `Spot` right leaves it false.
 - Write access comes from the key's read-only flag, UTA from the venue's `uta` flag (the contract's
   `KeyVerification.uta`; the deprecated `unified` is never read).
 - The whitelist is non-empty host addresses, all equal to the configured egress IP. An empty list
@@ -34,6 +36,7 @@ key is never used for a second signed call.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -41,7 +44,7 @@ from enum import StrEnum
 from ipaddress import IPv4Address, IPv6Address, ip_network
 from typing import Final, Protocol
 
-from candleviewer.accounts._permissions import reject_withdraw
+from candleviewer.accounts._permissions import FORBIDDEN_TOKENS, reject_withdraw
 from candleviewer.accounts.errors import AccountsError, WithdrawPermissionError
 from candleviewer.accounts.models import ExchangeAccount
 
@@ -55,6 +58,10 @@ TRADE_GROUP: Final = "ContractTrade"
 TRADE_RIGHTS: Final = ("Order", "Position")
 #: The groups that move funds with neither deny-list word in a name (model §5 item 2, SR-E27-04).
 FUND_GROUPS: Final = frozenset({"FiatP2P", "FiatBitPay", "FiatConvertBroker", "BitCard"})
+#: Every right of these may move funds (D6): `Wallet` (SR-030a's withdraw and transfer rights) and
+#: `FUND_GROUPS`, folded as `_fold` folds a name.
+_FUND_GROUP_KEYS: Final = frozenset(group.lower() for group in ("Wallet", *FUND_GROUPS))
+_NOT_ALNUM: Final = re.compile(r"[^0-9a-z]")
 #: A name safe to echo in a message: a short ASCII identifier (SR-E27-08).
 _TOKEN: Final = re.compile(r"[A-Za-z][A-Za-z0-9]{0,63}")
 _WILDCARD: Final = "*"
@@ -226,11 +233,26 @@ def _denied(permissions: Mapping[str, object]) -> bool:
     return False
 
 
+def _fold(name: object) -> str:
+    """A text name NFKC- and case-folded with all but its ASCII letters and digits dropped, so a
+    re-cased, padded, split or full-width spelling meets its plain form; `""` for any other."""
+    if not isinstance(name, str):
+        return ""
+    return _NOT_ALNUM.sub("", unicodedata.normalize("NFKC", name).casefold())
+
+
+def _moves_funds(group: object, right: object) -> bool:
+    """`withdraw_enabled` for a right outside the allow-list, fail closed (C-2.8, D6): a right of
+    a fund group, or a group or right named for a withdrawal or transfer, on folded names."""
+    names = (_fold(group), _fold(right))
+    return names[0] in _FUND_GROUP_KEYS or any(t in n for n in names for t in FORBIDDEN_TOKENS)
+
+
 def _gate_failures(permissions: Mapping[str, object]) -> tuple[list[VerificationFailure], bool]:
     """Check 2 (C-2.8): the deny-list first, then the allow-list. A right the deny-list refuses
     fails `key_withdraw_permission`, every other right outside the allow-list
     `key_permission_not_allowed`; messages are templates, sorted, the first rule's first. The flag
-    is `withdraw_enabled`: a right the deny-list refuses, or any right of a `FUND_GROUPS` group."""
+    is `withdraw_enabled`: a right the deny-list refuses, or one `_moves_funds` reports."""
     fund: set[str] = set()
     other: set[str] = set()
     found = _outside_allow_list(permissions)
@@ -243,7 +265,7 @@ def _gate_failures(permissions: Mapping[str, object]) -> tuple[list[Verification
         *(VerificationFailure(Rule.WITHDRAW_PERMISSION, text) for text in sorted(fund)),
         *(VerificationFailure(Rule.PERMISSION_NOT_ALLOWED, text) for text in sorted(other)),
     ]
-    return failures, bool(fund) or any(group in FUND_GROUPS for group, _, _ in found)
+    return failures, bool(fund) or any(_moves_funds(group, right) for group, _, right in found)
 
 
 def _rights(permissions: Mapping[str, object], group: str) -> set[str]:

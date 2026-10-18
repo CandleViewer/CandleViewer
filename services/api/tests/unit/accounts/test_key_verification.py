@@ -203,11 +203,12 @@ async def test_withdraw_right_is_reported_as_withdraw_enabled() -> None:
 #: deny-list refuses it whatever it says, fail closed): `key_withdraw_permission`.
 _DENIED_CASES: list[tuple[str, Any]] = [(c[0], c[1]) for c in REFUSED]
 _DENIED_CASES += [*non_json_cases(), ("non_text_group_granting_nothing", {**BASE, b"Wallet": []})]
-#: Every other right outside the allow-list: `key_permission_not_allowed`. The fiat and card groups
-#: move funds with neither word in their names, so a right of theirs also reports `withdraw_enabled`
-#: (the third field); a `Spot` or unknown right does not.
+#: Every other right outside the allow-list: `key_permission_not_allowed`. A right that may move
+#: funds also reports `withdraw_enabled` (the third field), fail closed: any right of `Wallet` or of
+#: a fiat or card group, under any case, padding or spacing (every KNOWN_GAPS spelling), or a group
+#: or right named for a withdrawal or transfer that the deny-list misses; a `Spot` right does not.
 _UNLISTED_CASES: list[tuple[str, Any, bool]] = [
-    (c[0], c[1], False) for c in KNOWN_GAPS if c[0] != "gap_fund_group_without_either_word"
+    (c[0], c[1], True) for c in KNOWN_GAPS if c[0] != "gap_fund_group_without_either_word"
 ]
 _UNLISTED_CASES += [
     ("spot_right", {**BASE, "Spot": ["SpotTrade"]}, False),
@@ -222,6 +223,14 @@ _UNLISTED_CASES += [
     ("scalar_right", {**BASE, "Affiliate": [1]}, False),
     ("scalar_in_allowed_group", {**BASE, "ContractTrade": ["Order", "Position", 1]}, False),
     ("allowed_group_as_object", {**BASE, "ContractTrade": {"Order": [], "Position": []}}, False),
+    ("unknown_wallet_right", {**BASE, "Wallet": ["Later2"]}, True),
+    ("wallet_re_cased", {**BASE, "WALLET": ["Order"]}, True),
+    ("fund_group_re_cased", {**BASE, "fiatp2p": ["FiatP2POrder"]}, True),
+    ("fund_group_padded", {**BASE, "BitCard ": ["BitCard"]}, True),
+    ("withdraw_spaced_outside_a_fund_group", {**BASE, "Spot": ["With draw"]}, True),
+    ("transfer_spaced_outside_a_fund_group", {**BASE, "Spot": ["Account Trans fer"]}, True),
+    ("withdraw_full_width_outside_a_fund_group", {**BASE, "Spot": ["\uff37ithdraw"]}, True),
+    ("integer_group", {**BASE, 1: ["Order"]}, False),
 ]
 
 

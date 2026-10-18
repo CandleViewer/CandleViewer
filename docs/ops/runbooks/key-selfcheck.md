@@ -52,17 +52,36 @@ not measured the offset), `rate_limited` (10006, 10018, or the IP-level hold aft
 makes no call), `service_unavailable` (10016, 10019 or an HTTP 5xx), `transport_error` (a reset, or
 a reply that is not JSON), `timeout`, `exchange_unknown` (any other refusal or unreadable reply), or
 one of the job's own: `probe_slow` (accepted later than the receive window), `probe_clock_step` (the
-host clock stepped during the probe) or `check_error`. A `check_error` can also be a borrow that
-the C-2.8 re-check refused (SR-E27-14): the error log `key_selfcheck_error` for that `key_id` then
-has `error=WithdrawPermissionRejected` or `error=SnapshotInvalid`, and the key cannot sign
-anything. Read its row in `api_keys`: `can_withdraw` and `can_transfer` must both be false, and
+host clock stepped during the probe) or `check_error`.
+
+A `check_error` can also be a borrow that the C-2.8 re-check refused (SR-E27-14): the error log
+`key_selfcheck_error` for that `key_id` then has `error=WithdrawPermissionRejected` or
+`error=SnapshotInvalid` (a snapshot that is not a JSON object included), and the key cannot sign
+anything. `error=CredentialUnavailable` can be a tamper sign too: the decrypt refuses a row whose
+sealed columns, or the columns bound into them, were edited (`secret_enc`, `enc_nonce`, `dek_ref`
+or `exchange_account_id`, for example). A Postgres or audit-log outage, a key revoked during the
+run or a row wrapped under a KEK version that is not loaded give the same error: rule them out
+first. Read the key's row in `api_keys`: `can_withdraw` and `can_transfer` must both be false, and
 `permission_snapshot` must be an object whose `permissions` hold only the rights the
-`key_withdraw_permission` row of the table above allows. A row that fails was edited since
-`store()` accepted it (KV-T03 of the E27 threat model): never correct it in SQL (C-2.9), treat it
-as a possible database tamper and replace the key (delete it, store a compliant one). Until slice
-2c1 of #836 this shows up only as the stale latch; 2c1 will report it as a policy violation
-(`key_withdraw_permission`, the first symptom above, with the force-disable and the critical
-alert). `unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
+`key_withdraw_permission` row of the table above allows. A row that fails, or that will not decrypt
+once those causes are ruled out, was edited since `store()` accepted it (KV-T03 of the E27 threat
+model). Treat it as a possible database tamper, as `auth-rbac.md` §5 treats an audit-chain break:
+
+1. **Preserve evidence first.** Save the log lines verbatim and take a database backup copy as
+   `docs/plan/07-release-and-prr.md` describes, stored off the host, before anything changes.
+2. **Notify** the Owner and the Security engineer at once, and follow `SECURITY.md`; never open a
+   public issue.
+3. **Replace the key once Security agrees.** Never correct the row in SQL (C-2.9). Delete the key
+   at the exchange, so it can sign nothing there, and store a compliant key. The row is revoked only
+   through M2's `destroy()` (`cv_app` has no DELETE on `api_keys`), which no route reaches before
+   `revokeApiKey` (#898). Until then the row stays, every borrow of it is refused and the latch
+   holds (fail closed); Security decides the next step.
+
+Until slice 2c1 of #836 this shows up only as the stale latch; 2c1 will report a C-2.8 refusal as
+a policy violation (`key_withdraw_permission`, the first symptom above, with the force-disable and
+the critical alert).
+
+`unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
 the key list could not be read (`key_selfcheck_targets_failed`), a key's check passed its deadline
 (`key_selfcheck_unfinished`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
 with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)

@@ -64,15 +64,18 @@ _KCV_PUT = sa.text(
 )
 
 
-def _decode(value: object) -> dict[str, Any]:
-    """`permission_snapshot` jsonb arrives as `str` (no asyncpg codec) or as a mapping, as in
-    `accounts_sqlalchemy._decode`. Any other shape fails closed (`ak_snapshot_shape` already makes
-    it an object in the database). The borrow's C-2.8 re-check (SR-E27-14) refuses a snapshot that
-    is no dict, so a `str` left as it came would fail every borrow as `snapshot_invalid`."""
-    parsed: object = json.loads(value) if isinstance(value, str) else value
-    if not isinstance(parsed, Mapping):
-        raise TypeError("permission_snapshot is not a JSON object")
-    return dict(parsed)
+def _decode(value: object) -> object:
+    """`permission_snapshot` jsonb arrives as `str` (no asyncpg codec) or decoded, as in
+    `accounts_sqlalchemy._decode`; a JSON object comes back as a dict. Any other shape (text that is
+    no JSON, an array, a scalar, `null`) comes back as no mapping, never raising: the borrow's C-2.8
+    re-check (SR-E27-14) refuses it as `snapshot_invalid`, while `destroy()` and the KEK re-wrap,
+    which never read the snapshot, still reach the row (`ak_snapshot_shape` makes it an object, so
+    only a row edited past that CHECK gets here, KV-T03)."""
+    try:
+        parsed: object = json.loads(value) if isinstance(value, str) else value
+    except ValueError:
+        return value
+    return dict(parsed) if isinstance(parsed, Mapping) else parsed
 
 
 class SqlAlchemyCredentialStore:

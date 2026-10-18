@@ -9,22 +9,24 @@ beyond the local testcontainer. Not run locally (no docker); CI integration lane
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
-from candleviewer.secrets.errors import CredentialUnavailable
+from candleviewer.secrets.errors import CredentialUnavailable, SnapshotInvalid
 from candleviewer.secrets.secret import Secret
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -251,3 +253,71 @@ async def test_get_is_namespaced_by_environment(pg_dsn: str) -> None:
         assert await store.get(key_id, "live") is None
     finally:
         await rel.dispose()
+
+
+#: KV-T03 (#836): an array of pairs, which `dict()` would read as an object.
+_PAIRS = [["permissions", {"ContractTrade": ["Order", "Position"]}], ["uid", "1"]]
+
+
+@pytest.fixture
+async def tampered(pg_dsn: str) -> AsyncIterator[tuple[SqlAlchemyCredentialStore, list[UUID]]]:
+    """Three active keys at KEK version 5 (no other test's); DDL drops `ak_snapshot_shape` and sets
+    the lowest id's snapshot to `_PAIRS`. The snapshot and the CHECK, as the catalog read it, come
+    back afterwards."""
+    plain = pg_dsn.replace("postgresql+asyncpg", "postgresql")
+    rel, store = _store(pg_dsn)
+    old = CredentialBroker(store, _audit, _kek(7, 5))
+    ids = []
+    for i in range(3):
+        key = Secret(f"KEY{i:04d}TAMP")
+        meta = await old.store("demo", _account(pg_dsn), f"t{i}", key, Secret("S"), _SNAP)
+        ids.append(meta.key_id)
+    _activate(pg_dsn, ids)
+    with psycopg.connect(plain, autocommit=True) as c:
+        found = c.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'ak_snapshot_shape' AND conrelid = 'api_keys'::regclass"
+        ).fetchone()
+        assert found is not None
+        c.execute("ALTER TABLE api_keys DROP CONSTRAINT ak_snapshot_shape")
+        c.execute(
+            "UPDATE api_keys SET permission_snapshot = %s::jsonb WHERE id = %s",
+            (json.dumps(_PAIRS), min(ids)),
+        )
+    try:
+        yield store, ids
+    finally:
+        with psycopg.connect(plain, autocommit=True) as c:
+            c.execute(
+                "UPDATE api_keys SET permission_snapshot = %s::jsonb WHERE id = %s",
+                (json.dumps(_SNAP), min(ids)),
+            )
+            add = sql.SQL("ALTER TABLE api_keys ADD CONSTRAINT ak_snapshot_shape {}")
+            c.execute(add.format(sql.SQL(found[0])))
+        await rel.dispose()
+
+
+async def test_a_snapshot_edited_past_its_check_is_refused_as_snapshot_invalid(
+    tampered: tuple[SqlAlchemyCredentialStore, list[UUID]],
+) -> None:
+    store, ids = tampered
+    with pytest.raises(SnapshotInvalid):
+        await _borrow(CredentialBroker(store, _audit, _kek(7, 5)), min(ids))
+
+
+async def test_destroy_revokes_a_row_whose_snapshot_was_edited_past_its_check(
+    tampered: tuple[SqlAlchemyCredentialStore, list[UUID]],
+) -> None:
+    store, ids = tampered
+    await CredentialBroker(store, _audit, _kek(7, 5)).destroy(min(ids))
+    rec = await store.get(min(ids), "demo")
+    assert rec is not None and rec["revoked"] is True
+
+
+async def test_a_kek_rewrap_moves_a_row_whose_snapshot_was_edited_and_every_other(
+    tampered: tuple[SqlAlchemyCredentialStore, list[UUID]],
+) -> None:
+    store, ids = tampered
+    rotating = CredentialBroker(store, _audit, _kek(8, 6), prev_kek=_kek(7, 5))
+    assert (await rotating.rewrap_all(6)).failed == ()
+    assert [(await store.get(k, "demo") or {}).get("kek_version") for k in ids] == [6, 6, 6]

@@ -9,8 +9,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from candleviewer.secrets import KEY_ID_SLOT
+from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets.broker import CredentialBroker
@@ -41,6 +43,9 @@ from tests.unit.credentials_m2._vectors import (
 _TOUCH_TASK = "secrets-credential-touch"
 #: A low-entropy key-id marker for the frame-locals check (never a real credential).
 _MARK_ID = "storefail" + "0" * 9 + "WXYZ"
+#: Low-entropy KEK and DEK markers for the seal-path frame check (never real key material).
+_MARK_KEK = b"kekmark" + b"0" * 25
+_MARK_DEK = b"dekmark" + b"0" * 25
 
 
 def _touch_tasks() -> list[asyncio.Task[Any]]:
@@ -367,6 +372,37 @@ async def test_a_failed_store_leaves_no_key_id_in_its_frame_locals(store: Any) -
     shown = traceback.TracebackException.from_exception(ei.value, capture_locals=True)
     rendered = "".join(shown.format())
     assert ", in store\n" in rendered and _MARK_ID not in rendered
+
+
+@pytest.mark.parametrize("failing", [1, 2, 3], ids=["dek_wrap", "key_id_seal", "secret_seal"])
+async def test_a_failed_seal_leaves_no_key_material_in_its_frame_locals(
+    store: Any, monkeypatch: pytest.MonkeyPatch, failing: int
+) -> None:
+    """C-12.6: a seal that fails inside `env.seal` (the DEK wrap under the KEK, or either half of
+    the pasted pair) renders with frame locals no KEK, DEK, key id or secret: `_seal_new` scrubs
+    the frames below it, as `request_signature` does."""
+    calls = 0
+
+    class Refusing:  # AES-GCM whose `failing`-th encryption raises
+        def __init__(self, key: bytes) -> None:
+            self.aead = AESGCM(key)
+
+        def encrypt(self, nonce: bytes, data: bytes, aad: bytes) -> bytes:
+            nonlocal calls
+            calls += 1
+            if calls == failing:
+                raise ValueError("seal refused")
+            return self.aead.encrypt(nonce, data, aad)
+
+    monkeypatch.setattr(env, "AESGCM", Refusing)
+    monkeypatch.setattr(env, "new_dek", lambda: bytearray(_MARK_DEK))
+    b = CredentialBroker(store, AuditLog(), kek(_MARK_KEK))
+    with pytest.raises(ValueError, match="seal refused") as failed:
+        await b.store("demo", ACCOUNT, "l", Secret(_MARK_ID), Secret(API_SECRET), SNAPSHOT)
+    shown = traceback.TracebackException.from_exception(failed.value, capture_locals=True)
+    rendered = "".join(shown.format())
+    marks = (_MARK_KEK.decode(), _MARK_DEK.decode(), _MARK_ID, API_SECRET)
+    assert (", in seal\n" in rendered, [x for x in marks if x in rendered]) == (True, [])
 
 
 async def test_store_refuses_other_environment(store: Any) -> None:

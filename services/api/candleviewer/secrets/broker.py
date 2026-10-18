@@ -3,9 +3,9 @@
 Plaintext keys and unwrapped DEKs exist only in memory inside this module, only between the
 decrypt and the end of the request MAC; they never leave M2 (C-2.7, #2339), not even in a
 traceback: a failed MAC leaves as a typed `signing_failed` with nothing chained, after the failed
-call's frames are cleared. Every action is audited *before* it acts (C-2.9), with an actor bound
-at wiring time; every await has a timeout; failures are typed, fail closed and carry no key
-material (C-12.6).
+call's frames are cleared, as a failed seal's are. Every action is audited *before* it acts (C-2.9),
+with an actor bound at wiring time; every await has a timeout; failures are typed, fail closed and
+carry no key material (C-12.6).
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from candleviewer.secrets.signing import (
     check_message,
     message_sha256,
     request_signature,
+    scrub_frames,
 )
 from candleviewer.secrets.store import AuditSink, CredentialStore
 
@@ -234,6 +235,9 @@ class CredentialBroker:
             aad_s = env.cred_aad(env_name, account_id, key_id, "secret")
             key_enc = env.seal(dek, api_key.reveal().encode(), aad_k)
             secret_enc = env.seal(dek, api_secret.reveal().encode(), aad_s)
+        except BaseException as exc:
+            scrub_frames(exc)  # the frames below hold the KEK, the DEK and the pasted pair (C-12.6)
+            raise
         finally:
             env.zero(dek)
         row = CredentialRow(
