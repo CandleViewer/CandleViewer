@@ -46,10 +46,15 @@ filesystem root under `file://`, so the window stayed blank. A relative
 protocol, which also confines reads to the dist root and gives the CSP header
 one delivery point.
 
-Packaged builds: `electron-builder.yml` packages only this package's `dist/`,
-so `apps/web/dist` is not in the installer yet. The handler expects it at
-`<resources>/web/dist`; adding it (without source maps, SR-116) and checking
-the installer the same way is #3518.
+Packaged builds (#3518): `electron-builder.yml` copies `apps/web/dist`, without
+source maps (SR-116), to `<resources>/web/dist`, where the handler reads it
+(`dist/main` inside `app.asar` resolves `../../../web/dist` there). The
+electron-hardening gate fails if a packaging list could ship a `.map` file or
+that entry is missing. Not yet proven: that an installer renders the app. CI
+builds no installer. The next step is to pack the unpacked app in the `build`
+job (`electron-builder --linux dir` with `electronDist` set to the Electron
+that job installs) and launch it with Playwright-Electron (`executablePath`)
+under `xvfb-run`, as `collect-hardening-facts.mjs` launches `dist/main/index.js`.
 
 Backend connection: the web app calls `/api` relative to its page and builds
 its socket URL from `location.host`, so on `app://candleviewer` the sign-in
@@ -64,7 +69,9 @@ backend's address, listing `app://candleviewer` in `CV_ALLOWED_ORIGINS`
 - `pnpm --filter @candleviewer/desktop e2e` — Playwright-Electron specs
   (requires `build` to have run first).
 - `pnpm --filter @candleviewer/desktop build:installer` — electron-builder
-  packaging (real signing/notarization/auto-update land in E10).
+  packaging (real signing/notarization/auto-update land in E10). Build
+  `apps/web` and this package first: electron-builder only warns when
+  `apps/web/dist` is missing, and that installer opens an empty window.
 
 ## Out of scope (E10)
 
