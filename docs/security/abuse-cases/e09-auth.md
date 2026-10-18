@@ -72,7 +72,7 @@ is a case that pins what `cv_app` holds or what owns the guard.
 | a misspelt trigger name in the test's guard list (a test edit)                                          | the guard-shape premise; the three attacks naming it, at their own existence check; every other AC-AUD-02 case, at the shape check     |
 
 The `complete_recovery` row replaces `consume_recovery_code` (removed by #2344) and was re-run on
-2026-10-16. AC-MFA-03 and AC-MFA-05b do not catch it: the in-memory fake never yields, so the
+2026-10-18. AC-MFA-03 and AC-MFA-05b do not catch it: the in-memory fake never yields, so the
 gathered recoveries run one after another and each later one fails at the code lookup, before any
 race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 `test_recover_lost_code_race_spends_nothing_and_counts_attempt`,
