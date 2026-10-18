@@ -234,6 +234,24 @@ class RewrapAuditNotWritten(StorageError):
     code = "STORAGE_REWRAP_AUDIT_NOT_WRITTEN"
 
 
+class BackupWriteOnceViolation(StorageError):
+    """`0032`'s guard refused an update of a `backups` row (SQLSTATE 23514, no constraint named): a
+    write-once column, or a set-once one set again. Nothing changed; never the driver's text."""
+
+    code = "STORAGE_BACKUP_WRITE_ONCE"
+
+
+class BackupCheckViolation(StorageError):
+    """A CHECK of `backups` refused the write (23514): `constraint` names it, never a value, as its
+    DETAIL is the whole row, the class S `encryption_ref` included. Nothing changed."""
+
+    code = "STORAGE_BACKUP_CHECK_VIOLATION"
+
+    def __init__(self, constraint: str) -> None:
+        super().__init__(f"backups: {constraint} refused the write")
+        self.constraint = constraint
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -260,4 +278,6 @@ ERROR_CODES: dict[type[StorageError], str] = {
     HotReplayReadTimeout: HotReplayReadTimeout.code,
     RewrapAuditNotWired: RewrapAuditNotWired.code,
     RewrapAuditNotWritten: RewrapAuditNotWritten.code,
+    BackupWriteOnceViolation: BackupWriteOnceViolation.code,
+    BackupCheckViolation: BackupCheckViolation.code,
 }
