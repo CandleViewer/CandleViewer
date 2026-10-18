@@ -194,6 +194,19 @@ def test_revocation_hub_keeps_the_default_cap_of_4096_revoked_ids(
     assert hub.max_remembered == 4096
 
 
+def test_registry_remembers_a_disabled_user_for_one_access_token_lifetime(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#3413: the composition root sizes the disabled-user memory to `ACCESS_TOKEN_TTL`, and
+    passes no cap, so the default of 1024 users is the cap production runs with."""
+    client, _ = world
+    registry = client.app.state.ws_registry  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert (registry.disabled_memory_s, registry.max_disabled) == (
+        ACCESS_TOKEN_TTL.total_seconds(),
+        1024,
+    )
+
+
 def test_book_snapshots_come_from_the_book_module(world: tuple[TestClient, _Kill]) -> None:
     """#2196: `book` is the book module's adapter, no longer a pending stub."""
     client, _ = world

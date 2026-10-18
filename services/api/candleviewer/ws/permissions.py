@@ -10,7 +10,8 @@
   subscription after a role/grant change and returns the `revoked` frames (§9.5, S7). With the
   backpressure flag on, `on_drop` hears of every subscription an operation ends or resets.
 - `ConnectionRegistry`: live sockets per user; role/grant change, kill-switch transition and
-  user-disabled fan-out.
+  user-disabled fan-out. A disabled user is also remembered for one access-token lifetime, so a
+  socket that registers after the per-user close is refused (#3413).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import asyncio
 import collections
 import contextlib
 import itertools
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -60,6 +62,7 @@ from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_
 from candleviewer.ws.rebuild_budget import RebuildBudget, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
+    EVICTION_LOG_EVERY_S,
     Closer,
     RevokedReason,
     revoked_frame,
@@ -128,6 +131,13 @@ _ABANDONED_USERS_LOGGED: Final = 10
 #: SR-186 (#2174): the one `ws.subscribe.granted` record of a `sub` frame lists the `ch` and
 #: account ids of at most this many of its new private subscriptions; its `count` holds them all.
 MAX_GRANTS_LISTED: Final = 10
+#: #3413: seconds a disabled user is remembered, one access-token lifetime (ADR-0020,
+#: `auth.session_service.ACCESS_TOKEN_TTL`, which the composition root passes). By then every
+#: token issued before the disable has expired, so no `auth` with one can pass.
+DISABLED_MEMORY_S: Final = 720.0
+#: At most this many disabled users are remembered (C-2.18); the oldest is forgotten first. A
+#: live entry goes early only once 1024 other users are disabled within one `DISABLED_MEMORY_S`.
+MAX_DISABLED_USERS: Final = 1024
 
 
 def _log() -> Any:
@@ -903,6 +913,13 @@ class ConnectionRegistry:
 
     The WS gateway registers a `ConnectionAuthz` plus a `send` coroutine at `auth_ok`, routes
     `sub`/`unsub`/`ctl` through this module and unregisters on close.
+
+    #3413 (SR-029, UL1-E2): `user_disabled` also remembers the user with the disable instant for
+    `disabled_memory_s`, one access-token lifetime, so the gateway refuses a socket that
+    registers after the per-user close on a token issued at or before it (`issued_before_disable`).
+    The memory is bounded (C-2.18) as `RevocationHub`'s is: entries expire on `monotonic`, and past
+    `max_disabled` the oldest is forgotten first, which reopens that window for that user only and
+    is logged (throttled).
     """
 
     def __init__(
@@ -910,7 +927,13 @@ class ConnectionRegistry:
         resolve: Callable[[uuid.UUID], Awaitable[PrincipalSnapshot]],
         clock_ms: Callable[[], int],
         services: SubscriptionServices | None = None,
+        *,
+        disabled_memory_s: float = DISABLED_MEMORY_S,
+        max_disabled: int = MAX_DISABLED_USERS,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
+        if not (math.isfinite(disabled_memory_s) and disabled_memory_s > 0) or max_disabled < 1:
+            raise ValueError("disabled_memory_s must be finite and > 0, and max_disabled >= 1")
         self._resolve = resolve
         self._clock_ms = clock_ms
         self.services = services if services is not None else SubscriptionServices()
@@ -922,6 +945,66 @@ class ConnectionRegistry:
         #: SR-189: one version source for every snapshot; `_changed_at`: the latest change's.
         self._versions = itertools.count(1)
         self._changed_at = 0
+        self._disabled_memory_s = disabled_memory_s
+        self._max_disabled = max_disabled
+        self._monotonic = monotonic
+        #: user id -> (monotonic expiry, disable instant in wall ms), oldest first. Every entry
+        #: lives the same span from a non-decreasing clock, so insertion order is expiry order.
+        self._disabled: collections.OrderedDict[uuid.UUID, tuple[float, int]] = (
+            collections.OrderedDict()
+        )
+        #: Live entries forgotten at the cap, and when that was last logged.
+        self._disabled_evicted = 0
+        self._disabled_evicted_logged_at: float | None = None
+
+    @property
+    def disabled_memory_s(self) -> float:
+        """Seconds a disabled user is remembered."""
+        return self._disabled_memory_s
+
+    @property
+    def max_disabled(self) -> int:
+        """Most disabled users remembered at once; past it the oldest is forgotten first."""
+        return self._max_disabled
+
+    def _prune_disabled(self, now: float) -> None:
+        while self._disabled:
+            user_id, (expires_at, _) = next(iter(self._disabled.items()))
+            if expires_at > now:
+                return
+            del self._disabled[user_id]
+
+    def _remember_disabled(self, user_id: uuid.UUID) -> None:
+        now = self._monotonic()
+        self._prune_disabled(now)
+        self._disabled.pop(user_id, None)  # a repeat renews the entry and its instant
+        self._disabled[user_id] = (now + self._disabled_memory_s, self._clock_ms())
+        while len(self._disabled) > self._max_disabled:
+            self._disabled.popitem(last=False)  # pruned above, so this one was still live
+            self._disabled_evicted += 1
+            logged_at = self._disabled_evicted_logged_at
+            if logged_at is None or now - logged_at >= EVICTION_LOG_EVERY_S:
+                self._disabled_evicted_logged_at = now
+                # A failing log sink must never skip the closes that follow (C-2.12).
+                with contextlib.suppress(Exception):
+                    _log().warning(
+                        "ws disabled-user memory full; oldest live entry forgotten",
+                        evicted_total=self._disabled_evicted,
+                        max_disabled=self._max_disabled,
+                    )
+
+    def issued_before_disable(self, user_id: uuid.UUID, token_expires_ms: int) -> bool:
+        """Whether `user_id` was disabled, within the last `disabled_memory_s`, at or after the
+        instant its access token was issued. The token expires at `token_expires_ms`, which is
+        its issue instant plus `ACCESS_TOKEN_TTL` capped by the session's absolute expiry
+        (`access_token_expires_at`), so one lifetime before it is never later than the issue:
+        every token issued at or before the disable is refused, and one issued after it (a user
+        re-enabled who signed in again) is not. Both instants are UTC wall-clock ms: the disable
+        is read from `clock_ms`, the token's from the session service's clock."""
+        self._prune_disabled(self._monotonic())
+        entry = self._disabled.get(user_id)
+        lifetime_ms = int(self._disabled_memory_s * 1000)
+        return entry is not None and token_expires_ms - lifetime_ms <= entry[1]
 
     def register(
         self, authz: ConnectionAuthz, send: Any, close: Any = None, closer: Closer | None = None
@@ -1136,7 +1219,11 @@ class ConnectionRegistry:
             await self._write_rows(rows)
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
-        """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket."""
+        """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket. #3413:
+        first the user is remembered and the version advances, so a socket still in its
+        handshake reads its principal again (SR-189) and the gateway refuses its registration."""
+        self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
+        self._remember_disabled(user_id)  # before the closes, which suspend
         entries = self._conns.pop(user_id, [])
         for authz, _send, close in entries:
             closer = self._closers.pop(id(authz), None)

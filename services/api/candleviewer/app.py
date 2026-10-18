@@ -1346,6 +1346,7 @@ def create_app(
         snapshot_loader or build_ws_principal_loader(resolved, identity),
         _now_ms,
         services=ws_services,
+        disabled_memory_s=ACCESS_TOKEN_TTL.total_seconds(),  # #3413: one access-token lifetime
     )
     ws_hub = GatewayHub(
         max_per_user=resolved.ws_max_connections_per_user,

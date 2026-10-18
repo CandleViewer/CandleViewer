@@ -188,7 +188,12 @@ from candleviewer.ws.permissions import (
 )
 from candleviewer.ws.permissions import handle_sub as _handle_sub
 from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
-from candleviewer.ws.revocation import RevocationHub
+from candleviewer.ws.revocation import (
+    CLOSE_USER_DISABLED,
+    RevocationHub,
+    user_disabled_bye,
+    ws_revoked_total,
+)
 from candleviewer.ws.sequencing import TopicEmitter
 from candleviewer.ws.system_filter import (
     FlagVisible,
@@ -1141,6 +1146,23 @@ def make_ws_router(
         )
         conn.close_with("client_rate_limited", bye=bye)
 
+    async def refuse_disabled(conn: _Connection, user_id: uuid.UUID) -> None:
+        """#3413 (SR-029, UL1-E2): the user was disabled at or after this socket's access token
+        was issued, and the socket registered after the per-user close, which therefore missed
+        it. It is closed as the hub closes the `auth` of a revoked session (#2739): `bye
+        user_disabled` and 4403, sealed, never `auth_ok`. Counted in
+        `cv_ws_revoked_total{reason="user_disabled"}`; the warning names the user, never the
+        token."""
+        ws_revoked_total.labels(reason="user_disabled").inc()
+        await conn.closer(user_disabled_bye(conn.wall_ms()), CLOSE_USER_DISABLED)
+        _log().warning(
+            "ws auth refused",
+            connection_id=conn.connection_id,
+            reason="user_disabled",
+            user_id=str(user_id),
+            source_ip=_source_ip(conn.ws.scope),
+        )
+
     def auth_call_late(conn: _Connection, call: str, *, reauth: bool) -> None:
         """#2155 (§4.3): an `auth` call outlived `auth_call_timeout_s`. A server fault, not a failed
         `auth` (no strike, no audit row): `bye internal_error` + `1011`, a re-auth's too. Its SR-189
@@ -1279,6 +1301,11 @@ def make_ws_router(
             # closed nothing. Close it as the hub would: its `bye` and code (4403 for a disabled
             # user), sealed, no auth_ok.
             await conn.closer(*revocation_hub.close_for(ended))
+            return
+        if registry.issued_before_disable(user_id, expires_ms):
+            # #3413: the per-user close ran before this socket registered, on a session the
+            # hub was never told about (a refresh had rotated it). The registry remembers.
+            await refuse_disabled(conn, user_id)
             return
         if not reauth:
             # Only a new socket's first SUCCESSFUL auth is counted (failures have their own 3
