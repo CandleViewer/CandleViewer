@@ -415,7 +415,9 @@ def _scan_run(
     env |= {"BASE_SHA": first if base is None else base, "HEAD_SHA": head}
     env |= {"DOCKER_LOG": str(tmp_path / "docker.log"), **fake}
     run = ["bash", "-e", "-c", _scan()["run"]]
-    proc = subprocess.run(run, cwd=ws, env=env, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        run, cwd=ws, env=env, capture_output=True, text=True, timeout=120, check=False
+    )
     log = tmp_path / "docker.log"
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return proc.returncode, proc.stdout + proc.stderr, [json.loads(line) for line in lines]
@@ -473,9 +475,13 @@ def test_secret_scan_runs_both_scanners_offline_over_the_prs_commits(tmp_path: P
         ({"TRUFFLEHOG_EXIT": "2"}, ["CI-SEC-005: trufflehog exited 2"]),
         # A scanner that failed is never a clean scan, even beside a clean (empty) report.
         ({"GITLEAKS_EXIT": "1"}, ["CI-SEC-005: gitleaks exited 1"]),
+        # gitleaks' exit code is not the only verdict: security_gate.py reads its report too.
+        ({"GITLEAKS_EXIT": "0", "GITLEAKS_REPORT": LEAK}, ["CI-SEC-001: gitleaks finding"]),
+        ({"GITLEAKS_EXIT": "0", "GITLEAKS_REPORT": "none"}, ["CI-SEC-005: gitleaks: unread"]),
     ],
     ids=["gitleaks-finding", "gitleaks-exit", "trufflehog-finding", "gitleaks-failed"]
-    + ["trufflehog-failed", "gitleaks-failed-empty-report"],
+    + ["trufflehog-failed", "gitleaks-failed-empty-report", "gitleaks-clean-exit-finding"]
+    + ["gitleaks-clean-exit-no-report"],
 )
 def test_secret_scan_fails_on_any_finding_or_scanner_failure(
     tmp_path: Path, fake: dict[str, str], codes: list[str]
@@ -485,8 +491,10 @@ def test_secret_scan_fails_on_any_finding_or_scanner_failure(
     assert (code, len(lines)) == (1, len(codes)), output
     assert all(line.startswith(prefix) for line, prefix in zip(lines, codes, strict=True)), lines
     # A finding is a committed secret: rotate it first (IR-02). Its file is named, never its value.
+    # The step's own annotation follows the scanners' exit codes; the gate's hint, any finding.
     finding = codes[0].startswith("CI-SEC-001")
-    assert (BLOCKS in output, "IR-02" in output) == (finding, finding)
+    flagged = fake.get("GITLEAKS_EXIT") == "3" or fake.get("TRUFFLEHOG_EXIT") == "183"
+    assert (BLOCKS in output, "IR-02" in output) == (flagged, finding)
     named = finding and ("GITLEAKS_REPORT" in fake or "TRUFFLEHOG_OUT" in fake)
     assert ("docs/x.md" in output) == named
 
