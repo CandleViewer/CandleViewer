@@ -13,7 +13,7 @@ is binding on every contributor and every AI agent; it implements Constitution �
 
 Report privately, in this order of preference:
 
-1. **GitHub Private Vulnerability Reporting** — repository → *Security* → *Report a vulnerability*
+1. **GitHub Private Vulnerability Reporting** — repository → _Security_ → _Report a vulnerability_
    (preferred; creates a private advisory thread).
 2. **Direct message to the owner** `@basiltt` on the project's private channel.
 
@@ -40,12 +40,12 @@ including that table's Triage SLA and Fix-before columns, which this file does n
 table below adds only the security-report-specific commitment: how soon a reporter hears back with an
 initial acknowledgement, which is always no later than that severity's §11.3 triage SLA.
 
-| Severity | Example (security) | Acknowledgement |
-|---|---|---|
-| **P0 — Critical** | API-key confidentiality breach, withdrawal-permission-off invariant defeated, RBAC bypass, missing native stop-loss, unauthorised order placement, audit-log integrity broken | 1 business hour |
-| **P1 — High** | Auth/session weakness, exploitable but not yet exploited, partial RBAC scoping gap | 4 business hours |
-| **P2 — Medium** | Defence-in-depth gap without a direct path to capital or credential loss | 1 business day |
-| **P3 — Low** | Hardening suggestion, informational finding | 2 business days |
+| Severity          | Example (security)                                                                                                                                                            | Acknowledgement  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| **P0 — Critical** | API-key confidentiality breach, withdrawal-permission-off invariant defeated, RBAC bypass, missing native stop-loss, unauthorised order placement, audit-log integrity broken | 1 business hour  |
+| **P1 — High**     | Auth/session weakness, exploitable but not yet exploited, partial RBAC scoping gap                                                                                            | 4 business hours |
+| **P2 — Medium**   | Defence-in-depth gap without a direct path to capital or credential loss                                                                                                      | 1 business day   |
+| **P3 — Low**      | Hardening suggestion, informational finding                                                                                                                                   | 2 business days  |
 
 See §11.3 for the Triage SLA and Fix-before commitment per severity. We also send the reporter a status
 update at least once every 2 business days for P0/P1 and once per week for P2/P3 until the fix ships, and
@@ -56,7 +56,7 @@ change re-ratified within 2 weeks.
 Because CandleViewer is a private, single-owner deployment **there is no bug-bounty programme** — this is
 a deliberate decision, not an omission — and no public disclosure timeline; advisories are published as
 private GitHub Security Advisories and, once a fix ships, summarised (without exploit detail) in
-`CHANGELOG.md` under *Security*.
+`CHANGELOG.md` under _Security_.
 
 ### In-scope / out-of-scope
 
@@ -97,12 +97,12 @@ CandleViewer is pre-1.0 and deployed from `main`.
 > "which version is supported?" is always: **the current `main`, and whatever tag production is pinned
 > to right now.**
 
-| Version | Supported |
-|---|---|
-| `main` (latest commit) | ✅ Security fixes |
-| Latest tagged release `v0.x` (what production is pinned to) | ✅ Security fixes |
-| Previous tagged release | ⚠️ Critical fixes only, and only while a rollback to it is still the documented recovery path |
-| Anything older | ❌ Unsupported — roll forward |
+| Version                                                     | Supported                                                                                     |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `main` (latest commit)                                      | ✅ Security fixes                                                                             |
+| Latest tagged release `v0.x` (what production is pinned to) | ✅ Security fixes                                                                             |
+| Previous tagged release                                     | ⚠️ Critical fixes only, and only while a rollback to it is still the documented recovery path |
+| Anything older                                              | ❌ Unsupported — roll forward                                                                 |
 
 **Remediation is always roll-forward on a single line.** A security fix lands on `main`, is tagged, and
 production is redeployed. There is no back-port branch, and creating one requires an owner decision.
@@ -111,7 +111,7 @@ After 1.0 this policy does not change while the deployment stays single-tenant: 
 supported version. The conventional "latest minor of current major + last minor of previous major" matrix
 applies only if CandleViewer is ever distributed to third parties — which is explicitly out of scope
 (Constitution §1.3, no multi-tenant/SaaS productisation). Security fixes are released as patch versions and
-noted in `CHANGELOG.md` under *Security*.
+noted in `CHANGELOG.md` under _Security_.
 
 ---
 
@@ -228,4 +228,4 @@ Production Readiness Review.
 
 ---
 
-*Questions about this policy: contact `@basiltt`. Last reviewed 2026-09-14.*
+_Questions about this policy: contact `@basiltt`. Last reviewed 2026-09-14._
