@@ -80,6 +80,7 @@ jobs:
               - 'tools/ci/mark-audit-handoff.mjs'
               - 'tools/ci/turbo-affected-packages.mjs'
               - 'tools/ci/write-turbo-summary.mjs'
+              - 'tools/ci/check_built_exports.mjs'
               - 'tools/ci/electron_hardening_gate.py'
               - 'tools/ci/electron_hardening_checks.py'
             py:
@@ -202,9 +203,8 @@ jobs:
               - '.semgrepignore'
               - 'security/semgrep/**'
               - 'tools/ci/check_semgrep_rule_tests.py'
-              # The other security jobs' inputs: the gitleaks and trufflehog configs, the risk
-              # register, the freeze manifest, the dev-env files the hygiene gate checks and the
-              # pip pins (#3182).
+              # The other security jobs' inputs: gitleaks and trufflehog configs, risk register,
+              # freeze manifest, the dev-env files the hygiene gate checks, pip pins (#3182).
               - '.gitleaks.toml'
               - '.trufflehog-exclude'
               - 'security/accepted-risks.yaml'

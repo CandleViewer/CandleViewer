@@ -71,17 +71,15 @@ release tag (.github/workflows/release.yml)
 ```
 
 **Dependency-only PRs (#3182).** A PR that changes only `pnpm-lock.yaml`, the root `package.json`
-or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts the `js` lane and,
-through it, `security` and `coverage-thresholds`, but not `e2e` or `a11y`. The manifests stay out of
-the `e2e` filter on purpose: they would put seven more jobs (the four `e2e-web` shards,
-`e2e-staging`, `a11y-axe` and `a11y`) on every dependency bump. The accepted control is the nightly
-`a11y-nightly.yml` sweep on `main`, a named artefact of the release checklist
-(`docs/plan/07-release-and-prr.md` §4.1). The Playwright e2e suite has no scheduled run yet (C-9.2
-asks for a nightly full matrix), so a bump that breaks it shows on the next PR that the `e2e` filter
-starts. The decision covers those three files only. A backend manifest (`services/api/uv.lock`,
-`services/api/pyproject.toml`) starts the `py` lanes, `security` (with the image check) and
-`coverage-thresholds` but not `migrations`, `contract` or `rule-roundtrip`, and no nightly covers
-those: an open gap with no decision recorded, not an accepted control.
+or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
+and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the `e2e` filter on
+purpose: they would put seven more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`)
+on every bump. The accepted control is the nightly `a11y-nightly.yml` sweep on `main`, a named
+artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1). The Playwright suite
+has no scheduled run yet (C-9.2 asks for a nightly full matrix), so a bump that breaks it shows on
+the next PR the `e2e` filter starts. The decision covers those three files only: a backend manifest
+(`services/api/uv.lock`, `pyproject.toml`) skips `migrations`, `contract` and `rule-roundtrip` and
+no nightly covers them, an open gap with no decision recorded, not an accepted control.
 
 ## 3. Reading the `ci-required` resolver summary
 

@@ -29,13 +29,11 @@ job's workflow and its meta-tests), so a PR that changed only those skipped the 
 script a `py`-filtered `gates` step runs from `tools/statechart/` (event coverage, the suite budget,
 the machine-hash lock, the xstate-contract script) skipped the gate built to check it.
 
-#3182: a lane must start on its own inputs. The e2e job's workflow and guards, the scripts the
-`statechart-lint` and `pin-check` steps run, and the workflows and scripts of the js, contract,
-migrations, engine-bench and coverage-thresholds jobs were each in another lane's filter or none;
-js also missed the token formats packages/ui imports, py the a11y gate logic and the fixture corpus,
-and several lanes the `.nvmrc` their Node comes from and the files their scripts read (READ_INPUTS).
-Run lines and `with:` inputs are re-derived here, so a new script or config needs a filter entry;
-every lane's `if:` and resolver entry read the same filters from `steps.filter`.
+#3182: a lane must start on its own inputs: its job's workflow, the scripts its steps run (derived
+below from run lines and `with:` inputs, so a new script or config needs a filter entry) and the
+files they read (READ_INPUTS); js also the token formats packages/ui imports, py the a11y gate logic
+and the fixture corpus. Every lane's `if:` and resolver entry read the same filters, from
+`steps.filter`.
 """
 
 from __future__ import annotations
@@ -353,11 +351,7 @@ def test_pr_yml_js_job_and_resolver_lane_read_the_same_filters() -> None:
 
 def test_pr_yml_e2e_filter_covers_the_e2e_jobs_own_inputs() -> None:
     # A PR that edits only the e2e job or a guard its steps run must start the lane (#3182).
-    assert _jobs()["e2e"]["uses"] == "./" + E2E_PATHS[0]
-    callee = yaml.safe_load((ROOT / E2E_PATHS[0]).read_text(encoding="utf-8"))
-    runs = [str(s.get("run", "")) for job in callee["jobs"].values() for s in job["steps"]]
-    for script in E2E_PATHS[1:]:
-        assert (ROOT / script).is_file() and any(f"node {script}" in run for run in runs), script
+    assert set(E2E_PATHS) <= _lane_runs()["e2e"][1], "not the e2e job's workflow and scripts"
     covered = set(_filters()["e2e"])
     assert set(E2E_PATHS) <= covered, sorted(set(E2E_PATHS) - covered)
 
