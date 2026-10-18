@@ -1901,6 +1901,8 @@ paths:
         Passing `?purge=true` additionally anonymises PII after the 90-day retention window.
         A query parameter this operation does not declare is refused with
         `422 validation_failed`, never ignored, and nothing is read or changed.
+        Without a live `users` step-up an authenticated caller first gets `403 step_up_required`,
+        whatever their role and target; the refusals above and their audit records follow it.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:

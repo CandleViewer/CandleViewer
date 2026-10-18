@@ -1,8 +1,8 @@
-"""SR-026 (#2573, #2632): a self-service route's query allow-list is exactly the query parameters
+"""SR-026 (#2573, #2632): a route's query allow-list is exactly the query parameters
 its contract operation declares (22-api-openapi.yaml, path-level and operation-level), and the
 operation declares the 422 the refusal answers with (C-6.1). A parameter the contract adds is
-accepted only once the handler is taught it. `DELETE /users/{userId}`, an owner route, keeps the
-same allow-list (E42-T04 S7, #965)."""
+accepted only once the handler is taught it. The routes are the self-service ones and one owner
+route, `DELETE /users/{userId}` (E42-T04 S7, #965)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _declared_query(spec: dict[str, Any], path: str, method: str) -> frozenset[s
         ("delete", "/users/{userId}", users.DELETE_USER_QUERY),
     ],
 )
-def test_self_service_allow_list_is_the_operations_declared_query(
+def test_declared_query_allow_list_is_the_operations_declared_query(
     spec: dict[str, Any], method: str, path: str, allowed: frozenset[str]
 ) -> None:
     assert _declared_query(spec, path, method) == allowed

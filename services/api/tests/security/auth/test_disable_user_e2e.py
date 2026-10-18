@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -339,11 +340,15 @@ def test_rest_401_ws_4403_within_5s(disabled: SimpleNamespace) -> None:
 
 
 def test_rule_disarmed_audited(disabled: SimpleNamespace) -> None:
-    """AC1, SR-029, R5 (`rule_disarmed`). The record's open-position count comes from the
-    call site's `positions`, the deployed source, which reports it unknown: `409
-    positions_unknown` names that source until the call acknowledges it (AC7, O2)."""
+    """AC1, SR-029, R5 (`rule_disarmed`)."""
     w = disabled
     rule_disarmed(w, _OWNER, _M)
+
+
+def test_positions_come_from_the_deployed_source(disabled: SimpleNamespace) -> None:
+    """AC7, O2: the record's open-position count comes from the call site's `positions`, the
+    deployed source, which reports it unknown: the 409 names that source until acknowledged."""
+    w = disabled
     assert (w.unacked.status_code, w.unacked.json()["code"]) == (409, "positions_unknown")
     assert "source: not_deployed" in w.unacked.json()["detail"]
     (record,) = [r for r in w.records if r["action"] == "users.disable"]
@@ -365,3 +370,4 @@ def test_data_retained(disabled: SimpleNamespace) -> None:
     assert mine == {str(s.session_id) for s in (w.a, w.b, w.c)}
     assert not w.rule_row.deleted and len(w.rule_row.versions) == 1
     assert lifecycle._REVOKE_GRANTS in w.repo.statements
+    assert not [s for s in w.repo.statements if re.search(r"\bDELETE\b", str(s), re.I)]

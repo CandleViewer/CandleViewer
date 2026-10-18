@@ -312,7 +312,8 @@ def test_deployed_app_challenges_an_unelevated_disable_before_the_handler(
     """#965 S7 (the S6 review's Low 4): without a live `users` elevation the path guard answers
     `DELETE /users/{userId}` with the step-up challenge before the handler runs, for a Manager, a
     Viewer and an Owner's self-target alike, so none of them meets the handler's audited 403 (the
-    elevated matrix cells above): no `rbac.denied` is written."""
+    elevated matrix cells above): no `rbac.denied` is written. The deployed B16 records the
+    challenge as `auth.step_up_required` without the target; the harness's step-up records none."""
     step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/{}"
     audited, step_up.elevated = len(deployed.audit.records), False
     try:
@@ -322,7 +323,7 @@ def test_deployed_app_challenges_an_unelevated_disable_before_the_handler(
         step_up.elevated = True
     assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
     assert resp.json()["action_class"] == "users"
-    assert deployed.audit.records[audited:] == []  # the handler never ran
+    assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
 
 
 def _states(resp: httpx.Response) -> dict[str, str]:
