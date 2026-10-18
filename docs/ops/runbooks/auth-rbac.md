@@ -686,10 +686,11 @@ repository's secret settings, never from an agent session.
   (`infra/compose/docker-compose.dev.yml`) defaults it to the Vite dev and preview origins
   (`http://127.0.0.1:5173`, `http://localhost:5173`, `:4173`).
 - **Electron desktop shell.** In dev (`CV_DEV_SERVER_URL`) the renderer runs on the Vite origin
-  above and works unchanged. The packaged shell loads `file://…/index.html`, so its requests carry
-  `Origin: null` and are refused by design (never allow-list `null`), and the backend's
-  `__Host-cv_csrf` cookie is not readable from a `file://` page. Packaged-Electron writes need a
-  privileged custom scheme or a main-process proxy, which is not part of #2090 (see the PR).
+  above and works unchanged. Without it, the shell serves the UI from `app://candleviewer` (#3410),
+  not `file://`, whose requests would carry `Origin: null` (refused by design; never allow-list
+  `null`). Desktop writes still need wiring that is not built yet: the backend's address in the
+  desktop build, `app://candleviewer` in this list, and a CSRF token path for an `app://` page,
+  which cannot read the backend's `__Host-cv_csrf` cookie (see `apps/desktop/README.md`).
 - **Unit and contract tests** use in-process fakes and keys generated inside the test process; there
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.

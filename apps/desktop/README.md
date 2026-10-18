@@ -43,6 +43,13 @@ so `apps/web/dist` is not in the installer yet. The handler expects it at
 `<resources>/web/dist`; adding it (without source maps, SR-116) and checking
 the installer the same way is still open.
 
+Backend connection: the web app calls `/api` relative to its page and builds
+its socket URL from `location.host`, so on `app://candleviewer` the sign-in
+screen renders but cannot reach the backend yet. Giving the desktop build the
+backend's address, listing `app://candleviewer` in `CV_ALLOWED_ORIGINS`
+(SR-042) and a CSRF token path for an `app://` page are still open. Both gaps
+are follow-ups to #3410.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/desktop build` — compiles `src/` to `dist/`.
