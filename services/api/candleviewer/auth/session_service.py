@@ -250,13 +250,13 @@ class SessionClass(StrEnum):
     #: The user has a confirmed MFA method and the session proved one (`mfa_satisfied_at`),
     #: or MFA is not required (which C-12.2 forbids).
     FULL = "full"
-    #: `mfa_required` and no confirmed method, or a session minted on the password alone:
-    #: only the five enrolment operations.
+    #: A session minted on the password alone (`mfa_satisfied_at` unset) of a user who has
+    #: `mfa_required`, inside its 15 minutes: only the five enrolment operations.
     ENROLMENT_ONLY = "enrolment_only"
     #: As `ENROLMENT_ONLY`, but its absolute expiry has passed (a refreshed access handle
-    #: outlives it), or lies more than `ENROLMENT_ONLY_LIFETIME` ahead, so it was not minted
-    #: as one (say, a full session whose user then lost every method). Refused like an
-    #: expired session: the user signs in again (Q7).
+    #: outlives it), or it was not minted as one: its expiry lies more than
+    #: `ENROLMENT_ONLY_LIFETIME` ahead, or it proved a second factor (a full session whose user
+    #: then lost every method). Refused like an expired session: the user signs in again (Q7).
     ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
     #: The user is disabled or gone, whatever else holds: #2911 answers, not this class. The
     #: HTTP guard leaves the request to its route, whose `require_active` revokes the session
@@ -279,13 +279,19 @@ def classify_session(
     `mfa_satisfied=False`, on the password alone) stays restricted even once its user has a
     confirmed method. Revoke-all at confirm (ADR-0010 decision 2) ends such sessions; should
     one be missed, it still never turns full. `mint` sets `mfa_satisfied_at` by default (the
-    MFA verify path) and `refresh` hands it on, so a full session keeps it."""
+    MFA verify path) and `refresh` hands it on, so a full session keeps it.
+
+    Conversely, a session that proved a second factor its user no longer has is never
+    enrolment-only (deny by default, C-12.4): every enrolment-only session is minted on the
+    password alone, so such a session (one a recovery sign-in or an owner reset left behind)
+    was not minted as one, and could otherwise enrol another TOTP in its last 15 minutes."""
     if user is None or user.status is UserStatus.DISABLED:
         return SessionClass.USER_INACTIVE
-    if not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None):
+    proved = session.mfa_satisfied_at is not None
+    if not user.mfa_required or (user.mfa_methods and proved):
         return SessionClass.FULL
     remaining = session.expires_at - now
-    if remaining <= timedelta(0) or remaining > ENROLMENT_ONLY_LIFETIME:
+    if proved or remaining <= timedelta(0) or remaining > ENROLMENT_ONLY_LIFETIME:
         return SessionClass.ENROLMENT_ONLY_EXPIRED
     return SessionClass.ENROLMENT_ONLY
 

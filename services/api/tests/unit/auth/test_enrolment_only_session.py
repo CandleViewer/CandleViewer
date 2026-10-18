@@ -4,7 +4,8 @@ Decisions on #2295 and the contract of #2661: the class is derived from the user
 every call, never from a session flag. `mfa_required` with no confirmed MFA method makes every
 session of the user enrolment-only; such a session lives at most 15 minutes from sign-in and
 refresh never extends it (Q7), so one whose expiry lies further ahead, or has passed, is refused.
-A session that never proved a second factor stays restricted even once its user has one.
+A session that never proved a second factor stays restricted even once its user has one, and one
+that proved a factor its user no longer has was not minted as one, so it is refused too.
 """
 
 from __future__ import annotations
@@ -78,12 +79,10 @@ def _session(user_id: uuid.UUID, *, expires_in: timedelta, proved: bool = True) 
     ("user", "expires_in", "expected"),
     [
         (_user(methods=_TOTP), timedelta(hours=12), _FULL),
-        (_user(), timedelta(microseconds=1), _ONLY),  # its last instant
-        (_user(), timedelta(minutes=15), _ONLY),  # Q7: exactly the window
-        (_user(), timedelta(0), _EXPIRED),  # dead at its expiry, as `is_absolute_expired` says
-        (_user(), -timedelta(minutes=1), _EXPIRED),  # a refreshed access handle outlives it
-        (_user(), timedelta(minutes=15, microseconds=1), _EXPIRED),
-        (_user(), timedelta(hours=12), _EXPIRED),  # never minted as one
+        # a factor its user has since lost: never minted as one (deny by default, C-12.4)
+        (_user(), timedelta(microseconds=1), _EXPIRED),
+        (_user(), timedelta(minutes=15), _EXPIRED),
+        (_user(), timedelta(hours=12), _EXPIRED),
         (_user(mfa_required=False), timedelta(hours=12), _FULL),  # the decided rule; C-12.2
         # #2911 answers a user who is gone or disabled: the route revokes the session
         (None, timedelta(minutes=5), _INACTIVE),
@@ -106,7 +105,12 @@ def test_classify_session_truth_table(
     [
         (_user(methods=_TOTP), timedelta(minutes=15), _ONLY),  # its user enrolled meanwhile
         (_user(methods=_TOTP), timedelta(hours=12), _EXPIRED),
-        (_user(), timedelta(minutes=15), _ONLY),
+        (_user(), timedelta(microseconds=1), _ONLY),  # its last instant
+        (_user(), timedelta(minutes=15), _ONLY),  # Q7: exactly the window
+        (_user(), timedelta(0), _EXPIRED),  # dead at its expiry, as `is_absolute_expired` says
+        (_user(), -timedelta(minutes=1), _EXPIRED),  # a refreshed access handle outlives it
+        (_user(), timedelta(minutes=15, microseconds=1), _EXPIRED),
+        (_user(), timedelta(hours=12), _EXPIRED),  # never minted as one
         (_user(mfa_required=False), timedelta(hours=12), _FULL),  # nothing to prove
     ],
 )
@@ -145,7 +149,8 @@ def test_classify_session_is_full_exactly_when_a_second_factor_is_proven_or_not_
     assert (verdict is _FULL) is full
     if not (full or inactive):
         left = timedelta(seconds=seconds_left)
-        assert (verdict is _EXPIRED) is (left <= timedelta(0) or left > ENROLMENT_ONLY_LIFETIME)
+        expired = proved or left <= timedelta(0) or left > ENROLMENT_ONLY_LIFETIME
+        assert (verdict is _EXPIRED) is expired
 
 
 # -- AuthService: the one place both HTTP and WS ask -------------------------------------------
@@ -180,14 +185,14 @@ async def test_classify_reads_the_sessions_own_user_on_every_call() -> None:
     users.add(enrolling)
     users.add(other)
     auth = await _auth(users)
-    session = _session(enrolling.id, expires_in=timedelta(minutes=10))
+    session = _session(enrolling.id, expires_in=timedelta(minutes=10))  # it proved a factor
 
-    assert await auth.classify(session) is _ONLY
+    assert await auth.classify(session) is _EXPIRED  # one its user does not have
     assert await auth.classify(_session(other.id, expires_in=timedelta(minutes=10))) is _FULL
     users.add(enrolling.model_copy(update={"mfa_methods": _TOTP}))  # confirmed elsewhere
     assert await auth.classify(session) is _FULL
     users.add(enrolling.model_copy(update={"mfa_methods": ()}))  # e.g. a recovery sign-in
-    assert await auth.classify(session) is _ONLY
+    assert await auth.classify(session) is _EXPIRED
 
 
 async def test_classify_keeps_a_password_only_session_restricted_once_its_user_enrols() -> None:
@@ -223,7 +228,7 @@ async def test_classify_uses_the_injected_clock() -> None:
     user = _user()
     users.add(user)
     auth = await _auth(users, clock=clock)
-    session = _session(user.id, expires_in=timedelta(minutes=20))
+    session = _session(user.id, expires_in=timedelta(minutes=20), proved=False)
 
     assert await auth.classify(session) is _EXPIRED
     clock.now = T0 + timedelta(minutes=5)  # 15 minutes left now

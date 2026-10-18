@@ -74,10 +74,10 @@ info:
       the audit writer is saturated: the same `403` and no audit record; the metric
       `auth_enrolment_refused_total` counts every refusal). A session that cannot be checked
       answers `503 store_unavailable` (fail closed). One past its 15 minutes, or whose expiry lies
-      further ahead (it was not minted as one), answers `401` as an expired token does
-      (`refresh_token_invalid` on `POST /auth/refresh`), except on `POST /auth/logout`. The
-      WebSocket refuses the session at `auth` (`23-ws-protocol.md` section 4.3), audited the same
-      way.
+      further ahead or that proved a second factor (it was not minted as one), answers `401` as an
+      expired token does (`refresh_token_invalid` on `POST /auth/refresh`), except on
+      `POST /auth/logout`. The WebSocket refuses the session at `auth` (`23-ws-protocol.md` section
+      4.3), audited the same way.
     * **Lifetime.** A session minted enrolment-only lives at most 15 minutes from sign-in.
       `POST /auth/refresh` rotates it as usual, but the successor keeps the same absolute expiry,
       so refresh never extends it; `refresh_expires_in` and the cookies' `Max-Age` count down to
