@@ -1,4 +1,10 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+
+// Playwright resolves a relative webServer.cwd against this file's directory (e2e/), not the
+// package root: "../web" named a missing apps/desktop/web (#3366). Anchor it to apps/web.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // apps/desktop Playwright-Electron config (E02-T04): hardening assertion +
 // main-window smoke specs.
@@ -16,7 +22,7 @@ export default defineConfig({
     command: "npx vite preview --port 4173 --strictPort --host 127.0.0.1",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env["CI"],
-    cwd: "../web",
+    cwd: path.resolve(__dirname, "../../web"),
     timeout: 120_000,
   },
   use: {
