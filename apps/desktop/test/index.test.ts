@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
-import { BrowserWindow, protocol, session } from "electron";
+import { app, BrowserWindow, protocol, session } from "electron";
 import { buildCsp } from "../src/main/csp";
+import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
+import { logAuditEvent } from "../src/main/logger";
 
 // src/main/index.ts calls app.on(...) / app.whenReady() at module scope, so
 // the real "electron" module (unavailable under vitest's node environment)
@@ -18,6 +20,7 @@ vi.mock("electron", () => ({
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
     quit: vi.fn(),
     commandLine: { appendSwitch: vi.fn() },
+    isPackaged: false,
   },
   BrowserWindow: vi.fn().mockImplementation(() => ({
     webContents: {
@@ -40,11 +43,25 @@ vi.mock("electron", () => ({
   shell: { openExternal: vi.fn() },
 }));
 
+// Captures the shell's log lines in memory; the real logger appends to a file in userData.
+vi.mock("../src/main/logger", () => ({ logStartup: vi.fn(), logAuditEvent: vi.fn() }));
+
 // The default load path is under test: no dev server.
 delete process.env["CV_DEV_SERVER_URL"];
 
-const { isNavigationAllowed, safeOriginOf, isExternalLinkAllowed } =
+const { isNavigationAllowed, safeOriginOf, isExternalLinkAllowed, createMainWindow } =
   await import("../src/main/index");
+
+/** A dev-server URL the shell accepted: the only kind isNavigationAllowed takes. */
+function acceptedDevUrl(raw: string): DevServerUrl {
+  const resolution = resolveDevServerUrl(raw, false);
+  if (resolution.kind !== "accepted") {
+    throw new Error(`${raw} is not an accepted dev-server URL`);
+  }
+  return resolution.url;
+}
+
+const DEV = acceptedDevUrl("http://localhost:5173");
 
 const APP_ROOT = path.resolve(
   process.platform === "win32" ? "C:\\app\\web\\dist" : "/app/web/dist",
@@ -75,23 +92,21 @@ describe("isNavigationAllowed", () => {
   });
 
   it("allows navigation to exactly the dev server origin", () => {
-    expect(isNavigationAllowed("http://localhost:5173/", "http://localhost:5173")).toBe(true);
-    expect(isNavigationAllowed("http://localhost:5173/route", "http://localhost:5173")).toBe(true);
+    expect(isNavigationAllowed("http://localhost:5173/", DEV)).toBe(true);
+    expect(isNavigationAllowed("http://localhost:5173/route", DEV)).toBe(true);
   });
 
   it("denies a lookalike host that merely starts with the dev origin string", () => {
-    expect(isNavigationAllowed("http://localhost:5173.evil.test/", "http://localhost:5173")).toBe(
-      false,
-    );
+    expect(isNavigationAllowed("http://localhost:5173.evil.test/", DEV)).toBe(false);
   });
 
   it("denies a different scheme or port than the dev server", () => {
-    expect(isNavigationAllowed("https://localhost:5173/", "http://localhost:5173")).toBe(false);
-    expect(isNavigationAllowed("http://localhost:9999/", "http://localhost:5173")).toBe(false);
+    expect(isNavigationAllowed("https://localhost:5173/", DEV)).toBe(false);
+    expect(isNavigationAllowed("http://localhost:9999/", DEV)).toBe(false);
   });
 
   it("denies the app origin while a dev server is configured", () => {
-    expect(isNavigationAllowed("app://candleviewer/", "http://localhost:5173")).toBe(false);
+    expect(isNavigationAllowed("app://candleviewer/", DEV)).toBe(false);
   });
 
   it("denies an unparseable URL", () => {
@@ -171,6 +186,69 @@ describe("app:// wiring (#3410)", () => {
       responseHeaders: { "x-a": ["b"], "Content-Security-Policy": [buildCsp()] },
     });
   });
+});
+
+interface MockWindow {
+  readonly webContents: { readonly on: Mock };
+  readonly loadURL: Mock;
+}
+
+type NavigateListener = (event: { preventDefault: () => void }, url: string) => void;
+
+describe("CV_DEV_SERVER_URL in the main window (#3411)", () => {
+  afterEach(() => {
+    delete process.env["CV_DEV_SERVER_URL"];
+    Object.assign(app, { isPackaged: false });
+  });
+
+  /** Opens a main window with `raw` set; reports what it loaded, what it logged, and its guard. */
+  function openMainWindow(raw: string, isPackaged: boolean) {
+    process.env["CV_DEV_SERVER_URL"] = raw;
+    Object.assign(app, { isPackaged });
+    vi.mocked(logAuditEvent).mockClear();
+    createMainWindow();
+    const logs = [...vi.mocked(logAuditEvent).mock.calls];
+    const win = vi.mocked(BrowserWindow).mock.results.at(-1)?.value as MockWindow;
+    const onNavigate = win.webContents.on.mock.calls.find(
+      ([name]) => name === "will-navigate",
+    )?.[1];
+    if (typeof onNavigate !== "function") {
+      throw new Error("no will-navigate listener registered");
+    }
+    /** True when the window's will-navigate guard lets `url` through. */
+    const navigates = (url: string): boolean => {
+      const event = { preventDefault: vi.fn() };
+      (onNavigate as NavigateListener)(event, url);
+      return event.preventDefault.mock.calls.length === 0;
+    };
+    return { loaded: win.loadURL.mock.calls[0]?.[0] as unknown, logs, navigates };
+  }
+
+  it("loads an accepted loopback dev server and allows navigation on its origin only", () => {
+    const win = openMainWindow("http://127.0.0.1:4173", false);
+    expect(win.loaded).toBe("http://127.0.0.1:4173/");
+    expect(win.logs).toEqual([]);
+    expect(win.navigates("http://127.0.0.1:4173/terminal")).toBe(true);
+    expect(win.navigates("http://localhost:4173/")).toBe(false);
+    expect(win.navigates("app://candleviewer/")).toBe(false);
+  });
+
+  it.each([
+    ["http://example.test:4173", false, "not-loopback-http"],
+    ["https://127.0.0.1:4173", false, "not-loopback-http"],
+    ["http://127.0.0.1", false, "malformed"],
+    ["http://127.0.0.1:4173", true, "unpackaged-only"],
+  ] as const)(
+    "ignores %s (packaged: %s): loads app://, logs %s only",
+    (raw, isPackaged, reason) => {
+      const win = openMainWindow(raw, isPackaged);
+      expect(win.loaded).toBe("app://candleviewer/");
+      expect(win.logs).toEqual([["dev-server-url-ignored", { reason }]]);
+      expect(JSON.stringify(win.logs)).not.toContain(raw);
+      expect(win.navigates(`${new URL(raw).origin}/`)).toBe(false);
+      expect(win.navigates("app://candleviewer/terminal")).toBe(true);
+    },
+  );
 });
 
 describe("isExternalLinkAllowed (SR-113)", () => {
