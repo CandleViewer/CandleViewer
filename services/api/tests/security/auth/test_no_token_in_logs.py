@@ -10,6 +10,7 @@ the un-prefixed `token_urlsafe` values the services mint today).
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import structlog
@@ -316,6 +318,33 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         literals["access_token_5"] = r.json()["tokens"]["access_token"]
         literals["refresh_cookie_5"] = refresh5
         literals["csrf_token_5"] = _csrf(r)
+        # 6. #2344 then #2295: no method is left (this user store does not derive them, so it is
+        # told), the password signs in enrolment-only, and that session enrols and confirms a
+        # new TOTP. The seed, its code and the 10 new recovery codes are secrets too.
+        users.add(user.model_copy(update={"mfa_methods": ()}))
+        clock.now += timedelta(seconds=60)
+        r = client.post("/auth/login", json={"identifier": "basiltt", "password": _PASSWORD})
+        assert (r.status_code, r.json()["status"]) == (200, "authenticated"), r.text
+        access6, csrf6 = r.json()["tokens"]["access_token"], _csrf(r)
+        literals.update(access_token_6=access6, refresh_cookie_6=r.cookies["cv_refresh"])
+        literals["csrf_token_6"] = csrf6
+        bearer6 = {"Authorization": f"Bearer {access6}", "X-CSRF-Token": csrf6}
+        r = client.post("/auth/mfa/enroll", headers=bearer6, json={"method": "totp"},
+                        cookies={CSRF_COOKIE: csrf6})  # fmt: skip
+        assert r.status_code == 201, r.text
+        method_id, uri = r.json()["method_id"], r.json()["otpauth_uri"]
+        secret = parse_qs(urlparse(uri).query)["secret"][0]
+        literals.update(otpauth_uri=uri, totp_seed_b32_2=secret)
+        seed2 = base64.b32decode(secret + "=" * (-len(secret) % 8))
+        literals["totp_code_4"] = generate_code(seed2, time_step_for(clock.now.timestamp()))
+        body = {"method_id": method_id, "code": literals["totp_code_4"]}
+        r = client.post("/auth/mfa/enroll/confirm", headers=bearer6, json=body,
+                        cookies={CSRF_COOKIE: csrf6})  # fmt: skip
+        assert r.status_code == 200, r.text
+        new_codes = r.json()["recovery_codes"]
+        literals.update({f"new_recovery_code_{i}": code for i, code in enumerate(new_codes)})
+        literals.update(access_token_7=r.json()["tokens"]["access_token"], csrf_token_7=_csrf(r))
+        literals["refresh_cookie_7"] = r.cookies["cv_refresh"]
         # wrong password / wrong code failure paths
         client.post("/auth/login", json={"identifier": "basiltt", "password": "pw-bad-7"})
         literals["bad_login_password"] = "pw-bad-7"  # noqa: S105
