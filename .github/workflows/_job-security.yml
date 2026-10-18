@@ -62,7 +62,8 @@ jobs:
       security-events: write # required to upload SARIF to code scanning
     env:
       # The one language list: init analyses these and the gate needs a SARIF for each (#3261).
-      CODEQL_LANGUAGES: javascript-typescript,python
+      # CV_, not CODEQL_: every step sees it, and CODEQL_* belongs to the CodeQL action and CLI.
+      CV_CODEQL_LANGUAGES: javascript-typescript,python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,7 +78,7 @@ jobs:
 
       - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
-          languages: ${{ env.CODEQL_LANGUAGES }}
+          languages: ${{ env.CV_CODEQL_LANGUAGES }}
           config-file: ./.github/codeql/codeql-config.yml
 
       # analyze writes one <language>.sarif per language under runner.temp, which the job starts
@@ -99,24 +100,27 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          IFS=', ' read -ra langs <<< "${CODEQL_LANGUAGES:-}"
-          if [ "${#langs[@]}" -eq 0 ]; then
-            echo "CI-SEC-005: CODEQL_LANGUAGES names no language — nothing to judge" >&2
+          dir="$RUNNER_TEMP/codeql-results"
+          if ! [[ "${CV_CODEQL_LANGUAGES:-}" =~ ^[a-z-]+(,[a-z-]+)*$ ]]; then
+            echo "CI-SEC-005: CV_CODEQL_LANGUAGES='${CV_CODEQL_LANGUAGES:-}' is not a language list" >&2
             exit 1
           fi
+          IFS=, read -ra langs <<< "$CV_CODEQL_LANGUAGES"
           status=0
           for lang in "${langs[@]}"; do
             # analyze names the file after the CodeQL language (javascript-typescript is analysed
             # as javascript, run 39070557384); any other alias expects a file that never appears,
             # so it fails closed until it is mapped here.
             case "$lang" in javascript-typescript) name=javascript ;; *) name="$lang" ;; esac
-            f="$RUNNER_TEMP/codeql-results/$name.sarif"
-            if [ ! -f "$f" ]; then
-              echo "CI-SEC-005: codeql produced no SARIF for $lang ($f) — scanner infrastructure failure" >&2
-              status=1
-            elif ! python tools/ci/security_gate.py --tool codeql --report "$f"; then
+            if [ ! -f "$dir/$name.sarif" ]; then
+              echo "CI-SEC-005: codeql produced no SARIF for $lang ($dir/$name.sarif) — scanner infrastructure failure" >&2
               status=1
             fi
+          done
+          # Judge every SARIF the upload sends: it walks the whole tree, dot-entries included.
+          shopt -s globstar nullglob dotglob
+          for f in "$dir"/**/*.sarif; do
+            python tools/ci/security_gate.py --tool codeql --report "$f" || status=1
           done
           exit "$status"
 
@@ -127,8 +131,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          shopt -s nullglob
-          files=("$RUNNER_TEMP/codeql-results/"*.sarif)
+          shopt -s globstar nullglob dotglob
+          files=("$RUNNER_TEMP/codeql-results/"**/*.sarif)
           if [ "${#files[@]}" -gt 0 ]; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
 
       - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3

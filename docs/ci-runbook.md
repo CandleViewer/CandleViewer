@@ -209,7 +209,7 @@ diff` cannot see because they were never tracked. `git add` them in the
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).
   For `codeql` it also fires per language: each one in the job's
-  `CODEQL_LANGUAGES` needs a SARIF that this run's analyze wrote under the
+  `CV_CODEQL_LANGUAGES` needs a SARIF that this run's analyze wrote under the
   runner's temp directory, and the message names the language without one.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
