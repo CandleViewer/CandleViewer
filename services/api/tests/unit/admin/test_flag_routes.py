@@ -5,6 +5,7 @@ guard leaves (the guard's own records are E42-T01's)."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -131,6 +132,8 @@ def test_the_body_cap_is_exact_and_past_it_is_422_body_too_large() -> None:
         (write(value="a\x00"), "", "invalid_character"),
         (write(evidence_url="https://x.example/\x00"), "", "invalid_character"),
         (write(overrides=[{"user_id": str(KNOWN), "value": "\x00"}]), "", "invalid_character"),
+        (write(overrides=[{"user_id": "\x00", "value": True}]), "", "invalid_character"),
+        (write(expected_updated_at="2026-10-15T08:00:00+00:00\x00"), "", "invalid_character"),
         (write(**{"a\x00": 1}), "", "invalid_character"),  # in a key
         (_with('"\\ud800"'), "", "invalid_character"),  # a lone surrogate: no UTF-8
         (_with('"\\udfff"'), "", "invalid_character"),  # ...at the other edge of its range
@@ -152,19 +155,59 @@ def test_a_body_the_contract_refuses_is_422_and_audited(
     assert _changes(audit)[-1]["reason"] == rule
 
 
-#: `api.feature_flags._REFUSED` at both edges of each of its ranges, and DEL; with the characters
-#: the contract names: `\t`, `\n` and `\r` (a multi-line reason), ZWNJ and ZWJ (an emoji sequence).
-_REFUSED_CHARS = "\x00\t\n\r\x1f\x7f\u200b\u200c\u200d\u200f\u202a\u202e\u2066\u2069"
+#: What `api.feature_flags._REFUSED` refuses: both edges of each of its ranges, a mid-point of the
+#: C1 and Tags ranges, DEL, and the characters the contract names: `\t`, `\n` and `\r` (a multi-line
+#: reason), ZWNJ and ZWJ (an emoji sequence). Numbers, not escapes, so that no source line of this
+#: file can hold an invisible character.
+_REFUSED_CODES = (
+    0x0000,  # NUL
+    0x0009,  # tab
+    0x000A,  # LF
+    0x000D,  # CR
+    0x001F,  # the C0 range's last
+    0x007F,  # DEL
+    0x0080,  # the C1 range's first
+    0x0090,  # ...the mid-point
+    0x009F,  # ...and its last
+    0x061C,  # ARABIC LETTER MARK
+    0x200B,  # ZERO WIDTH SPACE
+    0x200C,  # ZWNJ
+    0x200D,  # ZWJ
+    0x200F,  # RIGHT-TO-LEFT MARK
+    0x2028,  # LINE SEPARATOR
+    0x2029,  # PARAGRAPH SEPARATOR
+    0x202A,  # LEFT-TO-RIGHT EMBEDDING
+    0x202E,  # RIGHT-TO-LEFT OVERRIDE
+    0x2066,  # LEFT-TO-RIGHT ISOLATE
+    0x2069,  # POP DIRECTIONAL ISOLATE
+    0xFEFF,  # BYTE ORDER MARK
+    0xE0000,  # the Tags block's first
+    0xE0040,  # ...the mid-point (TAG COMMERCIAL AT)
+    0xE007F,  # ...and its last (CANCEL TAG)
+)
 
 
-@pytest.mark.parametrize("char", _REFUSED_CHARS, ids=lambda char: f"U+{ord(char):04X}")
-def test_a_control_zero_width_or_bidi_character_in_the_reason_is_422_and_audited(char: str) -> None:
+def _as_the_reason(text: str) -> dict[str, Any]:
+    return write(reason=text)
+
+
+def _as_a_member_name(text: str) -> dict[str, Any]:
+    return write(**{text: 1})  # a member the request does not define: still refused as a name
+
+
+@pytest.mark.parametrize(
+    "where", [_as_the_reason, _as_a_member_name], ids=["reason", "member-name"]
+)
+@pytest.mark.parametrize("code", _REFUSED_CODES, ids=lambda code: f"U+{code:04X}")
+def test_a_refused_character_in_a_reason_or_a_member_name_is_422_and_audited(
+    code: int, where: Callable[[str], dict[str, Any]]
+) -> None:
     c, audit = client()
-    response = put(c, write(reason=f"a{char}b"))
+    response = put(c, where(f"a{chr(code)}b"))
     assert (response.status_code, response.json()["errors"]) == (
         422,
         [{"field": "", "rule": "invalid_character"}],
-    )
+    )  # `invalid_character`, never `extra_forbidden`: the walk runs before the schema
     assert _changes(audit)[-1]["reason"] == "invalid_character"
 
 

@@ -100,7 +100,8 @@ async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_requ
     bound to the request the challenge refused (#2304): here through the app's own step-up port and
     audit emitter, and the real `StepUpService`. A write with another body is refused and audited,
     the grant stays, and the held request, re-sent unchanged, commits once."""
-    w, owner, _ = await _owner(monkeypatch)
+    w, owner, uid = await _owner(monkeypatch)
+    session = await w.auth.sessions.authenticate_access_token(owner)  # the one the grant is on
 
     def shown() -> dict[str, Any]:
         items = w.client.get("/admin/feature-flags", headers=_h(owner)).json()["items"]
@@ -133,6 +134,7 @@ async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_requ
 
     swapped = put(other)  # the grant is bound to `held`, not to this body
     assert (swapped.status_code, swapped.json()["code"]) == (403, "step_up_required")
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(swapped.json())  # as the first one is
     assert swapped.json()["challenge_id"] != challenge_id  # a challenge for this very request
     [mismatch] = w.audit.of("auth.step_up_mismatch")
     assert (mismatch["object_id"], mismatch["reason"], mismatch["outcome"]) == (
@@ -140,10 +142,18 @@ async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_requ
         "live_enablement",
         AuditOutcome.DENIED,
     )
+    assert (mismatch["actor_user_id"], mismatch["session_id"]) == (str(uid), str(session.id))
     assert mismatch["after_state"] == {
         "bound_request_sha256": held_hash,
         "refused_request_sha256": request_fingerprint("PUT", target.encode(), other),
     }
+    steps = [call["action"] for call in w.audit.calls if call["action"].startswith("auth.step_up")]
+    assert steps == [  # the mismatch is written ahead of the fresh challenge's own record
+        "auth.step_up_required",
+        "auth.step_up_granted",
+        "auth.step_up_mismatch",
+        "auth.step_up_required",
+    ]
     assert (w.audit.of("flags.change"), shown()["value"]) == ([], False)  # nothing was written
 
     committed = put(held)  # the held request, re-sent unchanged, spends the grant
