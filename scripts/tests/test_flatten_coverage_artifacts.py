@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -186,17 +187,32 @@ def test_the_pr_job_hands_flatten_the_summary_its_comment_posts() -> None:
     assert "always()" in comment["if"]
 
 
-@pytest.mark.parametrize("workflow", [PR_JOB, RATCHET_JOB])
+def _gate_jobs(workflow: Path) -> list[list[dict[str, Any]]]:
+    """The steps of each job in `workflow` that runs the coverage gate."""
+    jobs = yaml.safe_load(workflow.read_text(encoding="utf-8")).get("jobs", {})
+    steps = [job.get("steps", []) for job in jobs.values()]
+    return [s for s in steps if any("coverage_gate" in x.get("run", "") for x in s)]
+
+
+GATE_WORKFLOWS = [p for p in sorted(PR_JOB.parent.glob("*.y*ml")) if _gate_jobs(p)]
+
+
+def test_the_order_pin_finds_both_workflows_that_run_the_gate_today() -> None:
+    assert {PR_JOB, RATCHET_JOB} <= set(GATE_WORKFLOWS)
+
+
+@pytest.mark.parametrize("workflow", GATE_WORKFLOWS, ids=lambda p: p.name)
 def test_the_gate_reads_reports_only_after_flatten_succeeded(workflow: Path) -> None:
     # The gate trusts <artifact>/<package-slug>/ as flatten refuses a download that
     # already holds one (#3562): a refusal must end the job before the gate step.
-    for job in yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"].values():
-        runs = [step.get("run", "") for step in job["steps"]]
+    # Every workflow with a job that runs the gate is checked, not a fixed list.
+    for steps in _gate_jobs(workflow):
+        runs = [step.get("run", "") for step in steps]
         (flat,) = [i for i, run in enumerate(runs) if "flatten_coverage" in run]
-        gate = [i for i, run in enumerate(runs) if "coverage_gate.py" in run]
-        assert gate and flat < min(gate)
+        gate = [i for i, run in enumerate(runs) if "coverage_gate" in run]
+        assert flat < min(gate)
         for i in (flat, *gate):
-            assert not {"if", "continue-on-error"} & set(job["steps"][i]), runs[i]
+            assert not {"if", "continue-on-error"} & set(steps[i]), runs[i]
 
 
 # --- Each package is judged on its own report (#3562) ------------------------

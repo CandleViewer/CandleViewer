@@ -423,8 +423,9 @@ index alone, removing nothing.
   that lane's upload step; a silently-missing report must never pass.
   Each package is judged only on its own report, which `flatten_coverage_artifacts.py` copies to
   `<artifact>/<package-slug>/` (#3562): another package's report never stands in for a missing
-  one. flatten also reports `coverage-baselines.json` errors with this code: two packages naming
-  one upload path, or a package name that is not two or more lowercase `/`-separated segments.
+  one. flatten also reports `coverage-baselines.json` errors with this code, for example two
+  packages naming one upload path or one report directory (`a-b/c` and `a/b-c` both map to
+  `a-b-c`), or a package name that is not two or more lowercase `/`-separated segments.
   In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
   5 days) is missing: the lane died before writing it, or a "Re-run failed
   jobs" came after the green lanes' data expired; then use "Re-run all jobs".
