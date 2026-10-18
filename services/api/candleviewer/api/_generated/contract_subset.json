@@ -2241,6 +2241,16 @@
         }
       }
     },
+    "/admin/keys/kek-rewrap": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "keys:manage"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/log-level": {
       "put": {
         "x-rbac": {

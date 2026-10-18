@@ -5804,6 +5804,74 @@ class SecuritySummary(BaseModel):
     findings: list[Finding] | None = None
 
 
+class KekRewrapRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    to_version: Annotated[
+        int,
+        Field(
+            description="The environment's current KEK version; rows move from `to_version - 1`. The maximum is that of the `integer` column `kek_versions.version`.\n",
+            ge=2,
+            le=2147483647,
+        ),
+    ]
+
+
+class KekRewrapResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    run_id: Annotated[
+        UUID, Field(description="This run. Every audit record of the run carries it.")
+    ]
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    from_version: Annotated[
+        int, Field(description="The previous KEK version, `to_version - 1`.", ge=1, le=2147483646)
+    ]
+    to_version: Annotated[int, Field(ge=2, le=2147483647)]
+    resumed: Annotated[
+        bool,
+        Field(
+            description="True when this run opened with `security.kek_rotation_resumed`: an earlier run had already moved rows of this rotation and unrevoked API key rows were still left at `from_version`. False when it opened with `security.kek_rotation_started`: no earlier run had moved a row, or no row was left to move.\n"
+        ),
+    ]
+    rewrapped: Annotated[
+        int, Field(description="API key rows this run moved to `to_version`.", ge=0)
+    ]
+    remaining: Annotated[
+        int,
+        Field(
+            description="Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves.\n",
+            ge=0,
+        ),
+    ]
+    failed: Annotated[
+        int,
+        Field(
+            description="API key rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`.\n",
+            ge=0,
+        ),
+    ]
+    complete: Annotated[
+        bool,
+        Field(
+            description="True when the run ended with `security.kek_rotated`: no unrevoked API key row and no auth keyring row is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
+        ),
+    ]
+
+
 class TradingDisabledProblem(Problem):
     code: Annotated[
         Literal["trading_disabled"],

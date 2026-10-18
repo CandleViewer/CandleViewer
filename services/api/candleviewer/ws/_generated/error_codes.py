@@ -45,6 +45,8 @@ class ErrorCode(StrEnum):
     IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
     OPEN_EXPOSURE = "open_exposure"
     EXPOSURE_UNKNOWN = "exposure_unknown"
+    KEK_ROTATION_NOT_STAGED = "kek_rotation_not_staged"
+    KEK_ROTATION_IN_PROGRESS = "kek_rotation_in_progress"
     VERSION_CONFLICT = "version_conflict"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     GONE = "gone"
@@ -133,6 +135,8 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
     ErrorCode.OPEN_EXPOSURE: ErrorMeta(("rest",), None, False, None, None, "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"),
     ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because none of its keys can be used to read it"),
+    ErrorCode.KEK_ROTATION_NOT_STAGED: ErrorMeta(("rest",), None, False, None, None, "No KEK rotation is staged as the request states (previous KEK not loaded, or another environment or version)"),
+    ErrorCode.KEK_ROTATION_IN_PROGRESS: ErrorMeta(("rest",), None, True, None, None, "A KEK re-wrap run is already in progress for this environment"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
