@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { SceneA } from "../../../bench/scenes/scene-a.mjs";
-import { runScenario } from "../../../bench/runner.mjs";
-import { captureMachineDescriptor } from "../../../bench/machine.mjs";
+import { buildDriverScript } from "../../../bench/driver.mjs";
 import { generateM0Fixture } from "../../../bench/fixtures/index.mjs";
 
-function machine() {
-  return captureMachineDescriptor({ gpu: "test-stub-gpu", driver: "test-stub-driver" });
-}
-
 // Scoped to this file only: 100k-bar fixture generation is slow under v8 coverage
-// instrumentation (vitest 3). The perf budgets asserted below are unchanged.
+// instrumentation (vitest 3). Wall-clock budgets are not asserted here (this project runs under
+// coverage); they live in scene-a.perf.test.ts. #3578
 vi.setConfig({ testTimeout: 60_000 });
 
 describe("SceneA (E06-K02 throwaway prototype) — BenchScene conformance + budgets", () => {
@@ -27,27 +23,19 @@ describe("SceneA (E06-K02 throwaway prototype) — BenchScene conformance + budg
     scene.dispose();
   });
 
-  it("static-frame time does not scale measurably with total bar count (10k vs 100k, <=10% diff)", () => {
-    const fixture10k = generateM0Fixture({ seed: 1, barCount: 10_000 });
-    const fixture100k = generateM0Fixture({ seed: 1, barCount: 100_000 });
-
-    const scene10k = new SceneA();
-    scene10k.init(fixture10k);
-    scene10k.step(0, { tMs: 0, kind: "none" });
-    const t10k = scene10k.stats().frameTimeMs;
-    scene10k.dispose();
-
-    const scene100k = new SceneA();
-    scene100k.init(fixture100k);
-    scene100k.step(0, { tMs: 0, kind: "none" });
-    const t100k = scene100k.stats().frameTimeMs;
-    scene100k.dispose();
-
-    // Both scenes show the same *visible* window (viewport math is
-    // independent of total store length), so frame cost should be
-    // near-identical regardless of the 10x difference in total bars.
-    const diffRatio = Math.abs(t100k - t10k) / Math.max(t10k, 1e-6);
-    expect(diffRatio).toBeLessThanOrEqual(0.1);
+  it("static-frame work does not scale with total bar count: 10k vs 100k (timing: scene-a.perf.test.ts)", () => {
+    // Both stores show the same visible window (viewport math is independent of total store
+    // length), so the counted work per frame is identical; the 10% frame-time claim is timed in
+    // the perf file.
+    const work = (barCount: number) => {
+      const scene = new SceneA();
+      scene.init(generateM0Fixture({ seed: 1, barCount }));
+      scene.step(0, { tMs: 0, kind: "none" });
+      const { barsTouched, currentLod, drawCalls, bufferBytesUploaded } = scene.extendedStats();
+      scene.dispose();
+      return { barsTouched, currentLod, drawCalls, bufferBytesUploaded };
+    };
+    expect(work(100_000)).toEqual(work(10_000));
   });
 
   it("exposes currentLod in stats() per US-CHART-001 (aggregation level indicated)", () => {
@@ -59,48 +47,16 @@ describe("SceneA (E06-K02 throwaway prototype) — BenchScene conformance + budg
     scene.dispose();
   });
 
-  it("B1: continuous pan holds p95 <= 12ms and drawCalls <= 8", () => {
-    const fixture = generateM0Fixture({ seed: 42, barCount: 100_000 });
+  it("B1: continuous pan issues <= 8 draw calls on every frame (timing: scene-a.perf.test.ts)", () => {
     const scene = new SceneA();
-    scene.init(fixture);
-    const report = runScenario({
-      scene,
-      scenario: "B1",
-      durationMs: 5000,
-      repetitions: 3,
-      runtime: "chromium",
-      runtimeVersion: "test",
-      machine: machine(),
-      seed: 42,
-      lodProfile: "LOD_PROFILE_M0",
-      peakProcessMemMB: 0,
-      peakProcessMemSource: "test",
-    });
+    scene.init(generateM0Fixture({ seed: 42, barCount: 100_000 }));
+    let mostDrawCalls = 0;
+    for (const event of buildDriverScript({ scenario: "B1", durationMs: 5000 })) {
+      scene.step(event.tMs, event);
+      mostDrawCalls = Math.max(mostDrawCalls, scene.stats().drawCalls);
+    }
     scene.dispose();
-    expect(report.p95).toBeLessThanOrEqual(12);
-    expect(report.drawCalls).toBeLessThanOrEqual(8);
-  });
-
-  it("B2: zoom sweep holds p95 <= 14ms with <= 6 LOD changes", () => {
-    const fixture = generateM0Fixture({ seed: 42, barCount: 100_000 });
-    const scene = new SceneA();
-    scene.init(fixture);
-    const report = runScenario({
-      scene,
-      scenario: "B2",
-      durationMs: 5000,
-      repetitions: 3,
-      runtime: "chromium",
-      runtimeVersion: "test",
-      machine: machine(),
-      seed: 42,
-      lodProfile: "LOD_PROFILE_M0",
-      peakProcessMemMB: 0,
-      peakProcessMemSource: "test",
-    });
-    scene.dispose();
-    expect(report.p95).toBeLessThanOrEqual(14);
-    // lodChanges is scene-level state, read directly (report doesn't carry it).
+    expect(mostDrawCalls).toBeLessThanOrEqual(8);
   });
 
   it("B2: LOD level changes over a full 0.1->50 px/bar sweep stay within the hysteresis budget (<=6)", () => {
