@@ -215,7 +215,6 @@ async def _stand_in() -> None:
 @pytest.mark.parametrize(
     ("method", "prefix", "route"),
     [
-        ("PUT", "/admin/feature-flags", "/{flagKey}"),  # setFeatureFlag
         ("GET", "/admin/audit", "/exports/{jobId}"),  # downloadAuditExport: a GET
     ],
 )
@@ -280,7 +279,8 @@ def test_ad_f01_operations_are_handler_gated_with_their_documented_classes(
     assert _documented_classes(op) == classes
     assert dangerous_action_class(method, _concrete(path)) is None  # the guard must not pre-empt
     assert _registered_classes(method, path) == classes
-    assert (method, path) in _PENDING_HANDLER_GATES
+    mounted = (method, path) in served_operations(create_app())  # E42-T03 mounts setFeatureFlag
+    assert ((method, path) in _PENDING_HANDLER_GATES) is not mounted  # pending until mounted
 
 
 def test_every_contract_flag_write_is_registered() -> None:
@@ -536,7 +536,6 @@ _PENDING_HANDLER_GATES = {
     ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
-    ("PUT", "/admin/feature-flags/{flagKey}"),
     ("GET", "/admin/audit/exports/{jobId}"),
     ("POST", "/admin/view-as"),  # #3085: its server slice mounts it and drops this row
 }
@@ -762,3 +761,10 @@ def test_a_pinned_contract_line_is_in_the_operations_text(operation_id: str) -> 
     _, op = _operation(operation_id)
     _action_class, line = _PINNED_STEP_UP_CLASSES[operation_id]
     assert line in _squash(_text(op))
+
+
+def test_the_flag_write_is_handler_gated_from_the_locked_row() -> None:
+    """E42-T03: only the writer knows the class, from the flag's row under its lock."""
+    assert DANGEROUS_PATH_PATTERN.match("/admin/feature-flags/x1")
+    assert dangerous_action_class("PUT", "/admin/feature-flags/x1") is None
+    assert ("PUT", "/admin/feature-flags/{flagKey}", "flags") in HANDLER_GATED_ROUTES
