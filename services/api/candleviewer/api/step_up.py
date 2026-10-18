@@ -514,6 +514,7 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # reveal-scope has no contract path yet (E27); pre-registered under the keys prefix.
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
+    ("POST", re.compile(r"^/admin/keys/kek-rewrap$"), "keys"),  # rewrapKek (#2266, 04 row 41a)
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
     # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Mounted today: the export and deleteUser.
     ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser

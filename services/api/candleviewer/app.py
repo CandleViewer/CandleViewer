@@ -84,6 +84,7 @@ from candleviewer.api import (
 from candleviewer.api.admin_backups import make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
+from candleviewer.api.admin_kek import make_admin_kek_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
@@ -1567,6 +1568,11 @@ def create_app(
             owner_resolver,
             audit_ready=_audit_ready(ctx.audit),
         )
+    )
+    # #2266 D2: `rewrapKek`, the KEK re-wrap entry point. Owner only; step-up `keys` is path-gated
+    # in `DANGEROUS_ROUTES`; M2 runs it behind `AdminService` (counts only).
+    app.include_router(
+        make_admin_kek_router(ctx.admin, _LazyAuditEmitter(ctx.audit), owner_resolver)
     )
     # QA #1596: real session-backed resolver; without an identity provider
     # (fake backend) it stays `None` and every call fails closed with 501.

@@ -170,10 +170,12 @@ async def test_a_stranded_boot_reports_degraded_with_its_reason() -> None:
 
 
 async def test_the_stranded_gate_text_names_the_previous_handle_and_revocation() -> None:
+    """It names only tools that exist (#2266 C review): the re-wrap entry point, not #898's."""
     svc, ctx, _ = await _stranded()
     await svc.start(ctx)
     text = ctx.oms_read_only_gate.reason_text or ""
     assert "CV_KEK_PREV_HANDLE" in text and "revoke" in text
+    assert "POST /admin/keys/kek-rewrap" in text and "in CandleViewer" not in text
 
 
 async def test_a_stranded_boot_counts_a_kek_rows_stranded_failure() -> None:

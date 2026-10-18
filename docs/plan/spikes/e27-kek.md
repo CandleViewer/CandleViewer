@@ -137,23 +137,31 @@ retired_at)` (migration in T02 #835 scope). The loader compares with `hmac.compa
   wrapped DEK to `credential_id` stops a DB writer from swapping DEKs between rows; binding
   `kek_version` stops a downgrade to a retired wrap.
 
-Rotation procedure (owner-run, app in maintenance or Degraded, no order flow required):
+Rotation procedure (owner-run, per environment; the re-wrap call latches new orders itself):
 
 1. Provision KEK v(n+1) into custody (C1 / C3) alongside v(n); launcher supplies **both** handles
    (`CV_KEK_HANDLE` + `CV_KEK_PREV_HANDLE`, the latter only during rotation). FIFO order: current
    first, then previous, both in the handoff dir (`dirname(CV_KEK_HANDLE)`); cv-api drains them in
    that order.
-2. Audit `security.kek_rotation_started` (from, to, row count) before the first row; on a re-run
-   with rows still at v(n), `security.kek_rotation_resumed` (from, to, remaining).
-3. Re-wrap job (admin-invoked; runs inside `secrets`, admin sees only a report — §7; implementation
-   status: the job ships in E27-T02 #835, its entry point + the same-transaction per-row audit + step 2's
-   `kek_rotation_resumed` are tracked in #2266): for each row
-   `WHERE kek_version = n` (via `ix_api_keys_kek`), unwrap DEK with v(n), wrap with v(n+1), and in
-   **one transaction** update `dek_ref` + `kek_version` **and** write its per-row progress audit
-   record. Ciphertext and `enc_nonce` untouched. Idempotent and resumable.
-4. Verify: zero rows at version n; each re-wrapped DEK decrypts its ciphertext (in memory, discarded).
-5. Audit `security.kek_rotated` (from, to, row count; no key material). Retire v(n) from custody,
-   set `kek_versions.retired_at`, drop `CV_KEK_PREV_HANDLE`.
+2. The Owner calls `POST /admin/keys/kek-rewrap` (`rewrapKek`: owner only, step-up `keys`) with
+   `{environment, to_version}`, which must match the staged boot (#2266). Before the first row it
+   latches order entry read-only until the restart, then audits `security.kek_rotation_started`
+   (from, to, row count), or `security.kek_rotation_resumed` (from, to, remaining) when an earlier
+   run moved rows and rows are still at v(n).
+3. Re-wrap (runs inside `secrets`; admin sees only counts, §7): for each unrevoked row of the
+   environment `WHERE kek_version = n` (via `ix_api_keys_kek`), unwrap the DEK with v(n), wrap it
+   with v(n+1), check that the new wrap opens the ciphertext, and in **one transaction**
+   compare-and-set `dek_ref` + `kek_version` **and** write its `security.credential_rewrapped`
+   record. Ciphertext and `enc_nonce` untouched. Idempotent and resumable: the Owner calls again
+   until the run is complete.
+4. Audit `security.kek_rotated` (from, to, row count; no key material) once no unrevoked API key
+   row and no auth keyring row of the environment is left at v(n) and no row failed, else
+   `security.kek_rotation_incomplete`. Then restart without `CV_KEK_PREV_HANDLE`, keeping v(n) in
+   custody: health must be OK with no stranded rows (a boot that finds some degrades with
+   `kek_rows_stranded`).
+5. Only then set `kek_versions.retired_at` for v(n), under change control, and destroy v(n): in a
+   routine rotation once every pre-rotation backup has expired (the owner's offline copy keeps it
+   until then), in a compromise rotation at once (`docs/ops/runbooks/kek-custody.md`).
    Budget: ≤50 rows in ≤5 s _(budget; measure in FU-1)_. This job does not re-wrap E09's TOTP and
    recovery-code keys (FU-3 #2152, ADR-0009 Amendment 4): they are two `auth_keys` rows per environment
    (`21-database-schema.md` §3.1.5a), which M2 re-wraps itself at the rotation boot, each new wrap
