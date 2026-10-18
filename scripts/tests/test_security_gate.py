@@ -785,6 +785,19 @@ def test_malformed_accepted_risks_entry_raises_ci_sec_005(tmp_path: Path) -> Non
     assert exc_info.value.code == "CI-SEC-005"
 
 
+@pytest.mark.parametrize("severity", ["Moderate", "medium", "HIGH ", "critical"])
+def test_register_refuses_a_severity_the_gate_cannot_rank(tmp_path: Path, severity: str) -> None:
+    # #3558: the cap ranks an entry's severity, so an entry in pnpm's words or another case is
+    # malformed on load (CI-SEC-005), not a KeyError on the first finding that matches it.
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": severity}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    with pytest.raises(SecurityGateError) as exc_info:
+        load_accepted_risks(_write_yaml(tmp_path, {"entries": [entry]}))
+    message = f"severity {severity!r} is not one of LOW, MEDIUM, HIGH, CRITICAL"
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == f"accepted-risk entry #0 is malformed: {message}"
+
+
 # --------------------------------------------------------------------------
 # CLI entrypoint
 # --------------------------------------------------------------------------

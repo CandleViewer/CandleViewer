@@ -154,6 +154,11 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
                     f"accepted-risk entry #{i}: gitleaks findings cannot be accepted "
                     "(SR-142: any finding blocks unconditionally)",
                 )
+            # evaluate_findings ranks the entry's severity against the finding's (#3558).
+            if not isinstance(severity, str) or severity not in _SEVERITY_ORDER:
+                raise ValueError(
+                    f"severity {severity!r} is not one of {', '.join(_SEVERITY_ORDER)}"
+                )
             if severity == "CRITICAL":
                 raise SecurityGateError(
                     "CI-SEC-005",
