@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import playwrightConfig from "../e2e/playwright.config";
+import { resolveDevServerUrl } from "../src/main/devServer";
 
 const E2E_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../e2e");
 
@@ -36,5 +37,14 @@ describe("apps/desktop e2e playwright-electron config", () => {
     expect(existsSync(manifest), `${manifest} must exist`).toBe(true);
     const pkg = JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown };
     expect(pkg.name).toBe("@candleviewer/web");
+  });
+
+  // #3411: hotkeys.spec.ts loads this server through CV_DEV_SERVER_URL in the unpackaged shell.
+  it("serves on an origin the unpackaged shell honours as a dev server", () => {
+    const server = playwrightConfig.webServer;
+    if (server === undefined || Array.isArray(server) || server.url === undefined) {
+      throw new Error("expected exactly one webServer entry with a url");
+    }
+    expect(resolveDevServerUrl(server.url, false).kind).toBe("accepted");
   });
 });
