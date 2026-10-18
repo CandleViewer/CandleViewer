@@ -69,7 +69,10 @@ ACTIONS = {
     "read-only-scans": BASE_ACTIONS | {"actions/setup-node", "actions/upload-artifact"},
     "trivy": BASE_ACTIONS | {"aquasecurity/trivy-action", CODEQL_ACTION + "upload-sarif"},
 }
-SCANNERS = ('"semgrep==', '"pip-audit==', '"bandit[sarif]==')
+# #3549: semgrep installs by hash, from a lock of its own, in both of its venvs.
+SEMGREP_LOCK = "tools/ci/requirements-semgrep.txt"
+SEMGREP_INSTALL = f"pip install --require-hashes --only-binary=:all: -r {SEMGREP_LOCK}"
+SCANNERS = (SEMGREP_INSTALL, '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
@@ -133,6 +136,46 @@ def test_each_scanner_installs_into_its_own_venv_under_runner_temp(job: str) -> 
             venvs.append(venv)
     assert len(venvs) == len(set(venvs)) == 2
     assert "/tmp/" not in json.dumps(JOBS[job])
+
+
+def test_both_semgrep_steps_install_only_its_hash_pinned_lock() -> None:
+    # #3549: semgrep, its dependencies and the gate's PyYAML, all by hash (C-12.3).
+    steps = [s for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    assert sorted(s["id"] for s in steps) == ["security-auth", "semgrep"]
+    for step in steps:
+        installs = [line.strip() for line in step["run"].splitlines() if "pip install" in line]
+        assert installs == [SEMGREP_INSTALL]
+    assert not [p for p in WORKFLOWS.glob("*.yml") if "semgrep==" in p.read_text(encoding="utf-8")]
+
+
+def test_semgrep_lock_pins_each_requirement_by_hash_at_the_ci_versions() -> None:
+    pins: dict[str, str] = {}
+    hashes = 0
+    for line in (ROOT / SEMGREP_LOCK).read_text(encoding="utf-8").splitlines():
+        if line.startswith("    --hash="):
+            assert re.fullmatch(r"    --hash=sha256:[0-9a-f]{64}( \\)?", line), line
+            hashes += 1
+        elif line and not line.lstrip().startswith("#"):
+            # Each requirement line is an exact pin, and the one before it has its hashes.
+            assert len(pins) == 0 or hashes > 0, line
+            pin = re.fullmatch(r"([A-Za-z0-9][\w.-]*)==(\S+) \\", line)
+            assert pin, line
+            pins[pin.group(1).lower()] = pin.group(2)
+            hashes = 0
+    assert hashes > 0
+    assert pins["semgrep"] == "1.181.0"  # parses PEP 695, which 1.99.0 skipped (see its header)
+    ci_pins = (ROOT / "scripts" / "requirements-ci.txt").read_text(encoding="utf-8").splitlines()
+    assert f"PyYAML=={pins['pyyaml']}" in ci_pins
+
+
+def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
+    # #3549: the SARIF cannot say which files the engine left unparsed; the JSON report can.
+    (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
+    lines = [line.strip() for line in step["run"].splitlines()]
+    scan = "semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif --json-output semgrep.json"
+    gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
+    assert scan in lines
+    assert lines[-1] == gate + " --semgrep-json semgrep.json"
 
 
 @pytest.mark.parametrize("job", sorted(SCANS))

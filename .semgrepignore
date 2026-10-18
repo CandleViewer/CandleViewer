@@ -19,3 +19,7 @@ docs/plan/backlog/_tools/
 /.semgrep/tests/
 # YAML rule-test fixture lives outside the config dir so `--config .semgrep` validates (#2066); same treatment
 /.semgrep-fixtures/
+# Test data of the scripts/ tests: recorded scanner reports and inputs broken on purpose, such as
+# an unparsable backlog JSON and the Semgrep parse-gap sources (#3549). `tests/fixtures/` above
+# matches only the root one.
+/scripts/tests/fixtures/

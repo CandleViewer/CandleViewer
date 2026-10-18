@@ -44,8 +44,8 @@ permissions:
   contents: read
 
 env:
-  # 3.12: semgrep 1.99 still imports pkg_resources (setuptools is not
-  # preinstalled on 3.13 runners).
+  # 3.12: the hash-pinned installs (tools/ci/requirements-semgrep.txt and
+  # requirements-security-gate.txt) pin CPython 3.12 wheels.
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
 
@@ -179,8 +179,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       # Semgrep first: it scans the whole tree, so no other tool's report may sit in it yet.
-      # Each scanner gets its own venv: setuptools>=81 dropped pkg_resources, which
-      # semgrep 1.99 imports, and one tool's install must never re-resolve another's pins.
+      # Each scanner gets its own venv, so one tool's install never re-resolves another's pins;
+      # semgrep's installs only by hash, from tools/ci/requirements-semgrep.txt (#3549).
       - name: semgrep (custom-rule fixture tests, then registry packs + .semgrep/ rules)
         id: semgrep
         if: ${{ !cancelled() }}
@@ -190,7 +190,7 @@ jobs:
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/semgrep-venv"
           export PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH"
-          pip install -r scripts/requirements-ci.txt "setuptools<81" "semgrep==1.99.0"
+          pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt
           python tools/ci/check_semgrep_rule_tests.py # incl. the E10-X02 electron rules
           CONFIGS="p/python p/typescript p/react p/electron-desktop-app p/docker p/github-actions \
                    p/secrets p/owasp-top-ten p/sql-injection p/jwt p/insecure-transport"
@@ -202,15 +202,17 @@ jobs:
           # security_gate.py is what decides pass/fail on findings, so we only
           # want to swallow the "findings present" exit code (1), never a
           # genuine engine/config failure (>1) — CI-SEC-005 must not pass-by-default.
+          # The SARIF does not say which files the engine could not parse and still reads as
+          # a complete scan; the JSON report's errors do, and the gate fails on such a file (#3549).
           set +e
-          semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif
+          semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif --json-output semgrep.json
           status=$?
           set -e
           if [ "$status" -gt 1 ]; then
             echo "CI-SEC-005: semgrep exited $status (engine/config error) — scanner infrastructure failure" >&2
             exit "$status"
           fi
-          python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif
+          python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif --semgrep-json semgrep.json
 
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # Upload only when the scanner wrote a report; the semgrep step (not this upload)
@@ -374,8 +376,8 @@ jobs:
       - name: Install gate helper deps (PyYAML for security_gate.py)
         run: pip install -r scripts/requirements-ci.txt
 
-      # Scanners get their own venvs: semgrep 1.99 needs setuptools<81, and one tool's
-      # install must never re-resolve another's pins.
+      # Scanners get their own venvs, so one tool's install never re-resolves another's pins;
+      # semgrep installs only by hash, from tools/ci/requirements-semgrep.txt (#3549).
       - name: security-auth (auth rule fixtures + suppression policy, then the auth pack scan)
         id: security-auth
         if: ${{ !cancelled() }}
@@ -385,7 +387,7 @@ jobs:
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/security-auth-venv"
           export PATH="$RUNNER_TEMP/security-auth-venv/bin:$PATH"
-          pip install -r scripts/requirements-ci.txt "setuptools<81" "semgrep==1.99.0"
+          pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt
           python tools/ci/check_auth_semgrep.py
           semgrep scan --config security/semgrep/auth --error --metrics=off \
             --exclude fixtures services/api/candleviewer apps packages/ui

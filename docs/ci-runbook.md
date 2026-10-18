@@ -420,6 +420,15 @@ index alone, removing nothing.
   still runs; if the install failed on a hash, refresh the file with the
   command in it (it tracks the PyYAML pin in `scripts/requirements-ci.txt`
   and the workflow's `PYTHON_VERSION`).
+  For `semgrep` it also fires when the step's JSON report (`semgrep.json`)
+  shows a file the engine did not analyse (#3549): an error that leaves it
+  no syntax tree (`Syntax error` and its kin) or that made the engine give up
+  on it, or a `PartialParsing` error over every code line of the file. The
+  SARIF lists such errors with no line span and still reads as a complete
+  scan, so the file's clean result would mean nothing. Rewrite what Semgrep
+  cannot parse (the message names each file); a partial parse that leaves
+  code analysed, or a rule timeout, only prints a note in the step log. The
+  step installs semgrep by hash from `tools/ci/requirements-semgrep.txt`.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

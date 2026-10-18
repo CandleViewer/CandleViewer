@@ -753,7 +753,10 @@ def test_real_scanner_sarif_still_parses(
     report = SARIF_FIXTURES / name
     assert [(f.finding_id, f.severity) for f in parse_sarif(report, tool)] == found
     risks = _write_yaml(tmp_path, {"entries": []})
-    rc = main(["--tool", tool, "--report", str(report), "--accepted-risks", str(risks)])
+    args = ["--tool", tool, "--report", str(report), "--accepted-risks", str(risks)]
+    if tool == "semgrep":  # #3549: and the JSON report of a scan that parsed every file
+        args += ["--semgrep-json", str(_semgrep_report(tmp_path, "semgrep-1.181.0.json", []))]
+    rc = main(args)
     blocked = bool(found)  # each real finding meets its tool's threshold
     assert rc == int(blocked)
     assert (f"security_gate[{tool}]: OK" in capsys.readouterr().out) is not blocked
@@ -770,6 +773,129 @@ def test_real_bandit_sarif_with_a_file_it_could_not_scan_raises_ci_sec_005(
     assert (rc, out) == (1, "")
     head = f"CI-SEC-005: bandit: {report} run 0 records no completed scan: invocation 0 reports 1 "
     assert err.startswith(head + "configuration error(s)") and "skipped/broken.py" in err
+
+
+# --------------------------------------------------------------------------
+# #3549: a file Semgrep did not analyse fails its scan (fixtures/semgrep/README.md)
+# --------------------------------------------------------------------------
+
+SEMGREP_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "semgrep"
+LOST = "target(s) Semgrep did not analyse, so their clean result means nothing: "
+ALL_CODE = "(PartialParsing over every code line)"
+
+
+def _semgrep_report(tmp_path: Path, name: str, keep: list[str] | None = None) -> Path:
+    """Recorded report `name`, or a copy keeping only its errors on the files in `keep`."""
+    if keep is None:
+        return SEMGREP_FIXTURES / name
+    doc = json.loads((SEMGREP_FIXTURES / name).read_text(encoding="utf-8"))
+    doc["errors"] = [error for error in doc["errors"] if error["path"] in keep]
+    return _write_json(tmp_path, f"kept-{len(keep)}-{name}", doc)
+
+
+def _semgrep_gate(
+    tmp_path: Path, report: Path | None, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str, str]:
+    """Gate a clean Semgrep SARIF with `report` as the scan's JSON report."""
+    risks = _write_yaml(tmp_path, {"entries": []})
+    sarif = SARIF_FIXTURES / "semgrep-1.178.0-clean.sarif"
+    args = ["--tool", "semgrep", "--report", str(sarif), "--accepted-risks", str(risks)]
+    rc = main(args + (["--semgrep-json", str(report)] if report else []))
+    out, err = capsys.readouterr()
+    return rc, out, err
+
+
+def test_semgrep_1_99_files_parsed_on_no_code_line_raise_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CI's old pin skipped every code line of skipped.py (PEP 695) and drill.sh, and lost the
+    # findings there, while its SARIF read as a clean, complete scan.
+    monkeypatch.chdir(SEMGREP_FIXTURES)  # where the gate measures each partly parsed file
+    report = _semgrep_report(tmp_path, "semgrep-1.99.0.json")
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    lost = f"skipped.py {ALL_CODE}; drill.sh {ALL_CODE}"
+    assert err == f"CI-SEC-005: semgrep: {report} shows 2 {LOST}{lost}\n"
+
+
+def test_semgrep_1_181_file_no_parser_reads_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pinned version reads PEP 695, but no part of unparsed.py: a `Syntax error`, no span.
+    monkeypatch.chdir(SEMGREP_FIXTURES)
+    report = _semgrep_report(tmp_path, "semgrep-1.181.0.json")
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    lost = f"unparsed.py (Syntax error); drill.sh {ALL_CODE}"
+    assert err == f"CI-SEC-005: semgrep: {report} shows 2 {LOST}{lost}\n"
+
+
+def test_semgrep_files_parsed_in_part_are_logged_not_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Semgrep still analysed the rest of each file: the log names the lines it did not parse.
+    monkeypatch.chdir(SEMGREP_FIXTURES)
+    report = _semgrep_report(tmp_path, "semgrep-1.99.0.json", ["partial.py", "unparsed.py"])
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, err) == (0, "")
+    tail = "; the rest was analysed, not failing"
+    assert out.splitlines() == [
+        f"semgrep: partial.py: line(s) 3 not parsed (1 of 5 code lines){tail}",
+        f"semgrep: unparsed.py: line(s) 11 not parsed (1 of 10 code lines){tail}",
+        "security_gate[semgrep]: OK",
+    ]
+
+
+def test_semgrep_report_of_a_scan_that_parsed_every_file_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _semgrep_report(tmp_path, "semgrep-1.181.0.json", [])
+    assert _semgrep_gate(tmp_path, report, capsys) == (0, "security_gate[semgrep]: OK\n", "")
+
+
+def test_semgrep_gate_without_the_json_report_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, out, err = _semgrep_gate(tmp_path, None, capsys)
+    unknown = "no --semgrep-json report, so the files it did not parse are unknown"
+    assert (rc, out, err) == (1, "", f"CI-SEC-005: semgrep: {unknown}\n")
+
+
+@pytest.mark.parametrize("doc", [[], {"results": []}, {"errors": {}}, {"errors": ["x"]}])
+def test_semgrep_json_that_is_no_report_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], doc: object
+) -> None:
+    report = _write_json(tmp_path, "semgrep.json", doc)
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err == f"CI-SEC-005: semgrep: {report} has no 'errors' list of objects " + (
+        "(not a semgrep --json-output report)\n"
+    )
+
+
+def test_semgrep_partial_parse_of_a_file_it_cannot_read_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Fail closed: the gate cannot tell how much of partial.py was skipped without reading it.
+    monkeypatch.chdir(tmp_path)  # the fixture sources are not here
+    report = _semgrep_report(tmp_path, "semgrep-1.99.0.json", ["partial.py"])
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err.startswith(f"CI-SEC-005: semgrep: {report} names partial.py, which cannot be read")
+
+
+def test_semgrep_partial_parse_without_a_span_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(SEMGREP_FIXTURES)
+    doc = json.loads((SEMGREP_FIXTURES / "semgrep-1.99.0.json").read_text(encoding="utf-8"))
+    (error,) = [error for error in doc["errors"] if error["path"] == "partial.py"]
+    doc["errors"] = [{**error, "spans": [], "type": ["PartialParsing", []]}]
+    report = _write_json(tmp_path, "semgrep.json", doc)
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    no_span = "has a PartialParsing error with no target or line span: "
+    assert err.startswith(f"CI-SEC-005: semgrep: {report} {no_span}")
 
 
 def test_missing_accepted_risks_file_raises_ci_sec_005(tmp_path: Path) -> None:

@@ -526,6 +526,8 @@ def _incomplete_scan(invocations: object) -> str | None:
     happen: Bandit lists each file it could not scan there and still reports
     success. `toolExecutionNotifications` are not read: CodeQL reports per-file
     extraction diagnostics there, and Semgrep's fatal errors already fail its step.
+    Semgrep's per-file parse errors are judged from its JSON report instead
+    (`check_semgrep_coverage`, #3549): its notifications carry no line spans.
     """
     if not isinstance(invocations, list):
         return "'invocations' is not a list"
@@ -680,6 +682,136 @@ def parse_sarif(
                 )
             )
     return findings
+
+
+# Semgrep error kinds after which no rule ran on a target (#3549): it has no syntax tree, or the
+# engine gave up on it. A `Timeout` stops one rule on one file, so it is reported, not failed.
+_SEMGREP_TARGET_LOST = frozenset(
+    {
+        "Lexical error",
+        "Syntax error",
+        "Other syntax error",
+        "AST builder error",
+        "Out of memory",
+        "Stack overflow",
+    }
+)
+# A line that opens with one of these holds no code (Python, shell and YAML; TypeScript).
+_COMMENT_MARKERS = ("#", "//", "/*", "*")
+
+
+def _code_lines(text: str) -> set[int]:
+    """The 1-based numbers of the lines that hold code: not blank, not a comment line."""
+    return {
+        number
+        for number, line in enumerate(text.splitlines(), 1)
+        if line.strip() and not line.lstrip().startswith(_COMMENT_MARKERS)
+    }
+
+
+def _line(point: object) -> int | None:
+    line = point.get("line") if isinstance(point, dict) else None
+    return line if isinstance(line, int) and not isinstance(line, bool) and line > 0 else None
+
+
+def _span_lines(error: dict[str, Any]) -> set[int] | None:
+    """The lines a `PartialParsing` error's spans cover, or None without a valid span."""
+    spans = error.get("spans")
+    kind = error.get("type")
+    if spans is None and isinstance(kind, list) and len(kind) == 2:
+        spans = kind[1]  # Semgrep writes the spans in both places
+    if not isinstance(spans, list) or not spans:
+        return None
+    lines: set[int] = set()
+    for span in spans:
+        if not isinstance(span, dict):
+            return None
+        start, end = _line(span.get("start")), _line(span.get("end"))
+        if start is None or end is None or end < start:
+            return None
+        lines.update(range(start, end + 1))
+    return lines
+
+
+def _ranges(lines: set[int]) -> str:
+    """`{3, 10, 11, 12}` as `3, 10-12`."""
+    runs: list[list[int]] = []
+    for number in sorted(lines):
+        if runs and number == runs[-1][1] + 1:
+            runs[-1][1] = number
+        else:
+            runs.append([number, number])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+def check_semgrep_coverage(path: Path, *, source_root: Path | None = None) -> list[str]:
+    """Raise CI-SEC-005 when Semgrep's JSON report shows a target it did not analyse (#3549).
+
+    Semgrep's SARIF lists a parse error only as a `toolExecutionNotifications` entry with no
+    line span, and its summary still calls the scan complete, so the step also writes its
+    `--json-output` for this check. A target was not analysed when its error leaves it with no
+    syntax tree or the engine gave up on it (`_SEMGREP_TARGET_LOST`), or when a
+    `PartialParsing` error's spans cover every code line of the file, read from `source_root`
+    (default: the working directory). Semgrep 1.99 skipped files with PEP 695 generics so and
+    lost their findings while reporting none. Such a file's clean result means nothing.
+
+    A partial parse that leaves code lines analysed, a rule timeout and any other error do
+    not fail: each comes back as a note for the log, naming the lines Semgrep did not parse.
+    """
+
+    def lost_scan(reason: str) -> SecurityGateError:
+        return SecurityGateError("CI-SEC-005", f"semgrep: {path} {reason}")
+
+    def clipped(error: dict[str, Any]) -> str:
+        text = json.dumps(error)  # escaped: no line breaks reach the log
+        return text if len(text) <= 300 else text[:297] + "..."
+
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise lost_scan(f"is not a readable JSON report: {exc}") from exc
+    errors = doc.get("errors") if isinstance(doc, dict) else None
+    if not isinstance(errors, list) or not all(isinstance(e, dict) for e in errors):
+        raise lost_scan("has no 'errors' list of objects (not a semgrep --json-output report)")
+    root = source_root or Path.cwd()
+    lost: list[str] = []
+    notes: set[str] = set()
+    for error in errors:
+        kind = error.get("type")
+        name = kind[0] if isinstance(kind, list) and kind else kind
+        target = error.get("path") if isinstance(error.get("path"), str) else None
+        if not isinstance(name, str):
+            raise lost_scan(f"has an error with no type name: {clipped(error)}")
+        if name in _SEMGREP_TARGET_LOST:
+            lost.append(f"{target or 'an unnamed target'} ({name})")
+            continue
+        if name != "PartialParsing":
+            rule = error.get("rule_id")
+            what = name + (f" on {target}" if target else "") + (f" ({rule})" if rule else "")
+            notes.add(f"semgrep: {what}; the rest of the scan ran, not failing")
+            continue
+        skipped = _span_lines(error)
+        if not target or skipped is None:
+            no_span = "has a PartialParsing error with no target or line span"
+            raise lost_scan(f"{no_span}: {clipped(error)}")
+        try:
+            code = _code_lines((root / target).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            raise lost_scan(f"names {target}, which cannot be read to measure it: {exc}") from exc
+        gap = code & skipped
+        if code and gap == code:
+            lost.append(f"{target} (PartialParsing over every code line)")
+        elif gap:
+            notes.add(
+                f"semgrep: {target}: line(s) {_ranges(gap)} not parsed ({len(gap)} of "
+                f"{len(code)} code lines); the rest was analysed, not failing"
+            )
+    if lost:
+        raise lost_scan(
+            f"shows {len(lost)} target(s) Semgrep did not analyse, so their clean result means "
+            "nothing: " + "; ".join(lost)
+        )
+    return sorted(notes)
 
 
 def parse_pip_audit(path: Path) -> list[Finding]:
@@ -950,6 +1082,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="ISO date override for tests; default: today (UTC)",
     )
+    parser.add_argument(
+        "--semgrep-json",
+        type=Path,
+        default=None,
+        help="required with --tool semgrep: its --json-output report, the one that says which "
+        "files the engine could not parse (#3549)",
+    )
     args = parser.parse_args(argv)
 
     run_date = (
@@ -958,6 +1097,7 @@ def main(argv: list[str] | None = None) -> int:
         else datetime.now(UTC).date()
     )
 
+    notes: list[str] = []
     try:
         risks = load_accepted_risks(args.accepted_risks)
         if args.tool == "license-scan":
@@ -967,6 +1107,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if args.tool == "semgrep":
                 findings = parse_sarif(args.report, "semgrep", today=run_date)
+                if args.semgrep_json is None:
+                    raise SecurityGateError(
+                        "CI-SEC-005",
+                        "semgrep: no --semgrep-json report, so the files it did not parse are "
+                        "unknown",
+                    )
+                notes = check_semgrep_coverage(args.semgrep_json)
             else:
                 findings = _PARSERS[args.tool](args.report)
             result = evaluate_findings(findings, risks, run_date=run_date)
@@ -974,6 +1121,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1
 
+    for note in notes:
+        print(note)
     for msg in result.messages:
         print(msg, file=sys.stderr if result.blocked else sys.stdout)
 

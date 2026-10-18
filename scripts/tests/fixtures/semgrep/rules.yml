@@ -1,0 +1,11 @@
+rules:
+  - id: python-print
+    languages: [python]
+    severity: ERROR
+    message: A print call.
+    pattern: print(...)
+  - id: bash-echo
+    languages: [bash]
+    severity: ERROR
+    message: An echo command.
+    pattern: echo ...

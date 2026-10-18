@@ -81,6 +81,7 @@ def run_semgrep(tmpdir: Path) -> ToolResult:
         return ToolResult("semgrep (rule-tests)", "FAIL", test_proc.stdout + test_proc.stderr)
 
     sarif = tmpdir / "semgrep.sarif"
+    report = tmpdir / "semgrep.json"  # the gate reads which files went unparsed here (#3549)
     scan_proc = _run(
         [
             "semgrep",
@@ -96,13 +97,16 @@ def run_semgrep(tmpdir: Path) -> ToolResult:
             "--sarif",
             "--output",
             str(sarif),
+            "--json-output",
+            str(report),
         ]
     )
     if scan_proc.returncode > 1:
         return ToolResult("semgrep", "FAIL", f"engine error (exit {scan_proc.returncode})")
     if not sarif.exists():
         return ToolResult("semgrep", "FAIL", "CI-SEC-005: no SARIF produced")
-    gate_proc = _run([sys.executable, str(GATE), "--tool", "semgrep", "--report", str(sarif)])
+    gate = [sys.executable, str(GATE), "--tool", "semgrep", "--report", str(sarif)]
+    gate_proc = _run([*gate, "--semgrep-json", str(report)])
     status = "PASS" if gate_proc.returncode == 0 else "FAIL"
     return ToolResult("semgrep", status, gate_proc.stdout + gate_proc.stderr)
 
