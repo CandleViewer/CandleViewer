@@ -258,6 +258,13 @@ class UserDisableService:
         task.add_done_callback(self._untrack)
         return DisableResult(change.changed, await asyncio.shield(task))
 
+    async def authorize(self, user_id: uuid.UUID, *, actor: PrincipalSnapshot) -> None:
+        """The guard alone: `users:write`, then a self-target, each refusal audited before any
+        read. A route that must put its step-up between the guard and the change (SR-025: the
+        refusals no step-up can cure come first) calls it before the gate; `disable` repeats it,
+        so no caller reaches the change without it."""
+        await self._guard(user_id, actor, _request_uuid())
+
     def _untrack(self, task: asyncio.Task[tuple[str, ...]]) -> None:
         """A raise is logged here too: once the caller is cancelled, no one awaits the task."""
         self._cascades.discard(task)

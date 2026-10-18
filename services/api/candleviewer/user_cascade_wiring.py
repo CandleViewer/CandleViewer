@@ -1,4 +1,4 @@
-"""Composition-root adapters for the rule steps of the user-disable cascade (E42-T04 S5, #965).
+"""Composition-root adapters for the user-disable cascade (E42-T04 S5, S6; #965).
 
 `admin` (M21) and `rules` (M15) may not import each other: `UserDisableService` takes the ports
 `RuleDisarmer` and `ScopeRefresher`, and this module, which sees both sides as `rules_store_pg`
@@ -17,6 +17,7 @@ does, implements them over the rule engine's own interfaces.
   Owner, who sees every rule, so a rule that is not the user's is refused.
 - `ScopeRefreshAdapter` refreshes the user's entry in the rule engine's scope snapshot at once; a
   refresh that fails drops the entry (no grant, no live arming) and re-raises.
+- `build_user_disable_service` (S6) composes the service behind `DELETE /users/{userId}`.
 
 RBAC is the service's (`users:write`, SR-055); neither port is reachable from a route. Safety does
 not rest on these steps: O4 soft-revokes the grants in the disable's transaction and O5 makes the
@@ -30,13 +31,31 @@ import uuid
 import weakref
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 
+from candleviewer.admin.user_disable import AuditEmitter, UserDisableService
+from candleviewer.auth.invite_repository import InviteAudit
+from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.owner_floor import assert_owner_floor
+from candleviewer.auth.session_service import RevocationSink
+from candleviewer.auth.step_up import PositionStateProvider
 from candleviewer.observability.context import current_request_id
 from candleviewer.rules.manager import Actor, RulesManager, RuleStore
 from candleviewer.rules.scope_state import SnapshotScopeState
+from candleviewer.settings import Settings
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
+    SqlAlchemyUserLifecycleStore,
+)
+
+if TYPE_CHECKING:
+    from candleviewer.auth.service import AuthService
+    from candleviewer.rules.service import RulesService
 
 #: `rules.mode` of a rule that can still act: every B9 state but `draft`, `simulating`,
 #: `disarmed` and `kill_switched` projects to it (`rules.lifecycle._MODE_OF`).
@@ -162,3 +181,84 @@ class ScopeRefreshAdapter:
         except BaseException:
             state.invalidate(user_id)
             raise
+
+
+class NoOrderCounter:
+    """No order has a user on main (UL-F9): the count is unknown, never 0, so AC7 needs the ack."""
+
+    async def open_order_count(self, user_id: str) -> int | None:
+        return None
+
+
+# The three auth services below exist only once `AuthService.start()` ran, so they are looked up
+# when a step runs, not when the service is built: a step that runs before fails alone (R7).
+
+
+class _AuthSessions:
+    def __init__(self, auth: AuthService) -> None:
+        self._auth = auth
+
+    async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]:
+        return await self._auth.sessions.revoke_all(user_id, reason=reason)
+
+
+class _AuthChart:  # B16 REVOKE: its action writes `auth.session_revoked` (R5)
+    def __init__(self, auth: AuthService) -> None:
+        self._auth = auth
+
+    async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
+        await self._auth.step_up.chart.revoke(record, now, reason)
+
+
+class _AuthInvites:
+    def __init__(self, auth: AuthService) -> None:
+        self._auth = auth
+
+    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
+        await self._auth.invites.revoke(user_id, audit=audit)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def build_user_disable_service(
+    settings: Settings,
+    *,
+    auth: AuthService,
+    rules: RulesService,
+    rule_store: RuleStore,
+    audit: AuditEmitter,
+    positions: PositionStateProvider,
+    publish_revocation: RevocationSink,
+    clock: Callable[[], datetime] | None = None,
+) -> UserDisableService | None:
+    """The disable cascade behind `DELETE /users/{userId}`; `None` on the fake backend, which has
+    no store (the route then answers 501). `rule_store` is the one `rules` is bound to, `clock`
+    the app's (the keyless-testnet clock stamps sessions and B16). No I/O: the engine is lazy."""
+    if settings.storage_backend != "real":
+        return None
+    dsn = settings.pg_dsn.get_secret_value()
+    relational = SqlAlchemyRelationalRepository(dsn, "user-lifecycle")
+    store = SqlAlchemyUserLifecycleStore(
+        relational,
+        owner_floor=lambda current, new, owners: assert_owner_floor(
+            current_roles=current, new_roles=new, active_owner_count=owners
+        ),
+    )
+    return UserDisableService(
+        store,
+        audit,
+        positions=positions,
+        orders=NoOrderCounter(),
+        sessions=_AuthSessions(auth),
+        session_rows=SqlAlchemySessionRepository(
+            relational, lambda **fields: SessionRecord.model_validate(fields)
+        ),
+        chart=_AuthChart(auth),
+        publish_revocation=publish_revocation,
+        invites=_AuthInvites(auth),
+        rules=RuleDisarmAdapter(rule_store, rules.manager),
+        scope=ScopeRefreshAdapter(lambda: rules.scope_state),
+        clock=clock or _utc_now,
+    )

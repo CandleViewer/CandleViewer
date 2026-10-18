@@ -116,6 +116,7 @@ from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import (
     AccountAccessStore,
     SnapshotResolver,
+    UserDisable,
     UserRoleStore,
     make_users_router,
 )
@@ -312,6 +313,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
     WorkspacesPurgeTask,
 )
 from candleviewer.storage.service import StorageService
+from candleviewer.user_cascade_wiring import build_user_disable_service
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -1006,6 +1008,7 @@ def create_app(
     snapshot_loader: SnapshotLoader | None = None,
     user_role_store: UserRoleStore | None = None,
     account_access_store: AccountAccessStore | None = None,
+    user_disable: UserDisable | None = None,
     principal_resolver: SnapshotResolver | None = None,
     ws_authenticate: Authenticate | None = None,
     auth_clock: Callable[[], datetime] | None = None,
@@ -1317,6 +1320,23 @@ def create_app(
         user_role_store = build_user_role_store(resolved)
     if account_access_store is None:
         account_access_store = build_account_access_store(resolved, ctx.audit)
+    # E42-T04 S6 (#965): `DELETE /users/{userId}` (None on the fake backend: 501). `rule_store` is
+    # the one `ctx.rules` binds below; the lifespan drains `app.state.user_disable` before it stops.
+    rule_store = PostgresRuleStore(
+        SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rules")
+    )
+    if user_disable is None:
+        user_disable = build_user_disable_service(
+            resolved,
+            auth=ctx.auth,
+            rules=ctx.rules,
+            rule_store=rule_store,
+            audit=_LazyAuditEmitter(ctx.audit),
+            positions=_NoPositionStore(),
+            publish_revocation=_hub_publisher(revocation_hub),
+            clock=auth_clock,
+        )
+    app.state.user_disable = user_disable
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
         make_step_up_router(
@@ -1340,6 +1360,7 @@ def create_app(
             ws_registry,
             auth=ctx.auth,
             account_access=account_access_store,
+            user_disable=user_disable,
         )
     )
     app.include_router(
@@ -1748,9 +1769,7 @@ def create_app(
         )
 
     ctx.rules.bind(
-        store=PostgresRuleStore(
-            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rules")
-        ),
+        store=rule_store,
         audit=_rules_audit,
         broadcast=_rules_broadcast,
     )

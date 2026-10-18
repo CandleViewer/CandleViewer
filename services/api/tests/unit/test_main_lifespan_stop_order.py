@@ -105,6 +105,12 @@ class _Audits:
         return 0
 
 
+class _Cascades(_Audits):
+    async def drain(self) -> int:
+        self.stops.order.append("user_disable")
+        return 0
+
+
 class _SelfCheck(_Task):
     async def run_once(self) -> None:
         return None
@@ -136,6 +142,7 @@ def _app(stops: _Stops) -> FastAPI:
     app.state.health_pg = _Pool("health_pg", stops)
     app.state.kline_boundary_pg = _Pool("kline_boundary_pg", stops)
     app.state.csrf_refusal_audits = _Audits(stops)
+    app.state.user_disable = _Cascades(stops)
     return app
 
 
@@ -148,6 +155,15 @@ async def test_lifespan_stops_the_ws_gateway_before_anything_else() -> None:
     # Everything else did stop, after it: every runtime, task, pool and supervised module.
     assert {"health_registry", "bars_runtime", "health_pg", "mesh_self_check"} <= set(stops.order)
     assert {f"module:{name}" for name in _MODULES} <= set(stops.order)
+
+
+async def test_lifespan_drains_the_user_disable_cascades_before_the_modules_they_use_stop() -> None:
+    """E42-T04 S6 (#965): a cascade's steps use the sessions, audit and rules `stop_all` stops."""
+    stops = _Stops()
+    async with _lifespan(_app(stops)):
+        pass
+    used = (stops.order.index(f"module:{name}") for name in ("auth", "audit", "rules"))
+    assert 0 < stops.order.index("user_disable") < min(used)  # after the gateway, before them
 
 
 async def test_lifespan_starts_the_audit_verify_job_once_after_the_audit_module() -> None:
