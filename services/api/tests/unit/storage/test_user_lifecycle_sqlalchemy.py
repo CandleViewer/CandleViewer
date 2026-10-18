@@ -229,3 +229,53 @@ async def test_disable_trigger_check_before_audit_maps_only_the_floor(
     with pytest.raises(raised):
         await _disable(rel)
     assert "AUDIT" not in rel.order() and not rel.committed
+
+
+def _read_back(rel: Any, timeout_s: float = m.AUDIT_TIMEOUT_S) -> Any:
+    return _store(rel, timeout_s).read_back_disable(_UID, now=_NOW)
+
+
+async def test_read_back_returns_the_sessions_revoked_at_the_disables_instant() -> None:
+    """#3445: under the user-row lock, a user read back as disabled, then the ids of the sessions
+    revoked at the disable's instant with its reason, plain and sorted; nothing is written."""
+    rel = _Rel(status="disabled")
+    rel.rows[m._REVOKED_AT] = [(_DriverUUID(str(s)),) for s in (_S2, _S1)]
+    ids = await _read_back(rel)
+    assert ids == (_S1, _S2) and all(type(i) is uuid.UUID for i in ids)
+    params = {"id": str(_UID), "at": _NOW, "reason": "user_disabled"}
+    assert rel.ran == [(f.LOCK_USER, {"id": str(_UID)}), (m._REVOKED_AT, params)]
+    assert not rel.committed
+
+
+@pytest.mark.parametrize("status", ["active", None], ids=["not_disabled", "missing"])
+async def test_read_back_of_a_user_not_disabled_is_none(status: str | None) -> None:
+    """#3445: not disabled (the commit did not land) or gone: `None`, and no session is read."""
+    rel = _Rel(status=status)
+    rel.rows[m._REVOKED_AT] = [(_S1,)]
+    assert await _read_back(rel) is None
+    assert rel.order() == [f.LOCK_USER] and not rel.committed
+
+
+class _Held(_Rel):
+    """The user row is held by a transaction still in flight: the read under its lock waits."""
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncIterator[Any]:
+        async with super().unit_of_work() as uow:
+
+            async def execute(stmt: Any, params: Any = None) -> Any:
+                if stmt is f.LOCK_USER:
+                    await asyncio.Event().wait()
+                return await uow.session.execute(stmt, params)
+
+            yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=uow.commit)
+
+
+async def test_read_back_is_bounded_by_the_store_timeout() -> None:
+    """#3445: a read-back that waits on the user-row lock ends at `audit_timeout_s` with a
+    `TimeoutError`, never a hang; the guard only ends a regression's hang."""
+    call = asyncio.create_task(_read_back(_Held(status="disabled"), timeout_s=0))
+    done, _ = await asyncio.wait({call}, timeout=_GUARD_S)
+    assert call in done, "the read-back was not bounded"
+    with pytest.raises(TimeoutError):
+        call.result()

@@ -473,17 +473,24 @@ supported way to activate it (#2710). Do not edit `users` by hand: escalate to t
 as §3 says, and record it. On testnet, `services/api/scripts/seed_fixture_user.py` seeds an `active`
 Owner and audits it.
 
-**A commit lost on the wire (#2710).** When the commit of a disable fails on the wire, the call
-answers `503 store_unavailable`, and the `users.disable` record is followed by a `failure` record
-with reason `outcome_unknown`: the user may be disabled, and no step after the commit has run.
-Repeat the DELETE, which is safe either way: a repeat of a committed disable answers `204`, writes
-no record, ends every socket of the user and re-runs the sweep, the scope refresh and the disarm.
-B16 records none of the sessions that commit revoked (no `auth.session_revoked` for them); the two
-`users.disable` records are the trail. This residual awaits the Owner's sign-off in
+**A commit lost on the wire (#2710, #3445).** When the commit of a disable fails on the wire, the
+`users.disable` record is followed by a `failure` record with reason `outcome_unknown`, and the
+call reads the user back once, in a new transaction, within the store's 2-second bound. If the
+commit landed (the user reads `disabled`, with the sessions it revoked at its instant), a
+`users.disable` `success` record with reason `recovered_after_commit_error` follows, the steps run
+as after any disable, one `auth.session_revoked` per session included, and the call answers `204`:
+there is nothing to do. Otherwise the call answers `503 store_unavailable` and no step after the
+commit has run; the error line `users.disable.read_back` gives the `outcome` (`failed`,
+`not_disabled`, `other_sessions` or `record_failed`). A request cancelled during the commit (the
+client gone, or a shutdown) is not read back. Repeat the DELETE, which is safe either way:
+a repeat of a committed disable answers `204`, writes no record, ends every socket of the user and
+re-runs the sweep, the scope refresh and the disarm, but B16 records none of the sessions that
+commit revoked. That residual awaits the Owner's sign-off in
 `docs/security/threat-models/e42-user-lifecycle.md` §6.
 
 Proven end to end in process on the deployed app
-(`services/api/tests/security/auth/test_disable_user_e2e.py`) and on Postgres
+(`services/api/tests/security/auth/test_disable_user_e2e.py`, and
+`test_disable_commit_readback.py` for a lost commit) and on Postgres
 (`services/api/tests/integration/admin/test_user_disable_route_pg.py`), sockets on `rotated`
 sessions included. The staging drill (E09-X04, #2494) has not run;
 `services/api/tests/security/auth/test_disable_user_drill.py` drives the primitives only.
@@ -855,7 +862,7 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 | Scheduled audit-chain verifier                                            | #2111                |
 | Disable-user drill on staging (SR-029)                                    | #2494, #300          |
 | Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
-| No B16 record of the sessions that a lost disable commit revoked          | #2710                |
+| No B16 record of a lost disable commit's sessions if its read-back fails  | #2710, #3445         |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |

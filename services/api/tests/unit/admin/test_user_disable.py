@@ -294,8 +294,8 @@ async def test_unapplied_record_is_closed(
 async def test_commit_failure_is_closed_as_outcome_unknown(error: Exception) -> None:
     """S3, C-2.9: the hook returned, so the commit was sent; that it failed (a driver timeout is
     not `WriteAheadTimeout`, so no 503) does not say it did not apply. The record says so, with
-    the state before and no after state, and the caller still gets the error. A retry does not
-    settle it: AC5's no-op returns no ids (the store's `disable` docstring)."""
+    the state before and no after state. The read-back finds the user active (#3445), so the
+    caller still gets the error; `test_user_disable_readback.py` covers a commit that landed."""
     w = _World(_Rel(commit_error=error))
     with pytest.raises(type(error)):
         await w.disable()
@@ -499,8 +499,8 @@ async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
 
 
 async def test_retry_after_an_unknown_commit_closes_the_sockets_not_b16() -> None:
-    """AC5, S3, S7 (S6's Left item 7): the commit failed on the wire but had gone through
-    (`outcome_unknown`), and the ids it revoked died with the error, so the call ran no step. The
+    """AC5, S3, S7 (S6's Left item 7): the commit failed on the wire (`outcome_unknown`) and its
+    read-back did not find it (#3445: here it lands only after), so the call ran no step. The
     retry finds the user disabled: it writes no record, commits nothing and has no ids, so it
     closes every socket of the user, which ends the sockets of those two sessions, and sweeps
     (SR-029). B16 records neither session: a residual (`e42-user-lifecycle.md` §6)."""

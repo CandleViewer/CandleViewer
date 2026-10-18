@@ -5,9 +5,12 @@ transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and w
 `users.disable` ahead (O6). A change that did not commit closes that record with a `failure` one
 (C-2.9): `not_applied` if the store never reached its commit, `outcome_unknown` (no after state)
 if the commit itself failed, since a driver timeout or a cancellation there may have gone through.
-A retry settles that only in part: if the commit landed, the revoked ids died with the exception
-and a repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`), so it
-closes every socket of the user but records no B16 REVOKE for those sessions. Then, in a shielded
+After such an error (not a cancellation) one read-back, in a new transaction the store bounds,
+settles it (#3445): a user read back as disabled, with the very sessions the hook saw revoked at
+the disable's instant, gets `users.disable` `success` with reason `recovered_after_commit_error`,
+ahead of the steps below, and the call goes on as a change. Else the error stands, and a repeat is
+AC5's no-op, which returns no ids (see `SqlAlchemyUserLifecycleStore.disable`), so it closes every
+socket of the user but records no B16 REVOKE for those sessions. Then, in a shielded
 tracked task, never rolled back: socket close (`bye user_disabled`, 4403), first of each revoked
 session's sockets, then of every socket of the user, which reaches one still on a session that a
 refresh rotated (S7); a sweep of any session still live after the transaction (defence in depth: a
@@ -28,7 +31,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Final, NoReturn, Protocol
@@ -67,6 +70,7 @@ POSITIONS_DECISION: Final = "leave"  # O2: positions and orders stay as they are
 CLOSING_TIMEOUT_S: Final = 2.0  # bounds the closing record; the writer may still be slow
 NOT_APPLIED: Final = "not_applied"  # a closing record's reason: rolled back, nothing changed
 OUTCOME_UNKNOWN: Final = "outcome_unknown"  # ... or its commit failed and may have gone through
+RECOVERED: Final = "recovered_after_commit_error"  # #3445: read back, the commit had gone through
 STEPS: Final = (
     *("socket_close", "session_sweep", "b16_revoke", "scope_refresh", "rule_disarm"),
     "invite_revoke",
@@ -78,6 +82,10 @@ class LifecycleStore(Protocol):  # `SqlAlchemyUserLifecycleStore` (S3): commits 
     async def disable(
         self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: LifecycleAuditHook
     ) -> UserStatusChange | None: ...
+
+    async def read_back_disable(  # #3445: in a new transaction, bounded; `None`: not disabled
+        self, user_id: uuid.UUID, *, now: datetime
+    ) -> tuple[uuid.UUID, ...] | None: ...
 
 
 class AuditEmitter(Protocol):  # `AuditWriter` (M19): durable, write-ahead
@@ -243,8 +251,9 @@ class UserDisableService:
         acknowledge_unknown_positions: bool = False,
     ) -> DisableResult:
         """Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
-        unless the commit itself failed, whose outcome is unknown: if it landed, a retry closes the
-        user's sockets but records no B16 REVOKE, since AC5's no-op returns no session ids (see
+        unless the commit itself failed and its read-back did not find the change (#3445), whose
+        outcome is unknown: if it landed, a retry closes the user's sockets but records no B16
+        REVOKE, since AC5's no-op returns no session ids (see
         `SqlAlchemyUserLifecycleStore.disable`). A caller cancelled after the commit leaves the
         steps to finish in their task (R7)."""
         rid, now, uid = _request_uuid(), self._clock(), str(user_id)
@@ -360,6 +369,10 @@ class UserDisableService:
             if ahead.change is not None:  # its record may be durable: close it with what is known
                 who = _who(actor, user_id, rid)
                 await self._close(who, ahead.change, may_have_committed=ahead.returned)
+                if ahead.returned and isinstance(exc, Exception):  # a cancellation is not read back
+                    found = await self._recover(who, ahead.change, now, type(exc).__name__)
+                    if found is not None:  # the commit had gone through: on with its steps
+                        return found
             if isinstance(exc, WriteAheadTimeout):  # the hook outlived its bound: rolled back
                 raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
             if isinstance(exc, Exception) and not isinstance(exc, UserLifecycleError):
@@ -386,6 +399,49 @@ class UserDisableService:
         )
         await tally.run(record)
         self._step("closing_record", tally, who["object_id"])
+
+    async def _recover(
+        self, who: dict[str, Any], change: UserStatusChange, now: datetime, commit_error: str
+    ) -> UserStatusChange | None:
+        """#3445 (#2710 option C): after a commit that raised, read the change back once, in a new
+        transaction the store bounds. It landed only if the user reads back as disabled with the
+        very sessions the hook saw revoked at `now`: a concurrent disable that won revoked them at
+        its own instant. Then `users.disable` `success`, reason `recovered_after_commit_error`,
+        follows the `outcome_unknown` record, which stays, ahead of the steps (C-2.9), which run
+        for those sessions. `None` if any of it fails: the commit's error stands. One log line,
+        `users.disable.read_back`; no step is counted."""
+        user, request_id = str(change.user_id), current_request_id()
+        fields = {"commit_error": commit_error, "target_user_id": user, "request_id": request_id}
+        try:
+            ids = await self._store.read_back_disable(change.user_id, now=now)
+        except Exception as exc:  # a timeout too: isolated, the commit's error stands
+            _log().error(
+                "users.disable.read_back", outcome="failed", error=type(exc).__name__, **fields
+            )
+            return None
+        if ids is None or set(ids) != set(change.revoked_session_ids):  # not this change
+            outcome = "not_disabled" if ids is None else "other_sessions"
+            _log().error("users.disable.read_back", outcome=outcome, **fields)
+            return None
+        roles, tally = sorted(change.roles), _Tally(self._closing_timeout_s)
+        record = partial(
+            self._audit.emit,
+            "users.disable",
+            **who,
+            outcome=AuditOutcome.SUCCESS,
+            severity=Severity.WARNING,
+            reason=RECOVERED,
+            before_state={"status": change.before, "roles": roles},
+            after_state={"status": change.after, "roles": roles, "sessions_revoked": len(ids)},
+        )
+        await tally.run(record)
+        if tally.failures:  # not durable, so no step may follow (C-2.9)
+            _log().error(
+                "users.disable.read_back", outcome="record_failed", error=tally.error, **fields
+            )
+            return None
+        _log().warning("users.disable.read_back", outcome="recovered", sessions=len(ids), **fields)
+        return replace(change, revoked_session_ids=ids)
 
     async def _cascade(
         self, change: UserStatusChange, actor: uuid.UUID, rid: uuid.UUID | None, now: datetime

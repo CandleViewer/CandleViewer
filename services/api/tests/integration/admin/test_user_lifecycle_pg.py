@@ -13,9 +13,11 @@ import subprocess
 import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +27,7 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
+from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifecycle
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -92,6 +95,7 @@ _HOLD = sa.text(
     "WHERE r.name = 'owner' FOR UPDATE OF ur"
 )
 _WAITING = sa.text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+_HOLD_USER = sa.text("SELECT 1 FROM users WHERE id = CAST(:id AS uuid) FOR UPDATE")
 # A failure injected into one cascade statement: an UPDATE of a marked (table, user) raises.
 _CASCADE_TABLES = ("users", "sessions", "user_account_access")
 _FAIL_DDL = (
@@ -357,3 +361,80 @@ async def test_revoked_grants_keep_freeze_and_loss_cap_columns(db: Any) -> None:
     revoked = (await _snapshot(engine, user))[2][account]
     assert frozen[:3] == (True, True, True) and frozen[4:7] == (actor, "drawdown", Decimal(250))
     assert revoked[:2] == (False, False) and revoked[2:] == frozen[2:]
+
+
+async def _disabled_session(engine: AsyncEngine, user: uuid.UUID, at: datetime) -> None:
+    """A session of `user` revoked `user_disabled` at `at`, by a disable other than the test's."""
+    params = {"id": str(uuid.uuid4()), "user": str(user), "hash": secrets.token_hex(32)}
+    await _exec(engine, _SESSION, **params, revoked_at=at, reason="user_disabled")
+
+
+class _LostCommit:
+    """The repository, whose COMMIT lands and then raises: its answer lost on the wire."""
+
+    def __init__(self, rel: SqlAlchemyRelationalRepository) -> None:
+        self._rel = rel
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncIterator[Any]:
+        async with self._rel.unit_of_work() as uow:
+
+            async def commit() -> None:
+                await uow.commit()
+                raise OSError("commit lost")
+
+            yield SimpleNamespace(session=uow.session, commit=commit)
+
+
+async def test_read_back_after_a_lost_commit_selects_exactly_the_disables_sessions(
+    db: Any,
+) -> None:
+    """#3445: the COMMIT lands, its answer is lost. The read-back, in a new transaction, finds the
+    user disabled and returns exactly the two sessions this disable revoked at its instant: not
+    one ended earlier, nor one an earlier disable revoked, nor another user's revoked at the same
+    instant. A user who is not disabled reads back as `None`."""
+    rel, engine = db
+    actor, user, s1, _ = await _member(engine)
+    s2, _ = await _session(engine, user), await _session(engine, user, ended=True)
+    other = await _user(engine, "manager")
+    await _disabled_session(engine, user, _NOW - timedelta(hours=2))
+    await _disabled_session(engine, other, _NOW)
+    lost: Any = _LostCommit(rel)  # in place of the repository
+    with pytest.raises(OSError, match="commit lost"):
+        await _store(lost).disable(user, actor=actor, now=_NOW, audit=_Hook())
+    assert (await _snapshot(engine, user))[0][0] == "disabled"
+    assert await _store(rel).read_back_disable(user, now=_NOW) == tuple(sorted((s1, s2)))
+    assert await _store(rel).read_back_disable(other, now=_NOW) is None
+
+
+async def test_read_back_sees_a_commit_still_in_flight_once_it_lands(db: Any) -> None:
+    """#3445: the read-back reads under the user-row lock, so one that starts while the disable
+    still holds the row waits for its commit and then reads it, not the row as it was before."""
+    rel, engine = db
+    _, user, s1, _ = await _member(engine)
+    params = {"id": str(user), "now": _NOW, "reason": "user_disabled"}
+    async with engine.connect() as probe:
+        async with engine.begin() as inflight:  # the disable's own writes, not yet committed
+            await inflight.execute(lifecycle._DISABLE, params)
+            await inflight.execute(lifecycle._REVOKE_SESSIONS, params)
+            call = asyncio.create_task(_store(rel).read_back_disable(user, now=_NOW))
+            await _until_blocked(probe, 1)
+        async with asyncio.timeout(_WAIT_S):
+            assert await call == (s1,)
+
+
+async def test_read_back_waits_on_the_user_row_no_longer_than_the_store_timeout(
+    db: Any,
+) -> None:
+    """#3445: a transaction that keeps the user row locked holds the read-back no longer than
+    `audit_timeout_s`: `TimeoutError` while the row is still held."""
+    rel, engine = db
+    _, user, _, _ = await _member(engine)
+    store = SqlAlchemyUserLifecycleStore(rel, owner_floor=_floor, audit_timeout_s=0.5)
+    async with engine.begin() as holder:
+        await holder.execute(_HOLD_USER, {"id": str(user)})
+        call = asyncio.create_task(store.read_back_disable(user, now=_NOW))
+        done, _ = await asyncio.wait({call}, timeout=_WAIT_S)
+        assert call in done, "the read-back was not bounded"
+    with pytest.raises(TimeoutError):
+        call.result()
