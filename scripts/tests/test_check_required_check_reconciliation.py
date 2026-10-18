@@ -373,7 +373,7 @@ def test_dropping_a_lane_from_ci_required_fails_the_proof(
     tmp_path, workflow, old, new, expected
 ) -> None:
     olds, news = (old, new) if isinstance(old, tuple) else ((old,), (new,))
-    errors = _prove(tmp_path, workflow, *zip(olds, news))
+    errors = _prove(tmp_path, workflow, *zip(olds, news, strict=True))
     assert any(expected in e for e in errors), errors
 
 

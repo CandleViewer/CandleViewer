@@ -283,7 +283,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()` with no job keys but "
             f"{', '.join(JOB_KEYS)} (pr.yml may set no env or defaults), with steps checkout, "
             "setup-node and one step with no `if:`, continue-on-error or shell: (no keys but "
-            f"{', '.join(STEP_KEYS)}) that is the {RESOLVER} call alone, whose exit is the resolver's"
+            f"{', '.join(STEP_KEYS)}) that is the {RESOLVER} call alone, whose exit is the "
+            "resolver's"
         ]
     env_block = re.search(r"^        env:\n((?:          .*\n)*)", decider[0] + "\n", re.M)
     env_text = env_block[1] if env_block else ""
