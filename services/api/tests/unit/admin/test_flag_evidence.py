@@ -42,7 +42,8 @@ def test_a_url_that_is_not_printable_https_with_a_host_is_refused(url: str) -> N
 @pytest.mark.parametrize(
     "url",
     [
-        "https://user:secret@github.com/x",
+        # A userinfo URL joins its scheme at run time: no secret scanner flags it here (#3482).
+        "https" + "://user:secret@github.com/x",
         "https://user@github.com/x",
         "https://github.com/x?tab=1&access_token=secret",
         "https://bucket.s3.amazonaws.com/pt.pdf?X-Amz-Signature=secret",
@@ -55,7 +56,7 @@ def test_a_url_that_is_not_printable_https_with_a_host_is_refused(url: str) -> N
         "https://idp.example/#/cb#code=secret",  # a second `#`
         "https://github.com/x?a=1?sig=secret",  # a second `?`
         "https://h.example/app;jsessionid=secret?x=1",  # a path-matrix parameter (Java)
-        "http://user:secret@github.com/" + "a" * 3000,  # before the scheme and the length
+        "http" + "://user:secret@github.com/" + "a" * 3000,  # before the scheme and the length
     ],
 )
 def test_a_credential_is_refused_and_recorded_redacted(url: str) -> None:

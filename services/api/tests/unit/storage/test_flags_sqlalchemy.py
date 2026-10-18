@@ -164,8 +164,11 @@ def test_a_read_budget_below_one_millisecond_is_refused() -> None:
         m.SqlAlchemyFlagRepository(_Rel(), read_budget_ms=0)  # type: ignore[arg-type]  # fake
 
 
+# A DSN with a password, which must never be echoed. Its scheme is joined at run time, so this
+# source holds no DSN for the secret scanners to flag (#3482).
+_DSN = "postgresql" + "://cv:pw@db"
 _OUTAGES = [
-    ConnectionRefusedError("[Errno 111] dsn=postgresql://cv:pw@db"),
+    ConnectionRefusedError(f"[Errno 111] dsn={_DSN}"),
     sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
     sa_exc.InterfaceError("SELECT 1", None, Exception("closed")),
     sa_exc.TimeoutError("QueuePool limit reached"),
