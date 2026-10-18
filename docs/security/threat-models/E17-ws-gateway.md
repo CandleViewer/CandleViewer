@@ -491,7 +491,8 @@ A rebuild-budget refusal writes no row of its own: one per refused entry would g
 The exception is a user's first refusal for its per-user limit in a window: one `ws.rebuild.refused` row (#3476),
 which grows with the users and the minutes, not with the frames.
 A refused private-family `sub` entry is still in its frame's one `ws.subscribe.denied` record (23 §5.2), within
-#3185's per-connection budget (23 §4.3).
+#3185's per-connection budget (23 §4.3). One that a §9.5 change ends before its `sub_ok` is queued is in that
+change's `ws.subscription.revoked` row instead (23 §5.2, #2896).
 
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
@@ -736,3 +737,4 @@ scope on the open tickets named above.
 | 2026-10-18 | author (agent; PR for #3353 round 1)              | §6: WS-D08 qualified for the merged windows each binary subscription encodes, the trades part list; no rating or count changes               |
 | 2026-10-18 | author (agent; PR for #399 D8)                    | §6: `bars.*` share row; WS-D16: the share drop and its bound; no rating or count changes                                                     |
 | 2026-10-18 | author (agent; PR for #3476)                      | WS-D16, WS-D03: a rebuild limit per user over its connections (§6, §7 AC-31, §8 record, §9, §10: per process); no rating or count changes    |
+| 2026-10-19 | author (agent; PR for #2896)                      | §8: a topic a §9.5 change ends before its reply is in `ws.subscription.revoked`, not the denial record (23 §5.2); no rating or count changes |

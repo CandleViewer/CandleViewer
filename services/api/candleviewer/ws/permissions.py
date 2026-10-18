@@ -619,11 +619,52 @@ class ConnectionAuthz:
         its series (`ensure`: a restoring builder's closes reach it); the `BarBuilderSet` lease
         (`register` checks again; `user=` the authenticated principal id, never a client value);
         the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
-        refusal, an `unsub`, a revocation (one during these awaits: #2896) or the socket's end."""
-        refused = await self._upstream(sub)
+        refusal, an `unsub`, a revocation or the socket's end.
+
+        #2896: a change that ends `sub` during these awaits (a revocation, §9.5, or the socket's
+        end) releases only what was taken before it, and `release_all` no longer sees `sub`. What
+        was taken after it is released here, on a return, a raise or a cancellation, and a return
+        refuses `sub` (`ended_result`), after the `revoked` that the change queued already."""
+        try:
+            refused = await self._upstream(sub)
+        except BaseException:
+            self._release_ended(sub)
+            raise
         if refused is not None:  # what was queued of it meanwhile goes too (`on_drop`)
             self._dropped([sub])
-        return refused
+            return refused
+        return self.ended_result(sub) if self._release_ended(sub) else None
+
+    def _release_ended(self, sub: Subscription) -> bool:
+        """#2896: True when a change ended `sub` (`_drop`) during `subscribe_upstream`, so it is not
+        the one `by_id` holds under its id (never reused); dropping it again releases only what was
+        taken after that end. A release that raises (#2735) is logged as `release_all` logs one,
+        and never replaces a raise in flight."""
+        if self.by_id.get(sub.sub_id) is sub:
+            return False
+        try:
+            self._drop(sub)
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not replace that raise
+                _log().error(
+                    "ws subscription release failed", consumer=self._consumer(sub), exc_info=True
+                )
+        return True
+
+    def ended_result(self, sub: Subscription) -> dict[str, Any]:
+        """#2896: the `sub_ok` result of `sub`, which a change ended before its reply was queued:
+        the refusal a `sub` of it gets now, which for the change's `permission_revoked` is
+        `forbidden` and for `account_scope_changed` (its last account) `account_scope_denied`
+        (§10.2); else `forbidden` (the socket ended, or a later change gave it back). No `sub_id`,
+        as on any refusal (§5.2)."""
+        try:
+            if (kind := sub.topic.entity_kind) is not None:
+                self._authorise_entity(sub.ch, kind)
+            else:
+                self._authorise(sub.topic, sub.opts)
+        except TopicError as exc:
+            return _fail(sub.ch, exc.code, exc.message)
+        return _fail(sub.ch, "forbidden", _REFUSED["forbidden"])
 
     async def _upstream(self, sub: Subscription) -> dict[str, Any] | None:
         family = sub.topic.family.family
@@ -1371,7 +1412,12 @@ async def handle_sub(
     flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
     flush then sends it. A refused topic is dropped unannounced. One left unannounced by a
     raise or a cancellation never gets a `snap`: the connection ends (a raise closes it 1011)
-    and its teardown releases the subscription. Its private ones are audited next (SR-186)."""
+    and its teardown releases the subscription. Its private ones are audited next (SR-186).
+
+    #2896: one that a change (§9.5) ends before the reply is queued, in its own
+    `subscribe_upstream` or a later await of the frame, is refused in it (`ended_result`), after
+    that change's `permission_change` and `revoked`; it is never announced. The change records it
+    (`ws.subscription.revoked`), so it is no `ws.subscribe.denied` refusal: only `admit`'s are."""
     body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
     fid = _frame_id(frame)
     shape = sub_shape_error(body)
@@ -1402,13 +1448,18 @@ async def handle_sub(
             if rs is not None and ch != SYSTEM_TOPIC:
                 result["rs"] = rs
             results.append(result)
-            _observe(ch, result)
-            if not result["ok"]:
+            # `admit`'s refusals (§5.2): `subscribe_upstream` refuses public bar topics, which
+            # `_audited` keeps none of, and one a change ended, which that change records (#2896).
+            if not result["ok"] and sub is None:
                 code = result["error"]["code"]
                 if _audited(ch, code):
                     denials.append(_denial(ch, code, why))
     finally:  # a raise or a cancellation mid-loop still records the refusals before it (C-2.9)
         await _audit_denials(authz, denials)
+    _refuse_ended(authz, admitted, results, rs)  # #2896: no await from here to the reply
+    # each topic once, as the reply answers it (§6.2); none if the frame raised or was cancelled
+    for r in results:
+        _observe(r["ch"], r)
     if spent:  # SR-193: one line for the frame, naming its first budget refusal (§7.7)
         authz.rebuilds.log("sub", spent[0][1], authz.connection_id, spent[0][0], count=len(spent))
     cv_ws_client_topics_depth.observe(len(authz.by_id))
@@ -1422,6 +1473,24 @@ async def handle_sub(
         sub.announced = True
     await _audit_grants(authz, admitted)  # after the reply is queued, never ahead of it
     await audit_rebuild_refusal(authz)  # #3476: a user's first `user` refusal in a window
+
+
+def _refuse_ended(
+    authz: ConnectionAuthz,
+    admitted: list[Subscription],
+    results: list[dict[str, Any]],
+    rs: str | None,
+) -> None:
+    """#2896: an admitted subscription that a change ended after its own `subscribe_upstream`, in a
+    later await of the frame (another topic's, the denial record's), took nothing after that end,
+    and the change queued its `revoked`: its result becomes `ended_result`, which follows, and it
+    is no longer admitted (no `snap`, no grant record). Its draw stays, as a start's does."""
+    for sub in [s for s in admitted if authz.by_id.get(s.sub_id) is not s]:
+        admitted.remove(sub)
+        refused = authz.ended_result(sub)
+        if rs is not None:  # as on each result of the frame but `system`'s (§5.2)
+            refused["rs"] = rs
+        results[next(i for i, r in enumerate(results) if r.get("sub_id") == sub.sub_id)] = refused
 
 
 def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:

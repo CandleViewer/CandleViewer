@@ -174,8 +174,8 @@ class RebuildBudget:
     def draw(self, key: Key, path: RebuildPath, *, held: bool = False) -> None:
         """Record one rebuild (a `sub` of a topic not released in the window: the connection's and
         the user's); `held`: the draw its `sub` entry held (`hold`) becomes it, in one step. A
-        `sub` with no hold, one `_drop` ended while it waited, builds no snapshot: it draws on the
-        connection, as SR-193 counts it, but never on the user, whose bound stays exact."""
+        `sub` with no hold (none without a user) draws on the connection only. One that `_drop`
+        ended while it waited is refused instead, and draws nothing (#2896; §5.2)."""
         now = self._clock()
         stamps = self._stamps(key, now)
         self._all.append(now)

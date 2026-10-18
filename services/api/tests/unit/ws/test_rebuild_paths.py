@@ -446,7 +446,8 @@ async def test_two_users_each_spend_only_their_own_limit_and_get_their_own_recor
 
 async def test_an_entry_a_revocation_ends_mid_subscribe_never_draws_on_its_user() -> None:
     """#3476, an exact bound: a revocation that ends an entry waiting in its upstream lets its hold
-    go; when the wait ends, the entry draws on its connection (SR-193), never on its user."""
+    go; when the wait ends, the entry is refused (#2896) and draws on neither its connection nor
+    its user (§5.2: no refused topic draws)."""
     sink = _ParkedSink()
     (conn,) = _one_user(1, UpstreamRefs(sink))
     parked = await _park(conn, "trades.BTCUSDT", sink)
@@ -457,4 +458,4 @@ async def test_an_entry_a_revocation_ends_mid_subscribe_never_draws_on_its_user(
     sink.go.set()
     await parked
     users = conn.authz.services.user_rebuilds
-    assert (users._stamps, users._held, len(conn.authz.rebuilds._all)) == ({}, {}, 1)
+    assert (users._stamps, users._held, len(conn.authz.rebuilds._all)) == ({}, {}, 0)
