@@ -31,6 +31,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
+from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
@@ -1531,6 +1532,9 @@ def create_app(
     # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
     # started `AccountsService` before the app serves (real backend only).
     wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit))
+    # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
+    # and stops it.
+    app.state.account_health = wire_account_health(resolved, metrics_facade)
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
     # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
     app.state.audit_verify_job = build_audit_verify_job(
