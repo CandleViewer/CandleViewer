@@ -16,6 +16,9 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
   A read that fails keeps the set and is a failed pass. An untracked account has no state
   (`current()` is `None`, which the order-entry gate refuses). The same read feeds the key
   standing. The fake backend has no repository, so it runs no such loop and tracks none.
+- Dead-man's-switch episodes outlive the process (#837 W5): the monitor journals each before its
+  hook call (`system_events`). The tracking loop's first pass that works is the boot: it replays the
+  open ones once and tracks `at_boot`, so an account with no evidence for `down_s` is owed one.
 
 A pass that raises is logged by its error type (a message may echo exchange text, C-12.6) and the
 next one runs. A loop that ends, or whose passes keep failing, is a fault: `AccountsService`
@@ -42,7 +45,7 @@ import asyncio
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast, get_args
 from uuid import UUID
 
 import structlog
@@ -52,6 +55,8 @@ from candleviewer.accounts.health import (
     AccountHealthMonitor,
     Clock,
     DeadMansSwitch,
+    EpisodeJournal,
+    HealthReason,
     HealthState,
     HealthThresholds,
     HealthTransition,
@@ -71,6 +76,10 @@ from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
+    DmsEpisodeRow,
+    SqlAlchemyDmsEpisodeJournal,
+)
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -113,9 +122,26 @@ TRACKING_FAULT_AFTER_S: Final = 60.0
 LOG_EVERY_S: Final = 60.0
 #: The catalogue's counter of sizing decisions taken on a snapshot older than the period.
 OLD_SNAPSHOT_DECISIONS: Final = "cv_wallet_sizing_old_snapshot_total"
+#: The open episodes the boot replays, at most (C-2.18; the latest per account): more stay open.
+REPLAY_BATCH: Final = 100
 
 MonitoredAccounts = Callable[[], Awaitable[frozenset[UUID]]]
 Release = Callable[[], Awaitable[None]]
+_STATES: Final = {state.value: state for state in HealthState}
+_REASONS: Final = frozenset(get_args(HealthReason))
+
+
+class EpisodeStore(EpisodeJournal, Protocol):
+    """The journal the monitor writes, and the replay read the boot makes of it."""
+
+    async def open_episodes(self, limit: int) -> tuple[DmsEpisodeRow, ...]: ...
+
+
+def _episode(row: DmsEpisodeRow) -> HealthTransition:
+    """An open row's episode; one with codes this version does not know replays as a lapse."""
+    reason = cast(HealthReason, row.reason) if row.reason in _REASONS else "no_success"
+    state = _STATES.get(row.from_state or "", HealthState.DOWN)
+    return HealthTransition(row.account_id, state, HealthState.DOWN, reason, row.at)
 
 
 def logger() -> Any:
@@ -180,11 +206,12 @@ class AccountHealthRuntime:
     before it gets here (a dated-ahead snapshot would block every later refresh).
 
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
-    tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped.
-    `standings` is the key standing: the reconciler reports a rejected credential to it, and
-    `order_entry_check`, the account check of the app's order-entry gate, reads it with the monitor
-    and the cache. `topic` is the `wallet` topic it publishes on. Meant for one event loop, the one
-    that runs the loops and the hook calls."""
+    tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped;
+    `episodes` is the journal the boot replays (the monitor writes it). `standings` is the key
+    standing: the reconciler reports a rejected credential to it, and `order_entry_check`, the
+    account check of the app's order-entry gate, reads it with the monitor and the cache. `topic`
+    is the `wallet` topic it publishes on. Meant for one event loop, the one that runs the loops and
+    the hook calls."""
 
     def __init__(
         self,
@@ -197,13 +224,15 @@ class AccountHealthRuntime:
         topic: WalletTopic[SnapshotBody],
         release: Release | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        episodes: EpisodeStore | None = None,
     ) -> None:
         self.monitor, self.wallets, self.standings = monitor, wallets, standings
         self.topic = topic
         self.order_entry_check = AccountHealthCheck(monitor, standings, wallets)
-        self._monitored, self._release = monitored, release
+        self._monitored, self._release, self._episodes = monitored, release, episodes
         self._sleep = sleep
         self._tracked: set[UUID] = set()
+        self._booted = False  # a tracking pass has worked: the boot's replay is done
         self._tasks: list[asyncio.Task[None]] = []
         self._loops: dict[str, _Loop] = {}
         self._failures: dict[str, int] = {}  # passes failed in a row, by loop
@@ -310,22 +339,33 @@ class AccountHealthRuntime:
         nothing. A read that fails or times out raises, and the set stays as it was: an account is
         never untracked on a failed read, and the loop counts the pass as failed. An account that
         leaves the set while a dead-man's-switch call is still owed for it stays tracked until the
-        call has returned, so that its episode is not dropped."""
+        call has returned, so that its episode is not dropped.
+
+        The first pass that works is the boot: it also reads the journal's open episodes, before
+        anything is tracked (a failed read fails the pass), tracks its accounts `at_boot` and each
+        episode's account too, owed that episode until its call has returned; once only. The wallet
+        cache tracks the accounts the repository reports, not one tracked for its replay alone."""
         if self._monitored is None:
             return
         async with asyncio.timeout(READ_TIMEOUT_S):
             wanted = await self._monitored()
+        replayed = [] if self._booted else await self._replayed()
         owed = {episode.account_id for episode in self.monitor.owed()}
-        added = wanted - self._tracked
-        removed = {account_id for account_id in self._tracked - wanted if account_id not in owed}
+        kept = wanted | {episode.account_id for episode, _ in replayed}
+        added = kept - self._tracked
+        removed = {account_id for account_id in self._tracked - kept if account_id not in owed}
         for account_id in added:
-            self.monitor.track(account_id)
-            self.wallets.track(account_id)
+            self.monitor.track(account_id, at_boot=not self._booted)
             self.topic.health_changed(account_id)  # its monitoring starts (§15.4)
         for account_id in removed:
             self.monitor.untrack(account_id)
             self.wallets.untrack(account_id)
+        for account_id in wanted:  # a replayed account alone is the monitor's, for its call
+            self.wallets.track(account_id)
+        for episode, row in replayed:
+            self.monitor.replay(episode, row)
         self._tracked = (self._tracked - removed) | added
+        self._booted = True
         if added or removed:
             logger().info(
                 "account_health.tracking_changed",
@@ -333,6 +373,15 @@ class AccountHealthRuntime:
                 added=len(added),
                 removed=len(removed),
             )
+
+    async def _replayed(self) -> list[tuple[HealthTransition, int]]:
+        if self._episodes is None:
+            return []
+        async with asyncio.timeout(READ_TIMEOUT_S):
+            rows = await self._episodes.open_episodes(REPLAY_BATCH + 1)
+        if len(rows) > REPLAY_BATCH:
+            logger().error("account_health.replay_truncated", replayed=REPLAY_BATCH)
+        return [(_episode(row), row.row) for row in rows[:REPLAY_BATCH]]
 
     # -- the loops
 
@@ -411,14 +460,14 @@ class _UsableKeys(Protocol):
 
 def _repository_source(
     settings: Settings, standings: KeyStandings
-) -> tuple[MonitoredAccounts | None, Release | None]:
+) -> tuple[MonitoredAccounts | None, Release | None, EpisodeStore | None]:
     """The real backend's tracking source: the usable-key read of the stored-key self-check, on a
     store of its own bound to the process environment (C-2.11), reduced to the ids of the enabled
     accounts. The key standing takes the same read's rows of that environment and keeps none of
     them; the runtime never holds a row, and the store is typed as the read alone. The fake
-    backend has none."""
+    backend has none. The dead-man's-switch episode journal shares its pool and environment."""
     if settings.storage_backend != "real":
-        return None, None
+        return None, None, None
     env = settings.environment.value
     relational = SqlAlchemyRelationalRepository(
         settings.pg_dsn.get_secret_value(), "account-health"
@@ -439,7 +488,7 @@ def _repository_source(
         standings.observe(own)
         return frozenset(row.account.id for row in own if row.account.is_enabled)
 
-    return monitored, relational.dispose
+    return monitored, relational.dispose, SqlAlchemyDmsEpisodeJournal(relational, env=env)
 
 
 def wire_account_health(
@@ -454,16 +503,18 @@ def wire_account_health(
     dms: DeadMansSwitch | None = None,
     monitored: MonitoredAccounts | None = None,
     release: Release | None = None,
+    journal: EpisodeStore | None = None,
 ) -> AccountHealthRuntime:
     """Build the runtime; `create_app` calls it with the settings, its metrics, the `wallet` topic,
     which this attaches to the monitor and the cache, and the stored-key self-check whose results
     the key standing reads (`None` on the fake backend, which has none). The rest are the seams of
     the bindings that land later and of the tests: the clock (the standing reads its wall time, the
     one the self-check dates passes on, and ages its last good read on the monotonic one), the
-    loops' sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39) and the
-    tracking source with the release of its pool (`monitored` is the repository read; with neither
-    given, the real backend's, which also feeds the standing). A `release` without the `monitored`
-    it frees is refused. No I/O."""
+    loops' sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39), and the
+    tracking source with the release of its pool and the episode journal on its database
+    (`monitored` is the repository read; with none of the three given, the real backend's, which
+    also feeds the standing). A `release` or a `journal` without the `monitored` it goes with is
+    refused. No I/O."""
     clock = clock or SystemClock()
     standings = KeyStandings(
         selfcheck,
@@ -471,18 +522,19 @@ def wire_account_health(
         stale_after_s=TRACKING_FAULT_AFTER_S,
         clock=clock,
     )
+    if monitored is None:
+        if release is not None or journal is not None:
+            raise ValueError("a release or a journal goes with the `monitored` read: pass it too")
+        monitored, release, journal = _repository_source(settings, standings)
+    thresholds = HealthThresholds.from_settings(settings)
     monitor = AccountHealthMonitor(
-        clock, dms or LoggingDeadMansSwitch(), HealthThresholds.from_settings(settings)
+        clock, dms or LoggingDeadMansSwitch(), thresholds, journal=journal
     )
     wallets = WalletCache(
         clock,
         WalletThresholds.from_settings(settings),
         old_snapshot_decisions=register_r0(metrics)[OLD_SNAPSHOT_DECISIONS],
     )
-    if monitored is None:
-        if release is not None:
-            raise ValueError("a release frees what `monitored` reads: pass both or neither")
-        monitored, release = _repository_source(settings, standings)
     topic.attach(monitor, wallets)
     return AccountHealthRuntime(
         monitor,
@@ -493,4 +545,5 @@ def wire_account_health(
         topic=topic,
         release=release,
         sleep=sleep,
+        episodes=journal,
     )

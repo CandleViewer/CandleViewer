@@ -19,11 +19,12 @@ import math
 import random
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Final, Literal, Protocol
+from functools import partial
+from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -60,6 +61,12 @@ DMS_HOOK_TIMEOUT_S: Final = 5.0
 #: retry in step, and a broken hook costs one error log every `down_s / 2` to `down_s` per
 #: account, not one per tick.
 DMS_RETRY_MIN_S: Final = 1.0
+#: How long a call waits for each journal write, the record before the hook and the resolve after
+#: it. A write still running then is cancelled and left to unwind on its own task, never awaited (a
+#: driver's cleanup can wait on a stuck server). So, whatever the database does, the hook is called
+#: at most this long after its call starts, and both waits fit in the call's watch (twice the hook
+#: timeout): a slow or stuck write never abandons a call.
+DMS_JOURNAL_TIMEOUT_S: Final = 1.0
 
 
 def epoch_ms(value: datetime) -> int:
@@ -159,13 +166,32 @@ class DeadMansSwitch(Protocol):
     account's next call nor `drain()`. The monitor keeps the abandoned task referenced until it
     ends and never awaits it.
 
-    A restarted monitor starts every account `down` owing nothing, so an outage that spans a
-    restart, or an account that never reconnects after boot, owes this monitor no call. Closing
-    that gap is the #837 wiring's obligation: persist `owed()` at `drain()` and replay it after a
-    restart, and owe a call for an account still `down`, with no evidence, `down_s` after
-    startup."""
+    Across restarts (#837 W5), with an `EpisodeJournal`: an episode is recorded before its first
+    call, so a kill (SIGKILL included, which skips `drain()`) leaves its row open for the next boot
+    to replay once. One with no row (its record failed or timed out, or it became owed while its
+    account's previous call was in flight, so it is recorded only when its own call starts) is lost
+    to a kill, unless its account gives no evidence for `down_s` after the next boot: an account
+    tracked at boot is then owed a boot episode. Neither is a transition: a boot episode is `down`
+    to `down` with reason `never_connected`, and a replay arrives late, dated by `transition.at`,
+    which may be arbitrarily old, for an account that may since have been disabled or soft-deleted.
+    So check the episode against the exchange's current state before acting, and return, not raise,
+    for an account the policy cannot act on: a raise is retried for as long as the account stays
+    tracked, and replayed at every boot. At least once, so idempotent: a resolved row is never
+    replayed, and a call that returned before its resolve committed (a kill between the two, or a
+    failed write) is made at most once more."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
+
+
+class EpisodeJournal(Protocol):
+    """Where episodes outlive the process: `record` writes an unresolved row and returns its id,
+    `resolve` closes it and the account's older open rows. Codes and times only."""
+
+    async def record(
+        self, account_id: UUID, *, from_state: str, reason: str, at: datetime
+    ) -> int: ...
+
+    async def resolve(self, account_id: UUID, row: int) -> None: ...
 
 
 @dataclass(slots=True)
@@ -180,6 +206,8 @@ class _Account:
     dms_calling: HealthTransition | None = None  # the episode this tracking's last call delivers
     dms_delay: float = 0.0  # the last backoff for `dms_owed`; 0 until a call for it fails
     dms_retry_at: float = -math.inf  # monotonic; no call for `dms_owed` starts before it
+    dms_row: tuple[HealthTransition, int] | None = None  # the last episode recorded, and its row
+    boot_due: float | None = None  # monotonic; tracked at boot: a boot episode is owed from it
 
     def last_success(self) -> float | None:
         return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
@@ -203,6 +231,13 @@ class AccountHealthMonitor:
     An evidence call first commits any lapse the old evidence reached, so a down window that
     passed between two ticks is still a transition and a dead-man's-switch call, and returns the
     latest transition. Evidence for an untracked account is ignored: it can race `untrack()`.
+
+    With a `journal`, a call records its episode's row first and resolves it once the hook has
+    returned, waiting at most `journal_timeout_s` for each write (`DMS_JOURNAL_TIMEOUT_S`). A failed
+    write never withholds the hook, the safety action (the row is only its durability): it is
+    logged and counted in `journal_failures`, and a retry of the call writes the record again,
+    unless the account's last write is still unwinding: then it fails at once, holding no second
+    connection.
     """
 
     def __init__(
@@ -213,23 +248,45 @@ class AccountHealthMonitor:
         *,
         dms_timeout_s: float = DMS_HOOK_TIMEOUT_S,
         rng: random.Random | None = None,
+        journal: EpisodeJournal | None = None,
+        journal_timeout_s: float = DMS_JOURNAL_TIMEOUT_S,
     ) -> None:
         if not (math.isfinite(dms_timeout_s) and dms_timeout_s > 0):
             raise ValueError("dms_timeout_s must be finite and greater than 0")
+        if journal is not None and not 0 < 2 * journal_timeout_s < dms_timeout_s:
+            raise ValueError("journal_timeout_s must be above 0 and below half of dms_timeout_s")
         self._clock = clock
         self._dms = dms
         self._th = thresholds or HealthThresholds()
         self._dms_timeout_s = dms_timeout_s
         self._rng = rng if rng is not None else random.SystemRandom()  # retry jitter only
+        self._journal, self._journal_timeout_s = journal, journal_timeout_s
+        self.journal_failures = 0  # writes that failed, timed out or were skipped; W6 exports it
         self._accounts: dict[UUID, _Account] = {}
         self._calls: dict[UUID, asyncio.Task[None]] = {}  # the latest call per account id
         self._watchers: set[asyncio.Task[None]] = set()  # one per call: ends with it or abandons it
         self._stuck: set[asyncio.Task[None]] = set()  # abandoned calls: running, never awaited
+        self._unwinding: dict[asyncio.Task[Any], UUID] = {}  # journal writes left to unwind
 
-    def track(self, account_id: UUID) -> None:
-        """Start monitoring an account; it is `down` until the first success."""
+    def track(self, account_id: UUID, *, at_boot: bool = False) -> None:
+        """Start monitoring an account; it is `down` until the first success. `at_boot`: tracked by
+        the first pass after a start, so the outage may span the restart: with no evidence for
+        `down_s`, it is owed a boot episode (`down` to `down`, `never_connected`, dated then)."""
         if account_id not in self._accounts:
-            self._accounts[account_id] = _Account(self._clock.now(), self._clock.monotonic())
+            acc = _Account(self._clock.now(), self._clock.monotonic())
+            acc.boot_due = acc.since + self._th.down_s if at_boot else None
+            self._accounts[account_id] = acc
+
+    def replay(self, episode: HealthTransition, row: int) -> None:
+        """Owe the hook a call for an episode left open as journal row `row`, which the call
+        resolves; it stands for the boot episode. An account that owes one keeps its own."""
+        acc = self._accounts.get(episode.account_id)
+        if acc is None or acc.dms_owed is not None:
+            return
+        log = structlog.get_logger(__name__)
+        log.warning("account.dms_episode_replayed", account_id=str(episode.account_id))
+        acc.dms_owed, acc.dms_row, acc.boot_due = episode, (episode, row), None
+        self._evaluate(episode.account_id, acc)
 
     def untrack(self, account_id: UUID) -> None:
         """Stop monitoring an account. A call in flight finishes, and a later `track()` of the
@@ -286,8 +343,8 @@ class AccountHealthMonitor:
     async def drain(self) -> None:
         """Shutdown: wait until no dead-man's-switch call is in flight; each ends within twice the
         hook timeout, whatever its hook does with the cancellation. This process makes no call
-        still owed afterwards, so each is logged as `account.dms_hook_dropped`; `owed()` lists
-        them for the #837 wiring to persist and replay after a restart."""
+        still owed afterwards, so each is logged as `account.dms_hook_dropped`; one with a journal
+        row keeps it open for the next boot to replay."""
         while self._watchers:
             await asyncio.wait(set(self._watchers))
         for owed in self.owed():
@@ -353,14 +410,15 @@ class AccountHealthMonitor:
         running. A new transition into `down` replaces the owed episode, logged as dropped unless
         its call is in flight (that call's outcome decides), and starts with no delay. The call
         is a task bound to the account's correlation context, on top of the caller's: nothing
-        here waits for the hook or sees it raise."""
+        here waits for the hook or sees it raise. A boot episode that came due counts as one."""
         moved = self._commit(account_id, acc)
         busy = self._in_flight(account_id)
-        if moved is not None and moved.to_state is HealthState.DOWN:
+        down = moved if moved is not None and moved.to_state is HealthState.DOWN else None
+        if (episode := down or self._boot_episode(account_id, acc)) is not None:
             replaced = acc.dms_owed
             if replaced is not None and not (busy and replaced is acc.dms_calling):
                 _log_dropped(replaced)
-            acc.dms_owed, acc.dms_delay, acc.dms_retry_at = moved, 0.0, -math.inf
+            acc.dms_owed, acc.dms_delay, acc.dms_retry_at = episode, 0.0, -math.inf
         if acc.dms_owed is None or busy or self._clock.monotonic() < acc.dms_retry_at:
             return moved
         owed = acc.dms_owed
@@ -380,6 +438,19 @@ class AccountHealthMonitor:
         call = self._calls.get(account_id)
         return call is not None and not call.done() and call not in self._stuck
 
+    def _boot_episode(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
+        """Once, for an account tracked at boot: an episode once `down_s` passed with no evidence,
+        which cancels it (so no transition moved it: dated `down_s` after its tracking)."""
+        if acc.boot_due is None or acc.last_success() is not None:
+            acc.boot_due = None
+            return None
+        if self._clock.monotonic() < acc.boot_due:
+            return None
+        acc.boot_due, down, log = None, HealthState.DOWN, structlog.get_logger(__name__)
+        log.warning("account.dms_boot_episode", account_id=str(account_id))
+        at = acc.changed_at + timedelta(seconds=self._th.down_s)
+        return HealthTransition(account_id, down, down, "never_connected", at)
+
     def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         state, reason, began, at = self._project(acc, self._clock.monotonic())
         if state is acc.state:
@@ -391,6 +462,8 @@ class AccountHealthMonitor:
         return moved
 
     async def _call_dms(self, acc: _Account, owed: HealthTransition) -> None:
+        journal = self._journal
+        row = None if journal is None else await self._record(journal, acc, owed)  # ahead of it
         try:
             async with asyncio.timeout(self._dms_timeout_s):
                 await self._dms.account_down(owed)
@@ -400,6 +473,61 @@ class AccountHealthMonitor:
         else:
             if acc.dms_owed is owed:
                 acc.dms_owed = None
+            if journal is not None and row is not None:
+                await self._write("resolve", owed, partial(journal.resolve, owed.account_id, row))
+
+    async def _record(
+        self, journal: EpisodeJournal, acc: _Account, owed: HealthTransition
+    ) -> int | None:
+        """The episode's row: the one an earlier call for it wrote (or the replay gave), else a
+        new one; `None` when the write failed or timed out, and the hook is called all the same."""
+        if acc.dms_row is not None and acc.dms_row[0] is owed:
+            return acc.dms_row[1]
+        state, reason, at = owed.from_state.value, owed.reason, owed.at
+        write = partial(journal.record, owed.account_id, from_state=state, reason=reason, at=at)
+        if (row := await self._write("record", owed, write)) is not None:
+            acc.dms_row = (owed, row)
+        return row
+
+    async def _write[T](
+        self, step: str, owed: HealthTransition, write: Callable[[], Coroutine[Any, Any, T]]
+    ) -> T | None:
+        """One journal write, as its own task; `None` when it failed. Its task is waited for, not
+        cancelled into: one still running after `journal_timeout_s`, or when this call is itself
+        cancelled, is cancelled but never awaited, and stays referenced until it ends. While the
+        account's last such write is unwinding, none is started: it fails as a timeout at once."""
+        if owed.account_id in self._unwinding.values():
+            self._journal_failed(step, owed, TimeoutError.__name__)
+            return None
+        task = spawn(write(), name=f"account-dms-journal:{owed.account_id}")
+        task.add_done_callback(self._settled)
+        try:
+            await asyncio.wait({task}, timeout=self._journal_timeout_s)
+        finally:
+            if not task.done():  # cut off, or this call was cancelled: left to unwind
+                self._unwinding[task] = owed.account_id
+                task.cancel()
+        if not task.done():
+            self._journal_failed(step, owed, TimeoutError.__name__)
+            return None
+        if (error := task.exception()) is not None:
+            self._journal_failed(step, owed, type(error).__name__)
+            return None
+        return task.result()
+
+    def _settled(self, task: asyncio.Task[Any]) -> None:
+        """Done-callback of every journal write: forgets one left to unwind, and retrieves the
+        outcome, so none is reported as unretrieved (its message could echo the driver's text)."""
+        self._unwinding.pop(task, None)
+        if not task.cancelled():
+            task.exception()
+
+    def _journal_failed(self, step: str, owed: HealthTransition, error: str) -> None:
+        """By error type only (C-12.6); critical for a record: a kill now would lose the episode."""
+        self.journal_failures += 1
+        log = structlog.get_logger(__name__).bind(step=step, account_id=str(owed.account_id))
+        level = log.critical if step == "record" else log.error
+        level("account.dms_journal_failed", reason=owed.reason, error=error)
 
     def _failed(self, acc: _Account, owed: HealthTransition, error: str) -> None:
         # Still owed: the first evaluation after the jittered delay makes it again. A newer

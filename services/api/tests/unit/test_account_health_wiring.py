@@ -35,10 +35,14 @@ from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics import Metrics
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
+    DmsEpisodeRow,
+    SqlAlchemyDmsEpisodeJournal,
+)
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock, key_row
+from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock, Journal, key_row
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
@@ -644,18 +648,25 @@ def _account_row(
 
 @pytest.fixture
 def stored(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
-    """The real-backend `create_app` with the usable-key read faked at its SQL edge, which also
-    records the environment its store was bound to."""
-    edges = SimpleNamespace(rows=[], envs=[], disposed=0)
+    """The real-backend `create_app` with the usable-key read and the episode journal's replay
+    read faked at their SQL edge, each recording the environment its store was bound to."""
+    edges = SimpleNamespace(rows=[], envs=[], journal_envs=[], disposed=0)
 
     async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
         edges.envs.append(store._env)
         return tuple(edges.rows)
 
+    async def open_episodes(
+        journal: SqlAlchemyDmsEpisodeJournal, limit: int
+    ) -> tuple[DmsEpisodeRow, ...]:
+        edges.journal_envs.append(journal._env)
+        return ()
+
     async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
         edges.disposed += 1
 
     monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
     monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: None)
     yield edges
@@ -680,7 +691,7 @@ async def test_the_real_backend_binds_the_store_it_reads_to_the_process_environm
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.refresh_tracking()
-    assert stored.envs == ["testnet"]
+    assert stored.envs == stored.journal_envs == ["testnet"]  # and the boot pass replays
 
 
 async def test_a_row_of_another_environment_is_logged_once_for_as_long_as_it_stays(
@@ -728,10 +739,12 @@ def test_create_app_serves_the_wallet_topic_from_the_runtime_through_the_gateway
     assert [entry["exchange_account_id"] for entry in body.structured["health"]] == [str(ACC)]
 
 
-def test_a_release_without_the_read_it_frees_is_refused() -> None:
+@pytest.mark.parametrize("seam", ["release", "journal"])
+def test_a_release_or_a_journal_without_the_read_it_goes_with_is_refused(seam: str) -> None:
     async def release() -> None:
         return None
 
     topic = WalletTopic(SequencingHub().publish, SnapshotBody)
-    with pytest.raises(ValueError, match="release"):
-        wire_account_health(Settings(), Metrics("demo"), topic, release=release)
+    given: dict[str, Any] = {"release": release, "journal": Journal()}
+    with pytest.raises(ValueError, match=seam):
+        wire_account_health(Settings(), Metrics("demo"), topic, **{seam: given[seam]})

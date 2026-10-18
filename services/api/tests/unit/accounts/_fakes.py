@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 from uuid import UUID
@@ -13,6 +14,7 @@ from candleviewer.accounts.order_gate import KeyStanding
 from candleviewer.domain.primitives import Exchange
 from candleviewer.observability.context import get_context
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import DmsEpisodeRow
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -154,3 +156,59 @@ class Sizing(dict[UUID, bool]):
 
     def risk_sizing_available(self, account_id: UUID) -> bool | None:
         return self.get(account_id)
+
+
+@dataclass
+class Episode:
+    account_id: UUID
+    from_state: str
+    reason: str
+    at: datetime
+    resolved: bool = False
+
+
+class Journal:
+    """The episode journal (`system_events` in production), rows by id. A step (`record`,
+    `resolve`, `read`) in `fail` raises; one in `hold` waits for the event first, and holds its
+    cancellation until then too (a stuck server, which the driver's cleanup also waits for), then
+    raises its `fail`, if any, in the cancellation's place."""
+
+    def __init__(self, *episodes: Episode) -> None:
+        self.rows = {n: replace(e) for n, e in enumerate(episodes, start=1)}  # its own copies
+        self.fail: dict[str, Exception] = {}
+        self.hold: dict[str, asyncio.Event] = {}
+        self.limits: list[int] = []
+
+    def open(self) -> list[UUID]:
+        return [e.account_id for e in self.rows.values() if not e.resolved]
+
+    async def _step(self, name: str) -> None:
+        if (hold := self.hold.get(name)) is not None:
+            try:
+                await hold.wait()
+            except asyncio.CancelledError:
+                await hold.wait()
+                raise self.fail.get(name, asyncio.CancelledError()) from None
+        if (error := self.fail.get(name)) is not None:
+            raise error
+
+    async def record(self, account_id: UUID, *, from_state: str, reason: str, at: datetime) -> int:
+        await self._step("record")
+        self.rows[len(self.rows) + 1] = Episode(account_id, from_state, reason, at)
+        return len(self.rows)
+
+    async def resolve(self, account_id: UUID, row: int) -> None:
+        """The row and its account's older rows, as the SQL does."""
+        await self._step("resolve")
+        for n, episode in self.rows.items():
+            episode.resolved |= episode.account_id == account_id and n <= row
+
+    async def open_episodes(self, limit: int) -> tuple[DmsEpisodeRow, ...]:
+        """The latest open row per account, newest first, `limit` at most."""
+        self.limits.append(limit)
+        await self._step("read")
+        latest = {e.account_id: (n, e) for n, e in self.rows.items() if not e.resolved}
+        newest = sorted(latest.values(), key=lambda pair: pair[0], reverse=True)[:limit]
+        return tuple(
+            DmsEpisodeRow(n, e.account_id, e.from_state, e.reason, e.at) for n, e in newest
+        )
