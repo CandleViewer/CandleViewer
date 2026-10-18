@@ -97,7 +97,8 @@ def test_refresh_never_extends_the_fifteen_minute_lifetime(stack: Stack) -> None
 def test_an_idle_locked_enrolment_only_session_cannot_end_its_other_sessions(
     stack: Stack,
 ) -> None:
-    """`DELETE /me/sessions/{sessionId}` accepts a locked session; the guard still refuses."""
+    """The idle-lock gate (#2300), mounted outside the guard, refuses a locked session on
+    `DELETE /me/sessions/{sessionId}` first; either way the other session stays live."""
     user = _enrolling(stack)
     _, headers = _mint(stack, user, idle_timeout_s=300)
     other, _ = _mint(stack, user)
@@ -105,7 +106,7 @@ def test_an_idle_locked_enrolment_only_session_cannot_end_its_other_sessions(
 
     resp = stack.client.delete(f"/me/sessions/{other.session_id}", headers=headers)
 
-    assert (resp.status_code, resp.json()["code"]) == (403, _CODE)
+    assert (resp.status_code, resp.json()["code"]) == (401, "session_idle_locked")
     assert stack.call(stack.auth.sessions.require_active, str(other.session_id))  # still live
 
 

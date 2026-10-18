@@ -1459,17 +1459,9 @@ def create_app(
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
     set_b16_audit_sink(_LazyAuditEmitter(ctx.audit))
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
-    # #2300: an idle-locked session gets `401 session_idle_locked` from every route but the
-    # three allowed while locked. Added after the read-only guard and before `CsrfMiddleware`,
-    # so it runs inside the CSRF guard and outside every route-level guard.
-    app.add_middleware(
-        IdleLockMiddleware,
-        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
-        spec=spec,
-    )
     # #2295: the enrolment-only session reaches five operations; added after (so outside) the
-    # idle-lock gate and the read-only/step-up guard, so a refused request never records a step-up
-    # challenge, and a locked full session still meets the idle lock's own 401.
+    # read-only/step-up guard, so a refused request never records a step-up challenge, and
+    # before the idle-lock gate, so a locked session meets the lock first.
     app.middleware("http")(
         make_enrolment_only_guard(
             ctx.auth,
@@ -1477,6 +1469,14 @@ def create_app(
             operations=declared_operations(spec),
             sessionless=sessionless_operations(spec),
         )
+    )
+    # #2300: an idle-locked session gets `401 session_idle_locked` from every route but the
+    # three allowed while locked. Added after the read-only guard and before `CsrfMiddleware`,
+    # so it runs inside the CSRF guard and outside every route-level guard.
+    app.add_middleware(
+        IdleLockMiddleware,
+        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
+        spec=spec,
     )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
@@ -2051,9 +2051,8 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> enrolment-only guard (#2295)
-    #   -> IdleLock (#2300)
-    #   -> read-only/step-up guard -> routes.
+    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> IdleLock (#2300)
+    #   -> enrolment-only guard (#2295) -> read-only/step-up guard -> routes.
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.
