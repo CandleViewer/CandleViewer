@@ -150,12 +150,12 @@ def test_agents_md_states_the_build_prerequisite_of_the_web_tests() -> None:
     assert f"`{BUILD}` first" in text
 
 
-def _guard(package: Path) -> subprocess.CompletedProcess[str]:
+def _guard(package: Path, *node_options: str) -> subprocess.CompletedProcess[str]:
     node = shutil.which("node")
     if node is None:  # CI must run this behavioural check
         (pytest.fail if os.environ.get("CI") else pytest.skip)("node runs the guard")
     script = ROOT / "tools" / "ci" / "check_built_exports.mjs"
-    argv = [str(node), str(script), str(package)]
+    argv = [str(node), *node_options, str(script), str(package)]
     return subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
 
 
@@ -304,3 +304,18 @@ def test_guard_reports_a_permission_error_with_its_errno(
     finally:
         (built / "dist").chmod(0o755)
     _assert_reported(result, tmp_path / target, "EACCES")
+
+
+def test_guard_keeps_the_stack_of_an_error_that_has_no_code(tmp_path: Path) -> None:
+    # Only an error with a code (ENOTDIR, EACCES, ...) is reported as a CI-BUILD-001 line: a bug
+    # in the guard, such as a TypeError, keeps its stack and still exits 1.
+    bug = tmp_path / "bug.cjs"  # preloaded with --require: statSync throws a code-less TypeError
+    bug.write_text(
+        'require("node:fs").statSync = () => { throw new TypeError("bug"); };\n'
+        'require("node:module").syncBuiltinESMExports();\n',
+        encoding="utf-8",
+    )
+    result = _guard(_package(tmp_path, CONDITIONAL, []), "--require", str(bug))
+    assert result.returncode == 1
+    assert "TypeError: bug" in result.stderr and "\n    at " in result.stderr
+    assert "CI-BUILD-001" not in result.stderr

@@ -89,6 +89,9 @@ function main(dirs) {
       try {
         if (!present(dir, target)) missing.push(file);
       } catch (err) {
+        // A filesystem error has a string code (ENOTDIR, EACCES, ...). Any other error is a bug in
+        // this script: rethrown, it keeps its stack and still exits 1.
+        if (typeof err?.code !== "string") throw err;
         failed.push(`${file}: ${err.message}`);
       }
     }
