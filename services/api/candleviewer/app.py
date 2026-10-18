@@ -37,6 +37,7 @@ from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.metrics import export_flag_metrics
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
+from candleviewer.admin.lifecycle_metrics import export_user_lifecycle_metrics
 from candleviewer.admin.ops.health import AdminHealthService
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
@@ -1550,6 +1551,10 @@ def create_app(
     app.state.auth_metrics = export_auth_metrics(ctx.metrics, env=resolved.environment.value)
     # E42-T02: audit page time by filter class, and reads over their time budget.
     app.state.audit_query_metrics = export_audit_query_metrics(
+        ctx.metrics, env=resolved.environment.value
+    )
+    # E42-T04 (#965 R7): user lifecycle calls and steps, read by the lifecycle tickets.
+    app.state.user_lifecycle_metrics = export_user_lifecycle_metrics(
         ctx.metrics, env=resolved.environment.value
     )
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).

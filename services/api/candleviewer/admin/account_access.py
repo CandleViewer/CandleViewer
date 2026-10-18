@@ -81,14 +81,12 @@ async def _count(read: Awaitable[int | None], timeout_s: float) -> int | None:
         return None
 
 
-# TODO(#2648): alert on `grants_push` outcomes `failed` and `timeout` (R7: counted and alerted),
-# with the lifecycle alert rule of E42-T04's observability slice (#965), which also serves the
-# counter.
 def _pushed(
     user_id: uuid.UUID, outcome: Literal["pushed", "timeout", "failed"], error: str | None = None
 ) -> None:
     """One count and one line per push outcome. `timeout`: the request stopped waiting (AC3
-    missed) while the push goes on, to be counted again when it ends `pushed` or `failed`."""
+    missed) while the push goes on, to be counted again when it ends `pushed` or `failed`. A
+    `timeout` or a `failed` raises the `UserGrantsPushFailed` ticket (R7: counted and alerted)."""
     user_lifecycle_steps_total.labels(step=PUSH_STEP, outcome=outcome).inc()
     log = _log()
     level = {"pushed": log.info, "timeout": log.warning, "failed": log.error}[outcome]

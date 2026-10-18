@@ -249,3 +249,15 @@ groups:
         annotations:
           summary: "Expected metric egress_ip_changes_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #965 R7: the series behind UserLifecycleStepFailed and UserGrantsPushFailed, and, from the
+      # same export, UserDisableFailed's call counter. Every label value is bound at import
+      # (admin/lifecycle_metrics.py), so it reads 0 from process start; this fires only unscraped.
+      - alert: ExpectedMetricMissingCvUserLifecycleStepsTotal
+        expr: absent(cv_user_lifecycle_steps_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_user_lifecycle_steps_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"

@@ -176,3 +176,53 @@ groups:
         annotations:
           summary: "The break-glass state cannot be read: its pages are blind"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing"
+      - alert: UserLifecycleStepFailed
+        # #965 R7: a step of the user disable cascade after its commit (socket close, session
+        # sweep, B16 revoke, rule scope refresh, rule disarm, invite revoke) failed, or the
+        # closing record of a disable that did not commit could not be written. Counted, logged
+        # at error (`users.disable.step`) and never rolled back. A ticket, not a page: the
+        # committed transaction already disabled the user and revoked their sessions and grants,
+        # and the permission readers refuse a user who is not active (O5). The grants push has
+        # its own ticket below. Held past the quiet-hours mute as the WS any-event tickets are
+        # (ws_gateway.yml header, with its two preconditions); every series is bound at import
+        # (admin/lifecycle_metrics.py), so the first failure after a restart is an increase.
+        expr: >-
+          sum by (env) (increase(cv_user_lifecycle_steps_total{step!="grants_push",outcome="failed"}[15m]))
+          > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: user_lifecycle
+        annotations:
+          summary: "A step of a user disable failed and is not retried"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-userlifecyclestepfailed"
+      - alert: UserGrantsPushFailed
+        # #2648 R7: a committed grant change was not pushed to the user's live sockets: the push
+        # raised (`failed`), or the request stopped waiting for it after 2 s (`timeout`, AC3;
+        # the push goes on and is counted again when it ends). Logged as `account access push`.
+        # Held as the ticket above.
+        expr: >-
+          sum by (env) (increase(cv_user_lifecycle_steps_total{step="grants_push",outcome=~"failed|timeout"}[15m]))
+          > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: user_lifecycle
+        annotations:
+          summary: "A grant change was not pushed to the user's live sockets in time"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-usergrantspushfailed"
+      - alert: UserDisableFailed
+        # #965 R7: a disable failed in its store (`result` `error`, no refusal): no step ran, though
+        # a commit that raised may have landed. Held as the two above; their guard covers it too.
+        expr: >-
+          sum by (env) (increase(cv_user_lifecycle_total{action="disable",result="error"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: user_lifecycle
+        annotations:
+          summary: "A user disable failed in its store; none of its steps ran"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-userdisablefailed"

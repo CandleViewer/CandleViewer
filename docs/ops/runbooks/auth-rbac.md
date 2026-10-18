@@ -784,6 +784,38 @@ counter for them is requested under #3009 and E27 KV-D04 (#2267). A page that ha
 better evidence: it sends no `[RESOLVED]` message and clears with its 15-minute window, so the test
 sign-out in the alert runbook entry (row 7) is the check.
 
+## 11. A disable or a grant change left a step undone (`UserLifecycleStepFailed`, `UserGrantsPushFailed`, `UserDisableFailed`)
+
+Written 2026-10-18 against `main` at `f6aad808e` for #965 and #2648 (R7 of each: a step after the
+commit is counted and alerted, never rolled back). The alert runbooks are the anchors
+`alert-userlifecyclestepfailed`, `alert-usergrantspushfailed` and `alert-userdisablefailed` of
+`docs/plan/07-release-and-prr.md`; this section says where their signals come from.
+
+- **Disable steps.** After the transaction of `DELETE /users/{userId}` commits (§4), each step adds
+  one to `cv_user_lifecycle_steps_total{step,outcome}` per call, `ok` or `failed` (`skipped` only
+  for `b16_revoke` with no session and `invite_revoke` with no invite), and logs one
+  `users.disable.step` line with `step`, `outcome`, `attempted`, the `error` class,
+  `target_user_id` and `request_id`, at error when it failed. A disable that did not commit counts
+  and logs its closing record as the step `closing_record`, written in one attempt: `ok` or
+  `failed`. Any `failed` raises the `UserLifecycleStepFailed` ticket. The remedy is a repeat of the
+  DELETE, which re-runs the steps that §4 lists; it re-runs neither B16 for the sessions the first
+  call revoked nor the invite revoke.
+- **Disable calls.** `cv_user_lifecycle_total{action,result}` counts each call. An `error` is no
+  refusal but a store failure (`user disable store unavailable`, a `503`): no step ran, though its
+  commit may have landed, so it raises the `UserDisableFailed` ticket. Read the user's status and
+  disable them again if that is still wanted. No refusal alerts: `forbidden` and `self_target` are
+  audited (`rbac.denied`); `last_owner` (UL1-D1), `not_found` and `positions_unknown` are not.
+- **Grants push.** A grant change through `PUT /users/{userId}/account-access` (E42-T08) pushes
+  `grants_changed` to the user's live sockets once it commits, and counts the push as the step
+  `grants_push`: `pushed`, `timeout` (the request stopped waiting after 2 s; the push goes on and
+  is counted again when it ends) or `failed`, with one `account access push` line (`outcome`,
+  `error`, `target_user_id`). A `timeout` or a `failed` raises the `UserGrantsPushFailed` ticket.
+  A failed push is not retried: each socket reads the current grants at its next `auth`. The `PUT`
+  has been served since #3267 (#2648, S9c), so its pushes are counted and this ticket can fire.
+- Both series are served with `env` on the metrics listener (`127.0.0.1:9108`, §6), every label
+  value at 0 from process start, so the first failure after a restart is an increase the tickets
+  see. `ExpectedMetricMissingCvUserLifecycleStepsTotal` fires if they are not scraped (one export).
+
 ## Known gaps referenced above
 
 | Gap                                                                       | Reference            |

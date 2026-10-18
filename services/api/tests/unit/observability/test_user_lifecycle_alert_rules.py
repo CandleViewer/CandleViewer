@@ -1,0 +1,143 @@
+"""#965 R7 and #2648 R7: the `UserLifecycleStepFailed`, `UserGrantsPushFailed` and
+`UserDisableFailed` tickets and the `absent()` guard of their series. Promtool (CI runs
+`infra/prometheus/tests/system_alerts.test.yml`) proves when each fires and how long it is held;
+these pins tie the rules to the closed sets of `admin/lifecycle_metrics.py` and to the route,
+runbook, drill row and catalogue. No PromQL runs."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+from candleviewer.admin.lifecycle_metrics import ACTION_RESULTS, EXPORTED_NAMES, STEP_OUTCOMES
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from tests.unit.observability.test_auth_backstop_alert_rules import (
+    _quiet_hours_minutes,
+    _route_for,
+    _rule,
+    _runbook_section,
+)
+
+_ROOT = Path(__file__).resolve().parents[5]
+_PROMTOOL = _ROOT / "infra" / "prometheus" / "tests" / "system_alerts.test.yml"
+_MATRIX = _ROOT / "qa" / "plans" / "e04-alert-drill-matrix.md"
+_SERIES, _PUSH = "cv_user_lifecycle_steps_total", "grants_push"
+_GUARD = "ExpectedMetricMissingCvUserLifecycleStepsTotal"
+#: Each ticket's share of the closed sets: every failed cascade step and closing record for one,
+#: the push that failed or timed out for the other; no pair is read by both.
+ADMITS = {
+    "UserLifecycleStepFailed": {(step, "failed") for step in STEP_OUTCOMES if step != _PUSH},
+    "UserGrantsPushFailed": {(_PUSH, "failed"), (_PUSH, "timeout")},
+}
+_CALLS, _FAILED = "cv_user_lifecycle_total", "UserDisableFailed"  # reads the calls' `error`
+TICKETS = (*ADMITS, _FAILED)
+LOG_LINE = dict(
+    zip(TICKETS, ("users.disable.step", "access push", "disable store unavailable"), strict=True)
+)
+_SELECTOR = re.compile(rf"sum by \(env\) \(increase\({_SERIES}\{{(.*)\}}\[15m\]\)\) > 0")
+_MATCHER = re.compile(r'(step|outcome)(=~|!=|=)"([^"]*)"')
+#: The runbook's read for a night event once a Prometheus restart has dropped the hold (element 7).
+_NIGHT = re.compile(rf"increase\({_SERIES}\{{([^}}]*)\}}\[10h\]\)")
+
+
+def _pairs(selector: str) -> set[tuple[str, str]]:
+    """The (step, outcome) pairs of the closed sets that a selector's matchers admit."""
+    matchers = _MATCHER.findall(selector)
+    assert ",".join(f'{k}{op}"{v}"' for k, op, v in matchers) == selector  # nothing else
+
+    def holds(op: str, pattern: str, value: str) -> bool:
+        if op == "=~":
+            return re.fullmatch(pattern, value) is not None
+        return (value == pattern) == (op == "=")
+
+    return {
+        (step, outcome)
+        for step, outcomes in STEP_OUTCOMES.items()
+        for outcome in outcomes
+        if all(holds(op, v, {"step": step, "outcome": outcome}[k]) for k, op, v in matchers)
+    }
+
+
+def _admitted(expr: str) -> set[tuple[str, str]]:
+    """The pairs that a rule's selector admits."""
+    selector = _SELECTOR.fullmatch(expr)
+    assert selector is not None, expr
+    return _pairs(selector[1])
+
+
+@pytest.mark.parametrize("name", ADMITS)
+def test_the_ticket_reads_exactly_its_share_of_the_closed_sets(name: str) -> None:
+    assert _admitted(_rule(name)["expr"]) == ADMITS[name]
+
+
+@pytest.mark.parametrize("name", ADMITS)
+def test_the_runbooks_night_event_read_admits_what_the_ticket_reads(name: str) -> None:
+    """Element 7's read stands in for the rule once the hold is gone, so it reads the rule's
+    share: a failed grants push never reads as a failed cascade step. (A Markdown table cell
+    escapes the `|` of a regex matcher.)"""
+    (night,) = _NIGHT.findall(_runbook_section(_rule(name)))
+    assert _pairs(night.replace("\\|", "|")) == ADMITS[name]
+
+
+@pytest.mark.parametrize("name", TICKETS)
+def test_the_ticket_fires_at_once_is_held_past_the_mute_and_routes_as_a_ticket(name: str) -> None:
+    """The committed change stands and fails closed (O5; the deny-all load), so a ticket of its
+    own component; Alertmanager never sends one that fires and resolves inside the quiet-hours
+    mute, so each is held past it as the WS any-event tickets are, by the step ticket's hold."""
+    rule, proven = _rule(name), _rule("UserLifecycleStepFailed")  # promtool runs its hold cases
+    hold = re.fullmatch(r"(\d+)h(\d+)m", rule["keep_firing_for"])
+    assert (rule["for"], rule["keep_firing_for"]) == ("0m", proven["keep_firing_for"])
+    assert hold and int(hold[1]) * 60 + int(hold[2]) > _quiet_hours_minutes() >= 9 * 60
+    assert rule["labels"] == {"severity": "ticket", "component": "user_lifecycle"}
+    route = _route_for({**rule["labels"], "alertname": name, "env": "live"})
+    assert route["receiver"] == "ticket" and route["mute_time_intervals"] == ["quiet_hours"]
+
+
+@pytest.mark.parametrize("name", TICKETS)
+def test_the_ticket_links_a_runbook_entry_that_says_it_is_held_and_names_the_log_line(
+    name: str,
+) -> None:
+    rule = _rule(name)
+    anchor = f"alert-{name.lower()}"
+    assert rule["annotations"]["runbook_url"] == f"docs/plan/07-release-and-prr.md#{anchor}"
+    section = _runbook_section(rule)
+    assert section.startswith(f'<a id="{anchor}"></a>\n\n### {name}\n')
+    assert "Ticket" in section and "keep_firing_for" in section and LOG_LINE[name] in section
+
+
+def test_the_disable_ticket_reads_the_error_result_alone() -> None:
+    """A store failure, never a refusal; it may have committed with no step run (element 7 too)."""
+    read = f'increase({_CALLS}{{action="disable",result="error"}}[15m])'
+    assert "error" in ACTION_RESULTS["disable"]
+    assert _rule(_FAILED)["expr"] == f"sum by (env) ({read}) > 0"
+    assert read.replace("[15m]", "[10h]") in _runbook_section(_rule(_FAILED))
+
+
+def test_the_series_has_an_absent_guard_that_is_a_ticket() -> None:
+    """Every value is bound at import, so the guard stays quiet on a healthy idle system and
+    fires only when the series is unscraped; one collector serves both, so it guards the calls."""
+    guard = _rule(_GUARD)
+    assert EXPORTED_NAMES == {_SERIES, _CALLS}
+    assert (guard["expr"], guard["for"]) == (f"absent({_SERIES})", "15m")
+    assert guard["labels"]["severity"] == "ticket"
+
+
+def test_promtool_has_a_firing_and_a_silent_case_for_each_ticket() -> None:
+    doc = yaml.safe_load(_PROMTOOL.read_text(encoding="utf-8"))
+    checks: list[dict[str, Any]] = [c for t in doc["tests"] for c in t["alert_rule_test"]]
+    seen = {(c["alertname"], bool(c["exp_alerts"])) for c in checks if c["alertname"] in TICKETS}
+    assert seen == {(name, fires) for name in TICKETS for fires in (True, False)}
+    held = {(c["eval_time"], bool(c["exp_alerts"])) for c in checks if c["alertname"] == TICKETS[0]}
+    assert {("9h49m", True), ("9h52m", False)} <= held  # the hold all three share
+
+
+def test_the_drill_matrix_and_the_catalogue_name_each_ticket() -> None:
+    matrix = _MATRIX.read_text(encoding="utf-8")
+    alert = {s.name: s.alert for s in CATALOGUE}
+    for name in TICKETS:
+        assert re.search(rf"^\| {name} \| ticket \| 0m \|", matrix, re.M), name
+        assert name in alert[_CALLS if name == _FAILED else _SERIES], name
