@@ -104,13 +104,18 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears them. "
         "An `overrides[].user_id` that names no user is `422 validation_failed` (rule "
         "`unknown_user`).",
-        "`reason` and every other string field of the request (`evidence_url`, and `value` and an "
-        "override's `value` on a `variant` flag) refuse control, zero-width and bidirectional "
-        "formatting characters and lone surrogates, so that a recorded text cannot render as "
-        r"other text: U+0000 to U+001F (`\t`, `\n` and `\r` included, so a multi-line `reason` is "
-        "refused), U+007F, U+200B to U+200F (ZWNJ and ZWJ included, so an emoji ZWJ sequence is "
-        "refused), U+202A to U+202E, U+2066 to U+2069 and U+D800 to U+DFFF. The call fails `422 "
-        "validation_failed` (rule `invalid_character`) and nothing is written.",
+        "`reason` and every other string value of the request (`evidence_url`, "
+        "`expected_updated_at`, an override's `user_id`, and `value` and an override's `value` on "
+        "a `variant` flag), and every object member name in it, refuse control, zero-width and "
+        "bidirectional formatting characters, line and paragraph separators, tag characters and "
+        "lone surrogates, so that a recorded text cannot render as other text: U+0000 to U+001F "
+        r"(`\t`, `\n` and `\r` included, so a multi-line `reason` is refused), U+007F to U+009F "
+        "(DEL and the C1 controls), U+061C (the Arabic letter mark), U+200B to U+200F (ZWNJ and "
+        "ZWJ included, so an emoji ZWJ sequence is refused), U+2028 and U+2029, U+202A to "
+        "U+202E, U+2066 to U+2069, U+D800 to U+DFFF, U+FEFF (the byte order mark) and U+E0000 "
+        "to U+E007F (the Tags block). The call fails `422 validation_failed` (rule "
+        "`invalid_character`) and nothing is written, also for a member name the request does "
+        "not define (never `extra_forbidden`).",
         "Decision order: authentication; RBAC and scope, before any validation that needs a "
         "lookup, so a caller without `flags:write` learns nothing from a `422`; request "
         "validation; then, under the row lock, the step-up gate, the precondition and the write.",
@@ -145,12 +150,14 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "Every attempt past authentication and RBAC is audited as `flags.change` with the key, "
         "before, after, `reason` and `evidence_url`, including refused and conflicting ones and "
         "every `422` (such as `gate_evidence_required`, `kind_mismatch`, `unknown_user` and "
-        "`overrides_not_allowed`); a `step_up_required` challenge writes only "
-        "`auth.step_up_required`. The `flags.change` record is durable before the flag write "
-        "commits, or the write is refused (write-ahead, C-2.9). A `503 store_unavailable` (no row "
-        "can be read) is logged instead, with only the key and correlation id, plus a metric "
-        "(SR-125). An unreadable row's `before` is `unreadable`, never its raw value. Toggling "
-        "`maintenance.mode` is also audited as `maintenance.enabled` or `maintenance.disabled`.",
+        "`overrides_not_allowed`); a `step_up_required` challenge writes `auth.step_up_required` "
+        "and no `flags.change`, and one that refuses a no-grace grant bound to another request "
+        "also writes `auth.step_up_mismatch`, ahead of its `403`. The `flags.change` record is "
+        "durable before the flag write commits, or the write is refused (write-ahead, C-2.9). A "
+        "`503 store_unavailable` (no row can be read) is logged instead, with only the key and "
+        "correlation id, plus a metric (SR-125). An unreadable row's `before` is `unreadable`, "
+        "never its raw value. Toggling `maintenance.mode` is also audited as "
+        "`maintenance.enabled` or `maintenance.disabled`.",
         "A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the "
         "changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).",
         "`maintenance.mode` is a kill-switch-class flag. While it is on, the shared order-entry "
@@ -296,17 +303,32 @@ def test_every_decision_sentence_is_pinned(doc: str, sentence: str) -> None:
     assert sentence in _TEXT[doc]
 
 
-def test_put_names_exactly_the_code_points_the_route_refuses() -> None:
-    """Widening or narrowing `feature_flags._REFUSED` (#3172 item 5) fails here until the
-    contract's `invalid_character` row says so too (C-6.1)."""
-    [row] = [r for r in _PINNED["put"] if "`invalid_character`" in r]
-    named = {
+def _named_code_points(text: str) -> set[str]:
+    """The characters the `U+XXXX` and `U+XXXX to U+XXXX` items of `text` name: four to six hex
+    digits, so that a five-digit range such as the Tags block is read whole."""
+    return {
         chr(code)
-        for first, last in re.findall(r"U\+([0-9A-F]{4})(?: to U\+([0-9A-F]{4}))?", row)
+        for first, last in re.findall(r"U\+([0-9A-F]{4,6})(?: to U\+([0-9A-F]{4,6}))?", text)
         for code in range(int(first, 16), int(last or first, 16) + 1)
     }
+
+
+def test_the_code_point_reader_reads_five_digit_items_whole() -> None:
+    tags = {chr(code) for code in range(0xE0000, 0xE0080)}
+    assert _named_code_points("U+E0000 to U+E007F") == tags
+    assert _named_code_points("U+FEFF, U+2028 and U+E0041") == {
+        chr(0xFEFF),
+        chr(0x2028),
+        chr(0xE0041),
+    }
+
+
+def test_put_names_exactly_the_code_points_the_route_refuses() -> None:
+    """Widening or narrowing `feature_flags._REFUSED` fails here until the contract's
+    `invalid_character` row says so too (C-6.1)."""
+    [row] = [r for r in _PINNED["put"] if "`invalid_character`" in r]
     every_code_point = "".join(map(chr, range(0x110000)))
-    assert named == set(_REFUSED.findall(every_code_point))
+    assert _named_code_points(row) == set(_REFUSED.findall(every_code_point))
 
 
 def test_put_answers_step_up_classes_conflict_and_additive_request() -> None:

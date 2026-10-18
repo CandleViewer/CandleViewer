@@ -8,13 +8,13 @@ flag resolves for the caller's role: `owner`, or none, as `AuditPrincipal` carri
 The list is `FlagService.visible()`, each flag through the generated `FeatureFlag` model. A write
 reads its body only up to `MAX_BODY_BYTES` (`422 body_too_large`: the contract declares no 413),
 refuses, as input hygiene, a body nested deeper than any write or holding NaN, an infinity, a
-control, zero-width or bidi character or a lone surrogate, checks it against the generated
-`SetFeatureFlagRequest`, then hands it to `FlagWriter`, which takes the row lock, validates against
-the flag, demands the step-up and writes. A key the caller cannot see is a 404. Every refusal past
-the guard is audited as `flags.change`: the writer records its own, the route a body it refused,
-with the key and the rule only, never the body; a refusal that cannot be recorded is
-`503 audit_unavailable`. A store outage under the lock, the users' or the step-up's included, is
-`503 store_unavailable`.
+control, zero-width, bidi, line-separating or tag character, a byte order mark or a lone
+surrogate, checks it against the generated `SetFeatureFlagRequest`, then hands it to `FlagWriter`,
+which takes the row lock, validates against the flag, demands the step-up and writes. A key the
+caller cannot see is a 404. Every refusal past the guard is audited as `flags.change`: the writer
+records its own, the route a body it refused, with the key and the rule only, never the body; a
+refusal that cannot be recorded is `503 audit_unavailable`. A store outage under the lock, the
+users' or the step-up's included, is `503 store_unavailable`.
 """
 
 from __future__ import annotations
@@ -52,9 +52,14 @@ from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 MAX_BODY_BYTES: Final = 16 * 1024
 #: A write nests three deep (the body, `overrides`, an override); deeper is `json_invalid`.
 _MAX_DEPTH: Final = 8
-#: Control characters, zero-width and bidi formatting ones, and the lone surrogates
-#: `.encode("utf-8")` refuses, in any string or key (a record must not render as other text).
-_REFUSED: Final = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+#: Control characters (C0, DEL and C1), zero-width, bidi and line-separating formatting ones, the
+#: byte order mark, the Tags block and the lone surrogates `.encode("utf-8")` refuses, in any
+#: string or key (a record must not render as other text). `setFeatureFlag` in the contract lists
+#: these ranges, and a contract test pins the two together.
+_REFUSED: Final = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069"
+    r"\ud800-\udfff\ufeff\U000e0000-\U000e007f]"
+)
 _RETRY_AFTER_S: Final = 5
 #: `flagKey` as the contract's path parameter declares it.
 _KEY: Final = re.compile(r"[a-z0-9]+(\.[a-z0-9_]+)+")
