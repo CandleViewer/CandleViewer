@@ -21,8 +21,10 @@ test:
 	pnpm test
 	uv run --project services/api pytest -m "not integration"
 
-# Regenerates every committed generated file; `make gen-check` judges them. The CVWB vectors
-# need the layout twin `pnpm generate` writes, so they come after it (#3452).
+# Writes every generated file `make gen-check` judges (a test pins that each generator the gate's
+# FIXED_OUTPUTS names runs here), plus some it does not judge; other generated files, such as
+# services/api/.importlinter, have their own generators. The CVWB vectors need the layout twin
+# `pnpm generate` writes, so they come after it (#3452).
 gen:
 	pnpm generate
 	uv run --project services/api python services/api/scripts/generate_protocol_models.py

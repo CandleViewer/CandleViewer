@@ -209,9 +209,10 @@ matches those paths literally, so a name holding `*`, `?` or `[` names no other 
 judges the gated directories `pnpm generate` does not write (CI-GEN-006) from the index alone,
 removing nothing.
 
-- **CI-GEN-001** (drift): the working tree does not match `make gen`'s
-  output. Run codegen locally, commit the regenerated files — never hand-edit
-  `packages/protocol/src/generated`.
+- **CI-GEN-001** (drift): a generated file does not match what its generator writes from the
+  committed sources: one under `GENERATED_PATHS` in `tools/ci/check_gen_freshness.py`, or the
+  packaged contract subset. Regenerate with `make gen` (or the command the report prints), review
+  and commit the result — never hand-edit a generated file.
 - **CI-GEN-002** (untracked generated output): codegen produced files `git diff` cannot see
   because they were never tracked. `git add` them in the same commit as the schema change that
   introduced them. Reproduce with `make gen` and the `git status --porcelain` command the report
@@ -240,11 +241,13 @@ removing nothing.
   write): the directories are `FIXED_OUTPUT_DIRS` in `tools/ci/check_gen_freshness.py`, derived
   from its `FIXED_OUTPUTS` table (every file each generator writes there; tests pin each entry to
   the generator's own output paths) and its `HAND_KEPT` table (the files kept there by hand on
-  purpose, each with its reason). Their generators run in `make gen`, so the gate does not
-  regenerate them: it compares the index with those two tables. Delete the named files with the
-  one `git --literal-pathspecs rm -- <paths>` command the report prints. If a generator does write
-  one, add it to that generator's `FIXED_OUTPUTS` entry (and to the generator test that pins it).
-  A file kept by hand belongs outside these directories, or in `HAND_KEPT` with its reason.
+  purpose, each with its reason). Their generators are not part of `pnpm generate` (they run in
+  `make gen`), and most need the backend venv, which the `gen` step cannot count on, so the gate
+  does not regenerate them: it compares the index with those two tables. Delete the named files
+  with the one `git --literal-pathspecs rm -- <paths>` command the report prints. If a generator
+  does write one, add it to that generator's `FIXED_OUTPUTS` entry (and to the generator test that
+  pins it). A file kept by hand belongs outside these directories, or in `HAND_KEPT` with its
+  reason.
 
 ### CI-CON-* — contract conformance
 

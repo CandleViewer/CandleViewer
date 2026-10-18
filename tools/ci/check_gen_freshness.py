@@ -45,7 +45,7 @@ This script is the single implementation invoked by the ``gen`` step of the
 6. Renders the packaged contract subset (#2555) again from the committed
    ``docs/plan/22-api-openapi.yaml`` with the generator's own renderer and
    compares it with the committed artifact (CI-GEN-001), the way step 4 does
-   for packages/protocol: a YAML edit that skipped regeneration and a hand
+   for the generated paths: a YAML edit that skipped regeneration and a hand
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
 7. Fails CI-GEN-006, naming each path, for a committed file that no generator
@@ -123,15 +123,16 @@ GENERATE_OUTPUTS: tuple[Path, ...] = (
 # #3392: step 7 (CI-GEN-006). Every file each generator writes in the gated directories
 # `pnpm generate` does not write, keyed by the generator. Running most of those generators
 # would need the backend venv (datamodel-code-generator, the candleviewer package), which
-# this job does not install, and each writes a fixed set of files, so the gate compares
-# what git tracks there with this table. scripts/tests/test_check_gen_freshness.py pins
-# each entry to its generator's own output paths (generate_cvwb_vectors.py's read from its
-# source, as importing it needs the backend), and services/api/tests/unit/ws/
-# test_cvwb_binary.py pins that entry to the evaluated TARGETS too. Step 7 judges names
-# only; each file's content is checked by its generator's --check or by a test. #3452:
-# generate_cvwb_vectors.py's --check runs in no lane, as the py lane's test_cvwb_binary.py
-# already byte-checks every file it writes with the script's own renderers, and the
-# governance job runs keymap_lint.py --check-docs on every PR.
+# the `gen` step cannot count on (the gates job installs it only for the py lane), and each
+# writes a fixed set of files, so the gate compares what git tracks there with this table.
+# scripts/tests/test_check_gen_freshness.py pins each entry to its generator's own output
+# paths (generate_cvwb_vectors.py's read from its source, as importing it needs the
+# backend), and services/api/tests/unit/ws/test_cvwb_binary.py pins that entry to the
+# evaluated TARGETS too. Step 7 judges names only; each file's content is checked by its
+# generator's --check or by a test. #3452: generate_cvwb_vectors.py's --check runs in no
+# lane, as the py lane's test_cvwb_binary.py already byte-checks every file it writes with
+# the script's own renderers, and the governance job runs keymap_lint.py --check-docs on
+# every PR.
 FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
     "scripts/keymap_lint.py": ("docs/generated/default-keymap.md",),
     "tools/contracts/gen_ws_constants.py": (

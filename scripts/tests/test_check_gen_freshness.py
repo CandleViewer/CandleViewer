@@ -1326,12 +1326,18 @@ def test_the_checkout_passes_step_7(
 
 def test_the_runbook_names_the_gate_tables_instead_of_copying_them() -> None:
     """#3452 (C-16.5): docs/ci-runbook.md's CI-GEN entries point at the gate's tables, which
-    exist, and copy no directory step 7 judges and no hand-kept file, so a table edit cannot
-    leave a stale copy there."""
+    exist (GENERATED_PATHS, the paths CI-GEN-001 diffs, among them), and copy no directory
+    step 7 judges and no hand-kept file, so a table edit leaves no stale copy there."""
     runbook = (_REPO_ROOT / "docs/ci-runbook.md").read_text(encoding="utf-8")
     start = runbook.index("### CI-GEN-*")
     section = runbook[start : runbook.index("\n### ", start + 1)]
-    tables = ("GENERATE_OUTPUTS", "FIXED_OUTPUTS", "FIXED_OUTPUT_DIRS", "HAND_KEPT")
+    tables = (
+        "GENERATED_PATHS",
+        "GENERATE_OUTPUTS",
+        "FIXED_OUTPUTS",
+        "FIXED_OUTPUT_DIRS",
+        "HAND_KEPT",
+    )
     assert [name for name in tables if f"`{name}`" not in section] == []
     assert all(hasattr(gen_gate, name) for name in tables)
     dirs = [path.as_posix() for path in gen_gate.FIXED_OUTPUT_DIRS]
