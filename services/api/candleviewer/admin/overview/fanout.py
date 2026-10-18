@@ -40,8 +40,9 @@ FAILED_DETAIL: Final = "source failed"
 #: exception class name built in code. This merely refuses empty, oversized or odd strings.
 _DETAIL_RE: Final = re.compile(r"[A-Za-z0-9 _:.-]{1,200}")
 _REASON_MAX: Final = 80
-# `f`, not `rf` (no backslash, same string): Semgrep 1.181 cannot parse a raw f-string with a
-# replacement field, and then analyses none of this file (#3549).
+# `f`, not `rf` (no backslash, same string): Semgrep 1.181 parses a raw f-string with a
+# replacement field, and PEP 695 syntax such as `SliceResult[T]` below, but not both in one
+# module: then it analyses none of this file (#3549).
 _REASON_RE: Final = re.compile(f"[A-Za-z0-9_.:-]{{1,{_REASON_MAX}}}")
 #: (status, fixed wire detail, logged-only reason: the part and the exception class).
 Problem = tuple[Literal["error", "unavailable"], str, str]
