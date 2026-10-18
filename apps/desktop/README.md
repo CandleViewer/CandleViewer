@@ -29,7 +29,8 @@ read-only: one fixed host, the path decoded once and confined to the dist
 root (SR-174), an extension-less route outside `/api` gets `index.html` for
 the history-API router, and every response carries the shell's CSP header from
 `csp.ts` (SR-112). The scheme is `standard` and `secure` only and never
-bypasses the CSP; `test/index.test.ts` pins that registration.
+bypasses the CSP; `test/index.test.ts` and the electron-hardening gate pin
+that set.
 
 Why not `file://`: Vite emits root-absolute asset URLs, which resolve to the
 filesystem root under `file://`, so the window stayed blank. A relative
