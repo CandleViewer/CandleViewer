@@ -479,23 +479,25 @@ call reads the user back once, in a new transaction, within the store's 2-second
 commit landed (the user reads `disabled`, with the sessions it revoked at its instant), the call
 goes on as after any disable and answers `204`: a `users.disable` `success` record with reason
 `recovered_after_commit_error`, then the steps, one `auth.session_revoked` per session included.
-There is nothing to do. A user with no session leaves no ids to compare, so a concurrent disable
-of that user that committed can pass for this one; the user is disabled either way. The steps run
-even if the recovered record is refused or not confirmed in time (the error line
-`users.disable.read_back` with `outcome` `record_failed`): that record is then missing or lands
-late, and the step records after `outcome_unknown` show that the change applied, so there is
-nothing to repeat. Nor does the recovery wait on the `outcome_unknown` record: if it was refused,
-it is missing between the two `success` records. Each missing record shows as the error line
-`users.disable.step` with `step=closing_record` and `outcome=failed`. Otherwise the call answers
-`503 store_unavailable` and no step after the commit has run; the error line
+There is nothing to do unless a step failed (§11). A user with no session leaves no ids to compare,
+so a concurrent disable of that user that committed can pass for this one; the user is disabled
+either way. The steps run even if the recovered record is refused or not confirmed in time (the
+error line `users.disable.read_back` with `outcome` `record_failed`): that record is then missing
+or lands late. The trail alone does not show that every step ran: the socket close, the sweep and
+the scope refresh write no record, and a refusing audit writer, the likeliest cause, refuses those
+of B16 and the disarm too. Read the error lines `users.disable.step` with `outcome=failed`, and
+repeat the DELETE if there is one. Nor does the recovery wait on the `outcome_unknown` record: if
+it was refused, it is missing between the two `success` records. Each missing record shows as the
+error line `users.disable.step` with `step=closing_record` and `outcome=failed`. Otherwise the call
+answers `503 store_unavailable` and no step after the commit has run; the error line
 `users.disable.read_back` gives the `outcome` (`failed`, `not_disabled` or `other_sessions`). A
 request cancelled before the read-back found the change (during the commit, its closing record or
-the read-back: the client gone, or a shutdown) runs no step either; once it has found it, the
-record and the steps finish in their own task. Repeat the DELETE, which is safe either way: a
-repeat of a committed disable answers `204`, writes no record, ends every socket of the user and
-re-runs the sweep, the scope refresh and the disarm, but B16 records none of the sessions that
-commit revoked. That residual awaits the Owner's sign-off in
-`docs/security/threat-models/e42-user-lifecycle.md` §6.
+the read-back: the client gone, or a shutdown) runs no step either, and counts no `error`, so
+`UserDisableFailed` stays silent; once it has found it, the record and the steps finish in their
+own task. Repeat the DELETE, which is safe either way: a repeat of a committed disable answers
+`204`, writes no record, ends every socket of the user and re-runs the sweep, the scope refresh
+and the disarm, but B16 records none of the sessions that commit revoked. That residual awaits the
+Owner's sign-off in `docs/security/threat-models/e42-user-lifecycle.md` §6.
 
 Proven end to end in process on the deployed app
 (`services/api/tests/security/auth/test_disable_user_e2e.py`, and
@@ -846,11 +848,14 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
   `failed`. Any `failed` raises the `UserLifecycleStepFailed` ticket. The remedy is a repeat of the
   DELETE, which re-runs the steps that §4 lists; it re-runs neither B16 for the sessions the first
   call revoked nor the invite revoke.
+  A lost commit that a read-back found landed (§4) counts its recovered `success` record as
+  `closing_record` too, so one call can count two.
 - **Disable calls.** `cv_user_lifecycle_total{action,result}` counts each call. An `error` is no
   refusal but a store failure (`user disable store unavailable`, a `503`): no step ran, though its
   commit may have landed, so it raises the `UserDisableFailed` ticket. Read the user's status and
   disable them again if that is still wanted. No refusal alerts: `forbidden` and `self_target` are
   audited (`rbac.denied`); `last_owner` (UL1-D1), `not_found` and `positions_unknown` are not.
+  A lost commit that a read-back found landed (§4) counts as `disabled` and answers `204`.
 - **Grants push.** A grant change through `PUT /users/{userId}/account-access` (E42-T08) pushes
   `grants_changed` to the user's live sockets once it commits, and counts the push as the step
   `grants_push`: `pushed`, `timeout` (the request stopped waiting after 2 s; the push goes on and
@@ -871,7 +876,7 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 | Scheduled audit-chain verifier                                            | #2111                |
 | Disable-user drill on staging (SR-029)                                    | #2494, #300          |
 | Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
-| No B16 record of a lost disable commit's sessions if its read-back fails  | #2710, #3445         |
+| No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445         |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |

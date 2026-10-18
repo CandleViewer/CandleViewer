@@ -1200,8 +1200,9 @@ sink-refusal residual, from #2914).
 The annex's fourteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
 (#2318; #2272, via #2690), so it is Low, and #3413 closes its race at registration, leaving the registry's cap
 (annex §6). Twelve were read at the anchor; S7
-adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701. #3445 narrows
-UL1-R1 (R5) to a lost commit whose read-back fails or that a cancellation cuts off first. AD-S05 stays Medium until
+adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701. #3445 narrows UL1-R1 (R5)
+to a lost commit whose read-back fails or that a cancellation cuts off first, a recovered record that is not confirmed
+(`record_failed`), and a concurrent disable of a user with no session, which can pass for this call. AD-S05 stays Medium until
 D8 and #3085, and is not accepted. AD-R05,
 AD-E07, AD-I05 and AD-E04 are High until #3084 and #3085 land, but no restore or view-as route can mount before then
 (D6, D7), so none is an open residual and none is accepted. No High residual remains once the tickets in §13.1 ship.

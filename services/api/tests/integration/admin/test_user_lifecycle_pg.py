@@ -363,10 +363,12 @@ async def test_revoked_grants_keep_freeze_and_loss_cap_columns(db: Any) -> None:
     assert revoked[:2] == (False, False) and revoked[2:] == frozen[2:]
 
 
-async def _disabled_session(engine: AsyncEngine, user: uuid.UUID, at: datetime) -> None:
-    """A session of `user` revoked `user_disabled` at `at`, by a disable other than the test's."""
+async def _disabled_session(
+    engine: AsyncEngine, user: uuid.UUID, at: datetime, reason: str = "user_disabled"
+) -> None:
+    """A session of `user` ended at `at`, by default as a disable other than the test's does."""
     params = {"id": str(uuid.uuid4()), "user": str(user), "hash": secrets.token_hex(32)}
-    await _exec(engine, _SESSION, **params, revoked_at=at, reason="user_disabled")
+    await _exec(engine, _SESSION, **params, revoked_at=at, reason=reason)
 
 
 class _LostCommit:
@@ -390,14 +392,16 @@ async def test_read_back_after_a_lost_commit_selects_exactly_the_disables_sessio
     db: Any,
 ) -> None:
     """#3445: the COMMIT lands, its answer is lost. The read-back, in a new transaction, finds the
-    user disabled and returns exactly the two sessions this disable revoked at its instant: not
-    one ended earlier, nor one an earlier disable revoked, nor another user's revoked at the same
-    instant. A user who is not disabled reads back as `None`."""
+    user disabled and returns exactly the two sessions this disable revoked at its instant: not one
+    ended earlier or later by another disable, nor at that instant for another reason (a rotation),
+    nor another user's at the same instant. A user not disabled reads back as `None`."""
     rel, engine = db
     actor, user, s1, _ = await _member(engine)
     s2, _ = await _session(engine, user), await _session(engine, user, ended=True)
     other = await _user(engine, "manager")
     await _disabled_session(engine, user, _NOW - timedelta(hours=2))
+    await _disabled_session(engine, user, _NOW + timedelta(hours=2))
+    await _disabled_session(engine, user, _NOW, "rotated")
     await _disabled_session(engine, other, _NOW)
     lost: Any = _LostCommit(rel)  # in place of the repository
     with pytest.raises(OSError, match="commit lost"):

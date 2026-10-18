@@ -10,9 +10,8 @@ settles it (#3445): a user read back as disabled, with the very sessions the hoo
 the disable's instant, is taken as this change (with no session, a concurrent disable can pass for
 it), and the call goes on as a change; its `users.disable` `success`, reason
 `recovered_after_commit_error`, opens the steps' task below, whose steps run whatever its fate.
-Else the error stands, and a repeat is AC5's no-op, which returns no ids (see
-`SqlAlchemyUserLifecycleStore.disable`), so it closes every socket of the user but records no B16
-REVOKE for those sessions. Then, in a shielded
+Else the error stands, and a repeat is AC5's no-op, which returns no ids, so it closes every
+socket of the user but records no B16 REVOKE for those sessions. Then, in a shielded
 tracked task, never rolled back: socket close (`bye user_disabled`, 4403), first of each revoked
 session's sockets, then of every socket of the user, which reaches one still on a session that a
 refresh rotated (S7); a sweep of any session still live after the transaction (defence in depth: a
@@ -33,7 +32,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Final, NoReturn, Protocol
@@ -267,9 +266,8 @@ class UserDisableService:
         """Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
         unless the commit itself failed and its read-back did not find the change (#3445), whose
         outcome is unknown: if it landed, a retry closes the user's sockets but records no B16
-        REVOKE, since AC5's no-op returns no session ids (see
-        `SqlAlchemyUserLifecycleStore.disable`). A caller cancelled after the commit, or after a
-        read-back found it, leaves the steps, and such a change's record, to their task (R7)."""
+        REVOKE, since AC5's no-op returns no session ids. A caller cancelled after the commit, or
+        after a read-back found it, leaves the steps, and its record, to their task (R7)."""
         rid, now, uid = _request_uuid(), self._clock(), str(user_id)
         await self._guard(user_id, actor, rid)
         bound = self._count_timeout_s
@@ -423,13 +421,11 @@ class UserDisableService:
         self, change: UserStatusChange, now: datetime, commit_error: str
     ) -> UserStatusChange | None:
         """#3445 (#2710 option C): after a commit that raised, read the change back once, in a new
-        transaction the store bounds. It is taken as this change if the user reads back as
-        disabled with the very sessions the hook saw revoked at `now`, since a concurrent disable
-        that won revoked them at its own instant. With no session there is nothing to compare, so
-        such a disable passes for this one (UL1-R1 (R5)). `_cascade` then writes the recovered
-        record and runs the steps for those sessions. `None`, with an error line
-        `users.disable.read_back`, if the read-back fails or finds another state: the commit's
-        error stands."""
+        transaction the store bounds. It is this change if the user reads back as disabled with the
+        very sessions the hook saw revoked at `now`: a concurrent disable that won revoked them at
+        its own instant, but with no session it passes for this one (UL1-R1 (R5)). `_cascade` then
+        records and runs it. `None`, with an error line `users.disable.read_back`, if the read-back
+        fails or finds another state: the commit's error stands."""
         try:
             ids = await self._store.read_back_disable(change.user_id, now=now)
         except Exception as exc:  # a timeout too: isolated, the commit's error stands
@@ -439,7 +435,7 @@ class UserDisableService:
             outcome = "not_disabled" if ids is None else "other_sessions"
             _read_back_line(outcome, commit_error, change.user_id)
             return None
-        return replace(change, revoked_session_ids=ids)
+        return change
 
     async def _record_recovered(
         self, change: UserStatusChange, actor: uuid.UUID, rid: uuid.UUID | None, commit_error: str
@@ -447,9 +443,9 @@ class UserDisableService:
         """#3445: `users.disable` `success`, reason `recovered_after_commit_error`, first in the
         steps' task, so no cancellation of the caller can part it from them. Bounded and counted
         as a `closing_record` step. The steps run whatever its fate, as an append that started can
-        land after its bound: the write-ahead record is durable (the hook returned), and each step
-        writes its own ahead (C-2.9). Then the line `users.disable.read_back`: `recovered`, or
-        `record_failed` (error) if the record is not confirmed."""
+        land after its bound: the write-ahead record is durable (the hook returned), and the steps
+        that record anything write it ahead (C-2.9), though a refusing audit writer fails those
+        too. Then the line `users.disable.read_back`: `recovered`, or `record_failed` (error)."""
         roles, tally = sorted(change.roles), _Tally(self._closing_timeout_s)
         sessions = len(change.revoked_session_ids)
         record = partial(
