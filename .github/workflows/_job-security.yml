@@ -180,7 +180,7 @@ jobs:
 
       # Semgrep first: it scans the whole tree, so no other tool's report may sit in it yet.
       # Each scanner gets its own venv, so one tool's install never re-resolves another's pins;
-      # semgrep's installs only by hash, from tools/ci/requirements-semgrep.txt (#3549).
+      # semgrep installs only by hash, from tools/ci/requirements-semgrep.txt (#3549).
       - name: semgrep (custom-rule fixture tests, then registry packs + .semgrep/ rules)
         id: semgrep
         if: ${{ !cancelled() }}
@@ -202,8 +202,8 @@ jobs:
           # security_gate.py is what decides pass/fail on findings, so we only
           # want to swallow the "findings present" exit code (1), never a
           # genuine engine/config failure (>1) — CI-SEC-005 must not pass-by-default.
-          # The SARIF does not say which files the engine could not parse and still reads as
-          # a complete scan; the JSON report's errors do, and the gate fails on such a file (#3549).
+          # The SARIF does not say which targets a rule did not analyse and still reads as a
+          # complete scan; the JSON report's errors do, and the gate fails on them (#3549).
           set +e
           semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif --json-output semgrep.json
           status=$?

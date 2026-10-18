@@ -16,6 +16,10 @@ from typing import Any
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.ci.security_gate import SEMGREP_TIMEOUT_THRESHOLD
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 JOBS: dict[str, Any] = yaml.safe_load(
@@ -176,6 +180,16 @@ def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
     gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
     assert scan in lines
     assert lines[-1] == gate + " --semgrep-json semgrep.json"
+
+
+def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:
+    # #3549: at SEMGREP_TIMEOUT_THRESHOLD rule timeouts on a file (Semgrep's default
+    # --timeout-threshold) Semgrep runs no other rule on it, and the gate fails the scan there.
+    runs = [s["run"] for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    local = (ROOT / "tools" / "ci" / "run_security_local.py").read_text(encoding="utf-8")
+    assert len(runs) == 2
+    assert not [text for text in [*runs, local] if "timeout-threshold" in text]
+    assert SEMGREP_TIMEOUT_THRESHOLD == 3
 
 
 @pytest.mark.parametrize("job", sorted(SCANS))

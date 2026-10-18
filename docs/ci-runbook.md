@@ -421,14 +421,20 @@ index alone, removing nothing.
   command in it (it tracks the PyYAML pin in `scripts/requirements-ci.txt`
   and the workflow's `PYTHON_VERSION`).
   For `semgrep` it also fires when the step's JSON report (`semgrep.json`)
-  shows a file the engine did not analyse (#3549): an error that leaves it
-  no syntax tree (`Syntax error` and its kin) or that made the engine give up
-  on it, or a `PartialParsing` error over every code line of the file. The
-  SARIF lists such errors with no line span and still reads as a complete
-  scan, so the file's clean result would mean nothing. Rewrite what Semgrep
-  cannot parse (the message names each file); a partial parse that leaves
-  code analysed, or a rule timeout, only prints a note in the step log. The
-  step installs semgrep by hash from `tools/ci/requirements-semgrep.txt`.
+  shows a target a rule did not analyse (#3549). The SARIF lists such errors
+  with no line span and still reads as a complete scan, so the target's clean
+  result would mean nothing. Every error in the report fails, except two that
+  print as `::warning` annotations (the checks UI shows a capped number per
+  step; the step log lists them all): a rule `Timeout` on a file, unless the
+  rule is a cv-* one (`semgrep.cv-*`) or the file collects three timeouts
+  (Semgrep's default `--timeout-threshold`, after which it runs no other rule
+  there); and a `PartialParsing` error in a snippet that a non-cv rule embeds
+  in a YAML file (a workflow's `run:` script read as Bash). So a
+  `PartialParsing` error anywhere else fails however few lines it skips, and
+  so does `Too many matches`, after which Semgrep drops every rule's findings
+  on the file. The message names each target and why: rewrite what Semgrep
+  cannot parse; for a timeout, look at what changed in the file or the rule.
+  The step installs semgrep by hash from `tools/ci/requirements-semgrep.txt`.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

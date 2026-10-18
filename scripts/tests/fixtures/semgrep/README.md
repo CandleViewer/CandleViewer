@@ -2,12 +2,13 @@
 
 `test_security_gate.py` runs these through `tools/ci/security_gate.py --semgrep-json`. Semgrep's
 SARIF lists a parse error as a notification with no line span and still reads as a complete scan,
-so the gate reads the JSON report (`--json-output`) to find a file the engine did not analyse.
+so the gate reads the JSON report (`--json-output`) to find a target a rule did not analyse.
 Recorded 2026-10-18 in this directory with `semgrep scan --metrics=off --config rules.yml --sarif
 --output <scratch>.sarif --json-output semgrep-<version>.json skipped.py partial.py unparsed.py
 drill.sh`, as written, then re-indented by prettier (lint-staged). `rules.yml` flags each `print`
-call and `echo` command, so a missed one shows what Semgrep did not analyse. `.semgrepignore` keeps
-the CI scan out of this directory: its sources do not parse on purpose.
+call and `echo` command, in a workflow's `run:` script too, so a missed one shows what Semgrep did
+not analyse. `.semgrepignore` keeps the CI scan out of this directory: its sources do not parse on
+purpose.
 
 - `skipped.py`: a PEP 695 generic function after a `print` call. Semgrep 1.99.0, CI's pin before
   #3549, reports one `PartialParsing` error whose spans cover every code line, and misses the
@@ -23,3 +24,17 @@ the CI scan out of this directory: its sources do not parse on purpose.
   protobuf's pure-Python backend (its upb extension does not load on 3.14); the parser is the
   bundled `semgrep-core` binary that CI's CPython 3.12 runs too.
 - `semgrep-1.181.0.json`: Semgrep 1.181.0 over the four files.
+
+`semgrep-1.181.0-rule-gaps.json` was recorded in a copy of this directory, twice with the same
+result, with `semgrep scan --metrics=off --timeout 1 --config timeouts.yml --config rules.yml
+--sarif --output <scratch>.sarif --json-output semgrep-1.181.0-rule-gaps.json slow.py many.py
+workflow.yml`. It holds no finding at all:
+
+- `slow.py`: the three `timeouts.yml` rules time out on it, and then Semgrep runs no other rule
+  there (its default `--timeout-threshold` is 3): with `--timeout-threshold 0`, `python-print`
+  finds line 68. Timeouts depend on the machine; on a faster one, add assignments.
+- `many.py`: too many matches. Semgrep names one rule, `slow-sequence-a`, and drops every rule's
+  findings on the file; `rules.yml` alone finds the `print` on line 28.
+- `workflow.yml`: `workflow-run-echo` cannot parse the one-line `case` in the `run:` script as
+  Bash and reports lines 7 to 9; the YAML itself parsed. With the `case` on three lines the rule
+  matches the script, on line 7.

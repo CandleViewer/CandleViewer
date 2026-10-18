@@ -9,3 +9,13 @@ rules:
     severity: ERROR
     message: An echo command.
     pattern: echo ...
+  - id: workflow-run-echo
+    languages: [yaml]
+    severity: ERROR
+    message: An echo command in a run script.
+    patterns:
+      - pattern: "run: $SCRIPT"
+      - metavariable-pattern:
+          metavariable: $SCRIPT
+          language: bash
+          pattern: echo ...

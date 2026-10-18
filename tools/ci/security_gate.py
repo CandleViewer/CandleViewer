@@ -684,29 +684,23 @@ def parse_sarif(
     return findings
 
 
-# Semgrep error kinds after which no rule ran on a target (#3549): it has no syntax tree, or the
-# engine gave up on it. A `Timeout` stops one rule on one file, so it is reported, not failed.
-_SEMGREP_TARGET_LOST = frozenset(
-    {
-        "Lexical error",
-        "Syntax error",
-        "Other syntax error",
-        "AST builder error",
-        "Out of memory",
-        "Stack overflow",
-    }
+# How Semgrep's JSON report (`--json-output`) shows a target a rule did not analyse (#3549).
+# Only two error kinds leave the other rules' findings on a target intact, so only they are
+# notes: a rule `Timeout` on a file, and a `PartialParsing` error in a snippet a rule embeds in a
+# YAML file (a workflow's `run:` script read as Bash, say; the YAML itself parsed). Either one
+# fails the scan when it comes from a cv-* rule (`.semgrep/`, named `semgrep.cv-*` in CI): those
+# findings are the repo's own invariants. `Too many matches` drops every rule's findings on the
+# file, so it fails like any other error.
+SEMGREP_TIMEOUT_THRESHOLD = 3  # Semgrep's default --timeout-threshold, which CI keeps
+_SEMGREP_SNIPPET = re.compile(
+    r"When parsing a snippet as .+? for metavariable-pattern in rule '([^'\n]+)'"
 )
-# A line that opens with one of these holds no code (Python, shell and YAML; TypeScript).
-_COMMENT_MARKERS = ("#", "//", "/*", "*")
+_YAML_SUFFIXES = (".yml", ".yaml")
 
 
-def _code_lines(text: str) -> set[int]:
-    """The 1-based numbers of the lines that hold code: not blank, not a comment line."""
-    return {
-        number
-        for number, line in enumerate(text.splitlines(), 1)
-        if line.strip() and not line.lstrip().startswith(_COMMENT_MARKERS)
-    }
+def _is_cv_rule(rule_id: str) -> bool:
+    """A `.semgrep/cv-*.yml` rule: `semgrep.cv-obs-no-print` as CI names it, or `cv-...`."""
+    return rule_id.rsplit(".", 1)[-1].startswith("cv-")
 
 
 def _line(point: object) -> int | None:
@@ -744,19 +738,31 @@ def _ranges(lines: set[int]) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
-def check_semgrep_coverage(path: Path, *, source_root: Path | None = None) -> list[str]:
-    """Raise CI-SEC-005 when Semgrep's JSON report shows a target it did not analyse (#3549).
+def _annotate(note: str, target: str, line: int | None = None) -> str:
+    """`note` as a GitHub Actions warning on `target`, so the checks UI shows it as well.
 
-    Semgrep's SARIF lists a parse error only as a `toolExecutionNotifications` entry with no
+    Escaped as the Actions toolkit escapes a command, so no path or text can end it early.
+    """
+
+    def data(text: str) -> str:
+        return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+    where = "file=" + data(target).replace(":", "%3A").replace(",", "%2C")
+    return f"::warning {where}" + (f",line={line}" if line else "") + f"::{data(note)}"
+
+
+def check_semgrep_coverage(path: Path) -> list[str]:
+    """Raise CI-SEC-005 when Semgrep's JSON report shows a target a rule did not analyse (#3549).
+
+    Semgrep's SARIF lists such an error only as a `toolExecutionNotifications` entry with no
     line span, and its summary still calls the scan complete, so the step also writes its
-    `--json-output` for this check. A target was not analysed when its error leaves it with no
-    syntax tree or the engine gave up on it (`_SEMGREP_TARGET_LOST`), or when a
-    `PartialParsing` error's spans cover every code line of the file, read from `source_root`
-    (default: the working directory). Semgrep 1.99 skipped files with PEP 695 generics so and
-    lost their findings while reporting none. Such a file's clean result means nothing.
+    `--json-output` for this check. Semgrep 1.99 read files with PEP 695 generics in part or not
+    at all and reported no finding there; a part it skipped can hide a cv-* rule's match too.
 
-    A partial parse that leaves code lines analysed, a rule timeout and any other error do
-    not fail: each comes back as a note for the log, naming the lines Semgrep did not parse.
+    Every error fails the scan except two, which come back as GitHub warnings for the log and
+    the checks UI: a non-cv rule's `Timeout` on a file with fewer than
+    `SEMGREP_TIMEOUT_THRESHOLD` of them (at that count Semgrep runs no further rule on the
+    file), and a `PartialParsing` error in a snippet that a non-cv rule embeds in a YAML file.
     """
 
     def lost_scan(reason: str) -> SecurityGateError:
@@ -773,42 +779,53 @@ def check_semgrep_coverage(path: Path, *, source_root: Path | None = None) -> li
     errors = doc.get("errors") if isinstance(doc, dict) else None
     if not isinstance(errors, list) or not all(isinstance(e, dict) for e in errors):
         raise lost_scan("has no 'errors' list of objects (not a semgrep --json-output report)")
-    root = source_root or Path.cwd()
     lost: list[str] = []
-    notes: set[str] = set()
+    timeouts: dict[str, list[str]] = {}  # target -> the rules that timed out on it
+    snippets: dict[str, tuple[set[int], set[str]]] = {}  # YAML target -> lines, rules
     for error in errors:
         kind = error.get("type")
         name = kind[0] if isinstance(kind, list) and kind else kind
-        target = error.get("path") if isinstance(error.get("path"), str) else None
         if not isinstance(name, str):
             raise lost_scan(f"has an error with no type name: {clipped(error)}")
-        if name in _SEMGREP_TARGET_LOST:
-            lost.append(f"{target or 'an unnamed target'} ({name})")
+        target = error.get("path") if isinstance(error.get("path"), str) else None
+        rule = error.get("rule_id") if isinstance(error.get("rule_id"), str) else None
+        if name == "PartialParsing":
+            lines = _span_lines(error)
+            if not target or lines is None:
+                no_span = "has a PartialParsing error with no target or line span"
+                raise lost_scan(f"{no_span}: {clipped(error)}")
+            message = error.get("message")
+            snippet = _SEMGREP_SNIPPET.search(message) if isinstance(message, str) else None
+            parser = snippet.group(1) if snippet else rule
+            cv_rule = any(_is_cv_rule(r) for r in (rule, parser) if r)
+            if snippet and not cv_rule and target.endswith(_YAML_SUFFIXES):
+                gap = snippets.setdefault(target, (set(), set()))
+                gap[0].update(lines)
+                gap[1].add(snippet.group(1))
+            else:
+                by = f" in {parser}" if parser else ""
+                lost.append(f"{target} (PartialParsing{by}, line(s) {_ranges(lines)})")
             continue
-        if name != "PartialParsing":
-            rule = error.get("rule_id")
-            what = name + (f" on {target}" if target else "") + (f" ({rule})" if rule else "")
-            notes.add(f"semgrep: {what}; the rest of the scan ran, not failing")
-            continue
-        skipped = _span_lines(error)
-        if not target or skipped is None:
-            no_span = "has a PartialParsing error with no target or line span"
-            raise lost_scan(f"{no_span}: {clipped(error)}")
-        try:
-            code = _code_lines((root / target).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError) as exc:
-            raise lost_scan(f"names {target}, which cannot be read to measure it: {exc}") from exc
-        gap = code & skipped
-        if code and gap == code:
-            lost.append(f"{target} (PartialParsing over every code line)")
-        elif gap:
-            notes.add(
-                f"semgrep: {target}: line(s) {_ranges(gap)} not parsed ({len(gap)} of "
-                f"{len(code)} code lines); the rest was analysed, not failing"
-            )
+        if name == "Timeout" and target:
+            timeouts.setdefault(target, []).append(rule or "an unnamed rule")
+            if rule and not _is_cv_rule(rule):
+                continue
+        by = f" in {rule}" if rule else ""
+        lost.append(f"{target or 'an unnamed target'} ({name}{by})")
+    notes: list[str] = []
+    for target, rules in timeouts.items():
+        if len(rules) >= SEMGREP_TIMEOUT_THRESHOLD:
+            lost.append(f"{target} ({len(rules)} rule timeouts, so Semgrep skipped the rules left)")
+        else:
+            note = f"semgrep: {', '.join(rules)} timed out on {target}; the other rules analysed it"
+            notes.append(_annotate(note + ", not failing", target))
+    for target, (lines, parsers) in snippets.items():
+        note = f"semgrep: {target}: {', '.join(sorted(parsers))} could not parse the snippet on "
+        note += f"line(s) {_ranges(lines)}; the rest was analysed, not failing"
+        notes.append(_annotate(note, target, min(lines)))
     if lost:
         raise lost_scan(
-            f"shows {len(lost)} target(s) Semgrep did not analyse, so their clean result means "
+            f"shows {len(lost)} target(s) a rule did not analyse, so their clean result means "
             "nothing: " + "; ".join(lost)
         )
     return sorted(notes)
@@ -1087,7 +1104,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help="required with --tool semgrep: its --json-output report, the one that says which "
-        "files the engine could not parse (#3549)",
+        "targets a rule did not analyse (#3549)",
     )
     args = parser.parse_args(argv)
 
