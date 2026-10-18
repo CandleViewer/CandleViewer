@@ -1,0 +1,268 @@
+{
+  "advisories": {
+    "1119441": {
+      "findings": [
+        {
+          "version": "9.0.1",
+          "paths": [
+            "packages__ui>@storybook/addon-essentials>@storybook/addon-actions>uuid"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1119441,
+      "title": "uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided",
+      "module_name": "uuid",
+      "vulnerable_versions": "<11.1.1",
+      "patched_versions": ">=11.1.1",
+      "severity": "moderate",
+      "cwe": "CWE-787, CWE-1285",
+      "github_advisory_id": "GHSA-w5hq-g745-h8pq",
+      "url": "https://github.com/advisories/GHSA-w5hq-g745-h8pq"
+    },
+    "1120680": {
+      "findings": [
+        {
+          "version": "0.27.7",
+          "paths": [
+            "packages__chart-engine>tsup>bundle-require>esbuild",
+            "packages__chart-engine>tsup>esbuild"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1120680,
+      "title": "esbuild allows arbitrary file read when running the development server on Windows",
+      "module_name": "esbuild",
+      "vulnerable_versions": ">=0.27.3 <0.28.1",
+      "patched_versions": ">=0.28.1",
+      "severity": "low",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-g7r4-m6w7-qqqr",
+      "url": "https://github.com/advisories/GHSA-g7r4-m6w7-qqqr"
+    },
+    "1124268": {
+      "findings": [
+        {
+          "version": "6.30.6",
+          "paths": [
+            "apps__web>react-router-dom>react-router"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1124268,
+      "title": "React Router: Open redirect via backslash in <Link> and useNavigate (CVE-2025-68470 bypass)",
+      "module_name": "react-router",
+      "vulnerable_versions": ">=6.0.0 <7.18.0",
+      "patched_versions": ">=7.18.0",
+      "severity": "moderate",
+      "cwe": "CWE-601",
+      "github_advisory_id": "GHSA-wrjc-x8rr-h8h6",
+      "url": "https://github.com/advisories/GHSA-wrjc-x8rr-h8h6"
+    },
+    "1124272": {
+      "findings": [
+        {
+          "version": "6.30.6",
+          "paths": [
+            "apps__web>react-router-dom>react-router"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1124272,
+      "title": "React Router: Arbitrary Constructor Injection via deserializeErrors() in React Router SSR Hydration",
+      "module_name": "react-router",
+      "vulnerable_versions": ">=6.4.0 <7.18.0",
+      "patched_versions": ">=7.18.0",
+      "severity": "moderate",
+      "cwe": "CWE-470",
+      "github_advisory_id": "GHSA-337j-9hxr-rhxg",
+      "url": "https://github.com/advisories/GHSA-337j-9hxr-rhxg"
+    },
+    "1193683": {
+      "findings": [
+        {
+          "version": "3.2.7",
+          "paths": [
+            "packages__config>@vitest/coverage-v8>vitest",
+            "packages__config>vitest"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1193683,
+      "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+      "module_name": "vitest",
+      "vulnerable_versions": ">=2.1.0 <4.1.11",
+      "patched_versions": ">=4.1.11",
+      "severity": "moderate",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-82fw-gwwq-j7x9",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    "1193684": {
+      "findings": [
+        {
+          "version": "3.2.7",
+          "paths": [
+            "packages__config>@vitest/coverage-v8>vitest>@vitest/mocker",
+            "packages__config>vitest>@vitest/mocker"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1193684,
+      "title": "Vitest: Path Traversal / Arbitrary File Read via @vitest/mocker Redirect Mock",
+      "module_name": "@vitest/mocker",
+      "vulnerable_versions": ">=2.1.0 <4.1.11",
+      "patched_versions": ">=4.1.11",
+      "severity": "moderate",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-82fw-gwwq-j7x9",
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    "1240992": {
+      "findings": [
+        {
+          "version": "3.0.3",
+          "paths": [
+            ".>lint-staged>micromatch>braces"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1240992,
+      "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+      "module_name": "braces",
+      "vulnerable_versions": "<=3.0.3",
+      "patched_versions": null,
+      "patched_versions_unpublished": true,
+      "severity": "high",
+      "cwe": "CWE-674",
+      "github_advisory_id": "GHSA-vfj7-8cjw-p6xm",
+      "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"
+    },
+    "1241202": {
+      "findings": [
+        {
+          "version": "1.1.3",
+          "paths": [
+            "apps__desktop>electron-builder>app-builder-lib>@electron/get>global-agent>roarr>sprintf-js",
+            "apps__desktop>electron-builder>dmg-builder>app-builder-lib>@electron/get>global-agent>roarr>sprintf-js"
+          ],
+          "dev": true,
+          "optional": true,
+          "bundled": false
+        }
+      ],
+      "id": 1241202,
+      "title": "sprintf-js vulnerable to denial of service through unbounded precision specifiers",
+      "module_name": "sprintf-js",
+      "vulnerable_versions": "<=1.1.3",
+      "patched_versions": null,
+      "patched_versions_unpublished": true,
+      "severity": "moderate",
+      "cwe": "CWE-1284",
+      "github_advisory_id": "GHSA-hp3w-g68c-fv3c",
+      "url": "https://github.com/advisories/GHSA-hp3w-g68c-fv3c"
+    },
+    "1241209": {
+      "findings": [
+        {
+          "version": "1.2.1",
+          "paths": [
+            "packages__config>@vitest/coverage-v8>vitest>@vitest/mocker>vite>postcss>source-map-js",
+            "packages__config>@vitest/coverage-v8>vitest>vite>postcss>source-map-js"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1241209,
+      "title": "source-map-js allows event-loop denial of service through indexed source-map section offsets",
+      "module_name": "source-map-js",
+      "vulnerable_versions": ">=1.0.0 <1.2.2",
+      "patched_versions": ">=1.2.2",
+      "severity": "high",
+      "cwe": "CWE-1284",
+      "github_advisory_id": "GHSA-68fv-2mgg-jv7q",
+      "url": "https://github.com/advisories/GHSA-68fv-2mgg-jv7q"
+    },
+    "1241260": {
+      "findings": [
+        {
+          "version": "1.1.1",
+          "paths": [
+            "packages__config>@vitest/coverage-v8>vitest>tinypool",
+            "packages__config>vitest>tinypool"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1241260,
+      "title": "Tinypool: Prototype Pollution gadget in worker options leads to Remote Code Execution",
+      "module_name": "tinypool",
+      "vulnerable_versions": "<=2.1.0",
+      "patched_versions": ">=2.1.1",
+      "severity": "critical",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-5gmw-xhrv-c9v3",
+      "url": "https://github.com/advisories/GHSA-5gmw-xhrv-c9v3"
+    },
+    "1241261": {
+      "findings": [
+        {
+          "version": "1.1.1",
+          "paths": [
+            "packages__config>@vitest/coverage-v8>vitest>tinypool",
+            "packages__config>vitest>tinypool"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1241261,
+      "title": "Tinypool: Prototype Pollution Gadget to RCE in run() options",
+      "module_name": "tinypool",
+      "vulnerable_versions": "<2.1.2",
+      "patched_versions": ">=2.1.2",
+      "severity": "critical",
+      "cwe": "CWE-94, CWE-1321",
+      "github_advisory_id": "GHSA-85c8-ppgw-ccpr",
+      "url": "https://github.com/advisories/GHSA-85c8-ppgw-ccpr"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 6,
+      "high": 2,
+      "critical": 2
+    },
+    "dependencies": 9,
+    "devDependencies": 1054,
+    "optionalDependencies": 142,
+    "totalDependencies": 1077
+  }
+}

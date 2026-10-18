@@ -8,7 +8,8 @@ exactly once (technical notes, E03-T07 ticket body) instead of per-tool.
 
 Error codes (ticket "Technical notes / design"):
     CI-SEC-001  blocking finding (severity meets/exceeds the tool's policy
-                and no unexpired accepted-risk entry covers it)
+                and no unexpired accepted-risk entry covers it; none covers a
+                Critical)
     CI-SEC-002  licence violation (prohibited licence, no exception)
     CI-SEC-003  licence needs approval (LGPL) and no unexpired, correctly
                 approved accepted-risk entry covers it
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -229,6 +231,17 @@ def evaluate_findings(
             messages.append(
                 f"CI-SEC-001: {finding.tool} finding {finding.finding_id} "
                 f"({finding.severity}) has no accepted-risk entry — {finding.detail}"
+            )
+            blocking_code = blocking_code or "CI-SEC-001"
+            continue
+
+        # load_accepted_risks() refuses a CRITICAL entry, but an entry filed under a lower
+        # severity can carry a Critical finding's id: it must not cover it either (#3494).
+        if finding.severity == "CRITICAL":
+            messages.append(
+                f"CI-SEC-001: {finding.tool} finding {finding.finding_id} "
+                f"({finding.severity}) has an accepted-risk entry, but Critical findings take "
+                f"no accepted-risk entry (30-release-roadmap.md §4.4 R0) — {finding.detail}"
             )
             blocking_code = blocking_code or "CI-SEC-001"
             continue
@@ -688,43 +701,149 @@ def parse_pip_audit(path: Path) -> list[Finding]:
     return findings
 
 
-def _npm_advisory_id(via: dict[str, Any], pkg_name: str) -> str:
-    """Prefer the GHSA id (last segment of the advisory `url`) over npm's
-    numeric `source`, so accepted-risks entries can use stable GHSA ids."""
-    url = str(via.get("url", ""))
-    tail = url.rstrip("/").rsplit("/", 1)[-1]
-    if tail.startswith("GHSA-"):
-        return tail
-    return str(via.get("source", pkg_name))
+# `pnpm audit --json` as pnpm 12.5.1 writes it (scripts/tests/fixtures/pnpm-audit/README.md):
+# `advisories` maps npm's numeric advisory id to one GHSA advisory on one module, and
+# `metadata.vulnerabilities` counts those advisories per severity.
+_PNPM_SEVERITY: dict[str, Severity] = {
+    "critical": "CRITICAL",
+    "high": "HIGH",
+    "moderate": "MEDIUM",
+    "low": "LOW",
+    "info": "LOW",
+}
+_GHSA_ID = re.compile(r"GHSA(?:-[0-9a-z]{4}){3}")
+
+
+def _pnpm_ghsa(advisory: dict[str, Any]) -> str | None:
+    """The advisory's GHSA id, which accepted-risk entries use: `github_advisory_id`, else the
+    last segment of its `url`."""
+    url = advisory.get("url")
+    tail = url.rstrip("/").rsplit("/", 1)[-1] if isinstance(url, str) else None
+    for candidate in (advisory.get("github_advisory_id"), tail):
+        if isinstance(candidate, str) and _GHSA_ID.fullmatch(candidate):
+            return candidate
+    return None
+
+
+def _pnpm_installed(advisory: dict[str, Any]) -> tuple[list[str], list[str]] | None:
+    """The versions (in pnpm's order, once each) and all dependency paths in the advisory's
+    `findings`; None unless that is a non-empty list of objects, each with a string `version`
+    and a non-empty list of string `paths`."""
+    entries = advisory.get("findings")
+    if not isinstance(entries, list) or not entries:
+        return None
+    versions: list[str] = []
+    paths: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        version, entry_paths = entry.get("version"), entry.get("paths")
+        if not isinstance(version, str) or not isinstance(entry_paths, list) or not entry_paths:
+            return None
+        if not all(isinstance(dep_path, str) for dep_path in entry_paths):
+            return None
+        versions.append(version)
+        paths.extend(entry_paths)
+    return list(dict.fromkeys(versions)), paths
+
+
+def _pnpm_counts(counts: dict[str, Any]) -> str:
+    """Per-severity advisory counts as text, e.g. "1 high, 2 moderate"; "" when all are 0."""
+    return ", ".join(f"{counts[sev]} {sev}" for sev in _PNPM_SEVERITY if counts[sev])
 
 
 def parse_npm_audit(path: Path) -> list[Finding]:
-    """`npm audit --json` (v8+/v10 schema: `vulnerabilities` map) -> Findings."""
+    """`pnpm audit --json` (pnpm 12.5.1, which CI and `make security` run) -> Findings.
+
+    pnpm's report is not npm's (#3494): `advisories`, keyed by npm's advisory id, and
+    `metadata`. Each advisory is one module's exposure to one GHSA, and its `findings` list
+    every installed vulnerable version with all its dependency paths. The gate judges the
+    advisory, so it is one Finding however many versions and paths it has (they go into
+    `package` and `detail`). Two modules exposed to one GHSA stay two Findings, which one
+    accepted-risk entry covers. `finding_id` is the GHSA id, the id the register uses.
+
+    Fails closed (CI-SEC-005), never zero findings: on an empty file (pnpm writes nothing to
+    stdout when it cannot reach the registry), on any other schema (npm's own `npm audit
+    --json` too: nothing here runs it), on a missing or mistyped key or an unknown severity,
+    and on advisories that disagree with the per-severity counts in `metadata.vulnerabilities`
+    (pnpm counts, but leaves out of `advisories`, one on its auditConfig ignore list: the
+    register is the only exception path, C-12.3). A clean run is an empty `advisories` with
+    zero counts.
+    """
+
+    def malformed(reason: str) -> SecurityGateError:
+        return SecurityGateError("CI-SEC-005", f"npm-audit: {path} {reason}")
+
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SecurityGateError(
-            "CI-SEC-005", f"npm-audit: unreadable/invalid {path}: {exc}"
-        ) from exc
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise malformed(f"is unreadable: {exc}") from exc
+    if not text.strip():
+        raise malformed("is empty: pnpm audit wrote no report (its stderr in the log says why)")
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise malformed(f"is not JSON: {exc}") from exc
+    if not (
+        isinstance(doc, dict)
+        and isinstance(doc.get("advisories"), dict)
+        and isinstance(doc.get("metadata"), dict)
+    ):
+        raise malformed(
+            "is not a `pnpm audit --json` report "
+            "(an object with an 'advisories' object and a 'metadata' object)"
+        )
+    counts = doc["metadata"].get("vulnerabilities")
+    if not (
+        isinstance(counts, dict)
+        and set(counts) == set(_PNPM_SEVERITY)
+        and all(type(n) is int and n >= 0 for n in counts.values())
+    ):
+        raise malformed("has no counts per severity in 'metadata.vulnerabilities'")
 
     findings: list[Finding] = []
-    vulns = doc.get("vulnerabilities", {})
-    for pkg_name, info in vulns.items():
-        severity = str(info.get("severity", "high")).upper()
-        if severity not in _SEVERITY_ORDER:
-            severity = "HIGH"
-        via = info.get("via", [])
-        ids = [_npm_advisory_id(v, pkg_name) for v in via if isinstance(v, dict)] or [pkg_name]
-        for finding_id in ids:
-            findings.append(
-                Finding(
-                    tool="npm-audit",
-                    finding_id=str(finding_id),
-                    severity=severity,
-                    package=pkg_name,
-                    detail=f"npm audit advisory for {pkg_name}",
-                )
+    listed = dict.fromkeys(_PNPM_SEVERITY, 0)
+    for key, advisory in doc["advisories"].items():
+        if not isinstance(advisory, dict):
+            raise malformed(f"advisory {key} is not an object")
+        severity, module, title = (advisory.get(k) for k in ("severity", "module_name", "title"))
+        if not isinstance(severity, str) or severity not in _PNPM_SEVERITY:
+            raise malformed(
+                f"advisory {key} has no known severity (critical, high, moderate, low or info)"
             )
+        if not isinstance(module, str) or not module:
+            raise malformed(f"advisory {key} has no module_name")
+        if not isinstance(title, str):
+            raise malformed(f"advisory {key} has no title")
+        ghsa = _pnpm_ghsa(advisory)
+        if ghsa is None:
+            raise malformed(
+                f"advisory {key} has no GHSA id (github_advisory_id, or the last segment of url)"
+            )
+        installed = _pnpm_installed(advisory)
+        if installed is None:
+            raise malformed(
+                f"advisory {key} has no findings (a non-empty list of objects with a version "
+                "and a non-empty paths list)"
+            )
+        versions, paths = installed
+        listed[severity] += 1
+        package = f"{module}@{','.join(versions)}"
+        n_paths = f"{len(paths)} dependency path{'' if len(paths) == 1 else 's'}"
+        findings.append(
+            Finding(
+                tool="npm-audit",
+                finding_id=ghsa,
+                severity=_PNPM_SEVERITY[severity],
+                package=package,
+                detail=f"{package}: {title} ({n_paths}, e.g. {paths[0]})",
+            )
+        )
+    if listed != counts:
+        raise malformed(
+            f"lists {_pnpm_counts(listed) or 'no'} advisories but its metadata counts "
+            f"{_pnpm_counts(counts) or 'none'}: every advisory pnpm counts must reach the gate"
+        )
     return findings
 
 
