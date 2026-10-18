@@ -19,9 +19,9 @@ the loop and the error type: see [`account-health.md`](account-health.md).
 
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 
-Signals: `/readyz` reports `degraded` with a failing `accounts` check; every WS client gets the
-critical `system` notice with this reason (its text is the generic read-only one until #836 slice
-2c lists the `accounts.*` codes in `23-ws-protocol.md` §15.9); at start-up the log
+Signals: the page `KeySelfCheckFailed`, one alert per failing rule; `/readyz` reports `degraded`
+with a failing `accounts` check; every WS client gets the critical `system` notice with this reason
+and the text "Trading disabled: a stored API key failed its check."; at start-up the log
 says `starting in read-only mode (accounts.key_selfcheck_failed)`; the critical log
 `key_selfcheck_failed` names the key id and the failing rules; the audit log has `account.tested`
 (outcome failure, severity critical, `reason` the rule, `object_id` the key id), then, if the
@@ -85,10 +85,18 @@ the app serves. Fix the key first: its rule stays in `api_keys.last_error_code`,
 with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` true and latches
 again; only a pass clears it (decision 3 on #836).
 Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
-`account.tested` with outcome success for the key. The disarmed account stays disarmed: re-arming
-is an audited admin action that comes with the key routes (#2417, #836); never re-arm in SQL (C-2.9).
+`account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
+no failing key. The disarmed account stays disarmed: re-arming `trading_enabled` has no operation
+yet, so a force-disabled account has no audited way back (decision 16 on #836: a separate
+contract-first ticket, Owner only with step-up, refused while a key of the account fails its
+standing check). Never re-arm in SQL (C-2.9).
 
 ## Symptom: read-only with `accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`
+
+Pages: `KeyVerificationStale` (a key's last pass is over 1 h 15 min old), `KeySelfCheckRunMissed`
+(a run is overdue) and `KeyBootCheckIncomplete` (no run has completed since start-up). WS clients
+get "Trading disabled: a stored API key has no recent passing check." or "Trading disabled: the
+stored API keys could not be checked."
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and
@@ -110,7 +118,8 @@ sealed columns, or the columns bound into them, were edited (`secret_enc`, `enc_
 or `exchange_account_id`, for example). A Postgres or audit-log outage, a key revoked during the
 run or a row wrapped under a KEK version that is not loaded give the same error: rule them out
 first. A row that will not decrypt once those causes are ruled out was edited since `store()`
-accepted it (KV-T03 of the E27 threat model): treat it as a possible database tamper and take the
+accepted it (KV-T01 of the E27 threat model, ciphertext substitution; KV-T02's write-once trigger is
+what that edit got past): treat it as a possible database tamper and take the
 three steps under the first symptom above. No verdict is possible for it, so it shows up only as
 the stale latch.
 
@@ -126,8 +135,10 @@ has each key's age.
 pass or at a key test),
 the key list could not be read at start-up, or once a known key is past its window
 (`key_selfcheck_targets_failed`; a read that fails inside every window latches nothing), a key's
-check passed its deadline or its row is refused (`key_selfcheck_unfinished`,
-`key_selfcheck_env_mismatch`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
+check passed its deadline, the account model refused its row or the check raised after its verdict,
+as a metrics fault does (`key_selfcheck_unfinished`; a borrow M2 refuses is a
+`key_withdraw_permission` failure instead), a row of another environment is read
+(`key_selfcheck_env_mismatch`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
 with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)
 or the loop died
 (`key_selfcheck_loop_died`, or `key_selfcheck_watchdog_died` after `accounts_row_gauges_loop_died`

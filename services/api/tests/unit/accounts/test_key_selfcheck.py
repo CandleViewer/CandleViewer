@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
@@ -42,7 +43,7 @@ from candleviewer.accounts.selfcheck import (
     is_fresh,
     policy_violation,
 )
-from candleviewer.accounts.service import AccountsService
+from candleviewer.accounts.service import AccountHealthFeed, AccountsService
 from candleviewer.accounts.verification import (
     KeyRefused,
     Refusal,
@@ -857,6 +858,30 @@ async def test_readyz_lists_a_failing_key_as_a_degraded_accounts_check() -> None
     assert (body["status"], body["checks"]) == ("degraded", [accounts])
 
 
+@pytest.mark.parametrize(
+    ("info", "cause", "age"),
+    [
+        (facts(permissions=WITHDRAW), "1 stored key(s) fail the self-check", 1800),
+        (None, "loop ended", 0),
+    ],
+    ids=["both-fault", "feed-only"],
+)
+async def test_the_jobs_fault_is_reported_ahead_of_the_health_feeds(
+    info: ApiKeyFacts | None, cause: str, age: int
+) -> None:
+    """#3425's merge kept both checks, the job's first: this pins which cause `/readyz` names."""
+    w, svc = World(target(), info=info), AccountsService()
+    svc.attach_key_selfcheck(w.check)
+    svc.attach_account_health(cast(AccountHealthFeed, SimpleNamespace(fault="loop ended")))
+    await within(svc.start(cast(AppContext, object())))
+    try:
+        report = svc.health()
+    finally:
+        await within(svc.stop(1.0))
+    ages = f"1 key(s) checked, oldest last pass {age}s ago"  # a pass moves the last pass to now
+    assert (report.status, report.detail) == (HealthStatus.DEGRADED, f"{cause}; {ages}")
+
+
 async def test_readyz_shows_the_key_count_and_the_oldest_last_pass_never_a_key_id() -> None:
     w, app = World(target(), target(key=KEY2, acct=ACCT2, age=HOUR * 2 / 3)), FastAPI()
     w.infos[KEY2] = inconclusive()  # inside its window: no latch, its last pass stays
@@ -962,6 +987,7 @@ async def test_a_boot_pass_past_its_overall_bound_fails_closed_and_the_loop_stil
     assert (w.gate.reason_code, w.built) == (UNAVAILABLE, [(KEY, "1000001")])  # KEY2 never ran
     assert w.of("aclose") == [("aclose",)] and task is not None and task.cancelled()
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0  # KeyBootCheckIncomplete
 
 
 def test_the_boot_pass_is_bounded_at_sixty_seconds_unless_told_otherwise() -> None:
@@ -1342,6 +1368,7 @@ async def test_a_boot_pass_cut_while_the_violation_record_hangs_leaves_the_disar
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
     assert (w.gate.reason_code, w.armed[ACCT]) == (FAILED, False)
     assert w.disarms[ACCT] == ["key_withdraw_permission", NOW, NOW]  # its record sent and marked
+    assert sample(w, "cv_keys_failing_policy", rule="key_withdraw_permission") == 1.0  # its page
 
 
 async def test_a_verdict_with_several_failures_records_and_disarms_its_first_rule() -> None:
@@ -1372,6 +1399,8 @@ async def test_a_borrow_the_c28_recheck_refuses_is_a_withdraw_verdict_not_check_
     await w.run()  # the wiring's judging, as deployed, between M2's refusal and the job
     assert (w.kinds(), w.check.results[KEY].code) == (WITHDRAW_FAILURE, "key_withdraw_permission")
     assert (w.armed[ACCT], w.audit(VIOLATION)["severity"]) == (False, "critical")
+    # the runbook's tamper discriminator: its record lists no key-info fact, `permissions` included
+    assert set(w.audit(TESTED)["after_state"]) == CODES
 
 
 async def test_a_code_the_disarm_check_refuses_is_replaced_and_never_blocks_the_disarm() -> None:

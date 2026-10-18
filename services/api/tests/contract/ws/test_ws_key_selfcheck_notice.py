@@ -1,12 +1,14 @@
 """E27-T03 (#836) slice 2b1: the three reason codes the stored-key self-check latches the process
 read-only gate with reach clients as `system` notices (`accounts/selfcheck.py`, since slice 2a3c),
 and §15.9 of `23-ws-protocol.md` names them in the open code list. The notice schema is unchanged.
+Slice 2c2 gives each its own role-neutral message (`net/system_topic.py`).
 """
 
 from __future__ import annotations
 
 import json
 import re
+from uuid import UUID
 
 import pytest
 
@@ -16,6 +18,15 @@ from tests.contract.ws._harness import PROTOCOL_DOC, World, connect
 
 _CODES = (selfcheck.FAILED, selfcheck.STALE, selfcheck.UNAVAILABLE)
 _UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
+#: #836 slice 2c2: each code's own role-neutral text, which names no key and no account.
+_TEXT = {
+    selfcheck.FAILED: "Trading disabled: a stored API key failed its check.",
+    selfcheck.STALE: "Trading disabled: a stored API key has no recent passing check.",
+    selfcheck.UNAVAILABLE: "Trading disabled: the stored API keys could not be checked.",
+}
+#: What a client text must never carry: a machine code (`accounts.key_...`, `CV_EGRESS_IP`), an
+#: address or a port, a key or account id.
+_LEAK = re.compile(r"[a-z]\.[a-z]|_|\d+\.\d+|:\d|" + _UUID.pattern, re.IGNORECASE)
 
 
 def _notice_paragraph() -> str:
@@ -70,10 +81,23 @@ def test_key_selfcheck_notice_matches_the_system_schema_and_carries_its_code(cod
 
 
 @pytest.mark.parametrize("code", _CODES)
-def test_key_selfcheck_notice_message_is_the_fixed_role_neutral_text_naming_no_key(
+def test_key_selfcheck_notice_message_is_its_codes_role_neutral_text_naming_no_key(
     code: str,
 ) -> None:
     with connect(World(system_notices=lambda: [client_notice(True, code)])) as client:
         notice = client.recv()["p"]
-    assert notice["message"] == "Trading disabled: the server is in read-only mode."
-    assert not _UUID.search(json.dumps(notice))  # a key id or an account id is a UUID
+    assert notice["message"] == _TEXT[code]
+    assert not _LEAK.search(notice["message"]) and not _UUID.search(json.dumps(notice))
+
+
+def test_each_key_selfcheck_code_has_its_own_text_not_the_generic_one() -> None:
+    generic = client_notice(True, "accounts.not_a_code")["message"]
+    assert generic == "Trading disabled: the server is in read-only mode."
+    assert len({client_notice(True, code)["message"] for code in _CODES} - {generic}) == 3
+
+
+@pytest.mark.parametrize(
+    "leak", [selfcheck.FAILED, "203.0.113.7", "[::]:8000", "CV_EGRESS_IP", UUID(int=7)]
+)
+def test_the_leak_pattern_refuses_a_code_an_address_or_an_id(leak: object) -> None:
+    assert _LEAK.search(f"Trading disabled: {leak}.")

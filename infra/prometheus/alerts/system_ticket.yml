@@ -67,6 +67,43 @@ groups:
         annotations:
           summary: "Credential or certificate expiry within 14 days"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching"
+      - alert: KeyExpiringWithin14Days
+        # #836 (SR-034): the soonest `expiredAt` of a stored key (+Inf for none) is under 14 days
+        # away. One ticket per band, so each of the 14, 7 and 1 day lines raises a new one.
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 14 * 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) >= 7 * 86400
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 14 days (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
+      - alert: KeyExpiringWithin7Days
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 7 * 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) >= 86400
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 7 days (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
+      - alert: KeyExpiringWithin1Day
+        # Above 0: 0 is the gauge before a watchdog sets it (none on the fake backend); a lapsed
+        # key fails `key_expired` at its next check, which pages.
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 1 day (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
       - alert: AuthLoginFailureSpike
         expr: sum(increase(auth_login_failures_total[10m])) > 10
         for: 0m

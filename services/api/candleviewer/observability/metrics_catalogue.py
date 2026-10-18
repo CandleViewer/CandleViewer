@@ -734,7 +734,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "environment each latch accounts.key_selfcheck_unavailable; an unreadable key list "
         "latches only at boot or once a known key is past its window, so it alone can leave the "
         "gate open.",
-        "dashboard",
+        "error and no completed run = page (#836 slice 2c2)",
         _L,
         "E27",
         max_series=4,

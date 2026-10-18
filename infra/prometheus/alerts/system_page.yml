@@ -95,6 +95,55 @@ groups:
         annotations:
           summary: "KEK unavailable: credential broker degraded, trading disabled"
           runbook_url: "docs/ops/runbooks/kek-custody.md#alert-kekunavailable"
+      - alert: KeySelfCheckFailed
+        # #836 (C-2.8, C-12.2, SR-032): a stored key fails a rule, one alert per rule: a withdraw,
+        # transfer or other refused right, a whitelist that is not the egress IP (how a changed
+        # egress address shows, SR-033), any other. The job latched order entry read-only and
+        # disarmed the account; this resolves once no key fails, the latch at a restart.
+        expr: max by (env, rule) (cv_keys_failing_policy) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: key_selfcheck
+        annotations:
+          summary: "A stored API key fails its self-check: order entry is read-only"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyselfcheckfailed"
+      - alert: KeyBootCheckIncomplete
+        # #836 (ADR-0009 item 4): no run of this process has completed, so the boot assertion has
+        # no verdict (no egress IP, an unreadable key list, a check unfinished, the 60 s bound)
+        # and the job latched order entry read-only. A completed run resolves it.
+        expr: >-
+          max by (env) (cv_key_selfcheck_runs_total{result="error"}) > 0
+          unless on (env) max by (env) (cv_key_selfcheck_runs_total{result!="error"})
+        for: 0m
+        labels:
+          severity: page
+          component: key_selfcheck
+        annotations:
+          summary: "No key self-check run has completed since start-up: order entry is read-only"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyverificationstale"
+      - alert: KeyVerificationStale
+        # #836 (SR-E27-18): the oldest last pass is past the longest interval plus the grace; the
+        # watchdog latched read-only at the key's own window. Bound at 0 from import.
+        expr: max by (env) (cv_key_verification_age_seconds) > 3600 + 900
+        for: 0m
+        labels:
+          severity: page
+          component: key_selfcheck
+        annotations:
+          summary: "A stored API key has no passing self-check for over 75 min: order entry is read-only"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyverificationstale"
+      - alert: KeySelfCheckRunMissed
+        # #836 (SR-E27-18): a run not begun within the interval plus 15 min. A stopped job counts
+        # one more each interval (at most 1 h), so the 2 h window holds the page. Bound at 0.
+        expr: sum by (env) (increase(cv_key_selfcheck_missed_runs_total[2h])) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: key_selfcheck
+        annotations:
+          summary: "A stored-key self-check run is overdue: the job may have stopped"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyverificationstale"
       - alert: NetBindingUnsafe
         # #2496 (E09-T04: fires as soon as the gauge goes to 0). The mesh guard found a public or
         # off-mesh listener, or could not check, and tripped the read-only gate: no new orders.

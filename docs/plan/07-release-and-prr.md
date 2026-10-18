@@ -1697,6 +1697,69 @@ curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (sta
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 24h api | grep '"event":"account.key_rotation_notice"' | grep '"state":"overdue"' | tail -20
 ```
 
+<a id="alert-keyselfcheckfailed"></a>
+
+### KeySelfCheckFailed
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A stored API key fails its self-check (#836, C-2.8, SR-032): `cv_keys_failing_policy` is above 0, one alert per failing `rule`. A withdraw, transfer or other refused right; a whitelist that is not exactly `CV_EGRESS_IP` (`key_ip_whitelist_mismatch` is also how a changed egress address shows, SR-033); or any other rule. Found by the boot pass, the hourly pass or `testApiKey`, or restored at boot from `api_keys.last_error_code`. Page, no hold time.                 |
+| 2. User impact        | Order entry is read-only for every account (`accounts.key_selfcheck_failed`, latched until a restart) and the key's account is disarmed (`trading_enabled` false). WS clients get the critical `system` notice "Trading disabled: a stored API key failed its check."                                                                                                                                                                                                              |
+| 3. What is still safe | Native stop-losses on the exchange; cancel, flatten and SL repair (SR-032); reads. The key's status does not change.                                                                                                                                                                                                                                                                                                                                                               |
+| 5. Remediation        | Follow `docs/ops/runbooks/key-selfcheck.md`, symptom `accounts.key_selfcheck_failed`: find the key and the rule (`account.tested`), fix the key at the exchange or replace it (Owner), then restart cv-api via the launcher. A fund right the Owner did not grant, or a key that cannot sign at all, is a possible compromise or tamper: follow `SECURITY.md`. A disarmed account has no audited way back yet (decision 16 on #836); never re-arm it or edit a row in SQL (C-2.9). |
+| 6. Escalation         | Owner now; the Security engineer for any fund right, and for a whitelist or a key the Owner does not recognise.                                                                                                                                                                                                                                                                                                                                                                    |
+| 7. Verify recovery    | After the restart: no `starting in read-only mode` line for an `accounts.*` reason, command 1 is empty and `/readyz`'s `accounts` check is ok. The alert also resolves once a pass finds no failing key, but the read-only latch holds until the restart.                                                                                                                                                                                                                          |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: an empty answer, an ok `accounts` check, and no line.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=max by (env, rule) (cv_keys_failing_policy) > 0'
+curl -s http://127.0.0.1:8000/readyz  # the accounts check: its cause, the key count and the oldest last pass
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -E 'key_selfcheck_(failed|disable)' | tail -20
+```
+
+<a id="alert-keyverificationstale"></a>
+
+### KeyVerificationStale / KeySelfCheckRunMissed / KeyBootCheckIncomplete
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The stored keys were not checked in time (#836, SR-E27-18). `KeyVerificationStale`: the oldest last pass of a stored key is older than 1 h 15 min (`cv_key_verification_age_seconds` above 4500), so its checks keep ending with no verdict. `KeySelfCheckRunMissed`: a run did not begin within the interval plus 15 min (`cv_key_selfcheck_missed_runs_total` rose in the last 2 h), so the job stalled or its loop died. `KeyBootCheckIncomplete`: no run has completed since start-up (`cv_key_selfcheck_runs_total` has only `error`), so the boot assertion has no verdict. Page, no hold time. |
+| 2. User impact        | Order entry is read-only for every account (`accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`, latched until a restart), with the critical `system` notice. No key is blamed and nothing is disarmed. A missed run with no stored key latches nothing.                                                                                                                                                                                                                                                                                                                        |
+| 3. What is still safe | Native stop-losses on the exchange; cancel, flatten and SL repair; reads.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 5. Remediation        | Follow `docs/ops/runbooks/key-selfcheck.md`, symptom `stale` or `unavailable`: the log lines in command 3 name the cause (exchange reachability, the host clock, Postgres, `CV_EGRESS_IP`, a dead loop). Fix it, then restart cv-api via the launcher. Never disable the check or relax its bounds.                                                                                                                                                                                                                                                                                                   |
+| 6. Escalation         | Owner now; the Backend lead if a run is missed again after a restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 7. Verify recovery    | After the restart: no `starting in read-only mode` line for an `accounts.*` reason, `/readyz`'s `accounts` check is ok with an oldest last pass under an hour, and the alerts resolve (`KeySelfCheckRunMissed` 2 h after the last missed run).                                                                                                                                                                                                                                                                                                                                                        |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: an age under 4500, an ok `accounts` check, and no line.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=max by (env) (cv_key_verification_age_seconds)'
+curl -s http://127.0.0.1:8000/readyz  # the accounts check: its cause, the key count and the oldest last pass
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -E 'key_selfcheck_(inconclusive|run_missed|unfinished|boot_unfinished|no_egress_ip|targets_failed|env_mismatch|loop_died|watchdog_died)' | tail -20
+```
+
+<a id="alert-keyexpiring"></a>
+
+### KeyExpiringWithin14Days / KeyExpiringWithin7Days / KeyExpiringWithin1Day
+
+| Element               | Detail                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A stored API key expires soon (SR-034): `cv_key_soonest_expiry_seconds`, from the soonest `expiredAt` the last pass read, is under 14, 7 or 1 day away. One ticket per band, so each line raises a new one. Ticket, after 10 min. |
+| 2. User impact        | None yet. At its expiry the key fails `key_expired` at its next check: order entry goes read-only and its account is disarmed (KeySelfCheckFailed).                                                                               |
+| 3. What is still safe | Everything: the key still signs until it expires.                                                                                                                                                                                 |
+| 5. Remediation        | Store a replacement key before the expiry, or extend the expiry at the exchange (Owner; audited); the next hourly pass reads the new `expiredAt`. Withdrawal permission must be off. Never paste a key in chat or tickets.        |
+| 6. Escalation         | Owner.                                                                                                                                                                                                                            |
+| 7. Verify recovery    | After the next pass command 1 is above 14 days, or `+Inf` when no key expires, and the ticket resolves.                                                                                                                           |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: above 14 days or `+Inf`, an ok `accounts` check, and no row expiring within 14 days.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=min by (env) (cv_key_soonest_expiry_seconds) / 86400'
+curl -s http://127.0.0.1:8000/readyz  # the accounts check: its cause, the key count and the oldest last pass
+docker compose -f infra/compose/docker-compose.yml --profile core exec -e PGOPTIONS='-c default_transaction_read_only=on' postgres psql -U "${POSTGRES_USER:-cv}" -d "${POSTGRES_DB:-candleviewer}" -c "SELECT id, exchange_account_id, status, expires_at FROM api_keys WHERE status IN ('active', 'rotating') ORDER BY expires_at LIMIT 5"  # read-only, on the host
+```
+
 <a id="observability-stack-is-down"></a>
 
 ### Observability stack is down

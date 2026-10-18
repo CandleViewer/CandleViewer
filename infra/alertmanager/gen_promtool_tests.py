@@ -18,6 +18,12 @@ PROM = Path(__file__).resolve().parents[1] / "prometheus"
 RULE_FILES = ("system_page.yml", "system_ticket.yml", "accounts.yml")
 # #965 R7: a disable whose store raised (`result` `error`; a refusal is another result).
 _ERRORED = 'cv_user_lifecycle_total{action="disable",env="live",result="error"}'
+# #836: the key self-check's series.
+_AGE = 'cv_key_verification_age_seconds{env="live"}'
+_MISSED = 'cv_key_selfcheck_missed_runs_total{env="live"}'
+_EXPIRY = 'cv_key_soonest_expiry_seconds{env="live"}'
+_RUNS = 'cv_key_selfcheck_runs_total{{env="live",result="{}"}}'
+_FAILING = 'cv_keys_failing_policy{{env="live",rule="{}"}}'
 
 # alert -> (series, firing values, healthy values, eval_time, extra labels)
 SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
@@ -157,6 +163,13 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         {"env": "live"},
     ),
     "UserDisableFailed": (_ERRORED, "0+0x10 1+0x10", "0+0x20", "15m", {"env": "live"}),
+    # #836: the oldest last pass ages a minute a scrape; 1 h 15 min (4500 s) itself is not stale.
+    "KeyVerificationStale": (_AGE, "4500+60x10", "4500+0x10", "5m", {"env": "live"}),
+    "KeySelfCheckRunMissed": (_MISSED, "0+0x10 1+0x10", "0+0x20", "15m", {"env": "live"}),
+    # #836 (SR-034): one ticket per band; a healthy case on the upper edge, or the unset 0.
+    "KeyExpiringWithin14Days": (_EXPIRY, "864000+0x30", "1209600+0x30", "20m", {"env": "live"}),
+    "KeyExpiringWithin7Days": (_EXPIRY, "259200+0x30", "604800+0x30", "20m", {"env": "live"}),
+    "KeyExpiringWithin1Day": (_EXPIRY, "43200+0x30", "0+0x30", "20m", {"env": "live"}),
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
@@ -296,6 +309,32 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("1447m", True, {_OVERDUE: _A_DAY_APART}),
         ("6m", False, {_OVERDUE: _ZERO, _WARN: _RISE}),
     ),
+    # #836: a boot pass that could not complete pages; a run that completes (a pass) ends it.
+    "KeyBootCheckIncomplete": (
+        ("5m", True, {_RUNS.format("error"): "1+0x10"}),
+        ("15m", False, {_RUNS.format("error"): "1+0x20", _RUNS.format("passed"): "_x9 1+0x10"}),
+    ),
+}
+
+#: alert -> cases of (eval_time, {series: values}, the `rule` of each alert expected): #836's
+#: failing-key page fires once per failing rule, for every rule, and never for a rule at 0.
+BY_RULE: dict[str, tuple[tuple[str, dict[str, str], tuple[str, ...]], ...]] = {
+    "KeySelfCheckFailed": (
+        (
+            "5m",
+            {_FAILING.format("key_withdraw_permission"): "0+0x2 1+0x10"},
+            ("key_withdraw_permission",),
+        ),
+        (
+            "5m",
+            {
+                _FAILING.format("key_permission_not_allowed"): "1+0x10",
+                _FAILING.format("key_ip_whitelist_mismatch"): "2+0x10",
+            },
+            ("key_ip_whitelist_mismatch", "key_permission_not_allowed"),
+        ),
+        ("10m", {_FAILING.format("key_withdraw_permission"): "1+0x4 0+0x10"}, ()),  # fixed
+    ),
 }
 
 _DAILY = 'cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}'
@@ -428,6 +467,22 @@ def build() -> dict[str, Any]:
                     "input_series": [{"series": series, "values": values}],
                     "alert_rule_test": [
                         {"eval_time": at, "alertname": name, "exp_alerts": [alert] if fires else []}
+                    ],
+                }
+            )
+    for name, by_rule in BY_RULE.items():
+        for at, case_series, rules in by_rule:
+            labels, notes = {**labels_of(name), "env": "live"}, annotations_of(name)
+            expected = [
+                {"exp_labels": {**labels, "rule": rule}, "exp_annotations": dict(notes)}
+                for rule in rules
+            ]
+            tests.append(
+                {
+                    "interval": "1m",
+                    "input_series": [{"series": s, "values": v} for s, v in case_series.items()],
+                    "alert_rule_test": [
+                        {"eval_time": at, "alertname": name, "exp_alerts": expected}
                     ],
                 }
             )

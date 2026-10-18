@@ -387,6 +387,7 @@ class KeySelfCheck:
             except TimeoutError:
                 logger().critical("key_selfcheck_boot_unfinished")
                 self._latch(UNAVAILABLE)
+                self._ran("error")  # counted, so the boot page sees it, with any failure found
             self._task = spawn(self._loop(), name="key-selfcheck")
             self._task.add_done_callback(self._loop_ended)
 
