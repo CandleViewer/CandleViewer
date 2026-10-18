@@ -53,13 +53,6 @@ def test_a_root_apart_from_every_data_directory_is_read_from_the_environment_nor
     assert Settings().backup_root == f"{tmp_path}/backups"
 
 
-def test_a_sibling_that_shares_a_prefix_with_a_data_directory_is_accepted(tmp_path: Path) -> None:
-    """Directories compare by component, never as string prefixes (R26)."""
-    assert (
-        _settings(tmp_path, "{tmp}/data/parquet-old").backup_root == f"{tmp_path}/data/parquet-old"
-    )
-
-
 @pytest.mark.parametrize(
     ("root", "rule"),
     [
@@ -86,53 +79,170 @@ _AUDIT = "the directory of CV_AUDIT_WAL_PATH"
 @pytest.mark.parametrize(
     ("root", "paths", "name"),
     [
-        pytest.param("{tmp}/audit", {}, _AUDIT, id="audit-wal-dir"),
-        pytest.param("{tmp}/audit/b", {}, _AUDIT, id="inside-it"),
         pytest.param("{tmp}/var/audit/b", {"audit_wal_path": "var/audit/a.wal"}, _AUDIT, id="cwd"),
-        pytest.param("{tmp}/data", {}, "CV_PARQUET_ROOT", id="above-the-lake"),
-        pytest.param("{tmp}/data/parquet/b", {}, "CV_PARQUET_ROOT", id="inside-the-lake"),
         pytest.param(
             "{tmp}/real/parquet/b",
             {"parquet_root": "{tmp}/link/parquet"},
             "CV_PARQUET_ROOT",
             id="lake-reached-through-a-symlink",
         ),
-        pytest.param("{tmp}/data/recorder-wal/b", {}, "CV_RECORDER_WAL_DIR", id="default-spill"),
         pytest.param("{tmp}/data/bars", {}, "CV_BARS_STATE_ROOT", id="above-the-default-bar-state"),
+        # The spill WAL and the bar state are stripped, and their `~` expanded, as their own
+        # checks do; so is the lake's `~`, for the defaults derived from it.
         pytest.param(
-            "{tmp}/st/b", {"bars_state_root": "{tmp}/st"}, "CV_BARS_STATE_ROOT", id="bars"
-        ),
-        pytest.param("{tmp}/c/b", {"audit_checkpoint_path": "{tmp}/c/x"}, "CHECKPOINT", id="ckpt"),
-        pytest.param("{tmp}/ack", {"kek_ack_path": "{tmp}/ack/n"}, "CV_KEK_ACK_PATH", id="kek-ack"),
-        pytest.param(
-            "{tmp}/l/b", {"CV_AUDIT_LANE_KEY_FILE": "{tmp}/l/k"}, "LANE_KEY_FILE", id="lane"
+            "{tmp}/st/b", {"bars_state_root": " {tmp}/st "}, "CV_BARS_STATE_ROOT", id="bars-padded"
         ),
         pytest.param(
-            "{tmp}/p",
-            {"CV_AUDIT_LANE_PREVIOUS_KEY_FILE": "{tmp}/p/k"},
-            "LANE_PREVIOUS",
-            id="lane-prev",
+            "{tmp}/data/spill/b",
+            {"recorder_wal_dir": " {tmp}/data/spill "},
+            "CV_RECORDER_WAL_DIR",
+            id="spill-padded",
         ),
         pytest.param(
-            "{tmp}/data/spill", {"recorder_wal_dir": "{tmp}/data/spill"}, "CV_RECORDER_WAL_DIR"
+            "{tmp}/data/home/st/b", {"bars_state_root": "~/st"}, "CV_BARS_STATE_ROOT", id="bars-~"
         ),
-        pytest.param("{tmp}/secrets", {}, "the directory of CV_KEK_HANDLE", id="kek-handle-dir"),
-        pytest.param("{tmp}/o/b", {"kek_prev_handle": "{tmp}/o/k"}, "of CV_KEK_PREV_HANDLE"),
-        pytest.param("{tmp}/pg", {}, "{tmp}/pg", id="postgres-data"),
-        pytest.param("{tmp}/quest/b", {}, "{tmp}/quest", id="inside-questdb-data"),
+        pytest.param(
+            "{tmp}/data/home/sp/b",
+            {"recorder_wal_dir": "~/sp"},
+            "CV_RECORDER_WAL_DIR",
+            id="spill-~",
+        ),
+        pytest.param(
+            "{tmp}/data/home/bars/state/b",
+            {"parquet_root": "~/lake"},
+            "CV_BARS_STATE_ROOT",
+            id="default-bar-state-of-a-~-lake",
+        ),
+        pytest.param(
+            "{tmp}/data/home/recorder-wal/b",
+            {"parquet_root": "~/lake"},
+            "CV_RECORDER_WAL_DIR",
+            id="default-spill-of-a-~-lake",
+        ),
+        # Every other path is opened as written, the lake itself too: `~` is a directory name,
+        # under the cwd.
+        pytest.param("{tmp}/~/b", {"kek_handle": "~/k"}, "of CV_KEK_HANDLE", id="kek-handle-~"),
+        pytest.param("{tmp}/~/lake/b", {"parquet_root": "~/lake"}, "CV_PARQUET_ROOT", id="lake-~"),
     ],
 )
-def test_a_root_that_is_contains_or_lies_inside_a_data_directory_is_refused(
+def test_a_data_directory_is_compared_where_its_consumer_opens_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root: str, paths: dict[str, str], name: str
 ) -> None:
+    """Resolved against the working directory or through a symlink; stripped or `~`-expanded
+    where the consumer does, and not where it does not."""
     monkeypatch.chdir(tmp_path)
-    data_dirs = (f"{tmp_path}/pg", f"{tmp_path}/quest")
-    monkeypatch.setattr(settings_module, "DATABASE_DATA_DIRS", data_dirs)
+    monkeypatch.setenv("HOME", f"{tmp_path}/data/home")
     (tmp_path / "real").mkdir()
     (tmp_path / "link").symlink_to(tmp_path / "real", target_is_directory=True)
 
-    with pytest.raises(ValidationError, match=re.escape(name.format(tmp=tmp_path))):
+    with pytest.raises(ValidationError, match=re.escape(name)):
         _settings(tmp_path, root, **paths)
+
+
+def test_a_path_opened_as_written_is_not_stripped_or_expanded_for_the_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`~/k` is opened as `./~/k`, and a padded path keeps its spaces (a leading one makes it
+    relative): neither `$HOME` nor the stripped directory is a data directory, so a root there is
+    accepted (the table above refuses the directories these paths do name)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", f"{tmp_path}/home")
+
+    for paths, root in (
+        ({"kek_handle": "~/k"}, f"{tmp_path}/home"),
+        ({"parquet_root": "~/lake"}, f"{tmp_path}/home/lake"),
+        ({"audit_wal_path": " {tmp}/audit/w"}, f"{tmp_path}/audit"),
+    ):
+        assert _settings(tmp_path, root, **paths).backup_root == root
+
+
+@pytest.mark.parametrize("setting", ["parquet_root", "recorder_wal_dir", "bars_state_root"])
+def test_an_unknown_user_home_where_the_comparison_expands_it_is_a_validation_error(
+    tmp_path: Path, setting: str
+) -> None:
+    """The root cannot be compared with a directory that names no home: refused, naming the
+    setting, never the user (#2728, C-12.6), not escaped as a `RuntimeError`."""
+    with pytest.raises(
+        ValidationError, match=f"~ in CV_{setting.upper()} names no home"
+    ) as refused:
+        _settings(tmp_path, "{tmp}/backups", **{setting: "~no-such-user-cv966/x"})
+
+    for rendered in (str(refused.value), repr(refused.value.errors()), refused.value.json()):
+        assert "no-such-user-cv966" not in rendered
+
+
+#: Each directory the root is compared with: the label a refusal names, and the `Settings`
+#: keywords that put it at `{d}` (the spill WAL must lie in the data directory, `{tmp}/data`).
+#: The test patches the database directories in, at `{tmp}/data/postgres/data` and `questdb/data`.
+_DIRECTORIES = {
+    "audit-wal": (_AUDIT, {"audit_wal_path": "{d}/w"}),
+    "checkpoint": ("the directory of CV_AUDIT_CHECKPOINT_PATH", {"audit_checkpoint_path": "{d}/c"}),
+    "lake": ("CV_PARQUET_ROOT", {"parquet_root": "{d}"}),
+    "spill": ("CV_RECORDER_WAL_DIR", {"recorder_wal_dir": "{d}"}),
+    "bar-state": ("CV_BARS_STATE_ROOT", {"bars_state_root": "{d}"}),
+    "kek": ("the directory of CV_KEK_HANDLE", {"kek_handle": "{d}/k"}),
+    "kek-prev": ("the directory of CV_KEK_PREV_HANDLE", {"kek_prev_handle": "{d}/k"}),
+    "kek-ack": ("the directory of CV_KEK_ACK_PATH", {"kek_ack_path": "{d}/k"}),
+    "lane-key": ("the directory of CV_AUDIT_LANE_KEY_FILE", {"CV_AUDIT_LANE_KEY_FILE": "{d}/k"}),
+    "lane-key-prev": (
+        "the directory of CV_AUDIT_LANE_PREVIOUS_KEY_FILE",
+        {"CV_AUDIT_LANE_PREVIOUS_KEY_FILE": "{d}/k"},
+    ),
+    "postgres": ("{d}", {}),
+    "questdb": ("{d}", {}),
+}
+
+
+@pytest.mark.parametrize("shape", ["equal", "inside", "containing", "beside", "beside-short"])
+@pytest.mark.parametrize("key", _DIRECTORIES)
+def test_every_data_directory_is_refused_equal_inside_and_above_but_not_beside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, shape: str
+) -> None:
+    """Each directory has a subtree of its own, so only it can refuse the root. The root is
+    refused as the directory, inside it and above it, and accepted beside it, sharing its name as
+    a prefix, longer or shorter: each entry is the directory itself, not its file, its parent or
+    a string prefix."""
+    monkeypatch.chdir(tmp_path)
+    databases = tuple(f"{tmp_path}/data/{name}/data" for name in ("postgres", "questdb"))
+    monkeypatch.setattr(settings_module, "DATABASE_DATA_DIRS", databases)
+    label, keywords = _DIRECTORIES[key]
+    directory = f"{tmp_path}/data/{key}/data"
+    root = {
+        "equal": directory,
+        "inside": f"{directory}/b",
+        "containing": f"{tmp_path}/data/{key}",
+        "beside": f"{directory}-old",
+        "beside-short": directory[:-1],
+    }[shape]
+    paths = {name: value.format(d=directory) for name, value in keywords.items()}
+
+    if shape.startswith("beside"):
+        assert _settings(tmp_path, root, **paths).backup_root == root
+    else:
+        with pytest.raises(ValidationError, match=re.escape(label.format(d=directory))):
+            _settings(tmp_path, root, **paths)
+
+
+@pytest.mark.parametrize("lake", ["{tmp}/data/parquet", "{tmp}/x/link"], ids=["plain", "symlink"])
+def test_the_default_spill_wal_and_bar_state_are_where_their_own_checks_put_them(
+    tmp_path: Path, lake: str
+) -> None:
+    """The anchors are the source of truth for both defaults, so a drift fails here. A lake that
+    is a symlink to another directory moves the spill WAL's parent, not the bar state's."""
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y" / "real").mkdir(parents=True)
+    (tmp_path / "x" / "link").symlink_to(tmp_path / "y" / "real", target_is_directory=True)
+    anchored = _settings(tmp_path, "", parquet_root=lake)  # unwired: only the anchors ran
+
+    for name, directory in (
+        ("CV_RECORDER_WAL_DIR", anchored.recorder_wal_dir),
+        ("CV_BARS_STATE_ROOT", anchored.bars_state_root),
+    ):
+        for root in (directory, f"{directory}/b"):
+            with pytest.raises(ValidationError, match=name):
+                _settings(tmp_path, root, parquet_root=lake)
+        for root in (f"{directory}-old", directory[:-1]):  # beside it, as above
+            assert _settings(tmp_path, root, parquet_root=lake).backup_root == root
 
 
 def test_the_database_data_directories_are_where_the_stack_mounts_its_volumes() -> None:

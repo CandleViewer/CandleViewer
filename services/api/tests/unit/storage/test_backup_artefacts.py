@@ -429,7 +429,12 @@ async def test_stream_closes_the_file_when_cancelled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read: str
 ) -> None:
     """Cancelled in its second read, a stream or a digest closes the artefact, once, after that
-    read's thread returns, though the artefact is dropped and collected meanwhile (M-1)."""
+    read's thread returns, though the artefact is dropped and collected meanwhile (M-1). The
+    digest's thread then ends in `ArtefactMissing`, into a future no one awaits: `_settled`
+    retrieves it, so the loop reports nothing when it is collected (N6)."""
+    reports = list[str]()
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _, context: reports.append(context["message"]))
     closes = _Closes(monkeypatch)
     artefact = await _opened(_trees(tmp_path))
     closes.fd, reads = artefact._fd, _Reads(monkeypatch, hold_from=CHUNK_BYTES)
@@ -448,6 +453,8 @@ async def test_stream_closes_the_file_when_cancelled(
     await asyncio.wait_for(closes.event.wait(), _WAIT_S)
 
     assert closes.seen == [closes.fd] and len(reads.calls) == 2  # the digest read no more
+    gc.collect()
+    assert alive() is None and reports == []  # collected, and nothing reported for its read
 
 
 async def test_no_read_starts_once_closed_even_before_the_release(
@@ -476,6 +483,38 @@ async def test_no_read_starts_once_closed_even_before_the_release(
     await asyncio.wait_for(closes.event.wait(), _WAIT_S)
     with pytest.raises(ValueError, match="none once closed"):
         await late[0]
+    assert closes.seen == [closes.fd]
+
+
+async def test_a_finished_reads_callback_never_closes_under_a_newer_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4: a read ends and, before its done callback runs, a second reader (the port forbids it)
+    is admitted and `close()` is called, all in one loop iteration. The callback leaves the
+    descriptor to the read still in flight, which releases it, once, when its thread returns."""
+    closes = _Closes(monkeypatch)
+    artefact = await _opened(_trees(tmp_path))
+    closes.fd, settled = artefact._fd, artefact._settled
+    late = list[tuple[asyncio.Task[str], _Reads]]()
+
+    def window(reading: asyncio.Future[Any]) -> None:
+        if not late:
+            reads = _Reads(monkeypatch, hold_from=0)  # the second read waits in its thread
+            loop = asyncio.get_running_loop()
+            late.append((asyncio.Task(artefact.digest(), loop=loop, eager_start=True), reads))
+            artefact.close()  # that read is in flight: the release waits for it
+        settled(reading)
+
+    monkeypatch.setattr(artefact, "_settled", window)
+    assert await artefact.digest() == hashlib.sha256(_INSIDE).hexdigest()
+    task, reads = late[0]
+    await reads.held()
+    assert closes.seen == []  # not under the second read's thread
+
+    reads.release.set()
+    with pytest.raises(ArtefactMissing):  # closed, its digest stopped within one chunk
+        await task
+    await asyncio.wait_for(closes.event.wait(), _WAIT_S)
     assert closes.seen == [closes.fd]
 
 

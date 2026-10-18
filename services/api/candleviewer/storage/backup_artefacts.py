@@ -112,10 +112,12 @@ class ResolvedArtefact:
 
     def _settled(self, reading: asyncio.Future[Any]) -> None:
         """Every read's done callback, a bound method: it keeps the artefact, so its descriptor,
-        alive until the read returns, then releases the descriptor if `close()` came meanwhile."""
+        alive until the read returns, then releases the descriptor if `close()` came meanwhile.
+        Only for the read still current: `_run` admits a newer one once this one is done, before
+        this callback runs, and that read's own callback, or `close()`, releases it."""
         if not reading.cancelled():
             reading.exception()  # retrieved: a cancelled caller never will
-        if self._closing:
+        if self._closing and self._reading is reading:
             self._release()
 
     async def _run(self, read: Callable[..., _T], *args: Any) -> _T:
