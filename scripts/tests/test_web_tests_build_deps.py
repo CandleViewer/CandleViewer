@@ -8,20 +8,24 @@ that the built exports of `packages/ui`, `packages/chart-engine` and `packages/p
 before its first apps/web step, and AGENTS.md says so next to the web test command.
 
 #3367: the scan reads a run script as the shell runs it. Backslash-continued lines are joined, the
-commands are split at newlines, `;`, `&&`, `||` and `|`, and a `cd` or `pushd` moves the folder
-of the commands after it, also after `(`, `{`, `!` or a keyword such as `if`, `then` or `do`. A
-`-C`, `--dir` or `--prefix` flag runs one command in a folder, whichever program takes it
-(`pnpm -C`, `npm --prefix`, `make -C`). A folder counts when it is apps/web or inside it, relative
-to the checkout or under the workspace path (`${{ github.workspace }}`, `$GITHUB_WORKSPACE`), and
-a path selector (`./apps/web`, `{apps/web}`) or `--filter-prod` selects the app as its name does.
+commands are split at newlines, `;`, `&&`, `||`, `|` and a command substitution (`$(`, a
+backtick), and a `cd` or `pushd` moves the folder of the commands after it, also after `(`, `{`,
+`!` or a keyword such as `if`, `then` or `do`. A `-C`, `--dir` or `--prefix` flag runs one command
+in a folder, whichever program takes it (`pnpm -C`, `npm --prefix`, `make -C`). A folder is one
+shell word without its quotes (`"$GITHUB_WORKSPACE"/apps/web`) and counts when it is apps/web or
+inside it, relative to the checkout or under the workspace path (`${{ github.workspace }}`,
+`$GITHUB_WORKSPACE`). pnpm's `--filter`, `-F` or `--filter-prod` selects the app by its name, with
+or without the scope (`web`), or by a path selector relative to where pnpm runs (`./apps/web`,
+`{../web}`), which pnpm matches against the package folders: one inside the app selects nothing.
 A job-level `continue-on-error`, or a job or workflow `defaults.run.shell`, would weaken the
 pinned steps without touching them, so no scanned job may set one.
 
-The scan errs towards a hit, which fails loudly in the build-and-guard pin: a cd in a subshell or
-a pipeline is taken to persist. Out of scope, as a static scan cannot resolve them and no workflow
-uses them: commands in a script file, a composite action or a `bash -c` string, `case` arms,
-folders or filters held in variables (`cd "$DIR"`), and runs that select the app among other
-packages (`pnpm -r`, `--filter "./apps/*"`, `--filter "...@candleviewer/ui"`)."""
+The scan errs towards a hit, which fails loudly in the build-and-guard pin: a cd in a subshell, a
+pipeline or a command substitution is taken to persist. Out of scope, as a static scan cannot
+resolve them and no workflow uses them: commands in a script file, a composite action or a
+`bash -c` string, `case` arms, folders or filters held in variables (`cd "$DIR"`), and runs that
+select the app among other packages (`pnpm -r`, `--filter "./apps/*"`,
+`--filter "...@candleviewer/ui"`)."""
 
 from __future__ import annotations
 
@@ -45,15 +49,17 @@ GUARD_STEP = {
     "name": "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)",
     "run": GUARD,
 }
-# pnpm selecting exactly the app by name or folder, with --filter, -F or --filter-prod: not
-# `@candleviewer/web^...` (its deps) or `...web...[ref]`.
-WEB_SELECTOR = r"(?:@candleviewer/web|\./apps/web/?|\{(?:\./)?apps/web/?\})"
-WEB_FILTER = re.compile(rf"""(?:--filter(?:-prod)?|-F)[= ](["']?){WEB_SELECTOR}\1(?=\s|$)""")
+# One shell word as the command receives it once its quotes go: `"$GITHUB_WORKSPACE"/apps/web`.
+WORD = r"""((?:"[^"]*"|'[^']*'|[^\s<>])+)"""
+# pnpm's --filter, -F or --filter-prod and its selector. It counts when it picks exactly the app,
+# by name (`web` too) or by folder: not `@candleviewer/web^...` (its deps) or `...web...[ref]`.
+FILTER = re.compile(rf"(?:--filter(?:-prod)?|-F)(?:=|\s+){WORD}")
+WEB_NAMES = ("@candleviewer/web", "web")
 # A build or test word (`pnpm run build`, `vite build`, `playwright test`, `pnpm e2e`) or vitest.
 WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\bvitest\b")
 # One command run in another folder (`pnpm -C apps/web`, `--dir=apps/web`, `npm --prefix`).
-DIR_FLAG = re.compile(r"""(?:^|\s)(?:-C|--dir|--prefix)[= ]["']?([^\s"']+)""")
-CD = re.compile(r"""(?:cd|pushd)\s+(?:--\s+)?["']?([^\s"']+)""")
+DIR_FLAG = re.compile(rf"(?:^|\s)(?:-C|--dir|--prefix)(?:=|\s+){WORD}")
+CD = re.compile(rf"(?:cd|pushd)\s+(?:--\s+)?{WORD}")
 # What may precede a command's first word: a subshell, a group, `!` or a shell keyword.
 LEAD = re.compile(r"^(?:[\s({]|(?:!|if|elif|while|until|then|else|do)(?=\s))+")
 # GitHub writes `${{ github.workspace }}` into a script before the shell runs it.
@@ -83,11 +89,26 @@ def _in_web(folder: str) -> bool:
     return folder == "apps/web" or folder.startswith("apps/web/")
 
 
+def _word(text: str) -> str:
+    return re.sub(r"""["']""", "", text)
+
+
+def _selects_web(selector: str, here: str) -> bool:
+    """Whether a pnpm selector picks apps/web when pnpm runs in `here`: pnpm matches a path
+    selector (`./`, `../`, braces) against the package folders, and any other one as a name."""
+    if selector.startswith("{") and selector.endswith("}"):
+        selector = selector[1:-1]
+    elif not selector.startswith("."):
+        return selector in WEB_NAMES
+    return _folder(selector, here) == "apps/web"
+
+
 def _commands(run: object) -> list[str]:
-    """A run script's commands: continued lines joined, split at newlines, ;, &&, || and |."""
+    """A run script's commands: continued lines joined, split at newlines, ;, &&, || and |, and
+    where a command substitution (`$(`, a backtick) starts one."""
     script = GITHUB_WORKSPACE.sub("$GITHUB_WORKSPACE", re.sub(r"\\\r?\n", " ", str(run or "")))
-    parts = re.split(r"&&|\|\|?|;|\n", script)
-    return [re.sub(r"[\s)]+$", "", LEAD.sub("", part)) for part in parts]
+    parts = re.split(r"&&|\|\|?|;|\n|\$\(|`", script)
+    return [re.sub(r"""(?:\)"|[\s)])+$""", "", LEAD.sub("", part)) for part in parts]
 
 
 def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
@@ -95,11 +116,12 @@ def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
     here = _folder(step.get("working-directory", cwd))
     for command in _commands(step.get("run")):
         if (cd := CD.match(command)) is not None:
-            here = _folder(cd[1], here)
+            here = _folder(_word(cd[1]), here)
         elif "turbo" not in command and WEB_TASK.search(command) is not None:
             flag = DIR_FLAG.search(command)
-            folder = here if flag is None else _folder(flag[1], here)
-            if _in_web(folder) or WEB_FILTER.search(command) is not None:
+            folder = here if flag is None else _folder(_word(flag[1]), here)
+            selectors = [_word(selector) for selector in FILTER.findall(command)]
+            if _in_web(folder) or any(_selects_web(s, folder) for s in selectors):
                 return True
     return False
 
@@ -211,6 +233,22 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "pushd apps/web\npnpm build", True),
         (None, "{ cd apps/web; pnpm build; }", True),
         ("apps", "pnpm -C web run build", True),
+        # A word read without its quotes or a redirect, a tab or spaces after a flag, the name
+        # without its scope, a path selector relative to where pnpm runs, a command substitution.
+        (None, 'cd "$GITHUB_WORKSPACE"/apps/web && pnpm run build', True),
+        (None, 'cd "${{ github.workspace }}"/apps/web && pnpm run build', True),
+        (None, 'pnpm -C "$GITHUB_WORKSPACE"/apps/web run build', True),
+        (None, "pushd apps/web>/dev/null\npnpm build", True),
+        (None, "pnpm -C\tapps/web test", True),
+        (None, "pnpm --filter  web test", True),
+        (None, "pnpm --filter web run build", True),
+        (None, "pnpm -F web test", True),
+        (None, "pnpm --filter=web test:cov", True),
+        ("apps/desktop", "pnpm --filter ../web build", True),
+        (None, "pnpm -C apps/desktop --filter {../web} test", True),
+        (None, "out=$(cd apps/web && pnpm run build)", True),
+        (None, 'echo "$(pnpm -C apps/web test)"', True),
+        (None, "log=`pnpm --filter web test`", True),
         (None, "cd apps/desktop && pnpm run build", False),
         (None, "pnpm -C ${{ github.workspace }}/apps/desktop run build", False),
         ("apps/web-kit", "pnpm run build", False),
@@ -219,6 +257,14 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "pnpm --filter ./apps/web-kit run build", False),
         (None, "cd apps/web && pnpm turbo run test", False),
         ("${{ github.workspace }}/apps/desktop", "pnpm run build", False),
+        (None, 'cd "$GITHUB_WORKSPACE"/apps/desktop && pnpm run build', False),
+        (None, 'cd "apps/web kit" && pnpm run build', False),
+        (None, 'pnpm --filter "web^..." run build', False),
+        (None, "pnpm --filter web-kit run build", False),
+        ("apps/desktop", "pnpm --filter ./web build", False),
+        (None, "pnpm --filter ./apps/web/e2e test", False),  # no package has that folder
+        # The cd's `e2e` names a folder: a cd is never also scored as a web task.
+        ("apps/web", "cd e2e && npx playwright install --with-deps chromium", False),
     ],
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
