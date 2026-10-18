@@ -28,6 +28,10 @@ DOC_POST_STRING = b'1658385579423XXXXXXXXXX5000{"category":"option"}'
 DOC_GET_MAC = "c00720f96c5934ca7057ac28ae65b823f83b8b67a8fe784e7795ca0fa3c148ec"
 DOC_POST_MAC = "ff137e622dc52629f41b52ea614eab59502e2b0663f153c528cb570379c469b7"
 CASES = [(*DOC_GET, DOC_GET_MAC), (*DOC_POST, DOC_POST_MAC)]
+#: A private-WS `auth` (24 §14.3 "Auth (WS)"): `expires` from the research doc's illustrative
+#: op, and the MAC of `GET/realtime` + `expires` with the same synthetic secret.
+WS_EXPIRES, WS_STRING = 1735500000000, b"GET/realtime1735500000000"
+WS_MAC = "930517713cc9f5b0fcc3c2db56a9f291ecdd248eaac80c34bad925f729f4b36d"
 STRINGS = [(*DOC_GET, DOC_GET_STRING), (*DOC_POST, DOC_POST_STRING)]
 
 
@@ -56,6 +60,27 @@ async def test_m2_computes_the_documented_signature_end_to_end(
     signer = BybitSigner(mint_borrower(svc, "exchange_adapter"), meta.key_id)
     out = await signer.sign(timestamp_ms=ts, recv_window_ms=5000, payload=payload)
     assert out == BybitSignature(api_key=DOC_KEY_ID, signature=mac)
+
+
+async def test_ws_auth_signs_get_realtime_and_expires_under_its_own_purpose() -> None:
+    """No key-id slot; `sign_ws_auth` whatever the signer's REST purpose (#836 slice 2b5)."""
+    calls: list[Call] = []
+    signer = BybitSigner(fake_capability(DOC_KEY_ID, calls), CREDENTIAL_ID, purpose="key_verify")
+    out = await signer.sign_ws_auth(expires_ms=WS_EXPIRES)
+    assert calls == [(CREDENTIAL_ID, WS_STRING, "sign_ws_auth")]
+    assert out == BybitSignature(DOC_KEY_ID, stand_in_signature(WS_STRING))
+
+
+async def test_m2_computes_the_ws_auth_signature_end_to_end() -> None:
+    store = InMemoryCredentialStore()
+    svc = await _boot(store, _Src(KEK_V1, 1))
+    meta = await svc._require().store(
+        "demo", ACCOUNT, "doc", Secret(DOC_KEY_ID), Secret(DOC_KEY_ID), SNAPSHOT
+    )
+    store.activate(meta.key_id)  # `sign_ws_auth` signs active keys only
+    signer = BybitSigner(mint_borrower(svc, "exchange_adapter"), meta.key_id)
+    out = await signer.sign_ws_auth(expires_ms=WS_EXPIRES)
+    assert out == BybitSignature(api_key=DOC_KEY_ID, signature=WS_MAC)
 
 
 async def test_purpose_is_passed_to_m2() -> None:

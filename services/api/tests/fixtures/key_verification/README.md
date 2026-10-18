@@ -1,7 +1,7 @@
 # Key-verification fixtures (E27-T03)
 
 Inputs for the API-key verification pipeline (`candleviewer/accounts/verification.py`) and its
-adapter parsers (`candleviewer/exchange/bybit/key_info.py`). All six files are **synthetic,
+adapter parsers (`candleviewer/exchange/bybit/key_info.py`). All eight files are **synthetic,
 documented-shape** stand-ins, following the owner exception #1778 group A pattern. Private
 endpoints cannot be recorded without a real key, and agents never handle one (C-13.5). #2240
 owns the recorded, redacted capture that replaces them.
@@ -12,6 +12,10 @@ demo (host `api-demo.bybit.com`) and no symbol. Redaction: no key id, secret, si
 identifier. The UID is the synthetic `1000001` of `packages/fixtures/accounts/accounts.json`,
 `apiKey` is `***`, and the whitelist uses the documentation address 203.0.113.7 (RFC 5737).
 
+The two `ws_auth_*` files are the private stream's `auth` reply (`success`, `ret_msg`, `op`,
+`conn_id`, the fields of the v5 "Connect" page; not re-read from this network) on host
+`stream-demo.bybit.com`, with fabricated connection ids and no `time`.
+
 | File                  | Call                             | Notable                                                              |
 | --------------------- | -------------------------------- | -------------------------------------------------------------------- |
 | `key_info_trade.json` | `GET /v5/user/query-api`         | Compliant trade key: `ContractTrade` and `Derivatives` only, `uta` 1 |
@@ -20,6 +24,8 @@ identifier. The UID is the synthetic `1000001` of `packages/fixtures/accounts/ac
 | `error_10004.json`    | either call                      | Signature refused: inconclusive, never a verdict (SR-E27-18)         |
 | `error_10010.json`    | either call                      | Egress IP not on the key's whitelist (`key_ip_whitelist_mismatch`)   |
 | `error_33004.json`    | either call                      | Key past its expiry (`key_expired`)                                  |
+| `ws_auth_ok.json`     | private WS `auth`                | Granted (`success` true)                                             |
+| `ws_auth_denied.json` | private WS `auth`                | Refused (`success` false); its `ret_msg` is never read               |
 
 Tests derive the other scenarios (fund rights, read-only, `uta` 0, wildcard or extra IPs, near
 or past expiry, clock skew, a slow probe) from these files in-test. The 10002, 10018 and 5xx replies are in the shared

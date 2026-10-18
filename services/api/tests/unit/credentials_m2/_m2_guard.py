@@ -110,7 +110,7 @@ ALLOW: frozenset[tuple[str, str, str]] = frozenset(
         ("statechart/persistence.py", "reflect", "_descent_done"),  # xstate interpreter
         ("statechart/plugins/metrics.py", "reflect", "_timer_handles"),  # xstate interpreter
         ("statechart/plugins/audit.py", "reflect", "_active_state_nodes"),  # xstate interpreter
-        # R10 (#2339): the key id M2 returns, read once for the request's API-key header.
+        # R10 (#2339): the key id M2 returns, read for the REST API-key header or the WS `auth`.
         (_BORROW_SITE + "signer.py", "reveal", "api_key"),
     }
 )

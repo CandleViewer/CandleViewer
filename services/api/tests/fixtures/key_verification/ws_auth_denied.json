@@ -1,0 +1,6 @@
+{
+  "success": false,
+  "ret_msg": "synthetic refusal text, never echoed",
+  "op": "auth",
+  "conn_id": "cv-fixture-conn-0002"
+}

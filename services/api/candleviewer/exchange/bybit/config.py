@@ -45,6 +45,17 @@ SIGNED_REST_BASES: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
+#: The private WS stream of each environment (`20-architecture.md` §7.1, US-ACCT-007, C-2.11): a
+#: key authenticates on its own environment's stream only; nothing falls back to another. The
+#: `testApiKey` probe dials it (#836); the streaming private socket (#2877, #848) can reuse it.
+PRIVATE_WS_URLS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "live": "wss://stream.bybit.com/v5/private",
+        "demo": "wss://stream-demo.bybit.com/v5/private",
+        "testnet": "wss://stream-testnet.bybit.com/v5/private",
+    }
+)
+
 
 class EndpointClass(StrEnum):
     """Bybit's per-UID rate budgets differ per endpoint family (`Exchange
