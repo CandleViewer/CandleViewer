@@ -35,7 +35,8 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
-│                                      a11y-axe smoke (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
+│                                      a11y-axe smoke, e2e-electron on release/* heads
+│                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
 ├─ _job-a11y.yml  (e2e filter)       → the a11y lane: tools/a11y/gates.py over axe, keyboard, trees,
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
@@ -75,8 +76,11 @@ through it, `security` and `coverage-thresholds`, but not `e2e` or `a11y`. The m
 the `e2e` filter on purpose: they would put seven more jobs (the four `e2e-web` shards,
 `e2e-staging`, `a11y-axe` and `a11y`) on every dependency bump. The accepted control is the nightly
 `a11y-nightly.yml` sweep on `main`, a named artefact of the release checklist
-(`docs/plan/07-release-and-prr.md` §4.1). The Playwright e2e suite has no scheduled run, so a bump
-that breaks it shows on the next PR that the `e2e` filter starts.
+(`docs/plan/07-release-and-prr.md` §4.1). The Playwright e2e suite has no scheduled run yet (C-9.2
+asks for a nightly full matrix), so a bump that breaks it shows on the next PR that the `e2e` filter
+starts. A backend manifest (`services/api/uv.lock`, `services/api/pyproject.toml`) is in the same
+position: it starts the `py` lanes, `security` (with the image check) and `coverage-thresholds`, but
+not `migrations`, `contract` or `rule-roundtrip`, which run on the next PR their filters start.
 
 ## 3. Reading the `ci-required` resolver summary
 

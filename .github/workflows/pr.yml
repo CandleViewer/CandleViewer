@@ -67,10 +67,12 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'turbo.json'
-              # packages/ui's token build and its token-build tests import these formats (#3182).
+              # packages/ui's token build and token-build tests import these formats (#3182).
+              # Turbo's `...[origin/main]` maps them to no package yet, so those tests still skip.
               - 'tools/style-dictionary/**'
-              # The lane's own workflow and the scripts its steps run (#3182).
+              # The lane's own workflow, Node version (CI-JS-001) and its steps' scripts (#3182).
               - '.github/workflows/_job-js.yml'
+              - '.nvmrc'
               - 'tools/ci/check-node-version.mjs'
               - 'tools/ci/run-allowed-postinstall.mjs'
               - 'tools/ci/mark-audit-handoff.mjs'
@@ -113,8 +115,9 @@ jobs:
               - '.github/workflows/_job-coverage.yml'
             engine:
               - 'packages/chart-engine/**'
-              # The engine-bench job and the install script it runs (#3182).
+              # The engine-bench job, its Node version and the install script it runs (#3182).
               - '.github/workflows/_job-engine-bench.yml'
+              - '.nvmrc'
               - 'tools/ci/run-allowed-postinstall.mjs'
             protocol:
               - 'packages/protocol/**'
@@ -133,6 +136,8 @@ jobs:
               # The scripts the pin-check gates step runs (#3182).
               - 'tools/ci/check_action_pins.py'
               - 'tools/ci/resolve_image_digests.py'
+              # The CodeQL config the security lane hands codeql-action/init (#3182).
+              - '.github/codeql/**'
             image:
               - 'infra/images/**'
               - 'services/api/pyproject.toml'
@@ -193,6 +198,10 @@ jobs:
               - '.semgrepignore'
               - 'security/semgrep/**'
               - 'tools/ci/check_semgrep_rule_tests.py'
+              # The other security jobs' inputs: gitleaks config, risk register, pip pins (#3182).
+              - '.gitleaks.toml'
+              - 'security/accepted-risks.yaml'
+              - 'scripts/requirements-ci.txt'
 
   # --- Gates (#3076): one step per always-on or sub-minute gate. A step's id is its
   # `ci-required` lane and `gates` exports its outcome under it, so each gate is judged as its

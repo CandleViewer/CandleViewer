@@ -179,7 +179,7 @@ demo-only definition need not carry over.
   no `if:` of its own, so it runs on every image push (the workflow runs on any `services/api/**` change,
   `.github/workflows/main.yml:22-28`). The boot-smoke run is a PR-time early warning only: it sits in the
   `trivy` job, which runs only `if: inputs.image_changed` (`_job-security.yml:479`), and
-  `.github/workflows/pr.yml:136-140` sets that for the image paths alone. S3 adds `services/api/cvdev/**` and
+  `.github/workflows/pr.yml`'s `image:` filter sets that for the image paths alone. S3 adds `services/api/cvdev/**` and
   `services/api/candleviewer/account_fixture_wiring.py` to that filter; if it cannot, it names the gap: a PR
   that touches the fence then meets the image check only after merge, before the push.
 - **No `secrets` or `audit` import (S3):** `cvdev` becomes a second import-linter root, `root_packages` in

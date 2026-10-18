@@ -33,8 +33,11 @@ the machine-hash lock, the xstate-contract script) skipped the gate built to che
 `statechart-lint` and `pin-check` steps run, and the workflows and scripts of the js, contract,
 migrations, engine-bench and coverage-thresholds jobs were each in another lane's filter or none;
 the js filter also missed the token formats packages/ui imports, and py the a11y gate logic and the
-fixture corpus. The run lines are re-derived here, so a new script needs a filter entry. Every lane's
-`if:` and resolver entry are pinned to the same filters, read from `steps.filter`.
+fixture corpus. So did what the security jobs read besides scripts (the CodeQL and gitleaks configs,
+the accepted-risk register, the pins they `pip install -r`) and the `.nvmrc` the js and engine-bench
+jobs take Node from. The run lines and `with:` inputs are re-derived here, so a new script or config
+file needs a filter entry. Every lane's `if:` and resolver entry are pinned to the same filters,
+read from `steps.filter`.
 """
 
 from __future__ import annotations
@@ -84,6 +87,9 @@ TOKEN_FORMATS = "tools/style-dictionary/**"
 #: Read beyond services/api (#3182): the a11y gate logic, which the security lane's Semgrep scan
 #: reads like scripts/**/*.py, and the corpora and account pack the backend suites and cvdev load.
 PY_INPUTS = ("tools/a11y/**/*.py", "packages/fixtures/**")
+#: What the security jobs read that the run-line derivation cannot follow (#3182): the gitleaks
+#: config (`--config=/repo/...` inside a container) and the register security_gate.py defaults to.
+SECURITY_INPUTS = (".gitleaks.toml", "security/accepted-risks.yaml")
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
 FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
 #: Lane -> the filters that make it applicable: its `if:` and the resolver read the same (#3182).
@@ -366,11 +372,25 @@ def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() ->
     assert '/ "packages" / "fixtures" /' in corpus
 
 
+def test_pr_yml_security_lane_starts_on_the_gitleaks_config_and_the_risk_register() -> None:
+    # Either one changes what the scans report, so a PR that edits only it must run them (#3182).
+    sources = (".github/workflows/_job-security.yml", "tools/ci/security_gate.py")
+    reads = "\n".join((ROOT / path).read_text(encoding="utf-8") for path in sources)
+    rules = [rule for name in sorted(LANE_FILTERS["security"]) for rule in _filters()[name]]
+    for path in SECURITY_INPUTS:
+        assert (ROOT / path).is_file() and path in reads, path
+        assert any(_matches(path, rule) for rule in rules), path
+
+
 # --- What each lane's steps run (#3182) -----------------------------------------------------------
 
 _CALL = re.compile(r"\b(?:python3?|node|bash|sh)\s+(?:-[\w-]+\s+)*([\w./-]+\.(?:py|m?js|sh))\b")
 _MODULE = re.compile(r"\bpython3?\s+-m\s+((?:tools|scripts)(?:\.\w+)+)")
-_MAKE = re.compile(r"(?<![\w-])make\s+([\w-]+)")
+#: `make <target>` as a command, not inside an echoed hint.
+_MAKE = re.compile(r"(?:^|[;(]|&&|\|\|)\s*make\s+([\w-]+)", re.MULTILINE)
+_REQUIREMENTS = re.compile(r"\bpip3?\s+install\b[^\n]*?\s-[rc]\s*([\w./-]+)")
+#: `with:` keys that name a cache key or an artifact path, not a file the action reads.
+_WITH_UNREAD = frozenset({"cache-dependency-glob", "cache-dependency-path", "path"})
 _PY_IMPORT = re.compile(
     r"^\s*(?:from\s+((?:tools|scripts)(?:\.\w+)+)\s+import\s+([\w, ]+)"
     r"|import\s+((?:tools|scripts)(?:\.\w+)+))",
@@ -420,8 +440,8 @@ def _imports(file: str, source: str) -> list[str | None]:
 
 
 def _executed(cwd: str, run: str) -> set[str]:
-    """Repo files a `run:` executes: the scripts it calls, also through `make` and `bash`, and the
-    modules those import. Shell comments are skipped."""
+    """Repo files a `run:` executes: the scripts it calls (also through `make` and `bash`), the
+    modules those import and the files `pip install -r` reads. Shell comments are skipped."""
     files: set[str] = set()
     shells = [(cwd, run)]
     while shells:
@@ -430,6 +450,7 @@ def _executed(cwd: str, run: str) -> set[str]:
         for target in _MAKE.findall(text):
             files.add("Makefile")
             shells.append((".", _recipe(target)))
+        files.update(p for p in (_repo_file(where, r) for r in _REQUIREMENTS.findall(text)) if p)
         modules = [module.replace(".", "/") + ".py" for module in _MODULE.findall(text)]
         pending = [_repo_file(where, call) for call in _CALL.findall(text) + modules]
         while pending:
@@ -445,10 +466,17 @@ def _executed(cwd: str, run: str) -> set[str]:
     return files
 
 
+def _with_inputs(step: dict[str, Any]) -> set[str]:
+    """Repo files a `uses:` step hands its action in `with:`: a config or a version file."""
+    values = [str(v) for key, v in (step.get("with") or {}).items() if key not in _WITH_UNREAD]
+    found = (_repo_file(".", word.strip("\"'")) for value in values for word in value.split())
+    return {path for path in found if path and not path.startswith("/")}
+
+
 @functools.cache
 def _lane_runs() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
-    """Lane -> (the filters its `if:` reads, the repo files its steps run). A `gates` step is its
-    own lane; a job lane runs its reusable workflow (an input too), every inner job included."""
+    """Lane -> (the filters its `if:` reads, the repo files its steps run or hand an action). A
+    `gates` step is its own lane; a job lane runs its reusable workflow (an input too), all jobs."""
     lanes: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
     for name, job in _jobs().items():
         steps = [(".", step) for step in job.get("steps") or []]
@@ -462,19 +490,20 @@ def _lane_runs() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
         for where, step in steps:
             if "run" in step:
                 ran = _executed(step.get("working-directory", where), step["run"])
-                if name == "gates" and "id" in step:
-                    lanes[step["id"]] = (frozenset(_if_filters(step.get("if"))), frozenset(ran))
-                files |= ran
+            else:
+                ran = _with_inputs(step)
+            if name == "gates" and "id" in step:
+                lanes[step["id"]] = (frozenset(_if_filters(step.get("if"))), frozenset(ran))
+            files |= ran
         lanes.setdefault(name, (frozenset(_if_filters(job.get("if"))), frozenset(files)))
     return lanes
 
 
 @pytest.mark.parametrize("lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters))
 def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
-    # A PR that edits only a lane's workflow or a script its steps run must start that lane, or it
-    # merges with the gate built to run that file skipped (#3182).
+    # A PR that edits only a lane's workflow, a script its steps run or a file a step hands a tool
+    # must start that lane, or it merges with the gate built to check that file skipped (#3182).
     filters, files = _lane_runs()[lane]
-    assert filters == LANE_FILTERS[lane]
     rules = [rule for name in sorted(filters) for rule in _filters()[name]]
     assert sorted(path for path in files if not any(_matches(path, rule) for rule in rules)) == []
 
@@ -490,9 +519,18 @@ def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
         ("migrations", "tools/ci/migration_lint.py"),  # `../../` from services/api
         ("js", "tools/ci/electron_hardening_checks.py"),  # imported by the gate script
         ("contract", "tools/errorcodes/generate.py"),  # `make contracts`, then an import
+        ("security", ".github/codeql/codeql-config.yml"),  # a `with:` config file
+        ("security", "scripts/requirements-ci.txt"),  # `pip install -r`
+        ("js", ".nvmrc"),  # `node-version-file`
     ],
 )
 def test_pr_yml_lane_inputs_are_derived_through_each_way_a_step_runs_a_file(
     lane: str, path: str
 ) -> None:
     assert path in _lane_runs()[lane][1]
+
+
+def test_pr_yml_lane_inputs_read_make_only_as_a_command() -> None:
+    # `echo "make gen"` prints a hint and runs no recipe; `... && make <target>` runs one.
+    assert _executed(".", 'echo "make gen"') == set()
+    assert "Makefile" in _executed(".", "set -e && make contracts")
