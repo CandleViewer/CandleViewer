@@ -18,13 +18,16 @@ bar are refused the same way. The checks run in a private decimal context, so th
 precision never rounds a value into passing.
 Heikin-ashi values are averages, not traded prices: an HA producer must quantise them to the
 instrument tick before they reach this module, or the contract must give HA its own rounding rule.
+A merged window has only its bars' items, so `item_frames` reads them back (`item_bar`) into what
+kind 4 encodes, and builds the frames `bars_frames` would for the bars themselves (#3353).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from decimal import MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
 from candleviewer.bars.models import Bar
 from candleviewer.bars.spec import WireBarType
@@ -77,11 +80,35 @@ _MAX_VALUE_TEXT: Final = 64
 ITEM_MAX_BYTES: Final = 2048
 
 
-def _key(bar: Bar, generation: int) -> str:
+@dataclass(frozen=True, slots=True)
+class ItemBar:
+    """The fields of a bar that a §14.3 item holds and kind 4 encodes, as on a builder `Bar`:
+    times in microseconds, values as `Decimal` (`item_bar`)."""
+
+    index: int
+    open_time: int
+    close_time: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    turnover: Decimal
+    delta: Decimal
+    trade_count: int
+    closed: bool
+    synthetic: ClassVar[bool] = False  # `bar_item` never sends a `densify()` filler
+
+
+#: A bar this module encodes: a builder's, or one read back from its item.
+BarFields = Bar | ItemBar
+
+
+def _key(bar: BarFields, generation: int) -> str:
     return f"bars ({generation}, {bar.index})"
 
 
-def _sendable(bar: Bar, generation: int) -> None:
+def _sendable(bar: BarFields, generation: int) -> None:
     ints = (generation, bar.index, bar.trade_count, bar.open_time, bar.close_time)
     for (name, high), value in zip(_INTS, ints, strict=True):
         if abs(value) > high:  # never echoed: the key and the value may be too long to format
@@ -93,12 +120,14 @@ def _sendable(bar: Bar, generation: int) -> None:
         raise _refuse(bar, generation, name, value, "is negative")
 
 
-def _open_ms(bar: Bar) -> int:
+def _open_ms(bar: BarFields) -> int:
     """`t_ms`: the open time floored to the millisecond (builders keep microseconds)."""
     return bar.open_time // 1000
 
 
-def _refuse(bar: Bar, generation: int, field: str, value: object, why: str) -> FrameEncodeError:
+def _refuse(
+    bar: BarFields, generation: int, field: str, value: object, why: str
+) -> FrameEncodeError:
     """The error, formatted only on failure: the per-record path builds no strings."""
     text = str(value)
     if len(text) > _MAX_VALUE_TEXT:
@@ -127,7 +156,7 @@ def _places(value: Decimal) -> int:
 
 
 def _scaled(
-    value: Decimal, scale: int, bar: Bar, generation: int, field: str, *, exact: bool = True
+    value: Decimal, scale: int, bar: BarFields, generation: int, field: str, *, exact: bool = True
 ) -> int:
     """`value` as an integer of `scale` places: exact, or half-even when `exact` is off."""
     if not value.is_finite():
@@ -142,7 +171,7 @@ def _scaled(
 
 
 def covering_scales(
-    bars: Iterable[Bar], *, price_scale: int, qty_scale: int, include_delta: bool = True
+    bars: Iterable[BarFields], *, price_scale: int, qty_scale: int, include_delta: bool = True
 ) -> tuple[int, int]:
     """The scales, no coarser than the instrument's, that hold every price and size of `bars`
     exactly; `delta` counts only when it is sent. Pass the same pair to `bars_frames` and to the
@@ -192,7 +221,7 @@ def bar_item(
 
 
 def bar_record(
-    bar: Bar,
+    bar: BarFields,
     *,
     generation: int,
     include_delta: bool,
@@ -224,7 +253,7 @@ def bar_record(
 
 
 def bars_frames(
-    bars: Sequence[Bar],
+    bars: Sequence[BarFields],
     *,
     generation: int,
     include_delta: bool,
@@ -266,3 +295,42 @@ def bars_frames(
 
 def _frame(run: list[Record], base: int, price_scale: int, qty_scale: int) -> Frame:
     return Frame(BARS, tuple(run), price_scale=price_scale, qty_scale=qty_scale, ts_base_ms=base)
+
+
+def item_bar(item: Mapping[str, Any], *, include_delta: bool) -> ItemBar:
+    """The bar a `bar_item` item came from, as kind 4 reads it: `delta` only with `include_delta`,
+    and a time bar's open time as its close time, which only the range checks read."""
+    t_ms = int(item["t_ms"])
+    return ItemBar(
+        index=int(item["index"]),
+        open_time=t_ms * 1000,
+        close_time=int(item.get("close_t_ms", t_ms)) * 1000,
+        open=_value(item, "o"),
+        high=_value(item, "h"),
+        low=_value(item, "l"),
+        close=_value(item, "c"),
+        volume=_value(item, "v"),
+        turnover=_value(item, "turnover"),
+        delta=_value(item, "delta") if include_delta else Decimal(0),
+        trade_count=int(item["trades"]),
+        closed=bool(item["confirm"]),
+    )
+
+
+def _value(item: Mapping[str, Any], key: str) -> Decimal:
+    return Decimal(str(item[key]))
+
+
+def item_frames(
+    items: Sequence[Mapping[str, Any]], *, include_delta: bool, price_scale: int, qty_scale: int
+) -> tuple[Frame, ...]:
+    """`bars_frames` for the bars `items` (one generation, in index order) came from, at the scales
+    `covering_scales` gives over them from these; raises as `bars_frames` and `item_bar` do."""
+    flow = include_delta
+    bars = [item_bar(item, include_delta=flow) for item in items]
+    generations = {int(item["generation"]) for item in items}
+    if len(generations) > 1:
+        raise FrameEncodeError("bars: a kind-4 frame holds one generation")
+    ps, qs = covering_scales(bars, price_scale=price_scale, qty_scale=qty_scale, include_delta=flow)
+    gen = next(iter(generations), 0)
+    return bars_frames(bars, generation=gen, include_delta=flow, price_scale=ps, qty_scale=qs)

@@ -293,7 +293,8 @@ class Pacer:
         """Route one source update of `sub`; True when it was emitted or queued. A throttled
         topic needs the structured `body` (malformed without it); the CVWB `part` is optional.
         `meta` rides on the envelope: a window carries its last update's. `count` is the
-        producer's own `coalesced_count`, which the window carries (#3268)."""
+        producer's own `coalesced_count`, which the window carries (#3268). Only a binary
+        subscription's window keeps `part`: a structured one is built from bodies (#3353)."""
         if sub.topic.family.never_throttled:
             return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms, meta=meta)
         if _held(sub):
@@ -305,6 +306,8 @@ class Pacer:
         if lane.seq != sub.seq:
             self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
+        if sub.effective.get("encoding") != "binary":
+            part = None  # the emitter would drop it, and a window would be cut by it (§3.6)
         if not lane.queue.offer(body, part, ts_ms=ts_ms, meta=meta, count=count):
             self._refused(lane)
             return False
