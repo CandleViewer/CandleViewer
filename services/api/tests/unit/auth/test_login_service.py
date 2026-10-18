@@ -11,7 +11,7 @@ import pytest
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, EnrolmentOnlyLogin, LoginService
-from candleviewer.auth.models import LoginRequest, MfaMethodKind, UserStatus
+from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -49,6 +49,7 @@ async def test_successful_login_advances_to_mfa_challenge() -> None:
         LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
     )
 
+    assert isinstance(result, MfaChallengeResult)  # a user with a method: the MFA challenge
     assert result.methods == (MfaMethodKind.TOTP,)
     assert result.mfa_token
     assert result.expires_in == 300
@@ -123,6 +124,7 @@ async def test_lockout_persists_and_expires_after_window() -> None:
     result = await service.login(
         LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
     )
+    assert isinstance(result, MfaChallengeResult)
     assert result.mfa_token
 
 
@@ -286,7 +288,7 @@ async def test_successful_login_persists_hashed_mfa_challenge_when_repository_in
         LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
     )
 
-    assert len(mfa_repo.challenges) == 1
+    assert len(mfa_repo.challenges) == 1 and isinstance(result, MfaChallengeResult)
     challenge = next(iter(mfa_repo.challenges.values()))
     assert challenge.purpose == "login"
     assert challenge.mfa_token_hash != result.mfa_token
