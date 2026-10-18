@@ -492,6 +492,21 @@ def test_bars_frames_of_nothing_is_no_frame() -> None:
     assert _frames([]) == ()
 
 
+def test_kind_4_frames_at_different_scales_decode_to_one_value_by_their_own_headers() -> None:
+    """§3.4, §16.4 (C16): the integers change with the scales, and each frame's own header
+    restores the value; read with another frame's scale, the same integer is a wrong price."""
+    bar = _bar(open=Decimal("100.15"), delta=Decimal("-0.125"))
+    coarse, fine = (
+        bars_frames([bar], generation=0, include_delta=True, price_scale=ps, qty_scale=qs)[0]
+        for ps, qs in ((2, 3), (6, 8))
+    )
+    assert coarse.records != fine.records and (coarse.price_scale, fine.price_scale) == (2, 6)
+    numeric = ("o", "h", "l", "c", "v", "turnover", "delta")
+    decoded = [structured(decode(encode(f)))["bars"][0] for f in (coarse, fine)]
+    assert [Decimal(decoded[0][k]) for k in numeric] == [Decimal(decoded[1][k]) for k in numeric]
+    assert Decimal(fine.records[0][3]).scaleb(-coarse.price_scale) != Decimal("100.15")
+
+
 def test_bars_frames_never_encode_a_negative_offset() -> None:
     """A bar opening before the current frame's base starts its own frame (u32 offsets)."""
     late, early = _bar(index=4, open_time=T0_US + DAY_US), _bar(index=5, open_time=T0_US)
