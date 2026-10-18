@@ -15,8 +15,8 @@ from prometheus_client import REGISTRY
 from candleviewer.audit.actions import validate_action
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import MfaVerifiedResult, MfaVerifyRequest
-from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.models import MfaVerifiedResult, MfaVerifyRequest, SessionRecord
+from candleviewer.auth.session_service import SessionClass, SessionService
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 BASE = "https://testserver"
@@ -72,9 +72,13 @@ class SessionsAuth:
     """The session router's auth service: a real `SessionService` over the fake repo."""
 
     sessions_is_active = True
+    enrolment_gate_is_active = False  # these router tests classify nothing (#2295)
 
     def __init__(self, service: SessionService) -> None:
         self.sessions = service
+
+    async def classify(self, session: SessionRecord) -> SessionClass:
+        raise AssertionError("the enrolment-only gate is off in these router tests")
 
 
 class _VerifyingMfa:

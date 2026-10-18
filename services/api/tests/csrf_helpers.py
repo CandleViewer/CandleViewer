@@ -52,10 +52,9 @@ class FakeBearerSessions:
         return None
 
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
-        found = await self.peek_access_token(token)
-        if found is None:
-            raise SessionNotFound("not a test bearer")
-        return found
+        """No live session for the enrolment-only guard (#2295): it leaves the request to the
+        route, whose fake principal resolver authorises it."""
+        raise SessionNotFound("a fake bearer has no session")
 
 
 def wire_fake_sessions(app: Any, *bearers: str) -> None:

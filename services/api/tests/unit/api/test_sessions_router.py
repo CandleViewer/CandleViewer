@@ -27,8 +27,8 @@ from candleviewer.api.sessions import (
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import UserStatus
-from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.models import SessionRecord, UserStatus
+from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -43,6 +43,10 @@ class _Auth:
     def __init__(self, sessions: SessionService) -> None:
         self.sessions = sessions
         self.sessions_is_active = True
+        self.enrolment_gate_is_active = False  # these router tests classify nothing (#2295)
+
+    async def classify(self, session: SessionRecord) -> SessionClass:
+        raise AssertionError("the enrolment-only gate is off in these router tests")
 
 
 class _Writer:

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from candleviewer.app import create_app
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
 from tests.csrf_helpers import arm_csrf, wire_fake_sessions
+from tests.unit.auth.auth_fakes import MFA_PROVED_AT, FullUsers
 
 
 def test_route_mounted_and_fails_closed_without_identity() -> None:
@@ -71,7 +72,7 @@ class _Sessions:
         users = {"owner": _OWNER, "mgr": _MGR}
         if token not in users:
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=_SID, user_id=users[token])
+        return SimpleNamespace(id=_SID, user_id=users[token], mfa_satisfied_at=MFA_PROVED_AT)
 
 
 class _Identity:
@@ -98,6 +99,7 @@ def _wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     monkeypatch.setattr(app_module, "build_identity_provider", lambda _s: _Identity())
     app = app_module.create_app()
     app.state.app_context.auth._sessions = _Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec, _SID)
 
 

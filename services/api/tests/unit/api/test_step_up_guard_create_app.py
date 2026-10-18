@@ -30,6 +30,7 @@ from tests.unit.api.test_invites_create_app_e2e import (
     _login,
     _World,
 )
+from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -80,6 +81,7 @@ async def test_invite_create_fails_closed_when_sessions_are_wired_without_step_u
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     w = await _world(monkeypatch, with_user_repository=False)
+    w.auth._repository = FullUsers()  # #2295: after `start`, so only the guard reads it
     assert w.auth.sessions_is_active and w.auth.invites_is_active
     assert not w.auth.step_up_is_active  # the wiring fault
     owner = await _login(w, "owner", _OWNER_PERMS)

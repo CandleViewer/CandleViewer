@@ -38,6 +38,7 @@ from candleviewer.settings import Settings
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.repositories.rows import KlineRow
 from tests._corpus import rest
+from tests.unit.auth.auth_fakes import MFA_PROVED_AT, FullUsers
 
 _LIMIT = "987654321"
 _CURSOR = "GARBAGE-cursor-" + "Z" * 140
@@ -94,7 +95,7 @@ class _Sessions:
         user_id = _USER_OF.get(token)
         if user_id is None:
             raise SessionNotFound("unknown token")
-        return SimpleNamespace(id=user_id, user_id=user_id)
+        return SimpleNamespace(id=user_id, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT)
 
 
 class _Identity:
@@ -178,6 +179,7 @@ def _deployed_client(
     app = create_app(Settings(git_sha="test", version="0.0.0-test"))
     ctx = app.state.app_context
     ctx.auth._sessions = _Sessions()
+    ctx.auth._repository = FullUsers()  # #2295: each session is classified as a full one
     asyncio.run(ctx.storage.start(ctx))
     store = ctx.storage.market_data
     asyncio.run(store.write_klines(_stored(_recorded())))

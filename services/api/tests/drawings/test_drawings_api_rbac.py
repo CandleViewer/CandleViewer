@@ -15,6 +15,7 @@ from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
 from candleviewer.audit.writer import AuditUnavailable
+from tests.unit.auth.auth_fakes import FullUsers
 
 ACTORS = {"owner": USER_A, "other": USER_B, "viewer": VIEWER}
 #: operation -> HTTP status for (owner, other, viewer); user A owns the target drawing.
@@ -105,6 +106,7 @@ def test_production_create_app_resolves_callers_from_the_session(
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
     app = appmod.create_app()
     app.state.app_context.auth._sessions = fakes.Sessions()
+    app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     app.state.drawings_repository = fakes.FakeDrawingRepo()
     c = TestClient(app, client=peer)
     assert c.get(url, headers=ok).json()["items"] == []  # 200: resolved through the session

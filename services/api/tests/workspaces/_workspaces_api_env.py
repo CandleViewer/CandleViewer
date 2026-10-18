@@ -26,6 +26,7 @@ from candleviewer.storage.repositories.workspaces import (
     WorkspaceVersionConflictError,
     WriteResult,
 )  # fmt: skip
+from tests.unit.auth.auth_fakes import MFA_PROVED_AT
 
 USER_A = uuid.UUID("00000000-0000-4000-8000-00000000000a")
 USER_B = uuid.UUID("00000000-0000-4000-8000-00000000000b")
@@ -286,7 +287,7 @@ class Sessions:  # session-store seam of the real app (`ctx.auth._sessions`): to
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if (user_id := {"tok-a": USER_A}.get(token)) is None:
             raise SessionNotFound("unknown token")
-        return SimpleNamespace(id=SID, user_id=user_id)
+        return SimpleNamespace(id=SID, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT)
 
     async def peek_access_token(self, token: str) -> Any:  # the CSRF guard's session binding
         return await self.authenticate_access_token(token)
