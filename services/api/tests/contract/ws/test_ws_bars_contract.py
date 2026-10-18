@@ -312,16 +312,23 @@ def test_contract_bars_a_generation_change_is_a_swap_snapshot_never_a_delta(mode
         assert mine.apply(c.next_of("snap")) and sorted(mine.bars) == [(0, 0), (0, 1), (0, 2)]
         rig.emit(spec, _up("open", bars[3]))
         assert mine.apply(c.next_of("d"))  # s 2
-        # up, then back down: each snapshot takes the next `s`
-        for generation, seq in [(1, 3), (0, 4)]:
-            rig.emit(spec, _up("open", bars[0]), generation=generation)  # index 0 again
+        # Up, then back down. Each swap emits a bar above the newest close the store holds (the
+        # hydrated index 2, then the 4 closed in generation 1), so the store's restart rule (a bar
+        # at or below its newest close clears it) cannot fire: only the swap's own reset can drop
+        # the old bars.
+        for generation, seq, bar in [(1, 3, bars[4]), (0, 5, bars[5])]:
+            rig.emit(spec, _up("open", bar), generation=generation)
             swap = c.recv()  # the first frame the emission causes: a `snap`, not a `d`
             meta = swap["meta"]
             assert (swap["t"], swap["s"], meta["previous_seq"]) == ("snap", seq, seq - 1)
             assert meta["reason"] == "generation_swap" and mine.apply(swap)
-            assert sorted(mine.bars) == [(generation, 0)]  # replaced: nothing of the old series
+            assert {g for g, _ in mine.bars} == {generation}  # replaced, never merged
+            assert sorted(mine.bars) == [(generation, bar.index)]  # nothing of the old series
+            rig.emit(spec, _up("close", bar), generation=generation)  # a close for the next swap
+            # the close's own `d` comes next: the swap emission sent no delta after its snapshot
+            assert mine.apply(c.next_of("d")) and mine.bars[generation, bar.index]["confirm"]
         c.send({"t": "ping", "id": "p"})
-        assert c.recv()["t"] == "pong"  # and no `d` followed either snapshot
+        assert c.recv()["t"] == "pong"  # and none followed the last one either
 
 
 def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c15_c17() -> None:
