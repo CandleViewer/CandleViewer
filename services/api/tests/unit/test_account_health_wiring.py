@@ -38,7 +38,7 @@ from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfC
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock
+from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock, key_row
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
@@ -82,14 +82,31 @@ async def test_the_stand_ins_log_what_is_unbound_and_the_wallet_read_is_unavaila
         await UnavailableWalletRest().wallet(ACC)
 
 
-async def test_a_rejected_credential_reaches_the_logging_binding_the_app_wires() -> None:
+async def test_a_rejected_wallet_read_refuses_at_once_and_only_a_later_pass_clears_it() -> None:
+    """24-internal-schemas.md section 8.6 through the reconciler (Option A on #837): the rejection
+    reaches the key standing, which the runtime's order-entry check reads at once. It is never
+    health evidence, and no evidence clears it: not an accepted read, nor the socket's pongs."""
     rig = Rig(rest=True)
+    rig.runtime.standings.observe([key_row(ACC, verified_at=rig.clock.now())])
+    check = rig.runtime.order_entry_check
     rig.rest.error = KeyRefused(Refusal.IP_NOT_ALLOWED)  # the exchange refuses the key
     await rig.boot()
     with capture_logs() as logs:
         await rig.run(10)  # the first read is due at 10 s
+    view, refused = rig.runtime.monitor.view(ACC), check.refusal(ACC)
+    rig.rest.error = None  # the next read, at 20 s, is accepted: `rest_ok`
+    await rig.run(10)
+    rig.ws.connect()
+    await rig.run(1)
+    healthy, still = rig.runtime.monitor.current(ACC), check.refusal(ACC)
+    rig.runtime.standings.observe([key_row(ACC, verified_at=rig.clock.now())])  # a later pass
+    cleared = check.refusal(ACC)
     await rig.close()
-    [line] = [e for e in logs if e["event"] == "account.credential_rejection_unbound"]
+    assert view is not None and view.reason == "never_connected"  # no evidence from a rejection
+    assert refused is not None and refused.reason == "account_disabled_by_policy"
+    assert rig.rest.calls == [10.0, 20.0] and healthy is HealthState.HEALTHY
+    assert still == refused and cleared is None
+    [line] = [e for e in logs if e["event"] == "account.credential_rejected"]
     want = {"log_level": "error", "account_id": str(ACC), "reason": "ip_not_allowed"}
     assert want.items() <= line.items()
 

@@ -175,6 +175,7 @@ from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
+from candleviewer.domain.order_entry import OrderEntryGate
 from candleviewer.exchange.base.instruments import InstrumentsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
@@ -1499,8 +1500,8 @@ def create_app(
             clock=auth_clock,
         )
     app.state.user_disable = user_disable
-    # E42-T03: the feature-flag runtime (store, service, writer, push, maintenance) and the shared
-    # order-entry gate it composes; the lifespan starts it.
+    # E42-T03: the feature-flag runtime (store, service, writer, push, maintenance); its maintenance
+    # gate is the first check of the shared order-entry gate composed below; the lifespan starts it.
     feature_flags = build_feature_flags(
         resolved,
         audit=_LazyAuditEmitter(ctx.audit),
@@ -1511,7 +1512,6 @@ def create_app(
     app.state.feature_flags = feature_flags
     # ADR-0037 decision 12: the lane flag for the audit module, which may not import `admin`.
     ctx.audit.use_lane_flag(feature_flags.lane_flag)
-    app.state.order_entry_gate = feature_flags.order_entry_gate
     app.state.flag_metrics = export_flag_metrics(ctx.metrics, env=resolved.environment.value)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
@@ -1735,7 +1735,7 @@ def create_app(
         )
     # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
     # started `AccountsService` before the app serves (real backend only).
-    wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
+    selfcheck = wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
     # E27-T03 (#836): `createApiKey`; its flow holds M2's candidate capability (real backend only).
     # The lifespan drains its imports before `stop_all` stops audit and M2, then frees its pool.
     key_imports = wire_key_import(ctx, bundle.candidate_keys, _LazyAuditEmitter(ctx.audit))
@@ -1751,10 +1751,21 @@ def create_app(
     )
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
     # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's. It
-    # serves the `wallet` topic built above.
-    account_health = wire_account_health(resolved, metrics_facade, topic=ws_wallet)
+    # serves the `wallet` topic built above, and its key standing reads the self-check's results
+    # (none on the fake backend).
+    account_health = wire_account_health(
+        resolved, metrics_facade, topic=ws_wallet, selfcheck=selfcheck
+    )
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
+    # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
+    # then the account check (key standing, health, wallet), synchronous and never flag-gated
+    # (C-2.21, C-4.14). It replaces the flag runtime's maintenance-only gate, and `app.state` only
+    # ever holds this one, so no holder serves a gate without the account check.
+    feature_flags.order_entry_gate = OrderEntryGate(
+        feature_flags.gate, account_health.order_entry_check
+    )
+    app.state.order_entry_gate = feature_flags.order_entry_gate
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
     # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
     app.state.audit_verify_job = build_audit_verify_job(

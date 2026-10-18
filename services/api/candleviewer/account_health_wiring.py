@@ -14,16 +14,15 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
 - `account-health-tracking` makes the tracked accounts those the repository reports, every
   `TRACKING_REFRESH_S`: the enabled accounts of the process environment that hold a signable key.
   A read that fails keeps the set and is a failed pass. An untracked account has no state
-  (`current()` is `None`, which the order-entry gate refuses). The fake backend has no repository,
-  so it runs no such loop and tracks none.
+  (`current()` is `None`, which the order-entry gate refuses). The same read feeds the key
+  standing. The fake backend has no repository, so it runs no such loop and tracks none.
 
 A pass that raises is logged by its error type (a message may echo exchange text, C-12.6) and the
 next one runs. A loop that ends, or whose passes keep failing, is a fault: `AccountsService`
 reports it as a degraded `accounts` check (AGENTS.md §5.2), and an ended loop is logged critical.
-Three bindings are stand-ins that fail closed until their owners land: the exchange's wallet read
-is unavailable (E29), so sizing is off once a snapshot is stale after a failed attempt, or a period
-old; the dead-man's-switch hook (E39) logs the episode; a credential rejection (the key standing, a
-later slice of #837) is logged.
+Two bindings are stand-ins that fail closed until their owners land: the exchange's wallet read is
+unavailable (E29), so sizing is off once a snapshot is stale after a failed attempt, or a period
+old; the dead-man's-switch hook (E39) logs the episode.
 
 The runtime serves health and balances on the WS `wallet` topic (`accounts/wallet_topic.py`), which
 `create_app` builds on the gateway's hub and hands in: the topic's snapshots read the monitor and
@@ -31,6 +30,10 @@ the cache, and the runtime publishes a health delta when an account's monitoring
 transition it commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`),
 and a balance delta on each refresh, pushed or read, and when the tick finds a refreshed balance
 turned stale.
+
+`order_entry_check` is the account check of the app's one gate, `OrderEntryGate(maintenance,
+order_entry_check)` (#837 W3), over the monitor, the key standing (`accounts.key_standing`) and the
+cache; the reconciler reports a rejected credential to the standing, never as health evidence.
 """
 
 from __future__ import annotations
@@ -54,9 +57,9 @@ from candleviewer.accounts.health import (
     HealthTransition,
     SystemClock,
 )
-from candleviewer.accounts.verification import Refusal
+from candleviewer.accounts.key_standing import KeyStandings, SelfCheckResults
+from candleviewer.accounts.order_gate import AccountHealthCheck
 from candleviewer.accounts.wallet import (
-    CredentialRejections,
     WalletCache,
     WalletReconciler,
     WalletRestPort,
@@ -100,7 +103,8 @@ RELEASE_TIMEOUT_S: Final = 3.0
 FAULT_AFTER_S: Final = 5.0
 #: The tracking loop's: a repository that cannot be read leaves a new account untracked (the gate
 #: refuses it) and a removed one tracked. A minute is four reads, long enough that a restart of the
-#: database is no fault.
+#: database is no fault. It also bounds the key standing: once its last good read is this old, the
+#: gate refuses every account.
 TRACKING_FAULT_AFTER_S: Final = 60.0
 #: A failing loop logs its first failure and then once in this long, not every pass: the failures
 #: are still counted, and `fault` still reports them.
@@ -128,17 +132,6 @@ class LoggingDeadMansSwitch:
             account_id=str(transition.account_id),
             reason=transition.reason,
             down_at=transition.at.isoformat(),
-        )
-
-
-class LoggingCredentialRejections:
-    """Where a rejected credential goes until the key standing takes the 24-internal-schemas
-    section 8.6 reaction (a later slice of #837): it is logged, and the account is not marked or
-    disabled."""
-
-    def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
-        logger().error(
-            "account.credential_rejection_unbound", account_id=str(account_id), reason=refusal.value
         )
 
 
@@ -186,22 +179,26 @@ class AccountHealthRuntime:
 
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped.
-    `topic` is the `wallet` topic it publishes on. Meant for one event loop, the one that runs the
-    loops and the hook calls."""
+    `standings` is the key standing: the reconciler reports a rejected credential to it, and
+    `order_entry_check`, the account check of the app's order-entry gate, reads it with the monitor
+    and the cache. `topic` is the `wallet` topic it publishes on. Meant for one event loop, the one
+    that runs the loops and the hook calls."""
 
     def __init__(
         self,
         monitor: AccountHealthMonitor,
         wallets: WalletCache,
         rest: WalletRestPort,
-        rejections: CredentialRejections,
+        standings: KeyStandings,
         monitored: MonitoredAccounts | None,
         *,
         topic: WalletTopic[SnapshotBody],
         release: Release | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
-        self.monitor, self.wallets, self.topic = monitor, wallets, topic
+        self.monitor, self.wallets, self.standings = monitor, wallets, standings
+        self.topic = topic
+        self.order_entry_check = AccountHealthCheck(monitor, standings, wallets)
         self._monitored, self._release = monitored, release
         self._sleep = sleep
         self._tracked: set[UUID] = set()
@@ -210,7 +207,7 @@ class AccountHealthRuntime:
         self._failures: dict[str, int] = {}  # passes failed in a row, by loop
         self._stopping = False
         # the reconciler gives its evidence through this runtime, so a stop gates it as the feed
-        self._reconciler = WalletReconciler(wallets, rest, self, rejections)
+        self._reconciler = WalletReconciler(wallets, rest, self, standings)
         self.feed: AccountHealthFeed = _Feed(self)
 
     # -- the evidence of the private-WS consumer (`AccountHealthFeed`, through `feed`) and of the
@@ -410,10 +407,13 @@ class _UsableKeys(Protocol):
     async def targets(self) -> tuple[SelfCheckTargetRow, ...]: ...
 
 
-def _repository_source(settings: Settings) -> tuple[MonitoredAccounts | None, Release | None]:
+def _repository_source(
+    settings: Settings, standings: KeyStandings
+) -> tuple[MonitoredAccounts | None, Release | None]:
     """The real backend's tracking source: the usable-key read of the stored-key self-check, on a
     store of its own bound to the process environment (C-2.11), reduced to the ids of the enabled
-    accounts. The runtime never holds a row, and the store is typed as the read alone. The fake
+    accounts. The key standing takes the same read's rows of that environment and keeps none of
+    them; the runtime never holds a row, and the store is typed as the read alone. The fake
     backend has none."""
     if settings.storage_backend != "real":
         return None, None
@@ -433,9 +433,9 @@ def _repository_source(settings: Settings) -> tuple[MonitoredAccounts | None, Re
             # change, not at every read
             logger().error("account_health.env_mismatch", rows=foreign)
         foreign_said = foreign
-        return frozenset(
-            r.account.id for r in rows if r.account.is_enabled and r.account.env == env
-        )
+        own = [row for row in rows if row.account.env == env]
+        standings.observe(own)
+        return frozenset(row.account.id for row in own if row.account.is_enabled)
 
     return monitored, relational.dispose
 
@@ -445,22 +445,30 @@ def wire_account_health(
     metrics: Metrics,
     topic: WalletTopic[SnapshotBody],
     *,
+    selfcheck: SelfCheckResults | None = None,
     clock: Clock | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     rest: WalletRestPort | None = None,
     dms: DeadMansSwitch | None = None,
-    rejections: CredentialRejections | None = None,
     monitored: MonitoredAccounts | None = None,
     release: Release | None = None,
 ) -> AccountHealthRuntime:
-    """Build the runtime; `create_app` calls it with the settings, its metrics and the `wallet`
-    topic, which this attaches to the monitor and the cache. The rest are the seams of the bindings
-    that land later and of the tests: the clock, the loops' sleep, the exchange's wallet read
-    (E29), the dead-man's-switch hook (E39), the place a credential rejection goes (the key
-    standing) and the tracking source with the release of its pool (`monitored` is the repository
-    read; with neither given, the real backend's). A `release` without the `monitored` it frees is
-    refused. No I/O."""
+    """Build the runtime; `create_app` calls it with the settings, its metrics, the `wallet` topic,
+    which this attaches to the monitor and the cache, and the stored-key self-check whose results
+    the key standing reads (`None` on the fake backend, which has none). The rest are the seams of
+    the bindings that land later and of the tests: the clock (the standing reads its wall time, the
+    one the self-check dates passes on, and ages its last good read on the monotonic one), the
+    loops' sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39) and the
+    tracking source with the release of its pool (`monitored` is the repository read; with neither
+    given, the real backend's, which also feeds the standing). A `release` without the `monitored`
+    it frees is refused. No I/O."""
     clock = clock or SystemClock()
+    standings = KeyStandings(
+        selfcheck,
+        interval_s=settings.selfcheck_interval_s,
+        stale_after_s=TRACKING_FAULT_AFTER_S,
+        clock=clock,
+    )
     monitor = AccountHealthMonitor(
         clock, dms or LoggingDeadMansSwitch(), HealthThresholds.from_settings(settings)
     )
@@ -472,13 +480,13 @@ def wire_account_health(
     if monitored is None:
         if release is not None:
             raise ValueError("a release frees what `monitored` reads: pass both or neither")
-        monitored, release = _repository_source(settings)
+        monitored, release = _repository_source(settings, standings)
     topic.attach(monitor, wallets)
     return AccountHealthRuntime(
         monitor,
         wallets,
         rest or UnavailableWalletRest(),
-        rejections or LoggingCredentialRejections(),
+        standings,
         monitored,
         topic=topic,
         release=release,

@@ -10,7 +10,8 @@ a lapsed bound, a flag with no row and an override user deleted after the writer
 `StoreUnavailableError`, nothing written; what `prepare` raises reaches the writer as is.
 
 `FeatureFlagsRuntime` is built without I/O: the registry (an unsafe definition refuses boot), the
-maintenance gate (engaged until its flags are read), the composed order-entry gate, and the store:
+maintenance gate (engaged until its flags are read), an order-entry gate of that check alone, which
+`create_app` replaces with the one that adds the account check (#837 W3), and the store:
 Postgres on the real backend, in memory at the registry defaults on the fake one. `start()` reads
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
 to 2000 refuses boot), ensures every flag's row, reads `audit.lane_journal_first` once (`LaneFlag`)

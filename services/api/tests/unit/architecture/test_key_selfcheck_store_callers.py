@@ -14,8 +14,10 @@ be reviewed as an RBAC bypass first (C-12.4, SR-051), as for the row counts in
 One reviewed second reader (E27-T04, #837): the composition root's `account_health_wiring` builds a
 store of its own bound to the process environment and calls `targets()` and nothing else, to learn
 which enabled accounts hold a usable key. It types what it holds as a read-only protocol (mypy
-refuses a write), hands the health runtime the account ids only, never a row, and the last tests
-below fail if it names a write of the port in any way at all, a call or not.
+refuses a write) and hands the health runtime the account ids only, never a row; the key standing
+(#837 W3) reduces the same read's rows at once to key ids, pass times, error codes and an armed
+flag, and keeps none. The last tests below fail if the wiring names a write of the port in any way
+at all, a call or not.
 
 A module uses the port when it names the port type or calls one of its methods on an object
 (`store.targets()`). Methods match as attribute calls, not text: `record_error` is also the name
