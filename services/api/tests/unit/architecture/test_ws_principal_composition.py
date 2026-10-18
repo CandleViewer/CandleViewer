@@ -4,7 +4,8 @@ as `tests/contract/rbac/matrix.yaml` says, for every topic family and actor, and
 revokes a live subscription. Only the SQL edges of the real classes
 (`SqlAlchemyIdentityProvider.user`/`session_info`, `SqlAlchemyScopeSource.load_grants`) and the
 session service are faked, through the RBAC pack's seams (no Postgres, no network). The fake
-backend keeps the deny-all principal."""
+backend keeps the deny-all principal. #2648 S9c: the owner's PUT drives the push (AC3), with its
+store edge (`SqlAlchemyAccountAccessStore.replace_grants`) and the step-up service faked too."""
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 import yaml
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -24,10 +26,13 @@ from pydantic import SecretStr
 import candleviewer.app as appmod
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Settings
+from candleviewer.storage.repositories import account_access as aa
+from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlchemyAccountAccessStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.ws.limits import MACHINE_ENTRIES_MAX
 from tests.contract.rbac import rbac_harness as rbac
+from tests.csrf_helpers import csrf_headers
 
 _MATRIX: dict[str, Any] = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
@@ -44,20 +49,35 @@ _WS_TIMEOUT_S = 5.0
 
 
 def _delegate(target: Any, name: str) -> Callable[..., Any]:
-    return lambda _self, *args: getattr(target, name)(*args)
+    return lambda _self, *args, **kwargs: getattr(target, name)(*args, **kwargs)
 
 
 class _Grants:
     """`load_grants` over the pack's actors. The pack's source returns rows for the owner too,
     so the loader's "an owner's empty grants mean every account" rule is exercised. `withdrawn`
-    empties a user's rows, as removing their access would."""
+    empties a user's rows, as removing their access would; `held` replaces them, and
+    `replace_grants` (the store's commit) writes it."""
 
     def __init__(self) -> None:
         self._source = rbac._ScopeSource(rbac.load_contract())
         self.withdrawn: set[uuid.UUID] = set()
+        self.held: dict[uuid.UUID, tuple[uuid.UUID, ...]] = {}
 
     async def load_grants(self, owner: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:
+        if owner in self.held:
+            return [(account, True, False) for account in self.held[owner]]
         return [] if owner in self.withdrawn else await self._source.load_grants(owner)
+
+    async def replace_grants(self, user_id: uuid.UUID, grants: Any, **kw: Any) -> Any:
+        before: dict[uuid.UUID, aa.AccessLevel] = {
+            a: "read" for a, *_ in await self.load_grants(user_id)
+        }
+        granted = tuple(aa.AccessGrant(a, "read", "acct", "demo") for a in grants)
+        change = aa.AccessChange(user_id, before, dict(grants), granted=granted)
+        if change.removed and kw["removal"].blocks_removal:
+            raise aa.AccessPositionsUnknownError(str(user_id))
+        self.held[user_id] = tuple(grants)
+        return change
 
 
 @pytest.fixture(scope="module")
@@ -78,10 +98,13 @@ def deployed() -> Iterator[SimpleNamespace]:
         for name in ("user", "session_info"):
             mp.setattr(SqlAlchemyIdentityProvider, name, _delegate(identity, name))
         mp.setattr(SqlAlchemyScopeSource, "load_grants", _delegate(grants, "load_grants"))
+        mp.setattr(
+            SqlAlchemyAccountAccessStore, "replace_grants", _delegate(grants, "replace_grants")
+        )
         app = appmod.create_app(real)  # nothing injected: the deployed composition
         ctx = app.state.app_context
         ctx.audit._writer = rbac._AuditSink()  # `ws.subscribe.denied` is audited
-        ctx.auth._sessions = rbac._Sessions()
+        ctx.auth._sessions, ctx.auth._step_up = rbac._Sessions(), rbac._StepUp()
         yield SimpleNamespace(app=app, grants=grants)
 
 
@@ -230,6 +253,79 @@ def test_withdrawn_grant_revokes_the_live_subscription(deployed: SimpleNamespace
     assert change["t"] == "permission_change"
     assert (revoked["t"], revoked["ch"]) == ("revoked", "orders")
     assert revoked["p"]["reason"] == "account_scope_changed"
+
+
+@pytest.fixture
+def held(deployed: SimpleNamespace) -> Iterator[dict[uuid.UUID, tuple[uuid.UUID, ...]]]:
+    """The grants a test writes through the owner's PUT are undone."""
+    try:
+        yield deployed.grants.held
+    finally:
+        deployed.grants.held.clear()
+
+
+def _owner_puts(app: Any, client: TestClient, user: uuid.UUID, *accounts: uuid.UUID) -> None:
+    """The owner's PUT, step-up live, acknowledging that open positions are unknown."""
+    csrf = csrf_headers(app.state.csrf_codec, uuid.uuid5(rbac.user_id_of("owner"), "session"))
+    body = {"grants": [{"exchange_account_id": str(a), "level": "read"} for a in accounts]}
+    path = f"/users/{user}/account-access?acknowledge_unknown_positions=true"
+    r = client.put(path, json=body, headers={"Authorization": "Bearer tok-owner"} | csrf)
+    assert r.status_code == 200 and len(r.json()["items"]) == len(accounts), r.text
+
+
+def test_revoked_frame_within_2s(deployed: SimpleNamespace, held: Any) -> None:
+    """AC3 through the owner's PUT: the push ends inside the request's wait (`PUSH_WAIT_S`, 2 s,
+    pinned in tests/unit/admin/test_account_access_service.py), so the `revoked` frame is sent
+    before the 200 and the resubscribe is refused."""
+    manager = rbac.user_id_of("manager_with_grant")
+    with (
+        _client(deployed.app) as client,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws,
+    ):
+        _open(ws, "manager_with_grant")
+        assert _sub(ws, "positions", rbac.GRANTED) == "sub_ok"
+        with structlog.testing.capture_logs() as logs:
+            _owner_puts(deployed.app, client, manager)
+        change, revoked = _recv(ws), _recv(ws)
+        assert _sub(ws, "positions", rbac.GRANTED) == "account_scope_denied"  # the resubscribe
+    assert change["t"] == "permission_change"
+    assert (revoked["t"], revoked["ch"]) == ("revoked", "positions")
+    assert revoked["p"]["reason"] == "account_scope_changed"  # never `unsubscribed`
+    # Logged before the 200, and no `timeout`: the push ended within the request's wait.
+    assert [e["outcome"] for e in logs if e["event"] == "account access push"] == ["pushed"]
+
+
+def test_resubscribe_scope_denied(deployed: SimpleNamespace, held: Any) -> None:
+    """AC3 on a new socket too: its principal is read from the store the PUT wrote."""
+    _owner_puts(deployed.app, _client(deployed.app), rbac.user_id_of("manager_with_grant"))
+    observed = _subscribe_once(deployed.app, "manager_with_grant", "executions", rbac.GRANTED)
+    assert observed == "account_scope_denied"
+
+
+def test_other_subscriptions_and_other_managers_unaffected(
+    deployed: SimpleNamespace, held: dict[uuid.UUID, tuple[uuid.UUID, ...]]
+) -> None:
+    """I6, I7: M holds S and T; removing S revokes M's S subscription only (T goes on and can be
+    subscribed again), and N, who also holds S, gets no frame and keeps it."""
+    m, n = rbac.user_id_of("manager_with_grant"), rbac.user_id_of("manager_without_grant")
+    s, t = rbac.GRANTED, rbac.FOREIGN
+    held.update({m: (s, t), n: (s,)})
+    with (
+        _client(deployed.app) as client,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_m,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_n,
+    ):
+        _open(ws_m, "manager_with_grant")
+        _open(ws_n, "manager_without_grant")
+        assert [_sub(ws_m, "positions", s), _sub(ws_m, "orders", t)] == ["sub_ok"] * 2
+        assert _sub(ws_n, "positions", s) == "sub_ok"
+        _owner_puts(deployed.app, client, m, t)
+        change, revoked = _recv(ws_m), _recv(ws_m)
+        assert _sub(ws_m, "positions", s) == "account_scope_denied"
+        assert _sub(ws_m, "wallet", t) == "sub_ok"  # the next frame: `orders` was not revoked
+        assert _sub(ws_n, "orders", s) == "sub_ok"  # N's next frame is this reply: nothing pushed
+    assert change["t"] == "permission_change"
+    assert (revoked["ch"], revoked["p"]["removed_accounts"]) == ("positions", [str(s)])
 
 
 def test_fake_backend_keeps_the_deny_all_principal() -> None:

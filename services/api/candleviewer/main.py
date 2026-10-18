@@ -180,6 +180,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if bars_runtime is not None:
             await bars_runtime.stop()  # set before writer; both before storage stops
         await ctx.mesh_self_check.stop()
+        access = getattr(app.state, "account_access_service", None)
+        if access is not None:
+            # #2648: wait (bounded) for grant pushes before audit stops: they write WS audit rows
+            await access.drain()
         csrf_audits = getattr(app.state, "csrf_refusal_audits", None)
         if csrf_audits is not None:
             # #2090: let in-flight CSRF-refusal audits land (bounded) before audit stops.

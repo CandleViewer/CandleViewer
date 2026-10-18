@@ -354,6 +354,9 @@ class AccessStore:
             raise AccessUserNotFoundError(str(user_id))
         return list(self.grants[user_id])
 
+    async def replace_grants(self, user_id: uuid.UUID, grants: Any, **_kw: Any) -> Any:
+        raise AssertionError("no matrix cell writes grants: its empty body is refused (400) first")
+
 
 class LifecycleStore:
     """The S3 disable store's seam: it finds no user, so an authorised disable is a 404."""

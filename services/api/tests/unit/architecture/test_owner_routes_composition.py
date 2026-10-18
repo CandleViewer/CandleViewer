@@ -283,6 +283,21 @@ def test_the_disable_service_exists_only_on_the_real_backend(deployed: SimpleNam
     assert appmod.create_app(Settings()).state.user_disable is None
 
 
+def test_deployed_app_demands_a_live_step_up_before_the_grant_change(deployed: Any) -> None:
+    """F3 (#2648 S9c): without a live step-up the path guard refuses first, so the handler never
+    runs; with one, a manager gets the handler's audited 403 (the matrix cells above)."""
+    step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/u/account-access"
+    audited, step_up.elevated = len(deployed.audit.records), False
+    try:
+        for actor in ("owner", "manager_with_grant"):
+            headers = _headers(deployed.client, actor)
+            r = deployed.client.put(path, json={"grants": []}, headers=headers)
+            assert r.status_code == 403 and r.json()["code"] == "step_up_required", r.text
+    finally:
+        step_up.elevated = True
+    assert deployed.audit.records[audited:] == []  # no `rbac.denied`: the handler never ran
+
+
 def _states(resp: httpx.Response) -> dict[str, str]:
     assert resp.status_code == 200, resp.text
     return {item["key"]: item["state"] for item in resp.json()["items"]}
@@ -335,6 +350,7 @@ def test_owner_routes_derived_from_the_matrix_cover_the_issue_scope() -> None:
     named = {"PUT /users/{userId}/roles", "POST /users", "GET /users/invites"}  # by #2492
     assert named <= set(OWNER_ROUTES) and "POST /users/{userId}/mfa/reset" in OWNER_ROUTES
     assert "GET /users/{userId}/account-access" in OWNER_ROUTES  # by #2648 S9b (a `users:read` row)
+    assert "PUT /users/{userId}/account-access" in OWNER_ROUTES  # by #2648 S9c
 
 
 def test_onboarding_routes_derived_from_the_matrix_cover_the_issue_scope() -> None:
