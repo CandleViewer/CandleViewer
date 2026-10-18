@@ -5,19 +5,22 @@ transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and w
 `users.disable` ahead (O6). A change that did not commit closes that record with a `failure` one
 (C-2.9): `not_applied` if the store never reached its commit, `outcome_unknown` (no after state)
 if the commit itself failed, since a driver timeout or a cancellation there may have gone through.
-A retry does not settle that: if the commit landed, the revoked ids died with the exception and a
-repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`). Then, in a
-shielded tracked task, never rolled back: socket close (`bye user_disabled`, 4403), a sweep of any
-session still live after the transaction (defence in depth: a mint or a refresh refuses a disabled
-user, #2992, and `require_active` revokes a survivor, #3011), one B16 REVOKE per session (R5), the
-rule engine's scope refresh (S5, O5: a failing refresh leaves its snapshot closed), B9 DISARM of
-each armed rule the user owns, listed again once after the disarms (S5, S7: a rule its chart
-refuses fails its own run and the rest go on; O4 and O5 hold a rule while it stays armed), an
-`invited` user's open invite (R6; the invite store writes its record ahead); each await bounded,
-all by a deadline. A repeat (AC5's no-op) re-runs the sweep (and B16 for swept sessions), the
-scope refresh and the disarm, all idempotent, so a failed step can be re-driven by the same
-DELETE. Repeats may overlap, and the disarm stays idempotent: its adapter runs the disarms of one
-rule one at a time, so the second finds the rule disarmed and writes nothing."""
+A retry settles that only in part: if the commit landed, the revoked ids died with the exception
+and a repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`), so it
+closes every socket of the user but records no B16 REVOKE for those sessions. Then, in a shielded
+tracked task, never rolled back: socket close (`bye user_disabled`, 4403), first of each revoked
+session's sockets, then of every socket of the user, which reaches one still on a session that a
+refresh rotated (S7); a sweep of any session still live after the transaction (defence in depth: a
+mint or a refresh refuses a disabled user, #2992, and `require_active` revokes a survivor, #3011),
+one B16 REVOKE per session (R5), the rule engine's scope refresh (S5, O5: a failing refresh leaves
+its snapshot closed), B9 DISARM of each armed rule the user owns, listed again once after the
+disarms (S5, S7: a rule its chart refuses fails its own run and the rest go on; O4 and O5 hold a
+rule while it stays armed), an `invited` user's open invite (R6; the invite store writes its record
+ahead); each await bounded, all by a deadline. A repeat (AC5's no-op) re-runs the user's socket
+close, the sweep (and B16 for swept sessions), the scope refresh and the disarm, all idempotent, so
+a failed step can be re-driven by the same DELETE. Repeats may overlap, and the disarm stays
+idempotent: its adapter runs the disarms of one rule one at a time, so the second finds the rule
+disarmed and writes nothing."""
 
 from __future__ import annotations
 
@@ -113,6 +116,11 @@ class ScopeRefresher(Protocol):  # `user_cascade_wiring.ScopeRefreshAdapter`: fa
     async def refresh(self, user_id: uuid.UUID) -> None: ...
 
 
+#: `WsEvents.user_disabled`: `bye user_disabled` and 4403 on every socket of the user, whatever
+#: session it is on; returns how many it closed.
+UserSocketCloser = Callable[[uuid.UUID], Awaitable[int]]
+
+
 @dataclass(frozen=True, slots=True)
 class DisableResult:  # `changed` is False for AC5's no-op
     changed: bool
@@ -206,6 +214,7 @@ class UserDisableService:
         session_rows: SessionRows,
         chart: SessionRevokeRecorder,
         publish_revocation: RevocationSink,
+        close_user_sockets: UserSocketCloser,
         invites: InviteRevoker,
         rules: RuleDisarmer,
         scope: ScopeRefresher,
@@ -220,6 +229,7 @@ class UserDisableService:
         self._count_timeout_s = count_timeout_s
         self._sessions, self._rows, self._chart = sessions, session_rows, chart
         self._publish, self._invites = publish_revocation, invites
+        self._close_sockets = close_user_sockets
         self._rules, self._scope = rules, scope
         self._closing_timeout_s, self._step_timeout_s = closing_timeout_s, step_timeout_s
         self._deadline_s = deadline_s
@@ -233,9 +243,10 @@ class UserDisableService:
         acknowledge_unknown_positions: bool = False,
     ) -> DisableResult:
         """Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
-        unless the commit itself failed, whose outcome is unknown: if it landed, a retry does not
-        settle it, since AC5's no-op returns no ids (see `SqlAlchemyUserLifecycleStore.disable`).
-        A caller cancelled after the commit leaves the steps to finish in their task (R7)."""
+        unless the commit itself failed, whose outcome is unknown: if it landed, a retry closes the
+        user's sockets but records no B16 REVOKE, since AC5's no-op returns no session ids (see
+        `SqlAlchemyUserLifecycleStore.disable`). A caller cancelled after the commit leaves the
+        steps to finish in their task (R7)."""
         rid, now, uid = _request_uuid(), self._clock(), str(user_id)
         await self._guard(user_id, actor, rid)
         bound = self._count_timeout_s
@@ -397,6 +408,9 @@ class UserDisableService:
         try:
             async with asyncio.timeout(self._deadline_s):
                 await publish_revoked(publish, map(str, change.revoked_session_ids), REVOKED_REASON)
+                # Then every socket of the user, on every run (AC5's no-op too): no id list holds
+                # a session a refresh rotated, nor, on a repeat, those of a commit lost on the wire.
+                await t["socket_close"].run(partial(self._close_sockets, user))
                 log("socket_close")
                 sweep = partial(self._sessions.revoke_all, str(user), reason=REVOKED_REASON)
                 swept: tuple[SessionRecord, ...] = await t["session_sweep"].run(sweep) or ()

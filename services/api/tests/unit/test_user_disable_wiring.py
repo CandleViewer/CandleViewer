@@ -73,6 +73,7 @@ def _build(w: _World, auth: Any = None, **kw: Any) -> UserDisableService:
         audit=w,
         positions=w,
         publish_revocation=w.publish,
+        close_user_sockets=w.close_user_sockets,
         **kw,
     )
     assert service is not None
@@ -82,16 +83,18 @@ def _build(w: _World, auth: Any = None, **kw: Any) -> UserDisableService:
 async def test_the_real_backend_wires_every_port_to_the_service_it_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R7, in order: `users.disable` ahead of the commit; then the sockets, the sweep, B16, the
-    scope refresh, the rules (listed, then disarmed) and the invite."""
+    """R7, in order: `users.disable` ahead of the commit; then the sockets (the session's, then
+    every one of the user's), the sweep, B16, the scope refresh, the rules (listed, then disarmed)
+    and the invite."""
     w = _world(monkeypatch, positions=None)
     result = await _build(w).disable(_TARGET, actor=_OWNER, **_ACK)
     assert result == DisableResult(changed=True)
     assert w.log == [
-        *("positions", "users.disable", "socket:user_disabled", "sweep:user_disabled"),
-        *("b16:user_disabled", "scope", "rules", "disarm", "rules", "invite"),
-        "users.invite_revoked",
+        *("positions", "users.disable", "socket:user_disabled", "socket:user"),
+        *("sweep:user_disabled", "b16:user_disabled", "scope", "rules", "disarm", "rules"),
+        *("invite", "users.invite_revoked"),
     ]
+    assert w.socket_users == [_TARGET]
 
 
 @pytest.mark.parametrize("positions", [None, 0], ids=["positions-unknown", "orders-unknown"])
@@ -116,7 +119,9 @@ async def test_the_auth_services_are_looked_up_when_a_step_runs_not_when_built(
     result = await _build(w, auth=object()).disable(_TARGET, actor=_OWNER, **_ACK)
     failed = ("session_sweep", "b16_revoke", "invite_revoke")
     assert result == DisableResult(changed=True, failed_steps=failed)
-    assert w.post_commit() == ["socket:user_disabled", "scope", "rules", "disarm", "rules"]
+    assert w.post_commit() == [
+        *("socket:user_disabled", "socket:user", "scope", "rules", "disarm", "rules"),
+    ]
 
 
 async def test_the_instant_is_the_apps_clock(monkeypatch: pytest.MonkeyPatch) -> None:

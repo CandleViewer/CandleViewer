@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 
-from candleviewer.admin.user_disable import AuditEmitter, UserDisableService
+from candleviewer.admin.user_disable import AuditEmitter, UserDisableService, UserSocketCloser
 from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import assert_owner_floor
@@ -237,11 +237,13 @@ def build_user_disable_service(
     audit: AuditEmitter,
     positions: PositionStateProvider,
     publish_revocation: RevocationSink,
+    close_user_sockets: UserSocketCloser,
     clock: Callable[[], datetime] | None = None,
 ) -> UserDisableService | None:
     """The disable cascade behind `DELETE /users/{userId}`; `None` on the fake backend, which has
-    no store (the route then answers 501). `rule_store` is the one `rules` is bound to, `clock`
-    the app's (the keyless-testnet clock stamps sessions and B16). No I/O: the engine is lazy."""
+    no store (the route then answers 501). `rule_store` is the one `rules` is bound to,
+    `close_user_sockets` ends every socket of a user (`WsEvents.user_disabled`, S7), `clock` the
+    app's (the keyless-testnet clock stamps sessions and B16). No I/O: the engine is lazy."""
     if settings.storage_backend != "real":
         return None
     dsn = settings.pg_dsn.get_secret_value()
@@ -263,6 +265,7 @@ def build_user_disable_service(
         ),
         chart=_AuthChart(auth),
         publish_revocation=publish_revocation,
+        close_user_sockets=close_user_sockets,
         invites=_AuthInvites(auth),
         rules=RuleDisarmAdapter(rule_store, rules.manager),
         scope=ScopeRefreshAdapter(lambda: rules.scope_state),
