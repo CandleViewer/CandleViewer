@@ -17,7 +17,12 @@ from structlog.testing import capture_logs
 from candleviewer.observability.health import HealthStatus
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import CredentialUnavailable, KekUnavailable
-from candleviewer.secrets.service import STRANDED_REMEDIATION, SecretsService
+from candleviewer.secrets.service import (
+    REASONS,
+    STRANDED_GATE_REASON,
+    STRANDED_REMEDIATION,
+    SecretsService,
+)
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2._service_fakes import (
     KEK_V3,
@@ -177,6 +182,28 @@ async def test_a_stranded_boot_counts_a_kek_rows_stranded_failure() -> None:
     before = failures._value.get()
     await svc.start(ctx)
     assert failures._value.get() == before + 1
+
+
+def test_the_stranded_failure_reason_is_preinitialised_at_zero() -> None:
+    """`test_failure_reason_children_preinitialised` checks each entry of `REASONS`; this pins the
+    entry, so the series starts at 0 and an `increase()` sees the first stranded boot."""
+    assert STRANDED_GATE_REASON.removeprefix("secrets.") in REASONS
+
+
+async def test_a_boot_counts_the_stranded_rows_of_its_own_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.11: a testnet process counts testnet rows, never another environment's."""
+    store, seen = InMemoryCredentialStore(), list[str]()
+    count = store.count_stranded
+
+    async def spy(env: str, *versions: int) -> int:
+        seen.append(env)
+        return await count(env, *versions)
+
+    monkeypatch.setattr(store, "count_stranded", spy)
+    await _svc(_Src(KEK_V1, 1), store=store).start(_ctx(environment="testnet"))
+    assert seen == ["testnet"]
 
 
 @pytest.mark.parametrize(

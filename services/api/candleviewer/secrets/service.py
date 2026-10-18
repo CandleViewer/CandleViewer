@@ -505,6 +505,8 @@ class SecretsService:
         except CredentialUnavailable as exc:
             audit = str(exc) in _AUDIT_FAILURES
             raise KekRotationError("audit_unavailable" if audit else "store_unavailable") from None
+        except KekUnavailable:  # a `stop()` zeroed the KEKs mid-run: a 503, not the refusal
+            raise KekRotationError("store_unavailable") from None
         finally:
             self._rotating = False
 
@@ -523,15 +525,15 @@ class SecretsService:
             raise KekRotationError("audit_unavailable") from None
 
     def _latch_rotation(self, gate: LatchableGate) -> None:
-        """#2266: order entry read-only for the rest of this process, latched once (a repeat call
-        notifies nobody) with the reason `rewrapKek` names, a stranded boot's replaced. Health
-        reads DEGRADED (`kek_rotation`, unless a boot latched first); no KEK page
-        (`cv_kek_degraded_state`)."""
-        if gate.latched_reason_code == ROTATION_GATE_REASON:
-            return
-        gate.latch(reason_code=ROTATION_GATE_REASON, reason_text=ROTATION_REMEDIATION)
+        """#2266: order entry read-only for the rest of this process. Only a gate no latch holds
+        is latched, with the reason `rewrapKek` names, so a repeat notifies nobody; a held latch,
+        a stranded boot's or another module's, is the more specific reason and is never buried
+        (as `accounts/selfcheck.py` keeps one). Health reads DEGRADED (`kek_rotation`, unless a
+        boot latched first); no KEK page (`cv_kek_degraded_state`)."""
+        if gate.latched_reason_code is None:
+            gate.latch(reason_code=ROTATION_GATE_REASON, reason_text=ROTATION_REMEDIATION)
+            _log().warning("secrets.kek_rotation_latched", remediation=ROTATION_REMEDIATION)
         self._reason, self._latched = self._reason or "kek_rotation", True
-        _log().warning("secrets.kek_rotation_latched", remediation=ROTATION_REMEDIATION)
 
     async def stop(self, grace_s: float) -> None:
         broker, self._broker = self._broker, None

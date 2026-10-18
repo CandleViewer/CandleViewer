@@ -29,10 +29,24 @@ from tests.unit.credentials_m2._service_fakes import (
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog
 
 _REFUSED, _STARTED = "security.kek_rotation_refused", "security.kek_rotation_started"
-_ROTATION = "secrets.kek_rotation"
+_ROTATION, _FOREIGN = "secrets.kek_rotation", "accounts.key_selfcheck_failed"
 _OWNER = {"actor_kind": "user", "actor_role": "owner", "actor_user_id": "owner-1"}
 _LONG_ENV = "demo" + "x" * 36  # caller text of 40 characters
 Booted = tuple[SecretsService, Any, InMemoryCredentialStore]
+
+
+def _hold(store: InMemoryCredentialStore, name: str) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold the first call of the store method `name`: `entered` once it waits, until `release`."""
+    entered, release, real = asyncio.Event(), asyncio.Event(), getattr(store, name)
+
+    async def held(*args: Any) -> Any:
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await real(*args)
+
+    setattr(store, name, held)
+    return entered, release
 
 
 async def _alone(audit: AuditLog, raw: bytes | None = KEK_V1) -> Booted:
@@ -156,6 +170,40 @@ async def test_a_call_after_a_failed_run_is_not_refused_as_in_progress() -> None
     assert (rep.rewrapped, rep.complete) == (2, True)
 
 
+async def test_a_call_after_a_cancelled_run_is_not_refused_as_in_progress() -> None:
+    """A cancelled request or an outer timeout releases the single-flight lock as well."""
+    svc, _, store = await _staged(AuditLog(), InMemoryAuthKeyStore())
+    entered, _ = _hold(store, "count_at_kek_version")
+    run = asyncio.create_task(_rewrap(svc))
+    await entered.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    rep = await _rewrap(svc)
+    assert (rep.rewrapped, rep.complete) == (2, True)
+
+
+@pytest.mark.parametrize(
+    "held", ["count_at_kek_version", "ids_at_kek_version"], ids=["before_opening", "in_the_loop"]
+)
+async def test_a_run_whose_keks_a_stop_zeroes_answers_a_503_and_keeps_the_latch(held: str) -> None:
+    """A shutdown racing a run is no refusal: the latch stays, the run opens and closes as
+    aborted, and the answer is `store_unavailable`, never `kek_unavailable` (#2266 D1 review)."""
+    audit = AuditLog()
+    svc, ctx, store = await _staged(audit, InMemoryAuthKeyStore())
+    entered, release = _hold(store, held)
+    run = asyncio.create_task(_rewrap(svc))
+    await entered.wait()
+    await svc.stop(0)
+    release.set()
+    with pytest.raises(KekRotationError) as stopped:
+        await run
+    gate = ctx.oms_read_only_gate
+    assert (stopped.value.code, gate.reason_code) == ("store_unavailable", _ROTATION)
+    rotation = [a for a in audit.actions() if "rotation" in a]
+    assert rotation == [_STARTED, "security.kek_rotation_incomplete"]
+
+
 async def test_a_call_after_a_completed_run_is_not_refused_as_in_progress() -> None:
     svc, _, _ = await _staged(AuditLog(), InMemoryAuthKeyStore())
     await _rewrap(svc)
@@ -233,21 +281,32 @@ async def test_a_run_whose_audit_sink_hangs_answers_audit_unavailable() -> None:
     assert stopped.value.code == "audit_unavailable"
 
 
-async def test_a_rotation_on_a_stranded_boot_keeps_kek_rows_stranded_in_health() -> None:
-    svc, _, _ = await _stranded(AuditLog())
-    await _rewrap(svc, 3)
-    health = svc.health()
-    assert (health.status, health.detail) == (HealthStatus.DEGRADED, "kek_rows_stranded")
+async def _foreign(audit: AuditLog) -> Booted:
+    """The rotation boot, then another module's latch: the stored-key self-check's."""
+    svc, ctx, store = await _staged(audit, InMemoryAuthKeyStore())
+    ctx.oms_read_only_gate.latch(reason_code=_FOREIGN, reason_text="self-check")
+    return svc, ctx, store
 
 
-async def test_a_rotation_on_a_stranded_boot_latches_the_reason_rewrap_kek_names() -> None:
-    """Unlike `accounts/selfcheck.py`, it replaces the held latch's reason: both are M2's, the
-    contract names this one, and health keeps the stranded one."""
-    svc, ctx, _ = await _stranded(AuditLog())
-    gate = ctx.oms_read_only_gate
-    stranded = gate.reason_code
-    await _rewrap(svc, 3)
-    assert (stranded, gate.reason_code) == ("secrets.kek_rows_stranded", _ROTATION)
+@pytest.mark.parametrize(
+    ("boot", "to_version", "held", "detail"),
+    [
+        (_stranded, 3, "secrets.kek_rows_stranded", "kek_rows_stranded"),
+        (_foreign, 2, _FOREIGN, "kek_rotation"),
+    ],
+    ids=["stranded_boot", "another_module"],
+)
+async def test_a_rotation_keeps_a_held_latch_and_notifies_nobody(
+    boot: Callable[[AuditLog], Awaitable[Booted]], to_version: int, held: str, detail: str
+) -> None:
+    """Order entry is off already, and the held reason is the more specific one: it is never
+    buried, as `accounts/selfcheck.py` keeps one (#2266 D1 review). The rows still move."""
+    svc, ctx, _ = await boot(AuditLog())
+    notices: list[str | None] = []
+    ctx.oms_read_only_gate.subscribe(lambda _closed, code, _text: notices.append(code))
+    rep = await _rewrap(svc, to_version)
+    assert (ctx.oms_read_only_gate.reason_code, notices, rep.rewrapped > 0) == (held, [], True)
+    assert (svc.health().status, svc.health().detail) == (HealthStatus.DEGRADED, detail)
 
 
 async def test_a_run_with_no_keyring_store_never_reads_a_checked_zero() -> None:
