@@ -8,6 +8,7 @@ fakes, and a hang ends at a bound cut to zero, never a sleep. No network.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -23,6 +24,7 @@ from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.selfcheck import FAILED
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationResult
 from candleviewer.exchange.bybit import key_info
+from candleviewer.storage.repositories.accounts import PolicyDisarm, SelfCheckTargetRow
 from tests.contract._admin_support import SPEC
 from tests.unit.accounts.test_key_import import ACCT, KEY, OTHER, OWNER, account_row, key_row
 from tests.unit.accounts.test_key_selfcheck import (
@@ -30,6 +32,7 @@ from tests.unit.accounts.test_key_selfcheck import (
     HOUR,
     NOW,
     TESTED,
+    VIOLATION,
     WITHDRAW,
     WITHDRAW_FAILURE,
     World,
@@ -251,6 +254,52 @@ async def test_the_job_refuses_a_key_of_another_environment_before_signing() -> 
     with pytest.raises(ValueError, match="environment"):
         await w.check.test(target(), live, NOW, OWNED)
     assert w.built == []
+
+
+class Meeting(World):
+    """Each `mark_disarm_audited` waits at its own gate, by order of arrival, so a test's mark and
+    a pass's are in flight at once and either can finish first."""
+
+    def __init__(self, *rows: SelfCheckTargetRow, **options: Any) -> None:
+        super().__init__(*rows, **options)
+        self.arrived = [asyncio.Event(), asyncio.Event()]
+        self.opened = [asyncio.Event(), asyncio.Event()]
+        self.marks = 0
+
+    async def mark_disarm_audited(self, disarm: PolicyDisarm, *, at: datetime) -> bool:
+        n, self.marks = self.marks, self.marks + 1
+        self.arrived[n].set()
+        await self.opened[n].wait()
+        return await super().mark_disarm_audited(disarm, at=at)
+
+
+@pytest.mark.parametrize(
+    ("first", "audited"),
+    [
+        (0, [TESTED, DISABLED, VIOLATION, TESTED, VIOLATION]),
+        (1, [TESTED, DISABLED, TESTED, VIOLATION, VIOLATION]),
+    ],
+    ids=["test-marks-first", "pass-marks-first"],
+)
+async def test_a_test_and_a_pass_marking_one_disarm_at_once_both_finish(
+    first: int, audited: list[str]
+) -> None:
+    """A test runs outside the pass's lock: a pass reads the test's disarm as owed before the test
+    marks it, so both mark it, and the second finds it marked. Neither raises, so the loop goes on
+    and the test answers, its violation record written."""
+    w = Meeting(target(), info=facts(permissions=WITHDRAW))
+    async with asyncio.timeout(1.0):
+        tested = asyncio.create_task(flow_of(w).run(ACCT, KEY, ACTOR))
+        await w.arrived[0].wait()  # the test sent its disarm's record; its mark is held
+        passed = asyncio.create_task(w.check.run_once())
+        await w.arrived[1].wait()  # the pass read the disarm as owed: only its mark is retried
+        callers = [tested, passed]
+        for n in (first, 1 - first):
+            w.opened[n].set()
+            await callers[n]
+    assert [e[1] for e in w.of("audit")] == audited  # one `account.disabled_by_policy`
+    assert (w.disarms[ACCT][2], len(w.of("mark")), w.armed[ACCT]) == (NOW, 2, False)
+    assert not tested.result().passed
 
 
 def test_the_throttle_opens_one_window_per_key_and_says_how_long_is_left() -> None:

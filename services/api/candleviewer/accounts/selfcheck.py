@@ -50,10 +50,12 @@ too, leaves the account armed until the window ends. The verified columns and a 
 (`trading_enabled` false, with its rule code and time) persist too. A disarm whose record
 is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
 checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
-`record_id`), so it can be written twice, never zero times, in two windows: a crash between the
-record and its mark, and an emit cut by its bound once the writer has started the append (the
-writer keeps that append; the job counts the emit refused, so the record stays owed). A record
-sent but not yet marked is kept in memory, so a failed mark is retried alone.
+`record_id`), so it can be written twice, never zero times, in three windows: a crash between the
+record and its mark, an emit cut by its bound once the writer has started the append (the writer
+keeps that append; the job counts the emit refused, so the record stays owed), and a test's disarm
+that a pass reads as owed while the test sends its record (a test runs outside the pass's lock). A
+record sent but not yet marked is kept in memory, so a failed mark is retried alone; when a test
+and a pass both mark one disarm, the second finds it marked, and neither fails.
 
 On demand (`testApiKey`, decision 11 on #836): `test()` runs one stored key's pipeline as a pass
 does and hands its verdict to the same outcome handling, with the acting Owner on `account.tested`,
@@ -674,7 +676,7 @@ class KeySelfCheck:
             return
         if not marked:  # no longer owed as read: a later disarm, or a mismatch that re-sends it
             logger().error("key_selfcheck_disable_mark_unchanged", account_id=str(account_id))
-        del self._unmarked[account_id]
+        self._unmarked.pop(account_id, None)  # a test and a pass may both have settled it
 
     async def _verify(
         self, target: SelfCheckTargetRow, account: ExchangeAccount, now: datetime
