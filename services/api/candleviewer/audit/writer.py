@@ -415,10 +415,11 @@ class AuditWriter:
         await self.ingest(emission)
 
     async def ingest(self, record: AuditEmission | dict[str, Any]) -> int:
-        """Durably append a record that `build()` made, or one in its JSON form from
-        elsewhere (`audit.journal.fold_in`, the lane's drain), keeping its `record_id` and
-        `event_ts`. Refuses as `emit()`; a record that is not a valid `AuditEmission` raises
-        `UnknownAuditAction` or a pydantic `ValidationError`.
+        """Durably append an already-redacted record that `build()` made, or one in its JSON
+        form from elsewhere (`audit.journal.fold_in`, the lane's drain), keeping its `record_id`
+        and `event_ts`. It validates the record, a model too, but never redacts it. Refuses as
+        `emit()`; a record that is not a valid `AuditEmission` raises `UnknownAuditAction` or a
+        pydantic `ValidationError`.
 
         Returns the record's commit token: its ordinal in this writer's WAL append order,
         from 1, process-local and never reused. `committed_through()` reaches it once the
@@ -426,6 +427,8 @@ class AuditWriter:
         next token like any record; its insert is a no-op
         (`ON CONFLICT (record_id) DO NOTHING`), and that insert commits the token."""
         self._refuse_unless_accepting()
+        if isinstance(record, AuditEmission):  # `model_validate()` returns an instance unchecked
+            record = record.model_dump(warnings=False)
         emission = AuditEmission.model_validate(record)
         validate_action(emission.action)
         return await self._shielded(
@@ -441,9 +444,9 @@ class AuditWriter:
             raise AuditWriterStopped()
 
     async def _accept(self, op: _WalOp, record: dict[str, Any]) -> int:
-        """`emit()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
+        """`ingest()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
         fail-closed alarm and the flusher wake-up; returns the commit token. Once it holds the
-        lock it runs to the end even if `emit()`'s caller, or the op task itself, was
+        lock it runs to the end even if `ingest()`'s caller, or the op task itself, was
         cancelled; a cancel of the op task is raised after the wake-up."""
         try:
             async with self._wal_lock:

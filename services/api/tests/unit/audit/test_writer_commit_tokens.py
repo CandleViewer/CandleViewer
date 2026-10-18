@@ -2,7 +2,9 @@
 append order, and `committed_through()` the highest token whose record the flusher has put in
 Postgres. Tokens are monotonic and committed in WAL order across compactions and flusher
 restarts, `committed_through()` never passes a token whose record is not stored (a refusing
-insert holds it back), and a repeated record gets the next token and is stored once."""
+insert holds it back), and a repeated record gets the next token and is stored once. A backlog
+from an earlier process, and a record a restarted flusher reads again, take no token; a
+compaction that fails moves no base. `ingest()` refuses an invalid record, model or JSON."""
 
 from __future__ import annotations
 
@@ -19,8 +21,10 @@ import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
 from candleviewer.audit import wal as wal_module
+from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.models import AuditEmission
 from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.wal import AuditWal, encode_frame
@@ -35,6 +39,7 @@ class _ObservedRepository(FakeAuditRepository):
         super().__init__()
         self.writer: AuditWriter | None = None
         self.refuse: set[str] = set()
+        self.attempted = asyncio.Event()  # set by the first insert attempt
         self.attempts: list[tuple[int, str, frozenset[str]]] = []
 
     def snapshot(self) -> tuple[int, frozenset[str]]:
@@ -44,6 +49,7 @@ class _ObservedRepository(FakeAuditRepository):
     async def insert(self, record: dict[str, Any]) -> None:
         through, stored = self.snapshot()
         self.attempts.append((through, record["record_id"], stored))
+        self.attempted.set()
         if record["record_id"] in self.refuse:
             raise ConnectionError("insert refused")
         await super().insert(record)
@@ -176,31 +182,54 @@ async def test_writer_a_refused_append_takes_no_token(
     assert [r["actor_label"] for r in repo.rows] == ["a", "b"]
 
 
-def _emission(label: str, clock: FakeClock) -> AuditEmission:
+def _emission(label: str, clock: FakeClock, action: str = "auth.logout") -> AuditEmission:
     """What `build()` makes, without a writer: the WAL cap below needs the frame sizes first."""
     return AuditEmission(
         record_id=uuid.uuid4(),
-        action="auth.logout",
+        action=action,
         actor_label=label,
         event_ts=clock(),
     )
 
 
+async def _writer_over_a_full_wal(
+    repo: _ObservedRepository, path: Path, labels: str
+) -> tuple[AuditWriter, list[AuditEmission]]:
+    """A started writer over a WAL that holds three records stored in Postgres already but not
+    compacted away (a crash before its compaction), capped one byte short of holding a record per
+    label, so the last one overflows it. Nothing is pending: no batch is in flight."""
+    clock = FakeClock()
+    old = AuditWal(path / "audit.wal")
+    for i in range(3):
+        prefix = old.append(json.loads(_emission(f"old{i}", clock).model_dump_json()))
+    old.mark_committed(prefix)
+    new = [_emission(label, clock) for label in labels]
+    frames = sum(len(encode_frame(json.loads(e.model_dump_json()))) for e in new)
+    w = _writer(repo, path, max_wal_bytes=prefix + frames - 1)
+    await w.start()
+    await w.flush(5)
+    return w, new
+
+
+def _fail_first_compaction(w: AuditWriter, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first `compact()` raises `OSError` before it touches the file; later ones run."""
+    real = w._wal.compact
+    calls: list[None] = []
+
+    def compact() -> None:
+        calls.append(None)
+        if len(calls) == 1:
+            raise OSError("disk full")
+        real()
+
+    monkeypatch.setattr(w._wal, "compact", compact)
+
+
 async def test_writer_tokens_survive_the_compaction_a_full_wal_runs(tmp_path: Path) -> None:
     """A WAL left with a committed prefix (a crash before its compaction) is compacted by the
     append that would overflow it, while an earlier token still waits for the flusher."""
-    clock = FakeClock()
-    path = tmp_path / "audit.wal"
-    old = AuditWal(path)
-    for i in range(3):
-        prefix = old.append(json.loads(_emission(f"old{i}", clock).model_dump_json()))
-    old.mark_committed(prefix)  # stored in Postgres already, but not yet compacted
-    new = [_emission(label, clock) for label in ("a", "b")]
-    first, second = (len(encode_frame(json.loads(e.model_dump_json()))) for e in new)
     repo = _ObservedRepository()
-    w = _writer(repo, tmp_path, max_wal_bytes=prefix + first + second - 1)
-    await w.start()
-    await w.flush(5)  # nothing pending: no batch is in flight
+    w, new = await _writer_over_a_full_wal(repo, tmp_path, "ab")
     # Concurrent, so the second append overflows before the flusher reads the first.
     assert list(await asyncio.gather(w.ingest(new[0]), w.ingest(new[1]))) == [1, 2]
     await w.flush(5)
@@ -208,6 +237,162 @@ async def test_writer_tokens_survive_the_compaction_a_full_wal_runs(tmp_path: Pa
     ids = [str(e.record_id) for e in new]
     assert w.committed_through() == 2 and [r["record_id"] for r in repo.rows] == ids
     _never_ahead(repo, ids)
+
+
+async def test_writer_refuses_an_append_to_a_full_wal_while_a_batch_is_in_flight(
+    tmp_path: Path,
+) -> None:
+    """A compaction under a batch the flusher is inserting would move the coordinate its offsets
+    are in, so a full WAL refuses the append instead, whatever committed prefix it holds."""
+    repo = _ObservedRepository()
+    w, new = await _writer_over_a_full_wal(repo, tmp_path, "ab")
+    repo.down = True
+    assert await w.ingest(new[0]) == 1
+    await asyncio.wait_for(repo.attempted.wait(), 5)  # the flusher parks in its insert's retry
+    with pytest.raises(AuditUnavailable):
+        await w.ingest(new[1])
+    assert w._wal.committed_offset() > 0  # the prefix is still there: nothing was compacted
+    repo.down = False
+    await w.flush(5)
+    assert await w.ingest(new[1]) == 2  # the refusal took no token; the commit made room
+    await w.flush(5)
+    await w.stop(1)
+    ids = [str(e.record_id) for e in new]
+    assert w.committed_through() == 2 and [r["record_id"] for r in repo.rows] == ids
+    _never_ahead(repo, ids)
+
+
+async def test_writer_a_backlog_from_an_earlier_process_takes_no_token(tmp_path: Path) -> None:
+    """Frames an earlier process left in the WAL are stored by `start()`'s replay. They are no
+    one's token, so replaying them commits nothing."""
+    clock = FakeClock()
+    old = AuditWal(tmp_path / "audit.wal")
+    backlog = [_emission(f"old{i}", clock) for i in range(2)]
+    for e in backlog:
+        old.append(json.loads(e.model_dump_json()))  # appended, never committed
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path)
+    await w.start()
+    await w.flush(5)
+    assert [r["record_id"] for r in repo.rows] == [str(e.record_id) for e in backlog]
+    assert w.committed_through() == 0
+    repo.down = True
+    first = w.build("auth.login", actor_label="new")
+    assert await w.ingest(first) == 1
+    assert w.committed_through() == 0  # Postgres is down: the new record is not stored
+    repo.down = False
+    await w.flush(5)
+    await w.stop(1)
+    assert w.committed_through() == 1
+    _never_ahead(repo, [str(first.record_id)])
+
+
+async def test_writer_a_restart_that_rereads_confirmed_records_counts_them_once(
+    tmp_path: Path,
+) -> None:
+    """The flusher dies on the second record of a batch, after it confirmed the first. The
+    restart reads both again and inserts the first again (a no-op): that one counts once."""
+    died = asyncio.Event()
+
+    async def alarm(_reason: str) -> None:
+        died.set()
+
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path, max_insert_attempts=1, on_alarm=alarm)
+    await w.start()
+    built = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
+    ids = [str(b.record_id) for b in built]
+    repo.refuse = {ids[1]}  # Postgres keeps refusing the second record
+    # Concurrent, so the flusher reads the three frames as one batch.
+    assert list(await asyncio.gather(*(w.ingest(b) for b in built))) == [1, 2, 3]
+    await asyncio.wait_for(died.wait(), 5)  # record 1 stored and confirmed, record 2 refused
+    assert w.committed_through() == 1
+    repo.refuse.clear()
+    await w.start()
+    await w.flush(5)
+    assert w.committed_through() == 3
+    last = w.build("auth.logout", actor_label="next")
+    assert await w.ingest(last) == 4
+    await w.flush(5)
+    await w.stop(1)
+    assert w.committed_through() == 4
+    _never_ahead(repo, [*ids, str(last.record_id)])
+
+
+async def test_writer_a_failing_commit_compaction_does_not_move_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`compact()` fails after the commit cursor moved: the file keeps its prefix, so positions
+    keep their base and the restarted flusher's records get their own tokens."""
+    died = asyncio.Event()
+
+    async def alarm(_reason: str) -> None:
+        died.set()
+
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path, flush_batch_size=1, on_alarm=alarm)
+    await w.start()
+    repo.down = True
+    built = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
+    assert [await w.ingest(b) for b in built] == [1, 2, 3]
+    _fail_first_compaction(w, monkeypatch)
+    repo.down = False
+    await asyncio.wait_for(died.wait(), 5)  # the first commit could not compact: the flusher died
+    assert w.committed_through() == 1
+    await w.start()
+    await w.flush(5)
+    await w.stop(1)
+    assert w.committed_through() == 3
+    _never_ahead(repo, [str(b.record_id) for b in built])
+
+
+async def test_writer_a_failing_emergency_compaction_does_not_move_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The compaction a full WAL runs fails: that append is refused, the two earlier tokens stay
+    right, and the next append succeeds once the flusher has compacted."""
+    repo = _ObservedRepository()
+    w, new = await _writer_over_a_full_wal(repo, tmp_path, "abc")
+    _fail_first_compaction(w, monkeypatch)
+    results = await asyncio.gather(*(w.ingest(e) for e in new), return_exceptions=True)
+    assert results[:2] == [1, 2] and isinstance(results[2], AuditUnavailable)
+    await w.flush(5)
+    assert await w.ingest(new[2]) == 3
+    await w.flush(5)
+    await w.stop(1)
+    assert w.committed_through() == 3
+    _never_ahead(repo, [str(e.record_id) for e in new])
+
+
+async def _ingest_refuses(tmp_path: Path, error: type[Exception], *forms: Any) -> None:
+    """Every form is refused with `error`: nothing reaches the WAL and no token is taken."""
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path)
+    await w.start()
+    for form in forms:
+        with pytest.raises(error):
+            await w.ingest(form)
+    assert (tmp_path / "audit.wal").read_bytes() == b""
+    assert await w.ingest(w.build("auth.login", actor_label="ok")) == 1
+    await w.flush(5)
+    await w.stop(1)
+    assert [r["actor_label"] for r in repo.rows] == ["ok"]
+
+
+async def test_writer_ingest_refuses_an_unregistered_action_in_either_form(tmp_path: Path) -> None:
+    """A model built without `build()` is checked as its JSON form is (the lane's drain turns that
+    refusal into a `record_invalid` row)."""
+    bad = _emission("x", FakeClock(), "auth.unregistered_action")
+    await _ingest_refuses(tmp_path, UnknownAuditAction, bad, json.loads(bad.model_dump_json()))
+
+
+async def test_writer_ingest_refuses_a_model_that_skipped_its_validation(tmp_path: Path) -> None:
+    """`model_construct()` skips validation and `model_validate()` returns such an instance as it
+    is: `ingest()` checks its fields again, or a record id that is no UUID would reach the WAL."""
+    unchecked = AuditEmission.model_construct(
+        record_id="not-a-uuid", action="auth.login", actor_label="x", event_ts=FakeClock()()
+    )
+    await _ingest_refuses(tmp_path, ValidationError, unchecked)
 
 
 class _NoFsync:
