@@ -67,7 +67,7 @@ export const DIAG_INTERVAL_MS = 1_000;
 export const MAX_TABS = 64;
 export const MAX_CONSUMERS_PER_TAB = 512;
 export const MAX_PANES_PER_TAB = 64;
-/** How often a tab may void its consumers of one `ch`, together (live and replay), in the window the gateway counts snapshots in: each costs one of the five it grants a `ch`, and a gap needs one too. */
+/** How often a tab may void its consumers of one `ch`, together (live and replay), in the window the engine's guard counts snapshots in: it keeps one budget of five for both streams of a `ch`, and a gap needs a share of it too. */
 export const MAX_RESYNCS_PER_CH = 3;
 /** The latest update of each `system` kind is kept for a tab that joins late; a server that invents kinds gets no more room. */
 export const MAX_SYSTEM_KINDS = 16;
@@ -105,6 +105,8 @@ interface Session {
   silent: boolean;
   readonly panes: Map<string, Pane>;
   readonly consumers: Map<string, Consumer>;
+  /** By `ch`: when the tab voided its consumers of it, within the last window, whichever consumers they were and whether they are still there. */
+  readonly resyncs: Map<string, number[]>;
 }
 
 /** What a tab was last told a consumer reads: a change goes out even when no frame carries it. */
@@ -120,8 +122,6 @@ interface Consumer {
   readonly ch: string;
   readonly rs: string | undefined;
   readonly pane: string; // the tab's name for the pane it reads in
-  /** When its tab voided it or another of its consumers of the `ch`, within the last window: one list for all the tab's consumers of a `ch`. */
-  readonly resyncs: number[];
   readonly handle: StreamHandle;
   readonly queue: FrameQueue;
   /** No baseline of its own yet (a newcomer, or voided): deltas are not for it, a snapshot is. */
@@ -136,8 +136,6 @@ const sameTold = (a: Told | undefined, b: Told): boolean =>
 
 const holdsPane = (session: Session, pane: string): boolean =>
   [...session.consumers.values()].some((consumer) => consumer.pane === pane);
-const sameCh = (session: Session, ch: string): Consumer | undefined =>
-  [...session.consumers.values()].find((consumer) => consumer.ch === ch);
 
 export function createPortHost(options: PortHostOptions): PortHost {
   const timers: Timers = { ...platformTimers, ...options.timers };
@@ -364,7 +362,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
 
   /**
    * A tab holds at most `MAX_PANES_PER_TAB` panes (C-2.18). For a new one, a pane no consumer holds any more gives way,
-   * the oldest first, and not before: a switch of symbol is a release and a consume, and the tab does not describe the pane again.
+   * the first created first, and not before: a switch of symbol is a release and a consume, and the tab does not describe the pane again.
    */
   function makeRoomForPane(session: Session, id: string): boolean {
     if (session.panes.has(id) || session.panes.size < MAX_PANES_PER_TAB) return true;
@@ -377,12 +375,22 @@ export function createPortHost(options: PortHostOptions): PortHost {
     return false;
   }
 
-  /** Whether the tab may void a consumer of this `ch` now: `MAX_RESYNCS_PER_CH` in the window, for all its consumers of the `ch` together. */
-  function mayVoid({ resyncs }: Consumer): boolean {
+  /** Whether the tab may void a consumer of this `ch` now: `MAX_RESYNCS_PER_CH` in the window, for all its consumers of it together, and not only while they are there. */
+  function mayVoid({ ch, session: { resyncs } }: Consumer): boolean {
     const at = timers.now();
-    resyncs.splice(0, resyncs.length, ...resyncs.filter((stamp) => at - stamp < RESYNC_WINDOW_MS));
-    if (resyncs.length >= MAX_RESYNCS_PER_CH) return false;
-    resyncs.push(at);
+    for (const [name, stamps] of resyncs) {
+      const recent = stamps.filter((stamp) => at - stamp < RESYNC_WINDOW_MS);
+      if (recent.length === 0)
+        resyncs.delete(name); // none of its votes counts any more: the map holds what does
+      else resyncs.set(name, recent);
+    }
+    const votes = resyncs.get(ch) ?? [];
+    if (
+      votes.length >= MAX_RESYNCS_PER_CH ||
+      (votes.length === 0 && resyncs.size >= MAX_CONSUMERS_PER_TAB)
+    )
+      return false;
+    resyncs.set(ch, [...votes, at]);
     return true;
   }
 
@@ -495,7 +503,6 @@ export function createPortHost(options: PortHostOptions): PortHost {
           ch: message.ch,
           rs: message.rs,
           pane: message.pane,
-          resyncs: sameCh(session, message.ch)?.resyncs ?? [],
           handle,
           queue: createFrameQueue(limits),
           gated: true,
@@ -574,6 +581,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
         silent: false,
         panes: new Map(),
         consumers: new Map(),
+        resyncs: new Map(),
       };
       port.listen((data) => onMessage(session, data));
     },

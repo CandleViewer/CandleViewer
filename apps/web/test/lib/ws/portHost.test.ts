@@ -328,6 +328,8 @@ describe("what every tab hears at once", () => {
     for (let i = 0; i < 40; i += 1) t.gateway.latest.delta("system", { kind: `invented_${i}` });
     expect(t.tab().of("system").length).toBeLessThanOrEqual(16);
     expect(t.host.counters.droppedSystemUpdates).toBe(25); // `health` and 15 of the 40 are kept
+    t.gateway.latest.delta("system", { kind: "invented_0" }); // a kind it holds, again: kept, not counted
+    expect(t.host.counters.droppedSystemUpdates).toBe(25);
     t.gateway.latest.delta("system", { kind: "invented_39" }); // a kind it dropped, again: one more update with no room
     expect(t.host.counters.droppedSystemUpdates).toBe(26);
   });

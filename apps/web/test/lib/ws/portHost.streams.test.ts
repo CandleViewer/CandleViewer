@@ -3,6 +3,7 @@
 // newcomer waits for its snapshot; a consumer that cannot keep up is voided and re-baselined; what the tabs show
 // decides how the topics run.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as engineModule from "../../../src/lib/ws/core/engine";
 import {
   MAX_CONSUMERS_PER_TAB,
   MAX_PANES_PER_TAB,
@@ -400,6 +401,38 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
     a.say({ t: "resync", id: "kt" }); // another ch has a count of its own
     expect((await counted(t, a)).host.rejectedMessages).toBe(20 - MAX_RESYNCS_PER_CH);
   });
+
+  it("counts a tab's voids of a ch whichever consumers cast them: releasing the last one and taking a new one does not start the count over", async () => {
+    const t = hostHarness();
+    const [a, b] = [t.tab(), t.tab()]; // b holds the stream, so the engine's own count of it goes on (#3594)
+    t.consume(b, "kb", BOOK);
+    t.consume(a, "k1", BOOK);
+    await t.advance(400);
+    for (let i = 0; i < MAX_RESYNCS_PER_CH; i += 1) {
+      a.say({ t: "resync", id: "k1" });
+      await t.advance(100);
+    }
+    a.say({ t: "release", id: "k1" });
+    t.consume(a, "k2", BOOK);
+    a.say({ t: "resync", id: "k2" }); // the tab spent its three: refused, and a gap keeps its snapshot
+    expect(t.host.counters.rejectedMessages).toBe(1);
+  });
+
+  it("holds the votes of 512 chs at most: a tab that voided that many in a minute is refused one more, though a consumer left", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    for (let i = 0; i < MAX_CONSUMERS_PER_TAB; i += 1) {
+      t.consume(a, `k${i}`, `trades.S${i}`);
+      a.say({ t: "resync", id: `k${i}` });
+    }
+    a.say({ t: "release", id: "k0" }); // its vote stays
+    t.consume(a, "new", "trades.NEW");
+    a.say({ t: "resync", id: "new" });
+    expect(t.host.counters.rejectedMessages).toBe(1);
+    await t.advance(61_000); // the votes leave the window, and with them their chs
+    a.say({ t: "resync", id: "new" });
+    expect(t.host.counters.rejectedMessages).toBe(1);
+  });
 });
 
 describe("what the tabs show decides how the topics run (C8)", () => {
@@ -597,7 +630,46 @@ describe("what a tab may ask", () => {
     a.say({ t: "release", id: "again" });
     a.say({ t: "pane", id: "w0", visibility: "visible" }); // said again, still read by none
     t.consume(a, "fits", TRADES, { pane: "n3" }); // w0 gives way
-    expect((await counted(t, a)).host.rejectedMessages).toBe(2); // and `fits` was served
+    t.consume(a, "no3", TRADES, { pane: "n4" }); // and the 64 are held again: refused
+    expect((await counted(t, a)).host.rejectedMessages).toBe(3); // `fits` was served
+  });
+
+  it("keeps an idle pane while there is room: it gives way at the limit, not before", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    a.say({ t: "pane", id: "p1", visibility: "collapsed" });
+    t.consume(a, "k1", TRADES, { pane: "p1" });
+    a.say({ t: "release", id: "k1" }); // p1 is idle
+    t.consume(a, "k2", BOOK, { pane: "p2" }); // far from the limit: p1 stays
+    t.consume(a, "k3", TRADES, { pane: "p1" }); // still collapsed: its topic is not held
+    await t.advance(400);
+    const topics = t.gateway.latest
+      .of("sub")
+      .flatMap((f) => (f["p"] as { topics: { ch: string }[] }).topics);
+    expect(topics.map((topic) => topic.ch)).toEqual([BOOK]);
+  });
+
+  it("tells the engine of every pane it forgets: the one that gave way, and all of a tab's when it stops", async () => {
+    const createWsEngine = engineModule.createWsEngine;
+    const removed: string[] = [];
+    vi.spyOn(engineModule, "createWsEngine").mockImplementation((options) => {
+      const engine = createWsEngine(options);
+      const remove = engine.removePane.bind(engine);
+      engine.removePane = (id) => {
+        removed.push(id);
+        remove(id);
+      };
+      return engine;
+    });
+    const t = hostHarness();
+    const a = t.tab();
+    for (let i = 0; i < MAX_PANES_PER_TAB; i += 1) t.consume(a, `k${i}`, TRADES, { pane: `w${i}` });
+    a.say({ t: "release", id: "k3" });
+    a.say({ t: "release", id: "k0" });
+    t.consume(a, "k64", TRADES, { pane: "w64" }); // w0 gives way: the first created of the two idle, not the first released
+    expect(removed).toEqual(["t1:w0"]);
+    a.say({ t: "stop" });
+    expect(removed).toHaveLength(1 + MAX_PANES_PER_TAB); // and each of the 64 it held when it left
   });
 });
 
