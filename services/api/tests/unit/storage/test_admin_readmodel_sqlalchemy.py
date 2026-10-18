@@ -66,6 +66,12 @@ async def test_open_incidents_is_a_single_count() -> None:
     assert await _counts(_Rel({"open": 2})).open_incidents() == 2
 
 
+def test_open_incidents_counts_the_unresolved_rows_of_the_incidents_table() -> None:
+    # E42-T05: the materialised read model, not raw `system_events` (open or acknowledged).
+    sql = " ".join(str(repo._INCIDENTS).split())
+    assert sql == "SELECT count(*) AS open FROM incidents WHERE status IN ('open', 'acknowledged')"
+
+
 def test_every_statement_is_aggregate_only_and_reads_no_secret_column() -> None:
     for stmt in (repo._USERS, repo._ACCOUNTS, repo._INCIDENTS, repo._SUBACCOUNTS):
         sql = str(stmt).lower()

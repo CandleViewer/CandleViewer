@@ -1,10 +1,9 @@
-"""Composition-root wiring of the incident list (E42-T05): nothing reads the `incidents` table
-until the incident materialiser sets `INCIDENTS_MATERIALISED`; with it set, what each backend
-serves."""
+"""Composition-root wiring of the incident list (E42-T05): what each backend serves, now that
+every `error` and `critical` system event materialises its incident when it is written."""
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 import pytest
 
@@ -35,38 +34,19 @@ def _fresh(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wiring, "SqlAlchemyRelationalRepository", lambda dsn, suffix: suffix)
 
 
-@pytest.fixture
-def materialised(monkeypatch: pytest.MonkeyPatch) -> None:
-    """What the incident materialiser's PR sets: something now writes the `incidents` table."""
-    monkeypatch.setattr(wiring, "INCIDENTS_MATERIALISED", True)
-
-
-@pytest.mark.parametrize("backend", ["fake", "real"])
-async def test_the_list_is_501_on_every_backend_until_the_materialiser_ships(
-    backend: Literal["fake", "real"],
-) -> None:
-    # An empty page would read as "no incidents" while `system_events` holds errors.
-    incidents = wiring.build_admin_incidents(Settings(storage_backend=backend))
+async def test_the_fake_backend_has_no_incident_store_so_the_list_is_never_made_up() -> None:
+    incidents = wiring.build_admin_incidents(Settings(storage_backend="fake"))
     with pytest.raises(OpsNotWired):
         await incidents.page(status=None, cursor=None, limit=1)
     assert FakeIncidents.built == []  # no reader and no engine were even built
 
 
-@pytest.mark.usefixtures("materialised")
-async def test_the_fake_backend_has_no_incident_store_so_the_list_is_never_made_up() -> None:
-    incidents = wiring.build_admin_incidents(Settings(storage_backend="fake"))
-    with pytest.raises(OpsNotWired):
-        await incidents.page(status=None, cursor=None, limit=1)
-
-
-@pytest.mark.usefixtures("materialised")
 async def test_the_real_backend_serves_the_incidents_table_on_the_admin_engine() -> None:
     incidents = wiring.build_admin_incidents(Settings(storage_backend="real"), now=lambda: NOW)
     page = await incidents.page(status=None, cursor=None, limit=5)
     assert page.items == (row(1),) and FakeIncidents.built == ["admin"]
 
 
-@pytest.mark.usefixtures("materialised")
 def test_the_real_backend_shares_the_settings_stores_engine() -> None:
     shared: Any = object()
     store = SqlAlchemySystemSettings(shared)

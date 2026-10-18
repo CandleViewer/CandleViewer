@@ -1,11 +1,11 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
 `GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`; and
-(E42-T05) `GET /admin/incidents` (`build_admin_incidents` at the end, which stays `501` until the
-incident materialiser ships).
+(E42-T05) `GET /admin/incidents` (`build_admin_incidents` at the end).
 
 Real sources on the real storage backend:
-- the Postgres counts repository (users, accounts and keys, open incidents, sub-accounts in use),
-  bound to the serving environment (`settings.environment`, `CV_ENVIRONMENT`; C-2.11);
+- the Postgres counts repository (users, accounts and keys, unresolved incidents from the
+  `incidents` table, sub-accounts in use), bound to the serving environment
+  (`settings.environment`, `CV_ENVIRONMENT`; C-2.11);
 - the recorded sub-account tier, read from the `settings` row `accounts.subaccount_tier`
   (migration `0025`): no row is "unrecorded";
 - the storage snapshot, whenever `app.state.disk_budget` exists (the real backend, #2370):
@@ -229,26 +229,18 @@ def build_statechart_inspector(*, now: Callable[[], datetime] = utc_now) -> Stat
     return StatechartInspector(SliceFanOut(now=now), machine_key, lock)
 
 
-#: The incident list reads the `incidents` table only once something writes it. Nothing does
-#: until the incident materialiser (a later E42-T05 slice), so a wired reader would answer 200 with
-#: an empty list while `system_events` holds errors: the "no incidents" that the 501 exists to
-#: prevent. The materialiser's PR sets this to True.
-INCIDENTS_MATERIALISED = False
-
-
 def build_admin_incidents(
     settings: Settings,
     *,
     system_settings: SystemSettings | None = None,
     now: Callable[[], datetime] = utc_now,
 ) -> AdminIncidentsService:
-    """The incident list: `501 not_implemented`, never a made-up page, until the incident
-    materialiser fills the `incidents` table. `SqlAlchemyIncidents` is built and tested but
-    unwired: once `INCIDENTS_MATERIALISED` is set the real backend reads the table over the admin
-    area's one engine, and the fake backend never has a store. Until then `/admin/overview` still
-    counts open incidents from raw `system_events`."""
+    """The incident list. The real backend reads the `incidents` table, which every `error` and
+    `critical` system event fills as it is written (`PgSystemEventWriter`, the break-glass reset),
+    over the admin area's one engine. The fake backend never has a store, so its list is
+    `501 not_implemented`, never a made-up page."""
     store = None
-    if INCIDENTS_MATERIALISED and settings.storage_backend == "real":
+    if settings.storage_backend == "real":
         # The admin area's one engine, shared with the counts and the tier, as above.
         relational = (
             system_settings.relational

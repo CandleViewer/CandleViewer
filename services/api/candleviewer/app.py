@@ -272,6 +272,7 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyB
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
+from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
 )
@@ -303,6 +304,7 @@ from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRep
 from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
 from candleviewer.storage.retention.drawings_tasks import DrawingsMetrics, DrawingsPurgeTask
+from candleviewer.storage.retention.incidents_tasks import IncidentsPurgeTask
 from candleviewer.storage.retention.kline_boundary import (
     KlineBoundaryRefreshTask,
     KlineHotBoundary,
@@ -609,6 +611,21 @@ def _build_accounts_counts(settings: Settings) -> SqlAlchemyAccountsStore | None
         return None
     return SqlAlchemyAccountsStore(
         SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "accounts")
+    )
+
+
+def _build_incidents_purge(settings: Settings) -> IncidentsPurgeTask | None:
+    """E42-T05: resolved incidents dropped `policy.INCIDENTS_RESOLVED_MONTHS` after
+    `last_seen_at` (21 Sec.7), started by the lifespan when retention is enabled; `None` on the
+    fake backend (no `incidents` table). `incidents` has no forbid-delete trigger, so the app DSN
+    may purge. No I/O here."""
+    if settings.storage_backend != "real":
+        return None
+    relational = SqlAlchemyRelationalRepository(
+        settings.pg_dsn.get_secret_value(), "incidents-retention"
+    )
+    return IncidentsPurgeTask(
+        SqlAlchemyIncidents(relational), RetentionSchedule.from_settings(settings)
     )
 
 
@@ -1517,6 +1534,7 @@ def create_app(
         app.state.drawings_metrics.rows,
         TOOLS,
     )
+    app.state.incidents_purge_task = _build_incidents_purge(resolved)
     # E09-S06: server-evaluated first-run checklist. Steps whose owning epic
     # has not shipped (E27 api_key/demo, E39 profile limits) have no probe and
     # render `pending` ("coming soon") via the flag table, never a client stub.
@@ -1614,8 +1632,7 @@ def create_app(
         )
     )
     # E42-T05: the health report over the E04 registry's snapshot and the incident list, behind the
-    # same guard. The list has no store yet: the materialiser that fills `incidents` is a later
-    # slice, so it answers 501 rather than an empty page that would read as "no incidents".
+    # same guard. The list reads `incidents`, filled as each error or critical event is written.
     admin_health = AdminHealthService(
         health_registry,
         version=resolved.version,

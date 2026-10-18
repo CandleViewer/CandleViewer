@@ -85,3 +85,14 @@ class RetentionSchedule:
         if not self.enabled:
             return {}
         return {"workspaces_purge": self.retention_cron}
+
+    def incidents_jobs(self) -> dict[str, str]:
+        """Resolved `incidents` purge (E42-T05): `policy.INCIDENTS_RESOLVED_MONTHS` after
+        `last_seen_at`, empty when off.
+
+        The value is the retention cron for reference only: the task is a fixed 24 h interval
+        loop (`IncidentsPurgeTask`), not cron-driven, like `drawings_jobs()`.
+        """
+        if not self.enabled:
+            return {}
+        return {"incidents_purge": self.retention_cron}

@@ -155,6 +155,17 @@ async def test_lifespan_starts_and_stops_the_drawings_purge_task() -> None:
     task.stop.assert_awaited_once_with()
 
 
+async def test_lifespan_starts_and_stops_the_incidents_purge_task() -> None:
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.incidents_purge_task = task = SimpleNamespace(start=Mock(), stop=AsyncMock())
+
+    async with _lifespan(app):
+        task.start.assert_called_once_with()
+
+    task.stop.assert_awaited_once_with()
+
+
 async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate() -> None:
     app = FastAPI()
     ctx = _fake_ctx()

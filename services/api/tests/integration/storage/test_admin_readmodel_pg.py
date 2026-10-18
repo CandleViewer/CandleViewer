@@ -2,9 +2,10 @@
 
 One seeded dataset exercises every filter edge of the admin read-model counts: deleted rows,
 user status, confirmed / unconfirmed / revoked MFA, disabled and deleted accounts, the demo/live
-environment split (C-2.11), key status, revocation and the expiry horizon, resolved and
-low-severity events, and per-main sub-account usage. Ids are deterministic and the password
-hash is a fixed fake. Not run locally (no docker); CI integration lane.
+environment split (C-2.11), key status, revocation and the expiry horizon, open, acknowledged
+and resolved incidents (raw events are never counted), and per-main sub-account usage. Ids are
+deterministic and the password hash is a fixed fake. Not run locally (no docker); CI integration
+lane.
 """
 
 from __future__ import annotations
@@ -87,17 +88,22 @@ def _seed(c: psycopg.Connection) -> None:
     _key(c, s4, "active", NOW + timedelta(days=5))  # deleted account: never counted
     _key(c, m2, "expired", NOW - timedelta(days=1))
     _key(c, l1, "active", NOW + timedelta(days=3))  # live: never in the demo totals
-    for component, kind, severity, resolved in [
+    for component, kind, severity, resolved in [  # raw events: never counted (E42-T05)
         ("recorder", "disk_halt", "critical", False),
-        ("recorder", "disk_halt", "critical", False),  # same incident, second occurrence
-        ("ingestion", "ws_gap", "error", False),
-        ("oms", "reject", "error", True),
         ("api", "slow", "warning", False),
     ]:
         c.execute(
             "INSERT INTO system_events (component, kind, severity, message, resolved_at) "
             "VALUES (%s, %s, %s, 'seeded', CASE WHEN %s THEN now() END)",
             (component, kind, severity, resolved),
+        )
+    for n, status in enumerate(("open", "acknowledged", "resolved", "open"), start=1):
+        c.execute(  # the materialised incidents: three unresolved, one resolved
+            "INSERT INTO incidents (id, component, signature, severity, status, title, "
+            "occurrences, first_seen_at, last_seen_at, acknowledged_at, resolved_at) VALUES "
+            "(%s, 'recorder', %s, 'error', %s, 'seeded', 1, now(), now(), "
+            "CASE WHEN %s <> 'open' THEN now() END, CASE WHEN %s = 'resolved' THEN now() END)",
+            (_id(), f"{n:016x}", status, status, status),
         )
 
 
@@ -180,10 +186,10 @@ async def test_account_totals_are_scoped_to_the_bound_environment(
     assert await counts.account_totals(NOW + timedelta(days=30)) == expected
 
 
-async def test_open_incidents_group_unresolved_errors_by_component_and_kind(
+async def test_open_incidents_count_the_unresolved_rows_of_the_incidents_table(
     relational: SqlAlchemyRelationalRepository,
 ) -> None:
-    assert await SqlAlchemyAdminCounts(relational, env="demo").open_incidents() == 2
+    assert await SqlAlchemyAdminCounts(relational, env="demo").open_incidents() == 3
 
 
 @pytest.mark.parametrize(("env", "used"), [("demo", 3), ("live", 2)], ids=["demo", "live"])

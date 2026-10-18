@@ -100,3 +100,6 @@ ALERT_DELIVERIES_ACTION = "archive_parquet"
 DRAWINGS_SOFT_DELETE_DAYS = 90
 #: Soft-deleted workspaces and layouts are hard-purged after this many days (E15-T01, §3.8.1).
 WORKSPACES_SOFT_DELETE_DAYS = 90
+#: `incidents` (21 Sec.7): a `resolved` row is dropped this many months after its `last_seen_at`
+#: (the `system_events` total horizon); open and acknowledged rows are kept (E42-T05).
+INCIDENTS_RESOLVED_MONTHS = 24
