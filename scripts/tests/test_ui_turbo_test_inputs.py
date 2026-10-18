@@ -30,7 +30,8 @@ workspace globs; packages/config's own suite imports the preset by a relative pa
 leaves it out.
 
 ui's `typecheck` reads the token formats' declarations (its token-build tests import the
-formats), derived from the relative imports in the files its tsconfig includes; the tsconfig chain
+formats), derived from the relative imports in the files its tsconfig includes; the pin checks
+each file it reads, its own too, as an exclusion can drop one, and the rest of the tsconfig chain
 reaches its hash through `^typecheck`. The typecheck lane's `...[origin/main]` filter selected no
 package for a change only there, so ui's typecheck carries a tag and the lane adds its selector."""
 
@@ -266,13 +267,14 @@ def test_ui_build_inputs_cover_what_the_build_reads() -> None:
 
 
 def _typecheck_reads() -> set[str]:
-    """The files outside packages/ui that its typecheck reads: what each relative module that a
-    TypeScript file its tsconfig includes imports, statically or with `import()`, resolves to."""
+    """The files ui's typecheck reads: its tsconfig, the TypeScript files that tsconfig includes
+    and what each relative module they import, statically or with `import()`, resolves to."""
     include = json.loads((ROOT / UI / "tsconfig.json").read_text(encoding="utf-8"))["include"]
     tops = sorted({ROOT / UI / entry.split("/")[0] for entry in include})
     files = [file for top in tops for file in ([top] if top.is_file() else sorted(top.rglob("*")))]
-    reads: set[str] = set()
-    for source in [file.relative_to(ROOT).as_posix() for file in files if file.suffix in TS]:
+    sources = [file.relative_to(ROOT).as_posix() for file in files if file.suffix in TS]
+    reads = {f"{UI}/tsconfig.json", *sources}
+    for source in sources:
         text = (ROOT / source).read_text(encoding="utf-8")
         for specifier in STATIC_IMPORT.findall(text) + DYNAMIC_IMPORT.findall(text):
             target = posixpath.normpath(posixpath.join(posixpath.dirname(source), specifier))
@@ -280,17 +282,17 @@ def _typecheck_reads() -> set[str]:
             ends = DECLARATIONS.get(suffix)
             candidates = [stem + end for end in ends] if ends else [target + end for end in BARE]
             found = [path for path in candidates if (ROOT / path).is_file()]
-            if found and not PurePosixPath(target).is_relative_to(UI):
+            if found:
                 reads.add(found[0])
     return reads
 
 
-def test_ui_typecheck_hashes_the_declarations_it_reads_outside_the_package() -> None:
+def test_ui_typecheck_hashes_each_file_it_reads() -> None:
     reads = _typecheck_reads()
     # An empty scan proves nothing: ui's token-build tests import the formats today.
-    assert "tools/style-dictionary/formats/json-flat.d.ts" in reads
+    assert {f"{UI}/src/index.ts", "tools/style-dictionary/formats/json-flat.d.ts"} <= reads
+    # File by file: an exclusion (`!src/**`) drops files and still keeps every glob of the list.
     inputs = _inputs(UI, "typecheck")
-    assert set(_root_inputs("typecheck")) <= set(inputs), "keeps the sources and tsconfig files"
     assert sorted(path for path in reads if not _covered(path, inputs)) == []
 
 
