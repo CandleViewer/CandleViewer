@@ -190,10 +190,15 @@ async def test_the_rest_half_ends_at_the_jobs_deadline_with_no_verdict() -> None
     assert w.kinds() == [] and w.check.results == {}
 
 
-async def test_the_socket_half_gets_only_what_is_left_of_the_twelve_seconds() -> None:
+@pytest.mark.parametrize(("took", "dialled"), [(11.999, [KEY]), (12.0, []), (12.5, [])])
+async def test_the_socket_half_gets_only_what_is_left_of_the_twelve_seconds(
+    took: float, dialled: list[UUID]
+) -> None:
+    """A socket that never answers is cut at what is left (here 1 ms); with nothing left the port
+    is never called, so no open of the deployment's budget is spent (SR-E27-05)."""
     w, clock, socket = World(target()), Clock(), Socket(None)  # a socket that never answers
-    done = await run(flow_of(w, job=Slow(w.check, clock, 12.5), clock=clock, socket=socket))
-    assert done.websocket == Probe(False, None, "timeout") and socket.calls == [KEY]
+    done = await run(flow_of(w, job=Slow(w.check, clock, took), clock=clock, socket=socket))
+    assert (done.websocket, socket.calls) == (Probe(False, None, "timeout"), dialled)
 
 
 async def test_a_socket_half_that_raises_is_its_own_auth_error_never_the_tests() -> None:

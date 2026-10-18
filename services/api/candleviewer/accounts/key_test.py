@@ -21,8 +21,9 @@ C-3.2, C-3.4); `key_test_wiring` binds its ports. For the acting Owner (`Importe
    (`verify()`'s order). It is diagnostic (ruling 11): it never enforces and never raises, and its
    failure only makes `passed` false.
 5. Bounds (ticket performance notes): 5 s per signed call and 12 s for the REST half are the job's,
-   and the WebSocket half gets what is left of 12 s from the test's start. The verdict's handling
-   is never cut by them. Nothing here is on the order path.
+   and the WebSocket half gets what is left of 12 s from the test's start: with nothing left it
+   is a `timeout` that opens nothing. The verdict's handling is never cut by them. Nothing here is
+   on the order path.
 """
 
 from __future__ import annotations
@@ -255,8 +256,11 @@ class KeyTest:
 
     async def _socket(self, key_id: UUID, started: float) -> Probe:
         """The WebSocket half within what is left of the deadline. Diagnostic: whatever ends it
-        is its result, never raised (a cancellation still propagates)."""
-        left = max(0.0, started + self._deadline_s - self._monotonic())
+        is its result, never raised (a cancellation still propagates). With nothing left the port
+        is never called: its probe spends one of the deployment's opens first (SR-E27-05)."""
+        left = started + self._deadline_s - self._monotonic()
+        if left <= 0:
+            return Probe(False, None, "timeout")
         try:
             async with asyncio.timeout(left):
                 auth = await self._websocket(key_id)
