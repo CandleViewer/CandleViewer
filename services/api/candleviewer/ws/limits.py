@@ -36,6 +36,9 @@ Single home for every bound the gateway enforces. Overflow policy:
 - A `resync`, a `ctl` that would re-snapshot or a `sub` entry that would start a
   subscription, past the connection's rebuild budget -> `resync_rate_limited`; it
   changes nothing, and only a topic's own resync loop is revoked (SR-193).
+- With the backpressure flag on, a connection's queued `bars.*` frames past
+  `BARS_SHARE_PCT` of either limit of its outbound budget -> those topics alone are
+  dropped and re-snapshotted (`drop_share`); no other family loses a frame (SR-E12-07).
 """
 
 from __future__ import annotations
@@ -83,6 +86,9 @@ MAX_SYMBOLS_PER_CONNECTION = 40
 #: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
 #: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
 MAX_BARS_SUBSCRIPTIONS = 16
+#: SR-E12-07 (§8.4, flag on): the share, in percent of each limit of a connection's outbound
+#: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
+BARS_SHARE_PCT = 50
 #: SR-193 (§7.5, §16.2): the rebuild budget of a connection, which every snapshot a client causes
 #: draws on: per subscription key, and in all, in any sliding `REBUILD_WINDOW_S`. The connection's
 #: limit is a full attach of `MAX_SUBSCRIPTIONS` plus one full replace.
