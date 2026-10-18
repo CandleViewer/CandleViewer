@@ -22,8 +22,9 @@ measuring it and periodically breaking it on purpose.
 PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
-│  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, credential
-│  │                hygiene; CI-SEC-001/005, #3385), spike-containment (CI-SPIKE-001/002),
+│  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, a merge
+│  │                group's own commit; credential hygiene; CI-SEC-001/005, #3385),
+│  │                spike-containment (CI-SPIKE-001/002),
 │  │                changelog-fragment (CI-REL-001)*, licence-header, docs-link-check (GOV-002);
 │  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
@@ -125,9 +126,11 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   try to work around it; open an `infra-devops` issue.
 - On a merge group's run (the merge queue, #3433) `commitlint` and `changelog-fragment` read
   `false`/`skipped`: they check PR metadata, which the PR's own run already did. Every other lane
-  reads as on a PR. A queue run is never cancelled; a red one drops its PR from the queue: fix and
-  push, and the orchestrator enqueues it again. The workflows that run on `pull_request` only do not
-  run in the queue: protection requires `ci-required` alone.
+  reads as on a PR, but the filters compare the group with `main`, so a group queued behind others
+  can run more lanes than its PR did; `secret-scan` scans the group's own commit. A queue run is
+  never cancelled; a red one drops its PR from the queue: fix and push, and the orchestrator
+  enqueues it again. The workflows that run on `pull_request` only do not run in the queue:
+  protection requires `ci-required` alone.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`

@@ -60,14 +60,15 @@ jobs:
 
       # #3433: the change under test, decided here once. A pull request is its own diff: base and
       # head stay empty, so paths-filter lists the PR's files through the API, as before. A merge
-      # group is base_sha..head_sha: the base is the group's parent commit (with batching, the
-      # entry ahead), so it is still one PR's change. paths-filter fetches the base commit itself
-      # (depth 1) and diffs the two trees, so the shallow checkout is enough.
+      # group is diffed against `main` from their merge base (paths-filter fetches both), so its
+      # lanes cover every entry ahead of it too, never just its own base_sha: with grouping
+      # HEADGREEN (.github/branch-protection.json) the queue merges a failed entry together with
+      # a later one that passed, trusting the later run to have checked the combined change.
       - name: Change under test (pr, base, head)
         id: change
         env:
           EVENT: ${{ github.event_name }}
-          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
           GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
@@ -75,8 +76,8 @@ jobs:
           case "$EVENT" in
             pull_request) echo "pr=true" >> "$GITHUB_OUTPUT" ;;
             merge_group)
-              [[ "$GROUP_BASE" =~ $sha && "$GROUP_HEAD" =~ $sha ]] || { echo "::error::merge group without base/head SHA"; exit 1; }
-              printf 'pr=false\nbase=%s\nhead=%s\n' "$GROUP_BASE" "$GROUP_HEAD" >> "$GITHUB_OUTPUT" ;;
+              [[ "$GROUP_BASE_REF" == "refs/heads/main" && "$GROUP_HEAD" =~ $sha ]] || { echo "::error::merge group not for main or without a head SHA"; exit 1; }
+              printf 'pr=false\nbase=main\nhead=%s\n' "$GROUP_HEAD" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::pr.yml runs on pull_request and merge_group, not $EVENT"; exit 1 ;;
           esac
 
@@ -302,8 +303,11 @@ jobs:
         continue-on-error: true
         timeout-minutes: 10
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # A merge group (#3433): its own commit, base_sha..head_sha, the queue's squash of the
+          # PR. A content scan needs no more: every entry ahead had its commits scanned on its own
+          # PR's run, which is green before the PR can be enqueued.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           TRUFFLEHOG_IMAGE: trufflesecurity/trufflehog:3.97.9@sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db
         run: |
@@ -372,7 +376,7 @@ jobs:
         run: python tools/ci/check_spike_containment.py --root .
       - name: changelog-fragment (E03-T11, CI-REL-001)
         id: changelog-fragment
-        if: ${{ !cancelled() && needs.changed-paths.outputs.pr == 'true' }}
+        if: ${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -467,7 +471,7 @@ jobs:
           node-version: "20"
       - name: commitlint (Conventional Commits, 01-sdlc-and-branching.md §6)
         id: commitlint
-        if: ${{ !cancelled() && needs.changed-paths.outputs.pr == 'true' }}
+        if: ${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}
         continue-on-error: true
         timeout-minutes: 5
         run: |
@@ -678,7 +682,7 @@ jobs:
           FILTER_ENGINE: ${{ needs.changed-paths.outputs.engine }}
           FILTER_RULES: ${{ needs.changed-paths.outputs.rules }}
           FILTER_SEMGREP: ${{ needs.changed-paths.outputs.semgrep }}
-          FILTER_PR: ${{ needs.changed-paths.outputs.pr }} # false on a merge group (#3433)
+          FILTER_PR: ${{ needs.changed-paths.outputs.pr }} # false on a merge group only (#3433)
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
           RESULT_GATES: ${{ needs.gates.result }}
           RESULT_SECRET_SCAN: ${{ needs.gates.outputs.secret-scan }}
@@ -715,8 +719,8 @@ jobs:
               "secret-scan": { applicable: true, result: process.env.RESULT_SECRET_SCAN },
               "pin-check": { applicable: isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK },
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
-              commitlint: { applicable: isTrue(process.env.FILTER_PR), result: process.env.RESULT_COMMITLINT },
-              "changelog-fragment": { applicable: isTrue(process.env.FILTER_PR), result: process.env.RESULT_CHANGELOG_FRAGMENT },
+              commitlint: { applicable: process.env.FILTER_PR !== "false", result: process.env.RESULT_COMMITLINT },
+              "changelog-fragment": { applicable: process.env.FILTER_PR !== "false", result: process.env.RESULT_CHANGELOG_FRAGMENT },
               "licence-header": { applicable: true, result: process.env.RESULT_LICENCE_HEADER },
               "docs-link-check": { applicable: true, result: process.env.RESULT_DOCS_LINK_CHECK },
               gen: { applicable: true, result: process.env.RESULT_GEN },

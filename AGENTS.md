@@ -404,9 +404,9 @@ reading CRLF line endings as LF (#3454).
 
 ### Merge (delivery orchestrator only, C-10.1; `docs/plan/01-sdlc-and-branching.md` §7)
 
-| Task                                                                                     | Command                           |
-| ---------------------------------------------------------------------------------------- | --------------------------------- |
-| Enqueue an approved, green PR once the owner turns on the merge queue for `main` (#3433) | `gh pr merge <N> --squash --auto` |
+| Task                                                                                                                    | Command                           |
+| ----------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Enqueue a PR after its two C-10.1 approvals and a green run, once the owner turns on the merge queue for `main` (#3433) | `gh pr merge <N> --squash --auto` |
 
 The queue re-runs `ci-required` on `main` plus the PR and squash-merges when it passes; a red run
 drops the PR from the queue. Never `--admin` (C-9.1).
