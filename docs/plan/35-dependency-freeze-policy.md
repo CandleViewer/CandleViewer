@@ -165,4 +165,10 @@ reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `m
 | tinypool 1.1.1 (2 Critical) | GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr                           | transitive, vitest 3.2.7                    | test-only       | **Fixed**: `overrides: tinypool >=2.1.2 <3` (2.2.0); every vitest suite passes on it. Remove with vitest 4 (#1819)                                                 |
 | source-map-js 1.2.1 (High)  | GHSA-68fv-2mgg-jv7q                                                | transitive, postcss and magicast            | build/test-time | **Fixed**: `overrides: source-map-js >=1.2.2 <2` (1.2.2); the ui and web builds pass                                                                               |
 | braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | Unchanged: EX-06 (`security/accepted-risks.yaml`), expires 2026-12-31                                                                                              |
-| 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | Below the gate's High threshold. The R0 quality gate (`30-release-roadmap.md` §4.4) wants a dated accepted-risk entry per Medium: an owner decision, not made here |
+| 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | **Accepted** to 2026-11-26 (the R1 cut): one dated entry per advisory in `security/accepted-risks.yaml` (#3558), as R0's gate (`30-release-roadmap.md` §4.4) wants |
+
+#3558: none of the seven has a patched release in its installed major. react-router (which
+ships) and vitest need #1819's majors, uuid needs Storybook 9 or later, esbuild needs tsup 9,
+and sprintf-js has no fix. The `dependabot-alerts` step (C-9.1 #11's alert gate) also reads the
+open Dependabot alerts: vitest on seven manifests, which the vitest entry covers, and tauri 2.1.1
+in the E06-T01 bench harness, accepted to the same date. Each is re-decided at the R1 cut.
