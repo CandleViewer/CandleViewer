@@ -335,7 +335,10 @@ def test_only_these_routes_skip_the_backstop() -> None:
             warnings.simplefilter("ignore", SyntaxWarning)
             found.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
 
-    assert found.routes == {"POST /auth/logout", "DELETE /me/sessions/{sessionId}"}
+    # `guard` is the enrolment-only middleware (`api/enrolment_guard.py`, #2295), not a route: it
+    # reads the session with `allow_locked=True` only to classify it, and hands a disabled user's
+    # session to the route (`test_guard_cross_user_a_full_session_is_never_restricted[inactive]`).
+    assert found.routes == {"POST /auth/logout", "DELETE /me/sessions/{sessionId}", "guard"}
 
 
 async def test_refresh_without_identity_is_501_and_burns_no_token() -> None:
