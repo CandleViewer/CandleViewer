@@ -141,11 +141,27 @@ def check_declared_prefs(shell_port_js: str) -> list[Violation]:
     return vs
 
 
+def _call_args(js: str, callee: str) -> list[str]:
+    """The argument text of every `callee(...)` call, by balanced parentheses."""
+    found: list[str] = []
+    for m in re.finditer(re.escape(callee) + r"\s*\(", js):
+        depth, i = 1, m.end()
+        while i < len(js) and depth:
+            depth += {"(": 1, ")": -1}.get(js[i], 0)
+            i += 1
+        found.append(js[m.end() : i - 1])
+    return found
+
+
 def check_app_scheme(main_js: str) -> list[Violation]:
     """SR-112 + SR-174: the web app is served over the scoped app:// handler, under the CSP.
 
-    No privileged scheme may bypass the CSP, the app scheme keeps its closed privilege set,
+    No privileged scheme may bypass the CSP, the app scheme keeps its closed privilege set and is
+    the only scheme registered (one call, passing the constant itself, not a copy or a spread),
     and no window loads from a file: URL (a file: page is outside the handler's asset root).
+    These are text heuristics over the compiled main process: the file: check sees `loadFile(`,
+    a `file:` literal or `pathToFileURL` inside `loadURL(`, not a URL built elsewhere and passed
+    in a variable. The unit tests in apps/desktop/test/index.test.ts pin the real call arguments.
     """
     vs: list[Violation] = []
     if re.search(r"\bbypassCSP\s*:\s*(?:true|!0)", main_js):
@@ -157,14 +173,10 @@ def check_app_scheme(main_js: str) -> list[Violation]:
             )
         )
     m = re.search(r"APP_SCHEME_PRIVILEGES\s*=\s*\{(.*?)\}", main_js, re.DOTALL)
+    pair = r"([A-Za-z]+)\s*:\s*(true|false|!0|!1)"
     declared = (
-        {
-            key: value in {"true", "!0"}
-            for key, value in re.findall(
-                r"([A-Za-z]+)\s*:\s*(true|false|!0|!1)", m.group(1)
-            )
-        }
-        if m
+        {key: value in {"true", "!0"} for key, value in re.findall(pair, m.group(1))}
+        if m and not re.sub(pair, "", m.group(1)).replace(",", "").strip()
         else None
     )
     if declared != APP_SCHEME_PRIVILEGES:
@@ -175,7 +187,24 @@ def check_app_scheme(main_js: str) -> list[Violation]:
                 f"app scheme privileges are {declared!r}; allowed set is {APP_SCHEME_PRIVILEGES!r}",
             )
         )
-    if re.search(r"\.loadFile\s*\(|\.loadURL\s*\(\s*[\"'`]file:", main_js):
+    calls = [
+        re.sub(r"\s+", "", a)
+        for a in _call_args(main_js, "registerSchemesAsPrivileged")
+    ]
+    if calls != ["[{scheme:APP_SCHEME,privileges:APP_SCHEME_PRIVILEGES}]"]:
+        vs.append(
+            Violation(
+                "SR-174",
+                "main registerSchemesAsPrivileged",
+                f"expected one call registering only APP_SCHEME with APP_SCHEME_PRIVILEGES, "
+                f"found {len(calls)} call(s)",
+            )
+        )
+    loads = _call_args(main_js, ".loadURL")
+    if ".loadFile(" in re.sub(r"\s+", "", main_js) or any(
+        re.match(r"\s*[\"'`]file:", a, re.IGNORECASE) or "pathToFileURL" in a
+        for a in loads
+    ):
         vs.append(
             Violation(
                 "SR-174",

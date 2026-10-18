@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E10-X02: `electron-hardening` CI gate (SR-110..SR-119, SR-114 build-time assertion).
+"""E10-X02: `electron-hardening` CI gate (SR-110..SR-119, SR-174, SR-114 at build time).
 
 Inspects the *built* artefacts (compiled main/preload output and the renderer
 bundle), not the TypeScript source, because source-level checks miss build-time
@@ -8,8 +8,8 @@ running app can report (live `webPreferences`, the CSP header the main process
 actually builds) come from `apps/desktop/scripts/collect-hardening-facts.mjs`
 as a JSON file passed with `--facts`.
 
-Every failure names the SR requirement and links the section 6.11 row so a
-developer can self-serve the fix. Exit 0 = clean, 1 = violations, 2 = usage.
+Every failure names the SR requirement and links its section 6.11 or 6.11a row so
+a developer can self-serve the fix. Exit 0 = clean, 1 = violations, 2 = usage.
 Stdlib only. Checks live in `electron_hardening_checks.py`.
 """
 
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         require_runtime=args.require_runtime,
     )
     if not violations:
-        print("electron-hardening: clean (SR-110..SR-119 assertions hold)")
+        print("electron-hardening: clean (SR-110..SR-119 and SR-174 assertions hold)")
         return 0
     for v in violations:
         print(f"::error title=electron-hardening {v.sr}::{v.render()}")

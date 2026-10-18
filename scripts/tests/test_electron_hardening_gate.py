@@ -250,7 +250,8 @@ def test_bypass_csp_on_any_privileged_scheme_fails_sr112(tree: Tree) -> None:
         + 'protocol.registerSchemesAsPrivileged([{scheme:"x",privileges:{bypassCSP:!0}}]);'
     )
     vs = tree.violations()
-    assert srs(vs) == {"SR-112"} and "bypassCSP" in vs[0].render()
+    # The second registration also breaks the one-call rule (SR-174).
+    assert srs(vs) == {"SR-112", "SR-174"} and "bypassCSP" in vs[0].render()
 
 
 @pytest.mark.parametrize(
@@ -261,6 +262,7 @@ def test_bypass_csp_on_any_privileged_scheme_fails_sr112(tree: Tree) -> None:
         "standard: true, secure: true, allowServiceWorkers: true",
         "standard: true, secure: false",
         "standard: true",
+        "standard: true, secure: true, ...EXTRA",
     ],
 )
 def test_app_scheme_privileges_outside_the_closed_set_fail_sr174(
@@ -283,6 +285,36 @@ def test_bypass_csp_in_the_app_scheme_privileges_fails_sr112_and_sr174(
     assert srs(tree.violations()) == {"SR-112", "SR-174"}
 
 
+REGISTRATION = (
+    "protocol.registerSchemesAsPrivileged("
+    "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
+)
+
+
+@pytest.mark.parametrize(
+    "registration",
+    [
+        "privileges: { standard: true, secure: true, supportFetchAPI: true }",
+        "privileges: { ...APP_SCHEME_PRIVILEGES, corsEnabled: true }",
+        "privileges: OTHER_PRIVILEGES",
+        "privileges: APP_SCHEME_PRIVILEGES }, { scheme: 'x', privileges: APP_SCHEME_PRIVILEGES",
+        None,
+    ],
+)
+def test_app_scheme_registration_other_than_the_constant_fails_sr174(
+    tree: Tree, registration: str | None
+) -> None:
+    replacement = (
+        ""
+        if registration is None
+        else REGISTRATION.replace("privileges: APP_SCHEME_PRIVILEGES", registration)
+    )
+    assert REGISTRATION in GOOD_MAIN
+    tree.files["desktop/main/index.js"] = GOOD_MAIN.replace(REGISTRATION, replacement)
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "registerSchemesAsPrivileged" in vs[0].render()
+
+
 def test_missing_app_scheme_privileges_fails_sr174(tree: Tree) -> None:
     tree.files["desktop/main/appProtocol.js"] = "export const APP_SCHEME = 'app';\n"
     assert srs(tree.violations()) == {"SR-174"}
@@ -294,6 +326,10 @@ def test_missing_app_scheme_privileges_fails_sr174(tree: Tree) -> None:
         'void win.loadFile(path.join(__dirname, "../../../web/dist/index.html"));',
         'void win.loadURL("file:///opt/app/web/dist/index.html");',
         "void win.loadURL(`file://${indexPath}`);",
+        'void win.loadURL("FILE:///opt/app/web/dist/index.html");',
+        "void win.loadURL(pathToFileURL(indexPath).href);",
+        "void win.loadURL(url.pathToFileURL(path.join(root, 'index.html')).href);",
+        "void win . loadFile (indexPath);",
     ],
 )
 def test_window_loading_a_file_url_fails_sr174(tree: Tree, load: str) -> None:
