@@ -220,8 +220,10 @@ async def test_a_disabled_users_socket_closed_by_the_deployed_hub_is_one_scraped
 
     app.state.revocation_hub.register("s1", socket)
     before = observed()
+    assert before is not None, f"{_LATENCY}_count is not on the scraped registry"
     await app.state.revocation_hub.revoke("s1", "user_disabled")
-    assert before is not None and (closes, observed()) == ([4403], before + 1)
+    assert closes == [4403]
+    assert observed() == before + 1
 
 
 def test_the_revoke_to_close_latency_has_one_name_catalogued_and_exported() -> None:

@@ -7,7 +7,9 @@ reason `user_disabled` (the SR-029 disable cascade) gets the §9.5 `bye` and
 4403 instead, so the client returns to login and does not reconnect (#2493).
 Each revocation that attempts a close is one observation of `auth_revocation_latency_seconds`
 (`auth/metrics.py`, scraped; `AuthRevocationLatencyHigh` tickets a p99 above 5 s, SR-029), on the
-hub's monotonic clock (#3415): from the revoke to the last of its closes initiated or failed. The
+hub's monotonic clock (#3415): from the revoke to the last of its closes initiated or failed. A
+disable's per-user close, `ConnectionRegistry.user_disabled` (`ws/permissions.py`), which also ends
+the sockets on sessions that no revoke names (#3440), is one more, on the registry's clock. The
 gateway's closer queues the `bye` and seals the connection without suspending, so no data frame
 is sent after it; its writer closes the socket later, and that is not measured.
 

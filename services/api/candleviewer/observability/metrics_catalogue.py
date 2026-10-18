@@ -2572,7 +2572,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Seconds from a session revocation reaching the WS revocation hub to the last of that "
         "session's socket closes initiated (bye queued, connection sealed: no data frame after "
         "it) or failed; the transport close is not measured. One per revocation that attempted "
-        "a close (SR-029).",
+        "a close, and one for a disable's per-user close through the WS registry (SR-029).",
         "AuthRevocationLatencyHigh (p99 over 15m > 5 s, ticket); runbook auth-rbac section 4",
         _L,
         "E09",

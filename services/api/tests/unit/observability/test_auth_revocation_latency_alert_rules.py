@@ -47,3 +47,17 @@ def test_the_runbook_names_the_series_and_an_absent_guard_watches_it() -> None:
 
     assert "Ticket." in section and "keep_firing_for" in section and _SERIES in section
     assert (guard["expr"], guard["labels"]["severity"]) == (f"absent({_SERIES}_bucket)", "ticket")
+
+
+def test_the_runbook_calls_nan_healthy_and_an_empty_answer_an_unscraped_series() -> None:
+    """With the series scraped and no revocation in the window every bucket's rate is 0, so
+    `histogram_quantile` answers NaN, as the rule's comment says. An empty answer is the series
+    not being scraped, the regression #3415 fixed, and the runbook must not read it as healthy:
+    in the healthy result of its first command and in the check that closes the ticket."""
+    lines = _runbook_section(_rule(_TICKET)).splitlines()
+    first_command = next(line for line in lines if "First three diagnostic commands" in line)
+    recovery = next(line for line in lines if line.startswith("| 7. Verify recovery"))
+
+    for line in (first_command, recovery):
+        assert "NaN" in line, f"no NaN in: {line[:70]}"
+        assert "not scraped" in line, f"an empty answer is not explained in: {line[:70]}"

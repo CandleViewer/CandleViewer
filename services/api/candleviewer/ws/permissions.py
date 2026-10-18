@@ -31,6 +31,7 @@ import structlog
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import auth_revocation_latency_seconds
 from candleviewer.auth.scopes import Allow, Deny, DenyReason, PrincipalSnapshot, decide
 from candleviewer.bars.errors import (
     BarParamOutOfRange,
@@ -1253,20 +1254,34 @@ class ConnectionRegistry:
     async def user_disabled(self, user_id: uuid.UUID) -> int:
         """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket. #3413:
         first the user is remembered and the version advances, so a socket still in its
-        handshake reads its principal again (SR-189) and the gateway refuses its registration."""
+        handshake reads its principal again (SR-189) and the gateway refuses its registration.
+
+        One observation of `auth_revocation_latency_seconds` when there is any socket (SR-029,
+        #3415), on `services.clock`, as the revocation hub makes one for a session's closes:
+        from this call to the last close initiated or failed, however many sockets there are. The
+        gateway's closer queues the `bye` and seals the connection, and its writer closes the
+        socket later, which is not measured. Made in a `finally`, so a close that raised, one cut
+        off at `send_timeout_s` and a caller that cancelled mid-batch (the disable cascade bounds
+        this step at 2 s and does not shield it) are timed too."""
         self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
         self._remember_disabled(user_id)  # before the closes, which suspend
         entries = self._conns.pop(user_id, [])
-        for authz, _send, close in entries:
-            closer = self._closers.pop(id(authz), None)
-            authz.release_all()
-            ws_revoked_total.labels(reason="user_disabled").inc()
-            with contextlib.suppress(Exception):
-                async with asyncio.timeout(self.send_timeout_s):
-                    if closer is not None:
-                        await closer(user_disabled_bye(self._clock_ms()), 4403)
-                    elif close is not None:
-                        await close()
+        if not entries:
+            return 0
+        started = self.services.clock()
+        try:
+            for authz, _send, close in entries:
+                closer = self._closers.pop(id(authz), None)
+                authz.release_all()
+                ws_revoked_total.labels(reason="user_disabled").inc()
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(self.send_timeout_s):
+                        if closer is not None:
+                            await closer(user_disabled_bye(self._clock_ms()), 4403)
+                        elif close is not None:
+                            await close()
+        finally:
+            auth_revocation_latency_seconds.observe(self.services.clock() - started)
         return len(entries)
 
 

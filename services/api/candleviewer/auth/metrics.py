@@ -146,16 +146,19 @@ auth_session_revoke_denied_total = Counter(
     "DELETE /me/sessions/{id} for an id that is not one of the caller's live sessions "
     "(IDOR probe, or a stale row for the caller's own ended session).",
 )
-#: SR-029, E09-S03 (#3415): the one revoke-to-close latency, written by the WS `RevocationHub`
-#: (`ws` may import `auth`, never the reverse): one observation per revocation that attempted a
-#: close, from its `revoke` to the last of that session's closes initiated (`bye` queued and the
-#: connection sealed: no data frame after it) or failed, on the hub's clock. The socket's own
-#: close, in the connection's writer, is not measured. No label. Scraped: in
+#: SR-029, E09-S03 (#3415): the one revoke-to-close latency, written by the WS `RevocationHub` and
+#: by `ConnectionRegistry.user_disabled` (`ws` may import `auth`, never the reverse). One
+#: observation per revocation that attempted a close, from its `revoke` to the last of that
+#: session's closes initiated (`bye` queued and the connection sealed: no data frame after it) or
+#: failed, on the hub's clock; and one per disable's per-user close that had a socket, from its
+#: start to the last of the user's closes initiated or failed, on the registry's clock. The
+#: socket's own close, in the connection's writer, is not measured. No label. Scraped: in
 #: `AUTH_EXPORTED_NAMES`; `AuthRevocationLatencyHigh` reads it.
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
-    "Seconds from a session revocation reaching the WS hub to the last of its socket closes "
-    "initiated (bye queued, connection sealed); the transport close is not measured.",
+    "Seconds from a session revocation reaching the WS hub, or a disabled user's per-user close "
+    "starting, to the last of its socket closes initiated (bye queued, connection sealed) or "
+    "failed; the transport close is not measured.",
     buckets=REVOCATION_CLOSE_BUCKETS,
 )
 # SR-022 (#2496): one per accepted recovery code, counted before its `auth.recovery_code_used`
@@ -293,7 +296,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_break_glass_unresolved_events",
         "auth_break_glass_attempts",
         "auth_break_glass_state_read_failures_total",
-        # SR-029 revoke-to-close latency, observed by the WS revocation hub (#3415)
+        # SR-029 revoke-to-close latency, observed by the WS hub and the per-user close (#3415)
         "auth_revocation_latency_seconds",
     }
 )

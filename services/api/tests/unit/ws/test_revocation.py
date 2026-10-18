@@ -4,6 +4,7 @@ sockets get `bye user_disabled` and close 4403, no reconnect (23-ws-protocol.md 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable, Iterator
 from typing import Any, cast, get_args
 
@@ -14,14 +15,17 @@ from prometheus_client import CollectorRegistry
 from structlog.testing import capture_logs
 
 from candleviewer.auth.metrics import export_auth_metrics
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws.gateway import _Connection
+from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
     MAX_CLOSE_TASKS,
     REVOKED_MEMORY_S,
+    Closer,
     RevocationHub,
     RevokedReason,
     bye_frame,
@@ -495,7 +499,8 @@ async def test_the_latency_runs_from_the_revoke_to_the_last_close_on_the_hub_clo
     before = [scraped("sum"), scraped("bucket", le="5.0"), scraped("bucket", le="10.0")]
     await hub.revoke("s1", "user_disabled")
     after = [scraped("sum"), scraped("bucket", le="5.0"), scraped("bucket", le="10.0")]
-    assert [a - b for a, b in zip(after, before, strict=True)] == [6.0, 0.0, 1.0]
+    # `sum` is a float on a series every test shares: approximately, not to the last bit.
+    assert [a - b for a, b in zip(after, before, strict=True)] == pytest.approx([6.0, 0.0, 1.0])
 
 
 async def test_a_revoke_that_closes_no_socket_observes_no_latency(scraped: Scraped) -> None:
@@ -548,3 +553,177 @@ async def test_the_gateway_close_is_observed_once_sealed_before_its_socket_is_cl
     with pytest.raises(StopIteration):
         hub.revoke("s1", "user_disabled").send(None)
     assert (conn.sealed, sock.codes, scraped("count")) == (True, [], before + 1)
+
+
+def _observed(scraped: Scraped) -> list[float]:
+    """`count` and `sum` of the series now, for a before/after delta: the series is global."""
+    return [scraped("count"), scraped("sum")]
+
+
+def _grew(scraped: Scraped, before: list[float]) -> list[float]:
+    """How far `count` and `sum` have moved since `before`; compare `sum` with `pytest.approx`."""
+    return [now - then for now, then in zip(_observed(scraped), before, strict=True)]
+
+
+@pytest.mark.parametrize("reason", ["user_disabled", "session_revoked"])
+async def test_a_revoke_is_one_scraped_latency_observation_whatever_its_reason(
+    scraped: Scraped, reason: str
+) -> None:
+    """07 §9: a disable, a sign-out and a session or family revoke are all timed. The composition
+    root's publisher narrows every revocation reason to these two (`app._hub_publisher`)."""
+    hub = RevocationHub()
+    hub.register("s1", _Socket().close)
+    before = scraped("count")
+    assert await hub.revoke("s1", reason) == 1
+    assert scraped("count") == before + 1
+
+
+async def test_a_close_that_raises_is_still_one_scraped_latency_observation(
+    scraped: Scraped,
+) -> None:
+    """07 §9, the series' HELP and the hub's docstring: a failed close is timed too. This one
+    raises after 3 s of the hub's clock, so the observation is those 3 s, not none."""
+    clock = _Clock()
+
+    async def fails(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+        raise RuntimeError("socket gone")
+
+    hub = RevocationHub(monotonic=clock)
+    hub.register("s1", fails)
+    before = _observed(scraped)
+    with capture_logs():  # the failure is logged, as `test_a_failing_socket_does_not_block...`
+        assert await hub.revoke("s1", "user_disabled") == 1
+    assert _grew(scraped, before) == pytest.approx([1.0, 3.0])
+
+
+async def test_a_close_cut_off_at_its_bound_is_still_one_scraped_latency_observation(
+    scraped: Scraped,
+) -> None:
+    """The same for a close that reaches its bound: this one has used 2 s of the hub's clock and
+    never returns, so the bound ends it and the observation is those 2 s."""
+    clock = _Clock()
+
+    async def hung(frame: dict[str, Any], code: int) -> None:
+        clock.now += 2.0
+        await asyncio.Event().wait()  # never set: only the bound ends it
+
+    hub = RevocationHub(close_timeout_s=0.01, monotonic=clock)
+    hub.register("s1", hung)
+    before = _observed(scraped)
+    with capture_logs():
+        async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+            assert await hub.revoke("s1", "user_disabled") == 1
+    assert _grew(scraped, before) == pytest.approx([1.0, 2.0])
+
+
+# -- the disable's per-user close, `ConnectionRegistry.user_disabled` (#965 slice 7, #3440) ------
+
+_USER = uuid.UUID(int=0x5701)
+
+
+def _user_registry(clock: Callable[[], float]) -> ConnectionRegistry:
+    """A registry whose services run on `clock`. Its per-user close reads no principal."""
+
+    async def resolve(user_id: uuid.UUID) -> PrincipalSnapshot:
+        raise AssertionError("the per-user close resolves no principal")
+
+    return ConnectionRegistry(resolve, lambda: _NOW_MS, SubscriptionServices(clock=clock))
+
+
+def _connect(registry: ConnectionRegistry, closer: Closer) -> None:
+    """A live socket of `_USER` that the per-user close ends through `closer`."""
+    principal = PrincipalSnapshot(_USER, frozenset({"manager"}), frozenset())
+
+    async def send(frame: dict[str, Any]) -> None:
+        return None
+
+    registry.register(ConnectionAuthz(principal, registry.services), send, None, closer)
+
+
+async def test_the_per_user_close_is_one_scraped_latency_observation_for_all_its_sockets(
+    scraped: Scraped,
+) -> None:
+    """#3415, #965 slice 7: the per-user close is one observation on the series, however many
+    sockets the user has: from its start to the last close, here two of 3 s on the registry's
+    clock (`services.clock`)."""
+    clock = _Clock()
+
+    async def slow(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+
+    registry = _user_registry(clock)
+    _connect(registry, slow)
+    _connect(registry, slow)
+    before = _observed(scraped)
+    assert await registry.user_disabled(_USER) == 2
+    assert _grew(scraped, before) == pytest.approx([1.0, 6.0])
+
+
+async def test_a_per_user_close_with_no_socket_observes_no_latency(scraped: Scraped) -> None:
+    registry = _user_registry(_Clock())
+    before = scraped("count")
+    assert await registry.user_disabled(_USER) == 0
+    assert scraped("count") == before
+
+
+async def test_a_per_user_close_that_raises_is_still_one_scraped_latency_observation(
+    scraped: Scraped,
+) -> None:
+    """A failed close is timed too, here after 3 s of the registry's clock."""
+    clock = _Clock()
+
+    async def fails(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+        raise RuntimeError("socket gone")
+
+    registry = _user_registry(clock)
+    _connect(registry, fails)
+    before = _observed(scraped)
+    assert await registry.user_disabled(_USER) == 1
+    assert _grew(scraped, before) == pytest.approx([1.0, 3.0])
+
+
+async def test_a_per_user_close_cut_off_at_its_bound_is_still_one_scraped_latency_observation(
+    scraped: Scraped,
+) -> None:
+    """A close that has used 2 s of the registry's clock and never returns is ended by its bound
+    (`send_timeout_s`), and those 2 s are the observation."""
+    clock = _Clock()
+
+    async def hung(frame: dict[str, Any], code: int) -> None:
+        clock.now += 2.0
+        await asyncio.Event().wait()  # never set: only the bound ends it
+
+    registry = _user_registry(clock)
+    registry.send_timeout_s = 0.01
+    _connect(registry, hung)
+    before = _observed(scraped)
+    async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+        assert await registry.user_disabled(_USER) == 1
+    assert _grew(scraped, before) == pytest.approx([1.0, 2.0])
+
+
+async def test_a_per_user_close_cut_off_by_its_caller_is_still_one_observation(
+    scraped: Scraped,
+) -> None:
+    """The disable cascade bounds this step at 2 s and does not shield it: a cancel mid-batch
+    still records the batch once, up to the cut-off."""
+    clock, entered = _Clock(), asyncio.Event()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+        entered.set()
+        await asyncio.Event().wait()  # never set: only the cancel ends it
+
+    registry = _user_registry(clock)
+    registry.send_timeout_s = 60.0
+    _connect(registry, stalled)
+    _connect(registry, _Socket().close)
+    before = _observed(scraped)
+    caller = asyncio.create_task(registry.user_disabled(_USER))
+    await entered.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert _grew(scraped, before) == pytest.approx([1.0, 3.0])
