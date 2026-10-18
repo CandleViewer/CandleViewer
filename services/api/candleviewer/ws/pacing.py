@@ -8,10 +8,10 @@ exactly one sequence number. The first update after a quiet window leaves at onc
 leave when the window closes (`tick`). `orders` and `executions` bypass the pacer, frame by frame
 (S4). A queue that overflows is dropped and its topic marked for a `backpressure` snapshot (§8.4
 step 1); the outbound budget decides when that snapshot may go (step 2).
-A full queue counts as `cv_ws_overflow_total{reason="drop"}`, an update its merge cannot represent
-(footprint bars sharing an open time, #2529) as `reason="unmergeable"`; a malformed update is a
-producer bug, counted in `cv_ws_malformed_updates_total` and logged (family, topic and error class
-only), never as an overflow.
+A full queue counts as `cv_ws_overflow_total{reason="drop"}`, an update that breaks its merge rule
+(one to a confirmed footprint bar, #3297) as `reason="unmergeable"` and logged as a malformed update
+is; a malformed update is a producer bug, counted in `cv_ws_malformed_updates_total` and logged
+(family, topic and error class only), never as an overflow.
 
 With the flag on `ws/pipeline.py` routes the hub's deltas here (S3), checking the budget per update:
 `pending_bytes` is a total kept as the lanes change, and open windows are armed on a heap, so the
@@ -428,9 +428,12 @@ class Pacer:
         if queue.refusal == "malformed":  # a producer bug, not an overflow
             cv_ws_malformed_updates_total.labels(topic=family).inc()
             _log().warning("ws update malformed", family=family, ch=lane.sub.ch, error=queue.error)
-        else:  # `unmergeable` counts apart from a slow consumer's drops (a producer loop, #2529)
+        else:  # `unmergeable` counts apart from a slow consumer's drops (a producer bug, #3297)
             reason = "drop" if queue.refusal == "full" else "unmergeable"
             cv_ws_overflow_total.labels(reason=reason).inc()
+            if reason == "unmergeable":  # a producer bug, logged as a malformed update is
+                ch, error = lane.sub.ch, queue.error
+                _log().warning("ws update unmergeable", family=family, ch=ch, error=error)
         self.drop(lane.sub)
 
     def drop(self, sub: Subscription) -> None:

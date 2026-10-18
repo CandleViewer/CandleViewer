@@ -21,8 +21,8 @@ column for a heatmap bucket already sent complete. An update's envelope `meta` (
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
 (§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
-queue that hits a bound (`refusal` `full`), gets a valid update its merge cannot represent
-(`unmergeable`: footprint bars sharing an open time, until #2529) or one it cannot merge or size
+queue that hits a bound (`refusal` `full`), gets an update that breaks its merge rule
+(`unmergeable`: one to a footprint bar confirmed in the window) or one it cannot merge or size
 (`malformed`: a non-finite price, a missing key, anything a payload raises), refuses it, reports
 `overflowed` and drops every buffer at once: its pending state no longer equals the applied stream,
 so the caller must `clear()` it and re-snapshot the topic (§8.4) instead of emitting it. Nothing
@@ -52,8 +52,8 @@ from candleviewer.ws.topics import FAMILIES
 Payload = Mapping[str, Any]
 #: An update's envelope `meta` (bars: the §6.1 `include_delta` echo), if it has one.
 Meta = Mapping[str, Any] | None
-#: Why a queue refused an update: a bound, an update a merge cannot represent (both re-snapshot
-#: the topic), or a producer bug (counted apart, never as an overflow).
+#: Why a queue refused an update: a bound, an update that breaks its merge rule (both re-snapshot
+#: the topic), or a malformed one (counted apart, never as an overflow).
 Refusal = Literal["full", "unmergeable", "malformed"]
 
 #: §8.2: append, never merge; throttling batches them into arrays.
@@ -84,8 +84,8 @@ class _BufferFullError(Exception):
 
 
 class _UnmergeableError(Exception):
-    """A valid update the merge cannot represent (`unmergeable`): the topic is re-snapshotted, as
-    for a bound. Anything else raised is `malformed`."""
+    """An update that breaks its family's merge rule (`unmergeable`, a producer bug counted apart):
+    the topic is re-snapshotted, as for a bound. Anything else raised is `malformed`."""
 
 
 _CAUSES: Final[Mapping[type[Exception], Refusal]] = {
@@ -432,36 +432,37 @@ class _FootprintMerge(_Merge):
     """§8.2 `footprint`: per (bar, price) cell the volume fields are increments summed within the
     same bar, never across bars; every other bar and cell field is last-write-wins.
 
-    The bar key is `t_ms`, the only bar identity the §14.4 payload carries, but non-time bars can
-    share an open time (§8.2 "Bar key"). So instead of fusing two bars, an update that names one
-    open time twice, or that touches a bar already confirmed in this window, is refused, and the
-    topic is re-snapshotted. A new bar opening at the time of a bar that was neither repeated nor
-    confirmed in the window cannot be told apart until §14.4 carries the bar key (#2529)."""
+    A bar is keyed by `(generation, index)`, never by `t_ms` (§8.2 "Bar key", §14.4, #3297): bars
+    that share an open time stay apart, and items of one bar merge. An item without the key is
+    malformed, merged or queued whole. Generations are keyed apart but not policed: a swap is a
+    `snap` (§7.4), and the pacer discards the window that predates it. A confirmed footprint bar
+    is final (§8.2), so an update to a bar already confirmed in this window breaks the merge rule:
+    it is refused (`unmergeable`), and the topic is re-snapshotted."""
 
     def __init__(self, limit: int) -> None:
         super().__init__(limit, ("bars",))
-        self.bars: dict[int, tuple[dict[str, Any], dict[Decimal, dict[str, Any]]]] = {}
+        self.bars: dict[BarKey, tuple[dict[str, Any], dict[Decimal, dict[str, Any]]]] = {}
         self.keys = 0
+
+    def validate(self, body: Payload) -> None:
+        for bar in body.get("bars") or ():
+            bar_key(bar)  # a whole frame (`coalesce: false`) is refused without the key too
 
     def merge(self, body: Payload) -> bool:
         """Merge one update's bars. Not atomic on a refusal: a raise part-way (an unmergeable bar,
         a bound, an inexact sum) leaves what it had already merged in place. That is safe, because
         `CoalescingQueue._refuse` rebuilds the merge, so one that raised is never reused."""
         bars = body.get("bars") or ()
-        opened: set[int] = set()
         for bar in bars:
-            t_ms = int(bar["t_ms"])
-            if t_ms in opened:
-                raise _UnmergeableError("two bars share an open time in one update")
-            opened.add(t_ms)
-            entry = self.bars.get(t_ms)
+            key = bar_key(bar)
+            entry = self.bars.get(key)
             # By truthiness, as `BarCoalescer` reads `confirm`: a truthy non-boolean refuses the
             # update (a re-snapshot) rather than merging it silently into a confirmed bar.
             if entry is not None and entry[0].get("confirm"):
                 raise _UnmergeableError("an update to a bar already confirmed in this window")
             if entry is None:
                 self._grow()
-                entry = self.bars[t_ms] = ({}, {})
+                entry = self.bars[key] = ({}, {})
             fields, cells = entry
             before = _size(fields)
             fields.update((k, v) for k, v in bar.items() if k != "cells")
@@ -493,8 +494,8 @@ class _FootprintMerge(_Merge):
 
     def result(self) -> dict[str, Any]:
         bars = []
-        for t_ms in sorted(self.bars):
-            fields, cells = self.bars[t_ms]
+        for key in sorted(self.bars):  # key order, as `BarCoalescer.flush` leaves bars
+            fields, cells = self.bars[key]
             bars.append({**fields, "cells": [cells[price] for price in sorted(cells)]})
         return {**self.root, "bars": bars}
 

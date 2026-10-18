@@ -254,8 +254,10 @@ def test_pacer_queue_overflow_drops_the_topic_for_a_backpressure_snapshot() -> N
     sub = _sub(conn, "book.BTCUSDT.50")
     flood = {"bids": [[str(i), "1"] for i in range(1, MAX_PENDING_KEYS + 2)], "asks": []}
     drops = _count(cv_ws_overflow_total, reason="drop")
-    assert not pacer.offer(sub, flood)
+    with capture_logs() as logs:
+        assert not pacer.offer(sub, flood)
     assert _count(cv_ws_overflow_total, reason="drop") == drops + 1  # a full queue overflows
+    assert logs == []  # a slow consumer's drop is no producer bug: nothing is logged
     assert conn.take() == []  # never a partial state
     assert (sub.snapshot_pending, sub.pending_reason) == (True, "backpressure")
     assert pacer.resnapshot_required == {sub.sub_id: sub}
@@ -533,16 +535,20 @@ def test_pacer_malformed_update_is_counted_and_logged_apart_from_overflow() -> N
 
 
 def test_pacer_unmergeable_footprint_update_resnapshots_under_its_own_reason() -> None:
-    """Non-time bars may share an open time until §14.4 carries the bar key (#2529): such an
-    update re-snapshots the topic, counted as neither a slow consumer's drop nor a producer bug."""
+    """An update that breaks its merge rule, here one to a footprint bar already confirmed in its
+    window (§8.2), re-snapshots the topic: a producer bug counted apart (#3297), neither a slow
+    consumer's drop nor a malformed update, and logged as one is (family, topic, class only)."""
     conn, pacer = _conn()
     sub = _sub(conn, "footprint.BTCUSDT.tick.1000")
-    bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1", "ask_volume": "0"}]}
+    cells = [{"price": "1", "bid_volume": "1", "ask_volume": "0"}]
+    bar = {"generation": 0, "index": 0, "t_ms": 0, "cells": cells}
     before = _refusals("footprint")
     with capture_logs() as logs:
-        assert not pacer.offer(sub, {**_FOOTPRINT, "bars": [bar, dict(bar)]})
+        assert not pacer.offer(sub, {**_FOOTPRINT, "bars": [{**bar, "confirm": True}, bar]})
     after = {**before, "unmergeable": before["unmergeable"] + 1}
-    assert (_refusals("footprint"), logs) == (after, [])
+    event = {"event": "ws update unmergeable", "family": "footprint", "ch": sub.ch}
+    logged = {**event, "error": "_UnmergeableError", "log_level": "warning"}
+    assert (_refusals("footprint"), logs) == (after, [logged])
     assert pacer.resnapshot_required == {sub.sub_id: sub}
 
 
