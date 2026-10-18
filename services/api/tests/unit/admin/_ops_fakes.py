@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -24,6 +25,7 @@ from candleviewer.observability.health_probes import (
     HealthRegistry,
     ProbeResult,
 )
+from candleviewer.storage.repositories import incidents as port
 from candleviewer.storage.repositories.incidents import IncidentRow, Position
 from tests.unit.admin._admin_fakes import AuditSpy, Resolver
 
@@ -64,6 +66,7 @@ class Store:
     ) -> None:
         self.rows, self.error, self.hang = list(rows), error, hang
         self.calls: list[tuple[str | None, Position | None, int]] = []
+        self.acks: list[UUID] = []  # every `acknowledge` call: a refused caller leaves none
 
     async def page(
         self, *, status: str | None, after: Position | None, limit: int
@@ -76,6 +79,25 @@ class Store:
         wanted = [r for r in self.rows if status in (None, r.status)]
         wanted.sort(key=lambda r: (r.last_seen_at, r.id), reverse=True)
         return [r for r in wanted if after is None or (r.last_seen_at, r.id) < after][:limit]
+
+    async def acknowledge(
+        self, incident_id: UUID, *, by: UUID, write_ahead: port.AckWriteAhead
+    ) -> port.AckResult:
+        """The Postgres store's contract: only an `open` one moves, after its hook succeeds."""
+        self.acks.append(incident_id)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error is not None:
+            raise self.error
+        found = next((r for r in self.rows if r.id == incident_id), None)
+        if found is None or found.status != "open":
+            kept = {"acknowledged": port.AckOutcome.ALREADY, "resolved": port.AckOutcome.RESOLVED}
+            missing = port.AckOutcome.MISSING
+            return port.AckResult(missing if found is None else kept[found.status], found)
+        done = replace(found, status="acknowledged", acknowledged_by=by, acknowledged_at=NOW)
+        await write_ahead(found, done)
+        self.rows[self.rows.index(found)] = done
+        return port.AckResult(port.AckOutcome.ACKNOWLEDGED, done)
 
 
 async def settled_registry() -> HealthRegistry:

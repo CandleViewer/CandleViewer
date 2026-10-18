@@ -170,6 +170,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "maintenance.enabled",
         "maintenance.disabled",
         "settings.change",
+        # E42-T05 (SR-E42-11): an incident moved from `open` to `acknowledged`.
+        "incident.acknowledged",
         "hotkey.trading_binding_changed",
         # E09-S06 (#2323): a client-supplied body on the self-scope checklist dismissal
         # (`api/onboarding.py`). Unregistered, the real writer refused it (500, no row).

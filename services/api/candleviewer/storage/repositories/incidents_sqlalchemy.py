@@ -31,6 +31,13 @@ message, the same for the whole group, so a conflict never rewrites it.
 `purge_resolved` is the retention side (21 Sec.7): one batch of `resolved` incidents last seen more
 than the given months ago, oldest first, on `ix_incidents_status_seen`; open and acknowledged rows
 are kept.
+
+`acknowledge`: lock the row (`SELECT ... FOR UPDATE`); only an `open` one is updated, then the
+write-ahead hook (the audit record, C-2.9) is awaited, bounded, before the commit. The row stays
+locked meanwhile, so a second acknowledge or a new occurrence of the group queues behind it and
+reads the committed row; a refused or timed-out hook rolls everything back. Any other status
+comes back as it is, with no hook call. A COMMIT that fails after the hook can leave a record for
+an unchanged incident: the trail may over-report, never under-report.
 """
 
 from __future__ import annotations
@@ -48,17 +55,30 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.db.models import incidents as _TABLE
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import _TIMEOUT, READ_TIMEOUT
 from candleviewer.storage.repositories.incident_grouping import IncidentOccurrence
-from candleviewer.storage.repositories.incidents import IncidentRow, Position
+from candleviewer.storage.repositories.incidents import (
+    AckOutcome,
+    AckResult,
+    AckWriteAhead,
+    IncidentRow,
+    Position,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
 )
 
 _C = _TABLE.c
 #: Upper bound for one purge call, so a single transaction stays short.
 MAX_PURGE_BATCH: Final = 10_000
+#: Per statement of an acknowledge, above the hook's bound: one queued behind another waits for it.
+WRITE_TIMEOUT: Final = "10s"
+_NOT_OPEN = {"acknowledged": AckOutcome.ALREADY, "resolved": AckOutcome.RESOLVED}
 _SQLSTATE = re.compile(r"[0-9A-Z]{5}")
 #: SQLSTATE classes of a statement the database refuses: data, constraint, syntax/access, internal.
 _BUG_CLASSES = frozenset({"22", "23", "42", "XX"})
@@ -102,9 +122,32 @@ def page_statement(status: str | None, after: Position | None, limit: int) -> sa
     return stmt.order_by(_C.last_seen_at.desc(), _C.id.desc()).limit(limit)
 
 
+def lock_statement(incident_id: UUID) -> sa.Select[Any]:
+    """The incident, locked until the transaction ends: a writer of its group waits."""
+    return sa.select(*COLUMNS).where(_C.id == incident_id).with_for_update()
+
+
+def acknowledge_statement(incident_id: UUID, by: UUID) -> sa.Update:
+    """Three columns of an `open` row, stamped by the database clock after any wait for the lock
+    (`clock_timestamp()`, not the transaction's start), and the row as it now is."""
+    return (
+        sa.update(_TABLE)
+        .where(_C.id == incident_id, _C.status == "open")
+        .values(
+            status="acknowledged", acknowledged_by=by, acknowledged_at=sa.func.clock_timestamp()
+        )
+        .returning(*COLUMNS)
+    )
+
+
 class SqlAlchemyIncidents:
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
-        self._rel = relational
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+    ) -> None:
+        self._rel, self._audit_timeout_s = relational, audit_timeout_s
 
     async def page(
         self, *, status: str | None, after: Position | None, limit: int
@@ -130,6 +173,34 @@ class SqlAlchemyIncidents:
             result = await uow.session.execute(purge_statement(older_than_months, limit))
             await uow.commit()
         return int(getattr(result, "rowcount", 0))
+
+    async def acknowledge(
+        self, incident_id: UUID, *, by: UUID, write_ahead: AckWriteAhead
+    ) -> AckResult:
+        try:
+            async with self._rel.unit_of_work() as uow:
+                session = uow.session
+                await session.execute(_TIMEOUT, {"timeout": WRITE_TIMEOUT})
+                found = (await session.execute(lock_statement(incident_id))).mappings().first()
+                if found is None:
+                    return AckResult(AckOutcome.MISSING, None)
+                before = IncidentRow(**found)
+                if before.status != "open":
+                    return AckResult(_NOT_OPEN[before.status], before)
+                moved = await session.execute(acknowledge_statement(incident_id, by))
+                after = IncidentRow(**moved.mappings().one())
+                await bounded_write_ahead(write_ahead(before, after), self._audit_timeout_s)
+                await uow.commit()
+                return AckResult(AckOutcome.ACKNOWLEDGED, after)
+        except WriteAheadTimeout:
+            raise  # the hook's bound, not the database's, although it is an `OSError` too
+        except (OSError, sa_exc.SQLAlchemyError) as exc:
+            if not _is_outage(exc):
+                raise
+            structlog.get_logger(__name__).error(
+                "incidents_write_failed", error=type(exc).__name__, sqlstate=_sqlstate(exc)
+            )
+            raise StorageTierUnavailable("incidents: write failed") from None
 
 
 def upsert_statement(occ: IncidentOccurrence, *, seen_at: datetime, incident_id: UUID) -> Insert:

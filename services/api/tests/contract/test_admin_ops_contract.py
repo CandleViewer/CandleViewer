@@ -41,7 +41,6 @@ _FETCH = _PATHS["/admin/backups/{backupId}/download/{token}"]["get"]
 _RESTORE = _PATHS["/admin/backups/{backupId}/restore"]["post"]
 _STEP_UP = _PATHS["/auth/step-up"]["post"]
 _NEW_OPS = {
-    "POST /admin/incidents/{incidentId}/acknowledge": (_ACK, "admin:write"),
     "POST /admin/backups/{backupId}/download": (_ISSUE, "backups:write"),
     "GET /admin/backups/{backupId}/download/{token}": (_FETCH, "backups:read"),
 }

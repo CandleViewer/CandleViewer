@@ -68,3 +68,16 @@ class OpsUnavailable(AdminError):
 
 class InvalidCursor(AdminError):
     """A pagination cursor that is malformed, expired or issued for another listing (400)."""
+
+
+class IncidentNotFound(AdminError):
+    """No incident has the id to acknowledge (E42-T05): 404 `not_found`, nothing changed."""
+
+
+class IncidentResolved(AdminError):
+    """A `resolved` incident has nothing to acknowledge (E42-T05): 409 `conflict`, no change."""
+
+
+class OpsAuditUnavailable(AdminError):
+    """The write-ahead audit record could not be written (E42-T05, C-2.9): 503
+    `audit_unavailable`, nothing changed. Fixed message, never the cause."""

@@ -1,4 +1,4 @@
-"""`AdminIncidentsService` (E42-T05): the `GET /admin/incidents` read model.
+"""`AdminIncidentsService` (E42-T05): the `GET /admin/incidents` read model and the one write on it.
 
 It reads the materialised `incidents` table (`21-database-schema.md` 3.10.2a), never
 `system_events`. A page is `limit` rows, newest `last_seen_at` first with `id` as the tie-break,
@@ -8,6 +8,11 @@ cut to the contract's lengths; a `detail` that cannot be redacted is `None`, a `
 is dropped. A page of more than `OFFLOAD_ROWS` rows is redacted off the event loop (C-2.18). No
 store wired is `OpsNotWired`; a store that fails or outlasts its budget is `OpsUnavailable`, never
 an empty page, which would read as "no incidents".
+
+`acknowledge` moves an `open` incident to `acknowledged` for the caller and serves it as the list
+does. The caller's write-ahead hook writes the `incident.acknowledged` record (C-2.9): the store
+awaits it under the row lock before the commit, so a record that cannot be written refuses the
+change. One already acknowledged comes back as it is, and the hook is not called.
 """
 
 from __future__ import annotations
@@ -23,12 +28,24 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.errors import InvalidCursor, OpsNotWired, OpsUnavailable
+from candleviewer.admin.errors import (
+    IncidentNotFound,
+    IncidentResolved,
+    InvalidCursor,
+    OpsAuditUnavailable,
+    OpsNotWired,
+    OpsUnavailable,
+)
 from candleviewer.admin.overview.fanout import utc_now
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.redaction import redact_text
-from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.incidents import IncidentRow, IncidentStore, Position
+from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
+from candleviewer.storage.repositories.incidents import (
+    AckWriteAhead,
+    IncidentRow,
+    IncidentStore,
+    Position,
+)
 
 #: The contract's `Incident.title` / `detail` `maxLength`, `Cursor` `maxLength` and lifetime.
 TITLE_MAX: Final = 200
@@ -41,6 +58,18 @@ READ_BUDGET_S: Final = 2.0
 #: many rows the page is redacted in a worker thread (C-2.18): the loop then waits at most about
 #: the interpreter's 5 ms switch interval, not the page's time (the regex holds the GIL per call).
 OFFLOAD_ROWS: Final = 50
+#: The whole of an acknowledge; the store bounds each statement (10 s) and its hook (5 s) itself.
+WRITE_BUDGET_S: Final = 15.0
+
+
+def _audit_refused(exc: BaseException) -> OpsAuditUnavailable:
+    """Only the class of the cause is logged: never its text (a WAL path, a message)."""
+    _log().error(
+        "admin_incidents.ack_audit_failed",
+        error=type(exc).__name__,
+        request_id=current_request_id(),
+    )
+    return OpsAuditUnavailable("incidents: the audit record could not be written; nothing changed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,8 +133,10 @@ class AdminIncidentsService:
         *,
         now: Callable[[], datetime] = utc_now,
         budget_s: float = READ_BUDGET_S,
+        write_budget_s: float = WRITE_BUDGET_S,
     ) -> None:
         self._store, self._now, self._budget_s = store, now, budget_s
+        self._write_budget_s = write_budget_s
 
     async def page(self, *, status: str | None, cursor: str | None, limit: int) -> IncidentPage:
         if self._store is None:
@@ -129,3 +160,37 @@ class AdminIncidentsService:
         last = shown[-1] if more else None
         nxt = None if last is None else encode_cursor(status, (last.last_seen_at, last.id), issued)
         return IncidentPage(tuple(shown), nxt)
+
+    async def acknowledge(
+        self, incident_id: UUID, *, by: UUID, write_ahead: AckWriteAhead
+    ) -> IncidentRow:
+        """`open` to `acknowledged` by `by`, `write_ahead` (the record) awaited before the commit:
+        the incident as the list serves it. `IncidentNotFound`, `IncidentResolved`, `OpsNotWired`,
+        `OpsAuditUnavailable` (no record, no change) or `OpsUnavailable` (store down or slow)."""
+        if self._store is None:
+            raise OpsNotWired("incidents: no store wired")
+
+        async def record(before: IncidentRow, after: IncidentRow) -> None:
+            try:
+                await write_ahead(before, after)
+            except Exception as exc:  # any failure to make the record durable refuses the change
+                raise _audit_refused(exc) from None
+
+        try:
+            async with asyncio.timeout(self._write_budget_s):
+                done = await self._store.acknowledge(incident_id, by=by, write_ahead=record)
+        except WriteAheadTimeout as exc:  # also a `TimeoutError`, so it comes first
+            raise _audit_refused(exc) from None
+        except (TimeoutError, StorageTierUnavailable) as exc:  # only the class is logged
+            _log().warning(
+                "admin_incidents.ack_failed",
+                error=type(exc).__name__,
+                request_id=current_request_id(),
+            )
+            raise OpsUnavailable("incidents: store unavailable") from None
+        if done.row is None:  # `AckOutcome.MISSING`
+            raise IncidentNotFound("no such incident")
+        if done.row.status == "resolved":
+            raise IncidentResolved("a resolved incident cannot be acknowledged")
+        (shown,) = _scrubbed([done.row])
+        return shown

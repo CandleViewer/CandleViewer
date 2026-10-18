@@ -1,28 +1,41 @@
-"""`GET /admin/health` and `GET /admin/incidents` (E42-T05; contract `getHealth`, `listIncidents`,
-`x-rbac: admin:read`, scope none), on the audited admin router (`candleviewer.admin.http`).
+"""`GET /admin/health`, `GET /admin/incidents` and `POST /admin/incidents/{incidentId}/acknowledge`
+(E42-T05; contract `getHealth`, `listIncidents`, `acknowledgeIncident`; `x-rbac` `admin:read`, and
+`admin:write` for the acknowledge; scope none), on the audited admin router (`admin.http`).
 
 The handlers map the read models to the generated `HealthReport` / `Incident` models and serialise
 with `exclude_unset`, so a field the source did not read is omitted, never defaulted. A refusal is
 a problem document with a registered code: `not_implemented` (501) when no provider is wired,
 `store_unavailable` (503, retryable) when the source failed, had nothing yet or outlasted its
-budget, `invalid_cursor` (400). Its detail is the read model's fixed literal: no exception text,
-query or path ever leaves.
+budget, `audit_unavailable` (503) when the acknowledge's record could not be written,
+`invalid_cursor` (400), `not_found` (404), `conflict` (409, a resolved incident). Its detail is the
+read model's fixed literal: no exception text, query or path ever leaves.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Protocol
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.admin.errors import AdminError, InvalidCursor, OpsNotWired, OpsUnavailable
+from candleviewer.admin.errors import (
+    AdminError,
+    IncidentNotFound,
+    IncidentResolved,
+    InvalidCursor,
+    OpsAuditUnavailable,
+    OpsNotWired,
+    OpsUnavailable,
+)
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.admin.ops.health import AdminHealthService, HealthReading
 from candleviewer.admin.ops.incidents import CURSOR_MAX, AdminIncidentsService
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.health_report import render_report
+from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.storage.repositories.incidents import IncidentRow
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
@@ -32,8 +45,11 @@ _RETRY_AFTER_S: Final = 5
 #: answers as it does.
 _REFUSALS: Final = {
     InvalidCursor: (400, ErrorCode.INVALID_CURSOR),
+    IncidentNotFound: (404, ErrorCode.NOT_FOUND),
+    IncidentResolved: (409, ErrorCode.CONFLICT),
     OpsNotWired: (501, ErrorCode.NOT_IMPLEMENTED),
     OpsUnavailable: (503, ErrorCode.STORE_UNAVAILABLE),
+    OpsAuditUnavailable: (503, ErrorCode.AUDIT_UNAVAILABLE),
 }
 
 
@@ -106,5 +122,56 @@ def make_admin_ops_router(
             "meta": meta.model_dump(mode="json", exclude_unset=True),
         }
         return JSONResponse(body)
+
+    return router
+
+
+class _Emitter(Protocol):  # `AuditWriter.emit`, as the routes hold it
+    async def emit(self, action: str, **kwargs: Any) -> None: ...
+
+
+def make_admin_incident_ack_router(
+    incidents: AdminIncidentsService, *, resolver: PrincipalResolver | None, audit: _Emitter
+) -> APIRouter:
+    """A write (`admin:write`), so its own audited router: the guard checks RBAC before the id is
+    read and leaves the verified principal, who is the record's actor."""
+    router = admin_router(Permission.ADMIN_WRITE, resolver=resolver, audit=audit)
+
+    @router.post("/incidents/{incidentId}/acknowledge")
+    async def acknowledge_incident(
+        request: Request, incident_id: Annotated[UUID, Path(alias="incidentId")]
+    ) -> JSONResponse:
+        principal: AuditPrincipal = request.state.admin_principal  # left there by the guard
+
+        async def write_ahead(before: IncidentRow, after: IncidentRow) -> None:
+            # The handler itself writes the audit record (C-2.9), under the row lock, before the
+            # commit: facts only, never `title` or `detail`. Only a transition gets here.
+            await audit.emit(
+                "incident.acknowledged",  # registered in `audit/actions.py` (SR-E42-11)
+                actor_label=principal.username,
+                actor_user_id=principal.user_id,
+                actor_ip=principal.ip,
+                session_id=principal.session_id,
+                object_kind="incident",
+                object_id=str(after.id),
+                outcome=AuditOutcome.SUCCESS,
+                severity=Severity.INFO,
+                before_state={"status": before.status},
+                after_state={
+                    "status": after.status,
+                    "component": after.component,
+                    "severity": after.severity,
+                    "occurrences": after.occurrences,
+                },
+                request_id=principal.request_id,
+            )
+
+        try:
+            row = await incidents.acknowledge(
+                incident_id, by=principal.user_id, write_ahead=write_ahead
+            )
+        except tuple(_REFUSALS) as exc:  # every refusal the read models raise
+            return _refusal(exc)
+        return JSONResponse(incident_payload(row))
 
     return router
