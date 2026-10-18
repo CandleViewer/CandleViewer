@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Writes src/generated/index.ts, the barrel src/index.ts re-exports as `generated`. Every file
-// under src/generated comes from a generator: the gen-freshness gate fails a committed file there
+// under src/generated comes from a generator: CI's `gen` gate fails a committed file there
 // that `pnpm generate` does not write (CI-GEN-005, #3299). To export another generated surface,
 // add it to SURFACES. ./cvwb stays out of the barrel: src/runtime imports it directly.
 import { mkdirSync, writeFileSync } from "node:fs";

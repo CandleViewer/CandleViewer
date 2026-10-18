@@ -17,7 +17,7 @@ name: _job-contract
 #
 # CI-CON-001 (route/field drift) is raised by
 # candleviewer/api/contract_conformance.py; WS/codec drift codes are owned
-# by E02-T09 (ws-schema-drift.test.ts) and E03-T05 (gen-freshness).
+# by E02-T09 (ws-schema-drift.test.ts) and E03-T05 (the `gates` job's `gen` step, CI-GEN-*).
 
 on:
   workflow_call: {}
