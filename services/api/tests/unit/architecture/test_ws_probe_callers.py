@@ -3,8 +3,9 @@
 Only `testApiKey` (slice 2b6) may run the adapter's private-WS `auth` probe. Its module and the
 adapter method that runs it share one name, `key_ws_probe`, and the probe's class is `KeyWsProbe`,
 so a text scan finds every import, call, attribute or string that names either, and a second
-probe built elsewhere with a budget of its own. Until 2b6 adds its route module to `ALLOWED`, only
-the adapter names it; the self-check's own modules, and the pipeline it runs, may never be added.
+probe built elsewhere with a budget of its own. Besides the adapter, only the test's wiring names
+it, as the flow's WebSocket port; the self-check's own modules, and the pipeline it runs, may never
+be added.
 """
 
 from __future__ import annotations
@@ -17,9 +18,13 @@ import cvdev
 
 ROOTS = (Path(candleviewer.__file__).resolve().parent, Path(cvdev.__file__).resolve().parent)
 NAME = re.compile(r"\b(key_ws_probe|KeyWsProbe)\b")
-#: Where the probe may be named: its module and the adapter that holds it.
+#: Where the probe may be named: its module, the adapter that holds it and `testApiKey`'s wiring.
 ALLOWED = frozenset(
-    {"candleviewer/exchange/bybit/key_ws_probe.py", "candleviewer/exchange/bybit/service.py"}
+    {
+        "candleviewer/exchange/bybit/key_ws_probe.py",
+        "candleviewer/exchange/bybit/service.py",
+        "candleviewer/key_test_wiring.py",
+    }
 )
 #: The scheduled self-check: the job, the verification pipeline it runs, its wiring and the
 #: module that starts it.

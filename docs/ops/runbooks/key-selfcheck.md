@@ -31,6 +31,12 @@ withdraw, transfer, fiat or card right; error otherwise). Order entry is off for
 and the key's account is disarmed (`trading_enabled` false). The key's status does not change:
 reads go on.
 
+An Owner's on-demand test of a stored key (`testApiKey`, the Admin - Accounts "Test connection")
+enforces its verdict the same way (decision 11 on #836): a failing test gives this symptom and these
+records at once, its `account.tested` naming the Owner (`actor_user_id`, `request_id`) instead of
+`system:key-selfcheck`. Its WebSocket half never latches or disarms anything, and a passing test,
+like a passing hourly re-check, never clears the latch.
+
 The disarm's rule code and time commit with it, on the account row (`exchange_accounts`
 `policy_disarm_code`, `policy_disarmed_at`). If the audit sink refuses `account.disabled_by_policy`
 (critical log `key_selfcheck_disable_unaudited`), the record stays owed (`policy_disarm_audited_at`

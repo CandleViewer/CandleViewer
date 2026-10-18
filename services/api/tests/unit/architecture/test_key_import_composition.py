@@ -1,8 +1,10 @@
 """#836 slice 2b4 composition guard: the deployed `create_app()` on the real backend serves
 `createApiKey` with the import `wire_key_import` builds over the bundle's M2 candidate capability,
 the one audit handle M2's sink writes through and the settings' egress IP and rotation windows,
-and hands the lifespan that import's runtime to drain (`app.state.key_imports`). The fake backend
-serves the route with no import. `create_app` does no I/O: no store and no network is touched."""
+and hands the lifespan that import's runtime to drain (`app.state.key_imports`). Slice 2b6 serves
+`testApiKey` on the test `wire_key_test` builds over the self-check the boot assertion runs and that
+import's reads. The fake backend serves both routes with neither. `create_app` does no I/O: no
+store and no network is touched."""
 
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.settings import Environment, Settings
 
 EGRESS = "203.0.113.7"
-_SPIED = ("_build_secrets", "wire_key_import", "make_exchange_keys_router")
+_SPIED = ("_build_secrets", "wire_key_import", "make_exchange_keys_router", "wire_key_test")
 Backend = Literal["fake", "real"]
 
 
@@ -60,6 +62,9 @@ def test_the_real_backend_serves_create_api_key_on_the_import_it_wires(
     assert served is imports is app.state.key_imports  # the lifespan drains what the route runs
     assert (named["egress_ip"], named["rotation"]) == (EGRESS, KeyRotationPolicy(60, 7))
     assert resolver is not None  # the owner resolver: a call is judged, never a 501
+    (tested_on, job, reads_of), _, tests = seen["wire_key_test"]
+    assert tested_on is ctx and job is ctx.accounts._selfcheck and reads_of is imports
+    assert named["tests"] is tests is not None  # decision 11: the job that boots enforces a test
 
 
 def test_the_fake_backend_serves_create_api_key_with_no_import(
@@ -67,3 +72,4 @@ def test_the_fake_backend_serves_create_api_key_with_no_import(
 ) -> None:
     app, seen = _deployed(monkeypatch, "fake")
     assert seen["make_exchange_keys_router"][0][0] is None and app.state.key_imports is None
+    assert seen["make_exchange_keys_router"][1]["tests"] is None

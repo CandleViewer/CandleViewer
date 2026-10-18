@@ -184,6 +184,11 @@ class KeyImport:
         #: Accounts with an import running, one each: bounded by the requests in flight.
         self._busy: set[UUID] = set()
 
+    @property
+    def accounts(self) -> AccountsRepository:
+        """The owner-scoped reads, shared with `testApiKey` (one pool for the key routes)."""
+        return self._accounts
+
     async def run(self, request: KeyImportRequest, actor: Importer) -> KeyImported:
         """The imported key, or the refusal (`KeyImportFailed`, `AccountNotFoundError`,
         `AccountScopeDeniedError`, `AccountConflictError`), recorded before it is raised; any
