@@ -41,6 +41,7 @@ from tools.ci.py_test_lanes import (  # noqa: E402 - the repo root must be impor
 
 API_ROOT = ROOT / "services" / "api"
 WORKFLOW = ROOT / ".github" / "workflows" / "_job-py.yml"
+_PYTEST = ("pytest", "py.test")
 
 
 def _jobs() -> dict[str, Any]:
@@ -52,24 +53,44 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(step.get("run", "") for step in job["steps"])
 
 
+def _without_comment(line: str) -> str:
+    """The line before its bash comment: a `#` that starts a word and is neither quoted nor
+    escaped. shlex would also end the line at the `#` inside `${#lane_paths[@]}`."""
+    quote, escaped, word_start = "", False, True
+    for index, char in enumerate(line):
+        literal = bool(quote) or escaped
+        if char == "#" and word_start and not literal:
+            return line[:index]
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif char in "'\"" and quote in ("", char):
+            quote = "" if quote else char
+        word_start = not literal and char in " \t;&|()<>"
+    return line
+
+
 def _pytest_calls(run: str) -> list[list[str]]:
     """The arguments of each pytest call in a step's script. Continuation lines are joined and each
     line is split at the shell's control operators, so `pytest a && pytest b` is two calls."""
     calls: list[list[str]] = []
     for line in run.replace("\\\n", " ").splitlines():
-        if "pytest" not in line:
+        if not re.search(r"py\.?test", line):
             continue
-        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)  # drops `#` comments
+        lexer = shlex.shlex(_without_comment(line), posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
+        lexer.commenters = ""  # _without_comment drops comments the way bash does
         command: list[str] = []
         for word in [*lexer, ";"]:
             core = word.strip("()")  # a subshell or a `$(...)` stays inside its command
             if not core or core.strip(";&|"):
                 command.append(word)
                 continue
-            names = [Path(each).name for each in command]  # `pytest`, `.venv/bin/pytest`
-            if "pytest" in names:
-                calls.append(command[names.index("pytest") + 1 :])
+            # `pytest`, `.venv/bin/pytest` and the `py.test` entry point that pytest also installs
+            starts = [at for at, each in enumerate(command) if Path(each).name in _PYTEST]
+            if starts:
+                calls.append(command[starts[0] + 1 :])
             command = []
     return calls
 
@@ -100,7 +121,10 @@ def _leaves_flaky_out(expression: str) -> bool:
 
 def _keeps_flaky_out(args: list[str]) -> bool:
     """A pytest call deselects `flaky` tests. With no marker expression it runs the pyproject
-    addopts selection, which keeps them."""
+    addopts selection, which keeps them. The pin fails closed on what it cannot read: an `@file` of
+    more arguments, or a short-option cluster with an `m` in it, such as `-qm X`."""
+    if any(arg.startswith("@") or re.fullmatch(r"-[^-m]\w*m.*", arg) for arg in args):
+        return False
     expressions = _marker_expressions(args)
     return bool(expressions) and all(_leaves_flaky_out(each) for each in expressions)
 
@@ -292,6 +316,14 @@ def test_leaves_flaky_out_needs_not_flaky_under_the_outermost_and(
         ('python -m pytest -m"not flaky" a; .venv/bin/pytest --markexpr "perf" b', [True, False]),
         ('pytest -m "not flaky" $(cat paths) -m perf', [False]),
         ('(cd a && pytest -m "not flaky" t)&&pytest b', [True, False]),
+        ("n=${#lane_paths[@]}; uv run pytest -m perf t", [False]),  # `#` in a word: no comment
+        ("lanes\\ #2; pytest -m perf t", [False]),  # nor an escaped one
+        ('echo "# perf"; pytest -m perf t', [False]),  # nor a quoted one
+        ('pytest -m "not flaky" t  # -m perf', [True]),
+        ("py.test -m perf t", [False]),
+        ('pytest -m "not flaky" @lane.args', [False]),  # pytest reads more arguments from the file
+        ('pytest -m "not flaky" -qm perf t', [False]),  # `-qm X` is `-q -m X`
+        ('pytest -m "not flaky" -pno:randomly -Wignore::DeprecationWarning t', [True]),
     ],
 )
 def test_the_flaky_pin_reads_every_pytest_call_and_marker_expression(
