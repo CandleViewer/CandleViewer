@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import struct
+import sys
 import tracemalloc
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -365,16 +368,39 @@ def test_generated_python_layout_matches_the_declaration() -> None:
     assert " ".join(prefix.fields) == "generation index ts_offset_ms cell_count flags"
 
 
-@pytest.mark.parametrize("name", ["vectors.json", "corpus.json"])
-def test_committed_vectors_and_corpus_are_fresh(name: str) -> None:
-    path, render = {
-        "vectors.json": (
-            REPO / "packages/fixtures/golden/cvwb/vectors.json",
-            cvwb_vectors.render_vectors,
-        ),
-        "corpus.json": (REPO / "tests/fuzz/ws-frames/corpus.json", cvwb_vectors.render_corpus),
-    }[name]
-    assert path.read_text(encoding="utf-8") == render(), "run scripts/generate_cvwb_vectors.py"
+#: Every file scripts/generate_cvwb_vectors.py writes (its TARGETS), with its renderer.
+_COMMITTED_RENDERS = {
+    "packages/fixtures/golden/cvwb/structured.json": cvwb_vectors.render_structured,
+    "packages/fixtures/golden/cvwb/vectors.json": cvwb_vectors.render_vectors,
+    "tests/fuzz/ws-frames/corpus.json": cvwb_vectors.render_corpus,
+}
+
+
+@pytest.mark.parametrize("rel", sorted(_COMMITTED_RENDERS))
+def test_committed_vectors_and_corpus_are_fresh(rel: str) -> None:
+    """The structured twin too (#3392): the TS decoder tests read it as golden."""
+    committed = (REPO / rel).read_text(encoding="utf-8")
+    assert committed == _COMMITTED_RENDERS[rel](), "run scripts/generate_cvwb_vectors.py"
+
+
+def _load_by_path(path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(f"_cv_{path.stem}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_gen_gate_names_every_file_the_vectors_script_writes() -> None:
+    """#3392: the `gen` gate's FIXED_OUTPUTS entry for this script is the files it writes,
+    so a committed file it does not write in their directories fails CI-GEN-006."""
+    gate = _load_by_path(REPO / "tools/ci/check_gen_freshness.py")
+    script = _load_by_path(REPO / "services/api/scripts/generate_cvwb_vectors.py")
+    written = sorted(path.relative_to(REPO).as_posix() for path in script.TARGETS)
+    entry = gate.FIXED_OUTPUTS["services/api/scripts/generate_cvwb_vectors.py"]
+    assert sorted(entry) == written
+    assert sorted(_COMMITTED_RENDERS) == written  # and the test above byte-checks each one
 
 
 def test_fuzz_corpus_every_seed_behaves_as_declared() -> None:

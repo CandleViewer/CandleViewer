@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E03-T05: generated-code freshness gate for ``packages/protocol``.
+"""E03-T05: generated-code gate for ``packages/protocol`` and the other generated paths.
 
 ADR-0013 binding rule 3: "packages/protocol is regenerated from
 22-api-openapi.yaml and the WS schema; any diff fails the build. Generated
@@ -29,9 +29,11 @@ This script is the single implementation invoked by the ``gen`` step of the
    removed from the working tree (the index keeps it), and the report prints
    one `git rm` command that deletes them all. Every other run that fails once
    step 1 has removed files, a traceback or Ctrl-C included, lists the tracked
-   files it leaves missing, with one `git restore` command that brings them
-   all back. Step 1 fails closed (CI-GEN-004) when git tracks nothing under
-   the outputs, which would leave this step nothing to check.
+   files it leaves missing, if it leaves any, with one `git restore` command
+   that brings them all back. Each printed command matches its paths literally
+   (``git --literal-pathspecs``), so a name holding ``*``, ``?`` or ``[`` names
+   no other file. Step 1 fails closed (CI-GEN-004) when git tracks nothing
+   under the outputs, which would leave this step nothing to check.
 4. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
    against a committed schema change). This is also the hand-edit guard for
    committed generated files: regenerating overwrites the edit, so it shows
@@ -44,13 +46,25 @@ This script is the single implementation invoked by the ``gen`` step of the
    for packages/protocol: a YAML edit that skipped regeneration and a hand
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
+7. Fails CI-GEN-006, naming each path, for a committed file that no generator
+   writes in the gated directories ``pnpm generate`` does not write (#3392):
+   ``packages/protocol/generated``, the CVWB vectors and fuzz corpus, and the
+   ``_generated`` packages of services/api. Their generators run in ``make gen``
+   or need the backend venv, and each writes a fixed set of files there, so the
+   gate does not regenerate them: it compares what git tracks there with
+   ``FIXED_OUTPUTS`` (each generator's files, which tests pin to the generator's
+   own output paths) and ``HAND_KEPT`` (files kept there by hand on purpose,
+   each with its reason). It removes nothing, and the report prints one
+   `git rm` command. A file either table names that git does not track fails
+   closed (CI-GEN-004): a stale entry would let a hand-written file of that
+   name pass later.
 
 Exit codes: 0 clean; 1 on a failed check (each reports a CI-GEN-* code on
 stderr, CI-GEN-004 when the gate could not run a check: the generator, git or a
 working-tree step failed); 2 only for a command-line usage error (argparse).
-An uncoded exception (pnpm or git not on PATH, Ctrl-C) is not caught: after the
-note of step 3 it ends the run with its traceback and Python's usual exit
-status (1, or the SIGINT status for Ctrl-C).
+An uncoded exception (pnpm or git not on PATH, Ctrl-C) is caught and re-raised:
+after the note of step 3, it ends the run with its traceback and Python's usual
+exit status (1, or the SIGINT status for Ctrl-C).
 
 Stdlib only at import (subprocess/git/node are external processes, not
 imports). Step 6's renderer imports PyYAML when it runs; the ``gen`` step installs
@@ -94,11 +108,54 @@ GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
 # orphan check cannot judge outputs that run does not produce, so three gated paths
 # stay out: packages/protocol/generated/ (ws_constants.py, written only by `make gen`),
 # and packages/fixtures/golden/cvwb and tests/fuzz/ws-frames (written by
-# services/api/scripts/generate_cvwb_vectors.py). A committed file no generator writes
-# can still pass there; #3392 tracks that gap.
+# services/api/scripts/generate_cvwb_vectors.py). Step 7 judges those (#3392).
 GENERATE_OUTPUTS: tuple[Path, ...] = (
     GENERATED_ROOT / "src" / "generated",
     CVWB_LAYOUT_TWIN,
+)
+# #3392: step 7 (CI-GEN-006). Every file each generator writes in the gated directories
+# `pnpm generate` does not write, keyed by the generator. Running those generators would
+# need the backend venv (datamodel-code-generator, the candleviewer package), which this
+# job does not install, and each writes a fixed set of files, so the gate compares what
+# git tracks there with this table. scripts/tests/test_check_gen_freshness.py pins each
+# entry to its generator's own output paths (generate_cvwb_vectors.py's read from its
+# source, as importing it needs the backend), and services/api/tests/unit/ws/
+# test_cvwb_binary.py pins that entry to the evaluated TARGETS too. Step 7 judges names
+# only: each file's content is checked by its generator's --check or by a test.
+FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "tools/contracts/gen_ws_constants.py": (
+        "packages/protocol/generated/ws_constants.py",
+    ),
+    "tools/errorcodes/generate.py": (
+        "services/api/candleviewer/ws/_generated/error_codes.py",
+    ),
+    "services/api/scripts/generate_protocol_models.py": (
+        "services/api/candleviewer/api/_generated/__init__.py",
+        "services/api/candleviewer/api/_generated/contract_subset.json",
+        "services/api/candleviewer/api/_generated/openapi_models.py",
+        "services/api/candleviewer/ws/_generated/__init__.py",
+        "services/api/candleviewer/ws/_generated/ws_models.py",
+    ),
+    "services/api/scripts/generate_cvwb_vectors.py": (
+        "packages/fixtures/golden/cvwb/structured.json",
+        "packages/fixtures/golden/cvwb/vectors.json",
+        "tests/fuzz/ws-frames/corpus.json",
+    ),
+}
+# Files kept by hand on purpose in those directories, each with its reason.
+HAND_KEPT: dict[str, str] = {
+    "tests/fuzz/ws-frames/msgpack-client.json": (
+        "the SR-185 seed corpus of the cv.v1.msgpack client-frame decoder (#2483), "
+        "kept by hand"
+    ),
+}
+# The directories step 7 judges: those holding a file either table names. The CVWB
+# layout twin shares services/api/candleviewer/ws/_generated; step 3 judges it.
+FIXED_OUTPUT_DIRS: tuple[Path, ...] = tuple(
+    sorted(
+        {Path(rel).parent for files in FIXED_OUTPUTS.values() for rel in files}
+        | {Path(rel).parent for rel in HAND_KEPT}
+    )
 )
 # #2555: services/api/scripts/generate_protocol_models.py writes the packaged
 # contract subset the API reads at runtime. Its `--check` runs in the py lane only,
@@ -188,6 +245,16 @@ def _bullets(paths: list[str]) -> str:
     return "".join(f"  - {rel}\n" for rel in paths)
 
 
+def _git_command(verb: str, paths: list[str]) -> str:
+    """One copy-pasteable command; git matches each path literally, so a name holding
+    ``*``, ``?`` or ``[`` cannot also name another file."""
+    return f"git --literal-pathspecs {verb} -- {shlex.join(paths)}"
+
+
+def _is_under(rel: str, roots: tuple[Path, ...]) -> bool:
+    return any(rel == r.as_posix() or rel.startswith(f"{r.as_posix()}/") for r in roots)
+
+
 def _hash_generated_tree(roots: tuple[Path, ...]) -> str:
     """Deterministic content hash of every tracked file under ``root``.
 
@@ -210,8 +277,9 @@ def _hash_generated_tree(roots: tuple[Path, ...]) -> str:
 
 def set_aside_outputs(removed: list[str]) -> None:
     """Step 1: removes the tracked files under GENERATE_OUTPUTS from the working
-    tree, never the index, adding each to ``removed`` once it is gone, so a failure
-    partway still reports every file it removed."""
+    tree, never the index. Each goes into ``removed`` before it is removed, so a
+    failure or Ctrl-C partway still reports every file it removed; the note lists
+    only those actually missing."""
     tracked = _tracked_files(GENERATE_OUTPUTS)
     if not tracked:
         raise GenGateError(
@@ -222,13 +290,13 @@ def set_aside_outputs(removed: list[str]) -> None:
             "from the repository root; if the outputs moved, update GENERATE_OUTPUTS.",
         )
     for rel in tracked:
+        removed.append(rel)
         try:
             Path(rel).unlink(missing_ok=True)
         except OSError as exc:
             raise GenGateError(
                 "CI-GEN-004", f"cannot remove {rel} before generating: {exc}"
             ) from exc
-        removed.append(rel)
 
 
 def run_generator() -> None:
@@ -268,10 +336,10 @@ def check_orphans(removed: list[str]) -> None:
             "GENERATED header or not.\n"
             + _bullets(orphans)
             + "Delete them all with:\n"
-            + f"  git rm -- {shlex.join(orphans)}\n"
+            + f"  {_git_command('rm', orphans)}\n"
             + "or add the generator that writes each one. The gate leaves them removed "
-            "from the working tree; the index keeps them (`git restore -- <path>` "
-            "brings one back).",
+            "from the working tree; the index keeps them "
+            "(`git --literal-pathspecs restore -- <path>` brings one back).",
         )
 
 
@@ -285,7 +353,7 @@ def _note_missing(removed: list[str]) -> None:
             "tree: the gate removed them and nothing wrote them back. The index keeps "
             "them:\n"
             + _bullets(missing)
-            + f"Restore them all with:\n  git restore -- {shlex.join(missing)}\n",
+            + f"Restore them all with:\n  {_git_command('restore', missing)}\n",
             file=sys.stderr,
             end="",
         )
@@ -384,22 +452,68 @@ def check_contract_subset() -> None:
     )
 
 
+def check_fixed_outputs() -> None:
+    """CI-GEN-006: each tracked file in FIXED_OUTPUT_DIRS is one a generator writes
+    there (FIXED_OUTPUTS), one kept by hand on purpose (HAND_KEPT), or under
+    GENERATE_OUTPUTS, which step 3 judges."""
+    named = {
+        rel: f"FIXED_OUTPUTS, {writer}"
+        for writer, files in FIXED_OUTPUTS.items()
+        for rel in files
+    }
+    named.update(dict.fromkeys(HAND_KEPT, "HAND_KEPT"))
+    tracked = _tracked_files(FIXED_OUTPUT_DIRS)
+    untracked = sorted(set(named).difference(tracked))
+    if untracked:
+        raise GenGateError(
+            "CI-GEN-004",
+            "the gate's tables name file(s) git does not track, so the orphan check "
+            "(CI-GEN-006) cannot vouch for their directories:\n"
+            + "".join(f"  - {rel} ({named[rel]})\n" for rel in untracked)
+            + "Run the gate from the repository root. A generated file deleted by "
+            "mistake comes back when its generator runs; if a generator no longer "
+            "writes one, or a hand-kept file moved, update the table in "
+            "tools/ci/check_gen_freshness.py.",
+        )
+    orphans = [
+        rel
+        for rel in tracked
+        if rel not in named and not _is_under(rel, GENERATE_OUTPUTS)
+    ]
+    if orphans:
+        raise GenGateError(
+            "CI-GEN-006",
+            "committed file(s) that no generator writes, in a directory where only "
+            "generators write, apart from the files HAND_KEPT names: FIXED_OUTPUTS in "
+            "tools/ci/check_gen_freshness.py names every file each generator writes "
+            "there. A hand-written file must not pose as generated (C-4.16), GENERATED "
+            "header or not.\n"
+            + _bullets(orphans)
+            + "Delete them all with:\n"
+            + f"  {_git_command('rm', orphans)}\n"
+            + "or, if a generator writes one, add it to FIXED_OUTPUTS under that "
+            "generator. A file kept by hand belongs outside these directories, or in "
+            "HAND_KEPT with its reason.",
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
 
-    removed: list[str] = []  # step 1 adds each file as it removes it
+    removed: list[str] = []  # step 1 adds each file before it removes it
     try:
         # Order matters (ticket "Technical notes"): determinism first, so a
         # flaky generator never presents as a random freshness failure. The
         # orphan check comes before `git diff`, which would report a removed
-        # orphan as a deleted file (CI-GEN-001).
+        # orphan as a deleted file (CI-GEN-001). Step 7 reads only the index.
         set_aside_outputs(removed)
         check_determinism()
         check_orphans(removed)
         check_freshness()
         check_untracked()
         check_contract_subset()
+        check_fixed_outputs()
     except GenGateError as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         if exc.code != "CI-GEN-005":  # its own report lists them
@@ -411,7 +525,10 @@ def main(argv: list[str] | None = None) -> int:
         _note_missing(removed)
         raise
 
-    print("check_gen_freshness: OK — packages/protocol is fresh and deterministic")
+    print(
+        "check_gen_freshness: OK — the generated paths are fresh and deterministic, "
+        "and no committed file there poses as generated"
+    )
     return 0
 
 

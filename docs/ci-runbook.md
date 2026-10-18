@@ -24,7 +24,7 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
 │  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
 │  │                licence-header, docs-link-check (GOV-002); last, as their installs run PR
-│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..005)
+│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..006)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
@@ -166,36 +166,57 @@ here, or the check fails the `governance` lane.
   whichever one is stale so both name the same Node major/minor; re-run
   `node tools/ci/check-node-version.mjs` locally.
 
-### CI-GEN-* — generated-code freshness (`packages/protocol`)
+### CI-GEN-* — generated-code freshness (`packages/protocol` and the other generated paths)
 
 The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
 It first removes the tracked files under the outputs `pnpm generate` writes in full
 (`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
 tree, never the index, then generates. It restores nothing. A CI-GEN-005 report prints one
-`git rm -- <paths>` command for the files it names; any other failed run, a traceback or Ctrl-C
-included, lists the tracked files it leaves missing and prints one `git restore -- <paths>`
-command that brings them all back.
+`git --literal-pathspecs rm -- <paths>` command for the files it names; any other failed run, a
+traceback or Ctrl-C included, lists the tracked files it leaves missing, if it leaves any, and
+prints one `git --literal-pathspecs restore -- <paths>` command that brings them all back. git
+matches those paths literally, so a name holding `*`, `?` or `[` names no other file. Last, it
+judges the gated directories `pnpm generate` does not write (CI-GEN-006) from the index alone,
+removing nothing.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit
   `packages/protocol/src/generated`.
-- **CI-GEN-002** (untracked generated output): codegen produced files `git
-diff` cannot see because they were never tracked. `git add` them in the
-  same commit as the schema change that introduced them.
+- **CI-GEN-002** (untracked generated output): codegen produced files `git diff` cannot see
+  because they were never tracked. `git add` them in the same commit as the schema change that
+  introduced them. Reproduce with `make gen && git status --porcelain -- packages/protocol`; if a
+  file the report names does not show up there, a local ignore rule hides it from you
+  (`.git/info/exclude`, a global excludes file or an uncommitted `.gitignore` edit): fix the
+  rule, or `git add -f` the file.
 - **CI-GEN-003** (non-deterministic generation): running the generator twice
   produced two different hashes. This is a generator bug (usually an
   unordered map/set iteration or a timestamp leaking into output) — file it
-  against the generator, do not silence the check.
+  against the generator, do not silence the check. Reproduce locally with
+  `make gen && make gen` and diff the tree.
 - **CI-GEN-004** (generator toolchain failure): the generator itself crashed
   (missing dependency, schema syntax error). Fix the schema or toolchain;
   the gate cannot pass on a generator that did not run. The same code reports a gate that
   cannot run a check: git failed, a tracked output could not be removed, a tracked name is
-  not UTF-8, or git tracks nothing under the outputs (run it from the repository root).
+  not UTF-8, git tracks nothing under the outputs (run it from the repository root), or a file
+  the CI-GEN-006 tables name is not tracked. For the last: a generated file deleted by mistake
+  comes back when its generator runs; if a generator no longer writes it, or a hand-kept file
+  moved, remove its entry, since a stale entry would let a hand-written file of that name pass.
 - **CI-GEN-005** (committed file no generator writes): the named tracked files
   did not come back when the gate removed them and regenerated. A GENERATED
   header does not make a hand-written file generated (C-4.16). Delete them with the one
-  `git rm -- <paths>` command the report prints, or add the generator that writes each one
-  to the `generate` script in `packages/protocol/package.json`.
+  `git --literal-pathspecs rm -- <paths>` command the report prints, or add the generator that
+  writes each one to the `generate` script in `packages/protocol/package.json`.
+- **CI-GEN-006** (committed file no generator writes, in a directory `pnpm generate` does not
+  write): `packages/protocol/generated`, `packages/fixtures/golden/cvwb`, `tests/fuzz/ws-frames`
+  and `services/api/candleviewer/{api,ws}/_generated`. Their generators run in `make gen` or
+  need the backend venv, so the gate does not regenerate them: it compares the index with
+  `FIXED_OUTPUTS` in `tools/ci/check_gen_freshness.py`, every file each generator writes there
+  (tests pin each entry to the generator's own output paths), and `HAND_KEPT`, the files kept
+  there by hand on purpose with their reasons (today only `tests/fuzz/ws-frames/msgpack-client.json`,
+  the SR-185 corpus). Delete the named files with the one `git --literal-pathspecs rm -- <paths>`
+  command the report prints. If a generator does write one, add it to that generator's
+  `FIXED_OUTPUTS` entry (and to the generator test that pins it). A file kept by hand belongs
+  outside these directories, or in `HAND_KEPT` with its reason.
 
 ### CI-CON-* — contract conformance
 
