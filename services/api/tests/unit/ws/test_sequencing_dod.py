@@ -13,6 +13,7 @@ import pytest
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.sequencing import (
     SequencingHub,
     SnapshotBody,
@@ -364,6 +365,7 @@ def test_client_resync_fifth_allowed_and_sixth_rejected_as_resync_rate_limited_r
     err, revoked = conn.take()
     assert (err["p"]["code"], revoked["p"]["reason"]) == ("resync_rate_limited",) * 2
     assert (err["t"], revoked["t"]) == ("err", "revoked")
+    assert err["p"]["message"] == ERROR_META[ErrorCode.RESYNC_RATE_LIMITED].title  # §10.2, #3371
     assert conn.authz.find(sub.ch) is None
 
 
