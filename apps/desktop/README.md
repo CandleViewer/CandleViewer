@@ -41,14 +41,13 @@ one delivery point.
 Packaged builds: `electron-builder.yml` packages only this package's `dist/`,
 so `apps/web/dist` is not in the installer yet. The handler expects it at
 `<resources>/web/dist`; adding it (without source maps, SR-116) and checking
-the installer the same way is still open.
+the installer the same way is #3518.
 
 Backend connection: the web app calls `/api` relative to its page and builds
 its socket URL from `location.host`, so on `app://candleviewer` the sign-in
 screen renders but cannot reach the backend yet. Giving the desktop build the
 backend's address, listing `app://candleviewer` in `CV_ALLOWED_ORIGINS`
-(SR-042) and a CSRF token path for an `app://` page are still open. Both gaps
-are follow-ups to #3410.
+(SR-042) and a CSRF token path for an `app://` page are #3519.
 
 ## Scripts
 
