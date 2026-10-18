@@ -6,6 +6,10 @@ artifact, report_format}) and per-package coverage reports (lcov.info or
 coverage.xml, downloaded as CI artifacts by the caller workflow) and decides
 pass/fail per package plus an overall verdict.
 
+Each package is judged only on its own report, `<artifact>/<package-slug>/<report
+file>` (`own_report_path`), where `flatten_coverage_artifacts.py` copies it from
+the lane's upload, so packages that share an artifact never share a report (#3562).
+
 Error codes (ticket "Technical notes / design"):
     CI-COV-001  measured < floor
     CI-COV-002  measured < baseline - tolerance (regression, even if above
@@ -103,6 +107,25 @@ class PackageConfig:
     report_format: str
 
 
+REPORT_FILENAMES: dict[str, str] = {"coverage-xml": "coverage.xml", "lcov": "lcov.info"}
+_REPORT_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def report_slug(name: str) -> str:
+    """The directory that holds package `name`'s own report: its name with `-` for
+    each `/`, refused unless that is lowercase words joined by single `-`s."""
+    slug = name.replace("/", "-")
+    if not _REPORT_SLUG.fullmatch(slug):
+        raise CoverageGateError(f"{_excerpt(name)} names no report directory")
+    return slug
+
+
+def own_report_path(report_dir: Path, pkg: PackageConfig) -> Path:
+    """The one report `pkg` is judged on: `<report_dir>/<artifact>/<package-slug>/<file>`."""
+    filename = REPORT_FILENAMES[pkg.report_format]
+    return report_dir / pkg.artifact / report_slug(pkg.name) / filename
+
+
 @dataclass(frozen=True)
 class PackageResult:
     name: str
@@ -151,6 +174,7 @@ def load_config(path: Path) -> tuple[float, dict[str, PackageConfig]]:
         )
 
     packages: dict[str, PackageConfig] = {}
+    slugs: dict[str, str] = {}
     for name, cfg in packages_raw.items():
         try:
             packages[name] = PackageConfig(
@@ -162,6 +186,14 @@ def load_config(path: Path) -> tuple[float, dict[str, PackageConfig]]:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise CoverageGateError(f"malformed package entry {name!r}: {exc}") from exc
+        if packages[name].report_format not in REPORT_FILENAMES:
+            raise CoverageGateError(f"package {name!r} has an unknown report_format")
+        slug = report_slug(name)
+        if slug in slugs:
+            raise CoverageGateError(
+                f"packages {slugs[slug]!r} and {name!r} share the report directory {slug!r}"
+            )
+        slugs[slug] = name
 
     return float(tolerance), packages
 
@@ -268,6 +300,11 @@ def read_measured_coverage(
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise CoverageGateError(f"{report_path} is not UTF-8") from exc
+    return parse_report(text, report_format)
+
+
+def parse_report(text: str, report_format: str) -> float:
+    """Parse a report of `report_format` (raises CoverageGateError for any other)."""
     if report_format == "coverage-xml":
         return parse_coverage_xml(text)
     if report_format == "lcov":
@@ -393,12 +430,9 @@ def evaluate_all(
     packages: dict[str, PackageConfig],
     report_dir: Path,
     tolerance_pp: float,
-    report_filenames: dict[str, str] | None = None,
     ran_lanes: set[str] | None = None,
 ) -> GateReport:
-    """Evaluate every configured package. `report_filenames` maps package
-    name -> the filename to look for under `report_dir/<artifact>/`
-    (defaults to `coverage.xml` for coverage-xml, `lcov.info` for lcov).
+    """Evaluate every configured package on its own report (`own_report_path`).
     `ran_lanes` (None = all lanes ran) marks packages whose producing lane was
     path-skipped as N/A instead of CI-COV-003."""
     results: list[PackageResult] = []
@@ -432,14 +466,7 @@ def evaluate_all(
                 )
             )
             continue
-        filename: str
-        if report_filenames and name in report_filenames:
-            filename = report_filenames[name]
-        else:
-            filename = (
-                "coverage.xml" if pkg.report_format == "coverage-xml" else "lcov.info"
-            )
-        report_path = report_dir / pkg.artifact / filename
+        report_path = own_report_path(report_dir, pkg)
         results.append(evaluate_package(pkg, report_path, tolerance_pp, report_dir))
     return GateReport(results=results)
 
@@ -472,10 +499,6 @@ def render_summary_table(report: GateReport) -> str:
             f"| {r.name} | {r.floor:.1f}% | {r.baseline:.1f}% | {measured_s} | {delta_s} | {verdict_s} |"
         )
     return "\n".join(rows)
-
-
-def _slugify(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 def main(argv: list[str] | None = None) -> int:

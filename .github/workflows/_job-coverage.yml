@@ -75,10 +75,10 @@ jobs:
 
       # The frontend/engine lanes upload one lcov.info per package under a
       # shared artifact name (`apps/web/coverage/lcov.info`, etc. — see
-      # `_job-js.yml`); flatten each package's report to the single
-      # `<artifact>/lcov.info` (or `coverage.xml`) path coverage_gate.py's
-      # default filename lookup expects, without hand-listing every package
-      # path twice (that duplication already lives once, in
+      # `_job-js.yml`); flatten copies each package's report to a directory
+      # of its own, `<artifact>/<package-slug>/`, the one report
+      # coverage_gate.py judges that package on (#3562), without hand-listing
+      # every package path twice (that duplication already lives once, in
       # coverage-baselines.json's `artifact` field). A refusal here is written
       # to the summary file, so the PR comment below shows it.
       - name: Flatten per-package reports to coverage_gate.py's expected layout
