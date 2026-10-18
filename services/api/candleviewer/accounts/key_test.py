@@ -19,7 +19,8 @@ C-3.2, C-3.4); `key_test_wiring` binds its ports. For the acting Owner (`Importe
 4. With `include_ws`, the WebSocket half: the adapter's one-shot private `auth` (slice 2b5), only
    after a REST half that refused nothing, so a key a verdict refused is never signed with again
    (`verify()`'s order). It is diagnostic (ruling 11): it never enforces and never raises, and its
-   failure only makes `passed` false.
+   failure only makes `passed` false. A port that raises (M2 refusing to sign, say) is
+   `service_unavailable`, never `auth_error`: the exchange did not refuse the key.
 5. Bounds (ticket performance notes): 5 s per signed call and 12 s for the REST half are the job's,
    and the WebSocket half gets what is left of 12 s from the test's start: with nothing left it
    is a `timeout` that opens nothing. The verdict's handling is never cut by them. Nothing here is
@@ -266,9 +267,9 @@ class KeyTest:
                 auth = await self._websocket(key_id)
         except TimeoutError:
             return Probe(False, None, "timeout")
-        except Exception as exc:  # M2 refusing the `auth` signature, say: logged by its class
+        except Exception as exc:  # ours, not the key's (M2 refusing to sign, say): logged by class
             _log().warning("key_test_ws_failed", key_id=str(key_id), error=type(exc).__name__)
-            return Probe(False, None, "auth_error")
+            return Probe(False, None, "service_unavailable")
         return Probe(auth.ok, auth.latency_ms, auth.error)
 
     async def _read[T](self, step: Awaitable[T]) -> T:

@@ -35,9 +35,12 @@ An Owner's on-demand test of a stored key (`testApiKey`, the Admin - Accounts "T
 enforces its verdict the same way (decision 11 on #836): a failing test gives this symptom and these
 records at once, its `account.tested` naming the Owner (`actor_user_id`, `request_id`) instead of
 `system:key-selfcheck`. Its WebSocket half never latches or disarms anything, and a passing test,
-like a passing hourly re-check, never clears the latch. With `CV_EGRESS_IP` unset a test, like a
-pass, signs and judges nothing: it answers `503 exchange_unavailable` and latches
-`accounts.key_selfcheck_unavailable` (the next symptom), and no key or account is blamed.
+like a passing hourly re-check, never clears the latch. A WebSocket half that CandleViewer could
+not sign or run shows `service_unavailable`, never the key's `auth_error` (warning log
+`key_test_ws_failed` with the error type: `KekUnavailable` and `CredentialUnavailable` are M2's).
+With `CV_EGRESS_IP` unset a test, like a pass, signs and judges nothing: it answers
+`503 exchange_unavailable` and latches `accounts.key_selfcheck_unavailable` (the next symptom),
+and no key or account is blamed.
 
 The disarm's rule code and time commit with it, on the account row (`exchange_accounts`
 `policy_disarm_code`, `policy_disarmed_at`). If the audit sink refuses `account.disabled_by_policy`

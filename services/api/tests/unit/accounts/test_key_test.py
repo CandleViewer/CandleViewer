@@ -201,9 +201,24 @@ async def test_the_socket_half_gets_only_what_is_left_of_the_twelve_seconds(
     assert (done.websocket, socket.calls) == (Probe(False, None, "timeout"), dialled)
 
 
-async def test_a_socket_half_that_raises_is_its_own_auth_error_never_the_tests() -> None:
-    done = await run(flow_of(World(target()), socket=Socket(RuntimeError("m2 refused"))))
-    assert done.websocket == Probe(False, None, "auth_error") and not done.passed
+@pytest.mark.parametrize(
+    "error",
+    [
+        type("Refusal", (Exception,), {"code": "kek_unavailable"})("m2 refused"),
+        RuntimeError("no signing capability is wired"),
+    ],
+    ids=["m2-refused", "unwired"],
+)
+async def test_a_socket_half_that_raises_is_service_unavailable_never_the_keys_auth_error(
+    error: Exception,
+) -> None:
+    """A port that raises is CandleViewer's own fault (M2 refusing to sign, say), never the key's:
+    the exchange did not refuse it. It stays the half's result and never fails the test."""
+    with capture_logs() as logs:
+        done = await run(flow_of(World(target()), socket=Socket(error)))
+    assert done.websocket == Probe(False, None, "service_unavailable") and not done.passed
+    failed = {"event": "key_test_ws_failed", "key_id": str(KEY), "log_level": "warning"}
+    assert failed | {"error": type(error).__name__} in logs
 
 
 async def test_without_include_ws_the_socket_half_does_not_run() -> None:
