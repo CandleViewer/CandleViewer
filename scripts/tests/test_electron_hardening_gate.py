@@ -20,6 +20,7 @@ from tools.ci.electron_hardening_checks import (
     APP_PROBES,
     SR110_REQUIRED,
     SR112_EXACT,
+    check_packaging,
     parse_csp,
     run_all_checks,
 )
@@ -60,6 +61,9 @@ GOOD_SHELLPORT = (
     + "};\n"
 )
 GOOD_UPDATE = "export function isAutoUpdateEnabled() {\n    return false;\n}\n"
+# The tree's web dist is web/ beside electron-builder.yml (apps/web/dist is ../web/dist there).
+WEB_ENTRY = "extraResources:\n  - from: web\n    to: web/dist\n"
+GOOD_WEB_RESOURCES = WEB_ENTRY + '    filter:\n      - "**/*"\n      - "!**/*.map"\n'
 GOOD_BUILDER = 'files:\n  - dist/**/*\n  - "!**/*.map"\n'
 GOOD_WINDOWS: list[dict[str, object]] = [
     {
@@ -112,7 +116,7 @@ class Tree:
                 f'<html><head><meta http-equiv="Content-Security-Policy" content="{GOOD_CSP}" />'
                 "</head></html>"
             ),
-            "electron-builder.yml": GOOD_BUILDER,
+            "electron-builder.yml": GOOD_BUILDER + GOOD_WEB_RESOURCES,
         }
         self.windows = copy.deepcopy(GOOD_WINDOWS)
         self.probes = copy.deepcopy(GOOD_PROBES)
@@ -668,9 +672,99 @@ def test_autoupdate_enabled_in_main_fails_sr115(tree: Tree) -> None:
     assert srs(tree.violations()) == {"SR-115"}
 
 
-def test_sourcemaps_shipped_fails_sr116(tree: Tree) -> None:
-    tree.files["electron-builder.yml"] = "files:\n  - dist/**/*\n"
+@pytest.mark.parametrize(
+    "files",
+    ["files:\n  - dist/**/*\n", "", "files: dist/**/*\n"],
+    ids=["no-exclusion", "absent", "one-pattern"],
+)
+def test_sourcemaps_shipped_fails_sr116(tree: Tree, files: str) -> None:
+    tree.files["electron-builder.yml"] = files + GOOD_WEB_RESOURCES
     assert srs(tree.violations()) == {"SR-116"}
+
+
+@pytest.mark.parametrize(
+    "web_filter",
+    [
+        "",
+        "    filter: []\n",
+        '    filter: "**/*"\n',
+        '    filter:\n      - "**/*"\n      - "!*.map"\n',
+        '    filter:\n      - "**/*"\n      - "!**/*.map"\n      - assets/*.js.map\n',
+        '    filter:\n      - "**/*"\n      - "!**/*.map"\n      - "!!**/*.js.map"\n',
+    ],
+    ids=["none", "empty", "all", "top-level-only", "re-included", "double-negation"],
+)
+def test_web_dist_entry_that_could_package_maps_fails_sr116(
+    tree: Tree, web_filter: str
+) -> None:
+    tree.files["electron-builder.yml"] = GOOD_BUILDER + WEB_ENTRY + web_filter
+    vs = tree.violations()
+    assert srs(vs) == {"SR-116"} and "extraResources entry from 'web'" in vs[0].message
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [
+        WEB_ENTRY + '    filter: "!**/*.map"  # starts from **/*\n',
+        WEB_ENTRY
+        + "    filter:\n      - '**/*'\n\n      - '!**/*.map'\n      - '!*.txt'\n",
+        "extraResources:\n- filter:\n  - '!**/*.map'\n  to: ./web/dist/\n  from: web\n",
+    ],
+    ids=["exclusion-only", "exclusion-then-exclusion", "compact-reordered"],
+)
+def test_web_dist_entry_excluding_maps_last_passes(tree: Tree, resources: str) -> None:
+    tree.files["electron-builder.yml"] = GOOD_BUILDER + resources
+    assert tree.violations() == []
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        GOOD_BUILDER,
+        GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("to: web/dist", "to: web"),
+        GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("from: web", "from: web/assets"),
+    ],
+    ids=["absent", "other-destination", "other-source"],
+)
+def test_web_dist_missing_from_the_asset_root_fails_sr174(
+    tree: Tree, builder: str
+) -> None:
+    tree.files["electron-builder.yml"] = builder
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "'web/dist'" in vs[0].message
+
+
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    [
+        ("  - from: docs\n    to: docs\n", "extraResources entry from 'docs'"),
+        ('  - "notes/**"\n', "extraResources patterns"),
+        ("extraFiles:\n  - from: docs\n", "extraFiles entry from 'docs'"),
+        ("files:\n  - '**/*'\n", "cannot read files: declared twice"),
+        ("linux:\n  extraResources:\n    - x\n", "['extraResources'] outside the top"),
+        ("  - from: [web]\n", "unreadable from value '[web]'"),
+        ("  - from: web\n    mode: x\n", "unexpected field 'mode'"),
+        ("  - &web x\n", "unreadable item '&web x'"),
+        ("  - from: x\n    filter:\n      - *w\n", "unreadable filter pattern '*w'"),
+        ("  - to: null\n", "unreadable to value 'null'"),
+        ("  -\n", "unreadable line '-'"),
+        ("extraFiles: x\n  - y\n", "cannot read extraFiles: a value and a block"),
+        ("extraFiles: [{from: docs}]\n", "cannot read extraFiles: unreadable value"),
+    ],
+)
+def test_other_packaging_that_could_ship_maps_fails_sr116(
+    tree: Tree, extra: str, reason: str
+) -> None:
+    tree.files["electron-builder.yml"] = GOOD_BUILDER + GOOD_WEB_RESOURCES + extra
+    vs = tree.violations()
+    assert srs(vs) == {"SR-116"} and any(reason in v.message for v in vs)
+
+
+def test_the_shipped_builder_config_packages_the_web_dist_without_maps() -> None:
+    root = Path(__file__).resolve().parents[2]
+    config = root / "apps/desktop/electron-builder.yml"
+    text = config.read_text(encoding="utf-8")
+    assert check_packaging(text, config.parent, root / "apps/web/dist") == []
 
 
 def test_ipcrenderer_exposed_directly_fails_sr111(tree: Tree) -> None:
