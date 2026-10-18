@@ -213,7 +213,10 @@ def test_verdict_fails_on_any_red_scan_and_ignores_a_failed_upload(
 WRITES = {"javascript-typescript": "javascript.sarif", "python": "python.sarif"}
 LANGUAGES = ",".join(WRITES)
 RESULTS = "${{ runner.temp }}/codeql-results"
-CLEAN = json.dumps({"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL"}}}]})
+# A clean run still carries its results list (#3372: absent or null means "not computed").
+CLEAN = json.dumps(
+    {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL"}}, "results": []}]}
+)
 # A CodeQL High: CodeQL scores the rule descriptor, not the result (#1715).
 HIGH = """{"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL",
   "rules": [{"id": "x", "properties": {"security-severity": "7.5"}}]}},
@@ -233,10 +236,12 @@ def _run(
     temp: dict[str, str],
     langs: str | None = LANGUAGES,
     checkout: str = CLEAN,
+    flags: str = "-B",
     **env: str,
 ) -> subprocess.CompletedProcess[str]:
     """Run a codeql step's script as the runner does (`bash -e`), with `temp` under $RUNNER_TEMP
-    and, in the checkout's own codeql-results/, a file per language whose body is `checkout`."""
+    and, in the checkout's own codeql-results/, a file per language whose body is `checkout`.
+    `python` is this interpreter run with `flags`."""
     ws, runner_temp, bin_dir = tmp_path / "ws", tmp_path / "runner-temp", tmp_path / "bin"
     for d in (ws / "codeql-results", ws / "security", runner_temp / "codeql-results", bin_dir):
         d.mkdir(parents=True)
@@ -248,7 +253,7 @@ def _run(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
     python = bin_dir / "python"  # this interpreter (with PyYAML); -B: no bytecode in the repo
-    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "$@"\n', encoding="utf-8")
+    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" {flags} "$@"\n', encoding="utf-8")
     python.chmod(0o755)
     env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
     env["RUNNER_TEMP"] = str(runner_temp)
@@ -346,9 +351,36 @@ def test_codeql_gate_fails_a_language_sarif_without_runs(tmp_path: Path) -> None
     assert re.search(r"^CI-SEC-005: codeql: \S+/javascript\.sarif has no runs", proc.stderr, re.M)
 
 
-# #3337: the gate's one third-party module, by hash, from wheels only, after analyze.
+# #3372: a language SARIF whose run has no results list, or did not complete, records no scan.
+_NAMED_RUN = {"tool": {"driver": {"name": "CodeQL"}}}
+
+
+@pytest.mark.parametrize(
+    ("run", "reason"),
+    [
+        (_NAMED_RUN, "run 0 has no 'results' list"),
+        (
+            {**_NAMED_RUN, "invocations": [{"executionSuccessful": False}], "results": []},
+            "run 0 records no completed scan: invocation 0 does not report",
+        ),
+    ],
+)
+def test_codeql_gate_fails_a_language_sarif_that_records_no_completed_scan(
+    tmp_path: Path, run: dict[str, Any], reason: str
+) -> None:
+    body = json.dumps({"version": "2.1.0", "runs": [run]})
+    proc = _run("security_gate.py", tmp_path, {"javascript.sarif": body, "python.sarif": CLEAN})
+    assert (proc.returncode, proc.stdout.count("security_gate[codeql]: OK")) == (1, 1)
+    pattern = rf"^CI-SEC-005: codeql: \S+/javascript\.sarif {re.escape(reason)}"
+    assert re.search(pattern, proc.stderr, re.MULTILINE)
+
+
+# #3337: the gate's one third-party module, by hash, from wheels only, after analyze. #3372: in
+# isolated mode (-I), so neither the checkout's files nor PYTHON* variables can stand in for pip.
 GATE_REQUIREMENTS = "tools/ci/requirements-security-gate.txt"
-GATE_INSTALL = "python -m pip install --require-hashes --only-binary=:all: --no-deps -r "
+GATE_INSTALL = "python -I -m pip install --require-hashes --only-binary=:all: --no-deps -r "
+# A Python installer word anywhere in a line, as NODE_TOOL matches node's.
+PY_INSTALLER = re.compile(r"(?<![\w.-])(?:pip[\d.]*|pipx|uv|easy_install)(?![\w.-])")
 
 
 def test_codeql_installs_only_the_hash_pinned_gate_dependency_after_analyze() -> None:
@@ -360,6 +392,27 @@ def test_codeql_installs_only_the_hash_pinned_gate_dependency_after_analyze() ->
     assert analyze < steps.index(install) < gate
     assert (install["if"], install["run"]) == ("always()", GATE_INSTALL + GATE_REQUIREMENTS)
     assert "requirements-ci.txt" not in json.dumps(JOBS["codeql"])
+    # #3372: and it is the job's only install, under any spelling.
+    lines = [
+        line.strip()
+        for step in steps
+        for line in step.get("run", "").splitlines()
+        if PY_INSTALLER.search(line) and not line.strip().startswith("#")
+    ]
+    assert lines == [install["run"]]
+
+
+def test_codeql_gate_stops_on_an_import_error_when_its_install_failed(tmp_path: Path) -> None:
+    # The gate step runs after a failed install (always()), so it cannot pass without PyYAML:
+    # -S keeps site-packages, and with them PyYAML, off sys.path. The runbook says what that
+    # looks like in the log.
+    sarif = dict.fromkeys(WRITES.values(), CLEAN)
+    proc = _run("security_gate.py", tmp_path, sarif, flags="-B -S")
+    assert (proc.returncode, proc.stdout) == (1, "")
+    assert proc.stderr.count("ModuleNotFoundError: No module named 'yaml'") == len(WRITES)
+    runbook = (ROOT / "docs" / "ci-runbook.md").read_text(encoding="utf-8")
+    entry = runbook.split("- **CI-SEC-005**", 1)[1].split("- **CI-SEC-006**", 1)[0]
+    assert "No module named 'yaml'" in entry
 
 
 def test_gate_requirements_hash_pin_what_security_gate_imports_at_the_ci_version() -> None:
