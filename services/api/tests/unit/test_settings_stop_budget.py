@@ -244,20 +244,28 @@ def test_the_ws_close_audit_bound_is_the_term_the_floor_uses() -> None:
 async def test_the_supervisor_cuts_a_hung_stop_at_its_grace_plus_the_shared_slack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The slack in the budget's sum is the one `_stop_each` spends (patched small to run fast)."""
+    """The slack in the budget's sum is the one `_stop_each` spends: the bound it asks
+    `asyncio.timeout` for is the grace plus `STOP_SLACK_S` (patched to 0.1), and a hung stop is
+    cut there. The bound is read, not timed, so a loaded runner cannot fail it (#3339)."""
     monkeypatch.setattr("candleviewer.app.STOP_SLACK_S", 0.1)
+    bounds: list[float | None] = []
+    real_timeout = asyncio.timeout
+
+    def _cut_at_once(delay: float | None) -> asyncio.Timeout:
+        bounds.append(delay)
+        return real_timeout(0)  # the hung stop is cut now, not once the bound has elapsed
+
+    monkeypatch.setattr(asyncio, "timeout", _cut_at_once)
 
     class _Hung:
         async def stop(self, grace_s: float) -> None:
             await asyncio.Event().wait()
 
-    loop = asyncio.get_running_loop()
-    started = loop.time()
     supervisor = Supervisor(cast(AppContext, SimpleNamespace(audit=_Hung())))
-    await supervisor._stop_each(["audit"], 0.05)
-    # The grace plus the patched slack. The ceiling is generous (0.8 s of scheduling slack) and
-    # still excludes a literal 1 s slack in `_stop_each`, which would end no earlier than 1.05 s.
-    assert 0.15 <= loop.time() - started < 0.95
+    # `wait_for` bounds the test itself through `asyncio.timeouts`, which the patch leaves alone.
+    await asyncio.wait_for(supervisor._stop_each(["audit"], 0.05), 5)
+    # The grace plus the patched slack; a literal 1 s slack in `_stop_each` would ask for 1.05.
+    assert bounds == [pytest.approx(0.15)]
 
 
 def test_the_two_uvicorn_ticks_the_budget_counts_are_still_in_uvicorn() -> None:
