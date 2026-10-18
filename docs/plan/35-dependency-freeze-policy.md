@@ -58,7 +58,13 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
    / `@size-limit/*` >= 12 need Node 22 while `package.json` `engines` pins Node 20 — ignored
    until the Node 22 upgrade ticket lands, which removes the `ignore` entry in the same PR.
    `xstate-statemachine` (ADR-0016 exact pin) and `pnpm` (corepack `packageManager` pin) are
-   never bumped by Dependabot. **All npm semver-major bumps are ignored** (`dependency-name: "*"`) because majors are sequenced manually via #1819 (Node 22 floor first, #1778 F); remove that entry once step 1 of #1819 lands. Any new `ignore` entry needs a comment naming the unblocking ticket.
+   never bumped by Dependabot. **All npm semver-major bumps are ignored** (`dependency-name: "*"`) because majors are sequenced manually via #1819 (Node 22 floor first, #1778 F); remove that entry once step 1 of #1819 lands.
+   The docker `python` base image (`infra/images`) ignores minor and major updates: the backend
+   targets Python 3.12 (`services/api/.python-version`, the mypy/Ruff/Black targets in
+   `services/api/pyproject.toml`, the `python:3.12-slim` pin in `infra/images/PINS.md`;
+   `AGENTS.md` §5.2 sets 3.12 as the floor; #3314 declined, #3430), so only patch and digest
+   updates flow until the runtime-upgrade ticket #3492 and its ADR remove the entry. Any new
+   `ignore` entry needs a comment naming the unblocking ticket.
 
 Non-Dependabot dependency changes (a feature PR adding a package) follow §8.3 as before: the
 author runs `--write` in the same PR and the reviewer applies step 3(b).
