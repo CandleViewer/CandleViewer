@@ -44,6 +44,12 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
+# Where flatten_coverage_artifacts.py puts a package's own report (#3562).
+API_REPORT = Path("py-coverage") / "services-api" / "coverage.xml"
+PROTOCOL_REPORT = Path("coverage-unit-engine") / "packages-protocol" / "lcov.info"
+UI_REPORT = Path("coverage-unit-frontend") / "packages-ui" / "lcov.info"
+
+
 # --- Gherkin scenario 1: below floor fails --------------------------------
 
 
@@ -303,8 +309,8 @@ def test_evaluate_all_mixed_pass_and_fail(tmp_path: Path) -> None:
             "packages/ui", 80.0, 80.0, "coverage-unit-frontend", "lcov"
         ),
     }
-    _write(tmp_path / "py-coverage" / "coverage.xml", _coverage_xml(0.90))
-    _write(tmp_path / "coverage-unit-frontend" / "lcov.info", _lcov(1000, 700))
+    _write(tmp_path / API_REPORT, _coverage_xml(0.90))
+    _write(tmp_path / UI_REPORT, _lcov(1000, 700))
 
     report = evaluate_all(packages, tmp_path, tolerance_pp=0.5)
     verdicts = {r.name: r.verdict for r in report.results}
@@ -373,7 +379,7 @@ def test_main_passes_writes_summary_and_returns_zero(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     report_dir = tmp_path / "artifacts"
-    _write(report_dir / "py-coverage" / "coverage.xml", _coverage_xml(0.90))
+    _write(report_dir / API_REPORT, _coverage_xml(0.90))
     summary_out = tmp_path / "summary.md"
 
     rc = main(
@@ -440,7 +446,7 @@ def test_main_ratchet_writes_proposals_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     report_dir = tmp_path / "artifacts"
-    _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 894))
+    _write(report_dir / PROTOCOL_REPORT, _lcov(1000, 894))
     ratchet_out = tmp_path / "ratchet.json"
 
     rc = main(
@@ -593,19 +599,20 @@ def _protocol_code(report_dir: Path, artifact: str = "coverage-unit-engine") -> 
     "case", ["file-link", "dir-link", "dot-dot", "absolute", "oversized"]
 )
 def test_evaluate_all_refuses_an_untrusted_report(tmp_path: Path, case: str) -> None:
-    outside = _write(tmp_path / "outside" / "lcov.info", _lcov(1000, 990))
+    outside_dir = tmp_path / "outside"
+    outside = _write(outside_dir / "packages-protocol" / "lcov.info", _lcov(1000, 990))
     report_dir = tmp_path / "artifacts"
     artifact = report_dir / "coverage-unit-engine"
     report_dir.mkdir()
     if case == "file-link":
-        artifact.mkdir()
-        (artifact / "lcov.info").symlink_to(outside)
+        (report_dir / PROTOCOL_REPORT).parent.mkdir(parents=True)
+        (report_dir / PROTOCOL_REPORT).symlink_to(outside)
     elif case == "dir-link":
-        artifact.symlink_to(outside.parent, target_is_directory=True)
+        artifact.symlink_to(outside_dir, target_is_directory=True)
     elif case == "oversized":
-        report = _write(artifact / "lcov.info", _lcov(1000, 990))
+        report = _write(report_dir / PROTOCOL_REPORT, _lcov(1000, 990))
         os.truncate(report, coverage_gate.MAX_REPORT_BYTES + 1)
-    leave = {"dot-dot": "../outside", "absolute": str(outside.parent)}
+    leave = {"dot-dot": "../outside", "absolute": str(outside_dir)}
     with pytest.raises(coverage_gate.ArtifactRefusedError):
         _protocol_code(report_dir, leave.get(case, artifact.name))
 
@@ -628,8 +635,8 @@ def test_evaluate_all_refuses_an_untrusted_manifest(tmp_path: Path, case: str) -
 
 
 def test_evaluate_all_rejects_a_report_that_is_not_utf8(tmp_path: Path) -> None:
-    (tmp_path / "coverage-unit-engine").mkdir()
-    (tmp_path / "coverage-unit-engine" / "lcov.info").write_bytes(b"SF:\xff\nLF:1\n")
+    (tmp_path / PROTOCOL_REPORT).parent.mkdir(parents=True)
+    (tmp_path / PROTOCOL_REPORT).write_bytes(b"SF:\xff\nLF:1\n")
     assert _protocol_code(tmp_path) == "CI-COV-003"
 
 
@@ -731,7 +738,7 @@ def test_main_refuses_an_untrusted_report_with_ci_cov_004(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str
 ) -> None:
     report_dir = tmp_path / "artifacts"
-    report = report_dir / "coverage-unit-engine" / "lcov.info"
+    report = report_dir / PROTOCOL_REPORT
     if case == "file-link":
         report.parent.mkdir(parents=True)
         report.symlink_to(_write(tmp_path / "outside.info", _lcov(1000, 990)))
@@ -763,10 +770,10 @@ def test_main_ratchet_proposes_only_from_a_complete_valid_download(
     code: str,
 ) -> None:
     report_dir = tmp_path / "artifacts"
-    _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 990))
-    ui = report_dir / "coverage-unit-frontend" / "lcov.info"
+    _write(report_dir / PROTOCOL_REPORT, _lcov(1000, 990))
+    ui = report_dir / UI_REPORT
     if frontend is None:
-        ui.parent.mkdir()
+        ui.parent.mkdir(parents=True)
         ui.symlink_to(_write(tmp_path / "outside.info", _lcov(1000, 990)))
     else:
         _write(ui, frontend)
@@ -774,3 +781,50 @@ def test_main_ratchet_proposes_only_from_a_complete_valid_download(
     assert _main(tmp_path, report_dir, "--ratchet", "--ratchet-out", str(out)) == rc
     assert (json.loads(out.read_text()) if out.exists() else None) == proposed
     assert code in capsys.readouterr().err
+
+
+# --- Each package is judged on its own report (#3562) ------------------------
+
+
+def test_evaluate_all_judges_packages_sharing_an_artifact_on_their_own_reports(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "coverage-unit-frontend"
+    _write(artifact / "lcov.info", _lcov(100, 100))  # names no package, so judges none
+    _write(artifact / "packages-ui" / "lcov.info", _lcov(100, 95))
+    _write(artifact / "apps-app-web" / "lcov.info", _lcov(100, 70))
+    packages = {
+        name: PackageConfig(name, 80.0, 80.0, artifact.name, "lcov")
+        for name in ("packages/ui", "apps/app-web", "apps/app-electron")
+    }
+    report = evaluate_all(packages, tmp_path, tolerance_pp=0.5)
+    assert [(r.measured, r.code) for r in report.results] == [
+        (pytest.approx(95.0), None),
+        (pytest.approx(70.0), "CI-COV-001"),
+        (None, "CI-COV-003"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["a-b/c", "a/b-c"], ["../ui"], ["/ui"], ["a//ui"], ["Ui/x"], [""], ["ui"]],
+    ids=["collision", "dot-dot", "absolute", "empty-part", "upper", "empty", "single"],
+)
+def test_load_config_refuses_a_package_without_a_report_directory_of_its_own(
+    tmp_path: Path, names: list[str]
+) -> None:
+    entry = {"floor": 80.0, "baseline": 80.0, "artifact": "a", "report_format": "lcov"}
+    doc = {"tolerance_pp": 0.5, "packages": dict.fromkeys(names, entry)}
+    path = tmp_path / "baselines.json"
+    path.write_text(json.dumps(doc))
+    with pytest.raises(CoverageGateError, match="report directory"):
+        load_config(path)
+
+
+def test_load_config_refuses_an_unknown_report_format(tmp_path: Path) -> None:
+    entry = {"floor": 80.0, "baseline": 80.0, "artifact": "a", "report_format": "html"}
+    doc = {"tolerance_pp": 0.5, "packages": {"packages/ui": entry}}
+    path = tmp_path / "baselines.json"
+    path.write_text(json.dumps(doc))
+    with pytest.raises(CoverageGateError, match="unknown report_format"):
+        load_config(path)

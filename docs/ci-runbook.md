@@ -51,7 +51,7 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, npm-audit,
 │                                      license-scan)                    (CI-SEC-001..005)
-├─ _job-coverage.yml (js/py filters) → per-package threshold + ratchet  (CI-COV-001..004)
+├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
@@ -430,6 +430,11 @@ index alone, removing nothing.
 - **CI-COV-003** (missing coverage artifact): a lane that should have
   produced a coverage report for an applicable package left none. Check
   that lane's upload step; a silently-missing report must never pass.
+  Each package is judged only on its own report, which `flatten_coverage_artifacts.py` copies to
+  `<artifact>/<package-slug>/` (#3562): another package's report never stands in for a missing
+  one. flatten also reports `coverage-baselines.json` errors with this code, for example two
+  packages naming one upload path or one report directory (`a-b/c` and `a/b-c` both map to
+  `a-b-c`), or a package name that is not two or more lowercase `/`-separated segments.
   In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
   5 days) is missing: the lane died before writing it, or a "Re-run failed
   jobs" came after the green lanes' data expired; then use "Re-run all jobs".
@@ -440,7 +445,8 @@ index alone, removing nothing.
 - **CI-COV-004** (coverage artifact refused): artifacts are untrusted input, so the coverage
   scripts refuse a path that resolves outside the download directory or is not a regular file, a
   report over 32 MiB (`affected-packages.txt` and the ratchet proposals: 64 KiB), a download of
-  over 1,000 entries, or proposals that are not one JSON object of at most 64 package names mapped
+  over 1,000 entries or holding a package's `<artifact>/<package-slug>/` directory (only flatten
+  creates it), or proposals that are not one JSON object of at most 64 package names mapped
   to percentages. A lane's own upload (regular files, about 2.5 MB at most on 2026-10-18) never
   trips it: find what wrote the refused path. Raise a bound only in a reviewed change.
 - **`coverage-ratchet` is disabled (#3508).** It runs only for a successful push run of this
@@ -450,14 +456,18 @@ index alone, removing nothing.
   `if:` needs a `workflow_run` event. A push-to-main coverage run would cost about 45
   runner-minutes per merge for the `py` lane alone (medians 18.9, 14.8, 10.5 and 0.5 minutes, 26
   green `pr.yml` runs on 2026-10-18), about 8,800 a day at the 196 merges of 2026-10-16. To
-  re-enable it, first measure each package from its own report: the packages that share an
-  artifact (`coverage-unit-engine`, `coverage-unit-frontend`) are all measured today from the
-  first package report `flatten_coverage_artifacts.py` copies, so the ratchet would raise their
+  re-enable it, first make sure `main` judges each package on its own report (#3562): before
+  that fix, the packages that share an artifact (`coverage-unit-engine`, `coverage-unit-frontend`)
+  were all measured from the first package report flatten copied, so the ratchet would raise their
   baselines from that one package's number. Then add a push-to-main workflow that uploads every
   coverage artifact, with the JS coverage lanes unfiltered (their `...[origin/main]` filter
   selects no package on a push to `main`, so every JS package would be N/A), and name it under the
   ratchet's `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
   `scripts/tests/test_coverage_ratchet_yml.py` checks the producer runs on push to `main`.
+  Give the ratchet job's checkout `persist-credentials: false`, and open the bot PR with a
+  short-lived GitHub App token, not the default `GITHUB_TOKEN`: a PR opened with `GITHUB_TOKEN`
+  starts no `pull_request` workflows, so its required checks would never run. Keep the App's
+  private key in an environment secret with protection rules and required reviewers (SR-141).
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
 
