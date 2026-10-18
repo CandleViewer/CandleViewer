@@ -309,7 +309,7 @@ def test_s12_unknown_options_on_ctl_and_unknown_entry_fields_are_rejected() -> N
         c.drain(1)
         c.send({"t": "ctl", "id": "k", "ch": "trades.BTCUSDT", "p": {"throttel_ms": 1}})
         err = c.recv_err()
-        assert (err["p"]["code"], err["p"]["field"]) == ("invalid_options", "throttel_ms")
+        assert (err["p"]["code"], err["p"]["field"]) == ("invalid_options", "p")  # §5.4, #3370
         res = c.sub({"ch": "ticker.BTCUSDT", "extra": 1})["p"]["results"][0]
         assert res["error"]["code"] == "invalid_options"
 

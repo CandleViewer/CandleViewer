@@ -122,6 +122,31 @@ def test_contract_a_non_topic_ch_is_refused_without_being_echoed(t: str, p: Any,
         assert "ch" not in f and len(json.dumps(f)) < 400  # the `ch` is omitted, not nulled
 
 
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        pytest.param("Q" * 500, "p", id="500-chars"),
+        pytest.param("throttel_ms", "p", id="typo"),
+        pytest.param("depth", "depth", id="known-name-the-topic-lacks"),
+        pytest.param("encoding", "encoding", id="known-sub-option"),
+    ],
+)
+def test_contract_a_ctl_option_key_is_named_only_when_the_server_knows_it(
+    key: str, field: str
+) -> None:
+    """§5.4 (#3370): `field` is the key if it is an option name, else `p`; the message is fixed."""
+    with connect(World()) as c:
+        c.sub("trades.BTCUSDT")
+        c.send({"t": "ctl", "id": "k", "ch": "trades.BTCUSDT", "p": {key: 1}}, conform=False)
+        f = c.next_validated("err")
+        assert (f["id"], f["ch"], f["p"]["code"], f["p"]["field"], f["p"]["message"]) == (
+            ("k", "trades.BTCUSDT", "invalid_options", field, "Unknown ctl option.")
+        )
+        assert len(json.dumps(f)) < 400 and (field == key or key not in json.dumps(f))
+        c.send({"t": "ctl", "id": "k2", "ch": "trades.BTCUSDT", "p": CTL})
+        assert c.next_validated("ctl_ok")["id"] == "k2"  # nothing was changed or revoked
+
+
 def test_contract_refused_control_frames_are_not_protocol_strikes() -> None:
     refused: list[dict[str, Any]] = [
         {"t": "unsub", "id": "u", "p": {"topics": ["Bad Topic"]}},

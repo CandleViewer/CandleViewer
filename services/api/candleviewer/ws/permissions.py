@@ -77,6 +77,7 @@ from candleviewer.ws.topics import (
     FAMILIES,
     IDENTITY_OPTIONS,
     MACHINE_KINDS,
+    OPTION_NAMES,
     SCOPE_OPTIONS,
     UNIVERSAL,
     EntityScope,
@@ -731,14 +732,17 @@ class ConnectionAuthz:
         allowed = {**UNIVERSAL, **sub.topic.family.options}
         changes: dict[str, Any] = {}
         for key in sorted(body):
-            if key == "paused" and isinstance(body[key], bool):
+            if key == "paused":  # a boolean on every topic, though no family lists it (§5.4, #2517)
+                if not isinstance(body[key], bool):
+                    raise TopicError("invalid_options", "Option 'paused' is out of range.", key)
                 changes[key] = body[key]
                 continue
             if key in SCOPE_OPTIONS:  # scope is authorised at `sub` only; never widened here
                 raise TopicError("invalid_options", f"'{key}' cannot be changed by ctl.", key)
             spec = allowed.get(key) if key in CTL_KEYS else None
-            if spec is None:
-                raise TopicError("invalid_options", f"Unknown ctl option '{str(key)[:40]}'.", key)
+            if spec is None:  # a key the server does not know is never echoed (§5.4, #3370)
+                named = key if key in OPTION_NAMES else "p"
+                raise TopicError("invalid_options", "Unknown ctl option.", named)
             changes[key] = spec.check(key, body[key])
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
         effective = effective_options(sub.topic, opts)

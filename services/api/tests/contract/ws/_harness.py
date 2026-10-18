@@ -449,6 +449,10 @@ class Client:
         while True:
             frame: dict[str, Any] = recv_json(self.ws)
             assert frame.get("e") != ("b64" if self.msgpack else "b"), frame  # §3.2 per encoding
+            # #3370: a top-level `err`'s `field` (a `sub_ok` result's: #3479). 64 is this harness's
+            # bound, as the envelope `id`'s (§13.1); §13 sets none for `field` (#572).
+            if frame["t"] == "err":
+                assert len(frame["p"].get("field", "")) <= 64, frame
             if validate:
                 validate_frame(frame)
             self.seen.append(frame)
