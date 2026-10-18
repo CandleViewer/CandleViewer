@@ -397,7 +397,7 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - a command as an expansion's ``-`` default: ``${X:-set -x}`` (no rule starts a word after a
 #:   ``-``, as in ``x-set``)
 #: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does
-#:   not follow: ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
+#:   not follow (#3525): ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
 #:   with an expansion inside its name that no name follows: ``b${X}ash -x`` (but ``ba${X}sh``)
 #: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
@@ -413,8 +413,10 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: -x 80``: a session named sh, 80 columns wide), ``set`` as another tool's word (``gh secret set
 #: -v all X``: gh's ``--visibility``), a quoted string's words (``echo "use bash" -x``), a shell
 #: name after a ``+``, ``=`` or ``@`` in a word that is no path (``a+bash -x``, ``x=bash -x``; a
-#: path naming no shell is read whole: ``/opt/x+bash -x``), and an rcfile named ``--xtrace``
-#: (``bash --rcfile --xtrace ci.sh``: ``_LONG_XTRACE`` reads any ``--xtrace``).
+#: path naming no shell is read whole: ``/opt/x+bash -x``), an rcfile named ``--xtrace``
+#: (``bash --rcfile --xtrace ci.sh``: ``_LONG_XTRACE`` reads any ``--xtrace``), and a test's
+#: ``-a`` or ``-o`` before its ``-x`` on ``$SHELL`` or ``$BASH`` (``[ -n "$SHELL" -a -x "$SHELL" ]``
+#: reads as ``$SHELL`` run with ``-a -x``).
 _SET_X = (
     _SET_TRACE,
     _SHELL_TRACE,
@@ -468,9 +470,9 @@ def _sr146_hits(text: str) -> list[tuple[int, str]]:
         words = _unquoted(body)
         if any(m["on"] for m in _TRAP_DEBUG.finditer(body)) or any(
             m["on"]
-            for text in (words, _unquoted(words))
+            for view in (words, _unquoted(words))
             for rule in _SET_X
-            for m in rule.finditer(text)
+            for m in rule.finditer(view)
         ):
             hits.append((n, "'set -x' tracing"))
         if _ENV_DUMP.search(body):
