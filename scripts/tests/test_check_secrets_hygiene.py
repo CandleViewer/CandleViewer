@@ -252,6 +252,13 @@ def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: 
     assert h.check_workflows(tmp_path) == [f"{hit} (SR-146); run by w.yml" for hit in hits]
 
 
+def test_run_script_shebang_ignores_a_later_lines_allow_marker(tmp_path: Path) -> None:
+    # #3400: the shebang check reads line 1 alone; the marker allows only the line it is on.
+    _write(tmp_path, WF, _runs("./tools/x.sh"))
+    _write(tmp_path, "tools/x.sh", "#!/bin/bash -x\necho ok  # secrets-hygiene: allow\n")
+    assert h.check_workflows(tmp_path) == ["tools/x.sh:1: 'set -x' tracing (SR-146); run by w.yml"]
+
+
 @pytest.mark.parametrize(
     "run", ["./tools/gen.py", "python3 tools/gen.py", 'bash -c "tools/gen.py --check"']
 )
@@ -449,6 +456,8 @@ TRACED = [
     "set -eu${TRACE:+x}o pipefail",
     "set -e${O:-v}",
     "set -e${CI:+u} -x",
+    # #3400: an earlier option group holding ${NAME}, which the option words read past.
+    "set -e${X} -x",
     "set ${DEBUG:+-x}",
     "bash ${DEBUG:+-o xtrace} ci.sh",
 ]
@@ -643,6 +652,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         "$SHELL " * 13000,
         "${SHELL:-" * 10000,
         "${SHELL:-a" * 9000,
+        # #3400: a `:=` default puts a `=` before each `$`, so a rule starts there (not after
+        # `:-`): a default read on past a `$` re-read the line from each (about 4 s at 86k).
+        "${SHELL:=" * 9600,
         # #3400: path segments a rule may start in (after a `+`, a `}` or a `@` before a `~`),
         # each read once as one path naming no shell; letters from expansions, an unclosed one.
         "/a+" * 32000,
@@ -660,7 +672,7 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
     + ["trap-words", "trap-quotes", "trap-escapes"]
     + ["single-quotes", "mixed-quotes", "escaped-quotes", "quote-escapes", "ansi-c-quotes"]
     + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
-    + ["shell-vars", "shell-defaults", "shell-default-runs"]
+    + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
     + ["value-words"],
 )
