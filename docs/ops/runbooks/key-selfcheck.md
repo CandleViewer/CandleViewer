@@ -12,6 +12,11 @@ by `key_selfcheck_wiring.py`. `CV_EGRESS_IP` is the address the exchange sees fr
 once a key is stored); `CV_KEY_SELFCHECK_INTERVAL_S` is 60 to 3600. The start-up pass is bounded at 60 s:
 the API serves nothing, `/healthz` included, until it ends, and a healthy pass of up to about 19 keys fits.
 
+A failing `accounts` check whose detail names an account-health loop (`the account-health-tick loop
+ended`, `the account-health-reconcile loop fails: 10 passes in a row`) is not this job but the
+account health runtime (#837): its `account_health.loop_ended` and `account_health.step_failed` log lines name
+the loop and the error type. Restart cv-api via the launcher until that runtime has a runbook of its own.
+
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 
 Signals: `/readyz` reports `degraded` with a failing `accounts` check; every WS client gets the
@@ -101,10 +106,11 @@ or the loop died
 report status `ok` within `--smoke-timeout-s` (60 s by default). Otherwise it fails with
 `CI-DEP-002` and, on dev, redeploys the previous known-good digest from its ledger (with none
 recorded it stops and asks for manual intervention), unless it runs with `--no-auto-rollback`.
-A latched self-check or a failing stored key makes `/readyz` read `degraded` (the `accounts`
-check), so it fails the dev deploy and rolls it back. That is fail closed, as intended; do not
-relax the smoke test for it. It applies wherever the job runs: the real storage backend with at
-least one usable stored key. The fake backend wires no self-check.
+A latched self-check, a failing stored key or a faulted account-health loop makes `/readyz` read
+`degraded` (the `accounts` check), so it fails the dev deploy and rolls it back. That is fail
+closed, as intended; do not relax the smoke test for it. The first two apply wherever the job runs:
+the real storage backend with at least one usable stored key. The fake backend wires no
+self-check, but its two account-health loops can still fault.
 
 The case to expect is `CV_EGRESS_IP` unset with a stored key (`key_selfcheck_no_egress_ip`,
 `accounts.key_selfcheck_unavailable`), and compose cannot supply it today. It forwards neither

@@ -20,6 +20,13 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
 so it ends before the app serves, `stop()` stops its loop and then releases what it holds (its
 Postgres pool), and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed
 latch or its loop has ended; `/readyz` shows that as a failing `accounts` check.
+
+`attach_account_health()` takes the feed of the running per-account health and wallet cache
+(E27-T04, #837), which `create_app` attaches on both backends (`account_health_wiring`). It is what
+`account_health` serves the private-WS consumer (E29-T05, #848): the evidence calls and nothing
+else of the runtime. The lifespan, not this service, starts and stops the runtime, so that a
+dead-man's-switch call in flight at shutdown still finds the modules it needs. `health()` reads
+DEGRADED while one of its loops has ended or keeps failing.
 """
 
 from __future__ import annotations
@@ -27,16 +34,21 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
+from candleviewer.accounts.errors import AccountsError
 from candleviewer.accounts.models import AccountKind, KeyStatus
 from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from candleviewer.accounts.health import HealthTransition
     from candleviewer.accounts.selfcheck import KeySelfCheck
+    from candleviewer.accounts.wallet import WalletSnapshot
     from candleviewer.app import AppContext
     from candleviewer.observability.metrics import BoundedMetric
     from candleviewer.storage.repositories.accounts import AccountsRowCounts
@@ -64,9 +76,27 @@ def _log_loop_exit(task: asyncio.Task[None]) -> None:
         logger().error("accounts_row_gauges_loop_died", error=type(error).__name__)
 
 
+class AccountHealthFeed(Protocol):
+    """What the running account health serves the private-WS consumer (E29-T05, #848): the
+    evidence calls of `AccountHealthMonitor` and the wallet feed of `WalletCache`. Evidence for an
+    account that is not tracked is ignored (`None`, `False`). `fault` says why the runtime is not
+    doing its job, `None` while it is."""
+
+    @property
+    def fault(self) -> str | None: ...
+
+    def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None: ...
+
+    def ws_dropped(self, account_id: UUID) -> HealthTransition | None: ...
+
+    def rest_ok(self, account_id: UUID) -> HealthTransition | None: ...
+
+    def wallet_pushed(self, account_id: UUID, snapshot: WalletSnapshot) -> bool: ...
+
+
 class AccountsService:
     """M13 lifecycle; publishes the account and API-key row gauges and, once one is attached,
-    runs the stored-key self-check."""
+    runs the stored-key self-check and serves the account health feed."""
 
     def __init__(
         self,
@@ -89,6 +119,7 @@ class AccountsService:
         self._failures = 0
         self._selfcheck: KeySelfCheck | None = None
         self._release: Callable[[], Awaitable[None]] | None = None
+        self._health_feed: AccountHealthFeed | None = None
 
     def attach_row_gauges(
         self,
@@ -109,6 +140,18 @@ class AccountsService:
         """Wire the stored-key self-check (`key_selfcheck_wiring`, real backend only); `release`
         frees what it holds once its loop has stopped."""
         self._selfcheck, self._release = selfcheck, release
+
+    def attach_account_health(self, feed: AccountHealthFeed) -> None:
+        """Wire the feed of the running account health (`account_health_wiring`, both backends)."""
+        self._health_feed = feed
+
+    @property
+    def account_health(self) -> AccountHealthFeed:
+        """The private-WS consumer's feed; `create_app` wires it, so this raises only for a
+        service built on its own."""
+        if self._health_feed is None:
+            raise AccountsError("account health is not wired")
+        return self._health_feed
 
     async def start(self, ctx: AppContext) -> None:
         """Run the key self-check's boot assertion, then start the loops that are wired."""
@@ -177,6 +220,8 @@ class AccountsService:
         if not self._started:
             return HealthStatus.STOPPED, "stopped"
         if self._selfcheck is not None and (fault := self._selfcheck.fault) is not None:
+            return HealthStatus.DEGRADED, fault
+        if self._health_feed is not None and (fault := self._health_feed.fault) is not None:
             return HealthStatus.DEGRADED, fault
         if self._counts is None:
             return HealthStatus.OK, "no accounts store (fake backend): row gauges unset"
