@@ -9,13 +9,19 @@ before its first apps/web step, and AGENTS.md says so next to the web test comma
 
 #3367: the scan reads a run script as the shell runs it. Backslash-continued lines are joined, the
 commands are split at newlines, `;`, `&&`, `||` and `|`, and a `cd` or `pushd` moves the folder
-of the commands after it. `pnpm -C` or `--dir` and `npm --prefix` run one command in a folder. A
-folder counts when it is apps/web or inside it, relative to the checkout or under
-`${{ github.workspace }}`, and a path selector (`./apps/web`, `{apps/web}`) or `--filter-prod`
-selects the app as its name does. A job-level `continue-on-error`, or a job or workflow
-`defaults.run.shell`, would weaken the pinned steps without touching them, so no scanned job may
-set one. Out of scope, as a static scan cannot resolve them and no workflow uses them: commands in
-a script file or a composite action, and folders or filters held in variables (`cd "$DIR"`)."""
+of the commands after it, also after `(`, `{`, `!` or a keyword such as `if`, `then` or `do`. A
+`-C`, `--dir` or `--prefix` flag runs one command in a folder, whichever program takes it
+(`pnpm -C`, `npm --prefix`, `make -C`). A folder counts when it is apps/web or inside it, relative
+to the checkout or under the workspace path (`${{ github.workspace }}`, `$GITHUB_WORKSPACE`), and
+a path selector (`./apps/web`, `{apps/web}`) or `--filter-prod` selects the app as its name does.
+A job-level `continue-on-error`, or a job or workflow `defaults.run.shell`, would weaken the
+pinned steps without touching them, so no scanned job may set one.
+
+The scan errs towards a hit, which fails loudly in the build-and-guard pin: a cd in a subshell or
+a pipeline is taken to persist. Out of scope, as a static scan cannot resolve them and no workflow
+uses them: commands in a script file, a composite action or a `bash -c` string, `case` arms,
+folders or filters held in variables (`cd "$DIR"`), and runs that select the app among other
+packages (`pnpm -r`, `--filter "./apps/*"`, `--filter "...@candleviewer/ui"`)."""
 
 from __future__ import annotations
 
@@ -47,7 +53,11 @@ WEB_FILTER = re.compile(rf"""(?:--filter(?:-prod)?|-F)[= ](["']?){WEB_SELECTOR}\
 WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\bvitest\b")
 # One command run in another folder (`pnpm -C apps/web`, `--dir=apps/web`, `npm --prefix`).
 DIR_FLAG = re.compile(r"""(?:^|\s)(?:-C|--dir|--prefix)[= ]["']?([^\s"']+)""")
-CD = re.compile(r"""(?:cd|pushd)\s+["']?([^\s"']+)""")
+CD = re.compile(r"""(?:cd|pushd)\s+(?:--\s+)?["']?([^\s"']+)""")
+# What may precede a command's first word: a subshell, a group, `!` or a shell keyword.
+LEAD = re.compile(r"^(?:[\s({]|(?:!|if|elif|while|until|then|else|do)(?=\s))+")
+# GitHub writes `${{ github.workspace }}` into a script before the shell runs it.
+GITHUB_WORKSPACE = re.compile(r"\$\{\{\s*github\.workspace\s*\}\}")
 # The checkout root as a working-directory or a shell names it.
 WORKSPACE = re.compile(r"^(?:\$\{\{\s*github\.workspace\s*\}\}|\$\{?GITHUB_WORKSPACE\}?)(?:/|$)")
 Steps = list[dict[str, Any]]
@@ -75,8 +85,9 @@ def _in_web(folder: str) -> bool:
 
 def _commands(run: object) -> list[str]:
     """A run script's commands: continued lines joined, split at newlines, ;, &&, || and |."""
-    script = re.sub(r"\\\r?\n", " ", str(run or ""))
-    return [re.sub(r"^[\s({]+|[\s)]+$", "", part) for part in re.split(r"&&|\|\|?|;|\n", script)]
+    script = GITHUB_WORKSPACE.sub("$GITHUB_WORKSPACE", re.sub(r"\\\r?\n", " ", str(run or "")))
+    parts = re.split(r"&&|\|\|?|;|\n", script)
+    return [re.sub(r"[\s)]+$", "", LEAD.sub("", part)) for part in parts]
 
 
 def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
@@ -184,7 +195,25 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         ("${{ github.workspace }}/apps/web", "pnpm run build", True),
         (None, "pnpm --filter @candleviewer/web \\\n  run build", True),
         (None, "pnpm \\\n  -C apps/web \\\n  test", True),
+        # The workspace path as GitHub writes it in a script, and as the shell names it alone.
+        (None, "cd ${{ github.workspace }}/apps/web && pnpm run build", True),
+        (None, 'cd "${{ github.workspace }}/apps/web"\nnpx vitest run', True),
+        (None, "pnpm -C ${{ github.workspace }}/apps/web run build", True),
+        (None, 'pnpm --dir "${{ github.workspace }}/apps/web" test', True),
+        (None, "cd $GITHUB_WORKSPACE\ncd apps/web && pnpm build", True),
+        # `cd --`, a cd under a shell keyword, each separator, pushd, a brace group, and a -C
+        # folder relative to the working-directory.
+        (None, "cd -- apps/web && pnpm run build", True),
+        (None, "if true; then cd apps/web; fi; pnpm run build", True),
+        (None, "if ! cd apps/web; then exit 1; fi\npnpm run build", True),
+        (None, "false || cd apps/web && pnpm run build", True),
+        (None, "pnpm -C apps/desktop run lint | pnpm -C apps/web test", True),
+        (None, "pushd apps/web\npnpm build", True),
+        (None, "{ cd apps/web; pnpm build; }", True),
+        ("apps", "pnpm -C web run build", True),
         (None, "cd apps/desktop && pnpm run build", False),
+        (None, "pnpm -C ${{ github.workspace }}/apps/desktop run build", False),
+        ("apps/web-kit", "pnpm run build", False),
         ("apps/web", "cd ../desktop && pnpm run e2e", False),
         (None, "pnpm -C apps/desktop run build", False),
         (None, "pnpm --filter ./apps/web-kit run build", False),
@@ -194,6 +223,12 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
     assert _builds_or_tests_web({"run": run}, cwd) is web
+
+
+@pytest.mark.parametrize("keyword", ["if", "elif", "while", "until", "then", "else", "do", "!"])
+def test_the_scan_follows_a_cd_after_a_shell_keyword(keyword: str) -> None:
+    # A cd in a condition or a branch moves the shell: `then`, `else` and `do` open no subshell.
+    assert _builds_or_tests_web({"run": f"{keyword} cd apps/web\npnpm run build"})
 
 
 @pytest.mark.parametrize(("workflow", "job"), sorted(WEB_JOBS))
