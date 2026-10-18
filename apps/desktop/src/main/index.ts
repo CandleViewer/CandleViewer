@@ -172,9 +172,8 @@ export function isExternalLinkAllowed(url: string): boolean {
 
 /**
  * The dev server the main window may load (#3411), or undefined for the
- * shell's own bundle. Decided once at startup, so the window's load, its
- * guards and the IPC sender check agree. A set value the shell does not
- * honour is logged by reason only, never echoed: it may carry anything (C-12.6).
+ * shell's own bundle. A set value the shell does not honour is logged by
+ * reason only, never echoed: it may carry anything (C-12.6).
  */
 export function acceptedDevServerUrl(): DevServerUrl | undefined {
   const resolution = resolveDevServerUrl(process.env["CV_DEV_SERVER_URL"], app.isPackaged);
@@ -351,7 +350,7 @@ void app.whenReady().then(() => {
   // One CSP value for both delivery points: the dev-server response hook and
   // the app:// handler.
   const csp = buildCsp();
-  // One dev-server decision per run (the environment does not change while it runs).
+  // One dev-server decision per run, so the window's load, its guards and the IPC check agree.
   const devServerUrl = acceptedDevServerUrl();
   installCspHeader(csp);
   installAppProtocol(csp);
