@@ -13,13 +13,16 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, get_args
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import pytest
 from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
+from websockets.protocol import State
 
 from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
@@ -329,47 +332,80 @@ async def test_no_key_id_signature_or_exchange_text_reaches_a_log_repr_or_metric
     assert len(calls) == 2
 
 
+class Conn:
+    """A `websockets` client connection whose handshake asked for `url`. Its closing handshake
+    ends, or with `stall_close` never does; `aborts` counts transport aborts."""
+
+    def __init__(self, url: str, *, stall_close: bool = False) -> None:
+        parts = urlsplit(url)
+        self.request = SimpleNamespace(headers={"Host": parts.netloc}, path=parts.path)
+        self.transport = SimpleNamespace(abort=self._abort)
+        self.state, self.stall_close = State.OPEN, stall_close
+        self.sent: list[str] = []
+        self.aborts = 0
+
+    def _abort(self) -> None:
+        self.aborts += 1
+
+    async def send(self, frame: str) -> None:
+        self.sent.append(frame)
+
+    async def recv(self, decode: bool | None = None) -> bytes:
+        assert decode is False  # bytes, so the bound counts bytes
+        return OK.encode()
+
+    async def close(self) -> None:
+        if self.stall_close:
+            await asyncio.Event().wait()
+        self.state = State.CLOSED
+
+
+def dial_into(monkeypatch: pytest.MonkeyPatch, conn: Conn) -> dict[str, Any]:
+    """Production's connector with `conn` as what the library's `connect` returns."""
+    seen: dict[str, Any] = {}
+
+    async def dial(url: str, **kwargs: Any) -> Conn:
+        seen.update(kwargs, url=url)
+        return conn
+
+    monkeypatch.setattr(key_ws_probe, "_NoRedirectConnect", dial)
+    return seen
+
+
 async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_frame(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """websockets logs each frame at DEBUG, the `auth` op's key id and signature included: the
     probe's sockets log through a logger that never enables DEBUG, even under a DEBUG root. Each
-    read is bounded twice: by the library's `max_size` and by the read's own `max_bytes`."""
-    seen: dict[str, Any] = {}
-
-    class Conn:
-        def __init__(self) -> None:
-            self.sent: list[str] = []
-            self.closed = False
-
-        async def send(self, frame: str) -> None:
-            self.sent.append(frame)
-
-        async def recv(self, decode: bool | None = None) -> bytes:
-            assert decode is False  # bytes, so the bound counts bytes
-            return b'{"op": "auth"}'
-
-        async def close(self) -> None:
-            self.closed = True
-
-    conn = Conn()
-
-    async def connect(url: str, **kwargs: Any) -> Conn:
-        seen.update(kwargs, url=url)
-        return conn
-
-    monkeypatch.setattr("websockets.asyncio.client.connect", connect)
+    read is bounded twice: by the library's `max_size` and by the read's own `max_bytes`. The
+    library's close bound sits inside the probe's 1 s (the redirect refusal is on a real socket,
+    `test_key_ws_probe_real_socket.py`)."""
+    conn = Conn(URLS["demo"])
+    seen = dial_into(monkeypatch, conn)
     caplog.set_level(logging.DEBUG)
     socket = await key_ws_probe.connect_private_ws(URLS["demo"])
     await socket.send("frame")
-    assert await socket.recv(14) == '{"op": "auth"}'
+    assert await socket.recv(len(OK)) == OK
     with pytest.raises(ConnectionError):  # a transport error to the probe
-        await socket.recv(13)
+        await socket.recv(len(OK) - 1)
     await socket.close()
     assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
-    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 1.0}
+    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 0.5}
     assert seen == {**expected, "ping_interval": None, "max_size": 4096}
-    assert (conn.sent, conn.closed) == (["frame"], True)
+    assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
+
+
+async def test_a_close_the_peer_never_finishes_ends_in_an_abort(
+    monkeypatch: pytest.MonkeyPatch, bounds: list[float | None]
+) -> None:
+    """SR-E27-17: the library aborts an unanswered close at its own bound, and should the probe's
+    bound cancel the close first, the socket aborts the transport itself, so no authenticated
+    socket outlives the probe."""
+    conn = Conn(URLS["demo"], stall_close=True)
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    assert (await probe.probe(fake_capability(), "demo", CREDENTIAL_ID)).ok
+    assert (conn.aborts, bounds) == (1, [5.0, 1.0])
 
 
 async def test_the_adapter_probes_through_its_injected_connector_signed_by_m2() -> None:
@@ -379,13 +415,16 @@ async def test_the_adapter_probes_through_its_injected_connector_signed_by_m2() 
     assert (stream.dialled, [c[2] for c in calls]) == ([URLS["testnet"]], ["sign_ws_auth"])
 
 
-async def test_the_adapter_holds_one_budget_and_without_a_signer_dials_nothing() -> None:
+async def test_the_adapter_holds_one_budget_for_every_key() -> None:
     stream = Stream()
     svc = ExchangeBybitService(credentials=fake_capability(), private_ws_connect=stream.connect)
     results = [await svc.key_ws_probe("demo", UUID(int=i)) for i in range(11)]
     assert [r.error for r in results] == [None] * 10 + ["rate_limited"]
+
+
+async def test_the_adapter_without_a_signer_dials_nothing() -> None:
+    stream = Stream()
     unsigned = ExchangeBybitService(private_ws_connect=stream.connect)
     with pytest.raises(RuntimeError, match="no signing capability"):
         await unsigned.key_ws_probe("demo", CREDENTIAL_ID)
-    assert len(stream.dialled) == 10
-    assert ExchangeBybitService()._ws_probe._connect is key_ws_probe.connect_private_ws
+    assert stream.dialled == []

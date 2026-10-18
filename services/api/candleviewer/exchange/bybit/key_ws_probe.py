@@ -4,9 +4,11 @@
 stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11), send one `auth`
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
 close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
-falls back to another host. One 5 s bound covers the dial, the signature and the reply; the
-socket is closed on every path under its own short bound, and a cancellation propagates.
-Diagnostic only: it enforces nothing (ruling 11 on #836).
+falls back to another host; production's connector follows no redirect either, so a 3xx is a
+`transport_error` and the signed `auth` reaches no other host (SR-040a). One 5 s bound covers the
+dial, the signature and the reply; the socket is closed on every path under its own short bound,
+aborted if the peer never finishes the close, and a cancellation propagates. Diagnostic only: it
+enforces nothing (ruling 11 on #836).
 SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
 probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
 names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
@@ -26,22 +28,26 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
+from websockets.asyncio.client import ClientConnection
+from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
+from websockets.protocol import State
 
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.signer import BybitSigner
 
 if TYPE_CHECKING:
-    from websockets.asyncio.client import ClientConnection
-
     from candleviewer.secrets import SigningCapability
 
 #: Ticket performance notes: 5 s per probe, the dial, M2's signature and the reply together.
 PROBE_TIMEOUT_S: Final = 5.0
 #: The close's own bound, after the probe's, so a stalled close cannot hold the caller.
 CLOSE_TIMEOUT_S: Final = 1.0
+#: The library's close bound, inside the probe's: its abort of an unanswered close comes first.
+_LIBRARY_CLOSE_TIMEOUT_S: Final = CLOSE_TIMEOUT_S / 2
 #: SR-E27-17: `expires` at most 10 s ahead of the exchange clock.
 EXPIRES_AHEAD_MS: Final = 10_000
 #: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP).
@@ -101,18 +107,38 @@ class _Socket:
         return frame.decode("utf-8", "replace")
 
     async def close(self) -> None:
-        await self._conn.close()
+        """The library aborts a close the peer never finishes at its own bound; should the
+        probe's bound cancel the close first, the `finally` aborts it (SR-E27-17)."""
+        try:
+            await self._conn.close()
+        finally:
+            if self._conn.state is not State.CLOSED:
+                self._conn.transport.abort()
+
+
+class _NoRedirectConnect(ws_connect):
+    """`connect` follows a 3xx to any host (it refuses only a TLS downgrade). This one follows
+    none, as `rest.py` sets `follow_redirects=False` (SR-040a): a 3xx stays the `InvalidStatus`
+    it is, a transport error, and the signed `auth` is never sent elsewhere."""
+
+    def process_redirect(self, exc: Exception) -> Exception | str:
+        return exc
 
 
 async def connect_private_ws(url: str) -> PrivateSocket:
-    """Production's connector: no keepalive pings (the socket lives for one reply), small
-    frames, and the quiet logger above."""
-    from websockets.asyncio.client import connect
-
-    conn = await connect(
-        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=CLOSE_TIMEOUT_S, ping_interval=None,
-        max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG,
+    """Production's connector: no redirect, no keepalive pings (the socket lives for one reply),
+    small frames, the library's close bound inside the probe's, and the quiet logger above. As
+    `rest.py`'s `_assert_same_host`, defence in depth: a handshake that did not go to `url`
+    itself is aborted before anything is sent on it."""
+    conn = await _NoRedirectConnect(
+        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG,
     )  # fmt: skip
+    wanted, request = urlsplit(url), conn.request
+    asked = None if request is None else (request.headers.get("Host"), request.path)
+    if asked != (wanted.netloc, wanted.path):
+        conn.transport.abort()
+        raise ConnectionError("private ws handshake left the requested stream")
     return _Socket(conn)
 
 
