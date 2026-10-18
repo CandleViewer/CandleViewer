@@ -274,6 +274,7 @@ jobs:
       changelog-fragment: ${{ steps.changelog-fragment.outcome }}
       licence-header: ${{ steps.licence-header.outcome }}
       docs-link-check: ${{ steps.docs-link-check.outcome }}
+      backlog-twin-eol: ${{ steps.backlog-twin-eol.outcome }}
       pin-check: ${{ steps.pin-check.outcome }}
       statechart-lint: ${{ steps.statechart-lint.outcome }}
       event-coverage: ${{ steps.event-coverage.outcome }}
@@ -396,6 +397,14 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: python scripts/check_rule_refs.py
+      # #3495: validate.py --check reads a twin's CRLF as LF (#3454); this sees the blob, which a
+      # commit made without git's clean filter (web editor, contents API) can store as CRLF.
+      - name: backlog-twin-eol (#3495; every docs/plan/backlog/*.json blob is committed as LF)
+        id: backlog-twin-eol
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python scripts/check_backlog_twin_eol.py
       - name: pin-check (SR-132; CI-GATE-003, CI-IMG-002)
         id: pin-check
         if: ${{ !cancelled() && needs.changed-paths.outputs.infra == 'true' }}
@@ -693,6 +702,7 @@ jobs:
           RESULT_CHANGELOG_FRAGMENT: ${{ needs.gates.outputs.changelog-fragment }}
           RESULT_LICENCE_HEADER: ${{ needs.gates.outputs.licence-header }}
           RESULT_DOCS_LINK_CHECK: ${{ needs.gates.outputs.docs-link-check }}
+          RESULT_BACKLOG_TWIN_EOL: ${{ needs.gates.outputs.backlog-twin-eol }}
           RESULT_GEN: ${{ needs.gates.outputs.gen }}
           RESULT_JS: ${{ needs.js.result }}
           RESULT_PY: ${{ needs.py.result }}
@@ -724,6 +734,7 @@ jobs:
               "changelog-fragment": { applicable: process.env.FILTER_PR !== "false", result: process.env.RESULT_CHANGELOG_FRAGMENT },
               "licence-header": { applicable: true, result: process.env.RESULT_LICENCE_HEADER },
               "docs-link-check": { applicable: true, result: process.env.RESULT_DOCS_LINK_CHECK },
+              "backlog-twin-eol": { applicable: true, result: process.env.RESULT_BACKLOG_TWIN_EOL },
               gen: { applicable: true, result: process.env.RESULT_GEN },
               js: { applicable: isTrue(process.env.FILTER_JS), result: process.env.RESULT_JS },
               py: { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_PY },

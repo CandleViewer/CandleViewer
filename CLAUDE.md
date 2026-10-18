@@ -233,8 +233,8 @@ These rules keep agents from colliding:
    `machine_hashes.lock`; coordinate via the ticket comments. Rebase, don't merge `main` in.
 7. **Blocked? Stop loudly.** Comment with the exact failure/question, set Status **Blocked**, link the
    blocker — never work around a failing gate or silently change scope (`AGENTS.md` §9).
-8. **Ticket JSON edits** only via Python (load → modify → `json.dump(ensure_ascii=False, indent=2)`), then
-   run `validate.py`. Keep individual file writes small (chunked) to avoid truncation.
+8. **Ticket JSON edits** only via Python, as `AGENTS.md` §3a says (it owns the recipe), then run
+   `validate.py`. Keep individual file writes small (chunked) to avoid truncation.
 
 ## 10a. Project `.claude/` toolkit
 

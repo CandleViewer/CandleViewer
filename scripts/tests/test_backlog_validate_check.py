@@ -155,3 +155,4 @@ def test_validate_check_prettier_or_stale_twin_fails_naming_validate_py(
     out = capsys.readouterr().out
     assert re.findall(r"TWIN-FORMAT (\S+): ", out) == [f"{twin}.json"]  # never the CRLF twin
     assert "validate.py is the formatter" in out
+    assert ("AGENTS.md section 3a" in out) == (twin == "E17")  # #3495: it owns the recipe (C-16.5)
