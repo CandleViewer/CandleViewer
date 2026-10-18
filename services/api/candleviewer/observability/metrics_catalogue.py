@@ -2681,7 +2681,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "confirmations",
         ("outcome",),
         "TOTP enrolment confirmations (#2295) by outcome: completed or refused.",
-        "none yet (detection rules: E09-X03); audited as auth.mfa_enrolled / auth.mfa_failed",
+        "none yet (#2746); audited as auth.mfa_enrolled / auth.mfa_failed",
         _L,
         "E09",
         max_series=2,
