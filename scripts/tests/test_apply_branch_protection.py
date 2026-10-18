@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -214,6 +218,60 @@ def test_diff_rules_detects_a_changed_missing_or_undeclared_rule() -> None:
     assert diff.changed["merge_queue"] == ({"merge_method": "MERGE"}, {"merge_method": "SQUASH"})
     assert diff.removed == {"deletion": {}}
     assert abp.diff_rules({}, desired).added == {"merge_queue": {"merge_method": "SQUASH"}}
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *a: object) -> None:
+        return None
+
+
+def _fetch_rules(monkeypatch: pytest.MonkeyPatch, answer: object) -> tuple[dict, list]:
+    """fetch_branch_rules against a fake urlopen that returns `answer` as JSON, or raises it."""
+    seen: list = []
+
+    def fake(request: urllib.request.Request, timeout: float) -> _Resp:
+        seen.append(request)
+        if isinstance(answer, Exception):
+            raise answer
+        return _Resp(json.dumps(answer).encode())
+
+    monkeypatch.setattr(abp.urllib.request, "urlopen", fake)
+    return abp.fetch_branch_rules("o/r", "not-a-real-token"), seen
+
+
+def test_fetch_branch_rules_reads_every_rule_with_one_get(monkeypatch) -> None:
+    rules = [
+        {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}},
+        {"type": "deletion"},
+        {"type": "merge_queue", "parameters": {"merge_method": "MERGE"}},
+    ]
+    view, seen = _fetch_rules(monkeypatch, rules)
+    # A second ruleset's rule of the same type keeps its own key, so neither hides the other.
+    assert view == {
+        "merge_queue": {"merge_method": "SQUASH"},
+        "deletion": {},
+        "merge_queue #2": {"merge_method": "MERGE"},
+    }
+    url = "https://api.github.com/repos/o/r/rules/branches/main?per_page=100"
+    assert [(r.get_method(), r.full_url) for r in seen] == [("GET", url)]
+    assert _fetch_rules(monkeypatch, [])[0] == {}
+
+
+@pytest.mark.parametrize(
+    "answer,message",
+    [
+        ({"type": "merge_queue"}, "not a list of fewer than 100 rules"),
+        ([{"type": "deletion"}] * 100, "not a list of fewer than 100 rules"),
+        (urllib.error.HTTPError("u", 403, "Forbidden", None, None), "failed: 403 Forbidden"),
+        (urllib.error.URLError("no route"), "failed: no route"),
+    ],
+)
+def test_fetch_branch_rules_fails_closed(monkeypatch, answer, message) -> None:
+    with pytest.raises(abp.ApplyError, match=message):
+        _fetch_rules(monkeypatch, answer)
 
 
 # --- Refusals (#3103): never write a weaker or a lockout configuration ------
