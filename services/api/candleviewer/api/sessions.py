@@ -30,6 +30,8 @@ Enrolment-only session (#2295): refresh classifies the presented session as the 
 guard classifies a bearer (`AuthService.classify`). One that would outlive its 15-minute
 lifetime (Q7) gets the uniform `401 refresh_token_invalid` before any audit write or rotation,
 so the client signs in again; one that cannot be classified gets a 503 (fail closed).
+Unlock is not among an enrolment-only session's operations, and its `cv_refresh` cookie reaches
+no bearer guard, so unlock answers the session it finds as the guard would (`route_refusal`).
 
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
@@ -91,6 +93,7 @@ from candleviewer.api.csrf import (
     verify_refresh_csrf,
 )
 from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exported (contract name)
+from candleviewer.api.enrolment_guard import EnrolmentRefusals, route_refusal
 from candleviewer.api.enrolment_guard import _unavailable as _session_unchecked
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.errors import AuditError
@@ -259,6 +262,18 @@ class AuditServiceLike(Protocol):
 
     @property
     def writer(self) -> AuditEmitter: ...
+
+
+class _RouterAudit:
+    """The enrolment refusal recorder's sink when the app passes none: this router's writer."""
+
+    def __init__(self, audit: AuditServiceLike | None) -> None:
+        self._audit = audit
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if self._audit is None or not self._audit.is_active:
+            raise AuditUnavailableError
+        await self._audit.writer.emit(action, **kwargs)
 
 
 Clock = Callable[[], Any]
@@ -442,10 +457,13 @@ def make_session_router(
     audit_timeout_s: float = AUDIT_TIMEOUT_S,
     unlock_authority: Callable[[], UnlockAuthority | None] | None = None,
     unlock_throttle: PerIpLoginThrottle | None = None,
+    enrolment_refusals: EnrolmentRefusals | None = None,
 ) -> APIRouter:
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
     in-flight cap and one shutdown drain. *unlock_authority* is a thunk (step-up exists
-    only after `AuthService.start()`); without one `POST /auth/unlock` answers 503."""
+    only after `AuthService.start()`); without one `POST /auth/unlock` answers 503.
+    *enrolment_refusals*: the enrolment guard's recorder, so unlock's refusals share its
+    budgets (#2295)."""
     router = APIRouter(tags=["auth"])
 
     def now() -> datetime:
@@ -484,6 +502,7 @@ def make_session_router(
         max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
     )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
+    refusals = enrolment_refusals or EnrolmentRefusals(_RouterAudit(audit_service), tracker=tracker)
 
     def _audit_ready() -> bool:
         return audit_service is not None and audit_service.is_active
@@ -1089,6 +1108,11 @@ def make_session_router(
             return idle_lock.session_revoked_problem(exc.reason)
         except SessionNotFound:
             return _unauthorized()
+        refused = await route_refusal(  # #2295: not an enrolment-only session's operation
+            auth_service, refusals, record, operation=("POST", "/auth/unlock"), ip=ip
+        )
+        if refused is not None:
+            return refused  # before the lock state is told or any password is checked
         if (refusal := undeclared_query_refusal(request, UNLOCK_QUERY)) is not None:
             return refusal  # SR-026: before the lock state is told or a password checked
         if not record.is_idle_locked(now=at):

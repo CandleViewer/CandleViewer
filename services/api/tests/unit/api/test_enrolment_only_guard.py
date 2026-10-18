@@ -27,12 +27,13 @@ from candleviewer.api import csrf as csrf_module
 from candleviewer.api import sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import RefusalAuditTracker
-from candleviewer.api.deny_by_default import declared_operations
+from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.enrolment_guard import (
     ENROLMENT_OPERATIONS,
     REFUSAL_ACTION,
     EnrolmentRefusals,
     make_enrolment_only_guard,
+    route_refusal,
     sessionless_operations,
 )
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
@@ -265,6 +266,47 @@ async def test_guard_allow_list_never_matches_a_lower_case_method() -> None:
     resp = await _guard(_Auth(), _refusals(_Audit()))(request, handler)
 
     assert (resp.status_code, hits) == (403, [])
+
+
+def test_a_refresh_cookie_alone_reaches_no_operation_the_guard_would_refuse() -> None:
+    """The guard classifies a bearer only, so an operation whose contract admits the `cv_refresh`
+    cookie alone would skip it: each one served must be allow-listed, or its route must answer
+    the session as the guard would (`route_refusal`: `POST /auth/unlock`, #2300; pinned in
+    `tests/unit/api/idle_lock/test_unlock.py`)."""
+    from candleviewer import app as appmod
+
+    cookie = {
+        (method.upper(), path)
+        for path, item in _SPEC["paths"].items()
+        for method, op in item.items()
+        if isinstance(op, dict) and {"refreshCookie": []} in (op.get("security") or [])
+    }
+    served = cookie & served_operations(appmod.create_app())
+
+    assert ("POST", "/auth/refresh") in served  # the sweep sees the cookie operations
+    assert served <= ENROLMENT_OPERATIONS | {("POST", "/auth/unlock")}
+
+
+@pytest.mark.parametrize(
+    ("who", "operation", "status"),
+    [
+        ("enrolling", ("POST", "/auth/unlock"), 403),
+        ("overlong", ("POST", "/auth/unlock"), 401),
+        ("full", ("POST", "/auth/unlock"), None),
+        ("inactive", ("POST", "/auth/unlock"), None),  # #2911 is the route's
+        ("enrolling", ("GET", "/auth/session"), None),
+        ("overlong", ("POST", "/auth/logout"), None),
+    ],
+)
+async def test_route_refusal_answers_a_session_the_route_found_as_the_guard_would(
+    who: str, operation: tuple[str, str], status: int | None
+) -> None:
+    auth = _Auth()
+    record = await auth.authenticate_access_token(f"tok-{who}")
+
+    resp = await route_refusal(auth, _refusals(_Audit()), record, operation=operation, ip=None)
+
+    assert (None if resp is None else resp.status_code) == status
 
 
 def test_guard_matches_the_routed_path_under_a_root_path() -> None:
