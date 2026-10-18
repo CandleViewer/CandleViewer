@@ -25,6 +25,7 @@ from candleviewer.auth.errors import (
     RecoveryCodesExhausted,
     UserDisabled,
 )
+from candleviewer.auth.login_service import EnrolmentOnlyLogin
 from candleviewer.auth.models import (
     LoginRequest,
     MfaChallengeResult,
@@ -44,10 +45,12 @@ class _FakeLoginService:
     def __init__(self, outcome: object) -> None:
         self._outcome = outcome
 
-    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult:
+    async def login(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin:
         if isinstance(self._outcome, Exception):
             raise self._outcome
-        assert isinstance(self._outcome, MfaChallengeResult)
+        assert isinstance(self._outcome, MfaChallengeResult | EnrolmentOnlyLogin)
         return self._outcome
 
 
@@ -252,6 +255,13 @@ def test_account_locked_returns_423_with_retry_after_header() -> None:
 
 def test_inactive_auth_service_returns_503() -> None:
     client = TestClient(_app(InvalidCredentials("n/a"), active=False))
+    response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
+    assert response.status_code == 503
+
+
+def test_login_of_a_user_who_must_enrol_fails_closed_without_a_session_backend() -> None:
+    """#2295: never a challenge, a 501 or a session nobody can audit."""
+    client = TestClient(_app(EnrolmentOnlyLogin(user_id=uuid.uuid4())))
     response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
     assert response.status_code == 503
 
