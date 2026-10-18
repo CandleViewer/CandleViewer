@@ -16,7 +16,9 @@ only), never as an overflow.
 With the flag on `ws/pipeline.py` routes the hub's deltas here (S3), checking the budget per update:
 `pending_bytes` is a total kept as the lanes change, and open windows are armed on a heap, so the
 check, `tick` and `next_due` are O(1) until one is due (C-2.18). A window whose emit raises drops
-its topic and tells `on_error` (the pipeline's containment, §10.1).
+its topic and tells `on_error` (the pipeline's containment, §10.1). §16.1 S5 between windows (D18):
+windows that close together leave in causal order, and a `trade_groups` window never closes before
+a `positions` window that was open when one of its updates arrived; `positions` never waits.
 
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
 classification interval (`CV_WS_CLASSIFY_INTERVAL_MS`, `CLASSIFY_INTERVAL_S` by default): a class
@@ -207,7 +209,9 @@ def quality_notice(
 class _Lane:
     """One subscription's throttle window. `seq` is the topic's sequence number when the lane last
     emitted or started collecting: if anything else (a snapshot) moved it on, what the lane holds
-    predates that and is discarded. `bytes` is its queue's `pending_bytes` as last counted."""
+    predates that and is discarded. `bytes` is its queue's `pending_bytes` as last counted.
+    `waited_on`: an update of the family behind this one in causal order arrived while this window
+    was open, so that family's window closes after it (§16.1 S5, `Pacer._gate`)."""
 
     sub: Subscription
     queue: CoalescingQueue
@@ -215,6 +219,7 @@ class _Lane:
     last_emit: float = -math.inf
     due: float | None = None
     bytes: int = 0
+    waited_on: bool = False
 
 
 class Pacer:
@@ -242,6 +247,9 @@ class Pacer:
         #: (`_causal_rank`); one whose lane no longer has that `due` is stale and skipped.
         #: Rebuilt from the lanes once mostly stale (bounded, C-2.18).
         self._dues: list[tuple[float, int, str]] = []
+        #: §16.1 S5: the `positions` and `trade_groups` lanes by causal rank (`_CAUSAL`). A private
+        #: topic has one name and no replay, so a connection has at most one lane of each.
+        self._ranked: dict[int, _Lane] = {}
 
     @property
     def cls(self) -> ConnectionClass:
@@ -275,6 +283,8 @@ class Pacer:
         lane = self.lanes.get(sub.sub_id)
         if lane is None:
             lane = self.lanes[sub.sub_id] = _Lane(sub, _queue(sub), sub.seq)
+            if (rank := _CAUSAL.get(sub.topic.family.family)) is not None:
+                self._ranked[rank] = lane
         elif lane.seq != sub.seq:
             self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
@@ -282,13 +292,16 @@ class Pacer:
             self._refused(lane)
             return False
         self._account(lane)
-        now, due = self.emitter.clock(), lane.due
-        if due is None:
-            due = max(now, lane.last_emit + self.throttle_ms(sub) / 1000)
-            if now < due:  # else the leading edge: it leaves at once
-                self._arm(lane, due)
-        if now >= due:
+        now, armed = self.emitter.clock(), lane.due
+        due = max(now, lane.last_emit + self.throttle_ms(sub) / 1000) if armed is None else armed
+        hold = self._gate(lane, arrived=True)
+        if hold is not None:  # §16.1 S5: it closes after that window, never inline before it
+            if max(due, hold) != armed:
+                self._arm(lane, max(due, hold))
+        elif now >= due:  # the leading edge, or a window whose close has passed: it leaves now
             self._flush(lane, now)
+        elif armed is None:
+            self._arm(lane, due)
         return True
 
     def tick(self, now: float | None = None) -> int:
@@ -313,7 +326,23 @@ class Pacer:
         lane = self.lanes.get(entry[2])
         return lane if lane is not None and lane.due == entry[0] else None
 
+    def _gate(self, lane: _Lane, *, arrived: bool) -> float | None:
+        """§16.1 S5 between windows (D18): the close of the open window of the family just ahead
+        of `lane`'s in causal order (`positions`, for `trade_groups`; adjacent in
+        `PRIVATE_CAUSAL_ORDER`, as a test pins) when one of `lane`'s updates arrived while it was
+        open (`arrived`: one does now), else None; `lane`'s window never closes before it. It
+        marks that window `waited_on` when `arrived`, and moves and flushes no window, so
+        `positions` is never delayed and the gate pushes nothing from inside an `offer`."""
+        rank = _CAUSAL.get(lane.sub.topic.family.family)
+        ahead = None if rank is None else self._ranked.get(rank - 1)
+        if ahead is None or ahead.due is None:
+            return None
+        ahead.waited_on |= arrived
+        return ahead.due if ahead.waited_on else None
+
     def _arm(self, lane: _Lane, due: float) -> None:
+        if lane.due is None:  # a new window: no later family's update has arrived in it yet
+            lane.waited_on = False
         lane.due = due
         heapq.heappush(self._dues, (due, _causal_rank(lane.sub), lane.sub.sub_id))
         if len(self._dues) > 2 * len(self.lanes) + 64:  # mostly stale: rebuild from the lanes
@@ -414,6 +443,9 @@ class Pacer:
         lane = self.lanes.pop(sub_id, None)
         if lane is not None:
             self._pending -= lane.bytes
+            rank = _CAUSAL.get(lane.sub.topic.family.family)
+            if rank is not None and self._ranked.get(rank) is lane:  # never a newer lane's entry
+                del self._ranked[rank]
 
     def throttle_ms(self, sub: Subscription) -> float:
         """The subscription's `effective.throttle_ms` under the current class (§8.3)."""
@@ -446,7 +478,8 @@ class Pacer:
         return quality_notice(self.cls, queue_pct, rtt, self.apply(subs, now))
 
     def apply(self, subs: Iterable[Subscription], now: float | None = None) -> dict[str, Any]:
-        """Re-pace every lane under the current class; returns the notice's `applied` block."""
+        """Re-pace every lane under the current class, then keep §16.1 S5: a window still closes
+        after the one it waits for (`_gate`); returns the notice's `applied` block."""
         now = self.emitter.clock() if now is None else now
         for lane in self.lanes.values():
             if _held(lane.sub) or lane.seq != lane.sub.seq:
@@ -459,6 +492,10 @@ class Pacer:
             self._account(lane)  # a fold re-estimates the pending state
             if lane.due is not None:
                 self._arm(lane, max(now, lane.last_emit + self.throttle_ms(lane.sub) / 1000))
+        for lane in self._ranked.values():  # after the loop: the window waited for is re-timed
+            hold = self._gate(lane, arrived=False)
+            if hold is not None and lane.due is not None and lane.due < hold:
+                self._arm(lane, hold)
         return {
             "throttle_multiplier": _MULTIPLIER[self.cls],
             "forced_coalesce": self.cls is not ConnectionClass.HEALTHY,

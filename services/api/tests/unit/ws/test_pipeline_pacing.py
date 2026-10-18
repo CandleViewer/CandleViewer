@@ -6,10 +6,11 @@ attached to a `Conn` and registered on a hub; router tests the real `/ws` router
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
-from hypothesis import example, given
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
@@ -19,9 +20,9 @@ from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
-from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
+from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, SequencingHub, SnapshotBody
 from tests.unit.ws._seq_support import ACC_A, USER, Book, Conn, Source
-from tests.unit.ws.test_pacing import _COLUMN, _bid
+from tests.unit.ws.test_pacing import _COLUMN, _bid, _private
 from tests.unit.ws.test_pacing import _conn as _paced
 from tests.unit.ws.test_pacing import _sub as _subscribed
 from tests.unit.ws.test_pipeline_invalidation import _connected, _positions_rig, _row
@@ -155,6 +156,312 @@ def test_s5_private_windows_closing_together_leave_in_causal_order() -> None:
     hub.publish_private(ACC_A, event)  # two windows, both closing at 0.1
     pipe.service(0.1)
     assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders", "positions", "trade_groups"]
+
+
+# -- §16.1 S5 between windows (D18, #3268) -------------------------------------------------------
+
+_PRIVATE = ("trade_groups", "positions", "orders", "executions")  # scrambled, as `_event` sends
+
+
+def _private_rig(
+    hub: SequencingHub, positions_ms: int | None = None, **config: Any
+) -> tuple[ConnectionPipeline, Conn]:
+    """`_routed`'s pipeline on the four private families of `ACC_A`, `trade_groups` first in
+    `sub_id` order; `positions` at `positions_ms` when given, else at its 100 ms default."""
+    pipe, _, conn = _routed(hub, **config)
+    for family in _PRIVATE:
+        opts: dict[str, Any] = {"exchange_account_ids": [str(ACC_A)]}
+        if family == "positions" and positions_ms is not None:
+            opts["throttle_ms"] = positions_ms
+        _, sub = conn.authz.admit({"ch": family, "opts": opts})
+        assert sub is not None
+        sub.snapshot_pending = False
+    return pipe, conn
+
+
+def _body(family: str, at: int) -> dict[str, Any]:
+    """One update of a private family; a `positions` or `trade_groups` row carries `at`."""
+    if family == "positions":
+        return {"positions": [_row(ACC_A, at)]}
+    if family == "trade_groups":
+        return {"trade_groups": [{"id": "g", "status": "open", "updated_at_ms": at}]}
+    return {family: []}
+
+
+def _event(at: int, *families: str) -> list[tuple[str, dict[str, Any]]]:
+    """One account event of `families`, all four private ones by default, scrambled:
+    `publish_private` puts them in causal order."""
+    return [(family, _body(family, at)) for family in families or _PRIVATE]
+
+
+def _tags(frames: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """Each `positions` or `trade_groups` frame's channel and the `at` of its row."""
+    return [(f["ch"], f["p"][f["ch"]][0]["updated_at_ms"]) for f in frames]
+
+
+_P, _T = ("positions",), ("trade_groups",)
+_SETUPS: dict[str, tuple[list[tuple[float, tuple[str, ...]]], float, float, tuple[int, ...]]] = {
+    # the updates before the event, its arrival, `positions`' own close, the `trade_groups` rows
+    "cold_lane": ([(0.0, _P)], 0.05, 0.0 + 0.1, (2,)),  # `trade_groups` never emitted
+    "throttle": ([(0.0, ())], 0.01, 0.0 + 0.5, (2,)),  # `positions` at 500 ms
+    "last_emit": ([(0.0, _T), (0.05, _P)], 0.06, 0.05 + 0.1, (2,)),
+    "open_window": ([(0.0, _T), (0.01, _T), (0.01, _P), (0.02, _P)], 0.02, 0.01 + 0.1, (1, 2)),
+}
+
+
+@pytest.mark.parametrize("cause", list(_SETUPS))
+def test_s5_trade_groups_waits_for_the_open_positions_window(cause: str) -> None:
+    """§16.1 S5 between windows (D18), flag on: an event's `trade_groups` update that finds the
+    `positions` window it reached still open leaves after it, in the same writer's turn, whether
+    its lane is cold (no leading edge then), its `throttle_ms` shorter, its last emit earlier, or
+    its window open already, closing first (the update moves that close). `executions` and
+    `orders` leave at once, and `positions` at its own close."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub, 500 if cause == "throttle" else None)
+    setup, at, close, rows = _SETUPS[cause]
+    for now, families in setup:
+        conn.clock.now = now
+        hub.publish_private(ACC_A, _event(1, *families))
+    _queued(pipe)
+    conn.clock.now = at
+    hub.publish_private(ACC_A, _event(2))
+    assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
+    pipe.service(close - 0.001)
+    assert _queued(pipe) == []
+    pipe.service(close)
+    assert _tags(_queued(pipe)) == [("positions", 2), *(("trade_groups", row) for row in rows)]
+
+
+def test_s5_a_due_positions_window_leaves_before_an_inline_trade_groups_flush() -> None:
+    """§16.1 S5 (D18), the writer's turn late: a `trade_groups` update that finds the event's
+    `positions` window past its close never flushes its own window ahead of it, and the hold
+    queues nothing. That `positions` window is not moved: the next `positions` update still flushes
+    it at once, as without the hold, and `trade_groups` leaves after it at the writer's turn."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub)
+    hub.publish_private(ACC_A, _event(1))  # everything leaves at once
+    _queued(pipe)
+    conn.clock.now = 0.05
+    hub.publish_private(ACC_A, _event(2))  # both windows close at 0.1
+    assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
+    conn.clock.now = 0.11  # the writer's turn due at 0.1 has not run
+    hub.publish_private(ACC_A, _event(3, "trade_groups"))
+    assert _queued(pipe) == []
+    conn.clock.now = 0.12
+    hub.publish_private(ACC_A, _event(4, "positions"))
+    assert _tags(_queued(pipe)) == [("positions", 4)]  # as without the hold: at once, merged
+    pipe.service(0.13)
+    assert _tags(_queued(pipe)) == [("trade_groups", 2), ("trade_groups", 3)]
+
+
+def test_s5_a_class_change_keeps_positions_first() -> None:
+    """§16.1 S5 (D18) across an §8.3 class change: re-timed, a `trade_groups` window that an
+    update reached while a `positions` window was open still closes after that window, though its
+    own `throttle_ms` would now close it first (`positions` at 200 ms, then `lagging`)."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub, 200)
+    hub.publish_private(ACC_A, _event(1, "positions"))
+    conn.clock.now = 0.1
+    hub.publish_private(ACC_A, _event(2, "trade_groups"))
+    _queued(pipe)
+    conn.clock.now = 0.15
+    hub.publish_private(ACC_A, _event(3))  # both windows close at 0.2
+    assert [f["ch"] for f in _queued(pipe)] == ["executions", "orders"]
+    _pacer(pipe).classify(30.0, list(conn.authz.by_id.values()), now=0.16)  # lagging
+    pipe.service(0.1 + 0.2)  # `trade_groups`' own close now
+    assert _queued(pipe) == []
+    pipe.service(0.4)
+    assert _tags(_queued(pipe)) == [("positions", 3), ("trade_groups", 3)]
+
+
+def test_s5_a_class_change_holds_only_a_window_that_waited() -> None:
+    """D18 holds a `trade_groups` window for the `positions` window open when one of its updates
+    arrived, no other: re-timed, a window none of whose updates arrived while the open
+    `positions` window was open closes by its own `throttle_ms`, though an earlier one waited."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub, 200)
+    for now, at, families in ((0.0, 1, ("positions",)), (0.1, 2, ("trade_groups",)), (0.15, 3, ())):
+        conn.clock.now = now
+        hub.publish_private(ACC_A, _event(at, *families))
+    pipe.service(0.2)  # event 3's windows, `trade_groups` held for `positions`
+    _queued(pipe)
+    conn.clock.now = 0.25
+    hub.publish_private(ACC_A, _event(4, "trade_groups"))  # a window closing at 0.3
+    conn.clock.now = 0.26
+    hub.publish_private(ACC_A, _event(5, "positions"))  # a window closing at 0.4
+    _pacer(pipe).classify(30.0, list(conn.authz.by_id.values()), now=0.27)  # lagging
+    pipe.service(0.2 + 0.2)
+    assert _tags(_queued(pipe)) == [("trade_groups", 4)]
+    pipe.service(0.2 + 0.4)
+    assert _tags(_queued(pipe)) == [("positions", 5)]
+
+
+def test_s5_a_class_change_re_arms_no_dropped_trade_groups_window() -> None:
+    """§8.1 across a class change: `apply` arms no `trade_groups` window that §8.4 step 1 dropped
+    after one of its updates reached the open `positions` window. The next update opens a window
+    at its own close (`lagging`: 100.05 + 0.2), after the `positions` one, never at it."""
+    conn, pacer = _paced()
+    positions, groups = _private(conn, "positions"), _private(conn, "trade_groups")
+    out: list[dict[str, Any]] = []
+    conn.emitter.push = out.append  # not schema-checked: these rows carry only the order
+    pacer.offer(positions, _body("positions", 1))  # leaves at once
+    conn.clock.now = 100.05
+    pacer.offer(groups, _body("trade_groups", 1))  # leaves at once
+    conn.clock.now = 100.06
+    for family, sub in (("positions", positions), ("trade_groups", groups)):
+        pacer.offer(sub, _body(family, 2))  # `positions` closes at 100.1, waited on
+    pacer.drop(groups)
+    groups.snapshot_pending, groups.seq = False, groups.seq + 1  # its `backpressure` snap left
+    pacer.classify(30.0, [positions, groups], now=100.07)  # lagging: `positions` closes at 100.2
+    conn.clock.now = 100.08
+    pacer.offer(groups, _body("trade_groups", 3))
+    del out[:]
+    assert (pacer.tick(100.0 + 0.2), pacer.tick(100.05 + 0.2)) == (1, 1)
+    assert _tags(out) == [("positions", 2), ("trade_groups", 3)]
+
+
+def test_s5_an_ended_positions_window_holds_nothing_back() -> None:
+    """D18 waits on the connection's live `positions` window: once that stream ends or resets
+    (`ConnectionAuthz.on_drop`, which lets its window go), a `trade_groups` update on a cold lane
+    leaves at once again, its leading edge."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub)
+    hub.publish_private(ACC_A, _event(1, "positions"))
+    conn.clock.now = 0.05
+    hub.publish_private(ACC_A, _event(2, "positions"))  # a window closing at 0.1
+    positions = conn.authz.find("positions")
+    assert positions is not None and conn.authz.on_drop is not None
+    conn.authz.on_drop([positions])
+    _queued(pipe)
+    hub.publish_private(ACC_A, _event(3, "trade_groups"))
+    assert _tags(_queued(pipe)) == [("trade_groups", 3)]
+
+
+def test_s5_a_late_discard_of_an_ended_positions_lane_keeps_the_gate() -> None:
+    """The gate follows the live `positions` lane: a late `discard` of an ended subscription's
+    lane, after the topic was subscribed again, leaves `trade_groups` held behind the new lane."""
+    conn, pacer = _paced()
+    ended, groups = _private(conn, "positions"), _private(conn, "trade_groups")
+    live = replace(ended, sub_id="s_live")  # the same topic, subscribed again
+    out: list[dict[str, Any]] = []
+    conn.emitter.push = out.append  # not schema-checked: these rows carry only the order
+    pacer.offer(ended, _body("positions", 1))
+    for at in (2, 3):  # the first leaves at once, the second opens a window closing at 100.1
+        pacer.offer(live, _body("positions", at))
+    pacer.discard(ended.sub_id)
+    del out[:]
+    pacer.offer(groups, _body("trade_groups", 3))
+    assert out == [] and pacer.tick(100.0 + 0.1) == 2
+    assert _tags(out) == [("positions", 3), ("trade_groups", 3)]
+
+
+def test_s5_positions_is_just_ahead_of_trade_groups_in_causal_order() -> None:
+    """`Pacer._gate` waits on the family just ahead in causal order, and only `positions` and
+    `trade_groups` of the four are paced (S4): they must stay adjacent, in that order."""
+    assert PRIVATE_CAUSAL_ORDER[2:] == ("positions", "trade_groups")
+
+
+def test_s5_a_held_trade_groups_window_counts_and_is_shed_like_any_other() -> None:
+    """§8.4: a `trade_groups` window held behind a `positions` one counts against the budget from
+    its first update and keeps one heap entry (C-2.18); step 1 drops it like any window, marked
+    for its `backpressure` snapshot and with nothing left, though nothing was queued."""
+    hub = SequencingHub()
+    pipe, conn = _private_rig(hub, max_bytes=1_500)
+    hub.publish_private(ACC_A, _event(1, "positions"))
+    conn.clock.now = 0.01
+    hub.publish_private(ACC_A, _event(2, "positions"))  # a window closing at 0.1
+    _queued(pipe)
+    for at in range(3, 60):  # a cold lane, held: every update waits in its window
+        hub.publish_private(ACC_A, _event(at, "trade_groups"))
+    groups = conn.authz.find("trade_groups")
+    assert groups is not None and groups.pending_reason == "backpressure"
+    assert (len(pipe.queue), _pacer(pipe).pending_bytes, len(_pacer(pipe)._dues)) == (0, 0, 2)
+
+
+_S5_OPS = ("positions", "trade_groups", "event", _BOOK, "tick", "wait", "ctl", "classify")
+_TWO_CLOSES = [("ctl", 2), ("positions", 0), ("wait", 44), ("trade_groups", 0), ("wait", 0)]
+_OPEN = [("trade_groups", 0), ("wait", 0), ("trade_groups", 0), ("positions", 0), ("wait", 0)]
+_REOPEN = [("ctl", 2), ("event", 0), ("wait", 0), ("trade_groups", 0), ("wait", 0)]
+_OWN_LATER = [("ctl", 5), ("event", 0), ("wait", 0), ("event", 0)]
+_ARGS = st.one_of(st.integers(0, 9), st.integers(0, 49))  # short waits overlap the windows
+_LATE = [("event", 0), ("wait", 4), ("event", 0), ("wait", 5), ("trade_groups", 0), ("wait", 0)]
+
+
+def _s5_run(
+    ops: list[tuple[str, int]], groups: bool
+) -> tuple[list[tuple[float, dict[str, Any]]], dict[int, int]]:
+    """One run of the property below on a `Pacer`, `trade_groups` subscribed or not: the frames,
+    each with its release time, and how many had left before each event of both families. Checks
+    §8.1 on the way: two releases of a lane are at least the least `throttle_ms` it had between
+    them apart (a `ctl` re-times no open window, so the least is the bound)."""
+    conn, pacer = _paced()
+    families = ("positions", "trade_groups")[: 2 if groups else 1]
+    subs = {family: _private(conn, family) for family in families}
+    subs[_BOOK] = _subscribed(conn, _BOOK)
+    out: list[tuple[float, dict[str, Any]]] = []
+    conn.emitter.push = lambda frame: out.append((conn.clock.now, frame))
+    events: dict[int, int] = {}
+    last: dict[str, float] = {}
+    floor = {ch: pacer.throttle_ms(sub) for ch, sub in subs.items()}
+    for n, (op, arg) in enumerate([*ops, ("tick", 999)]):  # the last turn sends what is left
+        start = len(out)
+        if op in ("tick", "wait"):  # a writer's turn, or time passing without one (a late turn)
+            conn.clock.now += (arg + 1) / 100
+            if op == "tick":
+                pacer.tick()
+        elif op == "ctl":  # a new `throttle_ms`: the next window takes it
+            if (sub := subs.get(("positions", "trade_groups")[arg % 2])) is not None:
+                sub.effective["throttle_ms"] = (50, 100, 500)[arg % 3]
+        elif op == "classify":
+            pacer.classify((0.0, 30.0, 70.0)[arg % 3], list(subs.values()))
+        elif op == _BOOK:
+            pacer.offer(subs[_BOOK], _bid(str(100 + arg % 7)))
+        else:  # one family's update, or an event of both, in causal order
+            if op == "event" and groups:
+                events[n] = start
+            for family in families if op == "event" else (op,):
+                if family in subs:
+                    pacer.offer(subs[family], _body(family, n))
+        for ch, sub in subs.items():
+            floor[ch] = min(floor[ch], pacer.throttle_ms(sub))
+        for at, frame in out[start:]:
+            ch = frame["ch"]
+            if last.get(ch) != at:  # a new release: a window's frames leave together
+                if ch in last:
+                    assert at >= last[ch] + floor[ch] / 1000
+                last[ch], floor[ch] = at, pacer.throttle_ms(subs[ch])
+    return out, events
+
+
+@settings(max_examples=200, deadline=None, derandomize=True, database=None)
+@given(st.lists(st.tuples(st.sampled_from(_S5_OPS), _ARGS), max_size=40))
+@example([("positions", 0), ("wait", 4), ("event", 0)])  # 1: a cold lane's leading edge
+@example([("ctl", 2), ("event", 0), ("wait", 0), ("event", 0)])  # 2: `positions` at 500 ms
+@example([("trade_groups", 0), ("wait", 4), ("positions", 0), ("wait", 0), ("event", 0)])  # 3
+@example([("event", 0), ("wait", 4), ("event", 0), ("wait", 6), ("trade_groups", 0)])  # 4: late
+@example([*_TWO_CLOSES, ("event", 0), ("classify", 1)])  # 5: a class change re-times both
+@example([*_LATE, ("positions", 0), ("tick", 0)])  # no `positions` frame moves, late or not
+@example([*_OWN_LATER, ("tick", 9)])  # `trade_groups`' own close later than `positions'`
+@example([*_OWN_LATER, ("classify", 1), ("tick", 9), ("tick", 9)])  # and kept across a class change
+@example([*_OPEN, ("positions", 0), ("event", 0)])  # an open `trade_groups` window moves later
+@example([*_REOPEN, ("positions", 0), ("wait", 0), ("event", 0)])  # the same, `positions` 500 ms
+def test_s5_holds_between_windows_for_any_interleaving(ops: list[tuple[str, int]]) -> None:
+    """§16.1 S5 between windows (D18) over random interleavings of `positions`, `trade_groups`
+    and `book` updates, `throttle_ms` changes, class changes and writer turns, late ones too: for
+    every event of both families its `positions` frame leaves first; each lane leaves at most once
+    per its `throttle_ms` (§8.1, in `_s5_run`); and `positions` and `book` leave exactly as in
+    the same run without `trade_groups`, so the hold never moves them."""
+    out, events = _s5_run(ops, groups=True)
+    alone, _ = _s5_run(ops, groups=False)
+    for ch in ("positions", _BOOK):
+        assert [(at, f["s"], f["p"]) for at, f in out if f["ch"] == ch] == [
+            (at, f["s"], f["p"]) for at, f in alone if f["ch"] == ch
+        ]
+    for n, start in events.items():  # the first `positions` frame after it carries its row
+        p = next((i for i in range(start, len(out)) if out[i][1]["ch"] == "positions"), None)
+        groups = [i for i, (_, f) in enumerate(out) if f["ch"] == "trade_groups"]
+        t = next((i for i in groups if _tags([out[i][1]]) == [("trade_groups", n)]), None)
+        assert p is not None and t is not None and p < t
 
 
 def test_confirmed_bar_survives_a_later_unconfirmed_update_end_to_end() -> None:
