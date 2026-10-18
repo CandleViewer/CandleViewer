@@ -9852,16 +9852,23 @@ paths:
         in a minute, a further miss is `429 rate_limited` with `Retry-After` instead of `404`,
         counted in `cv_backup_download_source_rate_limited_total`, and the first such refusal per
         address and minute is audited as `backup.downloaded` with `stage: served`,
-        `outcome: denied` and `reason: rate_limited`, naming the address and no link. A token
-        cannot be guessed, so this budget only bounds log and audit volume and flags a scanner;
-        it never limits a matching token. Matching is a lookup, not a spend. A matching token
-        that was spent or has expired is `410 gone` and counts against no limit; the first time
-        a spent token is presented again, a `backup.downloaded` record with `stage: served`,
-        `outcome: failure` and `reason: link_reused`, naming its `after_state.link_id`, precedes
-        the `410`, and no later presentation or expired link writes one. A live matching token
-        then meets the hourly limit of the user it was issued to, the one check before the spend:
-        over it, the answer is `429 rate_limited`, nothing is spent and nothing is recorded. The
-        token is then spent, so a refused fetch spends it too. The link follows its issuing
+        `outcome: denied` and `reason: rate_limited`, naming the address and no backup or link taken
+        from the path. A token cannot be guessed, so this budget only bounds log and audit volume
+        and flags a scanner; it never limits a matching token. Matching is a lookup, not a spend. A
+        matching token that was spent or has expired is `410 gone` and counts against no limit; the
+        first time a spent token is presented again, a `backup.downloaded` record with
+        `stage: served`, `outcome: failure` and `reason: link_reused`, naming its
+        `after_state.link_id`, precedes the `410`, and no later presentation or expired link writes
+        one. The expired link that writes none is one that expired unspent: a token that was spent
+        and is first presented again after its 5 minutes writes the record, since the link was spent
+        first. When the `link_reused` record or the per-source `rate_limited` record cannot be
+        written (write-ahead, C-2.9), the answer is `503 audit_unavailable` instead of the `410` or
+        of the per-source `429`, and a record that was not written does not use up the one record
+        per link (or per address and minute): the next presentation of that link, or the next
+        refused miss from that address in the minute, writes it. A live matching token then meets
+        the hourly limit of the user it was issued to, the one check before the spend: over it, the
+        answer is `429 rate_limited`, nothing is spent and nothing is recorded. The token is then
+        spent, so a refused fetch spends it too. The link follows its issuing
         session's family across rotation (`issueBackupDownload`), so a rotation does not end it,
         and it ends with the events that end the grant that minted it, not with the grant's
         60-second expiry or its use: after the family's session logged out, idle-locked or turned
