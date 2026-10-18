@@ -3,7 +3,8 @@
 #3104: `xstate-contract` is an eleventh step, running the one script the nightly runs too, and
 `gen` the twelfth, last of all: its full install runs the PR's build scripts.
 #3385: `secret-scan` is the thirteenth, first of all and on every PR: gitleaks and trufflehog over
-the PR's commits, then the credential-hygiene gate, so a docs-only PR gets the secret scans too."""
+the PR's commits, then the credential-hygiene gate, so a docs-only PR gets the secret scans too.
+#3495: `backlog-twin-eol` is the fourteenth, on every PR: each backlog twin blob is LF."""
 
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ GATES: dict[str, int | str] = {
     "xstate-contract": VAR,  # #3104: _job-xstate-contract.yml:35 at 59bec409
     "gen": 5,  # #3104: _job-gen.yml:27 at 59bec409
     "secret-scan": 10,  # #3385: the budget of the security lane's gitleaks job
+    "backlog-twin-eol": 5,  # #3495: one `git ls-files --eol` over the twins
 }
 OTHER_LANES = ["changed-paths", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
@@ -113,7 +115,7 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
     texts = [json.dumps(step) for step in steps]
     installers = [i for i, text in enumerate(texts) if any(word in text for word in INSTALLERS)]
     readers = [i for i, s in enumerate(steps) if s.get("id") in GATES and i not in installers]
-    assert len(readers) == 9 and min(installers) > max(readers)
+    assert len(readers) == 10 and min(installers) > max(readers)
     # #3385: the secret scans read the checkout and its history before any gate runs a PR script.
     assert steps[min(readers)]["id"] == "secret-scan"
     assert [step.get("id") for step in steps[-3:-1]] == ["commitlint", "gen"]

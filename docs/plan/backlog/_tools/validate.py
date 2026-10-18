@@ -237,8 +237,9 @@ def is_fe_story(t):
 # --------------------------------------------------------------------------
 # validate.py is the twins' formatter (#3362; prettier skips them): an E<nn>.json is exactly what
 # json.dump(data, fh, ensure_ascii=False, indent=2) writes (AGENTS.md §3a), byte for byte except
-# line endings (#3454): git commits the twins as LF (.gitattributes), so read_twin() reads a CRLF
-# twin (a Windows text-mode write or checkout) as LF; the final newline still has to match.
+# line endings (#3454): git commits the twins as LF (.gitattributes; pr.yml's backlog-twin-eol gate
+# fails any other blob, #3495), so read_twin() reads a CRLF twin (a Windows text-mode write or
+# checkout) as LF; the final newline still has to match.
 TWIN_FORMAT = ("TWIN-FORMAT %s: not byte-identical to what validate.py writes; validate.py is the "
                "formatter of the backlog twins, never prettier or a hand edit: %s")
 
@@ -272,8 +273,8 @@ def load(fix=False):
             err("NOT-A-LIST %s: top level must be a JSON array" % fn)
             continue
         if raw != twin_text(data) and not fix:  # --fix rewrites it in the twin layout
-            err(TWIN_FORMAT % (fn, "re-save it via Python json.dump(data, fh, "
-                                   "ensure_ascii=False, indent=2), then run validate.py"))
+            err(TWIN_FORMAT % (fn, "re-save it via Python as AGENTS.md section 3a says, "
+                                   "then run validate.py"))
         by_file[fn] = data
         for t in data:
             t["_file"] = fn

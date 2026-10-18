@@ -70,7 +70,9 @@ jobs:
 
       - name: Backlog validation (semantic/report tool)
         # --check writes nothing and fails on any backlog twin that is not byte-identical to
-        # what validate.py writes; validate.py is the twins' formatter, not prettier (#3362).
+        # what validate.py writes, reading CRLF line endings as LF (#3454); validate.py is the
+        # twins' formatter, not prettier (#3362). pr.yml's backlog-twin-eol gate fails a twin
+        # blob committed with CRLF (#3495).
         run: python docs/plan/backlog/_tools/validate.py --check
 
       - name: Backlog schema validation (GOV-004)

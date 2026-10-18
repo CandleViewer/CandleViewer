@@ -25,7 +25,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, a merge
 │  │                group's own commit; credential hygiene; CI-SEC-001/005, #3385),
 │  │                spike-containment (CI-SPIKE-001/002),
-│  │                changelog-fragment (CI-REL-001)*, licence-header, docs-link-check (GOV-002);
+│  │                changelog-fragment (CI-REL-001)*, licence-header, docs-link-check (GOV-002),
+│  │                backlog-twin-eol (each docs/plan/backlog/*.json blob is LF, #3495);
 │  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
 │  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
