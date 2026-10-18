@@ -166,6 +166,11 @@ def load_config(path: Path) -> tuple[float, dict[str, PackageConfig]]:
     return float(tolerance), packages
 
 
+def _excerpt(value: str, limit: int = 40) -> str:
+    """Quote at most `limit` characters of artifact text in a message."""
+    return repr(value[:limit]) + ("..." if len(value) > limit else "")
+
+
 def _no_doctype(*_: object) -> None:
     raise CoverageGateError("malformed coverage.xml: it declares a document type")
 
@@ -198,10 +203,12 @@ def parse_coverage_xml(text: str) -> float:
             "coverage.xml root element missing 'line-rate' attribute"
         )
     if not re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?", line_rate):
-        raise CoverageGateError(f"coverage.xml has non-numeric line-rate {line_rate!r}")
+        raise CoverageGateError(
+            f"coverage.xml has non-numeric line-rate {_excerpt(line_rate)}"
+        )
     if not 0.0 <= float(line_rate) <= 1.0:
         raise CoverageGateError(
-            f"coverage.xml line-rate {line_rate!r} is outside [0, 1]"
+            f"coverage.xml line-rate {_excerpt(line_rate)} is outside [0, 1]"
         )
     return float(line_rate) * 100.0
 

@@ -675,6 +675,17 @@ def test_parse_coverage_xml_rejects_a_report_outside_the_cobertura_shape(
         parse_coverage_xml(text)
 
 
+@pytest.mark.parametrize(
+    "line_rate", ["x" * 10_000, "9" * 10_000], ids=["not-a-number", "above-one"]
+)
+def test_parse_coverage_xml_quotes_at_most_an_excerpt_of_a_bad_line_rate(
+    line_rate: str,
+) -> None:
+    with pytest.raises(CoverageGateError) as raised:
+        parse_coverage_xml(f'<coverage line-rate="{line_rate}"></coverage>')
+    assert len(str(raised.value)) <= 100
+
+
 def test_parse_coverage_xml_reads_a_coverage_py_report() -> None:
     text = (
         '<?xml version="1.0" ?>\n<coverage version="7.16.1" line-rate="0.9792">\n'

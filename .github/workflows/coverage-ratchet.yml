@@ -81,6 +81,9 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Only the baselines file: the downloaded artifacts and the proposals are input, never
+          # part of the PR (the action commits every new or modified file by default).
+          add-paths: tools/ci/coverage-baselines.json
           commit-message: "chore(infra-devops): ratchet coverage baseline(s) up"
           branch: bot/coverage-baseline-ratchet
           delete-branch: true

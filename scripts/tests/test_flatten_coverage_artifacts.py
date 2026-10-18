@@ -12,7 +12,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci import coverage_gate
-from tools.ci.flatten_coverage_artifacts import flatten, main
+from tools.ci.flatten_coverage_artifacts import _create_inside, flatten, main
 
 
 def test_flatten_copies_web_lcov_to_expected_path(tmp_path: Path) -> None:
@@ -141,6 +141,21 @@ def test_main_refuses_an_untrusted_report(
     assert "CI-COV-004" in capsys.readouterr().err
     assert not (artifact / "lcov.info").exists()
     assert not (tmp_path / "elsewhere.info").exists()
+
+
+@pytest.mark.parametrize("case", ["missing", "link-loop"])
+def test_a_copy_whose_directory_does_not_resolve_is_refused(
+    tmp_path: Path, case: str
+) -> None:
+    root = tmp_path / "coverage-artifacts"
+    root.mkdir()
+    artifact = root / "coverage-unit-frontend"
+    if case == "link-loop":
+        artifact.symlink_to(root / "loop")
+        (root / "loop").symlink_to(artifact)
+    with pytest.raises(coverage_gate.ArtifactRefusedError, match="does not resolve"):
+        _create_inside(root, artifact / "lcov.info", VALID_LCOV.encode())
+    assert not any(path.is_file() for path in tmp_path.rglob("*"))
 
 
 @pytest.mark.parametrize("data", [b"not lcov\n", b"SF:x\nLF:ten\n", b"SF:\xff\n"])

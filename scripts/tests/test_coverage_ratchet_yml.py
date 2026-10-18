@@ -78,6 +78,15 @@ def test_artifacts_come_only_from_the_run_that_triggered_the_ratchet() -> None:
         }
 
 
+def test_the_bot_pr_commits_only_the_baselines_file() -> None:
+    for job in _load(RATCHET)["jobs"].values():
+        opens = [s for s in job["steps"] if "create-pull-request@" in s.get("uses", "")]
+        assert opens
+        assert {s["with"].get("add-paths") for s in opens} == {
+            "tools/ci/coverage-baselines.json"
+        }
+
+
 def test_steps_check_out_main_and_pass_no_expression_to_a_shell() -> None:
     for job in _load(RATCHET)["jobs"].values():
         uses = [s for s in job["steps"] if "actions/checkout@" in s.get("uses", "")]

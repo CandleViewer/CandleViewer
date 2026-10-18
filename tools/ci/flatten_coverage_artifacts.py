@@ -64,8 +64,12 @@ def _repo_dir_for(package: str) -> str:
 def _create_inside(root: Path, dest: Path, data: bytes) -> None:
     """Write `data` to `dest` as a new file whose directory resolves inside `root`;
     an existing path at `dest`, a link included, is refused rather than followed."""
-    parent = dest.parent.resolve(strict=True)
-    if not parent.is_relative_to(root.resolve(strict=True)):
+    try:
+        parent = dest.parent.resolve(strict=True)
+        inside = parent.is_relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError) as exc:
+        raise ArtifactRefusedError(f"{dest.parent} does not resolve") from exc
+    if not inside:
         raise ArtifactRefusedError(f"{dest} resolves outside {root}")
     try:
         fd = os.open(parent / dest.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)

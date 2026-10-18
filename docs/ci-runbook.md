@@ -397,23 +397,30 @@ removing nothing.
   In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
   5 days) is missing: the lane died before writing it, or a "Re-run failed
   jobs" came after the green lanes' data expired; then use "Re-run all jobs".
-  A report the gate cannot parse counts as missing; the message names the line.
+  A report the gate cannot parse counts as missing; the message names the line. The lcov
+  reader takes only the record types it lists (`_LCOV_RECORD` in `tools/ci/coverage_gate.py`,
+  every record the Vitest lanes write today), so a reporter upgrade that writes a new record
+  type reads as CI-COV-003 until a reviewed change adds that type.
 - **CI-COV-004** (coverage artifact refused): artifacts are untrusted input, so the coverage
-  scripts refuse a path that resolves outside the download directory or is not a regular file,
-  a report over 32 MiB (`affected-packages.txt` and the ratchet proposals: 64 KiB), a download
-  of over 1,000 entries, or proposals that are not one JSON object of package names to
-  percentages. A lane's own upload (regular files, about 2.5 MB at most on 2026-10-18) never
+  scripts refuse a path that resolves outside the download directory or is not a regular file, a
+  report over 32 MiB (`affected-packages.txt` and the ratchet proposals: 64 KiB), a download of
+  over 1,000 entries, or proposals that are not one JSON object of at most 64 package names mapped
+  to percentages. A lane's own upload (regular files, about 2.5 MB at most on 2026-10-18) never
   trips it: find what wrote the refused path. Raise a bound only in a reviewed change.
 - **`coverage-ratchet` is disabled (#3508).** It runs only for a successful push run of this
-  repository's `main`, and no workflow runs the coverage lanes on a push to `main` (`pr.yml`
-  runs on pull requests). Its only trigger is `workflow_dispatch`, and a manual run is expected
-  to skip its job: the job's `if:` needs a `workflow_run` event. A push-to-main coverage run
-  would cost about 45 runner-minutes per merge for the `py` lane alone (medians 18.9, 14.8,
-  10.5 and 0.5 minutes, 26 green `pr.yml` runs on 2026-10-18), about 8,800 a day at the 196
-  merges of 2026-10-16. To re-enable it, add a push-to-main workflow that uploads every
+  repository's `main`, and no workflow runs the coverage lanes on a push to `main` (`pr.yml` runs
+  on pull requests and merge groups, and a merge group's tree may still leave the queue unmerged).
+  Its only trigger is `workflow_dispatch`, and a manual run is expected to skip its job: the job's
+  `if:` needs a `workflow_run` event. A push-to-main coverage run would cost about 45
+  runner-minutes per merge for the `py` lane alone (medians 18.9, 14.8, 10.5 and 0.5 minutes, 26
+  green `pr.yml` runs on 2026-10-18), about 8,800 a day at the 196 merges of 2026-10-16. To
+  re-enable it, first measure each package from its own report: the packages that share an
+  artifact (`coverage-unit-engine`, `coverage-unit-frontend`) are all measured today from the
+  first package report `flatten_coverage_artifacts.py` copies, so the ratchet would raise their
+  baselines from that one package's number. Then add a push-to-main workflow that uploads every
   coverage artifact, with the JS coverage lanes unfiltered (their `...[origin/main]` filter
-  selects no package on a push to `main`, so every JS package would be N/A), and name it under
-  the ratchet's `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
+  selects no package on a push to `main`, so every JS package would be N/A), and name it under the
+  ratchet's `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
   `scripts/tests/test_coverage_ratchet_yml.py` checks the producer runs on push to `main`.
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
