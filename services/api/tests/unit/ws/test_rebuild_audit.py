@@ -38,6 +38,25 @@ class _Sink:
         await asyncio.Event().wait()
 
 
+class _Held:
+    """An audit sink that counts the writes asked of it. The first raises (`error`) or waits for
+    `go` (`timeout`: the writer's bound cuts it when no test sets `go`); every later one is kept
+    at once."""
+
+    def __init__(self, fault: str = "timeout") -> None:
+        self.fault, self.entered, self.go = fault, asyncio.Event(), asyncio.Event()
+        self.calls, self.rows = 0, list[str]()
+
+    async def emit(self, action: str, **row: Any) -> None:
+        self.calls += 1
+        self.entered.set()
+        if self.calls == 1:
+            if self.fault == "error":
+                raise RuntimeError("the audit store is down")
+            await self.go.wait()
+        self.rows.append(row["object_id"])
+
+
 async def _refused_resume(fault: str) -> tuple[Conn, dict[str, Any], _Sink]:
     """A user with a limit of 1, spent by its `sub`: its resume is refused, a record due."""
     (conn,) = _one_user(1, limit=1)
@@ -112,3 +131,45 @@ async def test_a_sub_entry_s_record_is_written_after_its_frame_s_sub_ok() -> Non
     conn.out.clear()
     await _asub(conn, HEAT)  # refused for the user
     assert [(action, sent) for action, _, sent in rows.rows] == [("ws.rebuild.refused", ["sub_ok"])]
+
+
+async def test_two_sockets_of_one_user_racing_to_write_leave_one_record_a_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3476 (23 §7.7): the window is marked as a write starts. Two sockets of one user, A and B,
+    are refused for the user; while A's write is in flight, B's refusal finds the window marked
+    and `handle_sub` writes none for it: the user has one record."""
+    monkeypatch.setattr(permissions, "FANOUT_AUDIT_TIMEOUT_S", 30.0)  # a held write is not cut
+    a, b = _one_user(2, limit=1)
+    a.authz.services.audit = sink = _Held()
+    await _asub(a, BOOK)  # the user's one draw
+    _resume(a)  # refused for the user: A's record is due
+    write = asyncio.create_task(audit_rebuild_refusal(a.authz))
+    async with asyncio.timeout(5):
+        await sink.entered.wait()  # A's write is in flight
+    assert [r["ok"] for r in await _asub(b, HEAT)] == [False]  # refused for the user: no write
+    # B's call ran, took its due key and found the window marked:
+    assert b.authz.rebuilds.audit_due is None
+    assert sink.calls == 1
+    sink.go.set()
+    async with asyncio.timeout(5):
+        await write
+    assert sink.rows == ["book"]
+
+
+@pytest.mark.parametrize("fault", ["timeout", "error"])
+async def test_a_record_not_confirmed_leaves_the_window_marked_for_the_user_s_next_refusal(
+    fault: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3476 (23 §7.7): a write not confirmed, cut at its bound (`timeout`) or raised (`error`),
+    does not reopen the window. A later `user` refusal in it, on the user's other socket, reaches
+    no writer: one attempt for the window."""
+    monkeypatch.setattr(permissions, "FANOUT_AUDIT_TIMEOUT_S", 0.01)
+    a, b = _one_user(2, limit=1)
+    a.authz.services.audit = sink = _Held(fault)  # the first write is cut at the bound, or raises
+    await _asub(a, BOOK)
+    _resume(a)
+    async with asyncio.timeout(5):
+        await audit_rebuild_refusal(a.authz)  # not confirmed: counted, logged
+        assert [r["ok"] for r in await _asub(b, HEAT)] == [False]
+    assert (sink.calls, sink.rows) == (1, [])

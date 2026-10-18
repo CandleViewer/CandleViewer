@@ -6,6 +6,7 @@ frame is validated."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from tests.contract.ws._harness import OFFERS, Client, World, connect, publish
 from tests.unit.ws._seq_support import USER
 
@@ -182,3 +184,40 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
         "severity": Severity.WARNING,
         "reason": "user",
     }
+
+
+class _AfterReply(_Rows):
+    """An audit sink whose write waits for `read`, which the test sets on the app's loop once it
+    has read the refused `ctl`'s `err`. A record written ahead of its reply holds the `err` back
+    until the writer's bound cuts the write, and nothing is kept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.read = asyncio.Event()
+
+    async def emit(self, action: str, **row: Any) -> None:
+        await self.read.wait()
+        await super().emit(action, **row)
+
+
+@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
+@pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
+def test_ac31_a_refused_ctl_s_record_is_written_after_its_err_is_sent(
+    offer: list[str], backpressure: BackpressureConfig | None
+) -> None:
+    """#3476 (23 §7.7): the record of a refused `ctl` follows its `err`, as a `sub`'s follows its
+    `sub_ok` (`test_rebuild_audit.py`). The sink holds the write until the test thread has read
+    that `err`; a record written first holds the `err` back, is cut at the writer's bound and
+    keeps no row."""
+    w, sink = World(backpressure=backpressure), _AfterReply()
+    w.registry.services.user_rebuilds.limit = 1
+    w.registry.services.audit = sink
+    with connect(w, offer) as c:
+        c.sub(BOOK)  # the user's one draw
+        for i, paused in enumerate((True, False)):  # the resume is refused, the first
+            c.send({"t": "ctl", "id": f"k{i}", "ch": BOOK, "p": {"paused": paused}})
+        assert c.next_of("err")["id"] == "k1"  # the `err` is read: the write may go on
+        w.call(sink.read.set)
+        _until_pong(c)  # the record was written before the next frame was read
+    written = [(a, r["object_id"]) for a, r in sink.rows]
+    assert written == [("ws.rebuild.refused", "book")], "no record after the `err` was read"
