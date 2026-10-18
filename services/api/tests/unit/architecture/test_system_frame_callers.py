@@ -7,8 +7,12 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
 - a frame on the `system` channel (a dict literal whose `"ch"` is the topic, whatever its other
   keys, or a `ch=` argument) is built only by `_Connection.push_system` in `ws/gateway.py`. A
   `sub_ok` result row names the topic without being a frame: it has no `"t"`, and has `"ok"` or
-  `"sub_id"`. The topic is `"system"`, `SYSTEM_TOPIC` (as an import alias too), a name a module
-  copies it to (`TOPIC = SYSTEM_TOPIC`, at any scope) and `getattr(m, "SYSTEM_TOPIC")`;
+  `"sub_id"`. The topic is `"system"`, `SYSTEM_TOPIC` (as an import alias too), a name or an
+  attribute a module copies it to, at any scope (`TOPIC = SYSTEM_TOPIC`, `self.chan = ...`,
+  `A, B = 1, SYSTEM_TOPIC`, `(t := SYSTEM_TOPIC)`, a parameter default `def f(ch=SYSTEM_TOPIC)`)
+  and `getattr(m, "SYSTEM_TOPIC")`. Names and attributes are one namespace per module: a class
+  attribute `TOPIC` is read as `K.TOPIC` or `self.TOPIC`, and so is the `TOPIC` of any other
+  object, and a plain `TOPIC`. The key may be a name that holds `"ch"`;
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
   `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`),
   `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push) and
@@ -20,17 +24,24 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
 A new producer calls `GatewayHub.broadcast_system`. Any other reference fails here and must be
 reviewed as an RBAC change first (C-12.4), as for `test_key_selfcheck_store_callers.py`.
 Limits: a tripwire for an accident, not a proof, and it reads each module on its own. It does not
-see a channel or method name built at run time (`"sys" + "tem"`, an f-string), a channel passed
-positionally or through a parameter, a return value or a container, a frame filled in key by key
-(`frame["ch"] = ...`, `update`), a copy of the topic imported from another module, or code outside
-`candleviewer`.
+see a channel or method name built at run time (`"sys" + "tem"`, an f-string), a channel a
+caller passes in (a parameter default is followed), a return value or a container, a frame filled
+in key by key (`frame["ch"] = ...`, `update`), built from pairs or sent already encoded, a copy of
+the topic or of the `ch` key imported from another module, a `ch` key bound by `:=` in the key
+position, a `getattr` of a copy, a copy made by a conditional or boolean expression, a loop,
+`with` or `match` target, `setattr` or a subscript, a frame whose `t` key is a name and that also
+has `ok` or `sub_id` (it reads as a result row), or code outside `candleviewer`. It reports a
+frame it should not for a result row whose `ok` or `sub_id` key is a name, for a name and an
+attribute of one spelling, which are one name, for a name rebound to another value, and for the
+same name in another function (one name per module). A starred unpacking is read position by
+position, so one that does not line up is missed or reported wrongly.
 """
 
 from __future__ import annotations
 
 import ast
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -61,11 +72,20 @@ def _scoped(node: ast.AST, scope: str = "<module>") -> Iterator[tuple[ast.AST, s
         yield from _scoped(child, inner)
 
 
-def _is_system(node: ast.expr | None, names: set[str]) -> bool:
-    """The system topic: the string, a name in `names`, an attribute spelled `SYSTEM_TOPIC`, or
-    `getattr(m, "SYSTEM_TOPIC")`."""
+def _holds(node: ast.expr | None, names: set[str], text: str) -> bool:
+    """The string `text`, or a name, or an attribute of any object, that `names` holds."""
     if isinstance(node, ast.Constant):
-        return bool(node.value == "system")
+        return bool(node.value == text)
+    return (isinstance(node, ast.Name) and node.id in names) or (
+        isinstance(node, ast.Attribute) and node.attr in names
+    )
+
+
+def _is_system(node: ast.expr | None, names: set[str]) -> bool:
+    """The system topic: the string, a name or attribute in `names` (`SYSTEM_TOPIC` and its
+    copies), an assignment expression of one, or `getattr(m, "SYSTEM_TOPIC")`."""
+    if isinstance(node, ast.NamedExpr):
+        return _is_system(node.value, names)
     if isinstance(node, ast.Call):
         args = node.args
         return (
@@ -75,35 +95,92 @@ def _is_system(node: ast.expr | None, names: set[str]) -> bool:
             and isinstance(args[1], ast.Constant)
             and args[1].value == "SYSTEM_TOPIC"
         )
-    return (isinstance(node, ast.Name) and node.id in names) or (
-        isinstance(node, ast.Attribute) and node.attr == "SYSTEM_TOPIC"
-    )
+    return _holds(node, names, "system")
 
 
-def _topic_names(tree: ast.AST) -> set[str]:
-    """The names that hold the topic in a module: `SYSTEM_TOPIC`, what it is imported as, and each
-    name assigned it or such a name, at any scope, to a fixed point (`B = A` after `A = ...`)."""
-    names = {"SYSTEM_TOPIC"}
+def _is_ch(node: ast.expr | None, names: set[str]) -> bool:
+    """The key `"ch"`: the string, or a name or attribute in `names` (`CH = "ch"`)."""
+    return _holds(node, names, "ch")
+
+
+def _pairs(target: ast.expr, value: ast.expr) -> list[tuple[ast.expr, ast.expr]]:
+    """`(target, value)`; for a tuple or list on both sides, each element against the one in its
+    position, as deep as both go."""
+    if isinstance(target, ast.Tuple | ast.List) and isinstance(value, ast.Tuple | ast.List):
+        return [p for t, v in zip(target.elts, value.elts, strict=False) for p in _pairs(t, v)]
+    return [(target, value)]
+
+
+def _defaults(args: ast.arguments) -> list[tuple[ast.expr, ast.expr]]:
+    """Each parameter with its default (`def f(ch=SYSTEM_TOPIC)`, a lambda's too): the positional
+    ones right-aligned with `defaults`, the keyword-only ones with `kw_defaults` (`None`: none)."""
+    positional = [*args.posonlyargs, *args.args]
+    both: list[tuple[ast.arg, ast.expr | None]] = [
+        *zip(positional[len(positional) - len(args.defaults) :], args.defaults, strict=True),
+        *zip(args.kwonlyargs, args.kw_defaults, strict=True),
+    ]
+    return [(ast.Name(id=a.arg, ctx=ast.Store()), d) for a, d in both if d is not None]
+
+
+def _bindings(tree: ast.AST) -> list[tuple[ast.expr, ast.expr]]:
+    """Each (target, value) a module binds, at any scope: `a = v`, `a: T = v`, `(a := v)`, a
+    parameter with its default and the elements of a tuple or list unpacked (`a, b = v, w`)."""
+    found: list[tuple[ast.expr, ast.expr]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            found += [p for target in node.targets for p in _pairs(target, node.value)]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            found += _pairs(node.target, node.value)
+        elif isinstance(node, ast.NamedExpr):
+            found.append((node.target, node.value))
+        elif isinstance(node, ast.arguments):
+            found += _defaults(node)
+    return found
+
+
+def _held(
+    tree: ast.AST, names: set[str], holds: Callable[[ast.expr | None, set[str]], bool]
+) -> set[str]:
+    """`names` and each name, or attribute of any object, assigned a value that `holds` accepts,
+    at any scope, to a fixed point (`B = A` after `A = ...`)."""
+    pairs = _bindings(tree)
     while True:
         found = set(names)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                found |= {a.asname or a.name for a in node.names if a.name == "SYSTEM_TOPIC"}
-            elif isinstance(node, ast.Assign | ast.AnnAssign) and _is_system(node.value, names):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                found |= {t.id for t in targets if isinstance(t, ast.Name)}
+        for target, value in pairs:
+            if not holds(value, names):
+                continue
+            if isinstance(target, ast.Name):
+                found.add(target.id)
+            elif isinstance(target, ast.Attribute):
+                found.add(target.attr)
         if found == names:
             return names
         names = found
 
 
-def _builds_frame(node: ast.AST, names: set[str]) -> bool:
+def _topic_names(tree: ast.AST) -> set[str]:
+    """The names that hold the topic in a module: `SYSTEM_TOPIC`, what it is imported as, and what
+    `_held` finds assigned it or one of these (`B = A` after `A = ...`)."""
+    imported = {
+        a.asname or a.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for a in node.names
+        if a.name == "SYSTEM_TOPIC"
+    }
+    return _held(tree, {"SYSTEM_TOPIC"} | imported, _is_system)
+
+
+def _spelled(key: ast.expr | None, chs: set[str]) -> object:
+    """A dict key as the constant it spells: `"ch"` for the string or a name that holds it."""
+    if _is_ch(key, chs):
+        return "ch"
+    return key.value if isinstance(key, ast.Constant) else None
+
+
+def _builds_frame(node: ast.AST, names: set[str], chs: set[str]) -> bool:
     if isinstance(node, ast.Dict):  # a `ch` of the topic, unless it is a `sub_ok` result row
-        keys = {
-            k.value: v
-            for k, v in zip(node.keys, node.values, strict=True)
-            if isinstance(k, ast.Constant)
-        }
+        keys = {_spelled(k, chs): v for k, v in zip(node.keys, node.values, strict=True)}
         is_row = "t" not in keys and not RESULT_ROW.isdisjoint(keys)
         return _is_system(keys.get("ch"), names) and not is_row
     # `_reply("d", ch="system")`, `dict(t="d", ch=SYSTEM_TOPIC)`
@@ -123,9 +200,9 @@ def _sites(source: str) -> tuple[set[str], set[str]]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)  # an applied migration may carry one
         tree = ast.parse(source)
-    names = _topic_names(tree)
+    names, chs = _topic_names(tree), _held(tree, set(), _is_ch)
     for node, scope in _scoped(tree):
-        if _builds_frame(node, names):
+        if _builds_frame(node, names, chs):
             built.add(scope)
         elif _names_push_system(node):
             named.add(scope)
@@ -176,10 +253,46 @@ def test_push_system_is_named_only_by_its_senders() -> None:
         "TOPIC: Final = 'system'\nconn.push({'t': 'd', 'ch': TOPIC})",
         "A = SYSTEM_TOPIC\nB = A\nconn.push({'t': 'd', 'ch': B})",
         "conn.push({'t': 'd', 'ch': getattr(gateway, 'SYSTEM_TOPIC')})",
+        # the topic held as an attribute or a lambda default, taken out of a tuple, bound by `:=`
+        "self.chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': self.chan})",
+        "class K:\n    TOPIC = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': K.TOPIC})",
+        "push = lambda c, ch=SYSTEM_TOPIC: c.push({'t': 'd', 'ch': ch})",
+        # by design a name and an attribute of one spelling are one name, whoever holds it
+        "self.chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': chan})",
+        "chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': other.chan})",
+        "A, B = 1, SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': B})",
+        "[A, B] = [SYSTEM_TOPIC, 1]\nconn.push({'t': 'd', 'ch': A})",
+        "A, (B, C) = 1, (SYSTEM_TOPIC, 2)\nconn.push({'t': 'd', 'ch': B})",
+        "A, *B = SYSTEM_TOPIC, 1, 2\nconn.push({'t': 'd', 'ch': A})",
+        "if (t := SYSTEM_TOPIC):\n    conn.push({'t': 'd', 'ch': t})",
+        "conn.push({'t': 'd', 'ch': (t := SYSTEM_TOPIC)})",
+        # the `ch` key spelled through a name
+        "CH = 'ch'\nconn.push({'t': 'd', CH: SYSTEM_TOPIC})",
     ],
 )
 def test_a_frame_built_on_the_system_channel_is_found(source: str) -> None:
     assert _sites(source)[0] == {"<module>"}
+
+
+_K = "class K:\n    %s\n    def send(self, c):\n        c.push({'t': 'd', 'ch': self.%s})"
+_PUSH = "    conn.push({'t': 'd', 'ch': ch, 'p': body})"
+
+
+@pytest.mark.parametrize(
+    ("source", "scope"),
+    [
+        (_K % ("def __init__(self):\n        self.chan = SYSTEM_TOPIC", "chan"), "K.send"),
+        (_K % ("TOPIC = SYSTEM_TOPIC", "TOPIC"), "K.send"),
+        ("def _push(conn, body, ch=SYSTEM_TOPIC):\n" + _PUSH, "_push"),
+        ("def _push(conn, ch=SYSTEM_TOPIC, /, *, body):\n" + _PUSH, "_push"),
+        ("def _push(conn, *, body, ch=SYSTEM_TOPIC):\n" + _PUSH, "_push"),
+    ],
+    ids=["instance-attribute", "class-attribute", "default", "positional-only", "keyword-only"],
+)
+def test_a_copy_of_the_topic_held_by_a_class_or_a_default_is_found_where_the_frame_is_built(
+    source: str, scope: str
+) -> None:
+    assert _sites(source)[0] == {scope}
 
 
 def test_a_copy_of_the_topic_made_in_a_function_is_found_there() -> None:
@@ -203,6 +316,13 @@ def test_a_file_is_parsed_whatever_text_it_holds(tmp_path: Path) -> None:
         'body = {"kind": "system"}',
         "from elsewhere import TOPIC\nconn.push({'t': 'd', 'ch': TOPIC})",  # not this topic
         "TOPIC = 'book'\nconn.push({'t': 'd', 'ch': TOPIC})",
+        # a copy that is not the topic: another value, another element, a key that is not `ch`
+        "self.chan = 'book'\nconn.push({'t': 'd', 'ch': self.chan})",
+        "A, B = SYSTEM_TOPIC, 'book'\nconn.push({'t': 'd', 'ch': B})",
+        "CH = 'x'\nconn.push({'t': 'd', CH: SYSTEM_TOPIC})",
+        "CH = 'ch'\nrow = {CH: SYSTEM_TOPIC, 'ok': True}",  # a result row, whatever its key spells
+        "def _push(c, ch='book'):\n    c.push({'t': 'd', 'ch': ch})",  # another default
+        "def _push(c, ch, topic=SYSTEM_TOPIC):\n    c.push({'t': 'd', 'ch': ch})",  # `ch` has none
     ],
 )
 def test_a_frame_on_another_channel_or_a_result_row_is_not_found(source: str) -> None:

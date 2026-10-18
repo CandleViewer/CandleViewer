@@ -28,6 +28,7 @@ from candleviewer.ws.system_filter import (
     NEUTRAL_KILL_SWITCH,
     kill_switch_view,
     system_view,
+    withheld_reason,
 )
 from tests.unit.ws._seq_support import validate
 
@@ -287,23 +288,39 @@ def test_the_kind_table_is_the_contract_enum_and_names_only_schema_fields() -> N
     assert NEUTRAL_APPLIED <= set(_SCHEMA["properties"]["applied"]["properties"])
 
 
-def _holds_objects(prop: dict[str, Any]) -> bool:
-    """Whether a schema property is an object or an array of objects (`$ref`s followed)."""
+def _holds_objects(prop: dict[str, Any], where: str = "this property") -> bool:
+    """Whether a schema property is, or may hold, an object: `type` `object`, or `array` of
+    objects, alone or in a `type` list; a `$ref` to one; a `oneOf`, `anyOf` or `allOf` with one
+    among its parts; an `enum` or `const` with a dict or list for a member. A shape it cannot
+    classify, or a `type` that JSON Schema has not, raises and names `where`: none is skipped."""
+    seen: list[bool] = []
     if "$ref" in prop:
         uri, _, pointer = prop["$ref"].partition("#")
         target: Any = _SCHEMAS[uri] if uri else _SCHEMA
         for part in pointer.strip("/").split("/"):
             target = target[part]
-        return _holds_objects(target)
-    kind = prop.get("type")
-    return kind == "object" or (kind == "array" and _holds_objects(prop["items"]))
+        seen.append(_holds_objects(target, where))
+    for combinator in ("oneOf", "anyOf", "allOf"):
+        seen += [_holds_objects(part, where) for part in prop.get(combinator, ())]
+    if "type" in prop:
+        kinds = prop["type"] if isinstance(prop["type"], list) else [prop["type"]]
+        if not set(kinds) <= {"object", "array", "string", "number", "integer", "boolean", "null"}:
+            raise AssertionError(f"cannot classify {prop!r} at {where}: no such type")
+        items = prop.get("items", {})
+        seen.append("object" in kinds or ("array" in kinds and _holds_objects(items, where)))
+    if "enum" in prop or "const" in prop:
+        members = [*prop.get("enum", ()), prop.get("const")]
+        seen.append(any(isinstance(member, dict | list) for member in members))
+    if not seen:
+        raise AssertionError(f"cannot classify {prop!r} at {where}: teach it to `_holds_objects`")
+    return any(seen)
 
 
 _OBJECT_FIELDS = sorted(
     (kind, field)
     for kind, fields in NEUTRAL_FIELDS.items()
     for field in fields
-    if _holds_objects(_SCHEMA["properties"][field])
+    if _holds_objects(_SCHEMA["properties"][field], f"{kind}.{field}")
 )
 
 
@@ -311,6 +328,51 @@ def test_the_probe_reaches_the_five_object_fields_that_have_an_allow_list() -> N
     """`feature_flags` is cut by each key's registry `visibility` (E42-T03), the others by a set."""
     probed = {field for _, field in _OBJECT_FIELDS}
     assert probed >= {"kill_switch", "components", "exchange", "applied", "feature_flags"}
+
+
+_OBJECTS_SPELLED = {
+    "oneOf-ref-null": {"oneOf": [{"$ref": "#/$defs/killSwitch"}, {"type": "null"}]},
+    "anyOf": {"anyOf": [{"type": "null"}, {"type": "object"}]},
+    "allOf": {"allOf": [{"$ref": "#/$defs/killSwitch"}]},
+    "type-list": {"type": ["object", "null"]},
+    "array-in-type-list": {"type": ["array", "null"], "items": {"type": "object"}},
+    "object-or-array-without-items": {"type": ["object", "array"]},
+    "enum-with-an-object": {"enum": ["a", {"x": 1}]},
+    "const-object": {"const": {"x": 1}},
+}
+_SCALARS_SPELLED = {
+    "oneOf": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+    "anyOf-enum": {"anyOf": [{"enum": ["a"]}, {"type": "integer"}]},
+    "type-list": {"type": ["string", "number", "integer", "boolean", "null"]},
+    "array-in-type-list": {"type": ["array", "null"], "items": {"type": "string"}},
+    "enum": {"enum": ["a", "b"]},
+    "const": {"const": 1},
+}
+_NOT_UNDERSTOOD = {
+    "any": {},
+    "not": {"not": {"type": "object"}},
+    "array-without-items": {"type": "array"},
+    "part-of-oneOf": {"oneOf": [{"type": "null"}, {"minimum": 1}]},
+    "unknown-type": {"type": "any"},
+    "unknown-type-in-a-list": {"type": ["object", "frob"]},
+}
+
+
+@pytest.mark.parametrize("spelling", _OBJECTS_SPELLED.values(), ids=list(_OBJECTS_SPELLED))
+def test_the_probe_lists_a_property_however_an_object_is_spelled(spelling: dict[str, Any]) -> None:
+    """A nullable object (`oneOf [$ref, null]`, `anyOf`, `allOf`, `type [object, null]`) is one."""
+    assert _holds_objects(spelling)
+
+
+@pytest.mark.parametrize("spelling", _SCALARS_SPELLED.values(), ids=list(_SCALARS_SPELLED))
+def test_the_probe_lists_no_property_that_cannot_hold_an_object(spelling: dict[str, Any]) -> None:
+    assert not _holds_objects(spelling)
+
+
+@pytest.mark.parametrize("shape", _NOT_UNDERSTOOD.values(), ids=list(_NOT_UNDERSTOOD))
+def test_the_probe_fails_on_a_shape_it_cannot_classify(shape: dict[str, Any]) -> None:
+    with pytest.raises(AssertionError, match=r"cannot classify .* at kind\.field"):
+        _holds_objects(shape, "kind.field")
 
 
 @pytest.mark.parametrize(
@@ -375,6 +437,13 @@ def test_section_15_9_names_the_fields_of_each_nested_object_a_manager_or_viewer
     said = re.search(rf"`{name}`[^|]*?\swith\s+only\s+{listed}", _section_15_9())
     assert said, f"§15.9 does not say which fields of `{name}` a Manager or Viewer receives"
     assert set(re.findall(r"`(\w+)`", said.group(1))) == neutral, f"fields of `{name}`"
+
+
+def test_section_15_9_says_a_kill_switch_frame_without_its_state_reaches_only_the_owner() -> None:
+    """A fault of the producer, counted under the reason `withheld_reason` gives it."""
+    reason = withheld_reason({"kind": "kill_switch"}, MANAGER)
+    said = f"a frame with no `kill_switch` object goes to the Owner only, counted as `{reason}`"
+    assert said in _rows()["kill_switch"]
 
 
 # -- feature flags: each key by its registry `visibility` (E42-T03, §15.9) ---------------------
@@ -515,36 +584,47 @@ _NESTED_KEYS = st.sampled_from(
 )
 _STATE_KEYS = st.sampled_from([*sorted(_SCHEMA["$defs"]["killSwitch"]["properties"]), "x"])
 _FLAG_KEYS = st.sampled_from([*sorted(_FLAG_ROLES), "x.y"]) | st.integers() | st.text(max_size=4)
+_SYMBOLS = st.lists(st.sampled_from(["BTCUSDT", "ETHUSDT"]), max_size=2)
 
 
-@settings(max_examples=200, deadline=None)
-@given(
+def _body(
+    kind: str, extra: dict[str, Any], state: Any, parts: Any, nested: Any, flags: Any, symbols: Any
+) -> dict[str, Any]:
+    """The drawn fields over `extra`; `exchange` and `applied` take the one `nested` draw."""
+    drawn = {"kind": kind, "kill_switch": state, "components": parts, "feature_flags": flags}
+    return extra | drawn | {"affected_symbols": symbols, "exchange": nested, "applied": nested}
+
+
+#: Every body of the property tests: any kind of §15.9, whatever shape each of its fields takes;
+#: an empty `components`, `affected_symbols` or `applied` is drawn on purpose, not left to chance.
+BODIES = st.builds(
+    _body,
     kind=st.sampled_from(sorted(NEUTRAL_FIELDS)),
     extra=st.dictionaries(
         st.sampled_from(sorted(_SCHEMA["properties"])) | st.text(max_size=6), _VALUES
     ),
     state=st.dictionaries(_STATE_KEYS, _VALUES | _IDS | _IDS.map(tuple)) | _VALUES,
-    parts=st.lists(st.dictionaries(_PART_KEYS, _VALUES), max_size=3).flatmap(
+    parts=st.builds(list)
+    | st.lists(st.dictionaries(_PART_KEYS, _VALUES), max_size=3).flatmap(
         lambda parts: st.sampled_from([parts, tuple(parts)])
     )
     | _VALUES,
-    nested=st.dictionaries(_NESTED_KEYS, _VALUES) | _VALUES,
+    nested=st.builds(dict) | st.dictionaries(_NESTED_KEYS, _VALUES) | _VALUES,
     flags=st.dictionaries(_FLAG_KEYS, _VALUES) | _VALUES,
+    symbols=st.builds(list) | _SYMBOLS | _VALUES,
+)
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    body=BODIES,
     flag_visible=st.sampled_from([None, _visible]),
     who=st.sampled_from([MANAGER, VIEWER, principal("manager"), principal("viewer", "manager")]),
 )
 def test_no_manager_or_viewer_view_carries_an_owner_only_field_or_a_foreign_account(
-    kind: str,
-    extra: dict[str, Any],
-    state: Any,
-    parts: Any,
-    nested: Any,
-    flags: Any,
-    flag_visible: Any,
-    who: PrincipalSnapshot,
+    body: dict[str, Any], flag_visible: Any, who: PrincipalSnapshot
 ) -> None:
-    body = extra | {"kind": kind, "kill_switch": state, "components": parts, "feature_flags": flags}
-    body |= {"exchange": nested, "applied": nested}
+    kind = body["kind"]
     view = system_view(body, who, flag_visible=flag_visible)
     if view is None:
         return
