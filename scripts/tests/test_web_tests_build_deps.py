@@ -298,7 +298,7 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         # #3471: a changed-since range on a selector of the app alone, and a runner's own root or
         # config resolved against the step's, a cd or a -C folder. A `-c` after a path selector
         # leaves where pnpm runs alone. A positional root is out of scope, and so is a root flag
-        # under a filtered exec, which runs in the selected package's folder.
+        # under a filtered exec, which runs in the selected package's folder; `--no-c` is not `-c`.
         (None, 'pnpm --filter "@candleviewer/web[origin/main]" run build', True),
         (None, 'pnpm --filter "{./apps/web}[origin/main]" test', True),
         (None, "npx vitest run --root apps/web", True),
@@ -308,6 +308,7 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "pnpm --filter ./apps/web exec playwright test -c e2e/playwright.config.ts", True),
         (None, 'pnpm --filter "@candleviewer/desktop[origin/main]" test', False),
         (None, "npx vitest run --root apps/desktop", False),
+        ("apps/desktop", "npx vitest run --no-c ../web", False),
         (None, "npx vite build apps/web", False),
         (None, "pnpm --filter @candleviewer/desktop exec vitest run --root ../web", False),
         (None, "pnpm --filter ./apps/desktop exec vitest run -c ../web/vitest.config.mjs", False),
