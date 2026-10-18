@@ -6,14 +6,17 @@ import asyncio
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
 from candleviewer.secrets.errors import (
+    CredentialUnavailable,
     KekLoadError,
     KekUnavailable,
 )
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten, StorageError
 from tests.unit.credentials_m2._helpers import _borrow, _store
 from tests.unit.credentials_m2._vectors import (
     ACCOUNT,
@@ -293,3 +296,18 @@ async def test_rewrap_cas_on_a_revoked_row_moves_nothing_and_writes_nothing(
     before = dict(s.rows[key])
     assert not await _cas(s, key)
     assert s.rows[key] == before and s.rewrap_audit == []
+
+
+@pytest.mark.parametrize("error", [RewrapAuditNotWired, RewrapAuditNotWritten])
+async def test_a_typed_store_refusal_is_logged_by_its_code(error: type[StorageError]) -> None:
+    """#2266: not as an outage. `_io` logs the error's class `code`, never its message."""
+    s, _, _ = await _seed(1)
+
+    async def refuse(key_id: Any, **kw: Any) -> bool:
+        raise error("a message M2 never logs")
+
+    s.rewrap = refuse  # type: ignore[method-assign]
+    with capture_logs() as logs, pytest.raises(CredentialUnavailable, match="store"):
+        await _rot(s).rewrap_all(2)
+    event = {"event": "secrets.io_failed", "log_level": "error", "reason": "store"}
+    assert logs == [event | {"error_code": error.code}]

@@ -16,6 +16,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
+from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten
 from candleviewer.storage.repositories.audit_sqlalchemy import insert_audit_row_locked
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -149,7 +150,7 @@ class SqlAlchemyCredentialStore:
         (row lock first, chain lock last), then COMMIT: one transaction, so an error or a
         cancellation before the commit rolls back both (C-2.9, #2266)."""
         if self._audit_row is None:
-            raise RuntimeError("re-wrap refused: no audit row builder is wired")
+            raise RewrapAuditNotWired("re-wrap refused: no audit row builder is wired")
         params = {
             "id": key_id, "env": env, "from_v": from_version, "to_v": kek_version,
             "dek_ref": dek_ref,
@@ -159,7 +160,7 @@ class SqlAlchemyCredentialStore:
             if int(moved.rowcount) != 1:
                 return False
             if not await insert_audit_row_locked(uow.session, self._audit_row(*audit)):
-                raise RuntimeError("re-wrap audit record not written")
+                raise RewrapAuditNotWritten("re-wrap audit record not written")
             await uow.commit()
             return True
 

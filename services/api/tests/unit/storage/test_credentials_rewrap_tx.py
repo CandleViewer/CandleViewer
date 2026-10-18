@@ -14,6 +14,7 @@ from uuid import UUID
 
 import pytest
 
+from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 
 KEY = UUID(int=11)
@@ -76,17 +77,18 @@ async def test_the_cas_locks_the_chain_and_inserts_its_record_iff_it_moved_the_r
 
 
 @pytest.mark.parametrize(
-    ("tx", "builder", "error", "log"),
+    ("inserted", "builder", "error", "log"),
     [
-        (_Tx(inserted=0), _build, "not written", ["UPDATE", "LOCK", "INSERT", "ROLLBACK"]),
-        (_Tx(), _refuse, "unregistered", ["UPDATE", "ROLLBACK"]),
-        (_Tx(), None, "no audit row builder", []),
+        (0, _build, RewrapAuditNotWritten, ["UPDATE", "LOCK", "INSERT", "ROLLBACK"]),
+        (1, _refuse, ValueError, ["UPDATE", "ROLLBACK"]),
+        (1, None, RewrapAuditNotWired, []),
     ],
     ids=["record_id_already_stored", "builder_fails", "no_builder_wired"],
 )
 async def test_a_cas_without_its_record_commits_nothing(
-    tx: _Tx, builder: Callable[..., dict[str, Any]] | None, error: str, log: list[str]
+    inserted: int, builder: Callable[..., Any] | None, error: type[Exception], log: list[str]
 ) -> None:
-    with pytest.raises((RuntimeError, ValueError), match=error):
+    tx = _Tx(inserted=inserted)  # built per run: a rerun starts from an empty log (C-13.7)
+    with pytest.raises(error):
         await SqlAlchemyCredentialStore(cast(Any, tx), audit_row=builder).rewrap(KEY, **MOVE)
     assert tx.log == log

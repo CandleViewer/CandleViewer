@@ -54,8 +54,8 @@ _PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 _TABLE_USERS = frozenset({Path("db/models.py")})
 #: `str` parameters a non-insert port method may take; any other `str` could carry ciphertext.
 _PLAIN_STR = frozenset({"env", "dek_ref"})
-#: `rewrap`'s `(action, fields)` (#2266): the adapter hands it only to the injected audit-row
-#: builder, which redacts it into `audit_log`; no api_keys statement binds it (the SQL scan below).
+#: `rewrap`'s `(action, fields)` (#2266) goes only to the injected audit-row builder, redacted
+#: into `audit_log`. The SQL scan below pins what an api_keys UPDATE assigns, not what it binds.
 _AUDIT_RECORD = ("audit", tuple[str, dict[str, str]])
 #: The CAS kwargs of the in-memory checks: v(n) -> v(n+1), with its row record.
 _CAS: dict[str, Any] = {"env": "demo", "audit": ("security.credential_rewrapped", {})}

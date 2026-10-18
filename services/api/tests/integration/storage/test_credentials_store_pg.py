@@ -42,6 +42,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _SNAP: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
 _REWRAPPED = "security.credential_rewrapped"
 _CHAIN_LOCK = "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
+_TERMINATE = "SELECT pg_terminate_backend(%s)"
 #: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
 _WAITER = (
     "SELECT w.pid FROM pg_locks w JOIN pg_locks r ON r.pid = w.pid "
@@ -426,11 +427,20 @@ async def test_a_failed_audit_record_rolls_the_cas_back(
     assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
 
 
-async def test_a_rewrap_killed_while_it_waits_for_the_chain_lock_moves_nothing(
-    pg_dsn: str, one_key: tuple[SqlAlchemyCredentialStore, UUID]
+@pytest.mark.parametrize(
+    ("abort", "error"),
+    [
+        (lambda dsn, pid, cas: _sql(dsn, _TERMINATE, *pid), sa.exc.DBAPIError),
+        (lambda dsn, pid, cas: cas.cancel(), asyncio.CancelledError),
+    ],
+    ids=["killed", "cancelled"],
+)
+async def test_a_rewrap_aborted_while_it_waits_for_the_chain_lock_moves_nothing(
+    pg_dsn: str, one_key: tuple[SqlAlchemyCredentialStore, UUID], abort: Any, error: Any
 ) -> None:
-    """The CAS has updated its row and waits for the chain lock, which another connection holds;
-    its backend is terminated there. Nothing commits, and a rerun moves the row."""
+    """The CAS has updated its row and waits for the chain lock, which another connection holds.
+    There its backend is terminated, or its task cancelled (as M2's `_io` timeout cancels it).
+    Its transaction ends while the lock is held, nothing commits, and a rerun moves the row."""
     store, key_id = one_key
     before = _wrap(pg_dsn, key_id)
     sync = pg_dsn.replace("postgresql+asyncpg", "postgresql")
@@ -440,9 +450,12 @@ async def test_a_rewrap_killed_while_it_waits_for_the_chain_lock_moves_nothing(
         async with asyncio.timeout(30):  # fails a missed wait fast
             while not (pids := await (await holder.execute(_WAITER)).fetchall()):
                 pass
-        await holder.execute("SELECT pg_terminate_backend(%s)", pids[0])
-        with pytest.raises(sa.exc.DBAPIError):
+        abort(pg_dsn, pids[0], cas)
+        with pytest.raises(error):
             await cas
-    assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
+        async with asyncio.timeout(30):  # ended: no backend waits for the lock with the row's
+            while await (await holder.execute(_WAITER)).fetchall():
+                pass
+        assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
     assert await store.rewrap(key_id, **_move(key_id, "v1:moved")) is True
     assert _wrap(pg_dsn, key_id) == (2, "v1:moved") and len(_records(pg_dsn, key_id)) == 1

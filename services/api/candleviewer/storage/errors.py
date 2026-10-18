@@ -222,6 +222,18 @@ class HotReplayReadTimeout(StorageTierUnavailable):
     code = "HOT_REPLAY_READ_TIMEOUT"
 
 
+class RewrapAuditNotWired(StorageError):
+    """The credential store has no audit row builder, so it refuses every re-wrap (#2266)."""
+
+    code = "STORAGE_REWRAP_AUDIT_NOT_WIRED"
+
+
+class RewrapAuditNotWritten(StorageError):
+    """A re-wrap's record was not written (its `record_id` is stored), so both rolled back."""
+
+    code = "STORAGE_REWRAP_AUDIT_NOT_WRITTEN"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -246,4 +258,6 @@ ERROR_CODES: dict[type[StorageError], str] = {
     AuditEntryTooLarge: AuditEntryTooLarge.code,
     HotReplayReadError: HotReplayReadError.code,
     HotReplayReadTimeout: HotReplayReadTimeout.code,
+    RewrapAuditNotWired: RewrapAuditNotWired.code,
+    RewrapAuditNotWritten: RewrapAuditNotWritten.code,
 }
