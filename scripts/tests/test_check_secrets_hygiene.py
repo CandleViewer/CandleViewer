@@ -362,6 +362,29 @@ TRACED = [
     # option's name (zsh(1) INVOCATION, zshoptions(1)).
     "shellcheck -s bash ci.sh && bash -x ci.sh",
     "zsh --xtrace- ci.sh",
+    # #3400: shopt's set -o names, with -s and -o in any order (bash 5.3).
+    "shopt -so xtrace",
+    "shopt -s -o xtrace",
+    "shopt -o -s errexit xtrace",
+    "shopt -pso xtrace",
+    "shopt -s -o -- xtrace",
+    # #3400: zsh reads an option name in any case and without its `_` (zshoptions(1)); setopt
+    # sets and unsetopt unsets, each flipped by a `+` flag or a `no` name (Src/options.c).
+    "set -o XTRACE",
+    "set -o x_trace",
+    "zsh --X-Trace ci.sh",
+    "setopt xtrace",
+    "setopt XTRACE",
+    "setopt err_exit _x_trace",
+    "setopt -x",
+    "setopt -o xtrace",
+    "unsetopt noxtrace",
+    "unsetopt +o xtrace",
+    "set +o noxtrace",
+    # #3400: bash turns on the options SHELLOPTS lists when it starts; dash exports it.
+    "SHELLOPTS=xtrace",
+    "env SHELLOPTS=braceexpand:xtrace bash ci.sh",
+    'export SHELLOPTS="$SHELLOPTS:xtrace"',
 ]
 NOT_TRACED = [
     "set -e",
@@ -402,6 +425,20 @@ NOT_TRACED = [
     "curl https://x/bash -x y",
     "zsh --xtrace-not ci.sh",
     "set -o xtraced",
+    # #3400: shopt without -s and -o (a query, a listing, unset, no set -o name), zsh's options
+    # turned off, and other SHELLOPTS values.
+    "shopt -s nullglob",
+    "shopt -o xtrace",
+    "shopt -po xtrace",
+    "shopt -uo xtrace",
+    "shopt -s xtrace",
+    "set -o noxtrace",
+    "setopt noxtrace",
+    "setopt +o xtrace",
+    "unsetopt xtrace",
+    "unsetopt -o xtrace",
+    "SHELLOPTS=braceexpand:errexit",
+    'echo "$SHELLOPTS"',
 ]
 VIA = ["run", "script"]
 
@@ -437,6 +474,14 @@ def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None
     assert _sr146_in(tmp_path, line, via) == []
 
 
+@pytest.mark.parametrize("value", ["xtrace", '"braceexpand:xtrace"'])
+def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
+    # #3400: a job's or a step's env reaches the bash that runs each `run:` script.
+    env = f"jobs:\n  a:\n    env:\n      SHELLOPTS: {value}\n"
+    _write(tmp_path, WF, env + "    steps:\n      - run: make\n")
+    assert h.check_workflows(tmp_path) == ["w.yml:4: 'set -x' tracing (SR-146)"]
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -459,10 +504,24 @@ def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None
         "shellcheck " + "-a " * 70000,
         "x=shellcheck -a " * 14000,
         "/a/shellcheck " * 16000,
+        # #3400: a name's separators; a `--` name starts at its letter (a `-` run before it read
+        # the rest of the line at each `--`: about 10 s at 48k); shopt's flags, read by two
+        # lookaheads; setopt words; SHELLOPTS items, which end at `=` (else about 1.3 s at 80k).
+        "set -o x" + "_" * 90000 + "y",
+        "-" * 96000,
+        "shopt -s " * 15000,
+        "shopt -" + "s" * 90000,
+        "shopt -so " + "a " * 45000,
+        "setopt " + "-o a " * 19000,
+        "unsetopt " * 11000,
+        "SHELLOPTS=" * 9600,
+        "SHELLOPTS=" + "a:" * 45000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
-    + ["shellcheck-words", "shellcheck-options", "shellcheck-mid-word", "shellcheck-paths"],
+    + ["shellcheck-words", "shellcheck-options", "shellcheck-mid-word", "shellcheck-paths"]
+    + ["name-separators", "dashes", "shopt-flags", "shopt-long-flag", "shopt-names"]
+    + ["setopt-o-words", "unsetopt-words", "shellopts-assignments", "shellopts-items"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
