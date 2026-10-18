@@ -47,6 +47,8 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS as _REASONS
+from candleviewer.ws.metrics import cv_ws_audit_failures_total
 
 _NOW = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 _CODE = "mfa_enrollment_required"
@@ -681,6 +683,55 @@ async def test_refusal_audit_still_running_when_the_tracker_drains_is_counted_lo
     writer.release.set()  # let it end; a write the drain gave up on is never counted twice
     assert await tracker.drain() == 0
     assert _count("ws", "audit_unavailable") == lost + 1
+
+
+def _ws_unwritten() -> dict[str, float]:
+    """`cv_ws_audit_failures_total{reason}` (SR-186), which `WsAuditWriteFailed` reads."""
+    return {r: float(cv_ws_audit_failures_total.labels(reason=r)._value.get()) for r in _REASONS}
+
+
+def _moved(before: dict[str, float]) -> dict[str, float]:
+    return {r: v - before[r] for r, v in _ws_unwritten().items() if v != before[r]}
+
+
+async def _refuse(writer: _Writer, tracker: RefusalAuditTracker, channel: Any, **kw: Any) -> None:
+    refusals = EnrolmentRefusals(writer, tracker=tracker, **kw)
+    await refusals.refused(_record(), channel=channel, method="GET", path="/ws", ip=None)
+
+
+async def test_ws_refusal_row_not_written_counts_once_where_its_alert_reads() -> None:
+    """SR-186: a lost WS refusal row counts once in `cv_ws_audit_failures_total`, as every other
+    WS audit row: `error` for a failed write, `timeout` for a wait that ended first (never again
+    when that write then fails, or the drain gives up on it). An HTTP refusal's row never does."""
+    failed, late, stuck = (_Writer(OSError("audit store down")) for _ in range(3))
+    tracker, before = RefusalAuditTracker(), _ws_unwritten()
+    failed.release.set()
+
+    await _refuse(failed, tracker, "http")
+    assert _moved(before) == {}
+    await _refuse(failed, tracker, "ws")
+    await _refuse(late, tracker, "ws", audit_timeout_s=0.01)
+    await _refuse(stuck, tracker, "ws", audit_timeout_s=0.01)
+    late.release.set()
+    assert await tracker.drain(timeout_s=0.01) == 1  # `late` fails; `stuck` is given up on
+
+    assert _moved(before) == {"error": 1, "timeout": 2}
+
+
+async def test_ws_refusal_row_of_a_cancelled_auth_counts_error_once_it_fails() -> None:
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    before = _ws_unwritten()
+    caller = asyncio.create_task(_refuse(writer, tracker, "ws", audit_timeout_s=60.0))
+    await writer.started.wait()
+
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert _moved(before) == {}  # it runs on and may still land
+    writer.release.set()
+    assert await tracker.drain() == 0
+
+    assert _moved(before) == {"error": 1}
 
 
 # -- its slot in the composed app --------------------------------------------------------------

@@ -69,6 +69,7 @@ from candleviewer.auth.metrics import auth_enrolment_refused_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.ws.metrics import AuditFailureReason, count_audit_failure
 
 #: The only operations an enrolment-only session may call (decision on #2295, contract).
 ENROLMENT_OPERATIONS: Final = frozenset(
@@ -277,6 +278,13 @@ class EnrolmentRefusals:
             return
         self._per_user.record_failure(key)
         log.warning("auth.enrolment_only.refused", **ids, **fields)
+        slow = False  # SR-186: a WS row counts once; one whose wait timed out has counted
+
+        def lost() -> None:
+            self._count(channel, "audit_unavailable")
+            if not slow:
+                self._ws_unwritten(channel, "error")
+
         task = self._tracker.track(
             self._audit.emit(
                 REFUSAL_ACTION,
@@ -289,7 +297,7 @@ class EnrolmentRefusals:
                 reason="mfa_enrollment_required",
                 after_state=fields,
             ),
-            on_lost=lambda: self._count(channel, "audit_unavailable"),
+            on_lost=lost,
             late_failure_event="auth.enrolment_only.audit_failed_late",
         )
         try:
@@ -299,8 +307,10 @@ class EnrolmentRefusals:
             if failure is not None:  # the writer raised `TimeoutError` itself: it failed
                 self._audit_failed(channel, failure, fields)
                 return
+            slow = True
             self._tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             self._count(channel, "audit_slow")
+            self._ws_unwritten(channel, "timeout")
             log.warning("auth.enrolment_only.audit_slow", **fields)
         except asyncio.CancelledError:
             self._tracker.mark_timed_out(task)  # a later failure is still counted
@@ -309,8 +319,17 @@ class EnrolmentRefusals:
             self._audit_failed(channel, exc, fields)
 
     @staticmethod
+    def _ws_unwritten(channel: Channel, reason: AuditFailureReason) -> None:
+        """SR-186: a WS refusal's row not confirmed written also counts once in
+        `cv_ws_audit_failures_total`, which `WsAuditWriteFailed` reads, as every other WS audit
+        row does (`23-ws-protocol.md` §4.3); an HTTP refusal's never does."""
+        if channel == "ws":
+            count_audit_failure(reason=reason)
+
+    @staticmethod
     def _audit_failed(channel: Channel, exc: BaseException, fields: Mapping[str, str]) -> None:
         EnrolmentRefusals._count(channel, "audit_unavailable")
+        EnrolmentRefusals._ws_unwritten(channel, "error")
         _log().error("auth.enrolment_only.audit_unavailable", error=type(exc).__name__, **fields)
 
 

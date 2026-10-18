@@ -731,7 +731,8 @@ enrolment-only session; no alert rule reads it yet (#2746). By `reason`:
   `auth.enrolment_only.refused_unaudited`), was still running after the 2-second wait (it may
   still land; `auth.enrolment_only.audit_slow`), or failed
   (`auth.enrolment_only.audit_unavailable`, or `auth.enrolment_only.audit_failed_late` once
-  nobody waits for it).
+  nobody waits for it). A WebSocket refusal's slow or lost row (not one skipped on purpose) also
+  counts once in `cv_ws_audit_failures_total`, so `WsAuditWriteFailed` raises a ticket (SR-186).
 
 Deliberately not served on the metrics listener: `auth_sessions_active` (a process-local gauge that
 drifts: it never drops on expiry or rotation, and a restarted process drives it negative; the database
