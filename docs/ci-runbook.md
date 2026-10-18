@@ -22,9 +22,11 @@ measuring it and periodically breaking it on purpose.
 PR opened/updated (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
-│  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
-│  │                licence-header, docs-link-check (GOV-002); last, as their installs run PR
-│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..006)
+│  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, credential
+│  │                hygiene; CI-SEC-001/005, #3385), spike-containment (CI-SPIKE-001/002),
+│  │                changelog-fragment (CI-REL-001), licence-header, docs-link-check (GOV-002);
+│  │                last, as their installs run PR scripts: commitlint, then gen (generated-code
+│  │                freshness, CI-GEN-001..006)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
@@ -131,6 +133,21 @@ requires; every lane above feeds it. Read its job summary top to bottom:
 - `gen` is the last `gates` step (#3104): a full `pnpm install`, then
   `tools/ci/check_gen_freshness.py` in a fresh venv holding only PyYAML (Python 3.13). A red `gen`
   writes the reproduce steps to the job summary; its step log holds the CI-GEN code and diff.
+- `secret-scan` is the first `gates` step and runs on every PR, a docs-only one too (#3385).
+  gitleaks and trufflehog read the PR's commits (`base.sha..head.sha`, the range commitlint reads)
+  offline from digest-pinned images; gitleaks also diffs each merge commit against its first
+  parent, so a line added while resolving a merge is scanned (trufflehog's git mode prints no
+  merge patches). Then the step runs `check_secrets_hygiene.py all` and the SR-146 scan of
+  everything the scanners printed. `CI-SEC-001` is a finding: gitleaks names the rule, file and
+  line (redacted), trufflehog annotates the file and line, and neither prints the value.
+  `CI-SEC-005` means a scan did not run: a missing commit range, a failed image pull or PyYAML
+  install, the image's git unable to read the range, or a scanner exit code other than clean or
+  findings. A `FAIL` line with no code is the hygiene gate (see the E43-T06 section below).
+  Unverified trufflehog findings fail too (C-9.1). For a deliberate test vector it flags, drop
+  the password part where the test does not need one (`postgresql://user@host/db` is not
+  flagged; a `DUMMYKEY_` or `REDACTED` password still is). A redaction test that needs a
+  credentialed DSN or URL gets a path entry with its reason in `.trufflehog-exclude` (one path
+  per entry, as the E43-T06 triage below).
 - `security` is one lane over every job in `_job-security.yml`. In the folded jobs
   (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
   the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's
@@ -300,9 +317,11 @@ removing nothing.
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
 - **CI-SEC-001** (blocking finding): a CodeQL/Semgrep/Bandit/pip-audit/
-  npm-audit/gitleaks finding has no accepted-risk entry. Fix the finding.
-  Gitleaks findings never get an accepted-risk exception (see the gate's own
-  comment) — rotate the secret per `SECURITY.md` / IR-02 (§6 below) instead.
+  npm-audit/gitleaks finding has no accepted-risk entry, or trufflehog found a
+  secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
+  step, §3). Fix the finding.
+  Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
+  comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
   `tools/ci/licenses-allowlist.json`. Either drop the dependency, find an
   allowlisted alternative, or add the licence to the allowlist in its own
@@ -514,7 +533,7 @@ artifact or screenshot is an incident, not a cleanup task:
    assumed compromised even after a force-push or history rewrite.
 2. Follow `SECURITY.md`'s reporting path — never open a public issue
    (C-12.13).
-3. If CI itself surfaced the leak (gitleaks, `CI-SEC-001`), the finding
+3. If CI itself surfaced the leak (gitleaks or trufflehog, `CI-SEC-001`), the finding
    never gets an accepted-risk exception (§4 CI-SEC-*) — the PR cannot merge
    until the secret is gone from every commit in the branch and rotated.
 4. After rotation, `git filter-repo` (or equivalent) removal from history is
@@ -659,7 +678,8 @@ previous entry.
 
 ## Credential hygiene and full-history sweep (E43-T06)
 
-- `python scripts/check_secrets_hygiene.py all` (CI `gitleaks` job): fixtures carry the `DUMMYKEY_`
+- `python scripts/check_secrets_hygiene.py all` (CI `gitleaks` job, and every PR's `gates` job
+  `secret-scan` step, #3385): fixtures carry the `DUMMYKEY_`
   prefix (SR-145), `.env` ignored and `.env.example` non-secret (SR-144), no `set -x`/env dumps in
   workflows, in the repository shell scripts their `run:` steps invoke or in the scripts those run
   (which forms count: `workflow_scripts` in the script; SR-146). `inventory <names.json>` and
