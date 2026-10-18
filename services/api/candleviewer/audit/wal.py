@@ -17,11 +17,11 @@ frame boundary (logged CRITICAL, counted in `torn_tail_truncations`) so a
 new record is never glued onto garbage. The torn frame was never
 acknowledged (`append()` had not returned), so nothing accepted is lost.
 A complete frame whose `append()` raised is unacknowledged too: the failed
-append truncates it at once (best effort), and `replay()` reads only up to
-the acknowledged end in any case.
-`replay()` stops at, and logs, a bad frame that reaches EOF; a bad frame
-with more data after it is real corruption/tampering and raises
-`AuditWalCorrupt` — never skipped.
+append truncates it at once (best effort; a cut that fails is logged
+CRITICAL), and `replay()` reads only up to the acknowledged end in any case.
+`replay()` stops at, and logs, the unacknowledged bytes past that end; a bad
+frame before that end was complete when `append()` returned, so it is real
+corruption/tampering and raises `AuditWalCorrupt` — never skipped.
 
 Bounded, never lossy (C-2.9/C-2.18): `append()` raises `AuditWalFull` once
 the file would exceed `max_bytes`. `AuditWriter` then compacts the committed
@@ -35,7 +35,6 @@ Postgres, cursor not yet advanced) replays as an `ON CONFLICT DO NOTHING`.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import zlib
@@ -174,8 +173,9 @@ class AuditWal:
         offset just past it. Raises `AuditWalFull` if this would exceed
         `max_bytes`; any `OSError` propagates (the writer fails closed). The
         bytes it wrote are cut back to the acknowledged end before it raises
-        (best effort), so a later open does not read them as acknowledged;
-        when that cut fails too, the next append truncates them."""
+        (best effort; a cut that fails is logged CRITICAL), so a later open
+        does not read them as acknowledged; when that cut fails too, the next
+        append truncates them."""
         encoded = encode_frame(record)
         self._truncate_torn_tail()
         if self._end + len(encoded) > self._max_bytes:
@@ -188,13 +188,19 @@ class AuditWal:
         except OSError:
             # Cut back once the first handle has closed (a close can flush again), on a fresh
             # handle, never past the acknowledged end. Best effort: the caller sees the original
-            # error either way.
-            with contextlib.suppress(OSError):
+            # error either way, and a cut that fails is logged (its error type only).
+            try:
                 if self._path.stat().st_size > self._end:
                     with open(self._path, "r+b") as fh:
                         fh.truncate(self._end)
                         fh.flush()
                         os.fsync(fh.fileno())
+            except OSError as cut_error:
+                logger().critical(
+                    "audit.wal.cut_back_failed",
+                    error=type(cut_error).__name__,
+                    path=str(self._path),
+                )
             raise
         self._end += len(encoded)
         return self._end
@@ -214,12 +220,16 @@ class AuditWal:
 
     def replay(self) -> Iterator[tuple[int, dict[str, Any]]]:
         """Yield `(end_offset, record)` for every record after
-        `committed_offset()`, in append order. A torn tail is logged and
-        skipped; mid-file corruption raises `AuditWalCorrupt`. Only the
-        acknowledged part of the file is read: bytes past `_end` belong to an
-        append that never returned, and the next append truncates them."""
+        `committed_offset()`, in append order. Only the acknowledged part of
+        the file is read: bytes past `_end` belong to an append that never
+        returned, so they are logged as a torn tail and skipped, and the next
+        append truncates them. A frame inside the acknowledged part that fails
+        validation was complete when `append()` returned: it raises
+        `AuditWalCorrupt` (fail closed), never skipped."""
         raw = self._path.read_bytes()
         frames, good_end = _scan(raw[: self._end], self.committed_offset())
+        if good_end < self._end:
+            raise AuditWalCorrupt(good_end)
         if good_end < len(raw):
             logger().critical("audit WAL %s: skipping torn tail at offset %d", self._path, good_end)
         yield from frames
