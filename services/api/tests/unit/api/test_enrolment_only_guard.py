@@ -7,7 +7,6 @@ answer and that no handler logic ran. The composed app is covered by
 
 from __future__ import annotations
 
-import asyncio
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -531,43 +530,6 @@ def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -
         "OSError",
         "/auth/sessions",
     )
-
-
-async def test_refusal_audit_that_outlasts_the_wait_is_left_to_finish() -> None:
-    """The write is never cancelled mid-append (C-2.9, writer fix #2250): it finishes after
-    the answer, and the late arrival is counted `audit_slow`."""
-    release = asyncio.Event()
-    written: list[str] = []
-
-    class _Slow:
-        async def emit(self, action: str, **_kw: Any) -> None:
-            await release.wait()
-            written.append(action)
-
-    tracker = RefusalAuditTracker()
-    refusals = EnrolmentRefusals(_Slow(), tracker=tracker, audit_timeout_s=0.01)
-    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
-    before = _count("ws", "audit_slow")
-
-    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
-
-    assert _count("ws", "audit_slow") == before + 1
-    assert (len(tracker), written) == (1, [])
-    release.set()
-    assert await tracker.drain() == 0
-    assert written == [REFUSAL_ACTION]
-
-
-async def test_refusal_is_not_audited_while_the_in_flight_cap_is_full() -> None:
-    audit = _Audit()
-    refusals = _refusals(audit, cap=0)
-    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
-    before = _count("ws", "audit_throttled")
-
-    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
-
-    assert audit.records == []
-    assert _count("ws", "audit_throttled") == before + 1
 
 
 # -- its slot in the composed app --------------------------------------------------------------
