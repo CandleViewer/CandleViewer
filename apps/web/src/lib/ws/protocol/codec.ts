@@ -17,6 +17,8 @@ export interface WsDecodeError {
   readonly message: string;
   /** The topic the envelope named, only if it is a well-formed topic name (so it is bounded and safe to log or resync). */
   readonly ch?: string | undefined;
+  /** The `id` of a `snap` that failed, if it is a bounded string: every chunk of a set shares it (3.6), so the rest of the set can be refused. */
+  readonly id?: string | undefined;
 }
 
 interface Head {
@@ -60,7 +62,8 @@ const malformed = (
   diagnostic: DecodeDiagnostic,
   message: string,
   ch?: string | undefined,
-): WsDecodeError => ({ t: "decode_error", code: "frame_malformed", diagnostic, message, ch });
+  id?: string | undefined,
+): WsDecodeError => ({ t: "decode_error", code: "frame_malformed", diagnostic, message, ch, id });
 
 export const encodeFrame = (frame: F.ClientFrame): string => JSON.stringify(frame);
 
@@ -237,8 +240,13 @@ export function decodeFrame(data: unknown): Inbound | WsDecodeError {
   }
   if (!isObj(raw)) return malformed("envelope", "message is not a JSON object");
   const topic = isTopic(raw["ch"]) ? raw["ch"] : undefined;
+  // Only a `snap` has chunks to refuse; any other frame's `id` is a request's, and means nothing to a set.
+  const id =
+    raw["t"] === "snap" && isStr(raw["id"]) && raw["id"].length <= F.MAX_ID_LENGTH
+      ? raw["id"]
+      : undefined;
   const fail = (message: string, diagnostic: DecodeDiagnostic = "envelope") =>
-    malformed(diagnostic, message, topic);
+    malformed(diagnostic, message, topic, id);
   const head = readHead(raw);
   if (head === undefined) return fail("envelope field has the wrong type");
   const t = raw["t"];

@@ -147,6 +147,18 @@ describe("decodeFrame", () => {
     expect((error as { ch?: string }).ch).toBeUndefined();
   });
 
+  it("names the set of a malformed snapshot chunk, so the rest of it can be refused (3.6)", () => {
+    const chunk = { ...DATA, t: "snap", s: null, ts: "now", id: "set-7" };
+    expect(decodeFrame(wire(chunk))).toMatchObject({ t: "decode_error", id: "set-7" });
+    // a request's id is not a set's, and an unbounded string is never carried
+    for (const other of [
+      { ...chunk, t: "d" },
+      { ...chunk, id: "x".repeat(65) },
+    ]) {
+      expect((decodeFrame(wire(other)) as { id?: string }).id).toBeUndefined();
+    }
+  });
+
   it("accepts every limit exactly: a 64-character id, a 120-character topic, a UUID rs, a close code in range", () => {
     expect(decodeFrame(wire(DELTA))).toMatchObject({ t: "d" }); // the control for the rows above
     expect(decodeFrame(wire({ t: "pong", id: "x".repeat(64) }))).toMatchObject({ t: "pong" });
