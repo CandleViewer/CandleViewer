@@ -68,13 +68,15 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'turbo.json'
               # packages/ui's token build and token-build tests import these formats (#3182).
-              # Turbo's `...[origin/main]` maps them to no package yet, so those tests still skip.
+              # Turbo's `...[origin/main]` selects no package for them, so those tests skip (#3367).
               - 'tools/style-dictionary/**'
-              # The lane's own workflow, Node version (CI-JS-001) and its steps' scripts (#3182).
+              # The lane's own workflow, Node version (CI-JS-001), its steps' scripts and the
+              # postinstall allow-list one of them reads (#3182).
               - '.github/workflows/_job-js.yml'
               - '.nvmrc'
               - 'tools/ci/check-node-version.mjs'
               - 'tools/ci/run-allowed-postinstall.mjs'
+              - 'tools/ci/allowed-postinstall.json'
               - 'tools/ci/mark-audit-handoff.mjs'
               - 'tools/ci/turbo-affected-packages.mjs'
               - 'tools/ci/write-turbo-summary.mjs'
@@ -115,10 +117,11 @@ jobs:
               - '.github/workflows/_job-coverage.yml'
             engine:
               - 'packages/chart-engine/**'
-              # The engine-bench job, its Node version and the install script it runs (#3182).
+              # The engine-bench job, its Node version, install script and allow-list (#3182).
               - '.github/workflows/_job-engine-bench.yml'
               - '.nvmrc'
               - 'tools/ci/run-allowed-postinstall.mjs'
+              - 'tools/ci/allowed-postinstall.json'
             protocol:
               - 'packages/protocol/**'
               - 'docs/plan/22-api-openapi.yaml'
@@ -187,6 +190,7 @@ jobs:
               - 'services/api/alembic.ini'
               - 'tools/ci/verify_migration_lockfile.py'
               - 'tools/ci/migration_lint.py'
+              - 'tools/ci/security-sensitive-tables.txt' # migration_lint.py's CI-MIG-006 list
               - 'tools/ci/run_previous_release_upgrade.py'
               - 'infra/scripts/pg_bootstrap.sql'
               - '.github/workflows/_job-migrations.yml'
@@ -198,9 +202,15 @@ jobs:
               - '.semgrepignore'
               - 'security/semgrep/**'
               - 'tools/ci/check_semgrep_rule_tests.py'
-              # The other security jobs' inputs: gitleaks config, risk register, pip pins (#3182).
+              # The other security jobs' inputs: the gitleaks and trufflehog configs, the risk
+              # register, the freeze manifest, the dev-env files the hygiene gate checks and the
+              # pip pins (#3182).
               - '.gitleaks.toml'
+              - '.trufflehog-exclude'
               - 'security/accepted-risks.yaml'
+              - 'security/freeze-manifest.sha256'
+              - '.gitignore'
+              - '.env.example'
               - 'scripts/requirements-ci.txt'
 
   # --- Gates (#3076): one step per always-on or sub-minute gate. A step's id is its

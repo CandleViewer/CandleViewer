@@ -32,12 +32,10 @@ the machine-hash lock, the xstate-contract script) skipped the gate built to che
 #3182: a lane must start on its own inputs. The e2e job's workflow and guards, the scripts the
 `statechart-lint` and `pin-check` steps run, and the workflows and scripts of the js, contract,
 migrations, engine-bench and coverage-thresholds jobs were each in another lane's filter or none;
-the js filter also missed the token formats packages/ui imports, and py the a11y gate logic and the
-fixture corpus. So did what the security jobs read besides scripts (the CodeQL and gitleaks configs,
-the accepted-risk register, the pins they `pip install -r`) and the `.nvmrc` the js and engine-bench
-jobs take Node from. The run lines and `with:` inputs are re-derived here, so a new script or config
-file needs a filter entry. Every lane's `if:` and resolver entry are pinned to the same filters,
-read from `steps.filter`.
+js also missed the token formats packages/ui imports, py the a11y gate logic and the fixture corpus,
+and several lanes the `.nvmrc` their Node comes from and the files their scripts read (READ_INPUTS).
+Run lines and `with:` inputs are re-derived here, so a new script or config needs a filter entry;
+every lane's `if:` and resolver entry read the same filters from `steps.filter`.
 """
 
 from __future__ import annotations
@@ -87,9 +85,19 @@ TOKEN_FORMATS = "tools/style-dictionary/**"
 #: Read beyond services/api (#3182): the a11y gate logic, which the security lane's Semgrep scan
 #: reads like scripts/**/*.py, and the corpora and account pack the backend suites and cvdev load.
 PY_INPUTS = ("tools/a11y/**/*.py", "packages/fixtures/**")
-#: What the security jobs read that the run-line derivation cannot follow (#3182): the gitleaks
-#: config (`--config=/repo/...` inside a container) and the register security_gate.py defaults to.
-SECURITY_INPUTS = (".gitleaks.toml", "security/accepted-risks.yaml")
+#: Files a lane's steps read through a script or a container that the run-line derivation below
+#: cannot follow (#3182): (lane, the file the lane runs that names it, the file read).
+READ_INPUTS = (
+    ("security", ".github/workflows/_job-security.yml", ".gitleaks.toml"),  # --config=/repo/...
+    ("security", ".github/workflows/_job-security.yml", ".trufflehog-exclude"),
+    ("security", "tools/ci/security_gate.py", "security/accepted-risks.yaml"),
+    ("security", "tools/ci/check_freeze_manifest.py", "security/freeze-manifest.sha256"),
+    ("security", "scripts/check_secrets_hygiene.py", ".gitignore"),  # the SR-144 dev-env check
+    ("security", "scripts/check_secrets_hygiene.py", ".env.example"),
+    ("js", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
+    ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
+    ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),
+)
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
 FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
 #: Lane -> the filters that make it applicable: its `if:` and the resolver read the same (#3182).
@@ -372,14 +380,14 @@ def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() ->
     assert '/ "packages" / "fixtures" /' in corpus
 
 
-def test_pr_yml_security_lane_starts_on_the_gitleaks_config_and_the_risk_register() -> None:
-    # Either one changes what the scans report, so a PR that edits only it must run them (#3182).
-    sources = (".github/workflows/_job-security.yml", "tools/ci/security_gate.py")
-    reads = "\n".join((ROOT / path).read_text(encoding="utf-8") for path in sources)
-    rules = [rule for name in sorted(LANE_FILTERS["security"]) for rule in _filters()[name]]
-    for path in SECURITY_INPUTS:
-        assert (ROOT / path).is_file() and path in reads, path
-        assert any(_matches(path, rule) for rule in rules), path
+@pytest.mark.parametrize(("lane", "reader", "path"), READ_INPUTS)
+def test_pr_yml_lane_filter_covers_what_its_scripts_read(lane: str, reader: str, path: str) -> None:
+    # Each one changes what the lane checks, so a PR that edits only it must start the lane.
+    filters, runs = _lane_runs()[lane]
+    source = (ROOT / reader).read_text(encoding="utf-8")
+    assert reader in runs and posixpath.basename(path) in source, reader
+    assert (ROOT / path).is_file(), path
+    assert any(_matches(path, rule) for name in sorted(filters) for rule in _filters()[name]), path
 
 
 # --- What each lane's steps run (#3182) -----------------------------------------------------------

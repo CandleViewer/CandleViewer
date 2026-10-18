@@ -78,9 +78,10 @@ the `e2e` filter on purpose: they would put seven more jobs (the four `e2e-web` 
 `a11y-nightly.yml` sweep on `main`, a named artefact of the release checklist
 (`docs/plan/07-release-and-prr.md` §4.1). The Playwright e2e suite has no scheduled run yet (C-9.2
 asks for a nightly full matrix), so a bump that breaks it shows on the next PR that the `e2e` filter
-starts. A backend manifest (`services/api/uv.lock`, `services/api/pyproject.toml`) is in the same
-position: it starts the `py` lanes, `security` (with the image check) and `coverage-thresholds`, but
-not `migrations`, `contract` or `rule-roundtrip`, which run on the next PR their filters start.
+starts. The decision covers those three files only. A backend manifest (`services/api/uv.lock`,
+`services/api/pyproject.toml`) starts the `py` lanes, `security` (with the image check) and
+`coverage-thresholds` but not `migrations`, `contract` or `rule-roundtrip`, and no nightly covers
+those: an open gap with no decision recorded, not an accepted control.
 
 ## 3. Reading the `ci-required` resolver summary
 
