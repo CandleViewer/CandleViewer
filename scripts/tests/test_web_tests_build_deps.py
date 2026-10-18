@@ -20,12 +20,19 @@ or without the scope (`web`), or by a path selector relative to where pnpm runs 
 A job-level `continue-on-error`, or a job or workflow `defaults.run.shell`, would weaken the
 pinned steps without touching them, so no scanned job may set one.
 
+#3471: a selector still picks the app with a changed-since range (`@candleviewer/web[origin/main]`,
+`{./apps/web}[origin/main]`), and a runner's own root or config flag (`--root`, `--config`, `-c`:
+`vitest --root apps/web`, `playwright test -c apps/web/e2e`) counts as a folder the command reads,
+relative to where it runs. That flag does not move where pnpm runs, so a path selector next to it
+still resolves from the command's folder.
+
 The scan errs towards a hit, which fails loudly in the build-and-guard pin: a cd in a subshell, a
 pipeline or a command substitution is taken to persist. Out of scope, as a static scan cannot
 resolve them and no workflow uses them: commands in a script file, a composite action or a
-`bash -c` string, `case` arms, folders or filters held in variables (`cd "$DIR"`), and runs that
+`bash -c` string, `case` arms, folders or filters held in variables (`cd "$DIR"`), runs that
 select the app among other packages (`pnpm -r`, `--filter "./apps/*"`,
-`--filter "...@candleviewer/ui"`)."""
+`--filter "...@candleviewer/ui"`), and a root given as a positional argument
+(`vite build apps/web`)."""
 
 from __future__ import annotations
 
@@ -51,14 +58,20 @@ GUARD_STEP = {
 }
 # One shell word as the command receives it once its quotes go: `"$GITHUB_WORKSPACE"/apps/web`.
 WORD = r"""((?:"[^"]*"|'[^']*'|[^\s<>])+)"""
+# A flag's value: `=` or spaces, then one word.
+VALUE = rf"(?:=|\s+){WORD}"
 # pnpm's --filter, -F or --filter-prod and its selector. It counts when it picks exactly the app,
 # by name (`web` too) or by folder: not `@candleviewer/web^...` (its deps) or `...web...[ref]`.
-FILTER = re.compile(rf"(?:--filter(?:-prod)?|-F)(?:=|\s+){WORD}")
+FILTER = re.compile(rf"(?:--filter(?:-prod)?|-F){VALUE}")
 WEB_NAMES = ("@candleviewer/web", "web")
 # A build or test word (`pnpm run build`, `vite build`, `playwright test`, `pnpm e2e`) or vitest.
 WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\bvitest\b")
 # One command run in another folder (`pnpm -C apps/web`, `--dir=apps/web`, `npm --prefix`).
-DIR_FLAG = re.compile(rf"(?:^|\s)(?:-C|--dir|--prefix)(?:=|\s+){WORD}")
+DIR_FLAG = re.compile(rf"(?:^|\s)(?:-C|--dir|--prefix){VALUE}")
+# A runner's own root or config (`vitest --root apps/web`, `playwright test -c apps/web/e2e`).
+TOOL_ROOT = re.compile(rf"(?:^|\s)(?:--root|--config|-c){VALUE}")
+# A changed-since range in a pnpm selector (`@candleviewer/web[origin/main]`).
+SINCE = re.compile(r"\[[^\]]*\]")
 CD = re.compile(rf"(?:cd|pushd)\s+(?:--\s+)?{WORD}")
 # What may precede a command's first word: a subshell, a group, `!` or a shell keyword.
 LEAD = re.compile(r"^(?:[\s({]|(?:!|if|elif|while|until|then|else|do)(?=\s))+")
@@ -95,7 +108,9 @@ def _word(text: str) -> str:
 
 def _selects_web(selector: str, here: str) -> bool:
     """Whether a pnpm selector picks apps/web when pnpm runs in `here`: pnpm matches a path
-    selector (`./`, `../`, braces) against the package folders, and any other one as a name."""
+    selector (`./`, `../`, braces) against the package folders, and any other one as a name. A
+    changed-since range narrows the pick to the app when it changed: still a pick."""
+    selector = SINCE.sub("", selector)
     if selector.startswith("{") and selector.endswith("}"):
         selector = selector[1:-1]
     elif not selector.startswith("."):
@@ -120,8 +135,9 @@ def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
         elif "turbo" not in command and WEB_TASK.search(command) is not None:
             flag = DIR_FLAG.search(command)
             folder = here if flag is None else _folder(_word(flag[1]), here)
+            reads = [folder, *(_folder(_word(path), folder) for path in TOOL_ROOT.findall(command))]
             selectors = [_word(selector) for selector in FILTER.findall(command)]
-            if _in_web(folder) or any(_selects_web(s, folder) for s in selectors):
+            if any(map(_in_web, reads)) or any(_selects_web(s, folder) for s in selectors):
                 return True
     return False
 
@@ -277,6 +293,18 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "cd ${{ github.workspace}}/apps/web && pnpm build", True),
         (None, "cd ${{github.workspace }}/apps/web && pnpm build", True),
         (None, 'cd "${GITHUB_WORKSPACE}/apps/web" && pnpm run build', True),
+        # #3471: a changed-since range on a selector of the app alone, and a runner's own root or
+        # config resolved against where the command runs. A `-c` after a path selector leaves
+        # where pnpm runs alone. A positional root is out of scope.
+        (None, 'pnpm --filter "@candleviewer/web[origin/main]" run build', True),
+        (None, 'pnpm --filter "{./apps/web}[origin/main]" test', True),
+        (None, "npx vitest run --root apps/web", True),
+        (None, "npx playwright test -c apps/web/e2e", True),
+        (None, "pnpm -C apps/desktop exec vitest run --config=../web/vitest.config.mjs", True),
+        (None, "pnpm --filter ./apps/web exec playwright test -c e2e/playwright.config.ts", True),
+        (None, 'pnpm --filter "@candleviewer/desktop[origin/main]" test', False),
+        (None, "npx vitest run --root apps/desktop", False),
+        (None, "npx vite build apps/web", False),
     ],
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
