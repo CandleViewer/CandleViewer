@@ -385,6 +385,10 @@ _OTHER_FLOWS: Final = tuple(r for r in SNAP_REASONS if r not in (SWAP, "upstream
 async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(
     reason: SnapReason,
 ) -> None:
+    """A swap and its retry leave another flow's hold alone, and skip a replay. The frames do not
+    show a retry that matched a `backpressure` hold (flag off, `TopicEmitter` never flushes it),
+    but the hub names every match to `on_rebuild`, and flag on that unparks the overflow ladder's
+    snapshot for each one named: so the held subscription is never among the ids it receives."""
     src = Source()
     _, pub, [(held, hs), (conn, _)] = _world({}, {}, src=src)
     _, replay = conn.sub({"ch": CH, "opts": {}}, replay_session_id=RS)
@@ -392,12 +396,15 @@ async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(
     held.take(), conn.take()
     hs.snapshot_pending, hs.pending_reason = True, reason
     replay.snapshot_pending, replay.pending_reason = True, SWAP
+    told: list[str] = []  # the subscriptions the hub names to `held`'s `on_rebuild`
+    held.emitter.on_rebuild = lambda subs: told.extend(s.sub_id for s in subs)
     src.unavailable.add("BTCUSDT")
     await pub.emit(_em(_up(), generation=5))  # the swap leaves the live subscription pending
     src.unavailable.clear()
     await pub.emit(_em(_up(), generation=5))  # its retry
     assert [("rs" in f, f["meta"]["reason"]) for f in conn.take()] == [(False, SWAP)]
     assert (held.take(), hs.pending_reason, replay.snapshot_pending) == ([], reason, True)
+    assert hs.sub_id not in told
 
 
 async def test_groups_count_only_the_subscriptions_a_frame_reaches(
