@@ -10,6 +10,7 @@
 ["auth_readonly_downgrades_total", "counter", [], "live", "E09"]
 ["auth_recovery_codes_used_total", "counter", [], "live", "E09"]
 ["auth_refresh_reuse_total", "counter", [], "live", "E09"]
+["auth_revocation_latency_seconds", "histogram", [], "live", "E09"]
 ["auth_session_fixation_attempts_total", "counter", ["reason"], "live", "E09"]
 ["auth_session_revocations_total", "counter", ["reason"], "live", "E09"]
 ["auth_session_revoke_denied_total", "counter", [], "live", "E09"]

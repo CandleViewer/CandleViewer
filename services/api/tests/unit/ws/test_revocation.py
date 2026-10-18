@@ -4,18 +4,22 @@ sockets get `bye user_disabled` and close 4403, no reconnect (23-ws-protocol.md 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterator
 from typing import Any, get_args
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from prometheus_client import CollectorRegistry
 from structlog.testing import capture_logs
 
+from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
+    MAX_CLOSE_TASKS,
     REVOKED_MEMORY_S,
     RevocationHub,
     RevokedReason,
@@ -437,3 +441,62 @@ async def test_closes_past_the_task_cap_run_inline_and_none_is_dropped() -> None
 def test_the_defaults_bound_the_close_tasks_and_each_close() -> None:
     hub = RevocationHub()
     assert (hub._max_close_tasks, hub._close_timeout_s) == (256, 2.0)
+
+
+#: A sample of the revoke-to-close latency (`count`, `sum`, `bucket`), read where Prometheus reads
+#: it: a registry that serves `export_auth_metrics`. Before/after deltas: the series is global.
+Scraped = Callable[..., float]
+
+
+@pytest.fixture
+def scraped() -> Iterator[Scraped]:
+    registry = CollectorRegistry()
+    collector = export_auth_metrics(registry, env="demo")
+
+    def read(sample: str, **labels: str) -> float:
+        name = f"auth_revocation_latency_seconds_{sample}"
+        value = registry.get_sample_value(name, {"env": "demo", **labels})
+        assert value is not None, f"{name} is not served"
+        return value
+
+    try:
+        yield read
+    finally:
+        collector.close()
+
+
+@pytest.mark.parametrize("max_close_tasks", [MAX_CLOSE_TASKS, 0])  # owned task; inline past cap
+async def test_a_revoke_that_closes_sockets_is_one_scraped_latency_observation(
+    scraped: Scraped, max_close_tasks: int
+) -> None:
+    """#3415 (SR-029): one observation per revocation that closes sockets, however many."""
+    hub = RevocationHub(max_close_tasks=max_close_tasks)
+    hub.register("s1", _Socket().close)
+    hub.register("s1", _Socket().close)
+    before = scraped("count")
+    assert await hub.revoke("s1", "user_disabled") == 2
+    assert scraped("count") == before + 1
+
+
+async def test_the_latency_runs_from_the_revoke_to_the_last_close_on_the_hub_clock(
+    scraped: Scraped,
+) -> None:
+    """Two closes of 3 s on the hub's clock are one 6 s observation, past SR-029's 5 s edge."""
+    clock = _Clock()
+
+    async def slow(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+
+    hub = RevocationHub(monotonic=clock)
+    hub.register("s1", slow)
+    hub.register("s1", slow)
+    before = [scraped("sum"), scraped("bucket", le="5.0"), scraped("bucket", le="10.0")]
+    await hub.revoke("s1", "user_disabled")
+    after = [scraped("sum"), scraped("bucket", le="5.0"), scraped("bucket", le="10.0")]
+    assert [a - b for a, b in zip(after, before, strict=True)] == [6.0, 0.0, 1.0]
+
+
+async def test_a_revoke_that_closes_no_socket_observes_no_latency(scraped: Scraped) -> None:
+    before = scraped("count")
+    assert await RevocationHub().revoke("s1", "user_disabled") == 0
+    assert scraped("count") == before

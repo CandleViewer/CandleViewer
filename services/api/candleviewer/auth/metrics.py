@@ -20,6 +20,7 @@ from candleviewer.observability.metrics import (
     Histogram,
     ReexportCollector,
 )
+from candleviewer.observability.metrics_catalogue import REVOCATION_CLOSE_BUCKETS
 
 # Process-local and NOT in `AUTH_EXPORTED_NAMES` (#2319, accepted decision): it is +1 on mint and -1
 # only on `revoke`/`revoke_all`, never on expiry, idle lock, rotation or a family revoke, and a
@@ -145,10 +146,14 @@ auth_session_revoke_denied_total = Counter(
     "DELETE /me/sessions/{id} for an id that is not one of the caller's live sessions "
     "(IDOR probe, or a stale row for the caller's own ended session).",
 )
+#: SR-029, E09-S03 (#3415): the one revoke-to-close latency, written by the WS `RevocationHub`
+#: (`ws` may import `auth`, never the reverse): one observation per revocation that closed a
+#: socket, from its `revoke` to the last of that session's sockets closed or given up, on the
+#: hub's clock. No label. Scraped: in `AUTH_EXPORTED_NAMES`; `AuthRevocationLatencyHigh` reads it.
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
-    "Seconds from session revocation to its WebSocket connection being closed.",
-    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    "Seconds from a session revocation reaching the WS hub to the last of its sockets closed.",
+    buckets=REVOCATION_CLOSE_BUCKETS,
 )
 # SR-022 (#2496): one per accepted recovery code, counted before its `auth.recovery_code_used`
 # audit write, so it can exceed those rows when that write fails or audit is not wired.
@@ -285,6 +290,8 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_break_glass_unresolved_events",
         "auth_break_glass_attempts",
         "auth_break_glass_state_read_failures_total",
+        # SR-029 revoke-to-close latency, observed by the WS revocation hub (#3415)
+        "auth_revocation_latency_seconds",
     }
 )
 

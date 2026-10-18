@@ -63,6 +63,17 @@ groups:
         annotations:
           summary: "Expected metric auth_disabled_user_sessions_revoked_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #3415: the series behind the AuthRevocationLatencyHigh ticket. Its buckets read 0 from
+      # process start (auth/metrics.py declares it unlabelled), so this fires only if unscraped.
+      - alert: ExpectedMetricMissingAuthRevocationLatencySecondsBucket
+        expr: absent(auth_revocation_latency_seconds_bucket)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric auth_revocation_latency_seconds_bucket is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       # #2111: the series behind the AuditVerifyNotPassing page. It reads 0 from boot while no
       # verify runner is wired, so this stays quiet then; it fires only if the series is unscraped.
       - alert: ExpectedMetricMissingCvAuditVerifyLastOkTimestampSeconds

@@ -160,6 +160,9 @@ AUDIT_QUERY_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 1.0, 2.0
 #: One stored key's verification (E27-T03): edges at the 3 s import target, the 5 s per-call bound
 #: and the 12 s key deadline.
 KEY_VERIFICATION_BUCKETS: Final = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0)
+#: Revoke-to-close latency (#3415): an edge at SR-029's 5 s line, so a p99 above it is decided
+#: exactly (a quantile interpolates inside its bucket), and one at 10 s above it.
+REVOCATION_CLOSE_BUCKETS: Final = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 #: Statechart transition latency.
 TRANSITION_BUCKETS: Final = (
     0.00005,
@@ -2559,6 +2562,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "auth.disabled_user_session_revoked; runbook auth-rbac section 4",
         _L,
         "E09",
+        exported=True,
+    ),
+    _s(
+        "auth_revocation_latency_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "Seconds from a session revocation reaching the WS revocation hub to the last of that "
+        "session's sockets closed or given up; one per revocation that closed a socket (SR-029).",
+        "AuthRevocationLatencyHigh (p99 over 15m > 5 s, ticket); runbook auth-rbac section 4",
+        _L,
+        "E09",
+        REVOCATION_CLOSE_BUCKETS,
         exported=True,
     ),
     _s(
