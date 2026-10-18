@@ -1296,6 +1296,11 @@ exchange_accounts = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("deleted_at", TIMESTAMP(timezone=True)),
+    # 0031_policy_disarm (#836 slice 2d): the self-check's last force-disable, owed its record
+    # until `policy_disarm_audited_at` is set.
+    Column("policy_disarm_code", Text),
+    Column("policy_disarmed_at", TIMESTAMP(timezone=True)),
+    Column("policy_disarm_audited_at", TIMESTAMP(timezone=True)),
     CheckConstraint("(kind = 'main') = (parent_account_id IS NULL)", name="ea_parent_shape"),
     CheckConstraint("parent_account_id IS DISTINCT FROM id", name="ea_no_self_parent"),
     CheckConstraint("position_mode IN ('one_way','hedge')", name="ea_posmode"),
@@ -1303,6 +1308,12 @@ exchange_accounts = Table(
     CheckConstraint("account_type = 'UNIFIED'", name="ea_acct_type"),
     CheckConstraint("quote_ccy = 'USDT'", name="ea_quote"),
     CheckConstraint("exchange_uid ~ '^[0-9]{1,20}$'", name="ea_uid_fmt"),
+    CheckConstraint("policy_disarm_code ~ '^[a-z0-9_]{1,40}$'", name="ea_disarm_code_fmt"),
+    CheckConstraint(
+        "(policy_disarm_code IS NULL) = (policy_disarmed_at IS NULL) "
+        "AND (policy_disarm_audited_at IS NULL OR policy_disarmed_at IS NOT NULL)",
+        name="ea_disarm_shape",
+    ),
     Index(
         "ux_ea_uid",
         "exchange",

@@ -10,9 +10,11 @@ another environment (C-2.11). Outcomes (threat model `E27-accounts.md` D7, SR-E2
 - failure: the process read-only gate latches first, for the whole system. A write-ahead
   `account.tested` covers `last_error_*` (the failing rule). The account is force-disabled
   whatever the audit sink does (C-2.8 enforcement before the C-2.9 record, as `secrets`
-  degrades): `account.disabled_by_policy` (the rule; the message stays verbatim on the standing
-  result for display) follows once the conditional update reports a disarm; a refused record is
-  logged critical and re-sent on the next pass. The key's status never changes, so reads continue.
+  degrades), and the rule's code and the time commit with the disarm, which is then owed its
+  `account.disabled_by_policy` (the rule; the message stays verbatim on the standing result for
+  display). The record follows the conditional update that reports the disarm, and its mark
+  follows the record; a refused record is logged critical, stays owed and is re-sent on the next
+  pass. The key's status never changes, so reads continue.
 - inconclusive (no verdict): logged; nothing is disabled or refreshed. Only a verdict replaces a
   key's standing result: a failure stays in force with its rule in `last_error_*` (the ticket's
   chaos rule); otherwise `last_error_*` takes the code. A key whose last pass is older than
@@ -31,10 +33,15 @@ a weaker code), so a repeat notifies nobody. Every external await is bounded: a 
 a refused one (any latch due came first). Each key's standing result is kept with its time for
 display (US-ACCT-003 NFR).
 
-Restarts: the latch, the standing results and an owed record live in memory, so a restart forgets a
-standing failure. The boot check judges the key afresh: one that is inconclusive inside the window
-latches nothing. What was written persists: `last_error_*`, the verified columns and a per-account
-disarm (`trading_enabled` false); how a boot check treats them is an open decision on #836.
+Restarts: the latch and the standing results live in memory, so a restart forgets a standing
+failure. The boot check judges the key afresh: one that is inconclusive inside the window latches
+nothing. What was written persists: `last_error_*`, the verified columns and a per-account disarm
+(`trading_enabled` false, with its rule code and time). A boot check does not yet read a rule code
+in `last_error_code` as a standing failure (decision 3 on #836, slice 2c1). A disarm whose record
+is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
+checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
+`record_id`), so a crash between the record and its mark re-sends it once: a duplicate, never a
+loss. A record sent but not yet marked is kept in memory, so a failed mark is retried alone.
 
 Not here yet (#836 slice 2c, SR-E27-18): the freshness check independent of this job (at order
 admission or by a watchdog), its missed-run alert and the age metric. Until then a stalled job
@@ -65,6 +72,7 @@ from candleviewer.accounts.verification import (
 from candleviewer.observability import spawn
 from candleviewer.storage.repositories.accounts import (
     KeySelfCheckStore,
+    PolicyDisarm,
     SelfCheckTargetRow,
     VerifiedKey,
 )
@@ -79,9 +87,10 @@ FRESHNESS_GRACE: Final = timedelta(minutes=15)
 KEY_DEADLINE_S: Final = 12.0
 #: Bound on every other external await: the key list, a client's close, each audit or write.
 READ_TIMEOUT_S: Final = 10.0
-#: One key's whole check: `verify()`, the close and at most four audit or store steps, plus one
-#: step of margin. The deadline derives from the wired bounds, so it cuts only an unbounded await.
-CHECK_STEPS: Final = 6
+#: One key's whole check: `verify()`, the close and at most five audit or store steps (the last
+#: marks a disarm's record written), plus one step of margin. The deadline derives from the wired
+#: bounds, so it cuts only an unbounded await.
+CHECK_STEPS: Final = 7
 #: The boot assertion as a whole: past it the job fails closed and start-up goes on (#836). It
 #: is fixed, not scaled by the key count, because the API serves nothing, `/healthz` included,
 #: until it ends (the compose healthcheck reports unhealthy after about 100 s). At SCR-126's 3 s
@@ -204,8 +213,8 @@ class KeySelfCheck:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._booted = False
-        #: `account.disabled_by_policy` records the audit sink refused, by account: re-sent.
-        self._owed: dict[UUID, dict[str, Any]] = {}
+        #: Disarms whose record was written but not marked, by account: only the mark is retried.
+        self._unmarked: dict[UUID, datetime] = {}
         #: The standing result of each key in the last key list read.
         self.results: dict[UUID, KeyCheck] = {}
 
@@ -271,7 +280,7 @@ class KeySelfCheck:
         fails closed at boot, and later once a known key is past its window."""
         async with self._lock:
             booting, self._booted = not self._booted, True
-            await self._settle(*self._owed)
+            await self._settle_owed()
             try:
                 async with asyncio.timeout(self._timeout_s):
                     targets = await self._store.targets()
@@ -379,41 +388,53 @@ class KeySelfCheck:
             lambda: self._emit("account.tested", "api_key", key, **tested),
             lambda: self._store.record_error(key, code=rule, at=now),
         )
-        disabled = {
-            "before_state": {"trading_enabled": True},
-            "after_state": {"trading_enabled": False},
-            **crit,
-        }
-        await self._disarm(account_id, disabled)
+        await self._disarm(PolicyDisarm(account_id, rule, now))
 
-    async def _disarm(self, account_id: UUID, record: dict[str, Any]) -> None:
-        """The force-disable runs whatever the audit sink does (C-2.8 enforcement first). Its
-        record follows once the conditional update reports a disarm; a refused one is owed.
-
-        A disable that times out or raises may already have applied (outcome unknown): the next
-        pass's conditional update then reports no change, so no `account.disabled_by_policy` is
-        written for it. The `account.tested` failure record, written first, is then the durable
-        trail (decision 2 for the Owner and Security on #836 stays open)."""
+    async def _disarm(self, disarm: PolicyDisarm) -> None:
+        """The force-disable runs whatever the audit sink does (C-2.8 enforcement first, decision
+        2 on #836), its rule code and time in the same conditional update. Its record follows
+        once that update reports a disarm. A disable that times out or raises may have applied
+        (outcome unknown): if it did, its record is owed in the store and the next pass sends it."""
         try:
             async with asyncio.timeout(self._timeout_s):
-                disarmed = await self._store.disable_trading(account_id)
+                disarmed = await self._store.disable_trading(
+                    disarm.account_id, code=disarm.code, at=disarm.at
+                )
         except Exception as exc:  # TimeoutError included; cancellation propagates
             logger().critical(
                 "key_selfcheck_disable_failed",
-                account_id=str(account_id),
+                account_id=str(disarm.account_id),
                 error=type(exc).__name__,
                 outcome_unknown=True,
             )
             return
         if disarmed:
-            self._owed[account_id] = record
-            await self._settle(account_id)
+            await self._settle(disarm)
 
-    async def _settle(self, *accounts: UUID) -> None:
-        """Send these accounts' owed `account.disabled_by_policy` records; a refused one stays
-        owed, for the next pass."""
-        for account_id in accounts:
-            record = self._owed[account_id]
+    async def _settle_owed(self) -> None:
+        """Send the record of every disarm still owed in the store: after a restart, a refused
+        record, or a disable whose outcome was unknown. An unreadable list waits for the next
+        pass."""
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                owed = await self._store.owed_disarms()
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            logger().error("key_selfcheck_owed_unread", error=type(exc).__name__)
+            return
+        for disarm in owed:
+            await self._settle(disarm)
+
+    async def _settle(self, disarm: PolicyDisarm) -> None:
+        """Send one disarm's `account.disabled_by_policy`, then mark it written. A refused record
+        stays owed (logged critical); a written one whose mark failed is not sent again."""
+        account_id = disarm.account_id
+        if self._unmarked.get(account_id) != disarm.at:
+            record = {
+                "before_state": {"trading_enabled": True},
+                "after_state": {"trading_enabled": False},
+                "severity": "critical",
+                "reason": disarm.code,
+            }
             try:
                 async with asyncio.timeout(self._timeout_s):
                     await self._emit(DISABLED_BY_POLICY, "exchange_account", account_id, **record)
@@ -423,8 +444,19 @@ class KeySelfCheck:
                     account_id=str(account_id),
                     error=type(exc).__name__,
                 )
-                continue
-            del self._owed[account_id]
+                return
+            self._unmarked[account_id] = disarm.at
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                await self._store.mark_disarm_audited(disarm, at=self._clock())
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            logger().error(
+                "key_selfcheck_disable_unmarked",
+                account_id=str(account_id),
+                error=type(exc).__name__,
+            )
+            return
+        del self._unmarked[account_id]
 
     async def _verify(
         self, target: SelfCheckTargetRow, account: ExchangeAccount, now: datetime

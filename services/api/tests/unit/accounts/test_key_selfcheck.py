@@ -3,9 +3,10 @@
 Facts come from the documented-shape replies in `tests/fixtures/key_verification/` (its README
 names source, date, env and redaction), parsed by the adapter parsers. `World` is the store, audit
 sink and calls at once, around the real `ReadOnlyGate`: one event log keeps the order (latch,
-audit, write), and the audit sink refuses what `AuditWriter.emit` refuses (#2144). The clock is
-fixed, the loop's sleep is the test's and a hang is cut by a zero timeout, so nothing waits on
-wall time or the network.
+audit, write), and the audit sink refuses what `AuditWriter.emit` refuses (#2144). Its `disarms`
+are the store's policy-disarm columns: a second `World` over them is a restart (slice 2d). The
+clock is fixed, the loop's sleep is the test's and a hang is cut by a zero timeout, so nothing
+waits on wall time or the network.
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ from candleviewer.observability.health import HealthStatus
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
+    PolicyDisarm,
     SelfCheckTargetRow,
     VerifiedKey,
 )
@@ -81,7 +83,15 @@ FACTS = {"fetched_at", "readOnly", "permissions", "expiredAt", "uta", "withdraw_
 CODES = {"warnings", "failures"}
 WITHDRAW_FAILURE = [
     ("latch", FAILED), ("audit", TESTED), ("error", KEY), ("disable", ACCT), ("audit", DISABLED),
+    ("mark", ACCT),
 ]  # fmt: skip
+#: The `account.disabled_by_policy` record of a withdrawal-right disarm, whichever pass sends it.
+DISARM_RECORD = {
+    "actor_label": "system:key-selfcheck", "object_kind": "exchange_account",
+    "object_id": str(ACCT), "env": "demo", "before_state": {"trading_enabled": True},
+    "after_state": {"trading_enabled": False}, "severity": "critical",
+    "reason": "key_withdraw_permission",
+}  # fmt: skip
 
 
 def load(name: str) -> dict[str, Any]:
@@ -131,11 +141,14 @@ class World:
         self.fail: Exception | None = None
         self.close_error: Exception | None = None
         self.disable_error: Exception | None = None
+        self.mark_error: Exception | None = None
         self.hang: set[str] = set()
         self.info = facts() if info is None else info
         self.infos: dict[UUID, object] = {}
         self.seen = probed() if probe is None else probe
         self.armed = {row.account.id: row.account.trading_enabled for row in rows}
+        #: The policy-disarm columns by account: [rule code, disarmed at, record marked at].
+        self.disarms: dict[UUID, list[Any]] = {}
         self.events: list[tuple[Any, ...]] = []
         self.built: list[tuple[UUID, str]] = []
         self.gate = ReadOnlyGate()
@@ -174,13 +187,32 @@ class World:
         self.events.append(("error", key_id, code))
         return True
 
-    async def disable_trading(self, account_id: UUID) -> bool:
+    async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
         await self._io("disable_trading")
         self.events.append(("disable", account_id))
         armed, self.armed[account_id] = self.armed.get(account_id, False), False
+        if armed:  # one conditional update: the disarm and its reason commit together
+            self.disarms[account_id] = [code, at, None]
         if self.disable_error is not None:  # applied, but the answer never came back
             raise self.disable_error
         return armed
+
+    async def owed_disarms(self) -> tuple[PolicyDisarm, ...]:
+        await self._io("owed_disarms")
+        return tuple(
+            PolicyDisarm(a, c, at) for a, (c, at, mark) in self.disarms.items() if not mark
+        )
+
+    async def mark_disarm_audited(self, disarm: PolicyDisarm, *, at: datetime) -> bool:
+        await self._io("mark_disarm_audited")
+        self.events.append(("mark", disarm.account_id))
+        if self.mark_error is not None:
+            raise self.mark_error
+        row = self.disarms.get(disarm.account_id)
+        if row is None or row[1:] != [disarm.at, None]:  # not owed: marked, or a later disarm
+            return False
+        row[2] = at
+        return True
 
     async def emit(self, action: str, **fields: Any) -> None:
         validate_action(action)  # what `AuditWriter.emit` refuses, the double refuses
@@ -335,10 +367,12 @@ async def test_verdict_failure_latches_records_the_rule_and_disables(
         ("latch", FAILED),
         ("error", KEY),
         ("disable", ACCT),
+        ("mark", ACCT),
     ]
     check = w.check.results[KEY]
     assert (check.outcome, check.code, check.egress_ip) == ("failed", rule, EGRESS)
     assert check.result is not None and w.check.failing == 1
+    assert w.disarms[ACCT][0] == rule  # the disarm's durable reason is the rule, never its text
 
 
 @pytest.mark.parametrize(
@@ -390,7 +424,7 @@ async def test_every_key_of_a_pass_is_judged_and_recorded_on_its_own() -> None:
 async def test_an_unarmed_account_is_not_recorded_as_disabled() -> None:
     w = World(target(armed=False), info=facts(permissions=WITHDRAW))
     await w.run()
-    assert w.kinds() == WITHDRAW_FAILURE[:-1]
+    assert (w.kinds(), w.disarms) == (WITHDRAW_FAILURE[:-2], {})
 
 
 async def test_an_account_armed_after_the_key_list_read_is_still_disabled() -> None:
@@ -413,22 +447,82 @@ async def test_a_refused_disable_record_is_sent_on_the_next_pass_and_then_cleare
     await w.run()
     w.fail_audit, w.events = False, []
     await w.run()
-    assert w.kinds() == [("audit", DISABLED), ("audit", TESTED), ("error", KEY), ("disable", ACCT)]
-    assert w.audit(DISABLED)["before_state"] == {"trading_enabled": True}
+    assert w.kinds() == [
+        ("audit", DISABLED), ("mark", ACCT), ("audit", TESTED), ("error", KEY), ("disable", ACCT),
+    ]  # fmt: skip
+    assert w.audit(DISABLED) == DISARM_RECORD
     w.events = []
     await w.run()
     assert w.kinds() == [("audit", TESTED), ("error", KEY), ("disable", ACCT)]
+
+
+async def test_the_disarm_commits_its_rule_code_and_time_and_its_record_is_marked_after() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    w.now = NOW + HOUR
+    await w.run()
+    assert w.disarms == {ACCT: ["key_withdraw_permission", NOW + HOUR, NOW + HOUR]}
+    assert w.audit(DISABLED) == DISARM_RECORD and w.kinds()[-2:] == WITHDRAW_FAILURE[-2:]
+
+
+async def test_an_owed_record_is_sent_once_by_the_boot_pass_after_a_restart() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    w.fail_audit = True  # the sink refuses: the disarm applies and its record is owed
+    await w.run()
+    assert (w.armed[ACCT], w.disarms[ACCT]) == (False, ["key_withdraw_permission", NOW, None])
+    booted = World(target(armed=False), info=facts(permissions=WITHDRAW), sleep=Ticks(0))
+    booted.disarms = w.disarms  # a new process over the same store: the job's memory is gone
+    await within(booted.check.start())  # the boot pass
+    await within(booted.check.stop())
+    assert [e[1] for e in booted.of("audit")] == [DISABLED, TESTED]
+    assert booted.audit(DISABLED) == DISARM_RECORD and booted.disarms[ACCT][2] == NOW
+    booted.events = []
+    await booted.run()
+    assert [e[1] for e in booted.of("audit")] == [TESTED] and booted.of("mark") == []
+
+
+async def test_a_refused_re_send_stays_owed_and_is_logged_critical() -> None:
+    w = World(target(armed=False))  # passes now; a disarm of an earlier process is still owed
+    w.disarms[ACCT] = ["key_withdraw_permission", NOW - HOUR, None]
+    w.fail_audit = True
+    with capture_logs() as logs:
+        await w.run()
+    refused = [log for log in logs if log["event"] == "key_selfcheck_disable_unaudited"]
+    assert [(log["log_level"], log["account_id"]) for log in refused] == [("critical", str(ACCT))]
+    assert (w.disarms[ACCT][2], w.of("mark")) == (None, [])
+    w.fail_audit = False
+    await w.run()
+    assert (w.audit(DISABLED), w.disarms[ACCT][2]) == (DISARM_RECORD, NOW)
+
+
+async def test_a_sent_record_whose_mark_fails_is_never_sent_twice() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    w.mark_error = RuntimeError("database down")
+    await w.run()
+    w.mark_error, w.events = None, []
+    await w.run()  # only the mark is retried
+    assert [e[1] for e in w.of("audit")] == [TESTED]
+    assert (w.of("mark"), w.disarms[ACCT][2]) == ([("mark", ACCT)], NOW)
+
+
+async def test_an_unreadable_owed_list_is_logged_and_the_pass_goes_on() -> None:
+    w = World(target(), timeout_s=0.0)
+    w.hang.add("owed_disarms")
+    with capture_logs() as logs:
+        await w.run()
+    assert w.kinds() == [("audit", TESTED), ("pass", KEY)]
+    unread = {"event": "key_selfcheck_owed_unread", "error": "TimeoutError", "log_level": "error"}
+    assert unread in logs
 
 
 @pytest.mark.parametrize(
     ("hang", "error", "audited"),
     [
         ({"disable_trading"}, None, [TESTED, TESTED, DISABLED]),
-        (set(), RuntimeError("lost"), [TESTED] * 2),
+        (set(), RuntimeError("lost"), [TESTED, DISABLED, TESTED]),
     ],
     ids=["hangs", "raises-after-applying"],
 )
-async def test_a_disable_that_fails_has_an_unknown_outcome_and_leaves_the_failure_record(
+async def test_a_disable_that_fails_has_an_unknown_outcome_and_an_applied_one_is_owed_its_record(
     hang: set[str], error: Exception | None, audited: list[str]
 ) -> None:
     w = World(target(), info=facts(permissions=WITHDRAW), timeout_s=0.0)
@@ -438,7 +532,7 @@ async def test_a_disable_that_fails_has_an_unknown_outcome_and_leaves_the_failur
     unknown = [log for log in logs if log["event"] == "key_selfcheck_disable_failed"]
     assert [(log["log_level"], log["outcome_unknown"]) for log in unknown] == [("critical", True)]
     w.hang, w.disable_error = set(), None
-    await w.run()  # a disable that applied makes the next conditional update report no change
+    await w.run()  # an applied disable is owed its record; the conditional update then no-ops
     assert [event[1] for event in w.of("audit")] == audited
 
 
@@ -623,7 +717,7 @@ async def test_a_hanging_pass_write_is_cut_and_keeps_the_last_pass(step: str) ->
     assert (w.of("pass"), w.check.results[KEY].last_pass_at) == ([], NOW - HOUR / 2)
 
 
-@pytest.mark.parametrize("step", ["emit", "record_error", "disable_trading"])
+@pytest.mark.parametrize("step", ["emit", "record_error", "disable_trading", "mark_disarm_audited"])
 async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None:
     w = World(target(), info=facts(permissions=WITHDRAW), timeout_s=0.0)
     w.hang.add(step)
@@ -633,7 +727,7 @@ async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None
 
 def test_the_overall_deadline_covers_every_bounded_step_of_a_check() -> None:
     check = World(timeout_s=25.0, key_deadline_s=15.0).check
-    assert check._deadline_s >= 15.0 + 5 * 25.0  # verify(), the close and four audit or store steps
+    assert check._deadline_s >= 15.0 + 6 * 25.0  # verify(), the close, five audit or store steps
 
 
 async def test_a_check_past_its_deadline_fails_closed() -> None:
