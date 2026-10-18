@@ -7,10 +7,12 @@ transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and w
 if the commit itself failed, since a driver timeout or a cancellation there may have gone through.
 After such an error (not a cancellation) one read-back, in a new transaction the store bounds,
 settles it (#3445): a user read back as disabled, with the very sessions the hook saw revoked at
-the disable's instant, gets `users.disable` `success` with reason `recovered_after_commit_error`,
-ahead of the steps below, and the call goes on as a change. Else the error stands, and a repeat is
-AC5's no-op, which returns no ids (see `SqlAlchemyUserLifecycleStore.disable`), so it closes every
-socket of the user but records no B16 REVOKE for those sessions. Then, in a shielded
+the disable's instant, is taken as this change (with no session, a concurrent disable can pass for
+it), and the call goes on as a change; its `users.disable` `success`, reason
+`recovered_after_commit_error`, opens the steps' task below, whose steps run whatever its fate.
+Else the error stands, and a repeat is AC5's no-op, which returns no ids (see
+`SqlAlchemyUserLifecycleStore.disable`), so it closes every socket of the user but records no B16
+REVOKE for those sessions. Then, in a shielded
 tracked task, never rolled back: socket close (`bye user_disabled`, 4403), first of each revoked
 session's sockets, then of every socket of the user, which reaches one still on a session that a
 refresh rotated (S7); a sweep of any session still live after the transaction (defence in depth: a
@@ -210,6 +212,18 @@ async def _count(read: Awaitable[int | None], kind: str, timeout_s: float) -> in
         return None
 
 
+def _read_back_line(outcome: str, commit_error: str, user_id: uuid.UUID, **fields: Any) -> None:
+    """#3445: the read-back's line, a warning once `recovered` and an error otherwise."""
+    (_log().warning if outcome == "recovered" else _log().error)(
+        "users.disable.read_back",
+        outcome=outcome,
+        commit_error=commit_error,
+        target_user_id=str(user_id),
+        request_id=current_request_id(),
+        **fields,
+    )
+
+
 class UserDisableService:
     def __init__(
         self,
@@ -254,8 +268,8 @@ class UserDisableService:
         unless the commit itself failed and its read-back did not find the change (#3445), whose
         outcome is unknown: if it landed, a retry closes the user's sockets but records no B16
         REVOKE, since AC5's no-op returns no session ids (see
-        `SqlAlchemyUserLifecycleStore.disable`). A caller cancelled after the commit leaves the
-        steps to finish in their task (R7)."""
+        `SqlAlchemyUserLifecycleStore.disable`). A caller cancelled after the commit, or after a
+        read-back found it, leaves the steps, and such a change's record, to their task (R7)."""
         rid, now, uid = _request_uuid(), self._clock(), str(user_id)
         await self._guard(user_id, actor, rid)
         bound = self._count_timeout_s
@@ -268,12 +282,13 @@ class UserDisableService:
             "open_order_count": orders,
             "acknowledged_unknown_positions": acknowledge_unknown_positions,
         }
-        change = await self._commit(user_id, actor.user_id, counts, rid, now, unknown)
+        change, recovered = await self._commit(user_id, actor.user_id, counts, rid, now, unknown)
         if change is None:
             raise self._refused("not_found", UserNotFoundError(uid))
         result = "disabled" if change.changed else "noop"  # a no-op writes no record (AC5)
         user_lifecycle_total.labels(action="disable", result=result).inc()
-        task = spawn(self._cascade(change, actor.user_id, rid, now), name="user-disable-steps")
+        steps = self._cascade(change, actor.user_id, rid, now, recovered)
+        task = spawn(steps, name="user-disable-steps")
         self._cascades.add(task)
         task.add_done_callback(self._untrack)
         return DisableResult(change.changed, await asyncio.shield(task))
@@ -332,7 +347,9 @@ class UserDisableService:
         rid: uuid.UUID | None,
         now: datetime,
         unknown: bool,
-    ) -> UserStatusChange | None:
+    ) -> tuple[UserStatusChange | None, str | None]:
+        """The store's change, and the error of a commit that raised if a read-back then found the
+        change (#3445), else `None`."""
         ahead = _Ahead()
 
         async def write_ahead(change: UserStatusChange) -> None:
@@ -358,7 +375,7 @@ class UserDisableService:
             ahead.returned = True  # the store commits next (S3): a raise from here on is unknown
 
         try:
-            return await self._store.disable(user_id, actor=actor, now=now, audit=write_ahead)
+            return await self._store.disable(user_id, actor=actor, now=now, audit=write_ahead), None
         except OwnerFloorError as exc:  # refused under the lock, unaudited (UL1-D1)
             raise self._refused("last_owner", LastOwnerError(str(user_id))) from exc
         except UserSelfTargetError:  # the store's own SR-055 check: the same audited 403
@@ -370,9 +387,10 @@ class UserDisableService:
                 who = _who(actor, user_id, rid)
                 await self._close(who, ahead.change, may_have_committed=ahead.returned)
                 if ahead.returned and isinstance(exc, Exception):  # a cancellation is not read back
-                    found = await self._recover(who, ahead.change, now, type(exc).__name__)
+                    lost = type(exc).__name__
+                    found = await self._recover(ahead.change, now, lost)
                     if found is not None:  # the commit had gone through: on with its steps
-                        return found
+                        return found, lost
             if isinstance(exc, WriteAheadTimeout):  # the hook outlived its bound: rolled back
                 raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
             if isinstance(exc, Exception) and not isinstance(exc, UserLifecycleError):
@@ -401,56 +419,68 @@ class UserDisableService:
         self._step("closing_record", tally, who["object_id"])
 
     async def _recover(
-        self, who: dict[str, Any], change: UserStatusChange, now: datetime, commit_error: str
+        self, change: UserStatusChange, now: datetime, commit_error: str
     ) -> UserStatusChange | None:
         """#3445 (#2710 option C): after a commit that raised, read the change back once, in a new
-        transaction the store bounds. It landed only if the user reads back as disabled with the
-        very sessions the hook saw revoked at `now`: a concurrent disable that won revoked them at
-        its own instant. Then `users.disable` `success`, reason `recovered_after_commit_error`,
-        follows the `outcome_unknown` record, which stays, ahead of the steps (C-2.9), which run
-        for those sessions. `None` if any of it fails: the commit's error stands. One log line,
-        `users.disable.read_back`; no step is counted."""
-        user, request_id = str(change.user_id), current_request_id()
-        fields = {"commit_error": commit_error, "target_user_id": user, "request_id": request_id}
+        transaction the store bounds. It is taken as this change if the user reads back as
+        disabled with the very sessions the hook saw revoked at `now`, since a concurrent disable
+        that won revoked them at its own instant. With no session there is nothing to compare, so
+        such a disable passes for this one (UL1-R1 (R5)). `_cascade` then writes the recovered
+        record and runs the steps for those sessions. `None`, with an error line
+        `users.disable.read_back`, if the read-back fails or finds another state: the commit's
+        error stands."""
         try:
             ids = await self._store.read_back_disable(change.user_id, now=now)
         except Exception as exc:  # a timeout too: isolated, the commit's error stands
-            _log().error(
-                "users.disable.read_back", outcome="failed", error=type(exc).__name__, **fields
-            )
+            _read_back_line("failed", commit_error, change.user_id, error=type(exc).__name__)
             return None
         if ids is None or set(ids) != set(change.revoked_session_ids):  # not this change
             outcome = "not_disabled" if ids is None else "other_sessions"
-            _log().error("users.disable.read_back", outcome=outcome, **fields)
+            _read_back_line(outcome, commit_error, change.user_id)
             return None
+        return replace(change, revoked_session_ids=ids)
+
+    async def _record_recovered(
+        self, change: UserStatusChange, actor: uuid.UUID, rid: uuid.UUID | None, commit_error: str
+    ) -> None:
+        """#3445: `users.disable` `success`, reason `recovered_after_commit_error`, first in the
+        steps' task, so no cancellation of the caller can part it from them. Bounded and counted
+        as a `closing_record` step. The steps run whatever its fate, as an append that started can
+        land after its bound: the write-ahead record is durable (the hook returned), and each step
+        writes its own ahead (C-2.9). Then the line `users.disable.read_back`: `recovered`, or
+        `record_failed` (error) if the record is not confirmed."""
         roles, tally = sorted(change.roles), _Tally(self._closing_timeout_s)
+        sessions = len(change.revoked_session_ids)
         record = partial(
             self._audit.emit,
             "users.disable",
-            **who,
+            **_who(actor, change.user_id, rid),
             outcome=AuditOutcome.SUCCESS,
             severity=Severity.WARNING,
             reason=RECOVERED,
             before_state={"status": change.before, "roles": roles},
-            after_state={"status": change.after, "roles": roles, "sessions_revoked": len(ids)},
+            after_state={"status": change.after, "roles": roles, "sessions_revoked": sessions},
         )
         await tally.run(record)
-        if tally.failures:  # not durable, so no step may follow (C-2.9)
-            _log().error(
-                "users.disable.read_back", outcome="record_failed", error=tally.error, **fields
-            )
-            return None
-        _log().warning("users.disable.read_back", outcome="recovered", sessions=len(ids), **fields)
-        return replace(change, revoked_session_ids=ids)
+        self._step("closing_record", tally, change.user_id)
+        outcome = "record_failed" if tally.failures else "recovered"
+        fields = {"sessions": sessions, "error": tally.error}
+        _read_back_line(outcome, commit_error, change.user_id, **fields)
 
     async def _cascade(
-        self, change: UserStatusChange, actor: uuid.UUID, rid: uuid.UUID | None, now: datetime
+        self,
+        change: UserStatusChange,
+        actor: uuid.UUID,
+        rid: uuid.UUID | None,
+        now: datetime,
+        recovered: str | None,
     ) -> tuple[str, ...]:
         """R7: each await bounded, all by the deadline. Each step gets a callable, so a port that
         raises before it returns an awaitable fails its own step and the rest still run. A step
         cut off (the deadline, a raise outside a step, a cancellation) is failed, not skipped. No
         `Exception` reaches the caller after the commit; a cancellation (a non-`Exception`) is
-        re-raised once counted."""
+        re-raised once counted. `recovered`: the error of a commit that a read-back found (#3445),
+        whose record comes first."""
         user, t = change.user_id, {name: _Tally(self._step_timeout_s) for name in STEPS}
         logged: list[str] = []
 
@@ -463,6 +493,8 @@ class UserDisableService:
 
         try:
             async with asyncio.timeout(self._deadline_s):
+                if recovered is not None:  # its record, then the steps whatever its fate
+                    await self._record_recovered(change, actor, rid, recovered)
                 await publish_revoked(publish, map(str, change.revoked_session_ids), REVOKED_REASON)
                 # Then every socket of the user, on every run (AC5's no-op too): no id list holds
                 # a session a refresh rotated, nor, on a repeat, those of a commit lost on the wire.

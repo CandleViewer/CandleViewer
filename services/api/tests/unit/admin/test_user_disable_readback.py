@@ -5,8 +5,9 @@ and the fake unit of work of `test_user_disable.py`. The read-back's bound: the 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -29,11 +30,17 @@ from tests.unit.admin.test_user_disable import (
     _TARGET,
     _UNKNOWN,
     _records,
+    _steps,
     _World,
 )
 from tests.unit.storage.test_user_lifecycle_sqlalchemy import _GUARD_S, _S1, _S2, _Rel
 
 _RECOVERED = ("success", "recovered_after_commit_error", "disabled")
+_STEPS_RUN = (  # every step after the commit, for the lost world's two sessions and no rule
+    *("socket:user_disabled", "socket:user_disabled", "socket:user", "sweep:user_disabled"),
+    *("b16:user_disabled", "b16:user_disabled", "scope", "rules", "rules"),
+)
+_Append = Callable[[], Awaitable[None]]  # the recovered record's own append
 
 
 def _landed(rel: _Lost) -> None:
@@ -128,7 +135,8 @@ async def test_lost_commit_that_landed_is_read_back_and_its_sessions_get_the_ste
         "after_state": state | {"status": "disabled", "sessions_revoked": 2},
     }
     line = _read_back(logs)
-    assert (line["outcome"], line["sessions"], line["commit_error"]) == ("recovered", 2, "OSError")
+    got = (line["outcome"], line["sessions"], line["commit_error"], line["log_level"])
+    assert got == ("recovered", 2, "OSError", "warning")
     assert (_disables("disabled"), _disables("error")) == (disabled + 1, errors)
 
 
@@ -173,27 +181,112 @@ async def _hang(*_: Any, **__: Any) -> None:
     await asyncio.Event().wait()
 
 
+async def _refuse(_: _Append) -> None:
+    raise AuditUnavailable("down")
+
+
+async def _hang_unwritten(_: _Append) -> None:
+    await _hang()
+
+
+async def _hang_appended(append: _Append) -> None:
+    await append()  # `AuditWriter.emit` finishes an append that started, whoever stops waiting
+    await _hang()
+
+
 @pytest.mark.parametrize(
-    "recover", [AsyncMock(side_effect=AuditUnavailable("down")), _hang], ids=["refused", "hung"]
+    ("recover", "records"),
+    [
+        (_refuse, [_OPEN, _UNKNOWN]),
+        (_hang_unwritten, [_OPEN, _UNKNOWN]),
+        (_hang_appended, [_OPEN, _UNKNOWN, _RECOVERED]),
+    ],
+    ids=["refused", "hung", "appended_then_hung"],
 )
-async def test_recovered_record_not_written_runs_no_step(
-    recover: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
+async def test_recovered_record_not_confirmed_still_runs_the_steps(
+    recover: Callable[[_Append], Awaitable[None]],
+    records: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C-2.9: the recovered record goes ahead of the steps. Refused, or not written within the
-    closing bound, it runs no step, and the commit's error stands."""
+    """C-2.9, R5: once the read-back found the change, its steps run even if the recovered record
+    is refused or not confirmed within the closing bound, an append that started included: the
+    write-ahead record is durable and each step writes its own ahead. That record is a failed
+    `closing_record` step, the read-back's line says `record_failed`, and the call is a 204."""
     w = _World(_Lost(), closing_timeout_s=0)
     real = w.emit
 
     async def emit(action: str, **kwargs: Any) -> None:
         if kwargs.get("reason") == "recovered_after_commit_error":
-            await recover()
+            return await recover(partial(real, action, **kwargs))
+        return await real(action, **kwargs)
+
+    monkeypatch.setattr(w, "emit", emit)
+    failed = _steps("closing_record", "failed")
+    with capture_logs() as logs:
+        assert await asyncio.wait_for(w.disable(), _GUARD_S) == DisableResult(changed=True)
+    assert _records(w) == records and w.post_commit() == [*_STEPS_RUN]
+    line = _read_back(logs)
+    got = (line["outcome"], line["log_level"], _steps("closing_record", "failed"))
+    assert got == ("record_failed", "error", failed + 1)
+
+
+async def test_caller_cancelled_during_the_recovered_record_leaves_the_steps_to_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7, C-2.9: the recovered record runs in the steps' shielded task, ahead of them, so a caller
+    cancelled once it is appended (the request gone, or a shutdown) cannot leave it in the trail
+    with no step after it: the steps run, and `drain` waits for them."""
+    gate = asyncio.Event()
+    w = _World(_Lost())
+    real = w.emit
+
+    async def emit(action: str, **kwargs: Any) -> None:
+        await real(action, **kwargs)
+        if kwargs.get("reason") == "recovered_after_commit_error":  # appended; the caller goes
+            call.cancel()
+            await gate.wait()
+
+    monkeypatch.setattr(w, "emit", emit)
+    call = asyncio.create_task(w.disable())
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    gate.set()
+    await asyncio.wait_for(w.svc.drain(), _GUARD_S)
+    assert _records(w) == [_OPEN, _UNKNOWN, _RECOVERED] and w.post_commit() == [*_STEPS_RUN]
+
+
+async def test_refused_closing_record_does_not_hold_back_the_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recovery does not depend on the `outcome_unknown` record: refused, it is missing between
+    the two `success` records and an error-level `closing_record` line says so; the read-back still
+    finds the change, whose record and steps follow (the trail stays true: the change applied)."""
+    w = _World(_Lost())
+    real = w.emit
+
+    async def emit(action: str, **kwargs: Any) -> None:
+        if kwargs.get("reason") == "outcome_unknown":
+            raise AuditUnavailable("down")
         await real(action, **kwargs)
 
     monkeypatch.setattr(w, "emit", emit)
-    with capture_logs() as logs, pytest.raises(OSError, match="commit lost"):
-        await asyncio.wait_for(w.disable(), _GUARD_S)
-    assert _records(w) == [_OPEN, _UNKNOWN] and w.post_commit() == []
-    assert _read_back(logs)["outcome"] == "record_failed"
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(changed=True)
+    assert _records(w) == [_OPEN, _RECOVERED] and w.post_commit() == [*_STEPS_RUN]
+    closing = [(e["outcome"], e["log_level"]) for e in logs if e.get("step") == "closing_record"]
+    assert closing == [("failed", "error"), ("ok", "info")]
+
+
+async def test_without_sessions_a_concurrent_disable_passes_for_this_one() -> None:
+    """The limit UL1-R1 (R5) keeps: with no session there are no ids to tell this change, rolled
+    back, from a concurrent disable that committed, so the call is recorded as recovered (204).
+    The user is disabled either way and the other call has its own record; only the transaction's
+    id would tell them apart."""
+    w = _World(_Lost(_another_disable, sessions=()))
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(changed=True)
+    assert _records(w) == [_OPEN, _UNKNOWN, _RECOVERED]
+    assert _read_back(logs)["outcome"] == "recovered"
 
 
 async def test_cancelled_commit_is_not_read_back() -> None:

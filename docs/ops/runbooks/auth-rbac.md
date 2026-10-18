@@ -476,14 +476,23 @@ Owner and audits it.
 **A commit lost on the wire (#2710, #3445).** When the commit of a disable fails on the wire, the
 `users.disable` record is followed by a `failure` record with reason `outcome_unknown`, and the
 call reads the user back once, in a new transaction, within the store's 2-second bound. If the
-commit landed (the user reads `disabled`, with the sessions it revoked at its instant), a
-`users.disable` `success` record with reason `recovered_after_commit_error` follows, the steps run
-as after any disable, one `auth.session_revoked` per session included, and the call answers `204`:
-there is nothing to do. Otherwise the call answers `503 store_unavailable` and no step after the
-commit has run; the error line `users.disable.read_back` gives the `outcome` (`failed`,
-`not_disabled`, `other_sessions` or `record_failed`). A request cancelled during the commit (the
-client gone, or a shutdown) is not read back. Repeat the DELETE, which is safe either way:
-a repeat of a committed disable answers `204`, writes no record, ends every socket of the user and
+commit landed (the user reads `disabled`, with the sessions it revoked at its instant), the call
+goes on as after any disable and answers `204`: a `users.disable` `success` record with reason
+`recovered_after_commit_error`, then the steps, one `auth.session_revoked` per session included.
+There is nothing to do. A user with no session leaves no ids to compare, so a concurrent disable
+of that user that committed can pass for this one; the user is disabled either way. The steps run
+even if the recovered record is refused or not confirmed in time (the error line
+`users.disable.read_back` with `outcome` `record_failed`): that record is then missing or lands
+late, and the step records after `outcome_unknown` show that the change applied, so there is
+nothing to repeat. Nor does the recovery wait on the `outcome_unknown` record: if it was refused,
+it is missing between the two `success` records. Each missing record shows as the error line
+`users.disable.step` with `step=closing_record` and `outcome=failed`. Otherwise the call answers
+`503 store_unavailable` and no step after the commit has run; the error line
+`users.disable.read_back` gives the `outcome` (`failed`, `not_disabled` or `other_sessions`). A
+request cancelled before the read-back found the change (during the commit, its closing record or
+the read-back: the client gone, or a shutdown) runs no step either; once it has found it, the
+record and the steps finish in their own task. Repeat the DELETE, which is safe either way: a
+repeat of a committed disable answers `204`, writes no record, ends every socket of the user and
 re-runs the sweep, the scope refresh and the disarm, but B16 records none of the sessions that
 commit revoked. That residual awaits the Owner's sign-off in
 `docs/security/threat-models/e42-user-lifecycle.md` §6.
