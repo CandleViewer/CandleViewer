@@ -19,6 +19,7 @@
       ]
     },
     "test:cov": {
+      "tags": ["unit-frontend"],
       "inputs": [
         "$TURBO_EXTENDS$",
         "tokens/**",
