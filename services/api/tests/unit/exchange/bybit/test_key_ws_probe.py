@@ -1,4 +1,4 @@
-"""E27-T03 (#836 slice 2b5): the one-shot private-WS `auth` probe on an injected socket.
+"""E27-T03 (#836 slice 2b5): the one-shot private-WS `auth` probe and its adapter seam.
 
 Replies: the documented-shape `tests/fixtures/key_verification/ws_auth_*.json` (README there; no
 recorded capture exists, #2240). `Stream` stands in for the private stream and records every dial
@@ -13,7 +13,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 from uuid import UUID
 
 import pytest
@@ -25,6 +25,7 @@ from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.key_info import PROBE_ERRORS
 from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe, WsProbeError, WsProbeResult
+from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.logging import reset_logging
 from candleviewer.secrets import CredentialBorrower, CredentialUnavailable, RequestSignature
 from tests._signing import CREDENTIAL_ID, Call, fake_capability, stand_in_signature
@@ -326,3 +327,65 @@ async def test_no_key_id_signature_or_exchange_text_reaches_a_log_repr_or_metric
     for secret in (MARK, text, *(stand_in_signature(signed) for _, signed, _ in calls)):
         assert [s for s in shown if secret in s] == []
     assert len(calls) == 2
+
+
+async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_frame(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """websockets logs each frame at DEBUG, the `auth` op's key id and signature included: the
+    probe's sockets log through a logger that never enables DEBUG, even under a DEBUG root. Each
+    read is bounded twice: by the library's `max_size` and by the read's own `max_bytes`."""
+    seen: dict[str, Any] = {}
+
+    class Conn:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.closed = False
+
+        async def send(self, frame: str) -> None:
+            self.sent.append(frame)
+
+        async def recv(self, decode: bool | None = None) -> bytes:
+            assert decode is False  # bytes, so the bound counts bytes
+            return b'{"op": "auth"}'
+
+        async def close(self) -> None:
+            self.closed = True
+
+    conn = Conn()
+
+    async def connect(url: str, **kwargs: Any) -> Conn:
+        seen.update(kwargs, url=url)
+        return conn
+
+    monkeypatch.setattr("websockets.asyncio.client.connect", connect)
+    caplog.set_level(logging.DEBUG)
+    socket = await key_ws_probe.connect_private_ws(URLS["demo"])
+    await socket.send("frame")
+    assert await socket.recv(14) == '{"op": "auth"}'
+    with pytest.raises(ConnectionError):  # a transport error to the probe
+        await socket.recv(13)
+    await socket.close()
+    assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
+    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 1.0}
+    assert seen == {**expected, "ping_interval": None, "max_size": 4096}
+    assert (conn.sent, conn.closed) == (["frame"], True)
+
+
+async def test_the_adapter_probes_through_its_injected_connector_signed_by_m2() -> None:
+    stream, calls = Stream(), list[Call]()
+    svc = ExchangeBybitService(fake_capability(MARK, calls), private_ws_connect=stream.connect)
+    assert (await svc.key_ws_probe("testnet", CREDENTIAL_ID)).ok
+    assert (stream.dialled, [c[2] for c in calls]) == ([URLS["testnet"]], ["sign_ws_auth"])
+
+
+async def test_the_adapter_holds_one_budget_and_without_a_signer_dials_nothing() -> None:
+    stream = Stream()
+    svc = ExchangeBybitService(credentials=fake_capability(), private_ws_connect=stream.connect)
+    results = [await svc.key_ws_probe("demo", UUID(int=i)) for i in range(11)]
+    assert [r.error for r in results] == [None] * 10 + ["rate_limited"]
+    unsigned = ExchangeBybitService(private_ws_connect=stream.connect)
+    with pytest.raises(RuntimeError, match="no signing capability"):
+        await unsigned.key_ws_probe("demo", CREDENTIAL_ID)
+    assert len(stream.dialled) == 10
+    assert ExchangeBybitService()._ws_probe._connect is key_ws_probe.connect_private_ws

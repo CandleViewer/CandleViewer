@@ -7,9 +7,9 @@ close. It never subscribes (#2877 and #848 own the streaming socket), never retr
 falls back to another host. One 5 s bound covers the dial, the signature and the reply; the
 socket is closed on every path under its own short bound, and a cancellation propagates.
 Diagnostic only: it enforces nothing (ruling 11 on #836).
-SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per `KeyWsProbe`, then
-`rate_limited` at once with nothing signed or dialled (slice 2b5b's adapter holds the
-deployment's one probe). Results are `KeyProbeError` names (SR-E27-08), never
+SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
+probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
+names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
 exchange text: a refused `auth` is `auth_error`, no answer `timeout`, a failed or dropped
 connection or a frame that does not decode as JSON `transport_error`, any other reply
 `exchange_unknown`.
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import time
 from asyncio import timeout
 from collections import deque
@@ -33,6 +34,8 @@ from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.signer import BybitSigner
 
 if TYPE_CHECKING:
+    from websockets.asyncio.client import ClientConnection
+
     from candleviewer.secrets import SigningCapability
 
 #: Ticket performance notes: 5 s per probe, the dial, M2's signature and the reply together.
@@ -52,6 +55,11 @@ WsProbeError = Literal[
 ]
 #: A failed dial or a dropped socket: the OS's (refused, reset, DNS, TLS) or the library's.
 _TRANSPORT: Final = (OSError, WebSocketException)
+#: websockets logs each frame at DEBUG (the `auth` op's key id and signature too) and takes a
+#: stdlib logger only: this one never enables DEBUG; its other records reach the redacting handlers.
+# nosemgrep: cv-obs-no-direct-getlogger reason=ws-stdlib-logger owner=@basiltt review=2027-03-25
+_SOCKET_LOG: Final = logging.getLogger(f"{__name__}.socket")
+_SOCKET_LOG.setLevel(logging.INFO)
 
 
 class PrivateSocket(Protocol):
@@ -62,7 +70,7 @@ class PrivateSocket(Protocol):
     async def close(self) -> None: ...
 
 
-#: Dials a `PRIVATE_WS_URLS` value; chosen when the probe is built (production's: slice 2b5b).
+#: Dials a `PRIVATE_WS_URLS` value; chosen when the adapter is built (#2893 S12 injects one).
 PrivateWsConnect = Callable[[str], Awaitable[PrivateSocket]]
 
 
@@ -75,16 +83,49 @@ class WsProbeResult:
     latency_ms: int | None
 
 
+class _Socket:
+    """A `websockets` client connection as a `PrivateSocket`."""
+
+    def __init__(self, conn: ClientConnection) -> None:
+        self._conn = conn
+
+    async def send(self, frame: str) -> None:
+        await self._conn.send(frame)
+
+    async def recv(self, max_bytes: int) -> str:
+        """The library refuses a frame above `max_size` before buffering it; this bound holds
+        whatever that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
+        frame = await self._conn.recv(decode=False)
+        if len(frame) > max_bytes:
+            raise ConnectionError("private ws frame above the read bound")
+        return frame.decode("utf-8", "replace")
+
+    async def close(self) -> None:
+        await self._conn.close()
+
+
+async def connect_private_ws(url: str) -> PrivateSocket:
+    """Production's connector: no keepalive pings (the socket lives for one reply), small
+    frames, and the quiet logger above."""
+    from websockets.asyncio.client import connect
+
+    conn = await connect(
+        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=CLOSE_TIMEOUT_S, ping_interval=None,
+        max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG,
+    )  # fmt: skip
+    return _Socket(conn)
+
+
 def _wall_ms() -> int:
     return int(time.time() * 1000)
 
 
 class KeyWsProbe:
-    """One private-WS `auth` probe, holding its open budget."""
+    """The adapter's one private-WS `auth` probe, holding the deployment's open budget."""
 
     def __init__(
         self,
-        connect: PrivateWsConnect,
+        connect: PrivateWsConnect = connect_private_ws,
         *,
         monotonic: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = _wall_ms,

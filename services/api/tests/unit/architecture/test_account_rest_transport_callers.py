@@ -6,7 +6,8 @@ The account REST transport reaches `ExchangeBybitService` through two calls in
 other product module (`candleviewer/`, `cvdev/`), passing either keyword or a `**` splat to either
 call, or naming the adapter's `_rest_transport`, would send signed key-verification calls to a
 transport that the `CV_ACCOUNT_FIXTURE` gate never checked (C-2.11, C-12.2). Such a change fails
-here, and a security review decides it.
+here, and a security review decides it. #836 slice 2b5 adds the private-WS connector's way in on
+the same terms: the keyword `private_ws_connect=` and the adapter's `_ws_probe`.
 
 Limits: these are AST checks, so an alias of either callee or a name built at run time is not
 caught, as in `test_dev_module_confined.py`.
@@ -23,10 +24,14 @@ import candleviewer
 import cvdev
 
 ROOTS = (Path(candleviewer.__file__).resolve().parent, Path(cvdev.__file__).resolve().parent)
-#: Each call on the transport's way into the adapter, and the keyword that carries it.
-CARRIERS = {"ExchangeBybitService": "rest_transport", "build_app_context": "account_fixture"}
-PRIVATE = "_rest_transport"
-#: The adapter, which owns `_rest_transport`.
+#: Each call on the way into the adapter, and the keywords that carry a transport or a connector.
+CARRIERS = {
+    "ExchangeBybitService": frozenset({"rest_transport", "private_ws_connect"}),
+    "build_app_context": frozenset({"account_fixture"}),
+}
+#: The adapter's fields that hold them.
+PRIVATE = frozenset({"_rest_transport", "_ws_probe"})
+#: The adapter, which owns them.
 OWNER = "candleviewer/exchange/bybit/service.py"
 
 
@@ -37,22 +42,22 @@ def _name(node: ast.expr) -> str | None:
 
 
 def _carried(call: ast.Call) -> set[str]:
-    """The keyword that would carry the transport in `call`, if it calls a carrier directly,
-    through `__init__` or as the first argument (`functools.partial`)."""
+    """The keywords that would carry a transport or a connector in `call`, if it calls a carrier
+    directly, through `__init__` or as the first argument (`functools.partial`)."""
     callees = {_name(call.func), *(_name(arg) for arg in call.args[:1])}
     if isinstance(call.func, ast.Attribute) and call.func.attr == "__init__":
         callees.add(_name(call.func.value))
-    return {CARRIERS[callee] for callee in callees if callee in CARRIERS}
+    return set().union(*(CARRIERS[callee] for callee in callees if callee in CARRIERS))
 
 
 def _injections(source: str, *, owner: bool = False) -> list[int]:
     """The line of each call that passes a carrier its keyword or a `**` splat and, outside the
-    adapter, of each attribute or string naming its private transport."""
+    adapter, of each attribute or string naming one of its private fields."""
     lines = []
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Attribute | ast.Constant):
             named = node.attr if isinstance(node, ast.Attribute) else node.value
-            if named == PRIVATE and not owner:
+            if named in PRIVATE and not owner:
                 lines.append(node.lineno)
         elif (
             isinstance(node, ast.Call)
@@ -68,7 +73,7 @@ def _found() -> list[str]:
     for root in ROOTS:
         for path in sorted(root.rglob("*.py")):
             text, name = path.read_text(encoding="utf-8"), path.relative_to(root.parent).as_posix()
-            if any(word in text for word in (*CARRIERS, PRIVATE)):
+            if any(word in text for word in (*CARRIERS, *PRIVATE)):
                 found += [f"{name}:{line}" for line in _injections(text, owner=name == OWNER)]
     return found
 
@@ -77,12 +82,14 @@ def _found() -> list[str]:
     "source",
     [
         "ExchangeBybitService(credentials=c, rest_transport=t)",
+        "ExchangeBybitService(credentials=c, private_ws_connect=w)",
         "bybit.ExchangeBybitService(**kwargs)",
         "ExchangeBybitService.__init__(svc, rest_transport=t)",
         "functools.partial(ExchangeBybitService, rest_transport=t)",
         "build_app_context(settings, account_fixture=handle)",
         "svc._rest_transport = t",
         "setattr(svc, '_rest_transport', t)",
+        "svc._ws_probe = p",
     ],
 )
 def test_an_injection_is_found(source: str) -> None:

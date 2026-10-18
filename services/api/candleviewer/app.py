@@ -691,7 +691,8 @@ def build_app_context(
 
     #2893 S4: `account_fixture` is `create_app()`'s handle from `build_account_fixture`, None
     unless `CV_ACCOUNT_FIXTURE` is set; its REST transport becomes the exchange adapter's account
-    REST transport. None keeps httpx's own transport.
+    REST transport, and (#836 slice 2b5) its private-socket connector the adapter's private-WS
+    connector. None keeps httpx's own transport and production's connector.
     """
     resolved = settings or get_settings()
     read_only_gate = ReadOnlyGate()
@@ -720,6 +721,9 @@ def build_app_context(
         exchange_bybit=ExchangeBybitService(
             credentials=secrets.exchange_borrower,
             rest_transport=None if account_fixture is None else account_fixture.rest_transport,
+            private_ws_connect=(
+                None if account_fixture is None else account_fixture.private_ws_connect
+            ),
         ),
         bus=bus_service,
         ingestion=IngestionService(),

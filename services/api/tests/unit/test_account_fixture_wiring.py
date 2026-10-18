@@ -33,6 +33,7 @@ from candleviewer.account_fixture_wiring import (
 )
 from candleviewer.exchange.base.errors import TransportError
 from candleviewer.exchange.bybit import key_verify
+from candleviewer.exchange.bybit import key_ws_probe as private_ws
 from candleviewer.exchange.bybit import service as bybit_service
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
@@ -179,7 +180,19 @@ async def test_the_private_socket_connector_refuses_every_dial(tmp_path: Path) -
     assert fixture is not None
 
     with pytest.raises(ConnectionRefusedError):
-        await fixture.private_ws_connect()
+        await fixture.private_ws_connect("wss://stream-demo.bybit.com/v5/private")
+
+
+def test_the_adapter_dials_with_productions_connector_or_behind_the_door_the_handles(
+    tmp_path: Path,
+) -> None:
+    """#836 slice 2b5: the adapter's private-WS `auth` probe dials with production's own connector
+    unless the door's handle supplies one, which refuses every dial until S12."""
+    default = app_module.create_app(Settings()).state.app_context.exchange_bybit
+    app = app_module.create_app(_dev(tmp_path))
+    fixture = app.state.app_context.exchange_bybit
+    assert default._ws_probe._connect is private_ws.connect_private_ws
+    assert fixture._ws_probe._connect is app.state.account_fixture.private_ws_connect
 
 
 def test_set_in_checkout_create_app_keeps_the_handle_for_later_slices(tmp_path: Path) -> None:

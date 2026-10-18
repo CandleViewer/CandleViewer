@@ -17,7 +17,7 @@ from typing import Final, NoReturn
 
 import httpx
 
-from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused
+from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused, PrivateSocket
 from candleviewer.settings import Settings
 from cvdev.account_fixture import boot
 
@@ -32,7 +32,7 @@ class RefusingTransport(httpx.AsyncBaseTransport):
         raise httpx.ConnectError(REFUSAL, request=request)
 
 
-async def refuse_private_socket() -> NoReturn:
+async def refuse_private_socket(_url: str) -> NoReturn:
     """Never connects: every dial raises `ConnectionRefusedError`, as a closed port does."""
     raise ConnectionRefusedError(REFUSAL)
 
@@ -40,7 +40,7 @@ async def refuse_private_socket() -> NoReturn:
 @dataclass(frozen=True, slots=True)
 class _Fixture:
     rest_transport: httpx.AsyncBaseTransport
-    private_ws_connect: Callable[[], Awaitable[object]]
+    private_ws_connect: Callable[[str], Awaitable[PrivateSocket]]
 
 
 def build(settings: Settings) -> AccountFixture:
