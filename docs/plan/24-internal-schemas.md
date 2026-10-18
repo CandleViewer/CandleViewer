@@ -3819,7 +3819,7 @@ A scheduled run that finds the verify slot held waits for it and is never skippe
 
 **Redaction:** `before`/`after` pass through a redactor that removes secrets (`secret`, `api_key`, `password`, `token`, `dek`) and truncates large blobs to a hash. Redaction is unit-tested with a fixture containing every secret-ish key name used in the codebase.
 
-**System events (E42-T05).** `system_events.message` reaches the Owner as an incident's `title` and `detail` (`listIncidents`), so every writer keeps it to a short, fixed description of the condition and never embeds `str(exc)` or raw probe output. Machine detail goes to `details`, which passes through the same redaction serializer as audit (`21-database-schema.md` §12). The incident read model still passes both fields through `candleviewer.observability.redaction.redact_text`.
+**System events (E42-T05).** `system_events.message` reaches the Owner as an incident's `title` and `detail` (`listIncidents`), so every writer keeps it to a short, fixed description of the condition and never embeds `str(exc)` or raw probe output. Machine detail goes to `details`, which passes through the same redaction serializer as audit (`21-database-schema.md` §12). The one exception is the break-glass reset: its `details` (a target id, two counts and a flag) hold no secret-shaped key and are written as they are, until a composition root builds its repository and passes the serializer to it. The incident read model still passes both fields through `candleviewer.observability.redaction.redact_text`.
 
 ### 15.5 Audited action vocabulary (closed set)
 

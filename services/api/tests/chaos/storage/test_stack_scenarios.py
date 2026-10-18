@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from candleviewer.audit.redact import redact
 from candleviewer.health_wiring import PgSystemEventWriter, register_real_probes
 from candleviewer.observability.health_probes import ComponentState, HealthRegistry
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -65,7 +66,7 @@ async def _stack_healthy() -> None:
 
 
 def _registry(pg: SqlAlchemyRelationalRepository, disk_path: Path) -> HealthRegistry:
-    reg = HealthRegistry(events=PgSystemEventWriter(pg))
+    reg = HealthRegistry(events=PgSystemEventWriter(pg, redact_details=redact))
     register_real_probes(
         reg,
         pg_repo=pg,

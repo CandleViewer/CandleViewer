@@ -85,12 +85,18 @@ _STATE = sa.text(
     "system_events WHERE kind = 'break_glass_used' AND details->>'target_user_id' = :t)"
 )
 
-#: Transaction ids of every row of the user and of the event (one if one transaction).
+#: Transaction ids of every row of the user, of the event and of its incident (E42-T05; the
+#: one `auth` incident here is the break-glass group): one if one transaction.
 _XMINS = sa.text(
     "SELECT CAST(xmin AS text) FROM mfa_methods WHERE user_id = CAST(:u AS uuid) UNION "
     "SELECT CAST(xmin AS text) FROM sessions WHERE user_id = CAST(:u AS uuid) UNION "
     "SELECT CAST(xmin AS text) FROM recovery_codes WHERE user_id = CAST(:u AS uuid) UNION "
-    "SELECT CAST(xmin AS text) FROM system_events WHERE id = :e"
+    "SELECT CAST(xmin AS text) FROM system_events WHERE id = :e UNION "
+    "SELECT CAST(xmin AS text) FROM incidents WHERE component = 'auth'"
+)
+_INCIDENT = sa.text(
+    "SELECT CAST(severity AS text), status, occurrences >= 1, resolved_at FROM incidents "
+    "WHERE component = 'auth'"
 )
 _RESOLVE_ALL = sa.text(
     "UPDATE system_events SET resolved_at = now() "
@@ -177,11 +183,13 @@ async def test_reset_is_one_transaction(pg_dsn: str) -> None:
             event = await conn.execute(_EVENT, {"u": uid, "e": event_id})
             assert len(xids.all()) == 1  # every row the reset wrote has one transaction id
             *head, details, reasons = event.one()
+            incident = (await conn.execute(_INCIDENT)).one()
+        assert tuple(incident) == ("critical", "open", True, None)  # the reset's incident
         assert head == ["auth", BREAK_GLASS_EVENT_KIND, "critical", None]  # and unresolved
         assert reasons == BREAK_GLASS_REVOKED_REASON  # of every session of the Owner
         assert json.loads(details) == {  # counts and the target only: no hash, no secret
             "methods_revoked": 2,
-            "recovery_code_consumed": True,
+            "codes_consumed": True,
             "sessions_revoked": 2,
             "target_user_id": uid,
         }

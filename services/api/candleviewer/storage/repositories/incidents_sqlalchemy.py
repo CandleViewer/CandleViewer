@@ -1,4 +1,5 @@
-"""`SqlAlchemyIncidents`: the read side of the `incidents` table (E42-T05, migration `0028`).
+"""`SqlAlchemyIncidents`: the read side of the `incidents` table (E42-T05, migration `0028`), and
+`record_occurrence`, its write side.
 
 One keyset page of the materialised incident read model behind `GET /admin/incidents`. The
 statement is SQLAlchemy Core over `db.models.incidents` with every value bound, an explicit
@@ -14,20 +15,38 @@ socket or an exhausted pool. A statement the database refuses is a bug and keeps
 classes 22 (data), 23 (constraint), 42 (syntax or access rule) and XX (internal). Any other class
 is an outage too: the read is idempotent, so a retry is harmless, and the logged SQLSTATE shows one
 that never clears. Rows are `IncidentRow`s built by column name, so a drifted column fails loudly.
+
+The write side materialises an `error` or `critical` system event into its incident in the
+writer's own transaction (`21-database-schema.md` 3.10.2a): one `INSERT ... ON CONFLICT
+(component, signature) DO UPDATE` on `ux_incidents_group`, never a read followed by a write. Under
+READ COMMITTED a second writer of the same group waits for the first one's row lock, then applies
+its update to the committed row, so concurrent writers never raise a unique violation and never
+lose an occurrence. The `SET` holds the rules: one more occurrence; the first and last seen times
+widen to the event's time; `detail` follows the latest event; `severity` keeps the worst; a
+`resolved` incident reopens as `open`, and an `acknowledged` one does only when the event raises
+`severity` from `error` to `critical`, both clearing the acknowledgement; `resolved_at` is cleared,
+since the group now holds an unresolved event, so `inc_resolved` holds. `title` is the normalised
+message, the same for the whole group, so a conflict never rewrites it.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy import exc as sa_exc
+from sqlalchemy.dialects.postgresql import Insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.db.models import incidents as _TABLE
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import _TIMEOUT, READ_TIMEOUT
+from candleviewer.storage.repositories.incident_grouping import IncidentOccurrence
 from candleviewer.storage.repositories.incidents import IncidentRow, Position
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -86,3 +105,49 @@ class SqlAlchemyIncidents:
                 "incidents_read_failed", error=type(exc).__name__, sqlstate=_sqlstate(exc)
             )
             raise StorageTierUnavailable("incidents: read failed") from None
+
+
+def upsert_statement(occ: IncidentOccurrence, *, seen_at: datetime, incident_id: UUID) -> Insert:
+    """The occurrence as a new `open` incident, or, for a known group, its update in place."""
+    new = pg_insert(_TABLE).values(
+        id=incident_id,
+        component=occ.component,
+        signature=occ.signature,
+        severity=occ.severity,
+        status="open",
+        title=occ.title,
+        detail=occ.detail,
+        occurrences=1,
+        first_seen_at=seen_at,
+        last_seen_at=seen_at,
+    )
+    old, event = _C, new.excluded
+    reset = sa.or_(  # back to `open`, acknowledgement cleared
+        old.status == "resolved",
+        sa.and_(
+            old.status == "acknowledged", old.severity == "error", event.severity == "critical"
+        ),
+    )
+    return new.on_conflict_do_update(
+        index_elements=[old.component, old.signature],
+        set_={
+            "occurrences": old.occurrences + 1,
+            "first_seen_at": sa.func.least(old.first_seen_at, event.first_seen_at),
+            "last_seen_at": sa.func.greatest(old.last_seen_at, event.last_seen_at),
+            "detail": sa.case(
+                (event.last_seen_at >= old.last_seen_at, event.detail), else_=old.detail
+            ),
+            "severity": sa.func.greatest(old.severity, event.severity),
+            "status": sa.case((reset, "open"), else_=old.status),
+            "acknowledged_by": sa.case((reset, sa.null()), else_=old.acknowledged_by),
+            "acknowledged_at": sa.case((reset, sa.null()), else_=old.acknowledged_at),
+            "resolved_at": sa.null(),
+        },
+    )
+
+
+async def record_occurrence(
+    session: AsyncSession, occ: IncidentOccurrence, *, seen_at: datetime
+) -> None:
+    """Upsert the event's incident in the caller's transaction; the caller commits both rows."""
+    await session.execute(upsert_statement(occ, seen_at=seen_at, incident_id=uuid4()))
