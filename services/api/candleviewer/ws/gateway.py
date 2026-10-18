@@ -45,9 +45,11 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   on it ends the connection `internal_error` (as a writer fault does, if no close took); and
   teardown cancels it first.
 - **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
-  30/s and 300/min, excluding `pong` once `auth_ok` is sent (`client_rate_limited`, then
-  `4429`). An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters
-  is dropped before the frame is handled, so no reply echoes it (§13.1, #2572).
+  30/s and 300/min (`client_rate_limited`, then `4429`). From the first `auth_ok` a `pong` is
+  counted only once its `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes
+  `protocol_violation` (§8.5), never decoded when `t: "pong"` leads it. An envelope `id` that is
+  not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
+  handled, so no reply echoes it (§13.1, #2572).
 - Every server-initiated close after `accept` goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
   and 1011, which the handler counts itself. Token expiry and revocation seal the close:
@@ -92,6 +94,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
@@ -133,6 +136,7 @@ from candleviewer.ws.lifecycle import (
     InboundRateLimiter,
     Lifecycle,
     OriginRefusal,
+    PongBudget,
     RefusalLog,
     RefusalLogLimiter,
     Watchdog,
@@ -150,6 +154,7 @@ from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
     MAX_JSON_DEPTH,
+    MAX_PONG_BYTES,
     MAX_PREAUTH_FRAME_BYTES,
     MAX_UNAUTHENTICATED_SOCKETS,
     json_depth_exceeds,
@@ -294,7 +299,7 @@ def _wall_ms() -> int:
 
 
 _CLOSE = object()  # writer sentinel: the next queue item is the close code
-#: `_Connection.decode`'s answer for a frame over the inbound cap, whose `frame_too_big` close is
+#: `_Connection.decode`'s answer for a frame over its size cap or `MAX_PONG_BYTES`, whose close is
 #: already queued: the reader stops. Not `None`: `null` (JSON) and nil (msgpack) decode to `None`,
 #: and a frame that does is a non-object strike like any other malformed frame (#2905).
 _OVERSIZE = object()
@@ -502,6 +507,8 @@ class _Connection:
             auth_deadline=now + auth_timeout_s, last_inbound=now, last_outbound=now
         )
         self.rate = InboundRateLimiter()
+        #: §8.5: from the first `auth_ok`, the `pong`s that `rate` does not count.
+        self.pongs = PongBudget()
         #: Data frames stop at `OUTBOUND_QUEUE_MAX` (`push`); the `CLOSE_ITEMS` still fit (C-2.18).
         self.outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=OUTBOUND_QUEUE_MAX + CLOSE_ITEMS)
         self.user_id: uuid.UUID | None = None
@@ -811,7 +818,13 @@ class _Connection:
         binary frame. The SR-185 decoder (`ws/codec.py`) decodes msgpack. For any frame a
         conforming ASGI server delivers (`bytes` under `bytes`, `str` under `text`), this does
         not raise: a refusal is `[]`, and a decoded `None` (`null`, nil) is no envelope, so
-        `dispatch` counts a strike for either."""
+        `dispatch` counts a strike for either.
+
+        From the first `auth_ok`, a `pong` over `MAX_PONG_BYTES` closes `protocol_violation` and
+        the reader stops (§8.5): one whose first member is `t: "pong"` (`_leads_with_pong`) is
+        never decoded, any other once decoded. A frame over the bound that opens with `t: "pong"`
+        closes the same way even if the rest would not parse or repeats `t`: no `frame_malformed`
+        strike."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
@@ -825,6 +838,18 @@ class _Connection:
         if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
+        pong_bound = self.user_id is not None and size > MAX_PONG_BYTES
+        if pong_bound and _leads_with_pong(raw, msgpack=self.msgpack):
+            self.close_with("protocol_violation")
+            return _OVERSIZE
+        frame = self._parse(raw, values)
+        if pong_bound and isinstance(frame, dict) and frame.get("t") == "pong":
+            self.close_with("protocol_violation")  # its `t` comes later, or is written otherwise
+            return _OVERSIZE
+        return frame
+
+    def _parse(self, raw: str | bytes, values: int) -> Any:
+        """`decode`'s parse of a frame within its size caps: the decoded value, `[]` if refused."""
         try:
             if self.msgpack:
                 return [] if isinstance(raw, str) else decode_client_frame(raw, max_values=values)
@@ -855,6 +880,28 @@ def _str_or_none(value: Any) -> str | None:
 def _is_envelope_id(value: Any) -> bool:
     """§13.1 `envelope.id`: a string of at most `ENVELOPE_ID_MAX_LEN` characters."""
     return isinstance(value, str) and len(value) <= ENVELOPE_ID_MAX_LEN
+
+
+#: §8.5: a JSON text frame whose first member is `"t": "pong"`, JSON whitespace around its tokens.
+_JSON_PONG: Final = re.compile(r'[ \t\n\r]*\{[ \t\n\r]*"t"[ \t\n\r]*:[ \t\n\r]*"pong"')
+#: The same first member in MessagePack, after a fixmap header of 1 to 15 entries.
+_MSGPACK_PONG: Final = b"\xa1t\xa4pong"
+
+
+def _leads_with_pong(raw: str | bytes, *, msgpack: bool) -> bool:
+    """True when `raw`, a frame of its subprotocol's kind (§2.2), opens with the member `t: "pong"`:
+    in JSON text within its first `MAX_PONG_BYTES` characters, in MessagePack as a fixmap's first
+    fixstr key and value. An envelope has one `t` (§3.1), so a conforming frame it matches is a
+    `pong`. From `auth_ok`, a frame over the bound that it matches closes `protocol_violation`
+    even if the rest would not parse or repeats `t`, rather than counting a `frame_malformed`
+    strike. Anything else is False and is decoded as usual."""
+    if msgpack:
+        return (
+            isinstance(raw, bytes | bytearray)
+            and b"\x81" <= raw[:1] <= b"\x8f"
+            and raw.startswith(_MSGPACK_PONG, 1)
+        )
+    return isinstance(raw, str) and _JSON_PONG.match(raw, 0, MAX_PONG_BYTES) is not None
 
 
 async def _join_writer(task: asyncio.Task[None]) -> BaseException | None:
@@ -1338,6 +1385,7 @@ def make_ws_router(
         kind = frame.get("t") if isinstance(frame, dict) else None
         fid = frame.get("id") if isinstance(frame, dict) else None
         exempt = kind == "pong" and conn.user_id is not None  # §8.5: from the first `auth_ok`
+        exempt = exempt and conn.pongs.allow(conn.clock())  # and within its own `pong` budget
         if not exempt and not conn.rate.allow(conn.clock()):
             conn.rate_strikes += 1
             if conn.rate_strikes > 1:

@@ -252,7 +252,7 @@ class _Compared(str):
 async def test_unknown_answered_or_retired_pong_ids_are_ignored(encoding: str) -> None:
     """§9.1 (#2552): only the outstanding probe's `pong` is a sample. Any other id, made up, a
     heartbeat's, already answered or retired, changes nothing and keeps nothing; a client sends
-    them at will, past the inbound rate limit (§8.5), and each costs the probe one comparison."""
+    them at will, within its `pong` budget (§8.5), and each costs the probe one comparison."""
     rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
     sock.answer = False
     async with _connected(rig, sock) as conn:
@@ -262,11 +262,11 @@ async def test_unknown_answered_or_retired_pong_ids_are_ignored(encoding: str) -
         first = sock.pings[0]["id"]
         state = dict(vars(probe))
         made_up = ["c-1", "s-hb-1", "s-rtt-2", f"{first}0", first.upper(), ""]
-        bogus = [{"t": "pong", "id": i} for i in made_up * 6] + [
+        bogus = [{"t": "pong", "id": i} for i in made_up] + [
             {"t": "pong"},
             {"t": "pong", "id": 7},
         ]
-        assert await _at(rig, sock, 1.1, *bogus) == []  # 38 in one second: no reply, no strike
+        assert await _at(rig, sock, 1.1, *bogus) == []  # the budget's 8: no reply, no strike
         assert vars(probe) == state and probe.sample_ms is None
         assert await _at(rig, sock, 1.2, {"t": "pong", "id": first}) == []
         assert probe.sample_ms == pytest.approx(200)

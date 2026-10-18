@@ -260,7 +260,7 @@ If an emission cannot be built even structured (a value no valid bar has: not fi
 
 | Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                                                                                                                                                                                                                                                                                                                 |
+| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`; `pong`: §8.5.                                                                                                                                                                                                                                                                                                                                   |
 | Max inbound frame before `auth_ok` | 8 KiB   | Until the first `auth_ok`, `hello` included: the frame's encoded bytes are checked before any scan or decode; exceeding closes with `bye frame_too_big` and `1009`. With each enum list naming every member once, the largest conforming frame then is an `auth` with a 4 096-character ASCII `access_token` (about 4.2 KiB), so 8 KiB is headroom, not a format limit.       |
 | Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper or malformed frames, and any binary frame, are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels counting the envelope, so 32 is headroom, not a format limit. |
 | Max inbound JSON containers        | 1 024   | As-built (SR-184): `[` plus `{` characters, counted before the depth scan and the decode (strings are not skipped, so it can only over-count); more is a `frame_malformed` protocol violation (3 strikes -> `4400`), never scanned or decoded. The widest client frame (a 50-topic `sub`, every option list full) has about 400, so 1 024 is headroom, not a format limit.    |
@@ -1278,7 +1278,8 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 - **Backgrounded windows.** When the Electron window or browser tab is hidden, the client MUST `ctl` all visual topics to ≥1 000 ms. It MUST NOT unsubscribe (that would force a full re-snapshot on return).
 - **Off-screen panes.** A pane scrolled out of view goes to 1 000 ms; a collapsed pane unsubscribes from its visual topics entirely.
 - **Render decoupling.** The renderer runs off `requestAnimationFrame`, never off frame arrival. Feed cadence (10–200 ms upstream) and render cadence (60 fps) are independent — this is explicitly called out because coupling them is the classic cause of jank under burst (digest 06 §19).
-- **Inbound rate limit.** Clients may send at most 30 frames/second and 300 frames/minute (excluding `pong` once `auth_ok` is sent; before that a `pong` counts like any other frame). Exceeding yields `err` `client_rate_limited`, then close `4429`.
+- **Inbound rate limit.** Clients may send at most 30 frames/second and 300 frames/minute. Exceeding yields `err` `client_rate_limited`, then close `4429`. Before `auth_ok` a `pong` counts like any other frame. From `auth_ok` on, each `pong` first takes from its own per-connection budget, 4 a second and at most 8 at once, which the rate does not count: about twice the `ping`s the server sends (the RTT probe's one per classification, every 500 ms at the `CV_WS_CLASSIFY_INTERVAL_MS` floor, §8.6, and the idle heartbeat's, §9.1), so a client that answers every server `ping` never exhausts it. A `pong` past the budget counts like any other frame.
+- **`pong` size.** A client `pong` carries `t`, the echoed `id` of the server `ping` it answers (§9.1) and, optionally, the heartbeat `p` (§13.6), so any `pong` that answers a server `ping` is well under 256 bytes. From `auth_ok` on, a `pong` larger than 256 bytes closes the connection with `bye` `protocol_violation` and `1002` (§4.4). For this bound, the server may count a frame whose first member is `t: "pong"` as a `pong` even if the rest of it would not parse.
 - **Rebuild budget (§7.5).** The client coalesces identity `ctl` changes (the 400 ms debounce of §6.1.1) and treats a refused `ctl` or `sub` entry as not applied, keeping the last `effective` options (C4). It backs off a few seconds before it retries and never retries in a loop. With no draws for 60 s, both limits are empty.
 
 ### 8.6 As built (E17-T03, #412)
@@ -1305,7 +1306,7 @@ Everything here holds only with `CV_WS_BACKPRESSURE_ENABLED` on (§4.3). It stay
 ### 9.1 Heartbeats
 
 - The **client** sends `ping` every `welcome.heartbeat.interval_ms` (15 s default). The server replies `pong` echoing `id` and including its own clock.
-- The **server** also sends unsolicited `ping` when it has sent nothing for 20 s; the client MUST reply `pong` within 10 s.
+- The **server** also sends unsolicited `ping` when it has sent nothing for 20 s; the client MUST reply `pong` within 10 s (size and budget after `auth_ok`: §8.5).
 - With the backpressure flag on (§8.4 Rollout), the **server** also sends `ping` every `CV_WS_CLASSIFY_INTERVAL_MS` (1 s) as the RTT probe for adaptive throttling (§8.3); the client replies `pong` echoing `id`, as for any server ping. Flag off, there is no probe.
 - Either side seeing no traffic at all for `heartbeat.timeout_ms` (45 s) closes the connection.
 
@@ -4162,7 +4163,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | C3  | Never treat `confirm: false` bars as closed.                                                |
 | C4  | Honour `effective` options rather than assuming its requested values.                       |
 | C5  | Discard state on `snap` and on `ctl_ok` with `resnapshot: true`.                            |
-| C6  | Reply `pong` within 10 s of a server `ping`.                                                |
+| C6  | Reply `pong` within 10 s of a server `ping` (size and budget after `auth_ok`: §8.5).        |
 | C7  | Use full-jitter backoff and not auto-reconnect on `1002`/`4400`/`4403`.                     |
 | C8  | Throttle to ≥1 000 ms when the window is hidden; unsubscribe collapsed panes.               |
 | C9  | Decouple rendering from frame arrival (`requestAnimationFrame`).                            |
@@ -4193,12 +4194,13 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | Connect rate / user / minute   | 20 (first successful `auth`s, sliding 60 s)        |
 | Sockets awaiting `auth_ok`     | 64 per process; the next gets `1013` (§4.3)        |
 | Max inbound frame              | 256 KiB; 8 KiB until `auth_ok`                     |
+| Max `pong` after `auth_ok`     | 256 bytes; a larger one closes `1002` (§8.5)       |
 | Max envelope `id`              | 64 characters (any other `id` is dropped, §3.1)    |
 | Max outbound frame             | 4 MiB (snapshots chunked, bars `d` split)          |
 | Max `bars` frame span (kind 4) | 2³²−1 ms after the frame base (§3.6)               |
 | Outbound queue budget          | 8 MiB or 2 000 frames                              |
 | Min throttle                   | 50 ms (0 ms only for `orders`/`executions`)        |
-| Client inbound rate            | 30/s, 300/min (`pong` exempt after `auth_ok`)      |
+| Client inbound rate            | 30/s, 300/min; `pong` budget 4/s, 8 at once (§8.5) |
 | Rebuild budget (§7.5)          | 5 / stream, 400 / connection (sliding 60 s)        |
 | `ws.subscribe.denied` records  | 20 per connection, sliding 60 s (§4.3)             |
 | Heartbeat interval / timeout   | 15 s / 45 s                                        |

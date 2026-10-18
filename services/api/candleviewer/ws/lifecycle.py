@@ -10,8 +10,10 @@ Pure, I/O-free building blocks the gateway drives:
 - `origin_refusal`: §2.5 `Origin` check on the upgrade (SR-042, SR-183), `header_values`
   (case-insensitive header names) and `RefusalLogLimiter` (the refusal log cap).
 - `bye_frame`: the one `bye` builder (§4.4, requirement S11).
-- `InboundRateLimiter`: 30 frames/s and 300 frames/min (§8.5); the gateway exempts `pong` once
-  `auth_ok` is sent.
+- `InboundRateLimiter`: 30 frames/s and 300 frames/min (§8.5); from the first `auth_ok` the
+  gateway charges a `pong` to its `PongBudget` first.
+- `PongBudget`: the `pong`s a connection sends from the first `auth_ok` that the inbound rate does
+  not count, 4 a second and at most 8 at once (§8.5).
 - `ConnectRateLimiter`: new authenticated sockets per user per sliding minute (§4.3, #2558).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
   timeout evaluated against an injected monotonic clock (no sleeps).
@@ -59,6 +61,12 @@ MAX_UNAUTHENTICATED_FRAMES: Final = 3
 MAX_PROTOCOL_VIOLATIONS: Final = 3
 RATE_PER_SECOND: Final = 30
 RATE_PER_MINUTE: Final = 300
+#: §8.5: `pong`s a second that the inbound rate does not count, from the first `auth_ok`: about
+#: twice the server's `ping`s, the RTT probe's one per classification (every 500 ms at the
+#: `CV_WS_CLASSIFY_INTERVAL_MS` floor, flag on) and the heartbeat's one per `SERVER_PING_AFTER_S`.
+PONG_BUDGET_PER_S: Final = 4
+#: §8.5: the most of them at once, so `pong`s that arrive together still fit (two seconds' worth).
+PONG_BUDGET_BURST: Final = 8
 
 LIMITS_BLOCK: Final[dict[str, int]] = {
     "max_subscriptions": MAX_SUBSCRIPTIONS,
@@ -351,6 +359,28 @@ class InboundRateLimiter:
         if last_second >= self._per_second or len(self._stamps) >= self._per_minute:
             return False
         self._stamps.append(now)
+        return True
+
+
+class PongBudget:
+    """§8.5: a token bucket on the connection's clock, `burst` tokens refilled at `per_second`. From
+    the first `auth_ok` each `pong` takes one; one that finds none is counted by the inbound rate
+    limiter like any other frame. Bounded: two numbers, whatever the client sends."""
+
+    def __init__(self, per_second: int = PONG_BUDGET_PER_S, burst: int = PONG_BUDGET_BURST):
+        self._per_second = per_second
+        self._burst = burst
+        self._tokens = float(burst)
+        self._at: float | None = None  # monotonic time of the last `allow`
+
+    def allow(self, now: float) -> bool:
+        """Take one token at monotonic `now`; False, taking none, when none is left."""
+        if self._at is not None:
+            self._tokens = min(self._burst, self._tokens + (now - self._at) * self._per_second)
+        self._at = now
+        if self._tokens < 1:
+            return False
+        self._tokens -= 1
         return True
 
 

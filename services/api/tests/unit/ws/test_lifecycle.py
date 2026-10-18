@@ -6,10 +6,14 @@ import itertools
 
 import pytest
 
+from candleviewer.settings import Settings
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
     FEATURES,
     LIMITS_BLOCK,
+    PONG_BUDGET_BURST,
+    PONG_BUDGET_PER_S,
+    SERVER_PING_AFTER_S,
     TRANSITIONS,
     CloseCode,
     ConnEvent,
@@ -17,6 +21,7 @@ from candleviewer.ws.lifecycle import (
     IllegalTransition,
     InboundRateLimiter,
     Lifecycle,
+    PongBudget,
     Watchdog,
     bye_frame,
     negotiate_subprotocol,
@@ -134,6 +139,33 @@ def test_rate_limiter_300_per_minute() -> None:
         assert rl.allow(i * 0.1)  # 10/s: never trips the per-second limit
     assert rl.allow(30.0) is False
     assert rl.allow(60.0) is True  # t=0 aged out
+
+
+#: The `pong` budget 23 §8.5 states: 4 a second, at most 8 at once.
+_STATED_PONGS_PER_S, _STATED_PONG_BURST = 4, 8
+
+
+def test_pong_budget_takes_its_burst_at_once_then_refuses() -> None:
+    budget = PongBudget()
+    assert [budget.allow(5.0) for _ in range(9)] == [True] * _STATED_PONG_BURST + [False]
+    assert budget.allow(5.0) is False  # a refusal takes nothing and refills nothing
+
+
+def test_pong_budget_refills_at_its_rate_never_past_its_burst() -> None:
+    budget = PongBudget()
+    assert all(budget.allow(0.0) for _ in range(_STATED_PONG_BURST))
+    assert sum(budget.allow(k / 16) for k in range(1, 17)) == _STATED_PONGS_PER_S  # 1 s, at 16/s
+    assert [budget.allow(100.0) for _ in range(9)] == [True] * _STATED_PONG_BURST + [False]
+
+
+def test_pong_budget_is_about_twice_the_most_pings_the_server_sends() -> None:
+    """The RTT probe pings once per classification, every 500 ms at the settings' floor, and the
+    idle heartbeat once per `SERVER_PING_AFTER_S` of silence: about 2 a second (§8.5, §9.1)."""
+    field = Settings.model_fields["ws_classify_interval_ms"]
+    floor_ms = next(m.ge for m in field.metadata if hasattr(m, "ge"))
+    most = 1000 / floor_ms + 1 / SERVER_PING_AFTER_S
+    assert (PONG_BUDGET_PER_S, PONG_BUDGET_BURST) == (_STATED_PONGS_PER_S, _STATED_PONG_BURST)
+    assert 1.9 * most <= PONG_BUDGET_PER_S <= 2.5 * most
 
 
 def test_welcome_payload_full_limits_and_clock_skew() -> None:
