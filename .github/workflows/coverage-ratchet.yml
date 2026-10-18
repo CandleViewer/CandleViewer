@@ -1,27 +1,30 @@
 name: coverage-ratchet
 
 # E03-T04: baseline-raise automation (ticket Scope/Deliverables + Gherkin
-# scenario 3). Runs after `pr` completes on a push to `main` so it can read
+# scenario 3). Runs after a trusted push-to-main coverage run so it can read
 # that run's coverage artifacts; if any package's measured coverage beats
 # its recorded baseline by >=1.0pp, opens (or updates) a bot PR raising
 # just that package's `baseline` in `tools/ci/coverage-baselines.json`.
+#
+# #3508: the job runs only for a successful push run of this repository's
+# `main` (its `if:`, decided before any step), and the scripts read the
+# artifacts as untrusted input (CI-COV-003/004). Disabled: no workflow runs
+# the coverage lanes on a push to `main` yet, so there is no automatic
+# trigger; docs/ci-runbook.md (CI-COV-*) says how to re-enable it.
 #
 # The bot PR only ever raises a baseline (coverage_gate.py's
 # `compute_ratchet_proposals` never proposes a lower number); a baseline
 # *lowering* is a manual, CODEOWNER-gated edit with a `Reason:` line per
 # the file's own header comment and `.github/CODEOWNERS`.
 #
-# Token scope: `contents: write` + `pull-requests: write` only, matching
+# Token scope: `actions: read` + `contents: write` + `pull-requests: write`, matching
 # the ticket's Security notes (least-privilege, scoped to opening a PR
 # against this one file — SR-141 favours OIDC/GitHub App over a PAT; this
 # uses the default `GITHUB_TOKEN`, which is already scoped down to the
 # workflow's declared `permissions:` block below).
 
 on:
-  workflow_run:
-    workflows: ["pr"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch: {} # manual only while disabled; the job's `if:` skips it
 
 permissions:
   contents: read
@@ -29,11 +32,17 @@ permissions:
 jobs:
   ratchet:
     name: coverage-ratchet
-    # Never after a merge group's run: its tree may still leave the queue unmerged (#3433).
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'merge_group' }}
+    # A successful push run of this repository's `main` only (#3508), so never a merge group's
+    # run either: its tree may still leave the queue unmerged (#3433).
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: read # the producer run's artifacts
       contents: write
       pull-requests: write
     steps:
@@ -45,7 +54,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Download coverage artifacts from the triggering pr run
+      - name: Download coverage artifacts from the producer run
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -59,7 +68,6 @@ jobs:
         run: python tools/ci/flatten_coverage_artifacts.py coverage-artifacts
 
       - name: Compute ratchet proposals (does not fail the job on a below-floor package)
-        continue-on-error: true
         run: >
           python tools/ci/coverage_gate.py --baselines tools/ci/coverage-baselines.json
           --report-dir coverage-artifacts --ratchet --ratchet-out ratchet-proposals.json

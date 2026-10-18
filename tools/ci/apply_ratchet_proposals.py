@@ -10,6 +10,10 @@ requirement, but this guard keeps the invariant true even if a stale/hand-
 edited proposals file is fed in). Writes GitHub Actions `changed` and
 `summary` outputs (via `$GITHUB_OUTPUT` when set, else stdout) so the
 calling workflow step can decide whether to open a PR.
+
+The proposals document derives from downloaded artifacts, so `load_proposals`
+reads it as untrusted input (#3508); a refused one prints CI-COV-004, changes
+nothing and exits 1.
 """
 
 from __future__ import annotations
@@ -18,6 +22,36 @@ import json
 import os
 import sys
 from pathlib import Path
+
+MAX_PROPOSALS_BYTES = 64 * 1024
+MAX_PROPOSALS = 64
+
+
+class ProposalsRefusedError(Exception):
+    """The proposals document failed an untrusted-input check (CI-COV-004)."""
+
+
+def load_proposals(path: Path) -> dict[str, float]:
+    """Read `coverage_gate.py --ratchet-out` output: a regular file (not a link)
+    of at most MAX_PROPOSALS_BYTES holding one JSON object that maps at most
+    MAX_PROPOSALS package names to percentages in [0, 100]."""
+    if path.is_symlink() or not path.is_file():
+        raise ProposalsRefusedError(f"{path} is not a regular file")
+    with path.open("rb") as fh:
+        data = fh.read(MAX_PROPOSALS_BYTES + 1)
+    if len(data) > MAX_PROPOSALS_BYTES:
+        raise ProposalsRefusedError(f"{path} is over {MAX_PROPOSALS_BYTES} bytes")
+    try:
+        document = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:  # JSON and UTF-8 errors are ValueErrors
+        raise ProposalsRefusedError(f"{path} is not a JSON document") from exc
+    if not isinstance(document, dict) or len(document) > MAX_PROPOSALS:
+        raise ProposalsRefusedError(
+            f"{path} is not one object of at most {MAX_PROPOSALS} entries"
+        )
+    if not all(type(v) in (int, float) and 0 <= v <= 100 for v in document.values()):
+        raise ProposalsRefusedError(f"{path} does not map packages to percentages")
+    return {package: float(value) for package, value in document.items()}
 
 
 def apply_proposals(proposals: dict[str, float], baselines_path: Path) -> list[str]:
@@ -67,14 +101,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     proposals_path, baselines_path = Path(argv[0]), Path(argv[1])
-    if not proposals_path.is_file():
+    if not proposals_path.is_symlink() and not proposals_path.exists():
         # No proposals file (e.g. the gate step failed before ever
         # producing one) -> nothing to do, not an error.
         _write_github_output("changed", "false")
         _write_github_output("summary", "no ratchet proposals file found")
         return 0
 
-    proposals = json.loads(proposals_path.read_text(encoding="utf-8"))
+    try:
+        proposals = load_proposals(proposals_path)
+    except ProposalsRefusedError as exc:
+        print(f"CI-COV-004: ratchet proposals refused: {exc}", file=sys.stderr)
+        return 1
     changes = apply_proposals(proposals, baselines_path)
 
     _write_github_output("changed", "true" if changes else "false")

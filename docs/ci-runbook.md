@@ -47,7 +47,7 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, npm-audit,
 │                                      license-scan)                    (CI-SEC-001..005)
-├─ _job-coverage.yml (js/py filters) → per-package threshold + ratchet  (CI-COV-001..003)
+├─ _job-coverage.yml (js/py filters) → per-package threshold + ratchet  (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
@@ -63,11 +63,12 @@ merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/work
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
-scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml,
-           e2e-nightly.yml)
+disabled until a trusted producer exists (.github/workflows/coverage-ratchet.yml, #3508)
+└─ coverage-ratchet       → baseline-raise PR from a push-to-main coverage run (CI-COV-*)
+
+scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-nightly.yml, e2e-nightly.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
-├─ coverage-ratchet       → baseline-raise PR from merged coverage runs
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
 ├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
 └─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
@@ -388,14 +389,29 @@ removing nothing.
 - **CI-COV-002** (baseline regression): coverage dropped below the recorded
   baseline minus tolerance even though it is still above the hard floor.
   Add tests to recover the baseline, or — only when the drop is a deliberate,
-  reviewed removal of dead/duplicated tests — let the nightly
-  `coverage-ratchet` job open a baseline-raise PR reviewing the new number.
+  reviewed removal of dead/duplicated tests — lower it by hand in a CODEOWNER-reviewed
+  edit with a `Reason:` line (`tools/ci/coverage-baselines.json`); the ratchet only raises.
 - **CI-COV-003** (missing coverage artifact): a lane that should have
   produced a coverage report for an applicable package left none. Check
   that lane's upload step; a silently-missing report must never pass.
   In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
   5 days) is missing: the lane died before writing it, or a "Re-run failed
   jobs" came after the green lanes' data expired; then use "Re-run all jobs".
+  A report the gate cannot parse counts as missing; the message names the line.
+- **CI-COV-004** (coverage artifact refused): artifacts are untrusted input, so the coverage
+  scripts refuse a path that resolves outside the download directory or is not a regular file,
+  a report over 32 MiB (`affected-packages.txt` and the ratchet proposals: 64 KiB), a download
+  of over 1,000 entries, or proposals that are not one JSON object of package names to
+  percentages. A lane's own upload (regular files, about 2.5 MB at most on 2026-10-18) never
+  trips it: find what wrote the refused path. Raise a bound only in a reviewed change.
+- **`coverage-ratchet` is disabled (#3508).** It runs only for a successful push run of this
+  repository's `main`, and no workflow runs the coverage lanes on a push to `main` (`pr.yml`
+  runs on pull requests). That run would cost about 45 runner-minutes per merge for the `py`
+  lane alone (medians 18.9, 14.8, 10.5 and 0.5 minutes, 26 green `pr.yml` runs on
+  2026-10-18), about 8,800 a day at the 196 merges of 2026-10-16. To re-enable it, add a
+  push-to-main workflow that uploads every coverage artifact and name it under the ratchet's
+  `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
+  `scripts/tests/test_coverage_ratchet_yml.py` checks the producer runs on push to `main`.
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
 
