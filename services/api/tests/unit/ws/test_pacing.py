@@ -357,7 +357,7 @@ def test_pacer_a_ctl_re_times_no_open_window() -> None:
     sub = _sub(conn, "book.BTCUSDT.50", throttle_ms=500)
     pacer.offer(sub, _bid("100"))  # leaves at once
     pacer.offer(sub, _bid("101"))  # a window closing at 100.5
-    assert conn.authz.ctl(sub.ch, {"throttle_ms": 50}) == ({"throttle_ms": 50}, False)
+    assert conn.authz.ctl(sub.ch, {"throttle_ms": 50}) == ({"throttle_ms": 50}, False, sub)
     conn.clock.now = 100.1
     pacer.offer(sub, _bid("102"))
     assert (len(conn.take()), len(pacer._dues), pacer.next_due()) == (1, 1, 100.5)
