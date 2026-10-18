@@ -116,13 +116,14 @@ entries:
     ticket: "https://github.com/basiltt/CandleViewer/issues/1737"
   # #3558: the Medium and Low advisories left on main after #3494 (policy 35 §8.4) and the
   # open Dependabot alerts. 30-release-roadmap.md §4.4 R0 wants a dated entry per Medium. No
-  # pnpm advisory has a patched release in its installed major; tauri's patch needs cargo and
-  # a harness re-run. Each is accepted for one release cycle, which for the six Mediums runs
-  # past C-12.3's 30 days: that deviation is exception EX-09 (04-security-program.md §16.2),
-  # for the owner to ratify on #2701. They expire when S09 starts, so the re-decision comes
-  # before the R1 cut, not on it.
-  # The gates block from High only and never read these entries (re-scored higher, a finding
-  # outgrows its entry and blocks), so check_accepted_risk_expiry.py enforces their dates.
+  # pnpm advisory has a fix short of a major upgrade; tauri's (2.11.1) is in its installed major
+  # but needs cargo and a harness re-run. Each is accepted for one release cycle, past C-12.3's
+  # 30 days for the six Mediums and past the next release (R0, cut 2026-10-22) for the esbuild
+  # Low: that deviation is exception EX-09 (04-security-program.md §16.2), for the owner to
+  # ratify on #2701. They expire when S09 starts, so the re-decision comes before the R1 cut,
+  # not on it.
+  # The gates block from High only and never read these entries (re-scored High or above, a
+  # finding outgrows its entry and blocks), so check_accepted_risk_expiry.py enforces their dates.
   - id: "GHSA-wrjc-x8rr-h8h6"
     tool: npm-audit
     severity: MEDIUM
@@ -157,21 +158,21 @@ entries:
     reason: "sprintf-js 1.1.3 under electron-builder (apps/desktop packaging, build-time only); no patched release exists. Reached only through format strings an attacker controls; the build passes none"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
   - id: "GHSA-g7r4-m6w7-qqqr"
     tool: npm-audit
     severity: LOW
     reason: "esbuild 0.27.7 under tsup 8 (package builds); fixed in 0.28.1, which only tsup 9 (a major) takes. The flaw is in esbuild's development server on Windows; the builds never start it"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
   - id: "GHSA-7gmj-67g7-phm9"
     tool: dependabot
     severity: MEDIUM
     reason: "tauri 2.1.1 in the E06-T01 bench harness (packages/chart-engine/bench/matrix/tauri: spike-only, no CI workflow builds it, bundling is off, nothing ships); fixed in 2.11.1, a pin bump that needs cargo and a harness re-run. The advisory concerns which pages may use the app's IPC: the harness grants its one window no capabilities (empty permission list), defines no commands or plugins, keeps withGlobalTauri off and loads only the runner's loopback page"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration
   # 0004_instruments.py is immutable (C-5.4), so its three legacy `nosemgrep` markers
   # cannot gain reason/owner/review fields. The `exchange_code` enum value names the one

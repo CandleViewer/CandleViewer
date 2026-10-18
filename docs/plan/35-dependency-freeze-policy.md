@@ -167,12 +167,14 @@ reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `m
 | braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | Unchanged: EX-06 (`security/accepted-risks.yaml`), expires 2026-12-31                                                                                              |
 | 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | **Accepted** to 2026-11-20 (pre-R1 cut): one dated entry per advisory in `security/accepted-risks.yaml` (#3558), as R0's gate (`30-release-roadmap.md` §4.4) wants |
 
-#3558: none of the seven pnpm advisories has a patched release in its installed major.
+#3558: none of the seven pnpm advisories has a fix short of a major upgrade.
 react-router (which ships) and vitest need #1819's majors, uuid needs Storybook 9 or later,
 esbuild needs tsup 9, and sprintf-js has no fix. Dependabot also lists vitest on seven manifests,
 which the vitest entry's decision covers, and tauri 2.1.1 in the E06-T01 bench harness (patched
 in 2.11.1, a pin bump that needs cargo and a harness re-run), accepted to the same date as
 `tool: dependabot`. C-12.3 gives a Medium 30 days, which end 2026-10-27 to 2026-11-07 for the six
-Medium GHSAs here, tauri's included: running them one release cycle is exception EX-09
-(`04-security-program.md` §16.2), for the owner to ratify on #2701. They expire when S09 starts,
-so the re-decision comes before the R1 cut and the cut-day PRs stay green.
+Medium GHSAs here, tauri's included, and a Low until the next release, which for the esbuild Low
+(on `main` since 2026-09-27) is R0, cut 2026-10-22: running them one release cycle is exception
+EX-09 (`04-security-program.md` §16.2), for the owner to ratify on #2701. They expire when S09
+starts, so the re-decision comes before the R1 cut and the cut-day PRs stay green. #1819 tracks
+the react-router, vitest and uuid fixes; #3639 tracks tauri, esbuild and sprintf-js.
