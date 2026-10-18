@@ -92,10 +92,13 @@ def revoked_frame(
     reason: RevokedReason,
     *,
     now_ms: int,
+    sub_id: str,
+    rs: str | None = None,
     removed_accounts: list[str] | None = None,
     resubscribe_allowed: bool = False,
 ) -> dict[str, Any]:
-    """§9.5 `revoked` frame; `reason` is from the closed set, the message is fixed copy."""
+    """§9.5 `revoked` frame; `reason` is from the closed set, the message is fixed copy. It names
+    the subscription: `p.sub_id`, and on a replay one the envelope `rs` (#3218)."""
     p: dict[str, Any] = {
         "reason": reason,
         "message": _REVOKED_MESSAGES[reason],
@@ -103,7 +106,11 @@ def revoked_frame(
     }
     if removed_accounts:
         p["removed_accounts"] = removed_accounts
-    return {"t": "revoked", "ch": ch, "ts": now_ms, "p": p}
+    p["sub_id"] = sub_id
+    frame: dict[str, Any] = {"t": "revoked", "ch": ch, "ts": now_ms, "p": p}
+    if rs is not None:
+        frame["rs"] = rs
+    return frame
 
 
 def user_disabled_bye(now_ms: int) -> dict[str, Any]:

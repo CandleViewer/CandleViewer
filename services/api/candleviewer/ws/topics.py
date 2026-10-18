@@ -26,6 +26,10 @@ from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
 SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")
 #: §6.4 `uuid` ids: the lowercase canonical form only, so each machine has one topic name.
 _UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+#: §7.5 (#3218): a replay session id, the §13 `$defs/uuid` form in either letter case. No other
+#: spelling (`urn:uuid:`, braces, no or extra hyphens, non-ASCII digits) is one, though
+#: `uuid.UUID` reads them; ASCII ranges only, matched whole (`fullmatch`).
+_SESSION_RE: Final = re.compile(r"[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 _DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 #: Accepted characters of a bars/footprint `param`; dots are illegal (§6.1, use a colon).
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
@@ -60,6 +64,12 @@ def is_topic_name(ch: Any) -> bool:
         and 0 < len(ch) <= TOPIC_MAX_LEN
         and TOPIC_NAME_RE.fullmatch(ch) is not None
     )
+
+
+def parse_replay_session_id(raw: object) -> str | None:
+    """`raw` as a replay session id in canonical lower case, the form of every `rs` the server
+    sends, or None when it is not one (§7.5): a `sub`'s `replay_session_id`, a request's `rs`."""
+    return raw.lower() if isinstance(raw, str) and _SESSION_RE.fullmatch(raw) else None
 
 
 class TopicError(Exception):

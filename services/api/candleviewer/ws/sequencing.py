@@ -54,7 +54,12 @@ from candleviewer.ws.binary import (
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
 from candleviewer.ws.rebuild_budget import topic_key
-from candleviewer.ws.topics import is_topic_name, machine_refusal
+from candleviewer.ws.topics import (
+    TopicError,
+    is_topic_name,
+    machine_refusal,
+    parse_replay_session_id,
+)
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
@@ -680,16 +685,28 @@ class TopicEmitter:
         if not isinstance(ch, str) or not isinstance(body, dict):
             self.push(build_ws_error("frame_malformed", id=rid))
             return None
+        rs = parse_replay_session_id(frame.get("rs"))  # §7.5: on each `err` below, when a uuid
         reason = body.get("reason")
         last_seq = body.get("last_seq")
-        if reason not in CLIENT_RESYNC_REASONS or not (
-            last_seq is None or (isinstance(last_seq, int) and not isinstance(last_seq, bool))
+        if (
+            not isinstance(reason, str)
+            or reason not in CLIENT_RESYNC_REASONS
+            or not (
+                last_seq is None or (isinstance(last_seq, int) and not isinstance(last_seq, bool))
+            )
         ):
-            self.push(build_ws_error("frame_malformed", id=rid, ch=ch))
+            self.push(build_ws_error("frame_malformed", id=rid, ch=ch, rs=rs))
             return None
-        sub = authz.find(ch) or next(iter(authz.subscriptions_named(ch)), None)
-        if sub is None:
-            self.push(build_ws_error("not_subscribed", id=rid, ch=ch))
+        try:  # §7.5 (#3218): the subscription of `ch` in the `rs` session, else the live one
+            sub = authz.named(ch, frame.get("rs"), body.get("sub_id"))
+        except TopicError as exc:  # a malformed `rs`, then `sub_id`: never echoed
+            err = build_ws_error(
+                exc.code, id=rid, ch=ch, rs=rs, message=exc.message, field=exc.field
+            )
+            self.push(err)
+            return None
+        if sub is None:  # none of `ch` in that session, or the `sub_id` pin is not its own
+            self.push(build_ws_error("not_subscribed", id=rid, ch=ch, rs=rs))
             return None
         if reason == "sequence_gap":
             cv_ws_sequence_gaps_detected_total.inc()
@@ -713,9 +730,10 @@ class TopicEmitter:
             spent = budget.count_refusal("resync", scope)
             if budget.drawn(key, "resync") < budget.limits["topic"]:  # spent by `ctl`/`sub` too
                 message = f"{spent}; no snapshot was taken."
-                self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch, message=message))
+                err = build_ws_error("resync_rate_limited", id=rid, ch=ch, rs=rs, message=message)
+                self.push(err)
                 return None  # the subscription continues (§7.5)
-            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch))
+            self.push(build_ws_error("resync_rate_limited", id=rid, ch=ch, rs=rs))
             revoked = authz.revoke(sub, "resync_rate_limited", self.wall_ms())
             self.push(revoked)
             return revoked

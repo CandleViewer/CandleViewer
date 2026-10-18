@@ -171,8 +171,8 @@ async def test_pong_and_ctl_ok_overtake_queued_market_data(monkeypatch: pytest.M
 async def test_unsub_drops_the_topics_queued_frames_before_unsub_ok(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§8.4 Lanes: one `unsub` ends the live and the replay subscription of a topic; `unsub_ok`
-    overtakes their queued deltas, which go with them: nothing of either follows it."""
+    """§8.4 Lanes, W10 (#3218): an `unsub` without `rs` ends the live subscription of a topic
+    alone; `unsub_ok` overtakes its queued deltas, which go with it, and the replay one's follow."""
     rig, sock = _Rig(BackpressureConfig()), _Wire()
     async with _connected(rig, sock) as conn:
         await rig.sub(sock)
@@ -186,8 +186,13 @@ async def test_unsub_drops_the_topics_queued_frames_before_unsub_ok(
         answered = _on_push(conn, "unsub_ok", monkeypatch)
         sock.feed({"t": "unsub", "id": "u", "p": {"topics": [_BOOK]}})
         await answered.wait()
-        frames = await _released(sock, conn, 2)
-    assert [(f["t"], f.get("ch")) for f in frames] == [("d", "system"), ("unsub_ok", None)]
+        frames = await _released(sock, conn, 5)
+    replay = [("d", _BOOK, _RS)] * 3
+    assert [(f["t"], f.get("ch"), f.get("rs")) for f in frames] == [
+        ("d", "system", None),
+        ("unsub_ok", None, None),
+        *replay,
+    ]
 
 
 async def _heatmap_ctl(monkeypatch: pytest.MonkeyPatch, *, replay: bool) -> list[dict[str, Any]]:
@@ -497,22 +502,23 @@ async def test_on_drop_fires_once_per_operation_with_every_stale_subscription() 
     admit({"ch": _BOOK, "opts": _STRUCTURED}, replay_session_id=_RS)
     authz.ctl(_BOOK, {"throttle_ms": 500})
     assert calls == []
-    assert authz.unsubscribe(_BOOK) and calls == [[(_BOOK, None, False), (_BOOK, _RS, False)]]
+    assert authz.unsubscribe(_BOOK) and calls == [[(_BOOK, None, False)]]  # W10: the live one
+    assert authz.unsubscribe(_BOOK, _RS) and calls[1:] == [[(_BOOK, _RS, False)]]
     heatmap = admit({"ch": _HEATMAP, "opts": _STRUCTURED})
     authz.ctl(_HEATMAP, {"time_bucket_ms": 1000})
     authz.revoke(heatmap, "resync_rate_limited", 1)
-    assert calls[1:] == [[(_HEATMAP, None, True)]] * 2
+    assert calls[2:] == [[(_HEATMAP, None, True)]] * 2
     authz.services.bars_off = True  # any refusal of a `sub`'s upstream (one exit for all)
     bars = admit({"ch": "bars.BTCUSDT.time.1"})
     assert (await authz.subscribe_upstream(bars) or {"ok": True})["ok"] is False
-    assert calls[3:] == [[("bars.BTCUSDT.time.1", None, False)]]
+    assert calls[4:] == [[("bars.BTCUSDT.time.1", None, False)]]
     admit(_both())
     admit({"ch": "orders", "opts": {"exchange_account_ids": [str(ACC_B)]}})
     admit({"ch": "trades.BTCUSDT", "opts": _STRUCTURED})
     assert authz.apply_snapshot(VersionedSnapshot(principal(ACC_A), 1), 9) is not None
-    assert calls[4:] == [[("orders", None, False), ("positions", None, False)]]
+    assert calls[5:] == [[("orders", None, False), ("positions", None, False)]]
     authz.release_all()
-    assert calls[5:] == [[("positions", None, True), ("trades.BTCUSDT", None, False)]]
+    assert calls[6:] == [[("positions", None, True), ("trades.BTCUSDT", None, False)]]
 
 
 @pytest.mark.parametrize("pending", [None, "client_resync"])

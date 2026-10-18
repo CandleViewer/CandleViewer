@@ -54,6 +54,7 @@ from candleviewer.ws.limits import (
     MAX_SUBSCRIPTIONS,
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
+    SUB_ID_MAX_LEN,
 )
 from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
 from candleviewer.ws.rebuild_budget import RebuildBudget, topic_key
@@ -84,6 +85,7 @@ from candleviewer.ws.topics import (
     effective_options,
     is_topic_name,
     machine_refusal,
+    parse_replay_session_id,
     parse_topic,
     validate_options,
 )
@@ -305,14 +307,20 @@ def _bad_replay() -> str:
 
 
 def _replay_id(raw: Any) -> str | None:
+    """A `sub`'s `replay_session_id` (§5.2), read as §7.5 reads a uuid (#3218)."""
     if raw is None:
         return None
-    if not isinstance(raw, str):
-        return _bad_replay()
-    try:
-        return str(uuid.UUID(raw))
-    except ValueError:
-        return _bad_replay()
+    return parse_replay_session_id(raw) or _bad_replay()
+
+
+def _named_session(rs: object) -> str | None:
+    """A request's envelope `rs` (§7.5, W10): None when absent, else its canonical session id. One
+    that is not a uuid raises `invalid_options` naming the field, never the value."""
+    if rs is None:
+        return None
+    if (session := parse_replay_session_id(rs)) is None:
+        raise TopicError("invalid_options", "rs must be a uuid.", "rs")
+    return session
 
 
 def _upstream_keys(sub: Subscription) -> tuple[UpstreamKey, ...]:
@@ -390,6 +398,22 @@ class ConnectionAuthz:
             if sub.replay_session_id == replay_session_id:
                 return sub
         return None
+
+    def named(self, ch: str | None, rs: object, sub_id: object = None) -> Subscription | None:
+        """§7.5 (#3218): the subscription a `resync` or `ctl` of `ch` names, among this connection's
+        own only: the one of `ch` in the replay session `rs` names, else (no `rs`) the live one,
+        never a replay one. A `resync`'s `sub_id` is a pin: when sent, it must be that one's, or
+        none is named. In this order, an `rs` that is not a uuid and a `sub_id` that is not a
+        string of 1 to `SUB_ID_MAX_LEN` characters raise `invalid_options` naming the field, never
+        the value. `None` counts as absent for `rs` and `sub_id`; with no `ch`, none is named."""
+        session = _named_session(rs)
+        if sub_id is not None and not (
+            isinstance(sub_id, str) and 0 < len(sub_id) <= SUB_ID_MAX_LEN
+        ):
+            message = f"sub_id must be a string of 1 to {SUB_ID_MAX_LEN} characters."
+            raise TopicError("invalid_options", message, "sub_id")
+        sub = None if ch is None else self.find(ch, session)
+        return sub if sub is not None and sub_id in (None, sub.sub_id) else None
 
     def at_capacity(self, needed: int = 1) -> bool:
         """True when `needed` more subscriptions would exceed `MAX_SUBSCRIPTIONS` (C-2.18)."""
@@ -513,9 +537,6 @@ class ConnectionAuthz:
         from_ts = sub.opts.get("from_ts_ms")
         return source.continuity(sub, from_ts if isinstance(from_ts, int) else None)
 
-    def subscriptions_named(self, ch: str) -> list[Subscription]:
-        return [self.by_id[sid] for sid in sorted(self._by_topic.get(ch, ()))]
-
     def revoke(self, sub: Subscription, reason: RevokedReason, now_ms: int) -> dict[str, Any]:
         """Drop one subscription and return its `revoked` frame (e.g. §7.5 resync loop)."""
         self._drop(sub)
@@ -636,19 +657,15 @@ class ConnectionAuthz:
 
     # -- unsub / ctl ------------------------------------------------------------------------
 
-    def unsubscribe(self, topic: str) -> bool:
-        """Drop every subscription named `topic` (live and replay); False when none existed.
-        `system` is permanent and never removed (§6.2)."""
-        if topic == SYSTEM_TOPIC:
-            return False
-        ids = self._by_topic.get(topic)
-        if not ids:
-            return False
-        subs = [self.by_id[sid] for sid in sorted(ids)]
-        for sub in subs:
+    def unsubscribe(self, topic: str, rs: str | None = None) -> Subscription | None:
+        """§5.3 (W10, #3218): end the subscription an `unsub` entry of `topic` names and return it,
+        else None: the one in the replay session `rs` (canonical), else (no `rs`) the live one,
+        never a replay one. `system` is never held as a subscription (§6.2), so it never ends."""
+        sub = self.find(topic, rs)
+        if sub is not None:
             self._drop(sub)
-        self._dropped(subs)
-        return True
+            self._dropped([sub])
+        return sub
 
     def _dropped(self, subs: list[Subscription]) -> None:
         if self.on_drop is not None:
@@ -695,17 +712,20 @@ class ConnectionAuthz:
                     )
         self._dropped(subs)
 
-    def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
-        """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
-        `TopicError` (`not_subscribed`, `invalid_options`; a non-null `ch` that is no topic name
-        is the latter, #2572), or `resync_rate_limited` for a re-snapshot past the rebuild
-        budget, which changes nothing (SR-193)."""
+    def ctl(
+        self, ch: Any, body: Any, rs: object = None
+    ) -> tuple[dict[str, Any], bool, Subscription]:
+        """§5.4: retune the subscription a `ctl` names (W10, #3218): the one of `ch` in the replay
+        session of the envelope `rs`, else (no `rs`) the live one, never a replay one. Returns
+        (`effective`, resnapshot, the subscription retuned) or raises `TopicError`, in this order:
+        `invalid_options` for a non-null `ch` that is no topic name (#2572) or a malformed `rs`,
+        `not_subscribed`, `invalid_options` for the options; or `resync_rate_limited` for a
+        re-snapshot past the rebuild budget, which changes nothing (SR-193)."""
         if ch is not None and not is_topic_name(ch):
             raise TopicError("invalid_options", "ch must be a topic name.", "ch")
-        ids = self._by_topic.get(ch) if isinstance(ch, str) else None
-        if not ids:
+        sub = self.named(ch, rs)
+        if sub is None:
             raise TopicError("not_subscribed", "No subscription for this topic.")
-        sub = self.find(ch) or self.by_id[min(ids)]
         if not isinstance(body, dict) or not body:
             raise TopicError("invalid_options", "ctl needs at least one option.", "p")
         allowed = {**UNIVERSAL, **sub.topic.family.options}
@@ -751,7 +771,7 @@ class ConnectionAuthz:
         echoed = {
             k: v for k, v in effective.items() if k in changes or k in ("throttle_ms", "paused")
         }
-        return echoed, resnapshot
+        return echoed, resnapshot, sub
 
     # -- live revocation (§9.5, S7) -----------------------------------------------------------
 
@@ -833,6 +853,8 @@ class ConnectionAuthz:
             sub.ch,
             reason,
             now_ms=now_ms,
+            sub_id=sub.sub_id,
+            rs=sub.replay_session_id,
             removed_accounts=sorted(str(a) for a in removed),
             resubscribe_allowed=resubscribe,
         )
@@ -1212,6 +1234,7 @@ async def handle_sub(
     spent: list[tuple[str, BudgetScope]] = []  # SR-193: each budget refusal's `ch` and limit
     snapshot = body.get("snapshot", True)
     replay = body.get("replay_session_id")
+    rs = parse_replay_session_id(replay)  # §5.2 (#3218): on each result but `system`'s, refused too
     try:
         for entry in body["topics"]:  # at most `MAX_TOPICS_PER_SUB`, by the shape
             ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by shape
@@ -1224,6 +1247,8 @@ async def handle_sub(
                 if result["ok"]:
                     admitted.append(sub)
                     authz.rebuilds.draw(topic_key(sub.topic, sub.replay_session_id), "sub")
+            if rs is not None and ch != SYSTEM_TOPIC:
+                result["rs"] = rs
             results.append(result)
             _observe(ch, result)
             if not result["ok"]:
@@ -1250,18 +1275,23 @@ def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> 
     """§5.3 `unsub` -> `unsub_ok`: idempotent. Unknown/already-removed -> `ok: true, noop: true`;
     `system` is permanent -> `ok: false` and stays attached. A frame whose shape breaks §13.5 is
     refused whole instead: one `err`, nothing unsubscribed and no strike (#2572), a `topics` array
-    over `MAX_TOPICS_PER_SUB` included (#2875)."""
+    over `MAX_TOPICS_PER_SUB` included (#2875), and so is one whose envelope `rs` is not a uuid
+    (W10, #3218: an `rs` names each `ch`'s stream in that session; no `rs`, the live one)."""
     fid = _frame_id(frame)
     body: Any = frame.get("p")  # a dict once `unsub_shape_error` passes it
     shape = unsub_shape_error(body)
     if shape is not None:
         return build_ws_error(shape.code, id=fid, message=shape.message, field=shape.field)
+    try:
+        rs = _named_session(frame.get("rs"))  # W10: one `rs` names the stream of every entry
+    except TopicError as exc:
+        return build_ws_error(exc.code, id=fid, message=exc.message, field=exc.field)
     results: list[dict[str, Any]] = []
     for ch in body["topics"]:  # topic names, by the shape
         if ch == SYSTEM_TOPIC:
             results.append({"ch": ch, "ok": False})
-        elif authz.unsubscribe(ch):
-            results.append({"ch": ch, "ok": True})
+        elif (ended := authz.unsubscribe(ch, rs)) is not None:  # §5.3 (#3218): the one it ended
+            results.append({"ch": ch, "ok": True, "ended": [_name(ended)]})
         else:
             results.append({"ch": ch, "ok": True, "noop": True})
     cv_ws_client_topics_depth.observe(len(authz.by_id))
@@ -1277,22 +1307,34 @@ def handle_ctl(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> di
     fid = _frame_id(frame)
     ch = frame.get("ch")
     try:
-        effective, resnapshot = authz.ctl(ch, frame.get("p"))
+        effective, resnapshot, sub = authz.ctl(ch, frame.get("p"), frame.get("rs"))
     except TopicError as exc:
         return build_ws_error(
             exc.code,
             id=fid,
             ch=ch if is_topic_name(ch) else None,
+            rs=parse_replay_session_id(frame.get("rs")),  # §7.5: beside a `ch`, when it is a uuid
             message=exc.message,
             field=exc.field,
         )
     p: dict[str, Any] = {"effective": effective}
     if resnapshot:
         p["resnapshot"] = True
+    p["sub_id"] = sub.sub_id  # §5.4 (#3218): the one retuned; a replay one's `rs` is below
     out: dict[str, Any] = {"t": "ctl_ok", "ch": ch, "ts": now_ms, "p": p}
+    if sub.replay_session_id is not None:
+        out["rs"] = sub.replay_session_id
     if fid is not None:
         out["id"] = fid
     return out
+
+
+def _name(sub: Subscription) -> dict[str, str]:
+    """An `unsub_ok` `ended` entry (§5.3): the `sub_id`, and a replay subscription's `rs`."""
+    name = {"sub_id": sub.sub_id}
+    if sub.replay_session_id is not None:
+        name["rs"] = sub.replay_session_id
+    return name
 
 
 def _observe(ch: str, result: Mapping[str, Any]) -> None:
@@ -1428,7 +1470,11 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                     "object_kind": "ws_topic",
                     "object_id": ch if machines else ch[:40],
                     "reason": _MACHINE_REVOKED.get(reason, reason) if machines else reason,
-                    "after_state": {"removed_accounts": f["p"].get("removed_accounts", [])},
+                    "after_state": {  # §7.5 (#3218): it names the subscription, as `f` does
+                        "removed_accounts": f["p"].get("removed_accounts", []),
+                        "sub_id": f["p"]["sub_id"],
+                        **({"rs": f["rs"]} if "rs" in f else {}),
+                    },
                 },
             )
         )

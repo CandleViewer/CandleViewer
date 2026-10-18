@@ -154,7 +154,7 @@ def test_socket_unsub_idempotent_and_system_refused(world: _World) -> None:
     with world.client, world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         _sub(ws, "book.BTCUSDT.50")
-        for expected in ({"ch": "book.BTCUSDT.50", "ok": True},
+        for expected in ({"ch": "book.BTCUSDT.50", "ok": True, "ended": [{"sub_id": "s_01"}]},
                          {"ch": "book.BTCUSDT.50", "ok": True, "noop": True}):  # fmt: skip
             ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["book.BTCUSDT.50"]}})
             frame = _recv(ws)

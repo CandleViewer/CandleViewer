@@ -219,7 +219,7 @@ def test_contract_every_bye_and_revoked_reason_is_in_its_closed_schema_set() -> 
         f = bye_frame(reason, now_ms=1)
         check_schema("cv://ws/v1/bye.schema.json", f["p"], f"bye {reason}")
     for reason in sorted(_REVOKED_MESSAGES):
-        f = revoked_frame("positions", reason, now_ms=1)  # type: ignore[arg-type]  # str->Literal from the registry itself
+        f = revoked_frame("positions", reason, now_ms=1, sub_id="s_01")  # type: ignore[arg-type]  # str->Literal from the registry itself
         check_schema("cv://ws/v1/revoked.schema.json", f["p"], f"revoked {reason}")
 
 
@@ -513,7 +513,9 @@ def test_integration_replay_end_revoked_frame_shape_is_schema_valid() -> None:
         c.drain(1)
         frame = w.call(_end_replay, w, RS)
         check_schema("cv://ws/v1/revoked.schema.json", frame["p"], "replay_session_ended")
-        assert frame["p"]["reason"] == "replay_session_ended"
+        assert (frame["p"]["reason"], frame["rs"], frame["p"]["sub_id"]) == (
+            ("replay_session_ended", RS, "s_01")  # it names the replay stream (§9.5, #3218)
+        )
 
 
 async def _end_replay(w: World, rs: str) -> dict[str, Any]:

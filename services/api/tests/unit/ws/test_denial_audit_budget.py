@@ -243,9 +243,10 @@ async def test_the_budget_is_the_connections_and_survives_unsub_and_sub_churn() 
     for i in range(N):
         public = CHURN[i % len(CHURN)]
         await _sub(conn, KEPT)
-        assert (await _sub(conn, public))["p"]["results"][0]["ok"] is True
+        (held,) = (await _sub(conn, public))["p"]["results"]
         unsub = {"t": "unsub", "id": "u", "p": {"topics": [public]}}
-        assert handle_unsub(conn, unsub, 1)["p"]["results"] == [{"ch": public, "ok": True}]
+        ended = {"ch": public, "ok": True, "ended": [{"sub_id": held["sub_id"]}]}  # §5.3, #3218
+        assert (held["ok"], handle_unsub(conn, unsub, 1)["p"]["results"]) == (True, [ended])
     await _sub(conn, KEPT)
     assert len(sink.records) == N
     await _sub(_conn(sink), KEPT)

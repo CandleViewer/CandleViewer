@@ -431,6 +431,7 @@ def test_recheck_reads_the_scope_stored_at_sub_and_revokes_a_lost_account() -> N
         "message": "Access to one or more accounts was withdrawn.",
         "removed_accounts": [str(A)],
         "resubscribe_allowed": False,
+        "sub_id": "s_01",  # §9.5 (#3218)
     }
     assert conn.authz.find(order.ch) is None
 
@@ -597,13 +598,14 @@ def test_ctl_retunes_a_machines_subscription() -> None:
     conn, order = _subscribed()
     conn.push(handle_ctl(conn.authz, {"t": "ctl", "ch": order.ch, "p": {"throttle_ms": 250}}, 1))
     (ok,) = conn.take()
-    assert (ok["t"], ok["ch"], ok["p"]) == ("ctl_ok", order.ch, {"effective": {"throttle_ms": 250}})
+    p = {"effective": {"throttle_ms": 250}, "sub_id": "s_01"}  # §5.4 (#3218): the one retuned
+    assert (ok["t"], ok["ch"], ok["p"]) == ("ctl_ok", order.ch, p)
 
 
 def test_unsub_drops_a_machines_subscription() -> None:
     conn, order = _subscribed()
     reply = handle_unsub(conn.authz, {"t": "unsub", "p": {"topics": [order.ch]}}, 1)
-    assert reply["p"]["results"] == [{"ch": order.ch, "ok": True}]
+    assert reply["p"]["results"] == [{"ch": order.ch, "ok": True, "ended": [{"sub_id": "s_01"}]}]
     assert conn.authz.find(order.ch) is None
 
 
