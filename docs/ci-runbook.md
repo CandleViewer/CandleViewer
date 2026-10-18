@@ -206,8 +206,8 @@ index, then generates. It restores nothing. A CI-GEN-005 report prints one
 traceback or Ctrl-C included, lists the tracked files it leaves missing, if it leaves any, and
 prints one `git --literal-pathspecs restore -- <paths>` command that brings them all back. git
 matches those paths literally, so a name holding `*`, `?` or `[` names no other file. Last, it
-judges the gated directories `pnpm generate` does not write (CI-GEN-006) from the index alone,
-removing nothing.
+judges the gated directories that generators outside `pnpm generate` write (CI-GEN-006) from the
+index alone, removing nothing.
 
 - **CI-GEN-001** (drift): a generated file does not match what its generator writes from the
   committed sources: one under `GENERATED_PATHS` in `tools/ci/check_gen_freshness.py`, or the
@@ -237,17 +237,18 @@ removing nothing.
   header does not make a hand-written file generated (C-4.16). Delete them with the one
   `git --literal-pathspecs rm -- <paths>` command the report prints, or add the generator that
   writes each one to the `generate` script in `packages/protocol/package.json`.
-- **CI-GEN-006** (committed file no generator writes, in a directory `pnpm generate` does not
-  write): the directories are `FIXED_OUTPUT_DIRS` in `tools/ci/check_gen_freshness.py`, derived
-  from its `FIXED_OUTPUTS` table (every file each generator writes there; tests pin each entry to
-  the generator's own output paths) and its `HAND_KEPT` table (the files kept there by hand on
-  purpose, each with its reason). Their generators are not part of `pnpm generate` (they run in
-  `make gen`), and most need the backend venv, which the `gen` step cannot count on, so the gate
-  does not regenerate them: it compares the index with those two tables. Delete the named files
-  with the one `git --literal-pathspecs rm -- <paths>` command the report prints. If a generator
-  does write one, add it to that generator's `FIXED_OUTPUTS` entry (and to the generator test that
-  pins it). A file kept by hand belongs outside these directories, or in `HAND_KEPT` with its
-  reason.
+- **CI-GEN-006** (committed file no generator writes, in a directory that generators outside
+  `pnpm generate` write): the directories are `FIXED_OUTPUT_DIRS` in
+  `tools/ci/check_gen_freshness.py`, derived from its `FIXED_OUTPUTS` table (every file each
+  generator writes there; tests pin each entry to the generator's own output paths) and its
+  `HAND_KEPT` table (the files kept there by hand on purpose, each with its reason). Their
+  generators are not part of `pnpm generate` (they run in `make gen`), and most need the backend
+  venv, which the `gen` step cannot count on, so the gate does not regenerate them: it compares
+  the index with those two tables. A file there under `GENERATE_OUTPUTS` is judged by the checks
+  above instead. Delete the named files with the one `git --literal-pathspecs rm -- <paths>`
+  command the report prints. If a generator does write one, add it to that generator's
+  `FIXED_OUTPUTS` entry (and to the generator test that pins it). A file kept by hand belongs
+  outside these directories, or in `HAND_KEPT` with its reason.
 
 ### CI-CON-* — contract conformance
 

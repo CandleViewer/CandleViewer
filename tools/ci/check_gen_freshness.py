@@ -49,16 +49,17 @@ This script is the single implementation invoked by the ``gen`` step of the
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
 7. Fails CI-GEN-006, naming each path, for a committed file that no generator
-   writes in the gated directories ``pnpm generate`` does not write (#3392):
-   ``FIXED_OUTPUT_DIRS``, derived from the two tables below. Their generators
-   run in ``make gen``, most need the backend venv, and each writes a fixed set
-   of files there, so the gate does not regenerate them: it compares what git
-   tracks there with ``FIXED_OUTPUTS`` (each generator's files, which tests pin
-   to the generator's own output paths) and ``HAND_KEPT`` (files kept there by
-   hand on purpose, each with its reason). It removes nothing, and the report prints one
-   `git rm` command. A file either table names that git does not track fails
-   closed (CI-GEN-004): a stale entry would let a hand-written file of that
-   name pass later.
+   writes in the gated directories that generators outside ``pnpm generate``
+   write (#3392): ``FIXED_OUTPUT_DIRS``, derived from the two tables below.
+   Those generators run in ``make gen``, most need the backend venv, and each
+   writes a fixed set of files there, so the gate does not regenerate them: it
+   compares what git tracks there with ``FIXED_OUTPUTS`` (each generator's
+   files, which tests pin to the generator's own output paths) and
+   ``HAND_KEPT`` (files kept there by hand on purpose, each with its reason),
+   and leaves a file under ``GENERATE_OUTPUTS`` to step 3. It removes nothing,
+   and the report prints one `git rm` command. A file either table names that
+   git does not track fails closed (CI-GEN-004): a stale entry would let a
+   hand-written file of that name pass later.
 
 Exit codes: 0 clean; 1 on a failed check (each reports a CI-GEN-* code on
 stderr, CI-GEN-004 when the gate could not run a check: the generator, git or a
@@ -120,10 +121,10 @@ GENERATE_OUTPUTS: tuple[Path, ...] = (
     CVWB_LAYOUT_TWIN,
     POLICY_GOLDENS,
 )
-# #3392: step 7 (CI-GEN-006). Every file each generator writes in the gated directories
-# `pnpm generate` does not write, keyed by the generator. Running most of those generators
-# would need the backend venv (datamodel-code-generator, the candleviewer package), which
-# the `gen` step cannot count on (the gates job installs it only for the py lane), and each
+# #3392: step 7 (CI-GEN-006). Every file each generator outside `pnpm generate` writes in
+# the gated directories, keyed by the generator. Running most of those generators would
+# need the backend venv (datamodel-code-generator, the candleviewer package), which the
+# `gen` step cannot count on (the gates job installs it only for the py lane), and each
 # writes a fixed set of files, so the gate compares what git tracks there with this table.
 # scripts/tests/test_check_gen_freshness.py pins each entry to its generator's own output
 # paths (generate_cvwb_vectors.py's read from its source, as importing it needs the

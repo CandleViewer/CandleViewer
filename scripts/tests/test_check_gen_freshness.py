@@ -137,7 +137,7 @@ def _cvwb_targets() -> set[str]:
     return written
 
 
-# #3392: the gated directories `pnpm generate` does not write, and what each generator
+# #3392: the directories step 7 judges (FIXED_OUTPUT_DIRS), and what each generator
 # writes, read from the generator's own output paths (for generate_cvwb_vectors.py, from
 # its source; services/api/tests/unit/ws/test_cvwb_binary.py also pins its evaluated
 # TARGETS). The tracked files in those directories are those files, the CVWB layout twin
@@ -794,7 +794,7 @@ def generated_repo(
     monkeypatch.setattr(gen_gate, "GENERATE_CMD", [sys.executable, str(generator)])
     monkeypatch.chdir(root)
     subprocess.run(gen_gate.GENERATE_CMD, check=True)
-    # #3392: the gated directories `pnpm generate` does not write hold what their
+    # #3392: the directories step 7 judges (FIXED_OUTPUT_DIRS) hold what their
     # generators wrote and the hand-kept corpus; this stand-in generator leaves them alone.
     for rel in _FIXED_TREE:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -1189,7 +1189,7 @@ def test_orphan_check_covers_the_gated_outputs_of_pnpm_generate() -> None:
     assert {f"{_POLICY_DIR}/corpus.json", f"{_POLICY_DIR}/rules.json"} <= covered
 
 
-# #3392: step 7. In the gated directories `pnpm generate` does not write, a committed
+# #3392: step 7. In the directories it judges (FIXED_OUTPUT_DIRS), a committed
 # file that no generator writes fails CI-GEN-006, header or not. The gate removes
 # nothing there: it compares the index with FIXED_OUTPUTS and HAND_KEPT.
 _POSING = '"""GENERATED FILE — DO NOT EDIT BY HAND."""\n'
@@ -1221,15 +1221,32 @@ def _make_recipe(target: str) -> list[str]:
     return [line.strip() for line in found.group(1).splitlines()]
 
 
+# The arguments with which a generator FIXED_OUTPUTS names writes its files in place; every
+# other one writes them when run with none. Each also has a mode that writes nothing
+# (--check, --check-docs), and keymap_lint.py without --docs only lints.
+_WRITE_ARGS: dict[str, list[str]] = {"scripts/keymap_lint.py": ["--docs"]}
+
+
 def test_make_gen_runs_pnpm_generate_then_every_generator_step_7_names() -> None:
     """#3452: `make gen` regenerates every file the gate judges: first `pnpm generate`,
     the run the gate repeats, then each generator FIXED_OUTPUTS names (the gate runs
-    none of those)."""
+    none of those), with the arguments that make it write: run with --check, it would
+    leave a stale file as it is (C-4.16)."""
     recipe = _make_recipe("gen")
     assert recipe[0] == "pnpm generate"
-    args = [arg for line in recipe[1:] for arg in shlex.split(line)]
-    scripts = {arg for arg in args if arg.endswith(".py")}
-    assert sorted(set(gen_gate.FIXED_OUTPUTS) - scripts) == []
+    runs: dict[str, list[list[str]]] = {}
+    for line in recipe[1:]:
+        argv = shlex.split(line)
+        scripts = [at for at, arg in enumerate(argv) if arg.endswith(".py")]
+        if scripts:
+            runs.setdefault(argv[scripts[0]], []).append(argv[scripts[0] + 1 :])
+    assert set(_WRITE_ARGS) <= set(gen_gate.FIXED_OUTPUTS)
+    not_writing = {
+        writer: runs.get(writer, [])
+        for writer in gen_gate.FIXED_OUTPUTS
+        if _WRITE_ARGS.get(writer, []) not in runs.get(writer, [])
+    }
+    assert not_writing == {}
 
 
 def test_the_model_package_inits_hold_what_their_generator_writes() -> None:
@@ -1252,8 +1269,8 @@ def test_the_model_package_inits_hold_what_their_generator_writes() -> None:
 def test_committed_file_no_generator_writes_fails_ci_gen_006(
     generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """In each gated directory `pnpm generate` does not write, and below one; the gate
-    removes nothing, so it has nothing to restore."""
+    """In each directory step 7 judges, and below one; the gate removes nothing, so it
+    has nothing to restore."""
     _commit(generated_repo, rel)
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
