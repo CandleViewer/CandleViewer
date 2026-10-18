@@ -31,6 +31,7 @@ export function engineHarness(
   const events: EngineEvent[] = [];
   onTestFinished(() => assertEngineOrder(events)); // the order the reducer relies on, in every test
   const delivered = new Map<string, TopicFrame[]>();
+  let changes = 0;
   const engine = createWsEngine({
     url: URL,
     createSocket: gateway.createSocket,
@@ -41,6 +42,7 @@ export function engineHarness(
         const key = `${ch}#${rs ?? "live"}`;
         delivered.set(key, [...(delivered.get(key) ?? []), frame]);
       },
+      changed: () => void (changes += 1),
     },
     client: { version: "1.0.0", shell: "browser", locale: "en-GB" },
     random: () => 0.5, // no jitter: a delay is its row of the 9.2 table
@@ -64,5 +66,16 @@ export function engineHarness(
     gateway.latest
       .of("sub")
       .flatMap((frame) => ((frame["p"] as Json)["topics"] as { ch: string }[]).map((t) => t.ch));
-  return { gateway, tokens, events, engine, advance, start, got, peek, subscribed };
+  return {
+    gateway,
+    tokens,
+    events,
+    engine,
+    advance,
+    start,
+    got,
+    peek,
+    subscribed,
+    changes: () => changes,
+  };
 }

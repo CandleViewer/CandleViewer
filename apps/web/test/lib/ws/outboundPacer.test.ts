@@ -289,6 +289,20 @@ describe("ctl coalescing", () => {
     }
   });
 
+  it("merges the ctl of a stream into its own and keeps the replay session, never into another stream of the ch (C20)", async () => {
+    const RS = "bb000000-0000-4000-8000-000000000001";
+    pacer.enqueue(F.ctl("c-1", BOOK, { throttle_ms: 100 }));
+    pacer.enqueue(F.ctl("c-2", BOOK, { throttle_ms: 200 }, RS));
+    pacer.enqueue(F.ctl("c-3", BOOK, { depth: 200 }));
+    pacer.enqueue(F.ctl("c-4", BOOK, { depth: 50 }, RS));
+    await advance(500);
+    expect(sent).toEqual([
+      F.ctl("c-3", BOOK, { throttle_ms: 100, depth: 200 }), // the live stream's: no `rs` to carry
+      F.ctl("c-4", BOOK, { throttle_ms: 200, depth: 50 }, RS),
+    ]);
+    expect(sent[0]).not.toHaveProperty("rs");
+  });
+
   it("never emits an empty ctl: the generated type admits {} but the schema needs a property (#572)", async () => {
     const empty = junk({}); // {} is a type error once CtlPayload needs a property, but a caller can still send it
     expect(validateClientFrame(empty).join()).toMatch(/fewer than 1 properties/);

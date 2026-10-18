@@ -86,6 +86,8 @@ export interface Connection {
   readonly topicsPerRequest: number;
   /** `welcome.limits.min_throttle_ms`: `undefined` until `welcome`. */
   readonly minThrottleMs: number | undefined;
+  /** The server's clock minus ours (`welcome`, 4.2): `undefined` until `welcome` of this socket. */
+  readonly clockSkewMs: number | undefined;
   /** `bye.hint.most_expensive_topics` of the last close (8.4): kept, never acted on. */
   readonly slowConsumerHint: readonly string[];
   readonly counters: { readonly reconnects: number; readonly malformedFrames: number };
@@ -526,6 +528,10 @@ export function createConnection(options: ConnectionOptions): Connection {
     },
     get minThrottleMs() {
       return minThrottleMs;
+    },
+    get clockSkewMs() {
+      // `welcome` is what says it: before that the connection holds a placeholder of 0
+      return current?.phase === "auth" || current?.phase === "ready" ? current.skewMs : undefined;
     },
     get slowConsumerHint() {
       return slowConsumerHint;
