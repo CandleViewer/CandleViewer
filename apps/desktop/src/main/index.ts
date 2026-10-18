@@ -286,6 +286,30 @@ function installPermissionHandler(): void {
   });
 }
 
+/** What the IPC sender check could read of the frame that sent a call. */
+interface SenderFrame {
+  readonly url: string;
+  readonly kind: "main-frame" | "not-main-frame" | "frame-unavailable";
+}
+
+/**
+ * Reads the sender frame's URL and whether it is the main frame of the web contents that sent the
+ * call, by identity: the root of a nested frame tree has no parent either. No frame (navigated away
+ * or gone) is not a main frame; a frame or web contents disposed mid-call throws on read.
+ */
+function readSenderFrame(event: IpcMainInvokeEvent): SenderFrame {
+  try {
+    const frame = event.senderFrame;
+    if (frame === null) {
+      return { url: "", kind: "not-main-frame" };
+    }
+    const isMainFrame = frame === event.sender.mainFrame;
+    return { url: frame.url, kind: isMainFrame ? "main-frame" : "not-main-frame" };
+  } catch {
+    return { url: "", kind: "frame-unavailable" };
+  }
+}
+
 /**
  * Wraps an ipcMain.handle listener so it answers only the shell's own page (SR-111), checked
  * before `reply` runs; `reply` never sees the renderer's arguments. A refused call throws
@@ -296,12 +320,9 @@ function fromShellPage<T>(
   reply: () => T,
 ): (event: IpcMainInvokeEvent) => T {
   return (event) => {
-    const frame = event.senderFrame;
-    const url = frame?.url ?? "";
-    // parent is null only for a top frame; no frame (navigated away or gone) is not one.
-    const isMainFrame = frame?.parent === null;
-    if (!isTrustedIpcSender(url, isMainFrame, devServerUrl)) {
-      const reason = isMainFrame ? "not-shell-origin" : "not-main-frame";
+    const { url, kind } = readSenderFrame(event);
+    if (!isTrustedIpcSender(url, kind === "main-frame", devServerUrl)) {
+      const reason = kind === "main-frame" ? "not-shell-origin" : kind;
       logAuditEvent("ipc-sender-refused", { reason, origin: safeOriginOf(url) });
       throw new IpcSenderRefusedError();
     }

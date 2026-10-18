@@ -366,10 +366,34 @@ function ipcListener(channel: string): IpcListener {
   return listener as IpcListener;
 }
 
-/** An invoke event from the window's main frame on `url`, a sub-frame of it, or no frame. */
-function invokeFrom(url: string, frame: "main" | "sub" | "none"): IpcMainInvokeEvent {
-  const senderFrame = frame === "none" ? null : { url, parent: frame === "main" ? null : {} };
-  return { senderFrame } as unknown as IpcMainInvokeEvent;
+type SenderFrame = "main" | "sub" | "nested-root" | "none";
+
+/**
+ * An invoke event from `url` in the sending web contents' main frame, a sub-frame of it, the root
+ * of a nested frame tree (no parent, yet not that main frame), or no frame.
+ */
+function invokeFrom(url: string, frame: SenderFrame): IpcMainInvokeEvent {
+  const mainFrame = { url, parent: null };
+  const senderFrame = {
+    main: mainFrame,
+    sub: { url, parent: mainFrame },
+    "nested-root": { url, parent: null },
+    none: null,
+  }[frame];
+  return { senderFrame, sender: { mainFrame } } as unknown as IpcMainInvokeEvent;
+}
+
+/** An invoke event from the app origin's main frame where reading `part` throws (disposed). */
+function invokeDisposed(part: "senderFrame" | "url" | "mainFrame"): IpcMainInvokeEvent {
+  const gone = (): never => {
+    throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+  };
+  const frame = { url: "app://candleviewer/", parent: null };
+  const event = { senderFrame: frame, sender: { mainFrame: frame } };
+  Object.defineProperty({ senderFrame: event, url: frame, mainFrame: event.sender }[part], part, {
+    get: gone,
+  });
+  return event as unknown as IpcMainInvokeEvent;
 }
 
 describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", () => {
@@ -404,6 +428,7 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
     ["file:///app/web/dist/index.html", "main", "not-shell-origin", "file:"],
     ["", "main", "not-shell-origin", "invalid-url"],
     ["app://candleviewer/", "sub", "not-main-frame", "app://candleviewer"],
+    ["app://candleviewer/", "nested-root", "not-main-frame", "app://candleviewer"],
     ["", "none", "not-main-frame", "invalid-url"],
   ] as const)("refuses %j from a %s frame (%s), logged once", (url, frame, reason, origin) => {
     vi.mocked(app.getGPUInfo).mockClear();
@@ -418,6 +443,20 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
     }
     expect(app.getGPUInfo).not.toHaveBeenCalled();
   });
+
+  it.each(["senderFrame", "url", "mainFrame"] as const)(
+    "refuses a sender whose %s throws on read (disposed) by name, logged once",
+    (part) => {
+      for (const [, listener] of vi.mocked(ipcMain.handle).mock.calls) {
+        vi.mocked(logAuditEvent).mockClear();
+        const call = () => (listener as IpcListener)(invokeDisposed(part));
+        expect(call).toThrow(IpcSenderRefusedError);
+        expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
+          ["ipc-sender-refused", { reason: "frame-unavailable", origin: "invalid-url" }],
+        ]);
+      }
+    },
+  );
 
   it("the renderer sees the error's name and a fixed message, nothing about the sender", () => {
     const shown = String(new IpcSenderRefusedError());
