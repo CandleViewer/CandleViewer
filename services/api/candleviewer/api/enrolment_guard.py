@@ -11,10 +11,10 @@ operational routes) are left alone whatever bearer they carry, so sign-in stays 
 request without a bearer, or whose bearer has no live session, is left to the route (401, or
 a pre-session operation), and so is one whose user is gone or disabled: the route revokes that
 session (#2911, SR-029). A session lookup or a classification that fails answers
-`503 store_unavailable`: deny by default (C-12.4). An enrolment-only session that would
-outlive `ENROLMENT_ONLY_LIFETIME` was not minted as one (Q7), and one past its expiry is dead
-(a refreshed access handle outlives it): both get 401 like an expired session, except on
-`POST /auth/logout`.
+`503 store_unavailable`: deny by default (C-12.4). A session that was not minted enrolment-only
+(its expiry lies beyond `ENROLMENT_ONLY_LIFETIME`, Q7, or it proved a second factor) gets 401
+like an expired session, except on `POST /auth/logout`. One past its expiry never reaches the
+class: the session lookup refuses it (#3183), so its route answers 401, uncounted here.
 
 The guard is inert only while `AuthService.enrolment_gate_is_active` is false: no session store
 is wired, so nothing authenticates. Wired without the user store, every classification fails and
@@ -186,9 +186,9 @@ class EnrolmentRefusals:
     the HTTP guard and the WS authenticator alike.
 
     `auth_enrolment_refused_total{transport, reason}` counts every refusal once under its reason
-    (`enrolment_only`: 403 or `bye mfa_enrollment_required`; `expired`: an overlong or dead
-    session, 401 or a failed `auth`; `unclassified`: the session could not be checked, 503 or a
-    failed `auth`) and, for an `enrolment_only` refusal whose audit record was not written normally,
+    (`enrolment_only`: 403 or `bye mfa_enrollment_required`; `expired`: a session not minted as
+    one, 401 or a failed `auth`; `unclassified`: the session could not be checked, 503 or a failed
+    `auth`) and, for an `enrolment_only` refusal whose audit record was not written normally,
     again under `audit_throttled`, `audit_slow` or `audit_unavailable`. Only the
     `enrolment_only` refusal is an authorisation denial, so only it is audited: within a
     per-user budget (every session of a user shares it, so minting sessions buys no rows) and
@@ -230,7 +230,7 @@ class EnrolmentRefusals:
         )
 
     def expired(self, record: SessionRecord, *, channel: Channel, method: str, path: str) -> None:
-        """An enrolment-only session past its 15 minutes, or one that would outlive them (Q7)."""
+        """A session that was not minted enrolment-only: overlong (Q7), or it proved a factor."""
         self._count(channel, "expired")
         _log().warning(
             "auth.enrolment_only.expired",
