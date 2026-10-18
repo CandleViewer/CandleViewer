@@ -1,5 +1,5 @@
-"""`SqlAlchemyBackups`' reads with a fake unit of work (E42-T05 #966 BK-3a): the statements they
-build and the errors they raise, never with the driver's text. Postgres: `test_backups_pg.py`."""
+"""`SqlAlchemyBackups` with a fake unit of work (E42-T05 #966 BK-3): the statements it builds and
+the errors it raises, never with the driver's text. Postgres: `test_backups_pg.py`."""
 
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ from candleviewer.storage.repositories import backups as port
 from candleviewer.storage.repositories import backups_sqlalchemy as repo
 
 NOW = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
-ID = UUID(int=7)
+NAIVE = datetime(2026, 10, 18, 9, 0)  # no tzinfo: what the store refuses
+ID, USER = UUID(int=7), UUID(int=5)
 _DSN = "postgresql://cv:" + "hunter2" + "@db/cv"  # by concatenation: no scanner sees a credential
 _ALIAS = "age:" + "offsite-2026"  # a CHECK's DETAIL carries the whole row, this alias included
 _ROW = port.BackupRow(
@@ -37,8 +38,17 @@ _ROW = port.BackupRow(
     encrypted=True, covers_to=None, verified_at=None, error_message=None, triggered_by="manual",
     started_at=NOW, finished_at=NOW, retention_until=None, deleted_at=None,
 )  # fmt: skip
+_NEW = port.NewBackup(ID, "pg_dump", "/b/7", True, "manual", USER, NOW, encryption_ref=_ALIAS)
 _Call = Callable[[repo.SqlAlchemyBackups], Awaitable[object]]
 _ONE = [asdict(_ROW)]
+_WRITES: dict[str, _Call] = {
+    "insert_running": lambda s: s.insert_running(_NEW),
+    "record_run_finished": lambda s: s.record_run_finished(ID, port.RunFinished(NOW, None)),
+    "record_verify_outcome": lambda s: s.record_verify_outcome(
+        ID, method="checksum", at=NOW, error=None
+    ),
+    "mark_deleted": lambda s: s.mark_deleted(ID, by=USER, at=NOW),
+}
 _CALLS: dict[str, tuple[_Call, list[dict[str, Any]]]] = {  # each read, and what answers it
     "page": (lambda s: s.page("pg_dump", "ok", (NOW, ID), 5), _ONE),
     "get": (lambda s: s.get(ID), _ONE),
@@ -65,7 +75,10 @@ class _Rel:
                 raise self.error
             return SimpleNamespace(mappings=lambda: self.rows)
 
-        yield SimpleNamespace(session=SimpleNamespace(execute=execute))
+        async def commit() -> None:
+            self.events.append("commit")
+
+        yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
 
 
 class _Driver(Exception):
@@ -83,12 +96,14 @@ def _dbapi(kind: Any, state: str | None, name: str | None = None, pg3: bool = Fa
     return kind("SELECT backups", {"encryption_ref": _ALIAS}, _Driver(state, name, pg3))
 
 
-async def _executed(call: _Call, rows: list[dict[str, Any]] = _ONE) -> tuple[str, dict[str, Any]]:
+async def _executed(
+    call: _Call, rows: list[dict[str, Any]] = _ONE, *, write: bool = False
+) -> tuple[str, dict[str, Any]]:
     """The statement `call` ran, as SQLAlchemy renders it for any dialect, and its bound values;
-    the unit of work's 1 s cap ran first."""
+    the unit of work's 1 s cap ran first, and a write committed."""
     rel = _Rel(rows)
     await call(repo.SqlAlchemyBackups(rel))  # type: ignore[arg-type]  # structural fake
-    assert rel.events[0] == ("cap", "1s") and len(rel.events) == 2  # one capped read
+    assert rel.events[0] == ("cap", "1s") and rel.events[2:] == ["commit"] * write
     compiled = rel.events[1].compile()
     return " ".join(str(compiled).split()), compiled.params
 
@@ -229,3 +244,66 @@ def test_counts_as_usable_is_a_verified_status_with_verified_at_and_no_deleted_a
         if port.counts_as_usable(replace(_ROW, status=status, verified_at=at, deleted_at=gone))
     }
     assert usable == {("verified", NOW, None), ("restored", NOW, None)}  # `usable_count`'s rule
+
+
+async def test_writes_bind_the_alias_once_and_never_return_it() -> None:
+    assert _ALIAS not in repr(_NEW)  # nor in a logged `NewBackup`
+    for op, call in _WRITES.items():
+        sql, params = await _executed(call, write=True)
+        written, _, returned = sql.partition(" RETURNING ")
+        assert "encryption_ref" not in returned and _ALIAS not in sql  # bound, never inlined
+        assert (
+            ("encryption_ref" in written) is (_ALIAS in params.values()) is (op == "insert_running")
+        )
+
+
+@pytest.mark.parametrize("code", ["checksum mismatch", "CHECKSUM_MISMATCH", "", "boom " + _DSN])
+async def test_error_writes_accept_only_the_closed_code_set(code: Any) -> None:
+    rel = _Rel(_ONE)
+    store = repo.SqlAlchemyBackups(rel)  # type: ignore[arg-type]  # structural fake
+    with pytest.raises(ValueError) as run:
+        await store.record_run_finished(ID, port.RunFinished(NOW, code))
+    with pytest.raises(ValueError) as verify:
+        await store.record_verify_outcome(ID, method="checksum", at=NOW, error=code)
+    assert rel.events == [] and "hunter2" not in str(run.value) + str(verify.value)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["b/x", "", "/b/x@host", "/b/file://x", "s3://" + "key:" + "pw" + "@host/b"],
+    ids=["relative", "empty", "userinfo", "scheme-inside", "url"],
+)
+async def test_insert_refuses_a_target_path_that_is_not_an_absolute_filesystem_path(
+    path: str,
+) -> None:
+    rel = _Rel(_ONE)
+    new = port.NewBackup(ID, "pg_dump", path, True, "manual", USER, NOW, encryption_ref=_ALIAS)
+    with pytest.raises(ValueError) as refused:
+        await repo.SqlAlchemyBackups(rel).insert_running(new)  # type: ignore[arg-type]  # fake
+    assert rel.events == [] and str(refused.value) == (
+        "backups: target_path must be an absolute filesystem path"
+    )  # fixed: a URL's userinfo is never echoed
+
+
+async def test_naive_datetimes_are_refused_before_any_sql() -> None:
+    for build in (
+        lambda: port.NewBackup(ID, "pg_dump", "/b/7", True, "manual", USER, NAIVE),
+        lambda: port.RunFinished(NAIVE, None),
+        lambda: port.RunFinished(NOW, None, covers_from=NAIVE),
+        lambda: port.RunFinished(NOW, None, covers_to=NAIVE),
+        lambda: port.RunFinished(NOW, None, retention_until=NAIVE),
+    ):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            build()
+    rel = _Rel(_ONE)
+    store = repo.SqlAlchemyBackups(rel)  # type: ignore[arg-type]  # structural fake
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.mark_deleted(ID, by=USER, at=NAIVE)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.record_verify_outcome(ID, method="checksum", at=NAIVE, error=None)
+    assert rel.events == []
+
+
+def test_the_run_report_is_keyword_only() -> None:
+    with pytest.raises(TypeError):  # its datetimes cannot be swapped by position
+        port.RunFinished(NOW, None, 3)  # type: ignore[call-arg]  # a positional report, refused
