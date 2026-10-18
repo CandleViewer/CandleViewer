@@ -389,7 +389,8 @@ jobs:
               echo "git status --porcelain -- packages/protocol"
               echo '```'
               echo ""
-              echo "See the \`gen\` step log of the \`gates\` job for the CI-GEN-* code and diff."
+              echo "See the \`gen\` step log of the \`gates\` job for the CI-GEN-* code and its report"
+              echo "(the diff, or the files to delete); \`docs/ci-runbook.md\` §4 explains each code."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           }

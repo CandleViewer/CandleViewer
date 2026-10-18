@@ -144,7 +144,7 @@ here, or the check fails the `governance` lane.
   whichever one is stale so both name the same Node major/minor; re-run
   `node tools/ci/check-node-version.mjs` locally.
 
-### CI-GEN-* — generated-code freshness (`packages/protocol`)
+### CI-GEN-* — generated-code freshness (`packages/protocol` and the other generated paths)
 
 The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
 It first removes the tracked files under the outputs `pnpm generate` writes in full
@@ -160,13 +160,17 @@ removing nothing.
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit
   `packages/protocol/src/generated`.
-- **CI-GEN-002** (untracked generated output): codegen produced files `git
-diff` cannot see because they were never tracked. `git add` them in the
-  same commit as the schema change that introduced them.
+- **CI-GEN-002** (untracked generated output): codegen produced files `git diff` cannot see
+  because they were never tracked. `git add` them in the same commit as the schema change that
+  introduced them. Reproduce with `make gen && git status --porcelain -- packages/protocol`; if a
+  file the report names does not show up there, a local ignore rule hides it from you
+  (`.git/info/exclude`, a global excludes file or an uncommitted `.gitignore` edit): fix the
+  rule, or `git add -f` the file.
 - **CI-GEN-003** (non-deterministic generation): running the generator twice
   produced two different hashes. This is a generator bug (usually an
   unordered map/set iteration or a timestamp leaking into output) — file it
-  against the generator, do not silence the check.
+  against the generator, do not silence the check. Reproduce locally with
+  `make gen && make gen` and diff the tree.
 - **CI-GEN-004** (generator toolchain failure): the generator itself crashed
   (missing dependency, schema syntax error). Fix the schema or toolchain;
   the gate cannot pass on a generator that did not run. The same code reports a gate that
