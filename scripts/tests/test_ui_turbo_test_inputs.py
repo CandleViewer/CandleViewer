@@ -1,4 +1,4 @@
-"""#3272, #3367, #3471: turbo inputs name every file the tests, ui's build and its typecheck read.
+"""#3272, #3367, #3471: turbo inputs for ui's tests, build and typecheck, and every vitest runner.
 
 #3272: the root `test` and `test:cov` inputs are `src/**`, `test/**` and `tests/**`, but ui's
 tests also read its token sources (`tokens/**`) and token build scripts (`scripts/**`), so a cached
