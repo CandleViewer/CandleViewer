@@ -13,15 +13,7 @@ from structlog.testing import capture_logs
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.models import MintedSession, SessionRecord
 
-from ._world import (
-    _IDLE_S,
-    _T0,
-    World,
-    _bearer,
-    _conforms,
-    _lost,
-    _session,
-)
+from ._world import _IDLE_S, _T0, World, _bearer, _conforms, _lost, _refresh, _session
 
 
 async def _extend(w: World, minted: MintedSession) -> httpx.Response:
@@ -166,11 +158,7 @@ async def test_activity_never_lifts_the_lock(w: World) -> None:
     assert introspect.status_code == 200 and introspect.json()["session"]["locked"] is True
     listing = await w.client.get("/api/v1/auth/sessions", headers=_bearer(minted))
     assert listing.status_code == 401
-    refresh = await w.client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": minted.refresh_token},
-        headers=_bearer(minted),
-    )
+    refresh = await _refresh(w, minted)
     assert (refresh.status_code, refresh.json()["code"]) == (401, "session_idle_locked")
     row = await w.row(minted)
     assert row.last_seen_at == _T0 and row.is_idle_locked(now=w.clock.now) and not row.is_revoked

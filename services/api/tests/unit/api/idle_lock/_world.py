@@ -240,6 +240,11 @@ async def _session(w: World, headers: dict[str, str]) -> httpx.Response:
     return await w.client.get("/api/v1/auth/session", headers=headers)
 
 
+async def _refresh(w: World, minted: MintedSession) -> httpx.Response:
+    body = {"refresh_token": minted.refresh_token}
+    return await w.client.post("/api/v1/auth/refresh", json=body, headers=_bearer(minted))
+
+
 def _lost(action: str) -> float:
     """`auth_audit_outcome_lost_total{action}` on the process-default registry (never reset)."""
     return REGISTRY.get_sample_value("auth_audit_outcome_lost_total", {"action": action}) or 0.0

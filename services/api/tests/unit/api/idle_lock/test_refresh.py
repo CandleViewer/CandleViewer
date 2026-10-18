@@ -10,28 +10,16 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.models import MintedSession, RefreshOutcome
+from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.models import MintedSession, RefreshOutcome, UserStatus
 
-from ._world import (
-    _IDLE_S,
-    _T0,
-    World,
-    _bearer,
-    _lost,
-    _session,
-    _unlock,
-)
+from ._world import _IDLE_S, _T0, World, _bearer, _lost, _refresh, _session, _unlock
 
 
 async def test_refresh_is_not_activity_and_carries_the_idle_deadline_over(w: World) -> None:
     minted = await w.mint(await w.add_user())
     w.clock.now += timedelta(seconds=200)
-    r = await w.client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": minted.refresh_token},
-        headers=_bearer(minted),
-    )
+    r = await _refresh(w, minted)
     assert r.status_code == 200, r.text
     successor = r.json()["tokens"]["access_token"]
     info = await _session(w, {"Authorization": f"Bearer {successor}"})
@@ -41,11 +29,10 @@ async def test_refresh_is_not_activity_and_carries_the_idle_deadline_over(w: Wor
 async def test_a_refresh_refused_while_locked_works_again_after_the_unlock(w: World) -> None:
     minted = await w.mint(await w.add_user())
     w.lock()
-    refresh = {"refresh_token": minted.refresh_token}
-    locked = await w.client.post("/api/v1/auth/refresh", json=refresh, headers=_bearer(minted))
+    locked = await _refresh(w, minted)
     assert (locked.status_code, locked.json()["code"]) == (401, "session_idle_locked")
     assert (await _unlock(w, _bearer(minted))).status_code == 200
-    again = await w.client.post("/api/v1/auth/refresh", json=refresh, headers=_bearer(minted))
+    again = await _refresh(w, minted)
     assert again.status_code == 200, again.text
 
 
@@ -63,8 +50,7 @@ async def _refresh_locking_inside(
         return await refresh(raw_refresh_token, **kwargs)
 
     monkeypatch.setattr(w.sessions, "refresh", deadline_passes)
-    body = {"refresh_token": minted.refresh_token}
-    return await w.client.post("/api/v1/auth/refresh", json=body, headers=_bearer(minted))
+    return await _refresh(w, minted)
 
 
 async def test_a_refresh_locked_after_its_check_is_session_idle_locked_then_denied(
@@ -101,3 +87,27 @@ async def test_a_lost_idle_locked_refusal_record_is_counted_and_the_401_stands(
     (lost,) = [e for e in logs if e["event"] == "auth.session_audit.outcome_lost"]
     assert (lost["action"], lost["error"]) == ("auth.session_refreshed", "AuditUnavailable")
     assert _lost("auth.session_refreshed") - before == 1  # counted, so it tickets
+
+
+async def test_a_spent_token_past_the_idle_timeout_still_reaches_reuse_detection(w: World) -> None:
+    """The pre-check sees every row: right only because `is_idle_locked` skips revoked ones."""
+    minted = await w.mint(await w.add_user())
+    successor = await w.sessions.refresh(minted.refresh_token)
+    w.lock()
+    r = await _refresh(w, minted)
+    assert (r.status_code, r.json().get("code")) == (401, None)  # not `session_idle_locked`
+    (rec,) = w.audit.writer.records
+    assert (rec["action"], rec["severity"]) == ("auth.refresh_reuse_detected", Severity.CRITICAL)
+    assert (await w.row(successor.minted)).revoked_reason == "rotation_reuse"
+
+
+async def test_a_locked_disabled_users_refresh_is_the_lock_with_no_record(w: World) -> None:
+    """U45: the pre-check comes before the intent record, so nothing is written or revoked."""
+    uid = await w.add_user()
+    minted = await w.mint(uid)
+    w.lock()
+    w.repo.user_statuses[str(uid)] = UserStatus.DISABLED
+    r = await _refresh(w, minted)
+    assert (r.status_code, r.json()["code"]) == (401, "session_idle_locked")
+    assert w.audit.writer.records == [] and w.published == []
+    assert not (await w.row(minted)).is_revoked
