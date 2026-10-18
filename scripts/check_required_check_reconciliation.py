@@ -85,8 +85,8 @@ USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
 NEVER_RE = re.compile(
     r"^    (if:\s*(\$\{\{\s*)?false\s*(\}\})?|continue-on-error:(?!\s*false\s*$).*)\s*$", re.M
 )
-# The same for a step (`- ` opens one; its keys sit at 8 spaces).
-STEP_NEVER_RE = re.compile(NEVER_RE.pattern.replace("^    ", "^      (?:- |  )", 1), re.M)
+# The same at any indentation, `- ` included: a job `ci-required` needs, or one of its steps.
+ANY_NEVER_RE = re.compile(NEVER_RE.pattern.replace("^    ", r"^\s*(?:-\s+)?", 1), re.M)
 # A YAML anchor, alias or merge key: it hides a node's content from this text-based proof.
 ANCHOR_RE = re.compile(r"^\s*(?:- )?(?:[\w\"'-]+\s*:\s+)?[&*]\w|^\s*(?:- )?<<\s*:", re.M)
 PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
@@ -205,9 +205,9 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     literal `false` and reads only FILTER_<NAME> set from the `changed-paths` output <name>, and
     the table, with no key twice and nothing but lanes, takes its result from the needed job of
     the lane's own name, or from the `gates` output of that name, which the step of that id backs.
-    Every job `ci-required` needs must fail when its work fails: no NEVER_RE, on the job or on a
-    step, but continue-on-error on a `gates` step whose outcome is a lane. These files may hold no
-    YAML anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
+    Every job `ci-required` needs must fail when its work fails: no ANY_NEVER_RE, on the job or on
+    a step, but continue-on-error on a `gates` step whose outcome is a lane. These files may hold
+    no YAML anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     text = _read(path)
     if ANCHOR_RE.search(text):
@@ -278,20 +278,16 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             lanes.add(lane)
             outcomes.add(lane)
     for job in sorted(needs):
-        block = "\n" + "\n".join(jobs.get(job, []))
-        sets = [f"sets {m.group(1)!r}" for m in NEVER_RE.finditer(block)]
-        for step in re.split(r"(?=^      - )", block.partition("\n    steps:\n")[2], flags=re.M):
-            step_id = re.search(r"^      (?:- |  )id:\s*([\w-]+)\s*$", step, re.M)
-            judged = job == "gates" and step_id is not None and step_id.group(1) in outcomes
-            sets += [
-                f"a step sets {m.group(1)!r}"
-                for m in STEP_NEVER_RE.finditer(step)
+        head, _, tail = ("\n" + "\n".join(jobs.get(job, []))).partition("\n    steps:\n")
+        for i, chunk in enumerate([head, *re.split(r"(?=^      - )", tail, flags=re.M)]):
+            step_id = re.search(r"^      (?:- |  )id:\s*([\w-]+)\s*$", chunk, re.M)
+            judged = i > 0 and job == "gates" and step_id is not None and step_id[1] in outcomes
+            errors += [
+                f"{path}: job '{job}' must fail `{AGGREGATE_CONTEXT}` when its work fails, but "
+                f"sets {m.group(1)!r}"
+                for m in ANY_NEVER_RE.finditer(chunk)
                 if not (judged and m.group(1).startswith("continue-on-error"))
             ]
-        errors += [
-            f"{path}: job '{job}' must fail `{AGGREGATE_CONTEXT}` when its work fails, but {s}"
-            for s in sets
-        ]
     return lanes, errors + ([] if lanes else [f"{path}: no lane table in `{AGGREGATE_CONTEXT}`"])
 
 

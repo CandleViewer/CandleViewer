@@ -212,6 +212,14 @@ COE = "        continue-on-error: true\n"
 VERDICT = "      - name: Verdict (every gate succeeded or was skipped)\n"
 RESOLVE = "      - name: Resolve ci"
 PIN_CHECK = "isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK"
+ARCH_STEP = (
+    "      - name: Reflect the py lane's result (its py-checks job runs the architecture "
+    "contract)\n        run: |\n"
+)
+# The same step as an indentless sequence entry, valid YAML that a fixed indentation would miss.
+INDENTLESS = ARCH_STEP.replace("      - ", "    - ").replace(
+    "        run", "      continue-on-error: true\n      run"
+)
 
 
 @pytest.mark.parametrize(
@@ -267,6 +275,7 @@ PIN_CHECK = "isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CH
         ("pr.yml", "    name: architecture\n", JOB_COE, "job 'architecture' must fail"),
         ("pr.yml", ARCH_IF, "    if: false\n", "job 'architecture' must fail"),
         ("pr.yml", "the architecture contract)\n", "$&" + COE, "job 'architecture' must fail"),
+        ("pr.yml", ARCH_STEP, INDENTLESS, "job 'architecture' must fail"),
         ("pr.yml", "    name: changed-paths\n", JOB_COE, "job 'changed-paths' must fail"),
         ("pr.yml", "        id: filter\n", "$&" + COE, "job 'changed-paths' must fail"),
         ("pr.yml", VERDICT, "$&" + COE, "job 'gates' must fail"),
