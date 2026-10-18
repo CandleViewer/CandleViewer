@@ -129,6 +129,7 @@
 ["cv_kek_load_seconds", "histogram", [], "live", "E27"]
 ["cv_kek_version_state", "gauge", [], "live", "E27"]
 ["cv_key_rotation_notices_total", "counter", ["state"], "live", "E27"]
+["cv_key_selfcheck_latch_state", "gauge", [], "live", "E27"]
 ["cv_key_selfcheck_missed_runs_total", "counter", [], "live", "E27"]
 ["cv_key_selfcheck_runs_total", "counter", ["result"], "live", "E27"]
 ["cv_key_soonest_expiry_seconds", "gauge", [], "live", "E27"]

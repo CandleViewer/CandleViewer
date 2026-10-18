@@ -707,7 +707,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("result", "rule"),
         "Stored-key self-check verdicts: passed, failed (rule: the first failing rule) or "
         "inconclusive (rule none).",
-        "failed = page (#836 slice 2c2)",
+        "dashboard; the failing-key page reads cv_keys_failing_policy (KeySelfCheckFailed)",
         _L,
         "E27",
         max_series=13,
@@ -734,7 +734,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "environment each latch accounts.key_selfcheck_unavailable; an unreadable key list "
         "latches only at boot or once a known key is past its window, so it alone can leave the "
         "gate open.",
-        "error and no completed run = page (#836 slice 2c2)",
+        "dashboard",
         _L,
         "E27",
         max_series=4,
@@ -745,10 +745,22 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "keys",
         ("rule",),
         "Stored keys whose standing self-check result fails, by rule; every rule set each run.",
-        "> 0 = read-only latched (page, #836 slice 2c2)",
+        "> 0 = read-only latched: page KeySelfCheckFailed",
         _L,
         "E27",
         max_series=11,
+    ),
+    _s(
+        "cv_key_selfcheck_latch_state",
+        "gauge",
+        "state",
+        (),
+        "1 once the stored-key self-check has latched order entry read-only (a failing key, a "
+        "stale one or none it could check), else 0; only a restart resets it.",
+        "1 with no key failing = page KeySelfCheckLatched (held until a restart)",
+        _L,
+        "E27",
+        max_series=1,
     ),
     _s(
         "cv_key_verification_age_seconds",
@@ -757,7 +769,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Age of the oldest last pass of a stored key, set each minute by the watchdog; each "
         "key's age is in its debug log, never a label (SR-E27-18).",
-        "> interval + 15 min = stale latch (page, #836 slice 2c2)",
+        "> interval + 15 min = stale latch, paged by KeySelfCheckLatched",
         _L,
         "E27",
         max_series=1,
@@ -768,7 +780,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "runs",
         (),
         "Self-check runs not begun within the interval plus 15 minutes of the last (SR-E27-18).",
-        "any increase = page (#836 slice 2c2)",
+        "any increase in 2 h = page KeySelfCheckRunMissed",
         _L,
         "E27",
         max_series=1,
@@ -779,7 +791,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "seconds",
         (),
         "Seconds to the soonest expiry of a stored key; +Inf when none expires.",
-        "< 14, 7 and 1 days = ticket (SR-034, #836 slice 2c2)",
+        "< 14, 7 and 1 days = tickets KeyExpiringWithin14Days, 7Days and 1Day (SR-034)",
         _L,
         "E27",
         max_series=1,

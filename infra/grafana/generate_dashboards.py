@@ -248,8 +248,9 @@ def system() -> Board:
         0.01,
     )
     b.ts("Watchdog alert state", 'ALERTS{alertname="Watchdog"}', "short")
-    # #836 (E27-T03): the stored-key self-check's two page signals. `max`: replicas judge the same
-    # keys. The fake backend wires no self-check: no failing-rule series, and the age reads 0.
+    # #836 (E27-T03): keys failing the stored-key self-check, and the oldest last pass, which latches
+    # stale (paged) past the interval plus 15 min; its other series: #3658. `max`: replicas judge
+    # the same keys. The fake backend wires no self-check: no failing-rule series, the age reads 0.
     b.ts(
         "Stored API keys failing the self-check, by rule (page above 0)",
         f"max by (rule) (cv_keys_failing_policy{{{E}}})",
@@ -259,7 +260,7 @@ def system() -> Board:
         "{{rule}}",
     )
     b.ts(
-        "Oldest stored API key's last passing self-check (page above 1 h 15 min)",
+        "Oldest stored API key's last passing self-check (stale latch at the interval + 15 min)",
         f"max(cv_key_verification_age_seconds{{{E}}})",
         "s",
         3600,

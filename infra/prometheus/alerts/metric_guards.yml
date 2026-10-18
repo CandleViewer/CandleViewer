@@ -31,8 +31,8 @@ groups:
         annotations:
           summary: "Expected metric cv_kek_degraded_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      # #836: the key self-check pages' series. The first two appear with the first run, so they
-      # also fire where no self-check is wired (the fake backend); the last two are bound at 0.
+      # #836: the key self-check pages' series. The first appears with a run, so its guard stands
+      # where no self-check is wired (the fake backend: dev until #3180); the others are bound at 0.
       - alert: ExpectedMetricMissingCvKeysFailingPolicy
         expr: absent(cv_keys_failing_policy)
         for: 15m
@@ -42,23 +42,14 @@ groups:
         annotations:
           summary: "Expected metric cv_keys_failing_policy is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingCvKeySelfcheckRunsTotal
-        expr: absent(cv_key_selfcheck_runs_total)
+      - alert: ExpectedMetricMissingCvKeySelfcheckLatchState
+        expr: absent(cv_key_selfcheck_latch_state)
         for: 15m
         labels:
           severity: ticket
           component: alerting
         annotations:
-          summary: "Expected metric cv_key_selfcheck_runs_total is not emitted"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
-      - alert: ExpectedMetricMissingCvKeyVerificationAgeSeconds
-        expr: absent(cv_key_verification_age_seconds)
-        for: 15m
-        labels:
-          severity: ticket
-          component: alerting
-        annotations:
-          summary: "Expected metric cv_key_verification_age_seconds is not emitted"
+          summary: "Expected metric cv_key_selfcheck_latch_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingCvKeySelfcheckMissedRunsTotal
         expr: absent(cv_key_selfcheck_missed_runs_total)

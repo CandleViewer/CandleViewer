@@ -773,7 +773,7 @@
           "refId": "A"
         }
       ],
-      "title": "Oldest stored API key's last passing self-check (page above 1 h 15 min)",
+      "title": "Oldest stored API key's last passing self-check (stale latch at the interval + 15 min)",
       "type": "timeseries"
     }
   ],

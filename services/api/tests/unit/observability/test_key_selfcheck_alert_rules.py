@@ -1,10 +1,5 @@
-"""#836 (E27-T03) slice 2c2: the stored-key self-check's pages and SR-034 expiry tickets.
-
-`infra/prometheus/tests/system_alerts.test.yml` (promtool, run by CI) proves when each rule fires.
-These pins hold what promtool cannot: each rule's expression, hold and labels (the generator reads
-the labels, so a changed one regenerates clean), the series it reads, the guards, the routes and the
-runbook. No PromQL is evaluated.
-"""
+"""#836 slice 2c2: the key self-check's pages and SR-034 tickets. promtool (CI) proves when each
+fires; these pin what it cannot: expression, hold, labels, series, guards, routes and runbook."""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ import re
 
 import pytest
 
-from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, MAX_INTERVAL_S
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from tests.unit.observability.test_auth_backstop_alert_rules import (
     _route_for,
@@ -21,22 +15,18 @@ from tests.unit.observability.test_auth_backstop_alert_rules import (
 )
 
 _MIN = "min by (env) (cv_key_soonest_expiry_seconds)"
-_RUNS = "max by (env) (cv_key_selfcheck_runs_total{result"
+_LATCHED = "max by (env) (cv_key_selfcheck_latch_state) > 0"
+_FAILING = "max by (env) (cv_keys_failing_policy) > 0"
 _PAGE, _TICKET = ("0m", "page"), ("10m", "ticket")
-_STALE, _EXP = "keyverificationstale", "keyexpiring"
+_LATCH, _EXP = "keyselfchecklatched", "keyexpiring"
 #: alert -> (expression, `for`, severity, runbook anchor).
 RULES = {
     "KeySelfCheckFailed": (
         "max by (env, rule) (cv_keys_failing_policy) > 0", *_PAGE, "keyselfcheckfailed"
     ),
-    "KeyBootCheckIncomplete": (
-        f'{_RUNS}="error"}}) > 0 unless on (env) {_RUNS}!="error"}})', *_PAGE, _STALE
-    ),
-    "KeyVerificationStale": (
-        "max by (env) (cv_key_verification_age_seconds) > 3600 + 900", *_PAGE, _STALE
-    ),
+    "KeySelfCheckLatched": (f"{_LATCHED} unless on (env) {_FAILING}", *_PAGE, _LATCH),
     "KeySelfCheckRunMissed": (
-        "sum by (env) (increase(cv_key_selfcheck_missed_runs_total[2h])) > 0", *_PAGE, _STALE
+        "sum by (env) (increase(cv_key_selfcheck_missed_runs_total[2h])) > 0", *_PAGE, _LATCH
     ),
     "KeyExpiringWithin14Days": (f"{_MIN} < 14 * 86400 and {_MIN} >= 7 * 86400", *_TICKET, _EXP),
     "KeyExpiringWithin7Days": (f"{_MIN} < 7 * 86400 and {_MIN} >= 86400", *_TICKET, _EXP),
@@ -67,7 +57,3 @@ def test_each_rule_reads_live_key_series_and_each_page_series_has_an_absent_guar
     for series in read if severity == "page" else ():
         guard = _rule("ExpectedMetricMissing" + "".join(w.title() for w in series.split("_")))
         assert (guard["expr"], guard["for"]) == (f"absent({series})", "15m")
-
-
-def test_the_stale_line_is_the_longest_interval_plus_the_grace() -> None:
-    assert MAX_INTERVAL_S + FRESHNESS_GRACE.total_seconds() == 3600 + 900

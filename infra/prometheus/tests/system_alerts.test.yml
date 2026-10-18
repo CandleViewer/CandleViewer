@@ -706,30 +706,6 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
-  - series: cv_key_verification_age_seconds{env="live"}
-    values: 4500+60x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: KeyVerificationStale
-    exp_alerts:
-    - exp_labels:
-        severity: page
-        component: key_selfcheck
-        env: live
-      exp_annotations:
-        summary: 'A stored API key has no passing self-check for over 75 min: order
-          entry is read-only'
-        runbook_url: docs/plan/07-release-and-prr.md#alert-keyverificationstale
-- interval: 1m
-  input_series:
-  - series: cv_key_verification_age_seconds{env="live"}
-    values: 4500+0x10
-  alert_rule_test:
-  - eval_time: 5m
-    alertname: KeyVerificationStale
-    exp_alerts: []
-- interval: 1m
-  input_series:
   - series: cv_key_selfcheck_missed_runs_total{env="live"}
     values: 0+0x10 1+0x10
   alert_rule_test:
@@ -742,7 +718,7 @@ tests:
         env: live
       exp_annotations:
         summary: 'A stored-key self-check run is overdue: the job may have stopped'
-        runbook_url: docs/plan/07-release-and-prr.md#alert-keyverificationstale
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
 - interval: 1m
   input_series:
   - series: cv_key_selfcheck_missed_runs_total{env="live"}
@@ -1366,29 +1342,53 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
-  - series: cv_key_selfcheck_runs_total{env="live",result="error"}
-    values: 1+0x10
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 0+0x2 1+0x10
   alert_rule_test:
   - eval_time: 5m
-    alertname: KeyBootCheckIncomplete
+    alertname: KeySelfCheckLatched
     exp_alerts:
     - exp_labels:
         severity: page
         component: key_selfcheck
         env: live
       exp_annotations:
-        summary: 'No key self-check run has completed since start-up: order entry
-          is read-only'
-        runbook_url: docs/plan/07-release-and-prr.md#alert-keyverificationstale
+        summary: The stored-key self-check holds order entry read-only until a restart
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
 - interval: 1m
   input_series:
-  - series: cv_key_selfcheck_runs_total{env="live",result="error"}
-    values: 1+0x20
-  - series: cv_key_selfcheck_runs_total{env="live",result="passed"}
-    values: _x9 1+0x10
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x10
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 1+0x10
   alert_rule_test:
-  - eval_time: 15m
-    alertname: KeyBootCheckIncomplete
+  - eval_time: 5m
+    alertname: KeySelfCheckLatched
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x20
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 1+0x4 0+0x15
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: KeySelfCheckLatched
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: key_selfcheck
+        env: live
+      exp_annotations:
+        summary: The stored-key self-check holds order entry read-only until a restart
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x4 0+0x15
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: KeySelfCheckLatched
     exp_alerts: []
 - interval: 1m
   input_series:

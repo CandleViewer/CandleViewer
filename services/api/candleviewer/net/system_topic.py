@@ -61,7 +61,7 @@ def gate_notice(
 
 
 #: Role-neutral client texts per gate reason (no internal addresses reach WS clients). The key
-#: self-check's name no key and no account (`23-ws-protocol.md` §15.9; E27-T03).
+#: self-check's texts name no key and no account (`23-ws-protocol.md` §15.9; E27-T03).
 _CLIENT_TEXT = {
     "secrets.kek_unavailable": "Trading disabled: the credential key is unavailable.",
     "secrets.kek_rotation": "Trading disabled: a credential key rotation is in progress.",

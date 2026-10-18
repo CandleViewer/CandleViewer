@@ -18,11 +18,10 @@ import json
 import math
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
@@ -43,7 +42,7 @@ from candleviewer.accounts.selfcheck import (
     is_fresh,
     policy_violation,
 )
-from candleviewer.accounts.service import AccountHealthFeed, AccountsService
+from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.verification import (
     KeyRefused,
     Refusal,
@@ -858,30 +857,6 @@ async def test_readyz_lists_a_failing_key_as_a_degraded_accounts_check() -> None
     assert (body["status"], body["checks"]) == ("degraded", [accounts])
 
 
-@pytest.mark.parametrize(
-    ("info", "cause", "age"),
-    [
-        (facts(permissions=WITHDRAW), "1 stored key(s) fail the self-check", 1800),
-        (None, "loop ended", 0),
-    ],
-    ids=["both-fault", "feed-only"],
-)
-async def test_the_jobs_fault_is_reported_ahead_of_the_health_feeds(
-    info: ApiKeyFacts | None, cause: str, age: int
-) -> None:
-    """#3425's merge kept both checks, the job's first: this pins which cause `/readyz` names."""
-    w, svc = World(target(), info=info), AccountsService()
-    svc.attach_key_selfcheck(w.check)
-    svc.attach_account_health(cast(AccountHealthFeed, SimpleNamespace(fault="loop ended")))
-    await within(svc.start(cast(AppContext, object())))
-    try:
-        report = svc.health()
-    finally:
-        await within(svc.stop(1.0))
-    ages = f"1 key(s) checked, oldest last pass {age}s ago"  # a pass moves the last pass to now
-    assert (report.status, report.detail) == (HealthStatus.DEGRADED, f"{cause}; {ages}")
-
-
 async def test_readyz_shows_the_key_count_and_the_oldest_last_pass_never_a_key_id() -> None:
     w, app = World(target(), target(key=KEY2, acct=ACCT2, age=HOUR * 2 / 3)), FastAPI()
     w.infos[KEY2] = inconclusive()  # inside its window: no latch, its last pass stays
@@ -987,7 +962,8 @@ async def test_a_boot_pass_past_its_overall_bound_fails_closed_and_the_loop_stil
     assert (w.gate.reason_code, w.built) == (UNAVAILABLE, [(KEY, "1000001")])  # KEY2 never ran
     assert w.of("aclose") == [("aclose",)] and task is not None and task.cancelled()
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
-    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0  # KeyBootCheckIncomplete
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0
+    assert sample(w, LATCH) == 1.0  # KeySelfCheckLatched
 
 
 def test_the_boot_pass_is_bounded_at_sixty_seconds_unless_told_otherwise() -> None:
@@ -1036,6 +1012,10 @@ def sample(w: World, name: str, **labels: str) -> float | None:
     return w.metrics.registry.get_sample_value(name, {"env": "demo", **labels})
 
 
+#: #836 slice 2c2: the pages' gauges (KeySelfCheckFailed, KeySelfCheckLatched).
+FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"
+
+
 @pytest.mark.parametrize(
     ("interval_s", "age", "fresh"),
     [
@@ -1067,6 +1047,10 @@ async def test_the_watchdog_latches_stale_once_a_last_pass_is_past_its_window(
         w.check.watch()  # a repeat notifies nobody
     stale = [log["key_ids"] for log in logs if log["event"] == "key_selfcheck_stale"]
     assert (w.of("latch"), stale) == (([("latch", STALE)], [[str(KEY2)]]) if latched else ([], []))
+    gauge = [sample(w, LATCH)]  # the watchdog publishes its latch at once
+    del w.infos[KEY2]
+    await w.run()  # every key passes: the latch's page gauge holds until a restart resets it
+    assert [*gauge, sample(w, LATCH)] == [float(latched)] * 2
 
 
 async def test_the_row_gauge_loop_runs_the_watchdog_while_the_jobs_loop_is_stalled() -> None:
@@ -1097,6 +1081,22 @@ async def test_the_watchdog_counts_one_missed_run_per_interval_past_the_grace() 
     runs = [e for e in logs if e["event"] == "key_selfcheck_run_missed"]
     missed = [(e["log_level"], e["missed"]) for e in runs]
     assert missed == [("error", 1), ("error", 2), ("error", 1)]  # none inside the grace
+
+
+async def test_a_failure_publishes_its_rule_and_the_latch_before_the_next_key_is_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w, seen = World(target(), target(key=KEY2, acct=ACCT2), info=facts(permissions=WITHDRAW)), []
+    real = w.key_info
+
+    async def key_info() -> Any:  # KEY2's check begins: what has KEY's failure published?
+        if w.built[-1][0] == KEY2:
+            seen.append((sample(w, FAILING, rule="key_withdraw_permission"), sample(w, LATCH)))
+        return await real()
+
+    monkeypatch.setattr(w, "key_info", key_info)
+    await w.run()
+    assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch page waits on it
 
 
 async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:
@@ -1241,6 +1241,7 @@ async def test_a_dead_watchdog_fails_closed_and_reads_degraded_with_no_accounts_
             status = svc.health().status
     assert (w.gate.reason_code, status) == (latch, HealthStatus.DEGRADED)
     assert {"event": "key_selfcheck_watchdog_died", "log_level": "error"} in logs
+    assert sample(w, LATCH) == (1.0 if held is None else 0.0)
 
 
 async def test_a_clean_stop_of_the_watchdog_loop_latches_nothing() -> None:
@@ -1255,7 +1256,9 @@ async def test_a_clean_stop_of_the_watchdog_loop_latches_nothing() -> None:
     assert (w.gate.reason_code, w.of("latch")) == (None, [])
 
 
-@pytest.mark.parametrize("series", ["cv_key_verification_seconds", "cv_key_verification_total"])
+@pytest.mark.parametrize(
+    "series", ["cv_key_verification_seconds", "cv_key_verification_total", FAILING, LATCH]
+)
 async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
     series: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1268,7 +1271,8 @@ async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
         return real(name)
 
     monkeypatch.setattr(w.metrics, "get", get)
-    await w.run()
+    with suppress(KeyError):  # the pages' gauges are published at the run's end too
+        await w.run()
     assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)
 
 

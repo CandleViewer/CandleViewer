@@ -68,7 +68,9 @@ Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admi
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
 minute, so a job that stalls or dies still latches `STALE` once a key's last pass is past its
 window; if that loop dies, `watch_ended()` latches `UNAVAILABLE`. It counts missed runs and
-publishes the oldest key's age and the soonest expiry. `/readyz` is anonymous (SR-010), so it gets
+publishes the oldest key's age and the soonest expiry, and, as a run's end and a failure do, the
+pages' gauges: each rule's failing keys and whether this job latched the gate, which only a restart
+resets (#836 slice 2c2). `/readyz` is anonymous (SR-010), so it gets
 the key count and the oldest age only (`ages()`, no key id); each key's age goes to the debug log,
 never to a series labelled by key (decision 13 on #836). `key_selfcheck_wiring` builds the job on
 the real backend.
@@ -316,6 +318,8 @@ class KeySelfCheck:
         self._ran_at: datetime | None = None
         self._missed = 0
         self._expiry: datetime | None = None
+        #: Whether this job latched the gate: its page's gauge, which only a restart resets.
+        self._latched = False
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._booted = False
@@ -361,12 +365,14 @@ class KeySelfCheck:
                 logger().error("key_selfcheck_run_missed", missed=due)
                 self._m.get("cv_key_selfcheck_missed_runs_total").child().inc(due - self._missed)
                 self._missed = due
+        self._failing()
 
     def watch_ended(self) -> None:
         """The loop that runs `watch()` died: no watchdog vouches for freshness, so this fails
         closed as the job's own loop does (AGENTS.md §5.2: no silent task)."""
         logger().error("key_selfcheck_watchdog_died")
         self._latch(UNAVAILABLE)
+        self._failing()  # no watchdog publishes it any more
 
     def ages(self) -> str:
         """For the anonymous `/readyz` (SR-010): how many keys were checked and the oldest last
@@ -387,7 +393,7 @@ class KeySelfCheck:
             except TimeoutError:
                 logger().critical("key_selfcheck_boot_unfinished")
                 self._latch(UNAVAILABLE)
-                self._ran("error")  # counted, so the boot page sees it, with any failure found
+                self._ran("error")  # counted, and the pages' gauges published (a failure found)
             self._task = spawn(self._loop(), name="key-selfcheck")
             self._task.add_done_callback(self._loop_ended)
 
@@ -416,6 +422,7 @@ class KeySelfCheck:
             return False
         text = f"{_REASON_TEXT[code]} Order entry stays off until a restart passes the check."
         self._gate.latch(reason_code=code, reason_text=text)
+        self._latched = True
         return True
 
     async def run_once(self) -> None:
@@ -468,15 +475,18 @@ class KeySelfCheck:
                 self._ran(next((o for o in ("failed", "inconclusive") if o in outcomes), "passed"))
 
     def _ran(self, result: str) -> None:
-        """Count the run, and publish each rule's failing keys."""
+        """Count the run, and publish the pages' gauges."""
         self._m.get("cv_key_selfcheck_runs_total").labels(result).inc()
         self._failing()
 
     def _failing(self) -> None:
-        """Publish each rule's failing keys (every rule, 0 when none), after a run or a test."""
+        """Publish each rule's failing keys (every rule, 0 when none), then whether this job
+        latched the gate, in that order: a failure never reads as a bare latch, whose page waits
+        while a key fails. Callers publish after enforcing, so a fault withholds nothing."""
         codes = [c.code for c in tuple(self.results.values()) if c.outcome == "failed"]
         for rule in Rule:
             self._m.get("cv_keys_failing_policy").labels(rule.value).set(codes.count(rule.value))
+        self._m.get("cv_key_selfcheck_latch_state").child().set(self._latched)
 
     async def _check(self, target: SelfCheckTargetRow, now: datetime) -> Outcome | None:
         account = ExchangeAccount.model_validate(target.account, from_attributes=True)
@@ -607,6 +617,7 @@ class KeySelfCheck:
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
         await self._violation(key, account_id, verdict)
+        self._failing()  # its page now, not after the run's other keys
 
     async def _violation(self, key: UUID, account_id: UUID, verdict: VerificationResult) -> None:
         """`security.key_policy_violation`, after the rule code and the disarm: a refused or

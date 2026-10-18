@@ -1606,7 +1606,7 @@ Scenario: onboarding rejects a key with withdrawal permission
 
 Scenario: periodic verification disables a drifted key
   Given a stored live credential that was valid at onboarding
-  When the 6-hourly verification reports that its IP whitelist was removed
+  When the hourly verification reports that its IP whitelist was removed
   Then the credential is disabled for trading within one verification cycle
   And a P1 alert is raised
   And cancel/flatten on that account still work

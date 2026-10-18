@@ -86,17 +86,17 @@ with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` t
 again; only a pass clears it (decision 3 on #836).
 Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
 `account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
-no failing key. The disarmed account stays disarmed: re-arming `trading_enabled` has no operation
-yet, so a force-disabled account has no audited way back (decision 16 on #836: a separate
-contract-first ticket, Owner only with step-up, refused while a key of the account fails its
-standing check). Never re-arm in SQL (C-2.9).
+no failing key, and `KeySelfCheckLatched` then pages until the restart. The disarmed account stays
+disarmed: re-arming `trading_enabled` has no operation yet, so a force-disabled account has no
+audited way back until #3657 ships (decision 16 on #836: Owner only with step-up, refused while a
+key of the account fails its standing check). Never re-arm in SQL (C-2.9).
 
 ## Symptom: read-only with `accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`
 
-Pages: `KeyVerificationStale` (a key's last pass is over 1 h 15 min old), `KeySelfCheckRunMissed`
-(a run is overdue) and `KeyBootCheckIncomplete` (no run has completed since start-up). WS clients
-get "Trading disabled: a stored API key has no recent passing check." or "Trading disabled: the
-stored API keys could not be checked."
+Pages: `KeySelfCheckLatched` (the latch, until the restart: a passing run never ends it) and
+`KeySelfCheckRunMissed` (a run is overdue; it clears once runs begin again, the latch does not). WS
+clients get "Trading disabled: a stored API key has no recent passing check." or "Trading disabled:
+the stored API keys could not be checked."
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and
@@ -184,6 +184,7 @@ A latched self-check, a failing stored key or a faulted account-health loop make
 closed, as intended; do not relax the smoke test for it. The first two apply wherever the job runs:
 the real storage backend with at least one usable stored key. The fake backend wires no
 self-check, but its two account-health loops can still fault.
+Without a self-check the guard `ExpectedMetricMissingCvKeysFailingPolicy` stands there as a ticket.
 
 The case to expect is `CV_EGRESS_IP` unset with a stored key (`key_selfcheck_no_egress_ip`,
 `accounts.key_selfcheck_unavailable`), and compose cannot supply it today. It forwards neither
