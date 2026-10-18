@@ -6,8 +6,8 @@ ADR-0013 binding rule 3: "packages/protocol is regenerated from
 files are committed so consumers need no codegen step." ADR-0005 reinforces
 it for the binary WS framing constants.
 
-This script is the single implementation invoked by
-``.github/workflows/_job-gen.yml`` and locally via ``make gen-check``:
+This script is the single implementation invoked by the ``gen`` step of the
+``gates`` job in ``.github/workflows/pr.yml`` and locally via ``make gen-check``:
 
 1. Runs the generator (``pnpm generate``, i.e. ``make gen``) twice in a row
    on the current checkout and hashes the generated tree after each run.
@@ -33,7 +33,7 @@ Exit codes: 0 clean, 1 a CI-GEN-* violation was found, 2 internal error
 (generator command failed to run at all).
 
 Stdlib only at import (subprocess/git/node are external processes, not
-imports). Step 4's renderer imports PyYAML when it runs; _job-gen.yml installs
+imports). Step 4's renderer imports PyYAML when it runs; the ``gen`` step installs
 the version pinned in scripts/requirements-ci.txt.
 """
 

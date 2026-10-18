@@ -23,7 +23,8 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
 │  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
-│  │                licence-header, docs-link-check (GOV-002), commitlint (last: installs run husky)
+│  │                licence-header, docs-link-check (GOV-002); last, as their installs run PR
+│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..004)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
@@ -31,7 +32,6 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
-├─ _job-gen.yml   (always)           → generated-code freshness gate    (CI-GEN-001..004)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
@@ -87,6 +87,9 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   then the 60 s suite budget, stopping at the first failing command, so the end of the step log
   names the red check. `xstate-contract-nightly.yml` runs the same script; to reproduce, run
   `bash tools/statechart/run_xstate_contract.sh` in a checkout.
+- `gen` is the last `gates` step (#3104): a full `pnpm install`, then
+  `tools/ci/check_gen_freshness.py` in a fresh venv holding only PyYAML (Python 3.13). A red `gen`
+  writes the reproduce steps to the job summary; its step log holds the CI-GEN code and diff.
 - `security` is one lane over every job in `_job-security.yml`. In the folded jobs
   (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
   the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's
@@ -123,6 +126,8 @@ here, or the check fails the `governance` lane.
   `node tools/ci/check-node-version.mjs` locally.
 
 ### CI-GEN-* — generated-code freshness (`packages/protocol`)
+
+The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit

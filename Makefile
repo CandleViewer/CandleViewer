@@ -40,7 +40,7 @@ contracts:
 # E03-T05: generated-code freshness gate (ADR-0013 binding rule 3). Runs
 # `make gen` twice to assert determinism (CI-GEN-003), then fails on any
 # diff/untracked output under packages/protocol (CI-GEN-001/002). Same
-# script `.github/workflows/_job-gen.yml` invokes in CI.
+# script the `gen` step of `.github/workflows/pr.yml` runs in CI.
 gen-check:
 	python tools/ci/check_gen_freshness.py
 

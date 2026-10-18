@@ -4,9 +4,9 @@
 "Client and server never disagree" scenario).
 
 Deliberately **stdlib-only** (no `candleviewer` import): the generated-code
-freshness gate (`.github/workflows/_job-gen.yml` / `tools/ci/
+freshness gate (the `gen` step of `.github/workflows/pr.yml` / `tools/ci/
 check_gen_freshness.py`) runs `pnpm generate` on a bare Python 3.13
-`setup-python` runner with no project dependencies installed, so this
+venv with no project dependencies installed, so this
 script cannot depend on `pydantic` or any other backend dependency.
 
 Faithfulness to the real `InstrumentPolicy`
