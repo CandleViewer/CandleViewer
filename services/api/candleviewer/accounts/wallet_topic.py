@@ -19,13 +19,16 @@ and `stale_since_ms` are REST `balance_stale` and `balance_stale_since`.
   health entry with an empty `balances` when its monitoring starts and on each state transition, a
   discrete event to announce, never one per tick; its balance item on each refresh, and once more
   when a balance sent fresh turns stale, so a client's `stale` does not stay `false` past it.
-- A delta that fails is logged by its error type, never its message, and goes no further: the
-  topic is a view, and neither the evidence calls nor the runtime's loops wait on it or see it fail.
+- A delta that fails is logged by its error type, never its message, at most once per
+  `LOG_INTERVAL_S` (the lines held back are counted on the next), and goes no further: the topic is
+  a view, and neither the evidence calls nor the runtime's loops wait on it or see it fail. A
+  failed send is not forgotten: the turn to stale that it carried is sent again by the next tick.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+import time
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any, Final, Protocol
 from uuid import UUID
@@ -45,6 +48,9 @@ from candleviewer.accounts.wallet import WalletSnapshot
 
 #: Private topics are flat, scoped by their `exchange_account_ids` option (§6.2).
 WALLET: Final = "wallet"
+#: A failed delta is logged at most once in this many seconds, the ones held back counted on the
+#: next line: a view that keeps failing, at every tick for every account, never floods the log.
+LOG_INTERVAL_S: Final = 60.0
 
 
 class WalletSub(Protocol):
@@ -76,24 +82,18 @@ def balance_item(account: UUID, balance: WalletSnapshot, status: AccountStatus) 
     return item | {"updated_at_ms": epoch_ms(balance.updated_at)}
 
 
-@contextmanager
-def _contained() -> Iterator[None]:
-    """A delta that fails stays here; a cancellation still propagates."""
-    try:
-        yield
-    except Exception as exc:
-        log = structlog.get_logger(__name__)
-        log.error("wallet_topic.publish_failed", error=type(exc).__name__)
-
-
 class WalletTopic[B]:
     """The `wallet` topic's snapshot source and publisher (see the module docstring), for the event
     loop that runs the gateway and the account health runtime: no locks."""
 
-    def __init__(self, publish: Publish, body: BodyFactory[B]) -> None:
-        self._publish, self._body = publish, body
+    def __init__(
+        self, publish: Publish, body: BodyFactory[B], *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._publish, self._body, self._clock = publish, body, clock
         self._reader: AccountStatusReader | None = None
         self._fresh: set[UUID] = set()  # accounts whose last balance item went out not stale
+        self._log_from = 0.0  # `_contained`: the clock reading from which a failure is logged again
+        self._held = 0  # and how many it held back since its last line
 
     def attach(self, health: HealthViews, wallets: WalletViews) -> None:
         """Serve these views, the account health runtime's, once (`wire_account_health`). Before,
@@ -127,7 +127,7 @@ class WalletTopic[B]:
 
     def health_changed(self, account_id: UUID) -> None:
         """The account's monitoring started, or its state moved: its health entry, alone."""
-        with _contained():
+        with self._contained():
             status = self._status(account_id)
             if status is not None and status.health is not None:
                 entry = status.health.ws_entry(account_id)
@@ -135,30 +135,49 @@ class WalletTopic[B]:
 
     def balance_refreshed(self, account_id: UUID) -> None:
         """The account's wallet snapshot was refreshed: its balance item, alone."""
-        with _contained():
+        with self._contained():
             status = self._status(account_id)
             if status is not None and status.balance is not None:
-                if status.balance_stale:
-                    self._fresh.discard(account_id)
-                else:
-                    self._fresh.add(account_id)
                 self._send_balance(account_id, status.balance, status)
 
     def stale_check(self) -> None:
         """Send each balance that went out fresh once more when it turns stale; the runtime's tick
-        calls this. An account that is no longer tracked is forgotten."""
+        calls this, so a send that failed is tried again by the next. An account that is no longer
+        tracked is forgotten."""
         for account_id in sorted(self._fresh):
-            with _contained():
+            with self._contained():
                 status = self._status(account_id)
                 if status is None or status.balance is None:
                     self._fresh.discard(account_id)
                 elif status.balance_stale:
-                    self._fresh.discard(account_id)
                     self._send_balance(account_id, status.balance, status)
 
     def _status(self, account_id: UUID) -> AccountStatus | None:
         return None if self._reader is None else self._reader.status(account_id)
 
     def _send_balance(self, account: UUID, balance: WalletSnapshot, status: AccountStatus) -> None:
+        """One balance item. A fresh one is recorded before it goes out, so that a send that fails
+        still owes its turn to stale; a stale one is forgotten after, so that a send that fails is
+        owed again (`stale_check`)."""
+        if not status.balance_stale:
+            self._fresh.add(account)
         item = balance_item(account, balance, status)
         self._publish(WALLET, {"balances": [item]}, account=account)
+        if status.balance_stale:
+            self._fresh.discard(account)
+
+    @contextmanager
+    def _contained(self) -> Iterator[None]:
+        """A delta that fails stays here, logged by its error type (never its message, C-12.6) at
+        most once per `LOG_INTERVAL_S`, with the count of those held back since the last line; a
+        cancellation still propagates."""
+        try:
+            yield
+        except Exception as exc:
+            now = self._clock()
+            if now < self._log_from:
+                self._held += 1
+                return
+            held, self._held, self._log_from = self._held, 0, now + LOG_INTERVAL_S
+            log = structlog.get_logger(__name__)
+            log.error("wallet_topic.publish_failed", error=type(exc).__name__, suppressed=held)

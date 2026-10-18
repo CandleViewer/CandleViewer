@@ -35,8 +35,15 @@ def _health(frames: Frames) -> list[tuple[str, str, bool]]:
     return [(entry["state"], entry["reason"], entry["rest_only"]) for entry in entries]
 
 
-def _failing_publish(ch: str, body: Mapping[str, Any], *, account: UUID) -> int:
-    raise RuntimeError("fan-out bug")
+class _FailingFanOut:
+    """A hub's `publish` that raises, and counts the deltas it was asked to send."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, ch: str, body: Mapping[str, Any], *, account: UUID) -> int:
+        self.calls += 1
+        raise RuntimeError("fan-out bug")
 
 
 async def test_monitoring_start_and_each_transition_are_the_only_health_deltas() -> None:
@@ -97,6 +104,25 @@ async def test_rest_polling_taking_over_is_one_degraded_rest_only_delta_then_a_b
     assert [item["stale"] for item in snap["balances"]] == [False]
 
 
+async def test_a_dropped_stream_with_rest_polling_working_is_one_degraded_ws_silent_delta() -> None:
+    rig = Rig(rest=True)
+    await rig.boot()
+    rig.ws.connect()
+    await rig.run(7)  # pongs at 0 and 5 s
+    conn = _subscriber(rig)
+    conn.take()
+    rig.ws.drop()
+    await rig.run(14)  # REST polling takes over: its reads at 10 and 20 s succeed
+    frames = conn.take()
+    [(_, snap)] = _subscriber(rig).take()
+    await rig.close()
+    # one health delta, at the drop: the transition's reason, `rest_only` true; each read then sends
+    # its balance and no health. A new subscriber is told the derived reason, `rest_only`.
+    assert _health(frames) == [("degraded", "ws_silent", True)]
+    assert [len(body["balances"]) for _, body in frames] == [0, 1, 1]
+    assert _health([("snap", snap)]) == [("degraded", "rest_only", True)]
+
+
 async def test_a_connected_account_is_served_healthy_with_its_heartbeat_age() -> None:
     rig = Rig()
     await rig.boot()
@@ -134,7 +160,8 @@ async def test_with_the_stream_and_the_truth_check_failed_the_served_balance_is_
 
 async def test_a_failing_fan_out_reaches_neither_the_evidence_calls_nor_the_loops() -> None:
     rig = Rig()
-    rig.topic._publish = _failing_publish
+    fan_out = _FailingFanOut()
+    rig.topic._publish = fan_out
     with capture_logs() as logs:
         await rig.boot()  # its monitoring starts: a health delta, which fails
         moved = rig.accounts.account_health.ws_heartbeat(ACC)
@@ -143,4 +170,6 @@ async def test_a_failing_fan_out_reaches_neither_the_evidence_calls_nor_the_loop
     await rig.close()
     failed = [entry for entry in logs if entry["event"] == "wallet_topic.publish_failed"]
     assert moved is not None and moved.to_state is HealthState.HEALTHY
-    assert (fault, len(failed), rig.dms.calls) == (None, 4, [(ACC, "no_success")])
+    # four deltas failed (start, healthy, degraded, down): one line, the rest held back
+    assert (fault, fan_out.calls, len(failed)) == (None, 4, 1)
+    assert rig.dms.calls == [(ACC, "no_success")]

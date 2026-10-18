@@ -5,7 +5,7 @@ subscriber gets is validated against 23-ws-protocol.md §15.4."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -16,15 +16,16 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import HealthState, epoch_ms
-from candleviewer.accounts.wallet_topic import WalletTopic
+from candleviewer.accounts.wallet_topic import LOG_INTERVAL_S, WalletTopic
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.sequencing import SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, T0
+from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock
 from tests.unit.accounts._runtime_rig import snapshot
 from tests.unit.accounts._wallet_ws import WalletWorld, manager, owner
 
 _ACC_C = UUID(int=3)
 _ACC_D = UUID(int=4)
+_ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class _BrokenViews:
     """A monitor or wallet cache whose every read raises."""
 
     def view(self, account_id: UUID) -> None:
-        raise RuntimeError("echoed exchange text: key abc123")
+        raise RuntimeError(_ECHO)
 
 
 def _ids(entries: list[dict[str, Any]]) -> list[str]:
@@ -57,7 +58,7 @@ def _ids(entries: list[dict[str, Any]]) -> list[str]:
 
 def _recorded(world: WalletWorld) -> tuple[WalletTopic[SnapshotBody], _Published]:
     published = _Published()
-    topic = WalletTopic(published, SnapshotBody)
+    topic = WalletTopic(published, SnapshotBody, clock=world.clock.monotonic)
     topic.attach(world.monitor, world.wallets)
     return topic, published
 
@@ -201,19 +202,78 @@ def test_until_it_is_attached_the_topic_builds_nothing_and_it_attaches_once() ->
         topic.attach(world.monitor, world.wallets)
 
 
-@pytest.mark.parametrize("broken", ["publish", "read"])
-def test_a_delta_that_fails_is_logged_by_its_type_and_reaches_no_caller(broken: str) -> None:
-    world = WalletWorld()
+_Failing = Callable[[], tuple[WalletTopic[SnapshotBody], _Published]]
+
+
+def _fan_out_fails() -> tuple[WalletTopic[SnapshotBody], _Published]:
+    topic, published = _recorded(WalletWorld())
+    published.error = RuntimeError(_ECHO)
+    return topic, published
+
+
+def _read_fails() -> tuple[WalletTopic[SnapshotBody], _Published]:
     published = _Published()
-    topic = WalletTopic(published, SnapshotBody)
-    if broken == "publish":
-        published.error = RuntimeError("echoed exchange text: key abc123")
-        topic.attach(world.monitor, world.wallets)
-    else:
-        topic.attach(_BrokenViews(), _BrokenViews())
+    topic = WalletTopic(published, SnapshotBody, clock=FakeClock().monotonic)
+    topic.attach(_BrokenViews(), _BrokenViews())
+    return topic, published
+
+
+@pytest.mark.parametrize("failing", [_fan_out_fails, _read_fails], ids=["fan-out", "read"])
+def test_a_delta_that_fails_is_logged_by_its_type_and_reaches_no_caller(failing: _Failing) -> None:
+    topic, published = failing()
     with capture_logs() as logs:
         topic.health_changed(ACC)
-        topic.balance_refreshed(ACC)
-    failed = ("wallet_topic.publish_failed", "error", "RuntimeError")
-    assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [failed] * 2
-    assert "abc123" not in repr(logs) and published == []
+        topic.balance_refreshed(ACC)  # fails too; its line is held back (LOG_INTERVAL_S)
+    line = {"event": "wallet_topic.publish_failed", "log_level": "error", "error": "RuntimeError"}
+    assert logs == [line | {"suppressed": 0}] and _ECHO not in repr(logs) and published == []
+
+
+def test_a_persistent_failure_logs_once_per_interval_and_counts_the_ones_it_held_back() -> None:
+    world = WalletWorld()
+    topic, published = _recorded(world)
+    published.error = RuntimeError(_ECHO)
+    with capture_logs() as logs:
+        for _ in range(int(2 * LOG_INTERVAL_S) + 1):  # a failed delta a second, for two intervals
+            topic.health_changed(ACC)
+            world.clock.advance(1)
+    held = int(LOG_INTERVAL_S) - 1
+    assert [line["suppressed"] for line in logs] == [0, held, held]
+
+
+def test_a_turn_to_stale_whose_publish_failed_is_sent_again_on_the_next_tick() -> None:
+    world = WalletWorld()
+    topic, published = _recorded(world)
+    topic.balance_refreshed(ACC)  # out fresh: it owes a turn to stale
+    world.clock.advance(11)
+    published.error = RuntimeError(_ECHO)
+    with capture_logs():
+        topic.stale_check()  # the turn to stale: its publish fails
+    published.error = None
+    topic.stale_check()  # the next tick sends it
+    topic.stale_check()  # once
+    assert [item["stale"] for _, body, _ in published for item in body["balances"]] == [False, True]
+
+
+def test_a_refresh_whose_publish_failed_still_owes_its_turn_to_stale() -> None:
+    world = WalletWorld()
+    topic, published = _recorded(world)
+    published.error = RuntimeError(_ECHO)
+    with capture_logs():
+        topic.balance_refreshed(ACC)  # its publish fails: no item is out
+    published.error = None
+    world.clock.advance(11)
+    topic.stale_check()
+    assert [item["stale"] for _, body, _ in published for item in body["balances"]] == [True]
+
+
+def test_an_account_that_lost_its_balance_is_forgotten_and_owes_no_turn_to_stale_later() -> None:
+    world = WalletWorld()
+    topic, published = _recorded(world)
+    topic.balance_refreshed(ACC)  # out fresh: it owes a turn to stale
+    world.wallets.untrack(ACC)
+    topic.stale_check()  # its balance is gone: what it owed is forgotten
+    world.wallets.track(ACC)
+    world.wallets.apply(ACC, snapshot(world.clock.now()))  # a balance the topic was never told of
+    world.clock.advance(11)
+    topic.stale_check()
+    assert [account for _, _, account in published] == [ACC]  # the first fresh item, nothing after

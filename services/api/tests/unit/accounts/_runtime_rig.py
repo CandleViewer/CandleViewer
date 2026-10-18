@@ -160,7 +160,7 @@ class Rig:
         self.metrics = metrics or Metrics("demo")
         self.accounts = AccountsService()
         self.hub = SequencingHub()
-        self.topic = WalletTopic(self.hub.publish, SnapshotBody)
+        self.topic = WalletTopic(self.hub.publish, SnapshotBody, clock=self.clock.monotonic)
         self.wanted: frozenset[UUID] = frozenset(accounts or (ACC,))
         self.read_error: Exception | None = None  # the tracking source fails with this
         self.read_hangs = False  # or never answers
