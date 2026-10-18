@@ -102,7 +102,7 @@ async def test_prev_kek_mid_rotation_borrow_and_rewrap_records_owner() -> None:
     await v2.start(_ctx())
     assert v2.health().status is HealthStatus.OK
     assert await _borrow(v2, meta.key_id) == "ABCD1234"  # still at v1
-    rep = await v2.rewrap_deks(2, actor_user_id="owner-1", actor_role="owner")
+    rep = await v2.rewrap_deks(2, environment="demo", actor_user_id="owner-1", actor_role="owner")
     assert (rep.rewrapped, rep.remaining) == (1, 0)
     assert audit.records[-1][1]["actor_user_id"] == "owner-1"
 

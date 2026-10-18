@@ -34,10 +34,17 @@ from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
 from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
-from candleviewer.secrets.errors import KekLoadError, KekSourceNotPermitted, KekUnavailable
+from candleviewer.secrets.errors import (
+    CredentialUnavailable,
+    KekLoadError,
+    KekRotationError,
+    KekSourceNotPermitted,
+    KekUnavailable,
+    RotationCode,
+)
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.signing import RequestSignature, SigningMessage
-from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
+from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -58,6 +65,15 @@ STRANDED_REMEDIATION = (
     "that KEK is lost, revoke those keys at the exchange and in CandleViewer, then restart. "
     "See docs/ops/runbooks/kek-custody.md."
 )
+#: #2266: a KEK re-wrap run latched order entry before its first row, until the restart.
+ROTATION_GATE_REASON = "secrets.kek_rotation"
+ROTATION_REMEDIATION = (
+    "KEK rotation: a re-wrap run latched order entry read-only before its first row; new orders "
+    "stay disabled until the restart that ends the rotation. Cancels and stop-loss amendments "
+    "keep signing. See docs/ops/runbooks/kek-custody.md."
+)
+#: The broker's reasons for a record it could not write (`CredentialBroker._audit`).
+_AUDIT_FAILURES = frozenset({"audit_unavailable", "audit_timeout"})
 #: Bounded `reason` label values of `cv_kek_load_failures_total` (pre-initialised at 0).
 REASONS = (
     "kek_unavailable",
@@ -93,7 +109,7 @@ class SecretsMetadata(Protocol):
 
     async def verify_kek_possession(self) -> KekCheckResult: ...
     async def rewrap_deks(
-        self, to_version: int, *, actor_user_id: str, actor_role: str
+        self, to_version: int, *, environment: str, actor_user_id: str, actor_role: str
     ) -> RewrapReport: ...
 
 
@@ -178,10 +194,13 @@ class SecretsMetadataFacade:
             return await svc.verify_kek_possession()
 
         async def rewrap_deks(
-            to_version: int, *, actor_user_id: str, actor_role: str
+            to_version: int, *, environment: str, actor_user_id: str, actor_role: str
         ) -> RewrapReport:
             return await svc.rewrap_deks(
-                to_version, actor_user_id=actor_user_id, actor_role=actor_role
+                to_version,
+                environment=environment,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
             )
 
         self.verify_kek_possession, self.rewrap_deks = verify_kek_possession, rewrap_deks
@@ -202,15 +221,23 @@ class SecretsService:
         sources: Callable[[Any], _source.KekSources] = _source.sources_from_settings,
         harden: Callable[[], bool] = _kek.harden_process,
         load_timeout_s: float = 10.0 + _LOAD_MARGIN_S,
+        auth_keys: AuthKeyStore | None = None,
     ) -> None:
         self._store, self._kcv, self._audit_sink = store, kcv_store, audit
         self._sources, self._harden = sources, harden
         self._load_timeout = load_timeout_s
+        #: The environment's auth keyring rows a re-wrap run counts (#3505).
+        self._auth_keys = auth_keys
         self._broker: RotatingBroker | None = None
         self._kek_version: int | None = None
         self._reason: str | None = None
         self._latched = False
         self._started = False
+        #: Captured at `start()`: what a re-wrap run latches, and the one environment it serves.
+        self._gate: LatchableGate | None = None
+        self._env = ""
+        #: The single-flight lock of this environment's re-wrap runs (#2266).
+        self._rotating = False
 
     async def _audit(self, action: str, fields: dict[str, str]) -> None:
         if self._audit_sink is None:
@@ -318,6 +345,7 @@ class SecretsService:
         live = env_name == "live"
         srcs = self._sources(settings)  # KekSourceNotPermitted propagates: fatal
         self._started = True
+        self._gate, self._env = ctx.oms_read_only_gate, env_name
         if self._store is None or self._kcv is None:
             self._reason = "no_credential_store"
             if live:
@@ -442,11 +470,62 @@ class SecretsService:
         return KekCheckResult(kek.version, True, None)
 
     async def rewrap_deks(
-        self, to_version: int, *, actor_user_id: str, actor_role: str
+        self, to_version: int, *, environment: str, actor_user_id: str, actor_role: str
     ) -> RewrapReport:
-        """Counts only, for `admin` (C-3.2); the Owner is recorded on every rotation record."""
+        """Counts only, for `admin` (C-3.2), in the boot staged for this rotation (#2266 D1).
+
+        Refused, audited (`security.kek_rotation_refused`) and with nothing latched or moved:
+        `KekUnavailable` without a usable KEK, `kek_rotation_not_staged` unless `environment` is
+        this process's and its KEKs are at `to_version` and `to_version - 1`, and
+        `kek_rotation_in_progress` while a run is under way. Otherwise order entry is latched
+        before the run's opening record, until restart, and the run counts the auth keyring
+        (#3505). The Owner is recorded on every record."""
         actor = ("user", actor_role, actor_user_id)
-        return await self._require().rewrap_all(to_version, actor=actor)
+        broker, gate = self._broker, self._gate
+        if broker is None or gate is None:
+            await self._refuse("kek_unavailable", actor, environment, to_version)
+            raise KekUnavailable("kek_unavailable")
+        try:
+            broker.staged(to_version)
+            staged = environment == self._env
+        except (KekUnavailable, KekLoadError):
+            staged = False
+        code: RotationCode | None = None if staged else "kek_rotation_not_staged"
+        if code is None and self._rotating:
+            code = "kek_rotation_in_progress"
+        if code is not None:
+            await self._refuse(code, actor, environment, to_version)
+            raise KekRotationError(code)
+        self._rotating = True  # no await since the check: single-flight
+        try:
+            self._latch_rotation(gate)
+            return await broker.rewrap_all(to_version, actor=actor, auth_keys=self._auth_keys)
+        except CredentialUnavailable as exc:
+            audit = str(exc) in _AUDIT_FAILURES
+            raise KekRotationError("audit_unavailable" if audit else "store_unavailable") from None
+        finally:
+            self._rotating = False
+
+    async def _refuse(
+        self, code: str, actor: tuple[str, str, str], environment: str, to_version: int
+    ) -> None:
+        """A refusal's record, written before the refusal leaves (C-2.9); one that cannot be
+        written answers `audit_unavailable` instead. Never latches."""
+        kind, role, user = actor
+        fields = {"actor_kind": kind, "actor_role": role, "actor_user_id": user, "env": self._env}
+        fields |= {"reason": code, "to_version": str(to_version)}
+        fields["requested_env"] = environment[:16]  # caller text, bounded (the route's is an enum)
+        try:
+            await self._audit("security.kek_rotation_refused", fields)
+        except KekLoadError:
+            raise KekRotationError("audit_unavailable") from None
+
+    def _latch_rotation(self, gate: LatchableGate) -> None:
+        """#2266: order entry read-only for the rest of this process. Health reads DEGRADED
+        (`kek_rotation`, unless a boot latched first); no KEK page (`cv_kek_degraded_state`)."""
+        gate.latch(reason_code=ROTATION_GATE_REASON, reason_text=ROTATION_REMEDIATION)
+        self._reason, self._latched = self._reason or "kek_rotation", True
+        _log().warning("secrets.kek_rotation_latched", remediation=ROTATION_REMEDIATION)
 
     async def stop(self, grace_s: float) -> None:
         broker, self._broker = self._broker, None

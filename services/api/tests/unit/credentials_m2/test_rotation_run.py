@@ -66,7 +66,7 @@ async def test_a_rerun_after_a_run_that_moved_rows_opens_as_resumed() -> None:
     aborted = await _aborted(s, 2)
     assert [a for a, _ in aborted.records] == [_STARTED, _INCOMPLETE]
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2)
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert _opening(audit) == (_RESUMED, "3", "2") and rep.resumed
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (3, 0, _ROTATED)
 
@@ -145,7 +145,7 @@ async def test_a_row_fenced_after_it_was_listed_never_reaches_the_cas(
 
     s.get, s.rewrap = reread, cas  # type: ignore[method-assign]
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2)
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert tried == [ids[1]] and s.rows[ids[0]]["dek_ref"] == wrap
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (1, 0, _ROTATED)
 
@@ -163,7 +163,7 @@ async def test_rows_of_every_other_status_are_rewrapped_and_none_is_left() -> No
     for key_id, status in zip(ids, statuses, strict=True):
         s.activate(key_id, status)
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2)
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (5, 0, _ROTATED)
 
 

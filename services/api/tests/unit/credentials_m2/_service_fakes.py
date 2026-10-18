@@ -18,7 +18,7 @@ from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import SecretsService, mint_borrower
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Settings
-from tests.unit.credentials_m2._vectors import ACCOUNT, SNAPSHOT, AuditLog
+from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, KEK_V2, SNAPSHOT, AuditLog
 
 _PASS = BindingCheckResult(safe=True, bound_addresses=(), reason_code="ok", reason_text="ok")
 KEK_V3 = bytes(range(200, 232))
@@ -80,11 +80,12 @@ def _svc(
     hardened: bool = True,
     ack: Path | None = None,
     timeout: float = 15.0,
+    auth_keys: Any = None,
 ) -> SecretsService:
     st = store if store is not None else InMemoryCredentialStore()
     return SecretsService(
         store=st, kcv_store=st, audit=audit or AuditLog(), sources=_bound_sources(cur, prev, ack),
-        harden=lambda: hardened, load_timeout_s=timeout,
+        harden=lambda: hardened, load_timeout_s=timeout, auth_keys=auth_keys,
     )  # fmt: skip
 
 
@@ -106,3 +107,17 @@ async def _boot(store: Any, cur: _Src, prev: _Src | None = None) -> SecretsServi
     svc = _svc(cur, prev, store=store)
     await svc.start(_ctx())
     return svc
+
+
+async def _staged(
+    audit: AuditLog, auth_keys: Any = None
+) -> tuple[SecretsService, Any, InMemoryCredentialStore]:
+    """Two keys stored under v1, then the rotation boot: v2 with v1 beside it (#2266)."""
+    store = InMemoryCredentialStore()
+    v1 = await _boot(store, _Src(KEK_V1, 1))
+    for _ in range(2):
+        await _store_one(v1)
+    svc = _svc(_Src(KEK_V2, 2), _Src(KEK_V1, 1), store=store, audit=audit, auth_keys=auth_keys)
+    ctx = _ctx()
+    await svc.start(ctx)
+    return svc, ctx, store

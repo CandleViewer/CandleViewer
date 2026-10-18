@@ -51,6 +51,17 @@ class RotatingBroker(CredentialBroker):
         if not kcv_matches(kek, expected):
             raise KekLoadError("kek_mismatch")
 
+    def staged(self, to_version: int) -> tuple[LoadedKek, LoadedKek]:
+        """The current and previous KEK of a rotation to `to_version` this broker was booted for:
+        `KekUnavailable` unless they are at `to_version` and `to_version - 1`, `kek_reused` if they
+        are one key (a no-op "rotation" must not be recorded). Checked before any latch (#2266)."""
+        kek, prev = self._require_kek(), self._prev
+        if prev is None or kek.version != to_version or prev.version != kek.version - 1:
+            raise KekUnavailable("kek_unavailable")
+        if kcv_matches(kek, prev.kcv()):
+            raise KekLoadError("kek_reused")
+        return kek, prev
+
     async def rewrap_all(
         self,
         new_kek_version: int,
@@ -68,14 +79,10 @@ class RotatingBroker(CredentialBroker):
         listed row is re-read and fenced (`_fenced`). Keyset paging terminates; failures are
         audited as they occur; `kek_rotated` only when nothing is left (the environment's auth
         keyring rows in `auth_keys` included) and no row failed, otherwise
-        `kek_rotation_incomplete`. `auth_keys` is None while no keyring is wired (#2152 S5b
-        wires it; until then nothing writes `auth_keys` rows).
+        `kek_rotation_incomplete`. With `auth_keys` None (no keyring store wired) the keyring is
+        unchecked: `auth_left` reads `unchecked` and the run is never complete (#3505).
         """
-        kek, prev = self._require_kek(), self._prev
-        if prev is None or kek.version != new_kek_version or prev.version != kek.version - 1:
-            raise KekUnavailable("kek_unavailable")
-        if kcv_matches(kek, prev.kcv()):
-            raise KekLoadError("kek_reused")  # a no-op "rotation" must not be recorded
+        kek, prev = self.staged(new_kek_version)
         run_id = uuid4()
         self._cache.flush()
         total = await self._io(self._store.count_at_kek_version(prev.version, self._env), "store")
@@ -145,27 +152,26 @@ class RotatingBroker(CredentialBroker):
             except Exception:
                 m.credential_outcome_audit_failures_total.inc()
             raise
-        left += auth_left
+        left += auth_left or 0
         fields = {
             **base,
             "rows": str(done),
             "left": str(left),
-            "auth_left": str(auth_left),
+            "auth_left": "unchecked" if auth_left is None else str(auth_left),
             "failed": str(len(failed)),
         }
-        complete = left == 0 and not failed
+        complete = left == 0 and not failed and auth_left is not None
         action = "security.kek_rotated" if complete else "security.kek_rotation_incomplete"
         await self._audit(action, fields)
-        return RewrapReport(
-            prev.version, kek.version, done, left, tuple(failed), run_id=run_id, resumed=resumed
-        )
+        report = (prev.version, kek.version, done, left, tuple(failed))
+        return RewrapReport(*report, run_id=run_id, resumed=resumed, complete=complete)
 
-    async def _left(self, version: int, auth_keys: AuthKeyStore | None) -> tuple[int, int]:
+    async def _left(self, version: int, auth_keys: AuthKeyStore | None) -> tuple[int, int | None]:
         """`(API key rows, auth keyring rows)` of this environment still at `version`: the rows
-        `ids_at_kek_version` lists, and those of `auth_keys` (none while no keyring is wired)."""
+        `ids_at_kek_version` lists, and those of `auth_keys`, None (unchecked) without one."""
         api = await self._io(self._store.count_at_kek_version(version, self._env), "store")
         if auth_keys is None:
-            return api, 0
+            return api, None
         return api, await self._io(auth_keys.count_at_kek_version(version, self._env), "store")
 
     def _fenced(self, row: CredentialRow, key_id: UUID, version: int) -> bool:

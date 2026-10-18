@@ -17,7 +17,7 @@ from candleviewer.secrets.errors import (
     KekUnavailable,
 )
 from candleviewer.secrets.secret import Secret
-from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
 from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten, StorageError
 from tests.unit.credentials_m2._helpers import _borrow, _store
 from tests.unit.credentials_m2._vectors import (
@@ -46,7 +46,7 @@ async def test_rewrap_all_keeps_ciphertext_and_bumps_version() -> None:
     s, metas, before = await _seed(20)
     old_refs = {k: s.rows[k]["dek_ref"] for k in before}
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, batch=7)
+    rep = await _rot(s, audit).rewrap_all(2, batch=7, auth_keys=InMemoryAuthKeyStore())
     assert (rep.rewrapped, rep.remaining, rep.failed) == (20, 0, ())
     for m in metas:
         row = s.rows[m.key_id]
@@ -243,7 +243,7 @@ async def test_rotation_ignores_other_environment_rows() -> None:
     live = CredentialBroker(s, AuditLog(), kek(KEK_LIVE, 1, "live"), env_name="live")
     lm = await live.store("live", ACCOUNT, "l", Secret("LIVEKEY00000ABCD"), Secret("s"), SNAPSHOT)
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2)
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert (rep.rewrapped, rep.remaining) == (2, 0)
     assert audit.actions()[-1] == "security.kek_rotated"
     assert s.rows[lm.key_id]["kek_version"] == 1  # live row untouched

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from candleviewer.admin.errors import KekRewrapError
+from candleviewer.admin.models import KekRewrapResult
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.secrets import KekRotationError, KekUnavailable
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -37,3 +40,32 @@ class AdminService:
         """Report module health. Scaffold modules report `ok` when constructed."""
         status = HealthStatus.OK if self._started else HealthStatus.STOPPED
         return HealthReport(module="", status=status, detail="scaffold module — no real logic yet")
+
+    async def rewrap_kek(
+        self, environment: str, to_version: int, actor_user_id: str
+    ) -> KekRewrapResult:
+        """#2266 D1: one KEK re-wrap run for the Owner (`rewrapKek`), counts only. M2 checks the
+        staged boot, audits a refusal, latches order entry and runs; this maps its errors to the
+        contract's codes. Without M2 no refusal can be recorded: `audit_unavailable`. No route
+        calls it yet (#2266 D2)."""
+        if self.secrets is None:
+            raise KekRewrapError("audit_unavailable")
+        try:
+            report = await self.secrets.rewrap_deks(
+                to_version, environment=environment, actor_user_id=actor_user_id, actor_role="owner"
+            )
+        except KekUnavailable:
+            raise KekRewrapError("kek_unavailable") from None
+        except KekRotationError as exc:
+            raise KekRewrapError(exc.code) from None
+        return KekRewrapResult(
+            run_id=report.run_id,
+            environment=environment,
+            from_version=report.from_version,
+            to_version=report.to_version,
+            resumed=report.resumed,
+            rewrapped=report.rewrapped,
+            remaining=report.remaining,
+            failed=len(report.failed),
+            complete=report.complete,
+        )

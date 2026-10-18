@@ -31,6 +31,7 @@ from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
 from candleviewer.secrets.errors import CredentialUnavailable, SnapshotInvalid
 from candleviewer.secrets.secret import Secret
+from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -587,5 +588,38 @@ async def test_a_stranded_count_is_of_unrevoked_rows_of_its_environment(pg_dsn: 
         _sql(pg_dsn, "UPDATE api_keys SET status = 'revoked' WHERE id = %s", old[1])
         after = [await store.count_stranded(*load) for load in loads]
         assert [a - b for a, b in zip(after, before, strict=True)] == [2, 0, 1]
+    finally:
+        await rel.dispose()
+
+
+async def test_a_run_counts_its_environment_keyring_through_the_auth_key_adapter(
+    pg_dsn: str,
+) -> None:
+    """#3505: `rewrap_all` with the real `SqlAlchemyAuthKeyStore`: a keyring row left at the
+    previous version keeps the run incomplete, counted; once it has moved, the run completes."""
+    rel, store = _store(pg_dsn)
+    keyring, ring = SqlAlchemyAuthKeyStore(rel, env="demo"), uuid4()
+    row = {"id": ring, "env": "demo", "purpose": "totp_seal", "origin": "generated"}
+
+    async def run(audit: AuditLog) -> Any:
+        rot = CredentialBroker(store, audit, _kek(190, 41), prev_kek=_kek(180, 40))
+        return await rot.rewrap_all(41, auth_keys=keyring)
+
+    try:
+        await _keys(CredentialBroker(store, _audit, _kek(180, 40)), pg_dsn, 1, "RING")
+        await _enrol(store, "demo", 41, _kek(190, 41).kcv())
+        at_40 = row | {"dek_ref": "ak1:" + "0" * 120, "kek_version": 40}
+        assert await keyring.insert_keyring([at_40])
+        first, again = AuditLog(), AuditLog()
+        rep = await run(first)
+        assert (rep.rewrapped, rep.remaining, rep.complete) == (1, 1, False)
+        assert first.records[-1][1]["auth_left"] == "1"
+        moved = "ak1:" + "2" * 120  # the next rotation boot re-wraps the keyring row (#2152)
+        assert await keyring.rewrap(
+            ring, env="demo", from_version=40, dek_ref=moved, kek_version=41
+        )
+        rep = await run(again)
+        assert (rep.remaining, rep.complete) == (0, True)
+        assert again.actions()[-1] == "security.kek_rotated"
     finally:
         await rel.dispose()
