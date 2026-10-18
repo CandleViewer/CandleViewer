@@ -822,11 +822,13 @@ exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) e
 
 While the sink refuses records, sign-out, session revocation, refresh, extend and unlock answer
 `503` and change nothing (C-2.9), except unlock while the sink is up but its writer refuses (a full
-or unwritable WAL): a wrong password then still counts toward the five failed unlocks that revoke
-the session and toward the SR-016 lockout, which it can apply with no `auth.unlock_failed` or
-`auth.account_locked` row (only `auth_lockouts_total` moves), so ask users not to retry an unlock
-until the sink is back. Sessions idle-lock at their idle deadline and cannot be unlocked, an access
-token lapses within 12 minutes and a longer refusal ends every session
+or unwritable WAL) for a lock B16's chart already holds: a wrong password still counts toward the
+five failed unlocks that revoke the session and toward the SR-016 lockout, which it can apply with
+no `auth.unlock_failed` or `auth.account_locked` row (only `auth_lockouts_total` moves), so ask
+users not to retry an unlock meanwhile. A lock the chart must still record (first seen meanwhile, or
+again after a restart) gets `503` at its `auth.idle_locked` record, before the password check, and
+counts nothing. Sessions idle-lock at their idle deadline and cannot be unlocked, an access token
+lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
 reset (section 3, E09-S11 #2119, not runnable yet) will be the Owner's emergency path: it runs only
 with cv-api stopped and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
