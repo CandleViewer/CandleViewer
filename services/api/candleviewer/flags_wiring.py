@@ -28,7 +28,7 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.flags.catalogue import default_registry
+from candleviewer.admin.flags.catalogue import AUDIT_LANE_JOURNAL_FIRST, default_registry
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
 from candleviewer.admin.flags.registry import FlagSpec, FlagValue
@@ -236,6 +236,7 @@ class FeatureFlagsRuntime:
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
         self._build(DEFAULT_READ_BUDGET_MS)
+        self.lane_flag = LaneFlag(self)
 
     def _build(self, budget_ms: int) -> None:
         store = StorageFlagStore(self._repository(budget_ms), bound_s=write_bound_s(budget_ms))
@@ -259,6 +260,7 @@ class FeatureFlagsRuntime:
         if budget_ms != self.budget_ms:
             self._build(budget_ms)  # the service refuses a budget outside 50-2000 ms
         await self.service.start()
+        await self.lane_flag.refresh()  # a boot during an outage keeps the catalogue default
         if self._poll is None:
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
 
@@ -269,6 +271,30 @@ class FeatureFlagsRuntime:
             await asyncio.wait({poll})
         if self._relational is not None:
             await self._relational.dispose()
+
+
+class LaneFlag:
+    """`audit.lane_journal_first` for `AuditService.use_lane_flag` (ADR-0037 decision 12, READY-21):
+    a call returns the last value read at once, so it never spends a caller's deadline, and starts
+    a refresh unless one runs. Read with no principal, from the service `start()` may rebuild; it
+    is the catalogue default until a read succeeds, and an outage or an unreadable row keeps it."""
+
+    def __init__(self, runtime: FeatureFlagsRuntime) -> None:
+        self._runtime, self._spec = runtime, runtime.registry[AUDIT_LANE_JOURNAL_FIRST]
+        self.value = self._spec.default is True
+        self._task: asyncio.Task[None] | None = None
+
+    def __call__(self) -> bool:
+        if self._task is None or self._task.done():
+            self._task = spawn(self.refresh(), name="audit-lane-flag")
+        return self.value
+
+    async def refresh(self) -> None:
+        service = self._runtime.service
+        row = await service.stored(self._spec)
+        flag = None if row is None else service.resolved(self._spec, row, None, frozenset())
+        if flag is not None and not flag.unreadable:
+            self.value = flag.value is True
 
 
 def build_feature_flags(

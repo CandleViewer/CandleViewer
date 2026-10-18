@@ -390,7 +390,8 @@ def test_catalogue_rows_carry_defaults_and_the_decided_visibility() -> None:
     assert set(visibility.values()) == {"`all_roles`", "`owner_only`"}
     owner_only = " ".join(sorted(k for k, value in visibility.items() if value == "`owner_only`"))
     assert owner_only == (
-        "killswitch.ingestion maintenance.keep_recorder recorder.auto_record storage.cold_tier"
+        "audit.lane_journal_first killswitch.ingestion maintenance.keep_recorder "
+        "recorder.auto_record storage.cold_tier"
     )
 
 

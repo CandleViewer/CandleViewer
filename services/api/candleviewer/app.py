@@ -137,6 +137,7 @@ from candleviewer.api.users import (
     make_users_router,
 )
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
+from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
@@ -644,16 +645,19 @@ def _build_incidents_purge(settings: Settings) -> IncidentsPurgeTask | None:
 
 
 def _build_audit(settings: Settings) -> AuditHandle:
-    """QA #1658 (C-2.9): the real hash-chained audit sink on the real backend."""
+    """QA #1658 (C-2.9): the real hash-chained audit sink on the real backend. ADR-0037: its
+    `start()` runs the lane key loader on every backend (S2b-1's refusals)."""
+    keys = lane_key_loader(settings)
     if settings.storage_backend != "real":
-        return build_audit_service()
+        return build_audit_service(lane_keys=keys)
     return build_audit_service(
         SqlAlchemyAuditRepository(
             SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
             read_slots=settings.audit_query_global_max_concurrent,
             verify_read_timeout_ms=settings.audit_verify_statement_timeout_ms,
             verify_max_entry_bytes=settings.audit_verify_max_entry_bytes,
-        )
+        ),
+        lane_keys=keys,
     )
 
 
@@ -1444,6 +1448,8 @@ def create_app(
         users=user_role_store,
     )
     app.state.feature_flags = feature_flags
+    # ADR-0037 decision 12: the lane flag for the audit module, which may not import `admin`.
+    ctx.audit.use_lane_flag(feature_flags.lane_flag)
     app.state.order_entry_gate = feature_flags.order_entry_gate
     app.state.flag_metrics = export_flag_metrics(ctx.metrics, env=resolved.environment.value)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.

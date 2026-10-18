@@ -23,7 +23,7 @@ from candleviewer.audit.lane_journal import key_id
 from candleviewer.audit.models import AuditEmission, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
-from candleviewer.audit.service import AuditService
+from candleviewer.audit.service import AuditService, LaneKeyLoader
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
 from candleviewer.observability.metrics import Metrics
@@ -154,11 +154,14 @@ def build_secrets_service(
     )
 
 
-def build_audit_service(repository: AuditRepository | None = None) -> AuditHandle:
+def build_audit_service(
+    repository: AuditRepository | None = None, *, lane_keys: LaneKeyLoader | None = None
+) -> AuditHandle:
     """Construct M19. No I/O. With a repository (storage_backend=real, QA
     #1658) `start()` wires the real WAL-backed `AuditWriter`; without one it
-    stays the scaffold."""
-    return AuditService(repository)
+    stays the scaffold. `start()` runs `lane_keys`, the composition root's
+    lane key loader, once (ADR-0037 decision 6)."""
+    return AuditService(repository, lane_keys=lane_keys)
 
 
 def build_audit_verify_job(

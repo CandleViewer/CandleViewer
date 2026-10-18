@@ -9,7 +9,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, get_args
+from typing import Any, cast, get_args
 from unittest.mock import AsyncMock, call
 
 import pytest
@@ -24,6 +24,7 @@ from candleviewer.admin.flags import (
     FlagRegistry,
     FlagService,
     FlagSpec,
+    StoredFlag,
     Visibility,
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController
@@ -40,7 +41,7 @@ from candleviewer.storage.repositories.flags_sqlalchemy import FlagSeed, SqlAlch
 from candleviewer.storage.repositories.system_settings import StoredSetting
 from candleviewer.storage.testing.flags import InMemoryFlagRepository
 from candleviewer.ws.gateway import GatewayHub
-from tests.unit.admin.flag_fakes import FakeAudit, FakeStepUp, FakeUsers
+from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
 _FLAGS = frozenset({"flags:read", "flags:write"})
 _OWNER = AuditPrincipal(uuid.UUID(int=1), "owner", _FLAGS, uuid.UUID(int=2), is_owner=True)
@@ -80,6 +81,40 @@ def _runtime(settings: _Settings | None = None) -> wiring.FeatureFlagsRuntime:
         users=FakeUsers(),
         sessions=_Sessions(),
     )
+
+
+async def test_the_audit_lane_flag_is_cached_read_with_no_principal_and_kept_in_an_outage() -> None:
+    """READY-21: the catalogue default until a read succeeds (on here: no implicit off); then no
+    principal, from a rebuilt service; the last value through an outage; no wait on the store."""
+    spec = FlagSpec("audit.lane_journal_first", FlagKind.BOOLEAN, "d", Category.FEATURE_ROLLOUT,
+                    True, Visibility.OWNER_ONLY, restrictive=False)  # fmt: skip
+    registry, (down, store), clock = (
+        FlagRegistry([spec]),
+        (FakeFlagStore(), FakeFlagStore()),
+        Clock(),
+    )
+    runtime = SimpleNamespace(registry=registry, service=FlagService(registry, down, clock=clock))
+    flag, down.down = wiring.LaneFlag(cast(wiring.FeatureFlagsRuntime, runtime)), True
+    await flag.refresh()  # a boot during an outage
+    assert flag.value is True
+    runtime.service = FlagService(registry, store, clock=clock)
+    store.rows[spec.key] = StoredFlag(False, role_overrides={"owner": True})
+    await flag.refresh()
+    assert flag.value is False  # no role applies
+    store.rows[spec.key], clock.now = StoredFlag(True), clock.now + 30
+    await flag.refresh()
+    store.rows[spec.key], clock.now = StoredFlag("on"), clock.now + 30
+    await flag.refresh()  # an unreadable row keeps it too
+    store.down, clock.now = True, clock.now + 30
+    await flag.refresh()
+    assert flag.value is True  # kept through the outage, not failed closed
+    store.rows[spec.key] = StoredFlag(False)
+    store.down, store.hold, clock.now = False, asyncio.Event(), clock.now + 30
+    assert flag() is True  # at once: the refresh waits on the slow store in its own task
+    store.hold.set()
+    async with asyncio.timeout(5):
+        while flag.value:  # noqa: ASYNC110 - the refresh completes in its own task
+            await asyncio.sleep(0)
 
 
 def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:
@@ -157,8 +192,10 @@ async def test_start_ensures_the_rows_and_the_poll_opens_the_order_gate() -> Non
     runtime, account = _runtime(), uuid.uuid4()
     refusal = runtime.order_entry_gate.refusal(account)
     assert refusal is not None and refusal.reason == "maintenance"  # unknown: engaged
+    runtime.lane_flag.value = True
     await runtime.start()
     poll = runtime._poll
+    assert runtime.lane_flag.value is False  # start() read the audit lane flag's stored value
     try:
         for _ in range(100):  # bounded: the poll's first read sees both gate flags off
             if not runtime.gate.engaged:
