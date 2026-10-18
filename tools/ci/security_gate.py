@@ -8,8 +8,8 @@ exactly once (technical notes, E03-T07 ticket body) instead of per-tool.
 
 Error codes (ticket "Technical notes / design"):
     CI-SEC-001  blocking finding (severity meets/exceeds the tool's policy
-                and no unexpired accepted-risk entry covers it; none covers a
-                Critical)
+                and no unexpired accepted-risk entry covers it: an entry covers
+                up to its own severity, and none covers a Critical)
     CI-SEC-002  licence violation (prohibited licence, no exception)
     CI-SEC-003  licence needs approval (LGPL) and no unexpired, correctly
                 approved accepted-risk entry covers it
