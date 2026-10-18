@@ -1,9 +1,11 @@
-"""`SqlAlchemyBackups`: the `backups` catalogue on Postgres (E42-T05 #966 BK-3a, the reads;
-BK-3b adds the writes), built, not wired. Values bound, statements over `COLUMNS` (never
-`encryption_ref`), pages `started_at DESC, id DESC` strictly after a keyset position, one unit of
-work per call, its statements capped at 1 s (lock waits too) by a transaction-local
-`statement_timeout`. Errors are classed by SQLSTATE as in `incidents_sqlalchemy`, but no driver
-error leaves (a CHECK's `DETAIL` is the whole row): 08/53/57/58/none/pool/unlisted is
+"""`SqlAlchemyBackups`: the `backups` catalogue on Postgres (E42-T05 #966 BK-3), built, not wired.
+Values bound, statements over `COLUMNS` (never `encryption_ref`), pages `started_at DESC, id DESC`
+strictly after a keyset position, one unit of work per call, its statements capped at 1 s (lock
+waits too) by a transaction-local `statement_timeout`. Writes are guarded updates (a run ends
+while `running`; a verification lands on a row neither `running` nor deleted; the deleted mark is
+set once, never on a running row); a second writer waits, then re-checks the guard (READ
+COMMITTED). Errors are classed by SQLSTATE as in `incidents_sqlalchemy`, but no driver error
+leaves (a CHECK's `DETAIL` is the whole row): 08/53/57/58/none/pool/unlisted is
 `StorageTierUnavailable`; 22/23/42/XX `StorageQueryFailed`, a 23514 typed by the constraint its
 violation names (none: `0032`'s guard). Logged with the call, type and SQLSTATE only; raised
 outside the `except`, with no cause or context.
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
@@ -79,16 +82,33 @@ def _failure(op: str, exc: Exception) -> StorageError:
     return StorageQueryFailed(state)
 
 
+def _code(error: str | None) -> str | None:
+    """`error` if it is a code of `BACKUP_ERROR_CODES`; nothing else reaches the table."""
+    if error is not None and error not in port.BACKUP_ERROR_CODES:
+        raise ValueError("backups: an error must be a code of BACKUP_ERROR_CODES")
+    return error
+
+
+def _path(path: str) -> str:
+    """21 Sec.3.10.3's `target_path`: an absolute filesystem path, never a URL or userinfo."""
+    if not path.startswith("/") or "://" in path or "@" in path:
+        raise ValueError("backups: target_path must be an absolute filesystem path")
+    return path
+
+
 class SqlAlchemyBackups:
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._rel = relational
 
     async def _run(self, op: str, stmt: sa.Executable) -> list[dict[str, Any]]:
-        """One statement in its own capped unit of work."""
+        """One statement in its own capped unit of work, committed unless it is a read."""
         try:
             async with self._rel.unit_of_work() as uow:
                 await uow.session.execute(_TIMEOUT, {"timeout": STATEMENT_TIMEOUT})
-                return [dict(row) for row in (await uow.session.execute(stmt)).mappings()]
+                rows = [dict(row) for row in (await uow.session.execute(stmt)).mappings()]
+                if not isinstance(stmt, sa.Select):
+                    await uow.commit()
+                return rows
         except (OSError, sa_exc.SQLAlchemyError) as exc:
             failure = _failure(op, exc)
         raise failure  # outside the `except`: no cause and no context, so no driver text
@@ -130,6 +150,44 @@ class SqlAlchemyBackups:
         usable = sa.and_(_C.kind == kind, verified, _C.deleted_at.is_(None))
         rows = await self._run("usable_count", sa.select(sa.func.count().label("n")).where(usable))
         return int(rows[0]["n"])
+
+    async def insert_running(self, new: port.NewBackup) -> port.BackupRow:
+        values = asdict(new) | {"status": "running", "target_path": _path(new.target_path)}
+        stmt = sa.insert(_TABLE).values(values).returning(*COLUMNS)
+        return port.BackupRow(**(await self._run("insert_running", stmt))[0])
+
+    async def record_run_finished(
+        self, backup_id: UUID, run: port.RunFinished
+    ) -> port.BackupRow | None:
+        values = {name: value for name, value in asdict(run).items() if name != "error"}
+        values |= {"status": "failed" if run.error else "ok", "error_message": _code(run.error)}
+        stmt = sa.update(_TABLE).where(_C.id == backup_id, _C.status == "running").values(values)
+        return await self._one("record_run_finished", stmt.returning(*COLUMNS))
+
+    async def record_verify_outcome(
+        self,
+        backup_id: UUID,
+        *,
+        method: port.VerifyMethod,
+        at: datetime,
+        error: port.BackupErrorCode | None,
+    ) -> port.BackupRow | None:
+        port.require_aware(at)
+        outcome: dict[str, Any] = {"status": "failed", "error_message": _code(error)}
+        if error is None:  # a failure leaves `verified_at` and `verify_method` at the last success
+            outcome = {"status": "verified", "error_message": None}
+            outcome |= {"verified_at": at, "verify_method": method}
+        guard = sa.and_(_C.id == backup_id, _C.status != "running", _C.deleted_at.is_(None))
+        stmt = sa.update(_TABLE).where(guard).values(**outcome).returning(*COLUMNS)
+        return await self._one("record_verify_outcome", stmt)
+
+    async def mark_deleted(
+        self, backup_id: UUID, *, by: UUID, at: datetime
+    ) -> port.BackupRow | None:
+        port.require_aware(at)
+        guard = sa.and_(_C.id == backup_id, _C.status != "running", _C.deleted_at.is_(None))
+        stmt = sa.update(_TABLE).where(guard).values(deleted_at=at, deleted_by=by)
+        return await self._one("mark_deleted", stmt.returning(*COLUMNS))
 
 
 #: Checked by mypy, which CI runs on `candleviewer`: the store satisfies its port at each slice.

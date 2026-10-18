@@ -1,5 +1,5 @@
-"""Integration: `SqlAlchemyBackups`' reads on real Postgres 16 at head (E42-T05 #966 BK-3a), what
-the fake cannot show. testcontainers, CI-only; run before the PR on a scratch Postgres 16.4."""
+"""Integration: `SqlAlchemyBackups` on real Postgres 16 at head (E42-T05 #966 BK-3), what the fake
+cannot show. testcontainers, CI-only; run before the PR on a scratch Postgres 16.4 (stand-in)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import asyncio
 import os
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, MutableMapping
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,7 +21,12 @@ from structlog.testing import capture_logs
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.api._generated.openapi_models import Backup
-from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.errors import (
+    BackupCheckViolation,
+    BackupWriteOnceViolation,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories import backups as port
 from candleviewer.storage.repositories import backups_sqlalchemy as repo
 from candleviewer.storage.repositories.backups_sqlalchemy import SqlAlchemyBackups
@@ -204,3 +209,123 @@ async def test_usable_count_needs_a_verified_status_a_verified_at_and_no_deleted
     counts = [await store.usable_count(k) for k in ("pg_dump", "pg_basebackup", "config_bundle")]
     usable = [port.counts_as_usable(row) for row in [await store.get(b) for b in ids] if row]
     assert counts == [2, 1, 0] and usable == [True, True, False, False, False, False, True]
+
+
+async def _running(store: SqlAlchemyBackups, at: datetime = T0) -> UUID:
+    new = port.NewBackup(uuid4(), "pg_dump", "/b/x", True, "manual", USER, at, _ALIAS)
+    return (await store.insert_running(new)).id
+
+
+async def _ok(store: SqlAlchemyBackups) -> UUID:
+    bid = await _running(store)
+    await store.record_run_finished(bid, port.RunFinished(T0, None, checksum_sha256=_DIGEST))
+    return bid
+
+
+def _refused(exc: BaseException, logs: list[MutableMapping[str, Any]], sqlstate: str) -> None:
+    leaked = str(exc) + repr(exc) + repr(logs)
+    assert _ALIAS not in leaked and "Failing row" not in leaked and "Key (" not in leaked
+    assert exc.__cause__ is None and exc.__context__ is None and logs[-1]["sqlstate"] == sqlstate
+
+
+async def test_insert_and_finish_write_each_field_as_given(
+    pg_dsn: str, store: SqlAlchemyBackups
+) -> None:
+    new = port.NewBackup(
+        uuid4(), "pg_basebackup", "/b/p", False, "pre_release", USER, T0 - H, _ALIAS
+    )
+    row = await store.insert_running(new)
+    assert (row.kind, row.status, row.target_path, row.encrypted, row.triggered_by) == (
+        "pg_basebackup", "running", "/b/p", False, "pre_release",
+    ) and row.started_at == T0 - H  # fmt: skip
+    run = port.RunFinished(
+        T0, None, size_bytes=2**40, checksum_sha256=_DIGEST, covers_from=T0 - 2 * H,
+        covers_to=T0 - H, retention_until=T0 + 720 * H,
+    )  # fmt: skip
+    done = await store.record_run_finished(new.id, run)
+    assert done is not None and done == await store.get(new.id)
+    assert (done.status, done.finished_at, done.retention_until, done.covers_to) == (
+        "ok", T0, T0 + 720 * H, T0 - H,
+    )  # fmt: skip
+    assert (done.size_bytes, done.checksum_sha256, done.error_message) == (2**40, _DIGEST, None)
+    query = "SELECT triggered_by_user, encryption_ref, covers_from FROM backups WHERE id = %s"
+    assert _q(pg_dsn, query, new.id) == (USER, _ALIAS, T0 - 2 * H)
+
+
+async def test_finish_sets_checksum_once_and_refuses_a_second_finish(
+    pg_dsn: str, store: SqlAlchemyBackups
+) -> None:
+    bid = await _running(store)
+    done = await store.record_run_finished(bid, port.RunFinished(T0, None, checksum_sha256=_DIGEST))
+    assert done is not None and (done.status, done.checksum_sha256) == ("ok", _DIGEST)
+    again = port.RunFinished(T0 + MIN, "internal_error", checksum_sha256="b" * 64)
+    assert await store.record_run_finished(bid, again) is None and await store.get(bid) == done
+    _q(pg_dsn, "UPDATE backups SET status = 'running' WHERE id = %s RETURNING id", bid)
+    with capture_logs() as logs, pytest.raises(BackupWriteOnceViolation) as refused:
+        await store.record_run_finished(bid, again)  # past the guard: the write-once trigger
+    _refused(refused.value, logs, "23514")
+    assert _q(pg_dsn, "SELECT checksum_sha256 FROM backups WHERE id = %s", bid) == (_DIGEST,)
+    with capture_logs() as logs, pytest.raises(StorageQueryFailed) as bad:  # the digest domain
+        await store.record_run_finished(
+            await _running(store), port.RunFinished(T0, None, checksum_sha256="x")
+        )
+    _refused(bad.value, logs, "23514")
+    run = port.RunFinished(T0, "audit_unavailable")
+    failed = await store.record_run_finished(await _running(store), run)
+    assert failed is not None and (failed.status, failed.error_message) == ("failed", run.error)
+
+
+async def test_verify_failure_sets_failed_and_error_and_keeps_verified_at(
+    pg_dsn: str, store: SqlAlchemyBackups
+) -> None:
+    async def verify(bid: UUID, at: datetime, error: Any = None, how: Any = "restore_smoke") -> Any:
+        return await store.record_verify_outcome(bid, method=how, at=at, error=error)
+
+    assert await verify(await _running(store), T0) is None  # never a running backup
+    bid = await _ok(store)
+    ok, no = await verify(bid, T0 + MIN), await verify(bid, T0 + 2 * MIN, "checksum_mismatch")
+    assert (ok.status, ok.verified_at) == ("verified", T0 + MIN)
+    assert (no.status, no.verified_at, no.error_message) == (
+        "failed",
+        T0 + MIN,
+        "checksum_mismatch",
+    )
+    assert _q(pg_dsn, "SELECT verify_method FROM backups WHERE id = %s", bid) == ("restore_smoke",)
+    with capture_logs() as logs, pytest.raises(BackupCheckViolation) as refused:
+        await verify(bid, T0, how="nope")  # past the `Literal` to `bk_verify`, DETAIL the row
+    _refused(refused.value, logs, "23514")
+    assert refused.value.constraint == "bk_verify"
+    again = await verify(bid, T0 + 3 * MIN)  # a pass clears the failure's code
+    assert (again.status, again.error_message) == ("verified", None)
+    await store.mark_deleted(bid, by=USER, at=T0)
+    assert await verify(bid, T0 + 4 * MIN, "verify_failed") is None  # nor a deleted one
+
+
+async def test_the_latest_verify_outcome_wins_even_over_restored(
+    pg_dsn: str, store: SqlAlchemyBackups
+) -> None:
+    bid = await _ok(store)
+    restored = "UPDATE backups SET status = 'restored', restored_at = %s WHERE id = %s RETURNING id"
+    cases: list[tuple[Any, str]] = [(None, "verified"), ("verify_failed", "failed")]  # m4
+    for error, status in cases:
+        _q(pg_dsn, restored, T0, bid)
+        row = await store.record_verify_outcome(bid, method="checksum", at=T0 + MIN, error=error)
+        assert row is not None and row.status == status
+        assert _q(pg_dsn, "SELECT restored_at FROM backups WHERE id = %s", bid) == (T0,)  # kept
+
+
+async def test_mark_deleted_once(pg_dsn: str, store: SqlAlchemyBackups) -> None:
+    bid, raced, live = await _ok(store), await _ok(store), await _running(store)
+    assert await store.mark_deleted(live, by=USER, at=T0) is None  # never a running backup
+    first = await store.mark_deleted(bid, by=USER, at=T0)
+    assert first is not None and (first.deleted_at, first.status) == (T0, "ok")  # status kept
+    assert await store.mark_deleted(bid, by=USER, at=T0 + MIN) is None
+    assert await store.get(bid) == first
+    assert _q(pg_dsn, "SELECT deleted_by FROM backups WHERE id = %s", bid) == (USER,)
+    marks = await asyncio.gather(*(store.mark_deleted(raced, by=USER, at=T0) for _ in range(4)))
+    won = [m for m in marks if m is not None]  # the others waited, re-checked the guard: None
+    assert len(won) == 1 and await store.get(raced) == won[0]
+    assert _q(pg_dsn, "SELECT deleted_at FROM backups WHERE id = %s", live) == (None,)
+    with capture_logs() as logs, pytest.raises(StorageQueryFailed) as unknown:
+        await store.mark_deleted(await _ok(store), by=UUID(int=999), at=T0)  # no such user
+    _refused(unknown.value, logs, "23503")
