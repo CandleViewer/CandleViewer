@@ -1107,6 +1107,7 @@ MAIN_FINDINGS = [
     ("GHSA-85c8-ppgw-ccpr", "CRITICAL", "tinypool@1.1.1"),
 ]
 SOURCE_MAP_JS, BRACES, TINYPOOL = "1241209", "1240992", "1241260"  # their advisories' keys
+VITEST, VITEST_MOCKER = "1193683", "1193684"  # GHSA-82fw-gwwq-j7x9 on each module
 CRITICAL_RULE = "Critical findings take no accepted-risk entry (30-release-roadmap.md §4.4 R0)"
 
 
@@ -1236,6 +1237,31 @@ def test_braces_stays_accepted_by_ex06_until_it_expires(
     rc, out, err = _npm_gate(capsys, report, run_date="2026-12-31")
     assert (rc, out) == (1, "")
     assert err.startswith("CI-SEC-004: accepted risk expired for GHSA-vfj7-8cjw-p6xm ")
+
+
+def test_one_register_entry_covers_its_ghsa_on_every_module_pnpm_reports(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Entries match on id and tool, never on the package (security/accepted-risks.yaml's schema
+    # comment): pnpm reports GHSA-82fw-gwwq-j7x9 on vitest and on @vitest/mocker, and one entry
+    # covers both. Raised to high, since only a finding at the gate's threshold meets the register.
+    doc = _pnpm_doc(VITEST, VITEST_MOCKER)
+    for advisory in doc["advisories"].values():
+        advisory["severity"] = "high"
+    doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 2}
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "HIGH"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
+    assert (rc, err) == (0, "")
+    accepted = "accepted risk: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) until 2099-01-01 - test"
+    assert out.splitlines() == [accepted, accepted, "security_gate[npm-audit]: OK"]
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": []}))
+    assert (rc, out) == (1, "")
+    assert [line.split(" — ")[-1].split(":")[0] for line in err.splitlines()[:2]] == [
+        "vitest@3.2.7",
+        "@vitest/mocker@3.2.7",
+    ]
 
 
 def test_critical_pnpm_advisory_blocks_even_with_a_matching_register_entry(
