@@ -55,6 +55,15 @@ def test_build_ws_error_keeps_a_call_site_message() -> None:
     assert frame["p"]["message"] == "depth must be one of 1, 50, 200, 500"
 
 
+def test_resync_rate_limited_title_says_what_the_code_does_as_built() -> None:
+    """#3371: the title is a resync loop's `err` message (§7.5), and every refusal of the rebuild
+    budget shares the code, so it names the spent budget and the refusal, and a revocation only for
+    a resync loop: not "more than 5 resyncs" with the subscription revoked every time."""
+    title = ERROR_META[ErrorCode.RESYNC_RATE_LIMITED].title
+    assert "budget" in title and "refused" in title and "resync loop revokes" in title
+    assert "5 resyncs" not in title
+
+
 @pytest.mark.parametrize("code", sorted(WS_ERROR_CODES))
 def test_every_ws_err_frame_validates_against_the_error_schema(code: ErrorCode) -> None:
     """#2395 (F1): `common#/$defs/error` requires `message` on every `err` frame."""

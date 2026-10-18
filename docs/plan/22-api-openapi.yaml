@@ -703,7 +703,7 @@ x-error-codes-ws:
   - code: resync_rate_limited
     scope: topic
     retryable: true
-    title: More than 5 resyncs per minute on one topic; subscription revoked
+    title: Snapshot rebuild budget spent; request refused, and a resync loop revokes the subscription
     rest_analogue: rate_limited
   - code: client_rate_limited
     scope: connection
