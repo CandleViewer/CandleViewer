@@ -43,7 +43,16 @@ var cv = Object.freeze({
 contextBridge.exposeInMainWorld("cv", cv);
 """
 GOOD_ALLOW = 'export const ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];\n'
-GOOD_MAIN = 'ipcMain.handle("cv:gpu:info", () => 1);\n'
+GOOD_MAIN = (
+    'ipcMain.handle("cv:gpu:info", () => 1);\n'
+    "protocol.registerSchemesAsPrivileged("
+    "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
+    "void win.loadURL(APP_ENTRY_URL);\n"
+)
+GOOD_APP_PROTOCOL = (
+    "export const APP_SCHEME_PRIVILEGES = "
+    "Object.freeze({ standard: true, secure: true });\n"
+)
 GOOD_SHELLPORT = (
     "export const HARDENED_WEB_PREFERENCES = {\n"
     + "".join(f"  {k}: {str(v).lower()},\n" for k, v in SR110_REQUIRED.items())
@@ -72,6 +81,7 @@ class Tree:
         self.root = root
         self.files = {
             "desktop/main/index.js": GOOD_MAIN,
+            "desktop/main/appProtocol.js": GOOD_APP_PROTOCOL,
             "desktop/main/shellPort.js": GOOD_SHELLPORT,
             "desktop/main/updateChannel.js": GOOD_UPDATE,
             "desktop/preload/index.js": GOOD_PRELOAD,
@@ -233,6 +243,237 @@ def test_relaxed_dev_csp_in_main_fails_sr114(tree: Tree) -> None:
         "const dev = \"script-src 'self' 'unsafe-eval'\";"
     )
     assert "SR-114" in srs(tree.violations())
+
+
+def test_bypass_csp_on_any_privileged_scheme_fails_sr112(tree: Tree) -> None:
+    tree.files["desktop/main/index.js"] = (
+        GOOD_MAIN
+        + 'protocol.registerSchemesAsPrivileged([{scheme:"x",privileges:{bypassCSP:!0}}]);'
+    )
+    vs = tree.violations()
+    # The second registration also breaks the one-call rule (SR-174).
+    assert srs(vs) == {"SR-112", "SR-174"} and "bypassCSP" in vs[0].render()
+
+
+@pytest.mark.parametrize("key", ['"bypassCSP"', "'bypassCSP'", '["bypassCSP"]'])
+def test_bypass_csp_under_a_quoted_key_fails_sr112(tree: Tree, key: str) -> None:
+    tree.files["desktop/main/csp.js"] = f"const extra = {{ {key}: !0 }};\n"
+    assert srs(tree.violations()) == {"SR-112"}
+
+
+@pytest.mark.parametrize(
+    "privileges",
+    [
+        "standard: true, secure: true, supportFetchAPI: true",
+        "standard: true, secure: true, corsEnabled: !0",
+        "standard: true, secure: true, allowServiceWorkers: true",
+        "standard: true, secure: false",
+        "standard: true",
+        "standard: true, secure: true, ...EXTRA",
+    ],
+)
+def test_app_scheme_privileges_outside_the_closed_set_fail_sr174(
+    tree: Tree, privileges: str
+) -> None:
+    tree.files["desktop/main/appProtocol.js"] = (
+        f"export const APP_SCHEME_PRIVILEGES = Object.freeze({{ {privileges} }});\n"
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"}
+    assert "section 6.11a, SR-174" in vs[0].render()
+
+
+def test_bypass_csp_in_the_app_scheme_privileges_fails_sr112_and_sr174(
+    tree: Tree,
+) -> None:
+    tree.files["desktop/main/appProtocol.js"] = (
+        "export const APP_SCHEME_PRIVILEGES = "
+        "Object.freeze({ standard: true, secure: true, bypassCSP: true });\n"
+    )
+    assert srs(tree.violations()) == {"SR-112", "SR-174"}
+
+
+@pytest.mark.parametrize(
+    "app_protocol",
+    [
+        # Not frozen, so a later write could widen the set at runtime.
+        "export const APP_SCHEME_PRIVILEGES = { standard: true, secure: true };\n",
+        # Writes to the constant after its declaration.
+        GOOD_APP_PROTOCOL + 'APP_SCHEME_PRIVILEGES["bypass" + "CSP"] = true;\n',
+        GOOD_APP_PROTOCOL + "APP_SCHEME_PRIVILEGES.supportFetchAPI = !0;\n",
+        GOOD_APP_PROTOCOL + "APP_SCHEME_PRIVILEGES . corsEnabled ||= true;\n",
+    ],
+)
+def test_app_scheme_privileges_not_frozen_or_written_fails_sr174(
+    tree: Tree, app_protocol: str
+) -> None:
+    tree.files["desktop/main/appProtocol.js"] = app_protocol
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "APP_SCHEME_PRIVILEGES" in vs[0].render()
+
+
+def test_a_second_app_scheme_privileges_declaration_fails_sr174(tree: Tree) -> None:
+    # A shadowing declaration with a wider set in another main-process file.
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + (
+        "const APP_SCHEME_PRIVILEGES = "
+        "Object.freeze({ standard: true, secure: true, supportFetchAPI: true });\n"
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "2 declaration(s)" in vs[0].render()
+
+
+def test_reading_the_app_scheme_privileges_passes(tree: Tree) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + (
+        "if (APP_SCHEME_PRIVILEGES.secure === true && APP_SCHEME_PRIVILEGES['standard'] == !0) {}\n"
+    )
+    assert tree.violations() == []
+
+
+REGISTRATION = (
+    "protocol.registerSchemesAsPrivileged("
+    "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
+)
+
+
+@pytest.mark.parametrize(
+    "registration",
+    [
+        "privileges: { standard: true, secure: true, supportFetchAPI: true }",
+        "privileges: { ...APP_SCHEME_PRIVILEGES, corsEnabled: true }",
+        "privileges: OTHER_PRIVILEGES",
+        "privileges: APP_SCHEME_PRIVILEGES }, { scheme: 'x', privileges: APP_SCHEME_PRIVILEGES",
+        None,
+    ],
+)
+def test_app_scheme_registration_other_than_the_constant_fails_sr174(
+    tree: Tree, registration: str | None
+) -> None:
+    replacement = (
+        ""
+        if registration is None
+        else REGISTRATION.replace("privileges: APP_SCHEME_PRIVILEGES", registration)
+    )
+    assert REGISTRATION in GOOD_MAIN
+    tree.files["desktop/main/index.js"] = GOOD_MAIN.replace(REGISTRATION, replacement)
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "registerSchemesAsPrivileged" in vs[0].render()
+
+
+def test_a_second_registration_by_bracket_access_fails_sr174(tree: Tree) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + (
+        'protocol["registerSchemesAsPrivileged"]([{ scheme: "x", privileges: {} }]);\n'
+    )
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "found 2 call(s)" in vs[0].render()
+
+
+def test_app_scheme_registration_reflowed_with_trailing_commas_passes(
+    tree: Tree,
+) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN.replace(
+        REGISTRATION,
+        "protocol.registerSchemesAsPrivileged([\n"
+        "    { scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES, },\n"
+        "]);\n",
+    )
+    assert tree.violations() == []
+
+
+def test_missing_app_scheme_privileges_fails_sr174(tree: Tree) -> None:
+    tree.files["desktop/main/appProtocol.js"] = "export const APP_SCHEME = 'app';\n"
+    assert srs(tree.violations()) == {"SR-174"}
+
+
+@pytest.mark.parametrize(
+    "load",
+    [
+        'void win.loadFile(path.join(__dirname, "../../../web/dist/index.html"));',
+        'void win.loadURL("file:///opt/app/web/dist/index.html");',
+        "void win.loadURL(`file://${indexPath}`);",
+        'void win.loadURL("FILE:///opt/app/web/dist/index.html");',
+        "void win.loadURL(pathToFileURL(indexPath).href);",
+        "void win.loadURL(url.pathToFileURL(path.join(root, 'index.html')).href);",
+        "void win . loadFile (indexPath);",
+        # A file: literal anywhere in the argument, and loadFile bound or indexed.
+        'void win.loadURL(new URL("file:///opt/app/web/dist/index.html").href);',
+        "void win.loadURL(String('file:///opt/app/web/dist/index.html'));",
+        'void win["loadURL"]("file:///opt/app/web/dist/index.html");',
+        'void win["loadFile"](indexPath);',
+        "const load = win.loadFile.bind(win);",
+    ],
+)
+def test_window_loading_a_file_url_fails_sr174(tree: Tree, load: str) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + load
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "file: URL" in vs[0].render()
+
+
+@pytest.mark.parametrize(
+    ("name", "use"),
+    [
+        (
+            "loadURL",
+            'const load = win.loadURL.bind(win);\nvoid load("file:///x.html");',
+        ),
+        ("loadURL", 'void win.loadURL.call(win, "file:///x.html");'),
+        ("loadURL", 'void Reflect.apply(win.loadURL, win, ["file:///x.html"]);'),
+        ("loadURL", 'void win.loadURL?.("file:///x.html");'),
+        ("loadURL", "const { loadURL } = win;"),
+        (
+            "registerSchemesAsPrivileged",
+            (
+                "const reg = protocol.registerSchemesAsPrivileged.bind(protocol);\n"
+                'reg([{ scheme: "x", privileges: { supportFetchAPI: true } }]);'
+            ),
+        ),
+    ],
+)
+def test_a_checked_call_used_other_than_directly_fails_sr174(
+    tree: Tree, name: str, use: str
+) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + use
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"}
+    assert f"{name} is used other than by a direct call" in vs[0].render()
+
+
+def test_direct_calls_spelled_with_brackets_or_spaces_pass(tree: Tree) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN + (
+        'void win["loadURL"](APP_ENTRY_URL);\n'
+        "void win.webContents.loadURL (APP_ENTRY_URL);\n"
+    )
+    assert tree.violations() == []
+
+
+@pytest.mark.parametrize(
+    ("rel", "js", "sr", "subject"),
+    [
+        (
+            "main/windows/help.js",
+            'void win.loadFile("help.html");',
+            "SR-174",
+            "main window load",
+        ),
+        (
+            "main/windows/help.js",
+            "win.webContents.openDevTools();",
+            "SR-114",
+            "main/windows/help.js",
+        ),
+        (
+            "preload/extra/a.js",
+            "win.webContents.openDevTools();",
+            "SR-114",
+            "preload/extra/a.js",
+        ),
+    ],
+)
+def test_a_module_in_a_sub_directory_is_scanned(
+    tree: Tree, rel: str, js: str, sr: str, subject: str
+) -> None:
+    tree.files[f"desktop/{rel}"] = js
+    vs = tree.violations()
+    assert srs(vs) == {sr} and f"violated by {subject}:" in vs[0].render()
 
 
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:

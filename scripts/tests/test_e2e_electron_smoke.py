@@ -1,9 +1,10 @@
 """#3366: `_job-e2e.yml`'s `e2e-electron` runs only for `release/*` heads and nightly, so a gap in
 it first shows when a release is cut (C-13.4). Its specs launch `apps/desktop/dist/main/index.js`,
-the shell loads `apps/web/dist/index.html`, and the Playwright config's webServer serves
-`apps/web/dist` with `vite preview`: the job builds both apps before the suite. Electron needs an X
-display on the runner, so the suite runs under `xvfb-run -a`, as the `build` job's
-Electron-hardening gate does."""
+the shell serves `apps/web/dist` over its `app://candleviewer` handler (#3410), and the Playwright
+config's webServer serves `apps/web/dist` with `vite preview` for the specs that load it through
+`CV_DEV_SERVER_URL`: the job builds both apps before the suite. Electron needs an X display on the
+runner, so the suite runs under `xvfb-run -a`, as the `build` job's Electron-hardening
+gate does."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Assertion library for the `electron-hardening` gate (E10-X02, SR-110..SR-119).
+"""Assertion library for the `electron-hardening` gate (E10-X02, SR-110..SR-119, SR-174).
 
 All checks are pure functions over already-read text/facts so the broken-fixture
 meta-tests can drive each one directly. See `electron_hardening_gate.py` for the CLI.
@@ -13,6 +13,9 @@ from typing import Any
 
 SEC_DOC = "docs/plan/04-security-program.md"
 ROW = f"{SEC_DOC} section 6.11"
+# SR-173..SR-182 live in section 6.11a (E10 threat model controls).
+ROW_6_11A = f"{SEC_DOC} section 6.11a"
+SR_IN_6_11A = frozenset({"SR-174"})
 
 # SR-110: the exact, closed webPreferences set (enableRemoteModule must be ABSENT).
 SR110_REQUIRED: dict[str, bool] = {
@@ -30,6 +33,11 @@ SR110_REQUIRED: dict[str, bool] = {
 # missing key is compliant for the *live* check; an explicit insecure value still fails. The
 # explicit literal is asserted statically by check_declared_prefs().
 ABSENT_MEANS_DEFAULT = frozenset({"nodeIntegrationInWorker"})
+
+# SR-174: the closed privilege set of the shell's app:// scheme (APP_SCHEME_PRIVILEGES in
+# apps/desktop/src/main/appProtocol.ts, declared once with Object.freeze). Widening it is a
+# deliberate change made here, in review.
+APP_SCHEME_PRIVILEGES: dict[str, bool] = {"standard": True, "secure": True}
 
 # SR-112: directives whose value must match verbatim (connect-src handled separately).
 SR112_EXACT: dict[str, str] = {
@@ -72,7 +80,8 @@ class Violation:
     message: str
 
     def render(self) -> str:
-        return f"{self.sr} violated by {self.subject}: {self.message} [see {ROW}, {self.sr}]"
+        row = ROW_6_11A if self.sr in SR_IN_6_11A else ROW
+        return f"{self.sr} violated by {self.subject}: {self.message} [see {row}, {self.sr}]"
 
 
 def parse_csp(csp: str) -> dict[str, str]:
@@ -128,6 +137,127 @@ def check_declared_prefs(shell_port_js: str) -> list[Violation]:
                     "SR-110",
                     "main shellPort",
                     f"declared {key} is {declared.get(key)!r}, SR-110 requires {str(want).lower()}",
+                )
+            )
+    return vs
+
+
+def _call_args(js: str, name: str) -> list[str]:
+    """The argument text of every `x.name(...)` or `x["name"](...)` call, by balanced parens."""
+    found: list[str] = []
+    for m in re.finditer(r"\b" + re.escape(name) + r"(?:[\"'`]\s*\])?\s*\(", js):
+        depth, i = 1, m.end()
+        while i < len(js) and depth:
+            depth += {"(": 1, ")": -1}.get(js[i], 0)
+            i += 1
+        found.append(js[m.end() : i - 1])
+    return found
+
+
+# An assignment operator (`=`, `+=`, `||=`, ...), not a comparison (`==`, `<=`) or an arrow.
+_ASSIGN = r"\s*(?:\*\*|\?\?|\|\||&&|<<|>>>?|[-+*/%&|^])?=(?![=>])"
+
+
+def check_app_scheme(main_js: str) -> list[Violation]:
+    """SR-112 + SR-174: the web app is served over the scoped app:// handler, under the CSP.
+
+    No privileged scheme may bypass the CSP. The app scheme keeps its closed privilege set,
+    declared once with Object.freeze and never written to, and is the only scheme registered
+    (one call, passing the constant itself, not a copy or a spread). No window loads from a
+    file: URL (a file: page is outside the handler's asset root).
+    These are text heuristics over the compiled main process, comments included, so a comment
+    that names a checked call or `loadFile` can turn the gate red. `loadURL` and
+    `registerSchemesAsPrivileged` may appear only as direct calls, so an alias,
+    bind/call/apply or an optional call fails. The file: check sees any `loadFile` and a
+    quoted `file:` literal or `pathToFileURL` anywhere in a `loadURL` argument. It does not
+    see a file: URL built elsewhere and passed in a variable, a name or literal assembled
+    from parts (`win["load" + "URL"]`, `"fi" + "le:"`), or a write through Object.assign or
+    defineProperty, which the freeze makes throw. The unit tests in apps/desktop/test pin
+    the real call arguments and that the constant is frozen.
+    """
+    vs: list[Violation] = []
+    if re.search(r"\bbypassCSP(?:[\"'`]\s*\]?)?\s*:\s*(?:true|!0)", main_js):
+        vs.append(
+            Violation(
+                "SR-112",
+                "main privileged scheme",
+                "a privileged scheme sets bypassCSP; every app page must stay under the CSP",
+            )
+        )
+    decls = [
+        m.end() for m in re.finditer(r"\bAPP_SCHEME_PRIVILEGES" + _ASSIGN, main_js)
+    ]
+    m = (
+        re.match(
+            r"\s*Object\.freeze\(\s*\{(.*?)\}\s*\)", main_js[decls[0] :], re.DOTALL
+        )
+        if len(decls) == 1
+        else None
+    )
+    pair = r"([A-Za-z]+)\s*:\s*(true|false|!0|!1)"
+    declared = (
+        {key: value in {"true", "!0"} for key, value in re.findall(pair, m.group(1))}
+        if m and not re.sub(pair, "", m.group(1)).replace(",", "").strip()
+        else None
+    )
+    if declared != APP_SCHEME_PRIVILEGES:
+        vs.append(
+            Violation(
+                "SR-174",
+                "main appProtocol",
+                f"declare APP_SCHEME_PRIVILEGES once, as Object.freeze of the allowed set "
+                f"{APP_SCHEME_PRIVILEGES!r}; found {len(decls)} declaration(s), "
+                f"privileges {declared!r}",
+            )
+        )
+    member = r"\s*(?:\.\s*[\w$]+|\[[^\]]*\])"
+    if re.search(r"\bAPP_SCHEME_PRIVILEGES" + member + _ASSIGN, main_js):
+        vs.append(
+            Violation(
+                "SR-174",
+                "main appProtocol",
+                "code writes to APP_SCHEME_PRIVILEGES; the set is fixed where it is declared",
+            )
+        )
+    calls = [
+        # Whitespace and trailing commas are formatting, so a reflowed call still matches.
+        re.sub(r",(?=[\]}])", "", re.sub(r"\s+", "", a))
+        for a in _call_args(main_js, "registerSchemesAsPrivileged")
+    ]
+    if calls != ["[{scheme:APP_SCHEME,privileges:APP_SCHEME_PRIVILEGES}]"]:
+        vs.append(
+            Violation(
+                "SR-174",
+                "main registerSchemesAsPrivileged",
+                f"expected one call registering only APP_SCHEME with APP_SCHEME_PRIVILEGES, "
+                f"found {len(calls)} call(s)",
+            )
+        )
+    loads = _call_args(main_js, "loadURL")
+    if re.search(r"\bloadFile\b", main_js) or any(
+        re.search(r"[\"'`]file:", a, re.IGNORECASE) or "pathToFileURL" in a
+        for a in loads
+    ):
+        vs.append(
+            Violation(
+                "SR-174",
+                "main window load",
+                "a window loads a file: URL; serve the web app through the app:// handler",
+            )
+        )
+    for name, subject in (
+        ("registerSchemesAsPrivileged", "main registerSchemesAsPrivileged"),
+        ("loadURL", "main window load"),
+    ):
+        # Not followed by `(` or `"](`: the checks above only read direct calls.
+        if re.search(r"\b" + name + r"\b(?!\s*\(|[\"'`]\s*\]\s*\()", main_js):
+            vs.append(
+                Violation(
+                    "SR-174",
+                    subject,
+                    f"{name} is used other than by a direct call (an alias, "
+                    f"bind/call/apply or an optional call); call it directly so its "
+                    f"arguments are checked",
                 )
             )
     return vs
@@ -393,8 +523,9 @@ def run_all_checks(
     facts: dict[str, Any],
     require_runtime: bool = False,
 ) -> list[Violation]:
-    main_files = sorted((desktop_dist / "main").glob("*.js"))
-    preload_files = sorted((desktop_dist / "preload").glob("*.js"))
+    # Recursive, so a module in a sub-directory of main/ or preload/ is scanned too.
+    main_files = sorted((desktop_dist / "main").rglob("*.js"))
+    preload_files = sorted((desktop_dist / "preload").rglob("*.js"))
     if not main_files or not preload_files:
         return [
             Violation(
@@ -404,7 +535,7 @@ def run_all_checks(
     vs: list[Violation] = []
     main_js = "\n".join(_read(p) for p in main_files)
     for p in main_files + preload_files:
-        vs += check_dev_affordances(f"{p.parent.name}/{p.name}", _read(p))
+        vs += check_dev_affordances(p.relative_to(desktop_dist).as_posix(), _read(p))
     bundle_files = (
         sorted((web_dist / "assets").glob("*.js")) if web_dist.is_dir() else []
     )
@@ -423,6 +554,7 @@ def run_all_checks(
     else:
         vs += check_csp("index.html <meta> CSP", meta)
     vs += check_declared_prefs(_read(desktop_dist / "main" / "shellPort.js"))
+    vs += check_app_scheme(main_js)
     vs += check_runtime_facts(facts, meta, require_runtime)
     vs += check_auto_update(web_js, _read(desktop_dist / "main" / "updateChannel.js"))
     vs += check_preload(

@@ -16,8 +16,8 @@ export const APP_HOST = "candleviewer";
 export const APP_ENTRY_URL = `${APP_SCHEME}://${APP_HOST}/`;
 
 /**
- * Privileges for the `app:` scheme, limited to what the web app needs (unit tests pin this
- * exact set):
+ * Privileges for the `app:` scheme, limited to what the web app needs (unit tests and the
+ * electron-hardening gate pin this exact set; it is frozen, so no later write can widen it):
  * - `standard`: a hierarchical URL with a host, so root-absolute and relative URLs resolve, the
  *   page has a real origin for CSP `'self'`, React Router's browser router can change the path
  *   with the history API, and web storage works.
@@ -26,7 +26,7 @@ export const APP_ENTRY_URL = `${APP_SCHEME}://${APP_HOST}/`;
  * Not granted: CSP bypass, renderer `fetch()` of `app:` URLs, CORS, service workers, streaming
  * and the code cache. The web app needs none of them.
  */
-export const APP_SCHEME_PRIVILEGES = { standard: true, secure: true } as const;
+export const APP_SCHEME_PRIVILEGES = Object.freeze({ standard: true, secure: true } as const);
 
 const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
   [".html", "text/html; charset=utf-8"],
