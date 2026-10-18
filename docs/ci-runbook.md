@@ -19,14 +19,16 @@ measuring it and periodically breaking it on purpose.
 ## 2. Pipeline job map
 
 ```
-PR opened/updated (.github/workflows/pr.yml)
+PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
-│  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, credential
-│  │                hygiene; CI-SEC-001/005, #3385), spike-containment (CI-SPIKE-001/002),
-│  │                changelog-fragment (CI-REL-001), licence-header, docs-link-check (GOV-002);
-│  │                last, as their installs run PR scripts: commitlint, then gen (generated-code
+│  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, a merge
+│  │                group's own commit; credential hygiene; CI-SEC-001/005, #3385),
+│  │                spike-containment (CI-SPIKE-001/002),
+│  │                changelog-fragment (CI-REL-001)*, licence-header, docs-link-check (GOV-002);
+│  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
+│  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
@@ -92,7 +94,8 @@ open gap with no decision recorded yet (#3384), not an accepted control.
 
 **Nightly e2e matrix (#3383).** `e2e-nightly.yml` calls `_job-e2e.yml` on `main` daily at 02:53 UTC
 and on demand, for C-9.2's full Playwright matrix: the four `e2e-web` shards, `e2e-staging`,
-`a11y-axe` and `e2e-electron`. `pr.yml` runs `e2e-electron` on `release/*` heads only; the nightly
+`a11y-axe` and `e2e-electron`. `pr.yml` runs `e2e-electron` on `release/*` heads only (a merge group
+names no head, so the queue skips it); the nightly
 sets the lane's `electron` input to `true`. The Electron smoke suite is green since #3393: job
 117609983250 (`e2e / e2e-electron`) passed in run 39105058132, a proof run whose other jobs were
 cancelled. The nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next
@@ -121,6 +124,14 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   "gate misconfiguration": the workflow itself is broken (a lane that
   should have run did not). This is a pipeline bug, not a PR bug — do not
   try to work around it; open an `infra-devops` issue.
+- On a merge group's run (the merge queue, #3433) `commitlint` and `changelog-fragment` read
+  `false`/`skipped`: they check PR metadata, which the PR's own run already did. Every other lane
+  reads as on a PR, but the filters compare the group with `main`, so a group queued behind others
+  can run more lanes than its PR did; `secret-scan` scans the group's own commit. A queue run is
+  never cancelled; a red one drops its PR from the queue: fix and push, and the orchestrator
+  enqueues it again. The workflows that run on `pull_request` only do not run in the queue, so
+  protection must require `ci-required` alone: a required check that never reports on a merge
+  group stalls the queue. Do not apply `.github/branch-protection.json` until #3103 reconciles it.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`

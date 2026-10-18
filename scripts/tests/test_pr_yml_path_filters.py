@@ -99,10 +99,13 @@ READ_INPUTS = (
 )
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
 FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
+#: Not a path filter: the event's `changed-paths` output, false on a merge group (#3433).
+PR_CONTEXT = frozenset({"pr"})
 #: Lane -> the filters that make it applicable: its `if:` and the resolver read the same (#3182).
 LANE_FILTERS: dict[str, frozenset[str]] = {
     **dict.fromkeys(["changed-paths", "gates", "gen", "spike-containment"], frozenset()),
-    **dict.fromkeys(["commitlint", "changelog-fragment", "licence-header"], frozenset()),
+    **dict.fromkeys(["commitlint", "changelog-fragment"], PR_CONTEXT),
+    "licence-header": frozenset(),
     # #3385: every PR, a docs-only one too, gets the secret scans.
     **dict.fromkeys(["docs-link-check", "secret-scan"], frozenset()),
     "pin-check": frozenset({"infra"}),
@@ -144,15 +147,16 @@ def _filters() -> dict[str, list[str]]:
     return filters
 
 
-_OUTPUT_TERM = re.compile(r"needs\.changed-paths\.outputs\.(\w+) == 'true'")
+#: The `pr` output fails closed (#3433): a PR-metadata gate skips only where it is false.
+_OUTPUT_TERM = re.compile(r"needs\.changed-paths\.outputs\.(?:(\w+) == 'true'|(pr) != 'false')")
 
 
 def _outputs_in(condition: str) -> set[str]:
     """The `changed-paths` outputs a job `if:` ORs together.
 
     The expression is split on `||` and each term must be exactly
-    `needs.changed-paths.outputs.<name> == 'true'`, so an `&&`, a `!=` or a stray operator fails
-    here instead of being skipped over by a search.
+    `needs.changed-paths.outputs.<name> == 'true'` (`pr`: `!= 'false'`), so an `&&`, any other
+    `!=` or a stray operator fails here instead of being skipped over by a search.
     """
     wrapped = re.fullmatch(r"\s*\$\{\{(.*)\}\}\s*", condition, re.DOTALL)
     assert wrapped, f"not a `${{{{ ... }}}}` expression: {condition!r}"
@@ -160,7 +164,7 @@ def _outputs_in(condition: str) -> set[str]:
     for term in wrapped.group(1).split("||"):
         match = _OUTPUT_TERM.fullmatch(term.strip())
         assert match, f"not a `needs.changed-paths.outputs.<name> == 'true'` term: {term.strip()!r}"
-        names.add(match.group(1))
+        names.add(match[1] or match[2])
     return names
 
 
@@ -192,7 +196,9 @@ def _resolver_step() -> dict[str, Any]:
     return _single([s for s in steps if s.get("name") == RESOLVER_STEP], f"`{RESOLVER_STEP}` step")
 
 
-_RESOLVER_TERM = re.compile(r"isTrue\(process\.env\.FILTER_(\w+)\)")
+_RESOLVER_TERM = re.compile(
+    r'isTrue\(process\.env\.FILTER_(\w+)\)|process\.env\.FILTER_(PR) !== "false"'
+)
 
 
 def _resolver_security_filters() -> set[str]:
@@ -205,7 +211,7 @@ def _resolver_lane_filters(name: str) -> set[str]:
 
     The lane must read its result from `RESULT_<NAME>` (`-` as `_`). `//` comments are stripped
     first, so a name that only a comment mentions does not count. Then each `||` term must be
-    exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
+    exactly `isTrue(process.env.FILTER_<NAME>)` (`pr`: `!== "false"`), so an `&&` or a `!` fails.
     """
     variable = "RESULT_" + name.upper().replace("-", "_")
     lane = re.search(
@@ -221,7 +227,7 @@ def _resolver_lane_filters(name: str) -> set[str]:
     for term in expression.split("||"):
         match = _RESOLVER_TERM.fullmatch(term.strip())
         assert match, f"not an `isTrue(process.env.FILTER_<NAME>)` term: {term.strip()!r}"
-        names.add(match.group(1).lower())
+        names.add((match[1] or match[2]).lower())
     return names
 
 
@@ -247,7 +253,11 @@ def test_pr_yml_changed_paths_exports_every_filter_of_the_step_id_its_outputs_re
     # Renaming only the step id would leave every `steps.filter.outputs.*` empty: each filtered lane
     # would skip and the resolver would count it as not applicable, so ci-required passes (#3182).
     assert _filter_step()["id"] == "filter"
-    assert set(_jobs()["changed-paths"]["outputs"]) == set(_filters()) == set(FILTER_NAMES)
+    assert (
+        set(_jobs()["changed-paths"]["outputs"]) - PR_CONTEXT
+        == set(_filters())
+        == set(FILTER_NAMES)
+    )
 
 
 def test_pr_yml_security_job_runs_when_only_semgrep_paths_change() -> None:
@@ -508,7 +518,9 @@ def _lane_runs() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
     return lanes
 
 
-@pytest.mark.parametrize("lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters))
+@pytest.mark.parametrize(
+    "lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters - PR_CONTEXT)
+)
 def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
     # A PR that edits only a lane's workflow, a script its steps run or a file a step hands a tool
     # must start that lane, or it merges with the gate built to check that file skipped (#3182).

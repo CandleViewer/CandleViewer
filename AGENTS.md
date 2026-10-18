@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 1.2.3 · Last updated 2026-10-18 · Owner `@basiltt`
+> **Version:** 1.3.0 · Last updated 2026-10-18 · Owner `@basiltt`
 
 ---
 
@@ -402,6 +402,17 @@ reading CRLF line endings as LF (#3454).
 | Preview the Unreleased section (writes nothing) | `python tools/ci/update_changelog.py --since-last-tag --preview` |
 | Sync Unreleased for a sync PR                   | `python tools/ci/update_changelog.py --since-last-tag`           |
 
+### Merge (delivery orchestrator only, C-10.1; `docs/plan/01-sdlc-and-branching.md` §7)
+
+| Task                                                                     | Command                           |
+| ------------------------------------------------------------------------ | --------------------------------- |
+| Enqueue a PR, once the owner turns on the merge queue for `main` (#3433) | `gh pr merge <N> --squash --auto` |
+
+Enqueue only once the PR has its two C-10.1 approvals and every check on it is green, `pr-metadata`
+and `governance` included: `--auto` waits only for `ci-required`, the one check protection
+requires, and the queue re-runs only that, on `main` plus the PR, then squash-merges; a red run
+drops the PR from the queue. Never `--admin` (C-9.1).
+
 ---
 
 ## 5. Coding standards
@@ -545,6 +556,11 @@ requesting review, confirm:
 - [ ] Feature flag added (default off) or removal ticket linked.
 - [ ] Screenshots/recording for UI; design ticket is Done and `design-approved` obtained.
 - [ ] Self-reviewed the diff line by line.
+
+Merging is the delivery orchestrator's (C-10.1). Once the owner turns on the merge queue for `main`,
+it enqueues the PR (§4, Merge) instead of merging it, and the queue tests `main` plus the PR before
+the squash merge. A PR behind `main` needs no rebase for that; rebase to resolve a conflict, and push
+with `--force-with-lease` (C-4.12). Never press **Update branch**.
 
 ---
 
