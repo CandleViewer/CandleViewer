@@ -553,6 +553,16 @@ _UNSCORED = {"ruleId": "x", "message": {"text": "x"}}  # no level and no rule de
         pytest.param([{"tool": {"name": "x"}}], "run 0 has no tool.driver", id="tool-no-driver"),
         pytest.param([{"tool": {"driver": "x"}}], "run 0 has no tool.driver", id="driver-str"),
         pytest.param([{"tool": {"driver": {}}}], "run 0 has no tool.driver", id="driver-no-name"),
+        # #3372: the name branch, for an empty, a non-string and a whitespace-only name.
+        pytest.param(
+            [{"tool": {"driver": {"name": ""}}}], "run 0 has no tool.driver", id="name-empty"
+        ),
+        pytest.param(
+            [{"tool": {"driver": {"name": 5}}}], "run 0 has no tool.driver", id="name-int"
+        ),
+        pytest.param(
+            [{"tool": {"driver": {"name": " \t"}}}], "run 0 has no tool.driver", id="name-blank"
+        ),
         pytest.param([_RUN, {"results": []}], "run 1 has no tool.driver", id="second-run"),
     ],
 )
@@ -587,6 +597,140 @@ def test_main_cli_fails_a_sarif_with_no_runs_instead_of_ok(
     assert err.startswith(f"CI-SEC-005: codeql: {report} has no runs")
 
 
+# #3372: a run must also record a completed scan. SARIF 2.1.0 §3.14.23: `results` absent or null
+# means the analysis was not performed; `[]` means it found nothing.
+_NAMED = {"tool": {"driver": {"name": "Bandit"}}}
+_DONE = {"executionSuccessful": True}
+# How Bandit records a file it could not scan, while it still reports executionSuccessful: true.
+_UNSCANNED = {"message": {"text": "syntax error while parsing AST from file"}, "level": "error"}
+
+
+@pytest.mark.parametrize("tool", SARIF_TOOLS)
+@pytest.mark.parametrize(
+    ("run", "reason"),
+    [
+        pytest.param(_NAMED, "has no 'results' list (absent or null", id="results-absent"),
+        pytest.param({**_NAMED, "results": None}, "has no 'results' list", id="results-null"),
+        pytest.param({**_NAMED, "results": {}}, "'results' is not a list", id="results-object"),
+        pytest.param({**_NAMED, "results": 5}, "'results' is not a list", id="results-int"),
+        pytest.param({**_NAMED, "results": "abc"}, "'results' is not a list", id="results-str"),
+        pytest.param({**_NAMED, "results": [1]}, "result 0 is not an object", id="result-int"),
+        pytest.param({**_NAMED, "results": [[]]}, "result 0 is not an object", id="result-list"),
+    ],
+)
+def test_sarif_run_without_a_results_list_raises_ci_sec_005(
+    tmp_path: Path, tool: str, run: dict[str, object], reason: str
+) -> None:
+    report = _write_json(tmp_path, f"{tool}.sarif", {"version": "2.1.0", "runs": [_RUN, run]})
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_sarif(report, tool)
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message.startswith(f"{tool}: {report} run 1 {reason}")
+
+
+@pytest.mark.parametrize("tool", SARIF_TOOLS)
+@pytest.mark.parametrize(
+    ("invocations", "reason"),
+    [
+        pytest.param(
+            [{"executionSuccessful": False}],
+            "invocation 0 does not report executionSuccessful: true",
+            id="not-successful",
+        ),
+        pytest.param([{}], "invocation 0 does not report executionSuccessful: true", id="unset"),
+        pytest.param(
+            [_DONE, {"executionSuccessful": "true"}],
+            "invocation 1 does not report executionSuccessful: true",
+            id="second-not-bool",
+        ),
+        pytest.param(
+            [{**_DONE, "toolConfigurationNotifications": [{"level": "warning"}, _UNSCANNED]}],
+            "invocation 0 reports 1 configuration error(s), first: " + json.dumps(_UNSCANNED),
+            id="configuration-error",
+        ),
+        pytest.param({}, "'invocations' is not a list", id="invocations-object"),
+        pytest.param([1], "invocation 0 is not an object", id="invocation-int"),
+        pytest.param(
+            [{**_DONE, "toolConfigurationNotifications": [1]}],
+            "invocation 0 'toolConfigurationNotifications' is not a list of objects",
+            id="notification-int",
+        ),
+    ],
+)
+def test_sarif_run_that_did_not_complete_raises_ci_sec_005(
+    tmp_path: Path, tool: str, invocations: object, reason: str
+) -> None:
+    run = {**_NAMED, "invocations": invocations, "results": []}
+    report = _write_json(tmp_path, f"{tool}.sarif", {"version": "2.1.0", "runs": [run]})
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_sarif(report, tool)
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == f"{tool}: {report} run 0 records no completed scan: {reason}"
+
+
+@pytest.mark.parametrize("tool", SARIF_TOOLS)
+def test_sarif_run_that_completed_with_warnings_is_a_clean_scan(tmp_path: Path, tool: str) -> None:
+    # A warning (SARIF's default level) leaves the scan complete, and so does an execution
+    # notification: CodeQL reports per-file extraction diagnostics there, at any level.
+    invocation = {
+        **_DONE,
+        "toolConfigurationNotifications": [{"level": "warning"}, {"message": {"text": "x"}}],
+        "toolExecutionNotifications": [{"level": "error", "message": {"text": "x"}}],
+    }
+    run = {**_NAMED, "invocations": [invocation], "results": []}
+    report = _write_json(tmp_path, f"{tool}.sarif", {"version": "2.1.0", "runs": [run]})
+    assert parse_sarif(report, tool) == []
+
+
+# #3372: CodeQL describes every rule it reports, on the driver or a tool.extensions pack, so a
+# result with no level and no descriptor to score it by is malformed, not an unscored MEDIUM.
+_UNDESCRIBED = [
+    pytest.param({"ruleId": "py/undescribed"}, id="rule-id"),
+    pytest.param({"rule": {"id": "py/x", "index": 1, "toolComponent": {"index": 1}}}, id="index"),
+    pytest.param({"rule": {"id": "py/x", "index": 0, "toolComponent": {"index": 2}}}, id="pack"),
+]
+
+
+@pytest.mark.parametrize("level", [None, "bogus"])  # "bogus" is no SARIF level, so scores nothing
+@pytest.mark.parametrize("ref", _UNDESCRIBED)
+def test_codeql_result_without_a_level_or_rule_descriptor_raises_ci_sec_005(
+    tmp_path: Path, ref: dict[str, object], level: str | None
+) -> None:
+    doc = _codeql_sarif_doc("py/described", security_severity="7.5", via_extension=True)
+    result = {"message": {"text": "x"}, **ref} | ({"level": level} if level else {})
+    doc["runs"][0]["results"].append(result)
+    report = _write_json(tmp_path, "codeql.sarif", doc)
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_sarif(report, "codeql")
+    assert exc_info.value.code == "CI-SEC-005"
+    message = exc_info.value.message
+    tail = "has no level and no rule descriptor on tool.driver or tool.extensions"
+    assert message.startswith(f"codeql: {report} run 0 result 1 (") and tail in message
+
+
+def test_codeql_result_without_a_rule_descriptor_is_scored_by_its_own_level(
+    tmp_path: Path,
+) -> None:
+    # The boundary #3372 draws: a level on the result still scores it, as for every tool.
+    doc = _codeql_sarif_doc("py/described", security_severity="7.5", via_extension=True)
+    doc["runs"][0]["results"].append({"ruleId": "py/x", "message": {"text": "x"}, "level": "note"})
+    findings = parse_sarif(_write_json(tmp_path, "codeql.sarif", doc), "codeql")
+    assert [f.severity for f in findings] == ["HIGH", "LOW"]
+
+
+def test_parse_sarif_docstring_names_every_tool_it_parses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3372: every SARIF tool reaches parse_sarif (its no-runs message), bandit included.
+    risks = _write_yaml(tmp_path, {"entries": []})
+    report = _write_json(tmp_path, "x.sarif", {"version": "2.1.0", "runs": []})
+    for tool in SARIF_TOOLS:
+        assert main(["--tool", tool, "--report", str(report), "--accepted-risks", str(risks)]) == 1
+        assert capsys.readouterr().err.startswith(f"CI-SEC-005: {tool}: {report} has no runs")
+    used_for = (parse_sarif.__doc__ or "").split("\n\n")[1].strip()
+    assert used_for.startswith("Used for CodeQL, Semgrep, Bandit and Trivy (")
+
+
 SARIF_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sarif"
 
 
@@ -594,6 +738,7 @@ SARIF_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sarif"
     ("name", "tool", "found"),
     [
         ("codeql-2.27.2-clean.sarif", "codeql", []),
+        ("codeql-2.27.2-analyze-clean.sarif", "codeql", []),
         ("semgrep-1.178.0-clean.sarif", "semgrep", []),
         (
             "semgrep-1.178.0-finding.sarif",
@@ -619,6 +764,19 @@ def test_real_scanner_sarif_still_parses(
     blocked = bool(found)  # each real finding meets its tool's threshold
     assert rc == int(blocked)
     assert (f"security_gate[{tool}]: OK" in capsys.readouterr().out) is not blocked
+
+
+def test_real_bandit_sarif_with_a_file_it_could_not_scan_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3372: Bandit exits 0 and reports executionSuccessful: true when it skips a file.
+    report = SARIF_FIXTURES / "bandit-1.9.4-skipped.sarif"
+    risks = _write_yaml(tmp_path, {"entries": []})
+    rc = main(["--tool", "bandit", "--report", str(report), "--accepted-risks", str(risks)])
+    out, err = capsys.readouterr()
+    assert (rc, out) == (1, "")
+    head = f"CI-SEC-005: bandit: {report} run 0 records no completed scan: invocation 0 reports 1 "
+    assert err.startswith(head + "configuration error(s)") and "skipped/broken.py" in err
 
 
 def test_missing_accepted_risks_file_raises_ci_sec_005(tmp_path: Path) -> None:
@@ -929,10 +1087,11 @@ def test_rule_index_disagreeing_with_rule_id_takes_higher_severity(
     assert out[0].severity == "CRITICAL"
 
 
-def test_no_severity_anywhere_is_medium(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tool", ["semgrep", "bandit", "trivy"])  # codeql: CI-SEC-005 (#3372)
+def test_no_severity_anywhere_is_medium(tmp_path: Path, tool: str) -> None:
     doc = _sarif_doc("cv-q")
     del doc["runs"][0]["results"][0]["level"]
-    assert parse_sarif(_write_json(tmp_path, "r.sarif", doc), "semgrep")[0].severity == "MEDIUM"
+    assert parse_sarif(_write_json(tmp_path, "r.sarif", doc), tool)[0].severity == "MEDIUM"
 
 
 def test_unreadable_source_still_blocks(tmp_path: Path) -> None:

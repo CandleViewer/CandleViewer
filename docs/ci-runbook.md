@@ -265,9 +265,17 @@ diff` cannot see because they were never tracked. `git add` them in the
   acceptable.
 - **CI-SEC-005** (scanner infrastructure failure): a scanner produced no
   output at all (crashed, mis-configured, or a > 1 non-finding exit code),
-  or a SARIF report that records no scan: no `runs`, or a run without a
-  named `tool.driver` (the message names the file and the run). CodeQL,
-  Semgrep, Bandit and Trivy each write a run on a clean scan too (#3337).
+  or a SARIF report that records no completed scan (the message names the
+  file and the run): no `runs`; a run without a named `tool.driver`; a run
+  whose `results` is absent or null (SARIF's "not computed"), not a list, or
+  holds a non-object; or a run whose invocation does not report
+  `executionSuccessful: true`, or reports an error-level
+  `toolConfigurationNotifications` entry (Bandit lists each file it could not
+  scan there: fix that file; if Bandit fails on valid code, take it to security
+  review, because an exclusion narrows the scan). So is a `codeql` result with no
+  `level` whose rule descriptor is on neither `tool.driver` nor
+  `tool.extensions`. CodeQL, Semgrep, Bandit and Trivy each write a run
+  with a `results` list on a clean scan too (#3337, #3372).
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).
@@ -275,9 +283,12 @@ diff` cannot see because they were never tracked. `git add` them in the
   `CV_CODEQL_LANGUAGES` needs a SARIF that this run's analyze wrote under the
   runner's temp directory, and the message names the language without one.
   The codeql job installs the gate's PyYAML after analyze, by hash, from
-  `tools/ci/requirements-security-gate.txt`; if that step fails on a hash,
-  refresh it with the command in that file (it tracks the PyYAML pin in
-  `scripts/requirements-ci.txt` and the workflow's `PYTHON_VERSION`).
+  `tools/ci/requirements-security-gate.txt`. A failing install shows up as
+  that install step failing, then an import error
+  (`ModuleNotFoundError: No module named 'yaml'`) in the gate step, which
+  still runs; if the install failed on a hash, refresh the file with the
+  command in it (it tracks the PyYAML pin in `scripts/requirements-ci.txt`
+  and the workflow's `PYTHON_VERSION`).
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

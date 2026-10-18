@@ -489,13 +489,43 @@ def _suppression_problem(
     return last
 
 
+def _incomplete_scan(invocations: object) -> str | None:
+    """Why a run's `invocations` show the scan did not complete, or None (#3372).
+
+    An invocation must report `executionSuccessful: true`. An error-level
+    `toolConfigurationNotifications` entry also means part of the scan did not
+    happen: Bandit lists each file it could not scan there and still reports
+    success. `toolExecutionNotifications` are not read: CodeQL reports per-file
+    extraction diagnostics there, and Semgrep's fatal errors already fail its step.
+    """
+    if not isinstance(invocations, list):
+        return "'invocations' is not a list"
+    for j, invocation in enumerate(invocations):
+        if not isinstance(invocation, dict):
+            return f"invocation {j} is not an object"
+        if invocation.get("executionSuccessful") is not True:
+            return f"invocation {j} does not report executionSuccessful: true"
+        notes = invocation.get("toolConfigurationNotifications", [])
+        if not isinstance(notes, list) or not all(isinstance(n, dict) for n in notes):
+            return f"invocation {j} 'toolConfigurationNotifications' is not a list of objects"
+        errors = [note for note in notes if note.get("level") == "error"]
+        if errors:
+            first = json.dumps(errors[0])  # escaped: no line breaks reach the log
+            first = first if len(first) <= 300 else first[:297] + "..."
+            return f"invocation {j} reports {len(errors)} configuration error(s), first: {first}"
+    return None
+
+
 def _sarif_runs(runs: object, path: Path, tool: str) -> list[dict[str, Any]]:
-    """Return the document's runs once each one names its `tool.driver` (#3337).
+    """Return the document's runs once each one records a completed scan (#3337, #3372).
 
     Every scanner that reaches this gate (CodeQL, Semgrep, Bandit, Trivy) writes
-    one run per scan, clean or not, and SARIF requires `tool.driver.name`. A
-    document with no run records no scan, and a run with no driver is malformed:
-    both are CI-SEC-005, never a clean scan or findings without a severity.
+    one run per scan, clean or not, with a named `tool.driver` (SARIF requires
+    `tool.driver.name`) and a `results` list, `[]` when clean. A document with no
+    run records no scan, and a run with no driver is malformed. `results` absent
+    or null means the analysis was not performed (SARIF 2.1.0 §3.14.23), and an
+    invocation can say the scan did not complete (`_incomplete_scan`). Each case
+    is CI-SEC-005, never a clean scan or findings without a severity.
     """
 
     def malformed(reason: str) -> SecurityGateError:
@@ -511,11 +541,22 @@ def _sarif_runs(runs: object, path: Path, tool: str) -> list[dict[str, Any]]:
         component = run.get("tool")
         driver = component.get("driver") if isinstance(component, dict) else None
         name = driver.get("name") if isinstance(driver, dict) else None
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name.strip():
             raise malformed(
                 f"run {i} has no tool.driver with a name (a malformed run, "
                 "not findings without a severity)"
             )
+        results = run.get("results")
+        if results is None:
+            raise malformed(f"run {i} has no 'results' list (absent or null: not computed)")
+        if not isinstance(results, list):
+            raise malformed(f"run {i} 'results' is not a list")
+        for k, result in enumerate(results):
+            if not isinstance(result, dict):
+                raise malformed(f"run {i} result {k} is not an object")
+        problem = _incomplete_scan(run.get("invocations", []))
+        if problem:
+            raise malformed(f"run {i} records no completed scan: {problem}")
     return runs
 
 
@@ -528,11 +569,11 @@ def parse_sarif(
 ) -> list[Finding]:
     """Parse a SARIF 2.1.0 file into normalised findings.
 
-    Used for CodeQL, Semgrep and Trivy (all three can emit SARIF). Severity
-    is read from `security-severity` (CVSS-like float, mapped to buckets)
-    when the result *or its rule descriptor* provides it, else falls back to
-    the SARIF `level` (error/warning/note) of the result, then of the rule's
-    `defaultConfiguration`.
+    Used for CodeQL, Semgrep, Bandit and Trivy (every SARIF tool in
+    `_PARSERS`). Severity is read from `security-severity` (CVSS-like float,
+    mapped to buckets) when the result *or its rule descriptor* provides it,
+    else falls back to the SARIF `level` (error/warning/note) of the result,
+    then of the rule's `defaultConfiguration`.
 
     CodeQL in particular carries both `security-severity` and the level only
     on the rule (`tool.driver.rules[]` / `tool.extensions[].rules[]`) and
@@ -541,8 +582,14 @@ def parse_sarif(
     which is how PRs with a GitHub-reported High CodeQL alert passed this
     gate (CI-SEC-001 regression, fixed under ci/e03-codeql-job-fix).
 
-    A document without runs, or with a run that names no `tool.driver`, is a
-    scanner-infrastructure failure (CI-SEC-005, `_sarif_runs`), for every tool.
+    A SARIF with no run, or with a run that names no `tool.driver`, has no
+    `results` list or records an incomplete scan, is a scanner-infrastructure
+    failure (CI-SEC-005, `_sarif_runs`), for every tool. So is a CodeQL result
+    with no SARIF `level` whose rule descriptor is on neither the driver nor an
+    extension (#3372): CodeQL describes every rule it reports, so the result is
+    malformed, not the default MEDIUM (which the codeql policy never blocks).
+    CI-SEC-005 rather than a guessed HIGH: its real severity is unknown, and an
+    accepted-risk entry can clear a HIGH but never a malformed SARIF.
     """
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
@@ -555,11 +602,19 @@ def parse_sarif(
         raise SecurityGateError("CI-SEC-005", f"{tool}: {path} is not a SARIF document (no 'runs')")
 
     findings: list[Finding] = []
-    for run in _sarif_runs(doc["runs"], path, tool):
+    for i, run in enumerate(_sarif_runs(doc["runs"], path, tool)):
         by_id, components = _sarif_rule_index(run)
-        for result in run.get("results", []):
+        for k, result in enumerate(run["results"]):
             rule_id = result.get("ruleId", "unknown-rule")
             rule = _sarif_result_rule(result, by_id, components)
+            level = result.get("level")
+            scored = isinstance(level, str) and level in _SARIF_LEVEL_TO_SEVERITY
+            if tool == "codeql" and not rule and not scored:
+                raise SecurityGateError(
+                    "CI-SEC-005",
+                    f"{tool}: {path} run {i} result {k} ({rule_id!r}) has no level and no rule "
+                    "descriptor on tool.driver or tool.extensions (a malformed CodeQL result)",
+                )
             if rule_id == "unknown-rule" and "id" in rule:
                 rule_id = rule["id"]
             locations = result.get("locations", [])
