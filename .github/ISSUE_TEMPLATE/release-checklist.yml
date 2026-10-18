@@ -27,6 +27,7 @@ body:
         - label: No open priority/p0-critical or priority/p1-high bugs against in-scope areas
         - label: Full test pyramid green on main tip (unit, contract, integration, E2E, load/perf, security, a11y)
         - label: Nightly a11y sweep (a11y-nightly.yml) passed on the main tip being cut; run link recorded, a11y-sweep-reports attached (kept 14 days)
+        - label: Nightly e2e matrix (e2e-nightly.yml, e2e-electron included) passed on the main tip being cut; run link recorded
         - label: "@demo-rest-only tagged E2E subset green against staging (demo); no WS order-entry frames asserted"
         - label: Coverage thresholds met (>=85% backend/engine, >=80% frontend), no regression from previous release
         - label: CHANGELOG.md Unreleased synced by a reviewed sync PR (preview reports 0 pending) and reviewed for accuracy and completeness
