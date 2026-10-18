@@ -71,8 +71,8 @@ export const DIAG_INTERVAL_MS = 1_000;
 export const MAX_TABS = 64;
 export const MAX_CONSUMERS_PER_TAB = 512;
 export const MAX_PANES_PER_TAB = 64;
-/** How often a tab may void one consumer in the window the gateway counts snapshots in: each costs one of the five it grants a topic, and a gap needs one too. */
-export const MAX_RESYNCS_PER_CONSUMER = 3;
+/** How often a tab may void its consumers of one `ch`, together (live and replay), in the window the gateway counts snapshots in: each costs one of the five it grants a `ch`, and a gap needs one too. */
+export const MAX_RESYNCS_PER_CH = 3;
 /** The latest update of each `system` kind is kept for a tab that joins late; a server that invents kinds gets no more room. */
 export const MAX_SYSTEM_KINDS = 16;
 
@@ -97,6 +97,7 @@ export function isSocketAllowed(wsUrl: string): boolean {
 interface Pane {
   visibility: PaneVisibility;
   size?: { readonly cssWidth: number; readonly dpr: number };
+  idle?: boolean; // every consumer that read it has left: it gives way to a new pane at the tab's limit, and not before
 }
 
 interface Session {
@@ -122,6 +123,9 @@ interface Consumer {
   readonly session: Session;
   readonly ch: string;
   readonly rs: string | undefined;
+  readonly pane: string; // the tab's name for the pane it reads in
+  /** When its tab voided it or another of its consumers of the `ch`, within the last window: one list for all the tab's consumers of a `ch`. */
+  readonly resyncs: number[];
   readonly handle: StreamHandle;
   readonly queue: FrameQueue;
   /** No baseline of its own yet (a newcomer, or voided): deltas are not for it, a snapshot is. */
@@ -129,12 +133,15 @@ interface Consumer {
   /** Voided because it could not keep up: reads `resyncing` until its snapshot. */
   voided: boolean;
   told: Told | undefined;
-  /** When its tab voided it, within the last window. */
-  resyncs: number[];
 }
 
 const sameTold = (a: Told | undefined, b: Told): boolean =>
   a !== undefined && a.status === b.status && a.effective === b.effective && a.source === b.source;
+
+const holdsPane = (session: Session, pane: string): boolean =>
+  [...session.consumers.values()].some((consumer) => consumer.pane === pane);
+const sameCh = (session: Session, ch: string): Consumer | undefined =>
+  [...session.consumers.values()].find((consumer) => consumer.ch === ch);
 
 export function createPortHost(options: PortHostOptions): PortHost {
   const timers: Timers = { ...platformTimers, ...options.timers };
@@ -154,7 +161,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
       readonly invalidate: boolean;
     }
   >();
-  const counters = { overflows: 0, rejectedMessages: 0, droppedSystemKinds: 0 };
+  const counters = { overflows: 0, rejectedMessages: 0, droppedSystemUpdates: 0 };
   let engine: WsEngine | undefined;
   let engineUrl: string | undefined;
   let state: WsState = INITIAL_WS_STATE;
@@ -240,7 +247,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
         const { kind } = event.update;
         if (systemKinds.has(kind) || systemKinds.size < MAX_SYSTEM_KINDS)
           systemKinds.set(kind, event.update);
-        else counters.droppedSystemKinds += 1; // every tab hears it now, a tab that joins late does not
+        else counters.droppedSystemUpdates += 1; // every tab hears it now, a tab that joins late does not
         broadcast({ t: "system", update: event.update });
       }
       scheduleFlush(); // the counters moved
@@ -359,26 +366,40 @@ export function createPortHost(options: PortHostOptions): PortHost {
     });
   }
 
-  /** A tab describes at most `MAX_PANES_PER_TAB` panes (C-2.18), and any of them again as often as it likes. */
-  const hasRoomForPane = (session: Session, id: string): boolean =>
-    session.panes.has(id) || session.panes.size < MAX_PANES_PER_TAB;
+  /**
+   * A tab holds at most `MAX_PANES_PER_TAB` panes (C-2.18). For a new one, a pane no consumer holds any more gives way,
+   * the oldest first, and not before: a switch of symbol is a release and a consume, and the tab does not describe the pane again.
+   */
+  function makeRoomForPane(session: Session, id: string): boolean {
+    if (session.panes.has(id) || session.panes.size < MAX_PANES_PER_TAB) return true;
+    for (const [name, pane] of session.panes) {
+      if (pane.idle !== true) continue;
+      session.panes.delete(name);
+      engine?.removePane(scoped(session, name));
+      return true;
+    }
+    return false;
+  }
 
-  /** Whether the tab may void this consumer now: `MAX_RESYNCS_PER_CONSUMER` in the window the gateway counts snapshots in. */
-  function mayVoid(consumer: Consumer): boolean {
+  /** Whether the tab may void a consumer of this `ch` now: `MAX_RESYNCS_PER_CH` in the window, for all its consumers of the `ch` together. */
+  function mayVoid({ resyncs }: Consumer): boolean {
     const at = timers.now();
-    consumer.resyncs = consumer.resyncs.filter((stamp) => at - stamp < RESYNC_WINDOW_MS);
-    if (consumer.resyncs.length >= MAX_RESYNCS_PER_CONSUMER) return false;
-    consumer.resyncs.push(at);
+    resyncs.splice(0, resyncs.length, ...resyncs.filter((stamp) => at - stamp < RESYNC_WINDOW_MS));
+    if (resyncs.length >= MAX_RESYNCS_PER_CH) return false;
+    resyncs.push(at);
     return true;
   }
 
   function drop(consumer: Consumer): void {
     consumer.handle.release();
-    consumer.session.consumers.delete(consumer.id);
+    const { session } = consumer;
+    session.consumers.delete(consumer.id);
     const key = topicKey(consumer.ch, consumer.rs);
     const group = byStream.get(key);
     group?.delete(consumer);
     if (group?.size === 0) byStream.delete(key);
+    const pane = session.panes.get(consumer.pane);
+    if (pane !== undefined && !holdsPane(session, consumer.pane)) pane.idle = true;
   }
 
   function detach(session: Session): void {
@@ -457,11 +478,12 @@ export function createPortHost(options: PortHostOptions): PortHost {
       case "consume": {
         if (session.consumers.has(message.id) || session.consumers.size >= MAX_CONSUMERS_PER_TAB)
           return false;
-        if (!hasRoomForPane(session, message.pane)) return false;
-        if (!session.panes.has(message.pane)) {
+        if (!makeRoomForPane(session, message.pane)) return false;
+        const pane = session.panes.get(message.pane);
+        if (pane === undefined) {
           session.panes.set(message.pane, { visibility: "visible" }); // a pane that was never described is in view
           applyPane(session, message.pane);
-        }
+        } else pane.idle = false;
         const handle = engine.consume(
           {
             ch: message.ch,
@@ -476,12 +498,13 @@ export function createPortHost(options: PortHostOptions): PortHost {
           session,
           ch: message.ch,
           rs: message.rs,
+          pane: message.pane,
+          resyncs: sameCh(session, message.ch)?.resyncs ?? [],
           handle,
           queue: createFrameQueue(limits),
           gated: true,
           voided: false,
           told: undefined,
-          resyncs: [],
         };
         session.consumers.set(message.id, consumer);
         const key = topicKey(message.ch, message.rs);
@@ -506,7 +529,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
         return true;
       }
       case "pane": {
-        if (!hasRoomForPane(session, message.id)) return false;
+        if (!makeRoomForPane(session, message.id)) return false;
         const size =
           message.cssWidth === undefined || message.dpr === undefined
             ? undefined
@@ -514,6 +537,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
         session.panes.set(message.id, {
           visibility: message.visibility,
           ...(size !== undefined && { size }),
+          ...(session.panes.get(message.id)?.idle === true && { idle: true }), // said again, still read by none
         });
         applyPane(session, message.id);
         return true;

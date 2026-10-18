@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_CONSUMERS_PER_TAB,
   MAX_PANES_PER_TAB,
-  MAX_RESYNCS_PER_CONSUMER,
+  MAX_RESYNCS_PER_CH,
 } from "../../../src/lib/ws/worker/portHost";
 import { tokenOf } from "./support/connectionHarness";
 import { b64, bookDelta } from "./support/cvwb";
@@ -321,21 +321,21 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
       a?.say({ t: "resync", id: "k1" });
       await t.advance(100); // the fake gateway answers with a snapshot
     }
-    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER);
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CH);
     conn.skip(BOOK);
     conn.delta(BOOK); // a real gap
     await t.advance(100);
-    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER + 1); // at once: the tab left the gateway two of its five
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CH + 1); // at once: the tab left the gateway two of its five
     expect((await counted(t, a ?? new FakeTab(true))).host.rejectedMessages).toBe(
-      20 - MAX_RESYNCS_PER_CONSUMER,
+      20 - MAX_RESYNCS_PER_CH,
     );
     await t.advance(60_000); // the window reopens
     a?.say({ t: "resync", id: "k1" });
     await t.advance(100);
-    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER + 2);
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CH + 2);
   });
 
-  it("twenty overflows in a minute ask for the five snapshots the gateway grants, and a real gap is repaired when its window reopens", async () => {
+  it("twenty floods in a minute make six overflows and ask for the five snapshots the gateway grants: the sixth waits, and a real gap joins its request and is repaired when the window reopens", async () => {
     const t = hostHarness(undefined, SMALL);
     const a = t.tab();
     t.consume(a, "k1", BOOK);
@@ -345,6 +345,7 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
       for (let i = 0; i < 5; i += 1) conn.delta(BOOK);
       await t.advance(100); // the fake gateway answers with a snapshot, and it reads again
     }
+    expect(t.host.counters.overflows).toBe(6); // once voided and waiting, nothing more reaches it to overflow
     expect(conn.of("resync")).toHaveLength(5); // the sixth waits
     conn.skip(BOOK);
     conn.delta(BOOK); // a real gap of a stream whose request already waits: one request, not two
@@ -377,6 +378,27 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
     conn.snap(BOOK, "client_resync");
     await t.advance(8);
     expect(a?.last("data").status).toBe("live");
+  });
+
+  it("limits what a tab can void of one ch to three in a window for all its consumers of it, live and replay, and a gap still finds a snapshot", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    t.consume(a, "k1", BOOK, { pane: "p1" });
+    t.consume(a, "k2", BOOK, { pane: "p2", rs: RS });
+    t.consume(a, "kt", TRADES, { pane: "p3" });
+    await t.advance(400);
+    const conn = t.gateway.latest;
+    for (let round = 0; round < 20; round += 1) {
+      a.say({ t: "resync", id: round % 2 === 0 ? "k1" : "k2" });
+      await t.advance(100); // the fake gateway answers with a snapshot
+    }
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CH); // not that many for each of them
+    conn.skip(BOOK);
+    conn.delta(BOOK); // a real gap
+    await t.advance(100);
+    expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CH + 1); // asked at once: two of the five are left
+    a.say({ t: "resync", id: "kt" }); // another ch has a count of its own
+    expect((await counted(t, a)).host.rejectedMessages).toBe(20 - MAX_RESYNCS_PER_CH);
   });
 });
 
@@ -539,6 +561,43 @@ describe("what a tab may ask", () => {
     expect([t.gateway.latest.of("sub").length, t.gateway.latest.of("unsub").length]).toEqual([
       1, 0,
     ]);
+  });
+
+  it("serves a tab that opens and closes 200 panes one after the other: a pane no consumer holds gives way to a new one", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    for (let i = 0; i < 200; i += 1) {
+      t.consume(a, `k${i}`, TRADES, { pane: `w${i}` });
+      a.say({ t: "release", id: `k${i}` });
+    }
+    expect(t.host.counters).toMatchObject({ consumers: 0, rejectedMessages: 0 });
+  });
+
+  it("keeps what the tab said of a pane while no consumer holds it: a switch of symbol is a release and a consume", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    a.say({ t: "pane", id: "p1", visibility: "collapsed" });
+    t.consume(a, "k1", TRADES);
+    a.say({ t: "release", id: "k1" });
+    t.consume(a, "k2", TRADES); // the same pane, still collapsed: its topic is not held
+    await t.advance(400);
+    expect(t.gateway.latest.of("sub")).toEqual([]);
+  });
+
+  it("gives a pane up only when no consumer holds it: 64 held panes refuse a 65th, and the last release in one makes room", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    for (let i = 0; i < MAX_PANES_PER_TAB; i += 1) t.consume(a, `k${i}`, TRADES, { pane: `w${i}` });
+    t.consume(a, "twin", TRADES, { pane: "w0" });
+    a.say({ t: "release", id: "k0" });
+    t.consume(a, "no1", TRADES, { pane: "n1" }); // w0 is still read by its twin: refused
+    a.say({ t: "release", id: "twin" });
+    t.consume(a, "again", TRADES, { pane: "w0" }); // read again
+    t.consume(a, "no2", TRADES, { pane: "n2" }); // refused
+    a.say({ t: "release", id: "again" });
+    a.say({ t: "pane", id: "w0", visibility: "visible" }); // said again, still read by none
+    t.consume(a, "fits", TRADES, { pane: "n3" }); // w0 gives way
+    expect((await counted(t, a)).host.rejectedMessages).toBe(2); // and `fits` was served
   });
 });
 
