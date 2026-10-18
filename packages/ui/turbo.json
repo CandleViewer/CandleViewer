@@ -3,10 +3,45 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "inputs": ["$TURBO_EXTENDS$", "tokens/**", "scripts/**"]
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "tokens/**",
+        "scripts/**",
+        "contrast/**",
+        ".storybook/**",
+        "vitest.config.mjs",
+        "tsconfig.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/tools/contrast/**",
+        "$TURBO_ROOT$/tools/style-dictionary/**"
+      ]
     },
     "test:cov": {
-      "inputs": ["$TURBO_EXTENDS$", "tokens/**", "scripts/**"]
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "tokens/**",
+        "scripts/**",
+        "contrast/**",
+        ".storybook/**",
+        "vitest.config.mjs",
+        "tsconfig.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/tools/contrast/**",
+        "$TURBO_ROOT$/tools/style-dictionary/**"
+      ]
+    },
+    "build": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "tsconfig.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
+        "$TURBO_ROOT$/tools/style-dictionary/**"
+      ]
     }
   }
 }
