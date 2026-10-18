@@ -49,8 +49,11 @@ one delivery point.
 Packaged builds (#3518): `electron-builder.yml` copies `apps/web/dist`, without
 source maps (SR-116), to `<resources>/web/dist`, where the handler reads it
 (`dist/main` inside `app.asar` resolves `../../../web/dist` there). The
-electron-hardening gate fails if a packaging list could ship a `.map` file or
-that entry is missing. Not yet proven: that an installer renders the app. CI
+electron-hardening gate fails if a packaging list could ship a `.map` file, or
+if that entry is missing or another one writes into that root. These files sit
+outside `app.asar`, so ASAR integrity does not cover them: the SR-118 startup
+check (E10) must, by packing them into `app.asar` or by checking them against
+a hash list kept there. Not yet proven: that an installer renders the app. CI
 builds no installer. The next step is to pack the unpacked app in the `build`
 job (`electron-builder --linux dir` with `electronDist` set to the Electron
 that job installs) and launch it with Playwright-Electron (`executablePath`)

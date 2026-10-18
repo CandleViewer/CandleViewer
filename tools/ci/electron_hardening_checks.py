@@ -479,6 +479,9 @@ MAP_EXCLUSION = "!**/*.map"
 WEB_DIST_TO = "web/dist"
 _ITEM = re.compile(r"( *)- +(.*)")
 _FIELD = re.compile(r"( *)(\w+):(?: +(.*))?")
+# A list item or a plain `key:` line. js-yaml also reads tagged (`!!str key:`), quoted or
+# escaped, explicit (`? key`) and `key :` keys, which the gate would not see.
+_LINE = re.compile(r" *(?:-(?:[ \t].*)?|[A-Za-z_][\w-]*:(?:[ \t].*)?)", re.ASCII)
 # Plain scalars YAML does not read as a string: a boolean, null, number, date or mapping.
 _NOT_STRING = re.compile(
     r"(?i)true|false|yes|no|on|off|null|\.?\d.*|\.inf|\.nan|.*:(\s.*)?"
@@ -561,11 +564,19 @@ def _packaging_lists(text: str) -> dict[str, list[Any] | str]:
 def _excludes_maps(patterns: list[str]) -> bool:
     """True when ordered patterns leave out every .map file. electron-builder applies them in
     order (minimatch: an odd count of leading '!' excludes) and an include re-adds what it
-    matches, so after the last MAP_EXCLUSION only exclusions may follow."""
+    matches, so after the last MAP_EXCLUSION only exclusions may follow, and no ${...} macro
+    (electron-builder expands it, so '!${env.X}' can become an include)."""
     if MAP_EXCLUSION not in patterns:
         return False
     tail = patterns[len(patterns) - patterns[::-1].index(MAP_EXCLUSION) :]
-    return all((len(p) - len(p.lstrip("!"))) % 2 == 1 for p in tail)
+    return all((len(p) - len(p.lstrip("!"))) % 2 == 1 and "${" not in p for p in tail)
+
+
+def _serves(to: object) -> bool:
+    """True when an extraResources `to` is web/dist, inside it or above it (absent: the
+    resources root)."""
+    t = (posixpath.normpath(to) if isinstance(to, str) else ".") + "/"
+    return t == "./" or t.startswith(WEB_DIST_TO + "/") or WEB_DIST_TO.startswith(t)
 
 
 def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violation]:
@@ -573,17 +584,27 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
 
     Reads the top-level files, extraResources and extraFiles of electron-builder.yml as a
     small YAML subset (block lists of plain or escape-free quoted patterns and of
-    {from, to, filter} entries, or `[]`); any other form fails closed, as do these keys
-    anywhere else (a platform section adds to them). A list's patterns and each entry's
-    filter must leave out every .map file (_excludes_maps); no filter, or no `files`,
-    packages everything. One extraResources entry must copy the web dist this gate scanned
-    to web/dist, the root the packaged app:// handler serves; `from` resolves against the
-    config's directory, the project directory of build:installer. Not seen: `extends`,
-    another entry writing under web/dist, and files a build hook copies.
+    {from, to, filter} entries, or `[]`). Other forms fail closed: these keys anywhere else
+    (a platform section adds to them), `extends`, and any line that is not a comment, a list
+    item or a plain `key:` (_LINE). A list's patterns and each entry's filter must leave out
+    every .map file (_excludes_maps); no filter, or an empty or absent `files`, packages
+    everything, and an entry whose `from` is one file is copied whatever its filter says.
+    Of the extraResources entries writing to web/dist, inside it or above it, there must be
+    exactly one: the copy of the web dist this gate scanned to web/dist, the root the
+    packaged app:// handler serves (`from` resolves against the config's directory, the
+    project directory of build:installer). Not seen: a tagged or escaped key inside a flow
+    mapping, extraFiles written into resources/, and files a build hook copies.
     """
     subject = "electron-builder.yml"
     vs: list[Violation] = []
     body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    bad = [ln for ln in body.splitlines() if ln.strip() and not _LINE.fullmatch(ln)]
+    if bad:
+        msg = f"cannot read line {bad[0].strip()!r}: use a list item or a plain 'key:' line"
+        vs.append(Violation("SR-116", subject, msg))
+    if re.search(r"(?m)^extends:", body):
+        msg = "the gate does not follow 'extends': declare the packaging lists here"
+        vs.append(Violation("SR-116", subject, msg))
     keys = r"(files|extraResources|extraFiles)[\"']?[ \t]*:"
     nested = re.findall(r"(?m)(?:^[ \t]+[\"']?|^[\"']|[{,][ \t]*[\"']?)" + keys, body)
     if nested:
@@ -594,37 +615,49 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         vs.append(Violation("SR-116", subject, msg))
     lists = _packaging_lists(text)
     for key in PACKAGING_KEYS:
-        items = lists.get(key, ["**/*"] if key == "files" else [])
+        items = lists.get(key) or (["**/*"] if key == "files" else [])
         if isinstance(items, str):
             msg = f"cannot read {key}: {items}; use a block list (see check_packaging)"
             vs.append(Violation("SR-116", subject, msg))
             continue
         patterns = [p for p in items if isinstance(p, str)]
+        entries = [e for e in items if isinstance(e, dict)]
         sets = [(f"{key} patterns", patterns)] if patterns else []
         sets += [
             (f"{key} entry from {e.get('from')!r}", e.get("filter", []))
-            for e in items
-            if isinstance(e, dict)
+            for e in entries
         ]
         for label, pats in sets:
             if not _excludes_maps(pats):
                 msg = (
                     f"{label} could package source maps: end its patterns with "
-                    f"'{MAP_EXCLUSION}' and add no include after it"
+                    f"'{MAP_EXCLUSION}' and add no include or ${{...}} macro after it"
+                )
+                vs.append(Violation("SR-116", subject, msg))
+        for e in entries:
+            names = [v for v in (e.get("from"), e.get("to")) if isinstance(v, str)]
+            if any(posixpath.normpath(v).lower().endswith(".map") for v in names):
+                msg = (
+                    f"{key} entry from {e.get('from')!r} copies a .map file: an entry "
+                    "whose from is one file is copied whatever its filter says"
                 )
                 vs.append(Violation("SR-116", subject, msg))
     resources = lists.get("extraResources", [])
-    if isinstance(resources, list) and not any(
-        isinstance(e, dict)
-        and isinstance(e.get("from"), str)
-        and isinstance(e.get("to"), str)
-        and (config_dir / e["from"]).resolve() == web_dist.resolve()
-        and posixpath.normpath(e["to"]) == WEB_DIST_TO
-        for e in resources
+    if isinstance(resources, list) and (
+        sum(isinstance(e, dict) and _serves(e.get("to")) for e in resources) != 1
+        or not any(
+            isinstance(e, dict)
+            and isinstance(e.get("from"), str)
+            and isinstance(e.get("to"), str)
+            and (config_dir / e["from"]).resolve() == web_dist.resolve()
+            and posixpath.normpath(e["to"]) == WEB_DIST_TO
+            for e in resources
+        )
     ):
         msg = (
             f"extraResources must copy the web dist this gate scanned ({web_dist}) to "
-            f"'{WEB_DIST_TO}', the asset root the packaged app:// handler serves"
+            f"'{WEB_DIST_TO}', the asset root the packaged app:// handler serves, and "
+            "no other entry may write there or above it"
         )
         vs.append(Violation("SR-174", subject, msg))
     return vs

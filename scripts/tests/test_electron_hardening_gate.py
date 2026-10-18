@@ -737,9 +737,10 @@ def test_web_dist_entry_excluding_maps_last_passes(tree: Tree, resources: str) -
         GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("to: web/dist", "to: web"),
         GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("from: web", "from: web/assets"),
         GOOD_PACKAGING + "  - from: src\n    to: web/dist/src\n" + MAP_FILTER,
+        GOOD_PACKAGING + "  - from: src\n    to: web\n" + MAP_FILTER,
         GOOD_PACKAGING + "  - from: src\n" + MAP_FILTER,
     ],
-    ids=["absent", "other-destination", "other-source", "inside", "at-root"],
+    ids=["absent", "other-destination", "other-source", "inside", "above", "at-root"],
 )
 def test_web_dist_missing_from_the_asset_root_fails_sr174(
     tree: Tree, builder: str
