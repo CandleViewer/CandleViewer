@@ -347,7 +347,7 @@ it (login refuses `disabled` only):
   once) and no `auth_session_revocations_total` increment. The retry finds the row revoked and
   adds nothing, and nothing the backstop emits shows the loss: the `sessions` row with
   `revoked_reason = 'user_disabled'` is the only trace, so compare those rows in a window with the
-  counter's increase over it (a disable's own sweep, once #965 is routed, adds rows of its own).
+  counter's increase over it (a disable's own transaction and sweep add rows of their own).
   Before #3029 the count came first, so a cancel there over-counted instead of losing the signal.
   Shielding the bookkeeping after the `UPDATE` is not built: it is the follow-up #3332 (P2), filed
   with the ruling of 2026-10-18 ([comment](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
@@ -385,8 +385,7 @@ it (login refuses `disabled` only):
 
   As an Owner, look each id up in
   `GET $API/admin/audit?action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`:
-  one with no record there is unaudited, unless a disable's own sweep revoked it (that disable's
-  audit records cover it).
+  one with no record there is unaudited, unless a disable revoked it (its audit records cover it).
 
 - A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
   presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
@@ -408,7 +407,7 @@ it (login refuses `disabled` only):
   `auth.session_audit.outcome_lost` log line and the `AuthAuditOutcomeLost` ticket (section 10).
   The streaming window is an accepted risk, dated 2026-10-17
   (`docs/security/threat-models/e09-auth-rbac.md`, U45; it is UL1-E2's in `e42-user-lifecycle.md`):
-  a socket has no write path, since orders are REST only, and the disable cascade of #965, once it
+  a socket has no write path, since orders are REST only, and #965's disable cascade, now that it
   is routed, closes sockets within 5 s. The live row and the silent counter are accepted too: the
   main-orchestrator confirmed them on 2026-10-18 ([ruling](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
   A refused refresh that revokes the row and counts it is not built: it is the follow-up #3331
@@ -755,6 +754,9 @@ sign-out in the alert runbook entry (row 7) is the check.
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
 | No durable retry of a lost audit outcome record                           | EX-07, #3009         |
+| No durable retry of a lost backstop audit record                          | EX-08, #3009         |
+| A refused refresh of a disabled user neither revokes nor counts           | #3331                |
+| A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332                |
 | No counter or alert for a write-ahead audit refusal (the `503`)           | #3009, #2267         |
 
 ## Execution record

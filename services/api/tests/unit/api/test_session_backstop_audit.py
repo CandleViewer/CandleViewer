@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from structlog.testing import capture_logs
@@ -44,10 +45,6 @@ class _Emitter:
         if self.failure is not None:
             raise self.failure
         self.calls.append((action, kwargs))
-
-
-async def _hold(event: asyncio.Event) -> None:
-    await event.wait()
 
 
 def _call(
@@ -98,14 +95,14 @@ async def test_a_failed_write_reaches_the_caller_and_leaves_nothing_in_flight() 
 
 
 async def test_a_full_tracker_drops_the_record_before_any_write_starts() -> None:
-    emitter, tracker, parked = _Emitter(), RefusalAuditTracker(cap=1), asyncio.Event()
-    tracker.track(_hold(parked))  # one write in flight fills the cap
+    emitter, tracker, parked = _Emitter(), RefusalAuditTracker(cap=1), _Emitter(held=True)
+    tracker.track(parked.emit("parked"))  # one write in flight fills the cap
 
     with pytest.raises(BackstopAuditSaturated):
         await _call(emitter, tracker)
 
     assert not emitter.started.is_set()
-    parked.set()
+    parked.gate.set()
     assert await tracker.drain() == 0
 
 
@@ -130,9 +127,8 @@ async def test_cancelling_the_caller_never_cancels_the_write() -> None:
     "held", [True, False], ids=["after_the_cancel", "in_the_cancels_loop_turn"]
 )
 async def test_a_write_that_fails_after_its_caller_stopped_waiting_is_logged(held: bool) -> None:
-    """Held open, the tracker reports the failure when it ends. Failed in the cancel's own loop
-    iteration, the tracker was never told to report it, so the adapter does. Either way the line
-    holds the error class and no session, as the runbook says: it is counted, not looked up."""
+    """The tracker logs the failure when the write ends, or at the hand-over if it ended first
+    (#3054): one line, with the error class and no session, as the runbook says to count them."""
     emitter, tracker = _Emitter(RuntimeError("wal unavailable"), held), RefusalAuditTracker()
     request = asyncio.create_task(_call(emitter, tracker))
     if held:
@@ -149,3 +145,17 @@ async def test_a_write_that_fails_after_its_caller_stopped_waiting_is_logged(hel
 
     late = [e for e in logs if e["event"] == LATE_FAILURE_EVENT]
     assert late == [{"event": LATE_FAILURE_EVENT, "log_level": "error", "error": "RuntimeError"}]
+
+
+async def test_a_raising_log_never_replaces_the_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#3054: the write fails in the cancel's own loop iteration and the log pipeline raises: the
+    cancel still propagates, and the log's error goes to the loop's handler, not to the caller."""
+    unhandled: list[dict[str, Any]] = []
+    asyncio.get_running_loop().set_exception_handler(lambda _loop, ctx: unhandled.append(ctx))
+    monkeypatch.setattr("structlog.get_logger", Mock(side_effect=RuntimeError("log down")))
+    request = asyncio.create_task(_call(_Emitter(RuntimeError("wal")), RefusalAuditTracker()))
+    await asyncio.sleep(0)  # the request has started the write, which has not run yet
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert [str(c["exception"]) for c in unhandled] == ["log down"]
