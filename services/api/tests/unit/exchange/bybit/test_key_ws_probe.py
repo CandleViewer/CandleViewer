@@ -11,17 +11,20 @@ import asyncio
 import json
 import logging
 import re
+import ssl
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
 from uuid import UUID
 
+import certifi
 import pytest
 from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
 from websockets.client import ClientProtocol
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
+from websockets.http11 import Request
 from websockets.protocol import State
 from websockets.uri import parse_uri
 
@@ -339,7 +342,7 @@ class Conn:
     counts transport aborts."""
 
     def __init__(self, url: str, *, stall_close: bool = False) -> None:
-        self.request = ClientProtocol(parse_uri(url)).connect()
+        self.request: Request | None = ClientProtocol(parse_uri(url)).connect()
         self.transport = SimpleNamespace(abort=self._abort)
         self.state, self.stall_close = State.OPEN, stall_close
         self.sent: list[str] = []
@@ -380,7 +383,7 @@ async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_f
     probe's sockets log through a logger that never enables DEBUG, even under a DEBUG root. Each
     read is bounded twice: by the library's `max_size` and by the read's own `max_bytes`. The
     library's close bound sits inside the probe's 1 s (the redirect refusal is on a real socket,
-    `test_key_ws_probe_real_socket.py`)."""
+    `test_key_ws_probe_real_socket.py`). It takes no proxy, and its TLS roots are pinned below."""
     conn = Conn(URLS["demo"])
     seen = dial_into(monkeypatch, conn)
     caplog.set_level(logging.DEBUG)
@@ -391,8 +394,8 @@ async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_f
         await socket.recv(len(OK) - 1)
     await socket.close()
     assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
-    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 0.5}
-    assert seen == {**expected, "ping_interval": None, "max_size": 4096}
+    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 0.5, "proxy": None}
+    assert seen == {**expected, "ping_interval": None, "max_size": 4096, "ssl": key_ws_probe._TLS}
     assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
 
 
@@ -411,6 +414,40 @@ async def test_the_handshake_check_takes_the_request_websockets_builds_for_the_s
     dial_into(monkeypatch, conn)
     await key_ws_probe.connect_private_ws(url)
     assert conn.aborts == 0
+
+
+def test_production_trusts_the_roots_the_signed_rest_client_trusts_and_no_other() -> None:
+    """C-2.7 and C-12.2, defence in depth: the signed `auth` travels under the signed REST
+    client's roots (httpx's default, certifi's bundle), never under the OS store, which may trust
+    a TLS-inspecting gateway's root (`test_key_ws_probe_real_socket.py` dials one)."""
+    tls, certifi_roots = key_ws_probe._TLS, ssl.create_default_context(cafile=certifi.where())
+    assert (tls.verify_mode, tls.check_hostname) == (ssl.CERT_REQUIRED, True)
+    assert tls.get_ca_certs() == certifi_roots.get_ca_certs()
+
+
+async def test_a_handshake_that_reached_another_stream_is_aborted_before_anything_is_signed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As `rest.py`'s `_assert_same_host`: a demo probe whose handshake reached live's stream is
+    a `transport_error` with nothing signed or sent, and its transport is aborted, not left open."""
+    conn, calls = Conn(URLS["live"]), list[Call]()
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    result = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert (result.error, calls, conn.sent, conn.aborts) == ("transport_error", [], [], 1)
+
+
+async def test_a_connection_with_no_handshake_request_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connection whose handshake request the library did not keep shows nowhere it went: it
+    is refused and aborted the same way, never trusted."""
+    conn, calls = Conn(URLS["demo"]), list[Call]()
+    conn.request = None
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    result = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert (result.error, calls, conn.sent, conn.aborts) == ("transport_error", [], [], 1)
 
 
 async def test_a_close_the_peer_never_finishes_ends_in_an_abort(

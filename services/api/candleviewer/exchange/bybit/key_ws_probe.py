@@ -5,7 +5,8 @@ stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
 close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
 falls back to another host; production's connector follows no redirect either, so a 3xx is a
-`transport_error` and the signed `auth` reaches no other host (SR-040a). One 5 s bound covers the
+`transport_error` and the signed `auth` reaches no other host (SR-040a); it trusts certifi's
+roots only, the signed REST client's default, and takes no proxy. One 5 s bound covers the
 dial, the signature and the reply; the socket is closed on every path under its own short bound,
 aborted if the peer never finishes the close, and a cancellation propagates. Diagnostic only: it
 enforces nothing (ruling 11 on #836).
@@ -22,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import ssl
 import time
 from asyncio import timeout
 from collections import deque
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
+import certifi
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -66,6 +69,9 @@ _TRANSPORT: Final = (OSError, WebSocketException)
 # nosemgrep: cv-obs-no-direct-getlogger reason=ws-stdlib-logger owner=@basiltt review=2027-03-25
 _SOCKET_LOG: Final = logging.getLogger(f"{__name__}.socket")
 _SOCKET_LOG.setLevel(logging.INFO)
+#: The roots the signed REST client trusts (httpx's default context, certifi's bundle), never the
+#: OS store, which may trust a TLS-inspecting gateway's root (C-2.7, C-12.2, defence in depth).
+_TLS: Final = ssl.create_default_context(cafile=certifi.where())
 
 
 class PrivateSocket(Protocol):
@@ -126,15 +132,18 @@ class _NoRedirectConnect(ws_connect):
 
 
 async def connect_private_ws(url: str) -> PrivateSocket:
-    """Production's connector: no redirect, no keepalive pings (the socket lives for one reply),
-    small frames, the library's close bound inside the probe's, and the quiet logger above. As
-    `rest.py`'s `_assert_same_host`, defence in depth: a handshake that did not go to `url`
-    itself is aborted before anything is sent on it."""
+    """Production's connector: no redirect, no proxy the environment names, `_TLS`'s roots on
+    `wss://` (every `PRIVATE_WS_URLS` value; `ws://` has no TLS to set), no keepalive pings (the
+    socket lives for one reply), small frames, the library's close bound inside the probe's, and
+    the quiet logger above. As `rest.py`'s `_assert_same_host`, defence in depth: a handshake
+    that did not go to `url` itself is aborted before anything is sent on it."""
+    wanted = urlsplit(url)
     conn = await _NoRedirectConnect(
         url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
-        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG,
+        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG, proxy=None,
+        ssl=_TLS if wanted.scheme == "wss" else None,
     )  # fmt: skip
-    wanted, request = urlsplit(url), conn.request
+    request = conn.request
     resource = f"{wanted.path}?{wanted.query}" if wanted.query else wanted.path
     asked = None if request is None else (request.headers.get("Host"), request.path)
     if asked != (wanted.netloc, resource):
