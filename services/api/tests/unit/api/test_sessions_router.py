@@ -337,8 +337,7 @@ def test_only_these_routes_skip_the_backstop() -> None:
 
     # `enrolment_only_guard` (`api/enrolment_guard.py`, #2295) is middleware, not a route: it reads
     # a session with `allow_locked=True` only to classify it; a disabled user's goes to the route.
-    routes = {"POST /auth/logout", "DELETE /me/sessions/{sessionId}", "enrolment_only_guard"}
-    assert found.routes == routes
+    assert found.routes == {"POST /auth/logout", "enrolment_only_guard"}
 
 
 async def test_refresh_without_identity_is_501_and_burns_no_token() -> None:

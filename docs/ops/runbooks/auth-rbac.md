@@ -24,9 +24,6 @@ Quick facts the procedures rely on:
 
 ## 1. Unlock a locked account (SR-016)
 
-`POST /auth/unlock` is dark until #2300's last slice wires it (2f, held for #1640): it answers `503`
-and checks no password, so what this section says of it holds from then on.
-
 **There is no unlock command, endpoint or CLI for this lock.** `POST /auth/unlock` (#2300) lifts a
 session's idle lock, never an account lock. A lock is `users.locked_until`, set by the shared
 password check after the fifth failure: at login, at a step-up (§2), or at `POST /auth/unlock`,
@@ -363,7 +360,7 @@ it (login refuses `disabled` only):
   `cv_refresh` cookie), whose `peek_access_token` and `peek_refresh` read no user status, and
   never calls `require_active`; or it authenticates with `allow_locked=True` other than through
   `require_active`. `test_only_these_routes_skip_the_backstop` scans the code for both:
-  `POST /auth/logout` skips it the first way (#2300), `DELETE /me/sessions/{sessionId}` the second.
+  `POST /auth/logout` skips it the first way (#2300); since #2300 no route takes the second.
   As deployed, `IdleLockMiddleware` (#2300) first authenticates the bearer of every route but the
   operations allowed while idle-locked with `authenticate_access_token`, which ends in
   `require_active`, so `DELETE /me/sessions/{sessionId}` meets the backstop there before its own
@@ -824,8 +821,12 @@ automatic retry: that half of rule 2 (`04-security-program.md` section 8.3) is t
 exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) exists.
 
 While the sink refuses records, sign-out, session revocation, refresh, extend and unlock answer
-`503` and change nothing (C-2.9): sessions idle-lock at their idle deadline and cannot be unlocked,
-an access token lapses within 12 minutes and a longer refusal ends every session
+`503` and change nothing (C-2.9), except unlock while the sink is up but its writer refuses (a full
+or unwritable WAL): a wrong password then still counts toward the five failed unlocks that revoke
+the session and toward the SR-016 lockout, which it can apply with no `auth.unlock_failed` or
+`auth.account_locked` row (only `auth_lockouts_total` moves), so ask users not to retry an unlock
+until the sink is back. Sessions idle-lock at their idle deadline and cannot be unlocked, an access
+token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
 reset (section 3, E09-S11 #2119, not runnable yet) will be the Owner's emergency path: it runs only
 with cv-api stopped and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a

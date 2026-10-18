@@ -47,20 +47,18 @@ record (`AuditError`: WAL full or unwritable, writer stopped), answers 503 with
 nothing changed. A record written after the service has acted is an outcome record
 (04-security-program.md §8.3 rules 1 and 2) and cannot undo that: a lost one is counted
 (`auth_audit_outcome_lost_total`), logged and alerted, and the answer stands
-(`_audit_outcomes`). They are, in `/auth/refresh`, the concurrent-refresh race, a disabled
-user's refusal (#2911) and a lock that engaged after the route's check (#2300), in
-`/auth/session/extend` an extension refused after its intent record (#2300) and, on
-`/auth/logout`, one `auth.session_revoked` per session revoked, after the one `auth.logout` intent
-record that names the targets (#2914). The retry half of rule 2 is the time-boxed exception EX-07
-(§16.2).
+(`_audit_outcomes`). They are, in `/auth/refresh`, the concurrent-refresh race and a disabled
+user's refusal (#2911) and, on `/auth/logout`, one `auth.session_revoked` per session revoked,
+after the one `auth.logout` intent record that names the targets (#2914). The retry half of rule 2
+is the time-boxed exception EX-07 (§16.2). #2300 adds two more: a refresh refused because its
+session locked after the route's check, and an extension refused after its intent record.
 
-Idle lock (#2300, contract info "Idle lock"): activity is explicit, so no route
-here re-stamps `last_seen_at` except `POST /auth/session/extend` and a successful
-`POST /auth/unlock`, and a refresh carries the idle deadline over.
-`GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout` serve a locked
-session, identified by an access token inside its lifetime or else the current
-`cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin and SR-041
-checks here); every other operation of a locked session is refused by
+Idle lock (#2300, contract info "Idle lock"): activity is explicit (a refresh carries the idle
+deadline over): only `POST /auth/session/extend` and a successful `POST /auth/unlock` re-stamp
+`last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
+serve a locked session, identified by an access token inside its lifetime or else
+the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
+and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 """
 
