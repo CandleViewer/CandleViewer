@@ -1452,6 +1452,8 @@ _CODEQL_LINE_PINS = {
 _MFA_TOKEN_ENTRY = (
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:60"
 )
+_MFA_RULE, _MFA_PATH, _MFA_LINE = _MFA_TOKEN_ENTRY.rsplit(":", 2)
+_MFA_TOKEN_RESULT = (_MFA_RULE, _MFA_PATH, int(_MFA_LINE))
 
 
 def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> None:
@@ -1514,7 +1516,8 @@ def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> Non
         for node in ast.walk(login)
         if isinstance(node, ast.Assign) and any(t in stores for t in node.targets)
     ]
-    assert len(stores) == 1 and minted == ["self._mfa_token_factory()"]
+    assert len(stores) == 1  # the token is bound once
+    assert minted == ["self._mfa_token_factory()"]
     assert _calls_of(login, "_hash_mfa_token") == ["_hash_mfa_token(mfa_token)"]
     mfa = ast.parse(_MFA_SERVICE.read_text(encoding="utf-8"))
     assert _calls_of(mfa, "_hash_token") == ["_hash_token(mfa_token)"]  # the presented token
@@ -1556,42 +1559,69 @@ def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:
     return {"version": "2.1.0", "runs": [run]}
 
 
-def test_real_codeql_gate_accepts_only_the_triaged_mfa_token_hash(
+def _real_codeql_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    register: Path,
+    results: list[tuple[str, str, int]],
+    run_date: str = "2026-10-18",  # fixed, and before the entry expires: deterministic
+) -> tuple[int, str]:
+    """Run the gate's CLI on a full-scan SARIF of `results`; return its exit code and output."""
+    report = _write_json(tmp_path, "python.sarif", _codeql_full_scan(results))
+    argv = ["--tool", "codeql", "--report", str(report), "--accepted-risks", str(register)]
+    rc = main([*argv, "--run-date", run_date])
+    out = capsys.readouterr()
+    return rc, out.out + out.err
+
+
+def test_real_codeql_gate_mfa_token_hash_without_its_entry_blocks(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rule, uri, line = _MFA_TOKEN_ENTRY.rsplit(":", 2)
-    n = int(line)
-    accepted = (rule, uri, n)
     doc = yaml.safe_load(_REGISTER.read_text(encoding="utf-8"))
     rest = [e for e in doc["entries"] if e["id"] != _MFA_TOKEN_ENTRY]
     without = _write_yaml(tmp_path, {"entries": rest})
-
-    def gate(
-        register: Path, results: list[tuple[str, str, int]], run_date: str = "2026-10-18"
-    ) -> tuple[int, str]:
-        report = _write_json(tmp_path, "python.sarif", _codeql_full_scan(results))
-        argv = ["--tool", "codeql", "--report", str(report), "--accepted-risks", str(register)]
-        rc = main([*argv, "--run-date", run_date])
-        out = capsys.readouterr()
-        return rc, out.out + out.err
-
-    rc, out = gate(without, [accepted])
+    rc, out = _real_codeql_gate(tmp_path, capsys, without, [_MFA_TOKEN_RESULT])
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
     assert f"{_MFA_TOKEN_ENTRY} (HIGH) has no accepted-risk entry" in out
-    rc, out = gate(_REGISTER, [accepted])
+
+
+def test_real_codeql_gate_mfa_token_hash_with_its_entry_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT])
     assert rc == 0, out
     assert "security_gate[codeql]: OK" in out
     assert f"accepted risk: codeql finding {_MFA_TOKEN_ENTRY} (HIGH)" in out
-    # The entry is exact: the same rule a line away, or another HIGH on that line, still blocks.
-    unrelated = [(rule, uri, n + 1), ("py/clear-text-logging-sensitive-data", uri, n)]
-    rc, out = gate(_REGISTER, [accepted, *unrelated])
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param((_MFA_RULE, _MFA_PATH, int(_MFA_LINE) + 1), id="same-rule-next-line"),
+        pytest.param(
+            ("py/clear-text-logging-sensitive-data", _MFA_PATH, int(_MFA_LINE)),
+            id="other-high-same-line",
+        ),
+    ],
+)
+def test_real_codeql_gate_mfa_token_entry_other_result_still_blocks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], other: tuple[str, str, int]
+) -> None:
+    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT, other])
+    rule, path, line = other
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
-    for other_rule, other_uri, other_line in unrelated:
-        assert f"{other_rule}:{other_uri}:{other_line} (HIGH) has no accepted-risk entry" in out
-    # And it expires (C-12.3): from its `expires` date the same result blocks again.
+    assert f"{rule}:{path}:{line} (HIGH) has no accepted-risk entry" in out
+    assert f"{_MFA_TOKEN_ENTRY} (HIGH) has no accepted-risk entry" not in out  # entry is exact
+
+
+def test_real_codeql_gate_mfa_token_entry_on_its_expiry_blocks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     expires = {r.finding_id: r for r in load_accepted_risks(_REGISTER)}[_MFA_TOKEN_ENTRY].expires
-    rc, out = gate(_REGISTER, [accepted], run_date=expires.isoformat())
+    run_date = expires.isoformat()
+    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT], run_date)
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-004)" in out
+    assert f"CI-SEC-004: accepted risk expired for {_MFA_TOKEN_ENTRY}" in out
