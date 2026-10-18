@@ -39,6 +39,10 @@ _REWRAP = sa.text(
     "UPDATE auth_keys SET dek_ref = :dek_ref, kek_version = :to_v "
     "WHERE id = :id AND env = CAST(:env AS exchange_env) AND kek_version = :from_v"
 )
+# A KEK re-wrap run of the environment waits for none of its rows to be left at the old version.
+_COUNT = sa.text(
+    "SELECT count(*) FROM auth_keys WHERE env = CAST(:env AS exchange_env) AND kek_version = :v"
+)
 # Counts only, every environment's (these tables have none). An unconfirmed TOTP method counts too.
 _MFA_MATERIAL = sa.text(
     "SELECT (SELECT count(*) FROM mfa_methods WHERE kind = 'totp' AND revoked_at IS NULL) "
@@ -91,6 +95,13 @@ class SqlAlchemyAuthKeyStore:
         except DBAPIError as exc:
             state = getattr(exc.orig, "sqlstate", None)
         raise StorageQueryFailed(state if isinstance(state, str) else None)  # nothing chained
+
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        """The rows of `env`, which must be the process's, wrapped under KEK `version` (#2266)."""
+        self._own(env)
+        async with self._rel.unit_of_work() as uow:
+            res: Any = await uow.session.execute(_COUNT, {"env": env, "v": version})
+            return int(res.scalar_one())
 
     async def count_mfa_material(self) -> int:
         """Unrevoked TOTP methods plus unused recovery codes, in every environment: what a new

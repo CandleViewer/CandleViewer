@@ -290,6 +290,18 @@ async def test_the_store_refuses_another_environment_and_an_empty_keyring(
     assert _exec(pg, "SELECT count(*) FROM auth_keys") == [(0,)]
 
 
+async def test_the_count_at_a_kek_version_is_of_the_environment_rows_only(
+    pg: str, store: Store
+) -> None:
+    """#2266: a KEK re-wrap run is complete only once none of these is left at its previous
+    version. Another environment's rows never count, and naming it is refused before any I/O."""
+    for cols in ({}, {"purpose": "recovery_hmac", "kek_version": 2}, {"env": "live"}):
+        _insert(pg, **cols)
+    assert [await store.count_at_kek_version(v, "demo") for v in (1, 2, 3)] == [1, 1, 0]
+    with pytest.raises(keys.AuthKeyEnvironmentError):
+        await store.count_at_kek_version(1, "live")
+
+
 async def test_only_a_taken_key_is_a_lost_race_a_reused_id_raises(pg: str, store: Store) -> None:
     """A plain `ON CONFLICT DO NOTHING` would report the primary-key clash as a boot that lost."""
     taken = _insert(pg, purpose="recovery_hmac")  # another boot got there first with one of them

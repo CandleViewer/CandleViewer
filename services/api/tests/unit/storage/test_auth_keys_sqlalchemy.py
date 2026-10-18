@@ -15,7 +15,7 @@ _STATEMENTS = {n: v for n, v in vars(m).items() if isinstance(v, sa.TextClause)}
 
 
 def test_statements_name_their_columns_and_never_delete() -> None:
-    assert set(_STATEMENTS) == {"_ROWS", "_INSERT", "_REWRAP", "_MFA_MATERIAL"}
+    assert set(_STATEMENTS) == {"_ROWS", "_INSERT", "_REWRAP", "_COUNT", "_MFA_MATERIAL"}
     for name, stmt in _STATEMENTS.items():
         text = str(stmt)
         # 21 Sec.12 forbids `SELECT *` on auth_keys; for this module this test is the guard.

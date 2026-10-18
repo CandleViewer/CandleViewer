@@ -3,7 +3,7 @@ and the resumable, verified DEK re-wrap (e27-kek.md §5). Private to M2."""
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cryptography.exceptions import InvalidTag
 
@@ -13,7 +13,7 @@ from candleviewer.secrets._kek import LoadedKek, kcv_matches
 from candleviewer.secrets.broker import _SYSTEM, CredentialBroker
 from candleviewer.secrets.errors import KekLoadError, KekUnavailable
 from candleviewer.secrets.models import CredentialRow, RewrapReport
-from candleviewer.secrets.store import KcvStore
+from candleviewer.secrets.store import AuthKeyStore, KcvStore
 
 
 class RotatingBroker(CredentialBroker):
@@ -53,23 +53,34 @@ class RotatingBroker(CredentialBroker):
         *,
         actor: tuple[str, str, str | None] = _SYSTEM,
         batch: int = 50,
+        auth_keys: AuthKeyStore | None = None,
     ) -> RewrapReport:
         """Re-wrap every DEK at `new_kek_version - 1` under the current KEK (e27-kek.md §5).
 
         Ciphertext/nonces untouched; each new wrap is verified by opening `secret_enc` before
         the compare-and-set, which commits the row's `security.credential_rewrapped` with it.
-        Keyset paging terminates; failures are audited as they occur; `kek_rotated` only when
-        nothing is left, otherwise `kek_rotation_incomplete`.
+        The run opens with `kek_rotation_resumed` when an earlier run moved rows and rows are
+        left, else `kek_rotation_started`; every record carries its `run_id` (#2266). Each
+        listed row is re-read and fenced (`_fenced`). Keyset paging terminates; failures are
+        audited as they occur; `kek_rotated` only when nothing is left (the environment's auth
+        keyring rows in `auth_keys` included) and no row failed, otherwise
+        `kek_rotation_incomplete`. `auth_keys` is None while no keyring is wired (#2152 S5b
+        wires it; until then nothing writes `auth_keys` rows).
         """
         kek, prev = self._require_kek(), self._prev
         if prev is None or kek.version != new_kek_version or prev.version != kek.version - 1:
             raise KekUnavailable("kek_unavailable")
         if kcv_matches(kek, prev.kcv()):
             raise KekLoadError("kek_reused")  # a no-op "rotation" must not be recorded
+        run_id = uuid4()
         self._cache.flush()
         total = await self._io(self._store.count_at_kek_version(prev.version, self._env), "store")
+        moved = self._store.count_rewrapped_since_enrolment(kek.version, self._env)
+        before = await self._io(moved, "store")
+        resumed = total > 0 and before > 0  # an earlier run moved rows, and rows are left
         kind, role, user = actor
         base = {
+            "run_id": str(run_id),
             "from": str(prev.version),
             "to": str(kek.version),
             "from_kcv": prev.kcv().hex(),
@@ -78,9 +89,13 @@ class RotatingBroker(CredentialBroker):
             "actor_role": role,
             **({"actor_user_id": user} if user else {}),
         }
-        await self._audit("security.kek_rotation_started", {**base, "rows": str(total)})
+        if resumed:
+            opened = {"remaining": str(total), "already_rewrapped": str(before)}
+            await self._audit("security.kek_rotation_resumed", {**base, **opened})
+        else:
+            await self._audit("security.kek_rotation_started", {**base, "rows": str(total)})
         # Each moved row's record, committed with its compare-and-set (#2266).
-        per_row = {"run_id": str(uuid4()), "env": self._env, "from": base["from"], "to": base["to"]}
+        per_row = {k: base[k] for k in ("run_id", "from", "to")} | {"env": self._env}
         per_row |= {k: v for k, v in base.items() if k.startswith("actor_")}
         done, failed, after = 0, [], None
         try:
@@ -90,7 +105,7 @@ class RotatingBroker(CredentialBroker):
                 after = ids[-1]
                 for key_id in ids:
                     row = await self._load(key_id)
-                    if row is None or row.kek_version != prev.version:
+                    if row is None or self._fenced(row, key_id, prev.version):
                         continue
                     out: list[str] = []
                     if not self._rewrap_one(row, prev, kek, out):
@@ -116,6 +131,7 @@ class RotatingBroker(CredentialBroker):
                     if await self._io(cas, "store"):
                         done += 1
                         m.credential_rewrap_rows_total.inc()
+            left, auth_left = await self._left(prev.version, auth_keys)
         except BaseException:
             try:  # terminal record for a run that died mid-way (resumable: rows are CAS'd)
                 await self._audit(
@@ -125,12 +141,36 @@ class RotatingBroker(CredentialBroker):
             except Exception:
                 m.credential_outcome_audit_failures_total.inc()
             raise
-        left = await self._io(self._store.count_at_kek_version(prev.version, self._env), "store")
-        fields = {**base, "rows": str(done), "left": str(left), "failed": str(len(failed))}
+        left += auth_left
+        fields = {
+            **base,
+            "rows": str(done),
+            "left": str(left),
+            "auth_left": str(auth_left),
+            "failed": str(len(failed)),
+        }
         complete = left == 0 and not failed
         action = "security.kek_rotated" if complete else "security.kek_rotation_incomplete"
         await self._audit(action, fields)
-        return RewrapReport(prev.version, kek.version, done, left, tuple(failed))
+        return RewrapReport(
+            prev.version, kek.version, done, left, tuple(failed), run_id=run_id, resumed=resumed
+        )
+
+    async def _left(self, version: int, auth_keys: AuthKeyStore | None) -> tuple[int, int]:
+        """`(API key rows, auth keyring rows)` of this environment still at `version`: the rows
+        `ids_at_kek_version` lists, and those of `auth_keys` (none while no keyring is wired)."""
+        api = await self._io(self._store.count_at_kek_version(version, self._env), "store")
+        if auth_keys is None:
+            return api, 0
+        return api, await self._io(auth_keys.count_at_kek_version(version, self._env), "store")
+
+    def _fenced(self, row: CredentialRow, key_id: UUID, version: int) -> bool:
+        """The round-5 fence (#2266): a row revoked by either signal, destroyed in this process
+        or no longer at `version` is never re-wrapped. Every other status is (0017 `key_status`),
+        or the rotation could never complete."""
+        if row.revoked or row.status == "revoked" or key_id in self._destroyed:
+            return True
+        return row.kek_version != version
 
     @staticmethod
     def _rewrap_one(row: CredentialRow, prev: LoadedKek, kek: LoadedKek, out: list[str]) -> bool:

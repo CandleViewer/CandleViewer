@@ -1,4 +1,4 @@
-"""Persistence port for `api_keys` envelope columns and `kek_versions`.
+"""Persistence ports for `api_keys` envelope columns, `kek_versions` and `auth_keys` counts.
 
 Records are plain dicts keyed by `CredentialRow` field names, so the Postgres adapter in
 M10 (`storage`) satisfies these Protocols structurally without importing M2 (C-3.2).
@@ -7,6 +7,7 @@ M10 (`storage`) satisfies these Protocols structurally without importing M2 (C-3
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from itertools import count
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -26,10 +27,21 @@ class CredentialStore(Protocol):
     async def ids_at_kek_version(
         self, version: int, limit: int, env: str, after: UUID | None = None
     ) -> list[UUID]:
-        """Non-revoked ids at `version` in `env` (C-2.11), ordered by id, after `after`."""
+        """Ids at `version` in `env` (C-2.11) that neither revocation signal (`revoked_at`,
+        status `revoked`) fences, ordered by id, after `after`."""
         ...
 
-    async def count_at_kek_version(self, version: int, env: str) -> int: ...
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        """How many rows `ids_at_kek_version` lists, all pages together."""
+        ...
+
+    async def count_rewrapped_since_enrolment(self, version: int, env: str) -> int:
+        """Rows of `env` at `version` created before `(env, version)` was enrolled in
+        `kek_versions`. Only a re-wrap puts a row there (`store()` writes the current version,
+        enrolled at boot first), so these are an earlier run's progress; a revoked row counts
+        too, since the rotation still moved it (#2266)."""
+        ...
+
     async def rewrap(
         self,
         key_id: UUID,
@@ -47,6 +59,16 @@ class CredentialStore(Protocol):
         ...
 
     async def touch_last_used(self, key_id: UUID) -> None: ...
+
+
+class AuthKeyStore(Protocol):
+    """`auth_keys` (#2152, ADR-0009 Amendment 4): the environment's auth keyring rows, which
+    only the rotation boot re-wraps. A KEK re-wrap run counts them (#2266); #2152 S4 adds the
+    rest of this port."""
+
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        """The rows of `env`, the process's environment, wrapped under KEK `version`."""
+        ...
 
 
 class KcvStore(Protocol):
@@ -72,9 +94,14 @@ class InMemoryCredentialStore:
         self.retired: set[tuple[str, int]] = set()
         #: `(action, fields)` of each record `rewrap` committed with a moved row.
         self.rewrap_audit: list[tuple[str, dict[str, str]]] = []
+        #: When each row was inserted and each KCV enrolled, as `created_at` orders them.
+        self.created: dict[UUID, int] = {}
+        self.enrolled: dict[tuple[str, int], int] = {}
+        self._clock = count()
 
     async def insert(self, record: dict[str, Any]) -> None:
         self.rows[record["id"]] = dict(record)
+        self.created[record["id"]] = next(self._clock)
 
     def activate(self, key_id: UUID, status: str = "active") -> None:
         """Test helper: E27-T03 verification moves a key from `pending`."""
@@ -94,12 +121,20 @@ class InMemoryCredentialStore:
         ids = sorted(
             k
             for k, r in self.rows.items()
-            if r["kek_version"] == version and not r["revoked"] and r["env"] == env
+            if r["kek_version"] == version and r["env"] == env
+            if not r["revoked"] and r.get("status") != "revoked"
         )
         return [k for k in ids if after is None or k > after][:limit]
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
         return len(await self.ids_at_kek_version(version, len(self.rows) + 1, env))
+
+    async def count_rewrapped_since_enrolment(self, version: int, env: str) -> int:
+        at = self.enrolled.get((env, version))
+        if at is None:  # never enrolled through `record_kcv`: no row predates it
+            return 0
+        ids = [k for k, r in self.rows.items() if r["env"] == env and r["kek_version"] == version]
+        return sum(self.created.get(k, at) < at for k in ids)
 
     async def rewrap(
         self,
@@ -130,6 +165,18 @@ class InMemoryCredentialStore:
         return [(e, v, k, (e, v) in self.retired) for (e, v), k in sorted(self.kcvs.items())]
 
     async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
-        if (env, version) not in self.kcvs and kcv in self.kcvs.values():
-            raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
+        if (env, version) not in self.kcvs:
+            if kcv in self.kcvs.values():
+                raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
+            self.enrolled[(env, version)] = next(self._clock)
         return self.kcvs.setdefault((env, version), kcv)
+
+
+class InMemoryAuthKeyStore:
+    """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records (`env`, `kek_version`)."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        return sum(r["env"] == env and r["kek_version"] == version for r in self.rows)
