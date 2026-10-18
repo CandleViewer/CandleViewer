@@ -20,10 +20,6 @@ from candleviewer.exchange.bybit.key_info import PROBE_ERRORS
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _CREATE_KEY: dict[str, Any] = _SPEC["paths"]["/exchange-accounts/{accountId}/keys"]["post"]
-#: The one rule emitted that the contract does not name yet: step 6 refuses an expiry at or before
-#: `now` (SR-030a). Slice 2b1 adds `key_expired` (decision 9 on #836) and retires this exemption;
-#: the subset check below passes before and after that merge, whichever slice lands first.
-_AWAITING_THE_CONTRACT = frozenset({"key_expired"})
 #: Added to `KeyVerification` by slice 2b1 (decision 8); the route fills it in from the policy.
 _FROM_THE_POLICY = frozenset({"egress_ip"})
 
@@ -40,9 +36,7 @@ def test_the_probe_error_names_are_the_contracts() -> None:
 def test_the_rules_are_the_ones_create_api_key_names() -> None:
     described = set(re.findall(r"`(key_[a-z_]+)`", _CREATE_KEY["description"]))
     named = described - set(_SCHEMAS["KeyVerificationWarning"]["enum"])
-    emitted = {rule.value for rule in Rule}
-    assert named <= emitted  # every rule the contract names is emitted
-    assert emitted - named <= _AWAITING_THE_CONTRACT  # an emitted rule it lacks is exempt by name
+    assert {rule.value for rule in Rule} == named  # each rule emitted is named, and none other
 
 
 def test_the_result_carries_every_field_of_key_verification() -> None:
