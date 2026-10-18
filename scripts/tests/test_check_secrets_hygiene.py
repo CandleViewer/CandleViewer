@@ -477,6 +477,11 @@ TRACED = [
     '"$X"bash -x ci.sh',
     '"$X"set -x',
     "ba${X}sh -x ci.sh",
+    # #3400: a quote that does not close on the line: one closing an earlier line's string, one
+    # opening a string that goes on to the next line (bash 5.3 traced both in a `run: |` block).
+    "true'; set \"-x\"",
+    "bash -c 'set \"-x\"; make",
+    "bash -c \"set '-x'; make",
 ]
 NOT_TRACED = [
     "set -e",

@@ -199,13 +199,15 @@ def check_dev_env(root: Path) -> list[str]:
 _WORD_START = r"(?<![\w./:-])"
 #: A word's quotes and escapes, which the shell takes off before a command reads it (#3400):
 #: ``set "-x"``, ``set -o 'xtrace'``, ``-"x"``, ``$'-x'``, ``-\x``, ``"bash" -x``, ``"$BASH" -x``.
-#: A quoted string gives its text, also unclosed (a ``run: |`` string may go on to the next line);
-#: an escaped character itself; an empty ``''`` or ``""`` nothing inside a word (``-''x``), but
-#: itself as a whole word (``set "" -x`` sets ``$1``). An escaped space stays: ``bash\ -x`` is one
-#: word. A quoted string's words read as words, so quoted prose counts as before. One pass, each
-#: quote read to its end once: the rules then read the line in linear time as before.
+#: A quoted string closing on the line gives its text. A quote that does not stays, and starts a
+#: word: a ``run: |`` string may go on to the next line (``bash -c 'set "-x"; make``) or close one
+#: from the line before (``true'; set "-x"``). An escaped character gives itself; an empty ``''``
+#: or ``""`` nothing inside a word (``-''x``), but itself as a whole word (``set "" -x`` sets
+#: ``$1``). An escaped space stays: ``bash\ -x`` is one word. A quoted string's words read as
+#: words, so quoted prose counts as before. One pass, each quote read to its end once (only the
+#: last one of a kind can fail to close): the rules then read the line in linear time as before.
 _QUOTING = re.compile(
-    r"\\(\S)|\$?'([^']+)'?|\$?\"((?:[^\"\\]|\\.)+)\"?|\$?(?:''|\"\")(?=[^\s;&|()<>`])"
+    r"\\(\S)|\$?'([^']+)'|\$?\"((?:[^\"\\]|\\.)+)\"|\$?(?:''|\"\")(?=[^\s;&|()<>`])"
 )
 
 
@@ -385,8 +387,7 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #:   ``mksh -x``, ``yash -x``
 #: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
 #: - a quoted word inside a quoted string, whose inner quotes stay on (the scan takes one level
-#:   off): ``bash -c 'set "-x"'``, ``sh -c "set \"-x\""``; also after a quote that closes an
-#:   earlier line's string, which the scan reads as opening one: ``make'; set "-x"``
+#:   off): ``bash -c 'set "-x"'``, ``sh -c "set \"-x\""``
 #: - a command going on to the next line: ``bash \`` then ``-x ci.sh``, or ``set -e`` then ``-x``
 #:   in a folded ``run: >`` block (each line is read alone)
 #: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
