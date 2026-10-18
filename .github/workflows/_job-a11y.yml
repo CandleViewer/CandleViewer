@@ -58,6 +58,14 @@ jobs:
       - name: Contrast-token linter (A11Y-C001..C003)
         run: pnpm --filter @candleviewer/ui run contrast:gate
 
+      # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
+      # and this job runs pnpm directly, so turbo's `^build` does not build them first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
       - name: Build web app
         run: pnpm --filter @candleviewer/web run build
 

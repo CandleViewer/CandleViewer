@@ -1,15 +1,17 @@
-"""#3244: lanes that run apps/web's tests with pnpm directly build its workspace deps first.
+"""#3244, #3272: every job that builds or tests apps/web without turbo builds its deps first.
 
 turbo's `dependsOn: ["^build"]` builds `packages/ui` (and the other packages `apps/web` imports)
-before `turbo run test`, but the `a11y-axe` job and `cold-cache.yml` call pnpm directly. So each
-must build `@candleviewer/web^...` and check that the built exports of `packages/ui`,
-`packages/chart-engine` and `packages/protocol` exist before the tests run, and AGENTS.md says so
-next to the web test command."""
+before `turbo run test`, but many jobs call pnpm, vitest, vite or Playwright on `apps/web`
+directly, and the app's build resolves `@candleviewer/ui/theme.css` to a built file. The scan below
+finds every such job in `.github/workflows/`. Each must build `@candleviewer/web^...` and check
+that the built exports of `packages/ui`, `packages/chart-engine` and `packages/protocol` exist
+before its first apps/web step, and AGENTS.md says so next to the web test command."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,39 +23,124 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = 'pnpm --filter "@candleviewer/web^..." run build'
 GUARD = "node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol"
-LANES = [
-    (".github/workflows/_job-e2e.yml", "a11y-axe", "pnpm --filter @candleviewer/web --filter"),
-    (
-        ".github/workflows/cold-cache.yml",
-        "cold-web",
-        "pnpm --filter @candleviewer/web run test:cov",
-    ),
-]
+BUILD_STEP = {"name": "Build the workspace packages apps/web depends on", "run": BUILD}
+GUARD_STEP = {
+    "name": "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)",
+    "run": GUARD,
+}
+# pnpm selecting exactly the app, not `@candleviewer/web^...` (its deps) or `...web...[ref]`.
+WEB_FILTER = re.compile(r"""(?:--filter|-F)[= ](["']?)@candleviewer/web\1(?=\s|$)""")
+# A build or test word (`pnpm run build`, `vite build`, `playwright test`, `pnpm e2e`) or vitest.
+WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\bvitest\b")
+Steps = list[dict[str, Any]]
 
 
-def _steps(workflow: str, job: str) -> list[dict[str, Any]]:
-    jobs: dict[str, Any] = yaml.safe_load((ROOT / workflow).read_text(encoding="utf-8"))["jobs"]
-    steps: list[dict[str, Any]] = jobs[job]["steps"]
-    return steps
+def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
+    """A build, test or Playwright run of apps/web that turbo does not drive."""
+    folder = str(step.get("working-directory", cwd) or "").removeprefix("./").rstrip("/")
+    return any(
+        "turbo" not in line
+        and WEB_TASK.search(line) is not None
+        and (folder == "apps/web" or WEB_FILTER.search(line) is not None)
+        for line in str(step.get("run", "")).splitlines()
+    )
 
 
-def _index(steps: list[dict[str, Any]], needle: str) -> int:
+def _web_jobs(
+    folder: Path = ROOT / ".github" / "workflows",
+) -> dict[tuple[str, str], tuple[Steps, int]]:
+    """(workflow, job) -> (steps, index of the first apps/web step), over every workflow."""
+    found: dict[tuple[str, str], tuple[Steps, int]] = {}
+    for path in sorted(folder.glob("*.y*ml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        default = ((doc.get("defaults") or {}).get("run") or {}).get("working-directory")
+        for name, job in (doc.get("jobs") or {}).items():
+            cwd = ((job.get("defaults") or {}).get("run") or {}).get("working-directory", default)
+            steps: Steps = job.get("steps") or []
+            hits = [i for i, step in enumerate(steps) if _builds_or_tests_web(step, cwd)]
+            if hits:
+                found[(path.name, name)] = (steps, hits[0])
+    return found
+
+
+WEB_JOBS = _web_jobs()
+# deploy-staging runs Playwright only once apps/web/e2e/demo-rest-only/ exists (R3) and installs
+# nothing yet. The day that folder lands this exemption lapses: install, build and guard go there.
+DORMANT = {("deploy-staging.yml", "deploy-staging"): "apps/web/e2e/demo-rest-only"}
+# An empty scan proves nothing: these jobs build or test apps/web today.
+KNOWN = {
+    ("_job-e2e.yml", "e2e-web"),
+    ("_job-e2e.yml", "e2e-staging"),
+    ("_job-e2e.yml", "a11y-axe"),
+    ("_job-a11y.yml", "a11y"),
+    ("a11y-nightly.yml", "sweep"),
+    ("_job-js.yml", "build"),
+    ("cold-cache.yml", "cold-web"),
+}
+
+
+def _index(steps: Steps, needle: str) -> int:
     hits = [i for i, s in enumerate(steps) if needle in str(s.get("run", ""))]
     assert len(hits) == 1, f"expected one step running {needle!r}, found {len(hits)}"
     return hits[0]
 
 
-@pytest.mark.parametrize(("workflow", "job", "tests"), LANES)
-def test_lane_builds_web_deps_and_guards_before_web_tests(
-    workflow: str, job: str, tests: str
-) -> None:
-    steps = _steps(workflow, job)
+def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
+    assert KNOWN | DORMANT.keys() <= WEB_JOBS.keys()
+
+
+@pytest.mark.parametrize(
+    ("cwd", "run", "web"),
+    [
+        ("apps/web", "pnpm run build", True),
+        ("./apps/web/", "npx playwright test -c e2e/playwright.config.ts", True),
+        ("apps/web", "npx vitest run", True),
+        ("apps/web", "pnpm e2e", True),
+        (None, "pnpm --filter @candleviewer/web --filter @candleviewer/desktop build", True),
+        (None, 'pnpm --filter "@candleviewer/web" run test:cov', True),
+        (None, "pnpm --filter=@candleviewer/web exec playwright test", True),
+        (None, "pnpm -F @candleviewer/web test", True),
+        ("apps/web", "npx playwright install --with-deps chromium", False),
+        ("apps/desktop", "pnpm run e2e --retries=1", False),
+        (None, BUILD, False),
+        (None, "pnpm turbo run test:cov --filter=@candleviewer/web", False),
+        (None, "pnpm --filter @candleviewer/web-kit run build", False),
+        (None, "pnpm --filter @candleviewer/web run lint", False),
+        ("apps/web", "ls dist/latest", False),
+    ],
+)
+def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
+    assert _builds_or_tests_web({"run": run}, cwd) is web
+
+
+def test_the_scan_reads_a_default_working_directory(tmp_path: Path) -> None:
+    web = {"defaults": {"run": {"working-directory": "apps/web"}}}
+    job = {"steps": [{"run": "pnpm install --frozen-lockfile"}, {"run": "pnpm test"}]}
+    for name, doc in {
+        "workflow.yml": {**web, "jobs": {"j": job}},
+        "job.yml": {"jobs": {"j": {**web, **job}}},
+        "none.yml": {"jobs": {"j": job}},
+    }.items():
+        (tmp_path / name).write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert set(_web_jobs(tmp_path)) == {("workflow.yml", "j"), ("job.yml", "j")}
+
+
+@pytest.mark.parametrize(("workflow", "job"), sorted(WEB_JOBS.keys() - DORMANT.keys()))
+def test_lane_builds_web_deps_and_guards_before_web_tests(workflow: str, job: str) -> None:
+    steps, first_web = WEB_JOBS[(workflow, job)]
     install = _index(steps, "pnpm install --frozen-lockfile")
     build, guard = _index(steps, BUILD), _index(steps, GUARD)
-    assert install < build < guard < _index(steps, tests)
-    assert (str(steps[build]["run"]).strip(), str(steps[guard]["run"]).strip()) == (BUILD, GUARD)
-    for step in (steps[build], steps[guard]):  # both always run and always gate
-        assert "if" not in step and not step.get("continue-on-error", False), step
+    assert install < build < guard < first_web
+    # Exactly these keys: no `if`, `continue-on-error`, `shell` or `working-directory`.
+    assert (steps[build], steps[guard]) == (BUILD_STEP, GUARD_STEP)
+
+
+@pytest.mark.parametrize(("workflow", "job"), sorted(DORMANT))
+def test_a_dormant_web_step_is_still_dormant(workflow: str, job: str) -> None:
+    folder = DORMANT[(workflow, job)]
+    assert not (ROOT / folder).exists(), f"{folder} exists: {job} needs install, build and guard"
+    steps, first_web = WEB_JOBS[(workflow, job)]
+    assert f"[ -d {folder} ]" in str(steps[first_web].get("run", ""))
 
 
 def test_agents_md_states_the_build_prerequisite_of_the_web_tests() -> None:

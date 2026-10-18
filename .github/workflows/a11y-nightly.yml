@@ -28,6 +28,12 @@ jobs:
           python-version: "3.12"
       - run: corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile
+      # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
+      # and this job runs pnpm directly, so turbo's `^build` does not build them first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
       - run: pnpm --filter @candleviewer/web run build
       - working-directory: apps/web
         run: npx playwright install --with-deps chromium

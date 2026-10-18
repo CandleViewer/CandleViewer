@@ -28,7 +28,7 @@ PR opened/updated (.github/workflows/pr.yml)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
-├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001)
+├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
@@ -184,9 +184,13 @@ diff` cannot see because they were never tracked. `git add` them in the
 ### CI-BUILD-* — workspace build prerequisites (`tools/ci/check_built_exports.mjs`)
 
 - **CI-BUILD-001** (a workspace package's built exports are missing): a lane that
-  runs `apps/web`'s tests with pnpm directly (the `a11y-axe` job, `cold-cache.yml`)
-  must build the packages `apps/web` imports first, because turbo's `^build` does
-  not apply there (#3244). Check that the lane's
+  builds or tests `apps/web` with pnpm, vitest, vite or Playwright directly must build
+  the packages `apps/web` imports first, because turbo's `^build` does not apply there
+  (#3244, #3272). Those lanes are `_job-e2e.yml`'s `e2e-web`, `e2e-staging` and
+  `a11y-axe`, `_job-a11y.yml`'s `a11y`, `a11y-nightly.yml`, `_job-js.yml`'s `build`
+  (before its Electron-hardening step) and `cold-cache.yml`;
+  `scripts/tests/test_web_tests_build_deps.py` finds every such job and fails when one
+  lacks the build and guard steps. Check that the lane's
   `pnpm --filter "@candleviewer/web^..." run build` step ran and succeeded, and that
   every `exports` target in the package's `package.json` is a file its `build`
   produces (a pattern target must match at least one file).

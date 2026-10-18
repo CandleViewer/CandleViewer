@@ -230,6 +230,12 @@ jobs:
       - name: Record lane duration in job summary
         if: always()
         run: node tools/ci/write-turbo-summary.mjs build >> "$GITHUB_STEP_SUMMARY"
+      # The hardening step builds apps/web with pnpm, and the turbo build above builds only the
+      # affected packages, so build what apps/web imports first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
       - name: Electron-hardening gate (E10-X02, SR-110..SR-119) - packaged build, weakened fixture must fail
         run: |
           set -euo pipefail
