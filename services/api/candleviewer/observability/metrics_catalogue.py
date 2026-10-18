@@ -903,6 +903,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_series_gap_rereads_total",
+        "counter",
+        "reads",
+        (),
+        "WS series store tail reads that found a series gapped and left it gapped (its re-read"
+        " interval doubles, up to a cap).",
+        "sustained = a hole the bar writer never lands; its series backs off to one read per 160 s",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_rows_returned_total",
         "counter",
         "bars",

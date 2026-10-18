@@ -44,6 +44,7 @@
 ["bars_rebuild_scheduled_total", "counter", [], "live", "E12"]
 ["bars_restore_gap_total", "counter", [], "live", "E12"]
 ["bars_rows_written_total", "counter", ["kind"], "live", "E12"]
+["bars_series_gap_rereads_total", "counter", [], "live", "E12"]
 ["bars_series_gaps_total", "counter", [], "live", "E12"]
 ["bars_series_hydrate_failed_total", "counter", ["reason"], "live", "E12"]
 ["bars_series_read_waits_total", "counter", [], "live", "E12"]
