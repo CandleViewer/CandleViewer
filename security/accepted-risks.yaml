@@ -27,9 +27,12 @@
 #                       no scanner here reports. No gate reads such an entry
 #                       until the alert gate (C-9.1 #11, #3558) lands, so only
 #                       check_accepted_risk_expiry.py acts on it, on its date.
-#   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW: the highest severity
-#                       the entry accepts. The tool's own severity counts; a
-#                       finding above the entry's blocks (CI-SEC-001, #3558).
+#   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW, exactly (any other
+#                       value is CI-SEC-005): the highest severity the entry
+#                       accepts, as security_gate.py scores the finding; a
+#                       finding above it blocks (CI-SEC-001, #3558). pip-audit
+#                       usually reports no severity, so the gate scores such a
+#                       finding HIGH and its entry needs HIGH.
 #   reason:    str   — why this is accepted now (not "will fix later")
 #   approver:  str   — GitHub handle; MUST be security or the owner per
 #                       SR-135/SR-136 approval rule (CI-SEC-003 licence path)
@@ -114,58 +117,59 @@ entries:
   # #3558: the Medium and Low advisories left on main after #3494 (policy 35 §8.4) and the
   # open Dependabot alerts. 30-release-roadmap.md §4.4 R0 wants a dated entry per Medium. No
   # pnpm advisory has a patched release in its installed major; tauri's patch needs cargo and
-  # a harness re-run. Each is accepted for one release cycle, past C-12.3's 30 days for a
-  # Medium (vitest's alerts opened 2026-09-28): that is the exception the owner ratifies on
-  # #2701. They expire when S09 starts, so the re-decision comes before the R1 cut, not on it.
+  # a harness re-run. Each is accepted for one release cycle, which for the six Mediums runs
+  # past C-12.3's 30 days: that deviation is exception EX-09 (04-security-program.md §16.2),
+  # for the owner to ratify on #2701. They expire when S09 starts, so the re-decision comes
+  # before the R1 cut, not on it.
   # The gates block from High only and never read these entries (re-scored higher, a finding
   # outgrows its entry and blocks), so check_accepted_risk_expiry.py enforces their dates.
   - id: "GHSA-wrjc-x8rr-h8h6"
     tool: npm-audit
     severity: MEDIUM
     reason: "react-router 6.30.6 ships in apps/web; fixed only in 7.18.0, a major. apps/web renders no <Link> and navigates only to its own route paths; nothing reads the login `next` parameter yet: re-decide before anything does"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
   - id: "GHSA-337j-9hxr-rhxg"
     tool: npm-audit
     severity: MEDIUM
     reason: "react-router 6.30.6 ships in apps/web; fixed only in 7.18.0, a major. The flaw is in server-side-rendering hydration; apps/web renders in the browser only and sets no hydration data"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
   - id: "GHSA-82fw-gwwq-j7x9"
     tool: npm-audit
     severity: MEDIUM
     reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached through the mocker plugins on a dev server's socket; no package uses them or vitest browser mode. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
   - id: "GHSA-w5hq-g745-h8pq"
     tool: npm-audit
     severity: MEDIUM
     reason: "uuid 9.0.1 under Storybook addon-actions (packages/ui, dev-only); fixed only in 11.1.1, two majors on, and addon-actions 8.6 (latest 8.x) still needs ^9. The flaw is in v3/v5/v6 with a caller buffer; addon-actions calls only v4()"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
   - id: "GHSA-hp3w-g68c-fv3c"
     tool: npm-audit
     severity: MEDIUM
     reason: "sprintf-js 1.1.3 under electron-builder (apps/desktop packaging, build-time only); no patched release exists. Reached only through format strings an attacker controls; the build passes none"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
   - id: "GHSA-g7r4-m6w7-qqqr"
     tool: npm-audit
     severity: LOW
     reason: "esbuild 0.27.7 under tsup 8 (package builds); fixed in 0.28.1, which only tsup 9 (a major) takes. The flaw is in esbuild's development server on Windows; the builds never start it"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
   - id: "GHSA-7gmj-67g7-phm9"
     tool: dependabot
     severity: MEDIUM
-    reason: "tauri 2.1.1 in the E06-T01 bench harness (packages/chart-engine/bench/matrix/tauri, spike-only, never built by CI or shipped); fixed in 2.11.1, a pin bump that needs cargo and a harness re-run. The flaw affects Windows and Android webviews"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (#3558)
+    reason: "tauri 2.1.1 in the E06-T01 bench harness (packages/chart-engine/bench/matrix/tauri: spike-only, no CI workflow builds it, bundling is off, nothing ships); fixed in 2.11.1, a pin bump that needs cargo and a harness re-run. The advisory concerns which pages may use the app's IPC: the harness grants its one window no capabilities (empty permission list), defines no commands or plugins, keeps withGlobalTauri off and loads only the runner's loopback page"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/3558"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration

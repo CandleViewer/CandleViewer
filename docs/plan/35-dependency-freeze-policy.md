@@ -172,6 +172,7 @@ react-router (which ships) and vitest need #1819's majors, uuid needs Storybook 
 esbuild needs tsup 9, and sprintf-js has no fix. Dependabot also lists vitest on seven manifests,
 which the vitest entry's decision covers, and tauri 2.1.1 in the E06-T01 bench harness (patched
 in 2.11.1, a pin bump that needs cargo and a harness re-run), accepted to the same date as
-`tool: dependabot`. C-12.3 gives a Medium 30 days (vitest's alerts opened 2026-09-28): these
-entries run past that, as one release-cycle exception the owner ratifies on #2701. They expire
-when S09 starts, so the re-decision comes before the R1 cut and the cut-day PRs stay green.
+`tool: dependabot`. C-12.3 gives a Medium 30 days, which end 2026-10-27 to 2026-11-07 for the six
+Medium GHSAs here, tauri's included: running them one release cycle is exception EX-09
+(`04-security-program.md` §16.2), for the owner to ratify on #2701. They expire when S09 starts,
+so the re-decision comes before the R1 cut and the cut-day PRs stay green.
