@@ -8,6 +8,7 @@ tolerance, missing artifact, malformed lcov, malformed coverage.xml.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tools.ci import coverage_gate
 from tools.ci.coverage_gate import (
     CoverageGateError,
     PackageConfig,
@@ -576,3 +578,199 @@ def test_manifest_maps_ticket_label_to_repo_dir(tmp_path: Path) -> None:
     assert (
         report.results[0].code == "CI-COV-003"
     )  # listed (after normalising) but no lcov
+
+
+# --- Untrusted input (#3508): every artifact is read as untrusted input ------
+
+
+def _protocol_code(report_dir: Path, artifact: str = "coverage-unit-engine") -> str:
+    pkg = PackageConfig("packages/protocol", 85.0, 85.0, artifact, "lcov")
+    (result,) = evaluate_all({pkg.name: pkg}, report_dir, tolerance_pp=0.5).results
+    return str(result.code)
+
+
+@pytest.mark.parametrize(
+    "case", ["file-link", "dir-link", "dot-dot", "absolute", "oversized"]
+)
+def test_evaluate_all_refuses_an_untrusted_report(tmp_path: Path, case: str) -> None:
+    outside = _write(tmp_path / "outside" / "lcov.info", _lcov(1000, 990))
+    report_dir = tmp_path / "artifacts"
+    artifact = report_dir / "coverage-unit-engine"
+    report_dir.mkdir()
+    if case == "file-link":
+        artifact.mkdir()
+        (artifact / "lcov.info").symlink_to(outside)
+    elif case == "dir-link":
+        artifact.symlink_to(outside.parent, target_is_directory=True)
+    elif case == "oversized":
+        report = _write(artifact / "lcov.info", _lcov(1000, 990))
+        os.truncate(report, coverage_gate.MAX_REPORT_BYTES + 1)
+    leave = {"dot-dot": "../outside", "absolute": str(outside.parent)}
+    with pytest.raises(coverage_gate.ArtifactRefusedError):
+        _protocol_code(report_dir, leave.get(case, artifact.name))
+
+
+@pytest.mark.parametrize("case", ["link", "oversized", "not-utf8"])
+def test_evaluate_all_refuses_an_untrusted_manifest(tmp_path: Path, case: str) -> None:
+    report_dir = tmp_path / "artifacts"
+    _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 990))
+    manifest = report_dir / "coverage-unit-engine" / "affected-packages.txt"
+    if case == "link":
+        manifest.symlink_to(_write(tmp_path / "outside.txt", "packages/chart-engine\n"))
+    else:
+        manifest.write_bytes(
+            b"\xff\n" if case == "not-utf8" else b"packages/protocol\n"
+        )
+    if case == "oversized":
+        os.truncate(manifest, coverage_gate.MAX_MANIFEST_BYTES + 1)
+    with pytest.raises(coverage_gate.ArtifactRefusedError):
+        _protocol_code(report_dir)
+
+
+def test_evaluate_all_rejects_a_report_that_is_not_utf8(tmp_path: Path) -> None:
+    (tmp_path / "coverage-unit-engine").mkdir()
+    (tmp_path / "coverage-unit-engine" / "lcov.info").write_bytes(b"SF:\xff\nLF:1\n")
+    assert _protocol_code(tmp_path) == "CI-COV-003"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SF:x.ts\nLF:ten\nLH:8\nend_of_record\n",
+        "SF:x.ts\nLF:-10\nLH:-8\nend_of_record\n",
+        "SF:x.ts\nLF:\u0661\u0660\nLH:8\nend_of_record\n",
+        "SF:x.ts\nXY:1\nLF:10\nLH:8\nend_of_record\n",
+        "SF:x.ts\nLF:10\nLH:11\nend_of_record\n",
+    ],
+    ids=["non-integer", "negative", "non-ascii-digits", "unknown-record", "hit>found"],
+)
+def test_parse_lcov_rejects_a_report_outside_the_tracefile_format(text: str) -> None:
+    with pytest.raises(CoverageGateError, match="malformed"):
+        parse_lcov(text)
+
+
+def test_parse_lcov_reads_every_record_type_a_vitest_report_writes() -> None:
+    text = (
+        "TN:\nSF:src/a.ts\nFN:1,f\nFNF:1\nFNH:1\nFNDA:3,f\nDA:1,3\nDA:2,0\n"
+        "LF:2\nLH:1\nBRDA:1,0,0,1\nBRDA:1,0,1,-\nBRF:2\nBRH:1\nend_of_record\n"
+    )
+    assert parse_lcov(text) == pytest.approx(50.0)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<?xml version="1.0"?><!DOCTYPE coverage><coverage line-rate="0.9"/>',
+        '<report line-rate="0.9"></report>',
+        '<coverage line-rate="1.5"></coverage>',
+        '<coverage line-rate="nan"></coverage>',
+        '<coverage line-rate="1_0"></coverage>',
+    ],
+    ids=["doctype", "wrong-root", "above-one", "not-a-number", "python-literal"],
+)
+def test_parse_coverage_xml_rejects_a_report_outside_the_cobertura_shape(
+    text: str,
+) -> None:
+    with pytest.raises(CoverageGateError):
+        parse_coverage_xml(text)
+
+
+@pytest.mark.parametrize(
+    "line_rate", ["x" * 10_000, "9" * 10_000], ids=["not-a-number", "above-one"]
+)
+def test_parse_coverage_xml_quotes_at_most_an_excerpt_of_a_bad_line_rate(
+    line_rate: str,
+) -> None:
+    with pytest.raises(CoverageGateError) as raised:
+        parse_coverage_xml(f'<coverage line-rate="{line_rate}"></coverage>')
+    assert len(str(raised.value)) <= 100
+
+
+def test_parse_coverage_xml_reads_a_coverage_py_report() -> None:
+    text = (
+        '<?xml version="1.0" ?>\n<coverage version="7.16.1" line-rate="0.9792">\n'
+        "\t<!-- Generated by coverage.py -->\n\t<sources><source>cv</source></sources>\n"
+        "</coverage>\n"
+    )
+    assert parse_coverage_xml(text) == pytest.approx(97.92)
+
+
+def _baselines_file(tmp_path: Path) -> Path:
+    lcov = {"floor": 85.0, "baseline": 85.0, "report_format": "lcov"}
+    packages = {
+        "packages/protocol": {**lcov, "artifact": "coverage-unit-engine"},
+        "packages/ui": {**lcov, "floor": 80.0, "artifact": "coverage-unit-frontend"},
+    }
+    path = tmp_path / "coverage-baselines.json"
+    path.write_text(json.dumps({"tolerance_pp": 0.5, "packages": packages}))
+    return path
+
+
+def _main(tmp_path: Path, report_dir: Path, *extra: str) -> int:
+    baselines = str(_baselines_file(tmp_path))
+    return coverage_gate.main(
+        ["--baselines", baselines, "--report-dir", str(report_dir), *extra]
+    )
+
+
+def test_main_refuses_a_download_with_too_many_entries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report_dir = tmp_path / "artifacts"
+    _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 990))
+    for i in range(coverage_gate.MAX_ARTIFACT_ENTRIES):
+        (report_dir / f"extra-{i}").touch()
+    summary = tmp_path / "summary.md"
+    assert _main(tmp_path, report_dir, "--summary-out", str(summary)) == 1
+    assert "CI-COV-004" in capsys.readouterr().err
+    assert "CI-COV-004" in summary.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("case", ["file-link", "oversized"])
+def test_main_refuses_an_untrusted_report_with_ci_cov_004(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str
+) -> None:
+    report_dir = tmp_path / "artifacts"
+    report = report_dir / "coverage-unit-engine" / "lcov.info"
+    if case == "file-link":
+        report.parent.mkdir(parents=True)
+        report.symlink_to(_write(tmp_path / "outside.info", _lcov(1000, 990)))
+    else:
+        os.truncate(
+            _write(report, _lcov(1000, 990)), coverage_gate.MAX_REPORT_BYTES + 1
+        )
+    summary = tmp_path / "summary.md"
+    assert _main(tmp_path, report_dir, "--summary-out", str(summary)) == 1
+    assert "CI-COV-004" in capsys.readouterr().err
+    assert summary.read_text(encoding="utf-8").startswith("CI-COV-004")
+
+
+@pytest.mark.parametrize(
+    ("frontend", "rc", "proposed", "code"),
+    [
+        (None, 1, None, "CI-COV-004"),
+        ("not lcov\n", 1, None, "CI-COV-003"),
+        (_lcov(1000, 500), 0, {"packages/protocol": 99.0}, "CI-COV-001"),
+    ],
+    ids=["refused", "malformed", "other-package-below-floor"],
+)
+def test_main_ratchet_proposes_only_from_a_complete_valid_download(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    frontend: str | None,
+    rc: int,
+    proposed: dict[str, float] | None,
+    code: str,
+) -> None:
+    report_dir = tmp_path / "artifacts"
+    _write(report_dir / "coverage-unit-engine" / "lcov.info", _lcov(1000, 990))
+    ui = report_dir / "coverage-unit-frontend" / "lcov.info"
+    if frontend is None:
+        ui.parent.mkdir()
+        ui.symlink_to(_write(tmp_path / "outside.info", _lcov(1000, 990)))
+    else:
+        _write(ui, frontend)
+    out = tmp_path / "ratchet.json"
+    assert _main(tmp_path, report_dir, "--ratchet", "--ratchet-out", str(out)) == rc
+    assert (json.loads(out.read_text()) if out.exists() else None) == proposed
+    assert code in capsys.readouterr().err

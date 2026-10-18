@@ -25,12 +25,31 @@ repo directories are `apps/web` / `apps/desktop` — see
 Deliverables list, which names the floors by the ticket's own package
 labels). `services/api`, `packages/chart-engine`, `packages/protocol` and
 `packages/ui` already match their repo directories 1:1.
+
+Artifacts are untrusted input (#3508): reports are read through
+`coverage_gate.read_artifact_bytes` and must parse as lcov, and a copy is only
+ever created as a new file. A refusal prints CI-COV-004 (a malformed report
+CI-COV-003), writes the same line to `--summary-out` when given (the summary
+the PR comment posts, as the gate does) and exits 1.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.ci.coverage_gate import (
+    MAX_REPORT_BYTES,
+    ArtifactRefusedError,
+    CoverageGateError,
+    check_artifact_entry_count,
+    parse_lcov,
+    read_artifact_bytes,
+)
 
 _PACKAGE_TO_REPO_DIR: dict[str, str] = {
     "apps/app-web": "apps/web",
@@ -42,15 +61,37 @@ def _repo_dir_for(package: str) -> str:
     return _PACKAGE_TO_REPO_DIR.get(package, package)
 
 
+def _create_inside(root: Path, dest: Path, data: bytes) -> None:
+    """Write `data` to `dest` as a new file whose directory resolves inside `root`;
+    an existing path at `dest`, a link included, is refused rather than followed."""
+    try:
+        parent = dest.parent.resolve(strict=True)
+        inside = parent.is_relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError) as exc:
+        raise ArtifactRefusedError(f"{dest.parent} does not resolve") from exc
+    if not inside:
+        raise ArtifactRefusedError(f"{dest} resolves outside {root}")
+    try:
+        fd = os.open(parent / dest.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError as exc:
+        raise ArtifactRefusedError(
+            f"{dest} already exists and is not a regular file"
+        ) from exc
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+
+
 def flatten(report_dir: Path) -> list[Path]:
     """Copy each package's `coverage/lcov.info` into
     `<report_dir>/<artifact>/lcov.info` if it isn't already there
     (services/api's `coverage.xml` is already uploaded flat by `_job-py.yml`
-    and needs no flattening). Returns the list of files written."""
+    and needs no flattening). Returns the list of files written. Raises
+    ArtifactRefusedError (CI-COV-004) or CoverageGateError (CI-COV-003)."""
     import json
 
     baselines_path = Path(__file__).parent / "coverage-baselines.json"
     config = json.loads(baselines_path.read_text(encoding="utf-8"))
+    check_artifact_entry_count(report_dir)
     written: list[Path] = []
 
     for package, cfg in config["packages"].items():
@@ -66,17 +107,46 @@ def flatten(report_dir: Path) -> list[Path]:
         if not source.is_file():
             continue  # coverage_gate.py will report CI-COV-003 for this one
 
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(source.read_bytes())
+        data = read_artifact_bytes(report_dir, source, MAX_REPORT_BYTES)
+        try:
+            parse_lcov(data.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise CoverageGateError(f"{source} is not UTF-8") from exc
+        except CoverageGateError as exc:
+            raise CoverageGateError(f"{source}: {exc}") from exc
+        _create_inside(report_dir, dest, data)
         written.append(dest)
 
     return written
 
 
+def _refuse(message: str, summary_out: Path | None) -> int:
+    print(message, file=sys.stderr)
+    if summary_out is not None:
+        summary_out.write_text(message + "\n", encoding="utf-8")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    report_dir = Path(argv[0]) if argv else Path("coverage-artifacts")
-    written = flatten(report_dir)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "report_dir", nargs="?", type=Path, default=Path("coverage-artifacts")
+    )
+    parser.add_argument(
+        "--summary-out",
+        type=Path,
+        default=None,
+        help="On a refusal, write it to this path (the PR-comment summary)",
+    )
+    args = parser.parse_args(argv)
+    try:
+        written = flatten(args.report_dir)
+    except ArtifactRefusedError as exc:
+        message = f"CI-COV-004: coverage artifact refused: {exc}"
+        return _refuse(message, args.summary_out)
+    except CoverageGateError as exc:
+        message = f"CI-COV-003: unreadable coverage artifact: {exc}"
+        return _refuse(message, args.summary_out)
     for path in written:
         print(f"flattened -> {path}")
     return 0

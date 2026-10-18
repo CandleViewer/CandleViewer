@@ -12,13 +12,16 @@ Error codes (ticket "Technical notes / design"):
                 floor)
     CI-COV-003  missing or unreadable coverage artifact for an applicable
                 package (a silently-absent report must never pass)
+    CI-COV-004  coverage artifact refused (#3508): artifacts are untrusted
+                input (read_artifact_bytes, check_artifact_entry_count)
 
 Ratchet mode (``--ratchet``, used only on merges to `main`): when a
 package's measured coverage exceeds its recorded baseline by >=1.0 pp, the
 gate emits a baseline-raise proposal (new baselines JSON) instead of
 mutating the file itself — the caller workflow uses that to open a bot PR.
 Baselines only ever move up here; lowering is a manual, CODEOWNER-gated
-edit to the JSON file (see the file's own header comment).
+edit to the JSON file (see the file's own header comment). Proposals are
+written only when no applicable artifact is missing or unreadable.
 
 Stdlib only — no network access performed by this module.
 """
@@ -27,14 +30,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from xml.etree import ElementTree as ET
+from xml.parsers import expat
 
 RATCHET_STEP_PP = 1.0
+
+# Untrusted-input bounds (#3508); on 2026-10-18 services/api's coverage.xml was
+# about 2.5 MB and a full download held about 20 entries.
+MAX_REPORT_BYTES = 32 * 1024 * 1024
+MAX_MANIFEST_BYTES = 64 * 1024
+MAX_ARTIFACT_ENTRIES = 1_000
 
 # Which CI lane produces which coverage artifact. A package is *applicable* only
 # when its producing lane ran in this workflow run; lanes are path-filtered
@@ -50,6 +60,38 @@ ARTIFACT_LANE: dict[str, str] = {
 class CoverageGateError(Exception):
     """Raised for malformed configuration; distinct from a gate *failure*
     (a failure is a normal, reported verdict — this is a setup bug)."""
+
+
+class ArtifactRefusedError(Exception):
+    """An artifact failed an untrusted-input bound and was not read (CI-COV-004)."""
+
+
+def read_artifact_bytes(root: Path, path: Path, max_bytes: int) -> bytes:
+    """Read an artifact file as untrusted input: after resolving links and `..`,
+    `path` must be a regular file inside `root` of at most `max_bytes` bytes."""
+    try:
+        target = path.resolve(strict=True)
+        inside = target.is_relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError) as exc:
+        raise ArtifactRefusedError(f"{path} does not resolve") from exc
+    if not inside or not target.is_file():
+        raise ArtifactRefusedError(f"{path} is not a regular file inside {root}")
+    with target.open("rb") as fh:
+        data = fh.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ArtifactRefusedError(f"{path} is over the {max_bytes}-byte bound")
+    return data
+
+
+def check_artifact_entry_count(root: Path) -> None:
+    """Refuse a download of more than MAX_ARTIFACT_ENTRIES entries (links not followed)."""
+    seen = 0
+    for _, dirs, files in os.walk(root):
+        seen += len(dirs) + len(files)
+        if seen > MAX_ARTIFACT_ENTRIES:
+            raise ArtifactRefusedError(
+                f"{root} holds over {MAX_ARTIFACT_ENTRIES} entries"
+            )
 
 
 @dataclass(frozen=True)
@@ -124,61 +166,108 @@ def load_config(path: Path) -> tuple[float, dict[str, PackageConfig]]:
     return float(tolerance), packages
 
 
+def _excerpt(value: str, limit: int = 40) -> str:
+    """Quote at most `limit` characters of artifact text in a message."""
+    return repr(value[:limit]) + ("..." if len(value) > limit else "")
+
+
+def _no_doctype(*_: object) -> None:
+    raise CoverageGateError("malformed coverage.xml: it declares a document type")
+
+
 def parse_coverage_xml(text: str) -> float:
     """Parse a Cobertura-style `coverage.xml` (pytest-cov / coverage.py
     `--cov-report=xml`) and return the overall line-rate as a percentage.
-    Raises CoverageGateError on malformed XML."""
+    Raises CoverageGateError unless it is well-formed XML with no document
+    type declaration (coverage.py writes none), a `<coverage>` root and a
+    decimal line-rate in [0, 1]."""
+    roots: list[tuple[str, dict[str, str]]] = []
+
+    def start(name: str, attrs: dict[str, str]) -> None:
+        if not roots:
+            roots.append((name, attrs))
+
+    parser = expat.ParserCreate()
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    parser.StartDoctypeDeclHandler = _no_doctype
+    parser.StartElementHandler = start
     try:
-        root = ET.fromstring(text)
-    except ET.ParseError as exc:
+        parser.Parse(text, True)
+    except expat.ExpatError as exc:
         raise CoverageGateError(f"malformed coverage.xml: {exc}") from exc
 
-    line_rate = root.attrib.get("line-rate")
+    name, attrs = roots[0]
+    line_rate = attrs.get("line-rate") if name == "coverage" else None
     if line_rate is None:
         raise CoverageGateError(
             "coverage.xml root element missing 'line-rate' attribute"
         )
-    try:
-        return float(line_rate) * 100.0
-    except ValueError as exc:
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?", line_rate):
         raise CoverageGateError(
-            f"coverage.xml has non-numeric line-rate {line_rate!r}"
-        ) from exc
+            f"coverage.xml has non-numeric line-rate {_excerpt(line_rate)}"
+        )
+    if not 0.0 <= float(line_rate) <= 1.0:
+        raise CoverageGateError(
+            f"coverage.xml line-rate {_excerpt(line_rate)} is outside [0, 1]"
+        )
+    return float(line_rate) * 100.0
+
+
+# Every line of an lcov tracefile is one of these records; counts are integers.
+_LCOV_RECORD = re.compile(
+    r"end_of_record|(?:TN|VER|SF|FN|FNL|FNA|FNDA|DA|BRDA):.*"
+    r"|(LF|LH|FNF|FNH|BRF|BRH):([0-9]{1,15})"
+)
 
 
 def parse_lcov(text: str) -> float:
     """Parse an lcov `lcov.info` file (Vitest `--coverage`) and return the
     aggregate line-coverage percentage across every `SF:` record
-    (lines hit / lines found * 100). Raises CoverageGateError when the
-    file has no `LF:`/`LH:` records at all (malformed / empty report)."""
+    (lines hit / lines found * 100). Raises CoverageGateError when a line
+    is not an lcov record, more lines are hit than found, or the file has
+    no `LF:`/`LH:` records at all (malformed / empty report)."""
     lines_found = 0
     lines_hit = 0
     seen_any_record = False
-    for line in text.splitlines():
-        if line.startswith("LF:"):
-            lines_found += int(line[3:].strip())
+    for number, line in enumerate(text.splitlines(), start=1):
+        record = _LCOV_RECORD.fullmatch(line.strip())
+        if record is None and line.strip():
+            raise CoverageGateError(f"malformed or empty lcov.info: line {number}")
+        if record is not None and record[1] in ("LF", "LH"):
             seen_any_record = True
-        elif line.startswith("LH:"):
-            lines_hit += int(line[3:].strip())
-            seen_any_record = True
+            if record[1] == "LF":
+                lines_found += int(record[2])
+            else:
+                lines_hit += int(record[2])
 
     if not seen_any_record:
         raise CoverageGateError(
             "lcov.info has no LF:/LH: records (malformed or empty report)"
         )
+    if lines_hit > lines_found:
+        raise CoverageGateError("malformed or empty lcov.info: LH above LF")
     if lines_found == 0:
         return 0.0
     return (lines_hit / lines_found) * 100.0
 
 
-def read_measured_coverage(report_path: Path, report_format: str) -> float:
+def read_measured_coverage(
+    report_path: Path, report_format: str, root: Path | None = None
+) -> float:
     """Read and parse a coverage report file. Raises CoverageGateError if
     the file is absent (caller maps that to CI-COV-003, not this
     exception's own message, so the reason stays distinguishable) or
-    malformed."""
+    malformed; ArtifactRefusedError past read_artifact_bytes' bounds
+    (`root` defaults to the report's own directory)."""
     if not report_path.is_file():
         raise CoverageGateError(f"coverage report not found at {report_path}")
-    text = report_path.read_text(encoding="utf-8")
+    data = read_artifact_bytes(
+        root or report_path.parent, report_path, MAX_REPORT_BYTES
+    )
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CoverageGateError(f"{report_path} is not UTF-8") from exc
     if report_format == "coverage-xml":
         return parse_coverage_xml(text)
     if report_format == "lcov":
@@ -190,6 +279,7 @@ def evaluate_package(
     pkg: PackageConfig,
     report_path: Path,
     tolerance_pp: float,
+    root: Path | None = None,
 ) -> PackageResult:
     """Evaluate one package against its floor and baseline.
 
@@ -214,7 +304,7 @@ def evaluate_package(
         )
 
     try:
-        measured = read_measured_coverage(report_path, pkg.report_format)
+        measured = read_measured_coverage(report_path, pkg.report_format, root)
     except CoverageGateError as exc:
         return PackageResult(
             name=pkg.name,
@@ -277,7 +367,7 @@ _PACKAGE_TO_REPO_DIR: dict[str, str] = {
 }
 
 
-def _affected_by_change_set(package: str, artifact_dir: Path) -> bool:
+def _affected_by_change_set(package: str, artifact_dir: Path, root: Path) -> bool:
     """The JS lanes run `turbo run test:cov --filter=<pkg>...[origin/main]`, so a
     package untouched by the PR is never scheduled and writes no lcov. The lane
     uploads `affected-packages.txt` (tools/ci/turbo-affected-packages.mjs) listing
@@ -287,9 +377,13 @@ def _affected_by_change_set(package: str, artifact_dir: Path) -> bool:
     manifest = artifact_dir / AFFECTED_MANIFEST
     if not manifest.is_file():
         return True
+    try:
+        text = read_artifact_bytes(root, manifest, MAX_MANIFEST_BYTES).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ArtifactRefusedError(f"{manifest} is not UTF-8") from exc
     listed = {
         line.strip().replace("\\", "/").rstrip("/")
-        for line in manifest.read_text(encoding="utf-8").splitlines()
+        for line in text.splitlines()
         if line.strip()
     }
     return _PACKAGE_TO_REPO_DIR.get(package, package) in listed
@@ -324,7 +418,7 @@ def evaluate_all(
                 )
             )
             continue
-        if not _affected_by_change_set(name, report_dir / pkg.artifact):
+        if not _affected_by_change_set(name, report_dir / pkg.artifact, report_dir):
             results.append(
                 PackageResult(
                     name=name,
@@ -346,7 +440,7 @@ def evaluate_all(
                 "coverage.xml" if pkg.report_format == "coverage-xml" else "lcov.info"
             )
         report_path = report_dir / pkg.artifact / filename
-        results.append(evaluate_package(pkg, report_path, tolerance_pp))
+        results.append(evaluate_package(pkg, report_path, tolerance_pp, report_dir))
     return GateReport(results=results)
 
 
@@ -434,7 +528,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.ran_lanes is not None
         else None
     )
-    report = evaluate_all(packages, args.report_dir, tolerance_pp, ran_lanes=ran_lanes)
+    try:
+        check_artifact_entry_count(args.report_dir)
+        report = evaluate_all(
+            packages, args.report_dir, tolerance_pp, ran_lanes=ran_lanes
+        )
+    except ArtifactRefusedError as exc:
+        refusal = f"CI-COV-004: coverage artifact refused: {exc}"
+        print(refusal, file=sys.stderr)
+        if args.summary_out is not None:
+            args.summary_out.write_text(refusal + "\n", encoding="utf-8")
+        return 1
     summary = render_summary_table(report)
     print(summary)
 
@@ -446,6 +550,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{r.code}: {r.reason}", file=sys.stderr)
 
     if args.ratchet:
+        # Fail closed (#3508); a floor or regression failure is the PR gate's verdict.
+        if any(r.code == "CI-COV-003" for r in report.results):
+            print("ratchet: no proposals written (CI-COV-003 above)", file=sys.stderr)
+            return 1
         proposals = compute_ratchet_proposals(report)
         if args.ratchet_out is not None:
             args.ratchet_out.write_text(
@@ -453,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         if proposals:
             print(f"ratchet proposals: {json.dumps(proposals)}")
+        return 0
 
     return 0 if report.conclusion == "success" else 1
 
