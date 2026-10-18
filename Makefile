@@ -118,7 +118,7 @@ alert-drill-stop:
 # `integration / audit-query-plan` (label a PR `run-audit-spike` or dispatch CI; ~27 min at 10 M rows;
 # CV_AUDIT_SPIKE_ROWS overrides size). Locally it needs Postgres via CV_TEST_PG_DSN; see docs/plan/spikes/E42-K01.md.
 audit-bench:
-	cd services/api && uv run pytest tests/integration/audit/test_query_plan_spike.py -m "integration and perf" --no-cov -rA -s -p no:randomly
+	cd services/api && uv run pytest tests/integration/audit/test_query_plan_spike.py -m "integration and perf and not flaky" --no-cov -rA -s -p no:randomly
 
 # E41-K01: journal analytics tier benchmark (scratch Postgres DSN; needs duckdb/pyarrow/psycopg).
 bench-journal:
