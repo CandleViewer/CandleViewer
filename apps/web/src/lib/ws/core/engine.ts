@@ -416,8 +416,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   /**
    * Brings the server in line with what is wanted: subscribes what is new (in the 9.3 order, in
    * frames of at most `max_topics_per_request`), unsubscribes what nobody wants, and asks for a
-   * baseline of a subscription a new consumer found still held. One `unsub` ends every
-   * subscription of a `ch`, live and replay alike (5.3), so it is sent only when none is wanted.
+   * baseline of a subscription a new consumer found still held. An `unsub` ends the stream its `rs`
+   * names (5.3, #3398), so each held stream of a `ch` that none of its streams wants is let go by a
+   * frame of its own. An unwanted stream stays subscribed while a twin of it is wanted: it goes with
+   * the last of them (the engine keyed by `(ch, rs)` is #3439).
    */
   function sync(): void {
     syncQueued = false;
@@ -430,7 +432,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const [ch, group] of byCh) {
       if (!group.some(wanted)) {
         const held = group.filter((s) => s.held);
-        if (held[0] !== undefined) drops.push(held[0]);
+        drops.push(...held);
         for (const s of held) {
           s.held = false;
           s.gen = nextGeneration(); // what the server held goes with the `unsub`
@@ -444,7 +446,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       }
     }
     const perFrame = connection.topicsPerRequest;
-    // A frame lists the topics of one `rs`, which it carries (5.3): the replay session whose subscription it ends.
+    // A frame lists the topics of one `rs`, which it carries (5.3): the session whose streams it ends, or the live ones.
     for (const run of runsOf(drops)) {
       for (const chunk of chunkTopics(run.items, perFrame)) {
         const topics = mapNonEmpty(chunk, (s) => s.ch);

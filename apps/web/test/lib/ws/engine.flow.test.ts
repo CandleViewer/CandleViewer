@@ -413,7 +413,7 @@ describe("live and replay streams of one ch (11)", () => {
     expect([t.got(), t.got(BOOK, RS)]).toEqual([[], ["d:2"]]);
   });
 
-  it("does not unsubscribe a ch while another stream of it is wanted: one unsub ends them all (5.3)", async () => {
+  it("does not unsubscribe a ch while another stream of it is wanted; when none is, each held stream gets an unsub of its own (5.3, #3398)", async () => {
     const t = engineHarness();
     const live = t.engine.consume(spec(BOOK));
     const replay = t.engine.consume(spec(BOOK), RS);
@@ -426,7 +426,19 @@ describe("live and replay streams of one ch (11)", () => {
     expect(t.got(BOOK, RS)).toEqual(["d:2"]); // the replay stream was not taken down with it
     replay.release();
     await t.advance(300);
-    expect(t.gateway.latest.of("unsub").map(topicsOf)).toEqual([[BOOK]]);
+    // the gateway ends the stream an `unsub` names (its `rs`), so each one has a frame, and the server holds neither
+    const unsubs = t.gateway.latest.of("unsub");
+    expect(unsubs.map((f) => [topicsOf(f), f["rs"]])).toEqual([
+      [[BOOK], undefined],
+      [[BOOK], RS],
+    ]);
+    expect(t.gateway.latest.subs().map((s) => s.ch)).toEqual(["system"]);
+    t.engine.consume(spec(BOOK), RS); // and the session can be consumed again: no duplicate_subscription
+    await t.advance(300);
+    expect(t.gateway.latest.subs().map((s) => [s.ch, s.rs])).toEqual([
+      ["system", undefined],
+      [BOOK, RS],
+    ]);
   });
 
   it("twin streams that both need a baseline inside a spent resync window are both asked for, oldest first", async () => {
@@ -890,10 +902,15 @@ describe("edges of the stream plane", () => {
     t.engine.consume(spec(BOOK));
     t.engine.consume(spec(BOOK), RS);
     await t.start();
+    t.gateway.withholdSnaps(true); // the answer to the resync is the replay stream's own snapshot, and it is withheld
     t.gateway.latest.skip(BOOK, RS);
     t.gateway.latest.delta(BOOK, {}, RS);
-    await t.advance(100); // the replay stream's resync goes out, and the gateway answers the live stream (#572)
+    await t.advance(100); // the replay stream's resync goes out
     expect(t.engine.counters.pendingRequests).toBe(1);
+    t.gateway.latest.snap(BOOK, "client_resync"); // the live stream's snapshot is not its answer
+    expect(t.engine.counters.pendingRequests).toBe(1);
+    t.gateway.latest.snap(BOOK, "client_resync", RS);
+    expect(t.engine.counters.pendingRequests).toBe(0);
   });
 
   it("keeps the requests whose reply is still due bounded", async () => {
