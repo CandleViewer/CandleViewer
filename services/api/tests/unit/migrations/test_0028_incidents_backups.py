@@ -24,6 +24,8 @@ _REV, _PREV = "0028_incidents_backups", "0027_feature_flags"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
 _KINDS = ("pg_basebackup", "pg_dump", "questdb_snapshot", "parquet_sync", "config_bundle")
 _STATUSES = ("running", "ok", "failed", "verified", "restored")
+#: Added to `backups` by `0032_backups_write_once`, whose own test pins them.
+_LATER = frozenset({"deleted_at", "deleted_by", "bk_deleted"})
 
 
 def _alembic(*args: str) -> str:
@@ -163,7 +165,8 @@ def _doc_columns(heading: str) -> list[tuple[str, bool, str | None]]:
 def test_models_mirror_the_doc_columns(table: Table, heading: str) -> None:
     """The `migrations` job autogenerate-diffs the DB against `db.models.metadata`; names,
     nullability and server defaults are pinned against the plan doc here."""
-    assert [(c.name, bool(c.nullable), _default(c)) for c in table.columns] == _doc_columns(heading)
+    columns = [c for c in table.columns if c.name not in _LATER]
+    assert [(c.name, bool(c.nullable), _default(c)) for c in columns] == _doc_columns(heading)
 
 
 def test_models_use_the_types_the_migration_owns() -> None:
@@ -176,7 +179,11 @@ def test_models_use_the_types_the_migration_owns() -> None:
 
 def test_models_mirror_the_foreign_keys_and_their_delete_rules() -> None:
     def fks(table: Table) -> set[tuple[str, str, str | None]]:
-        return {(fk.parent.name, fk.column.table.name, fk.ondelete) for fk in table.foreign_keys}
+        return {
+            (fk.parent.name, fk.column.table.name, fk.ondelete)
+            for fk in table.foreign_keys
+            if fk.parent.name not in _LATER
+        }
 
     assert fks(models.incidents) == {("acknowledged_by", "users", "SET NULL")}
     assert fks(models.backups) == {("triggered_by_user", "users", "SET NULL")}
@@ -184,11 +191,12 @@ def test_models_mirror_the_foreign_keys_and_their_delete_rules() -> None:
 
 def _checks(table: Table) -> dict[str, str]:
     """`alembic check` never diffs CHECK bodies, so they are pinned against the SQL here."""
-    return {
+    checks = {
         str(c.name).removeprefix(f"ck_{table.name}_"): " ".join(str(c.sqltext).split())
         for c in table.constraints
         if isinstance(c, CheckConstraint)
     }
+    return {name: body for name, body in checks.items() if name not in _LATER}
 
 
 def test_models_mirror_the_check_constraints() -> None:

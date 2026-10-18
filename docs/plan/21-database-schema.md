@@ -2653,6 +2653,17 @@ CREATE INDEX ix_backups_kind_time ON backups (kind, started_at DESC);
 CREATE INDEX ix_backups_failed    ON backups (started_at DESC) WHERE status = 'failed';
 ```
 
+**Write-once columns and the deleted marker (migration `0032_backups_write_once`, E42-T05 BK-2).** Deleting an artefact keeps its row (coordinator ruling Q4 on #966): `deleted_at` records when the artefact was removed (the backups contract slice, BK-0, returns it as an optional `Backup.deleted_at`); `deleted_by` records who removed it and is not in the contract. Both are nullable with no default. `bk_deleted` refuses a `deleted_by` without a `deleted_at`, so deleting the user (`ON DELETE SET NULL`) leaves the mark and its time. Trigger `trg_backups_write_once` (BEFORE UPDATE, per row, `ENABLE ALWAYS`; function `backups_write_once()`, `search_path` pinned) refuses an UPDATE that changes `id`, `kind`, `target_path`, `encryption_ref`, `started_at`, `triggered_by` or `triggered_by_user` (SR-E42-05), and lets `checksum_sha256` and `deleted_at` go from NULL to a value once, never back or to another value. `deleted_by` is set in the UPDATE that marks the row and is frozen with the mark. `triggered_by_user`, and `deleted_by` once the mark is set, may go to NULL only when their user row is gone: each FK's `ON DELETE SET NULL` is an UPDATE this trigger sees. The refusal is SQLSTATE 23514 with `trg_backups_write_once: backups.<column> is write-once (SR-E42-05)`, or `is set-once` for `checksum_sha256`, `deleted_at` and `deleted_by`: it names the column and its rule, never a value. Columns are compared with `IS DISTINCT FROM`, so writing a value over itself passes. The engine's columns (`status`, `size_bytes`, `encrypted`, coverage, WAL and timing, `verified_at`, `verify_method`, `restored_at`, `error_message`, `retention_until`) stay writable. It is the only trigger on `backups`. The downgrade refuses while any artefact is marked deleted, because dropping `deleted_at` would show it as present again; fix forward instead (C-5.2).
+
+**Privileges.** No UPDATE trigger fires on DELETE or INSERT, so the same revision revokes DELETE on `backups` from `cv_app` where the role exists, as `0024` does for `api_keys` and `0030` for `auth_keys`. The runtime role keeps SELECT, INSERT and UPDATE; without DELETE it cannot swap a row's location or digest by deleting the row and inserting it again under the same id. No runtime path deletes a catalogue row: the row is kept forever (§7), and a deleted artefact is marked. The owner role and superusers can still bypass both. The downgrade grants DELETE back, the `pg_bootstrap.sql` default. Verify and restore still check the digest bound in the append-only `backup.run` record.
+
+```sql
+ALTER TABLE backups
+  ADD COLUMN deleted_at timestamptz,
+  ADD COLUMN deleted_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  ADD CONSTRAINT bk_deleted CHECK (deleted_by IS NULL OR deleted_at IS NOT NULL);
+```
+
 #### 3.10.4 `outbox` — reliable side-effects
 
 Rule actions, alert deliveries and webhook calls are written transactionally with their originating state change and dispatched by a poller, so a crash between "decide" and "send" cannot lose or duplicate a side effect.
@@ -3435,6 +3446,7 @@ NAMING_CONVENTION = {
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 | `0030_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                     |
 | `0031_policy_disarm`          | `exchange_accounts.policy_disarm_code`, `policy_disarmed_at`, `policy_disarm_audited_at` (§3.2.1): the self-check's durable disarm and its owed audit record — **#836 slice 2d**; the downgrade refuses while a record is owed             |
+| `0032_backups_write_once`     | `backups.deleted_at`, `deleted_by`, `bk_deleted`, trigger `trg_backups_write_once`, no DELETE for `cv_app` (§3.10.3): write-once location, digest, identity — **E42-T05 BK-2**; the downgrade refuses while an artefact is marked deleted  |
 
 ---
 
@@ -3734,6 +3746,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `orders`                                               | `reject_code`, `reject_message`         | P1         | text, redacted before insert                    | Taxonomy code and exchange text (24 §8.1): its writer (E29-T03/T04) applies `redact_exchange_text()`, `message=True` for the text; not logged   |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
+| `backups`                                              | `deleted_by`                            | P0         | plaintext                                       | A user id (0032), never a name, email or IP; `ON DELETE SET NULL` detaches it, and the delete's audit record keeps the actor                    |
 | `settings`                                             | `value` where `is_secret`               | S          | AES-256-GCM                                     | `is_secret=true` rows are returned masked by the API                                                                                            |
 | Everything else                                        | —                                       | P0         | —                                               |                                                                                                                                                 |
 
