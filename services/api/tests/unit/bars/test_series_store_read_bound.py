@@ -132,9 +132,11 @@ async def free_slots() -> int:
     return free
 
 
-def test_the_read_bound_is_sixteen_reads() -> None:
-    """A change is a reviewed diff (`bars/limits.py`), as for the other E12 numbers."""
-    assert limits.MAX_CONCURRENT_TAIL_READS == 16
+def test_the_read_bound_is_eight_reads() -> None:
+    """A change is a reviewed diff (`bars/limits.py`), as for the other E12 numbers. It is 8, not
+    16: at most eight reads interleave on the loop and queue ahead of a REST read (ruling D-G2 on
+    #2787 D2-G3)."""
+    assert limits.MAX_CONCURRENT_TAIL_READS == 8
 
 
 def test_the_wait_counter_is_one_unlabelled_live_catalogue_series() -> None:
