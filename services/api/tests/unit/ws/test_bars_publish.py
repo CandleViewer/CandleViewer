@@ -18,7 +18,7 @@ from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.ws import bars_publish
 from candleviewer.ws.bars_publish import MAX_SERIES, BarsPublisher
 from candleviewer.ws.bars_wire import bar_item
-from candleviewer.ws.binary import decode_b64
+from candleviewer.ws.binary import FrameEncodeError, decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription, handle_sub
 from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody
@@ -319,6 +319,34 @@ async def test_a_swap_the_store_cannot_snapshot_yet_is_flushed_on_a_later_emissi
         ("d", 2, None), ("snap", 3, SWAP), ("d", 4, None)
     ]  # fmt: skip
     assert (held.take(), gone.take(), paused.seq) == ([], [], 1)
+
+
+async def test_a_d_the_hub_failed_to_emit_gets_its_snap_at_the_next_emission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3363, flag off: the first connection's `d` fails once (`FrameEncodeError`; every bars `d`
+    carries its `include_delta` meta) and nothing reaches the emitter. The other connection gets
+    that `d`; the failed one is pending `upstream_desync` and gets its `snap` at the next
+    emission, with no `d` before it (`s` 3, after the 2 the failed `d` took), then `d`s again."""
+    _, pub, [(bad, bs), (good, _)] = _world({}, {})
+    push, failed = bad.emitter.push, list[dict[str, Any]]()
+
+    def once(frame: dict[str, Any]) -> None:
+        if not failed:
+            failed.append(frame)
+            raise FrameEncodeError("refused")
+        push(frame)
+
+    monkeypatch.setattr(bad.emitter, "push", once)
+    await pub.emit(_em(_up()))
+    assert (bad.take(), bs.snapshot_pending, bs.pending_reason) == ([], True, "upstream_desync")
+    for _ in range(2):
+        await pub.emit(_em(_up()))
+    out = bad.take()
+    assert [(f["t"], f["s"]) for f in out] == [("snap", 3), ("d", 4)]
+    assert out[0]["meta"] == {"reason": "upstream_desync", "source": "live", "previous_seq": 2}
+    assert [f["s"] for f in good.take()] == [2, 3, 4]
+    assert failed[0]["meta"] == {"include_delta": False}  # the shape that failed: a bars `d`
 
 
 async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> None:

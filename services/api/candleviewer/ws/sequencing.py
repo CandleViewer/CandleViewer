@@ -52,7 +52,7 @@ from candleviewer.ws.binary import (
     encode_b64,
 )
 from candleviewer.ws.errors import build_ws_error
-from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
+from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK, cv_ws_malformed_updates_total
 from candleviewer.ws.rebuild_budget import topic_key
 from candleviewer.ws.topics import (
     FAMILIES,
@@ -872,13 +872,26 @@ class Sink(Protocol):
     def flush_pending(self, subs: Iterable[Subscription]) -> int: ...
 
 
+#: The hub logs a failure it contains (`SequencingHub._log_failed`) at most once per (event, family)
+#: in this many seconds, `orders` and `executions` aside: the flag-on default classify interval.
+FAILURE_LOG_INTERVAL_S: Final = 1.0
+
+
 class SequencingHub:
     """Routes owning-module events to every live connection's `Sink` (E17-S03 side of
     the fan-out; coalescing and the overflow ladder are E17-T03). Bounded by the gateway's
-    connection caps: one entry per authenticated socket."""
+    connection caps: one entry per authenticated socket. What a sink's `snapshot`, `flush_pending`
+    or `delta`, or its `on_rebuild`, raises is contained to its subscription (to its connection
+    for `on_rebuild`), so no connection stops a fan-out (§10.1): the flag-on sink contains it
+    itself, and the hub contains what a `TopicEmitter` lets through (flag off: `_snapshot_failed`,
+    `_delta_failed`). A cancellation is never contained, nor, flag off, a `d` whose `meta` names a
+    key the server owns: that is the caller's own error. `clock` paces the failure lines."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._conns: dict[int, tuple[ConnectionAuthz, Sink]] = {}
+        self._clock = clock
+        #: `_quiet`, per (event, family): when its interval ends, and the lines held back in it.
+        self._held: dict[tuple[str, str], tuple[float, int]] = {}
 
     def __len__(self) -> int:
         return len(self._conns)
@@ -929,11 +942,20 @@ class SequencingHub:
             if select is not None and not select(sub):
                 continue
             if wake and sub.snapshot_pending:
-                sent += emitter.flush_pending((sub,))
-            elif emitter.delta(
-                sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms, meta=meta
-            ):
-                sent += 1
+                try:
+                    sent += emitter.flush_pending((sub,))
+                except Exception as exc:  # contained to `sub`: the fan-out goes on
+                    self._snapshot_failed(authz, sub, exc)
+                continue
+            try:
+                if emitter.delta(
+                    sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms, meta=meta
+                ):
+                    sent += 1
+            except Exception as exc:  # contained to `sub`: the others still get this `d`
+                if meta and SERVER_META_KEYS.intersection(meta):
+                    raise  # the caller's own error, refused before any `s` was taken
+                self._delta_failed(authz, sub, exc)
         return sent
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
@@ -982,20 +1004,30 @@ class SequencingHub:
                 if emitter.snapshot(sub, sub.pending_reason):
                     sent += 1
             except Exception as exc:  # contained to `sub`: the fan-out goes on
-                _snapshot_failed(authz, sub, exc)
+                self._snapshot_failed(authz, sub, exc)
         return sent
 
     def flush_pending(self, match: Callable[[Subscription], bool] | None = None) -> int:
         """Retry every pending snapshot (e.g. once the book engine finished its rebuild), or
         only those of the subscriptions `match` accepts. `match` is asked for every subscription
         of every connection, so it must be pure and total. One held for its `backpressure`
-        snapshot is left to the overflow ladder, which the emitter's `on_rebuild` tells."""
+        snapshot is left to the overflow ladder, which the emitter's `on_rebuild` tells. Each
+        subscription is flushed alone, as `ConnectionPipeline.flush_pending` does: a build that
+        raises through the sink (flag off) leaves it pending with its reason (`_snapshot_failed`),
+        and the rest, and every connection's `on_rebuild` (guarded too), still run (#3363)."""
         sent = 0
         for authz, emitter in list(self._conns.values()):
             subs = [s for s in authz.by_id.values() if match is None or match(s)]
-            sent += emitter.flush_pending(subs)
+            for sub in subs:
+                try:
+                    sent += emitter.flush_pending((sub,))
+                except Exception as exc:  # contained to `sub`: the fan-out goes on
+                    self._snapshot_failed(authz, sub, exc)
             if emitter.on_rebuild is not None:
-                emitter.on_rebuild(subs)
+                try:
+                    emitter.on_rebuild(subs)
+                except Exception as exc:  # contained to its connection: the fan-out goes on
+                    self._log_failed("rebuild", authz, None, exc)
         return sent
 
     # -- the §7.4 triggers --
@@ -1014,6 +1046,57 @@ class SequencingHub:
     def replay_seek(self, replay_session_id: str) -> int:
         return self.resnapshot(lambda s: s.replay_session_id == replay_session_id, "replay_seek")
 
+    # -- containment (§10.1; #3262, #3363) --
+
+    def _snapshot_failed(self, authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
+        """A snapshot (a re-snapshot, a flush or a wake) that raised through its sink (flag off,
+        `TopicEmitter`, which has no close path): `sub` stays pending with its reason for the next
+        flush (§7.1). Marked again: `TopicEmitter.snapshot` clears the mark before it queues its
+        frames, so a raise there must not leave a `d` to follow a `snap` its client may lack."""
+        sub.snapshot_pending = True
+        self._log_failed("snapshot", authz, sub, exc)
+
+    def _delta_failed(self, authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
+        """A `d` that raised through its sink (flag off): `TopicEmitter` queues a `d` last, so that
+        update never reached `sub`'s client, though its `s` may be taken, as by a frame lost in
+        transit (§7.1). `sub` now awaits an `upstream_desync` `snap`, the §7.4 reason for a stream
+        with a gap ("the only correct recovery is drop-and-rebuild"), so no `d` crosses the gap;
+        one already pending keeps its reason, as it took no `d`. Marked first, which its count and
+        log line cannot skip; counted as a malformed update, as flag on counts one (§8.6 D9)."""
+        if not sub.snapshot_pending:
+            sub.snapshot_pending, sub.pending_reason = True, "upstream_desync"
+        cv_ws_malformed_updates_total.labels(topic=sub.topic.family.family).inc()
+        self._log_failed("delta", authz, sub, exc)
+
+    def _log_failed(
+        self, what: str, authz: ConnectionAuthz, sub: Subscription | None, exc: Exception
+    ) -> None:
+        """`ws {what} failed`, by connection, family and error class only (C-12.6). `orders` and
+        `executions` log every line, at `error`, as flag on logs each of their closes; the other
+        families, and `rebuild` lines, which name none, log at `warning`, at most one line per
+        (event, family) per `FAILURE_LOG_INTERVAL_S`, with a `suppressed` count (`_quiet`). A
+        failing logger or clock changes nothing (a cancellation still propagates)."""
+        with contextlib.suppress(Exception):  # never into the fan-out
+            family = None if sub is None else sub.topic.family
+            fields = {"connection_id": authz.connection_id, "error": type(exc).__name__}
+            if family is not None:
+                fields["family"] = family.family
+            if family is not None and family.never_throttled:
+                _log().error(f"ws {what} failed", **fields)
+            elif (held := self._quiet((what, fields.get("family", "")))) is not None:
+                _log().warning(f"ws {what} failed", **fields, suppressed=held)
+
+    def _quiet(self, key: tuple[str, str]) -> int | None:
+        """None holds a log line back: one per `key` (event, family) per `FAILURE_LOG_INTERVAL_S`
+        on the hub's clock, as `ConnectionPipeline._quiet` does per connection. Else how many it
+        held back since the last line (`suppressed`). Bounded: one entry per (event, family)."""
+        now, last = self._clock(), self._held.get(key)
+        if last is not None and now < last[0]:
+            self._held[key] = (last[0], last[1] + 1)
+            return None
+        self._held[key] = (now + FAILURE_LOG_INTERVAL_S, 0)
+        return 0 if last is None else last[1]
+
 
 def _live_symbol(symbol: str, *, book_only: bool) -> Callable[[Subscription], bool]:
     def match(sub: Subscription) -> bool:
@@ -1024,18 +1107,6 @@ def _live_symbol(symbol: str, *, book_only: bool) -> Callable[[Subscription], bo
         return symbol in sub.symbols
 
     return match
-
-
-def _snapshot_failed(authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
-    """A re-snapshot build that raised through its sink (flag off, `TopicEmitter`, which has no
-    close path): `sub` stays pending with its reason, as a build not ready does (§7.1). Logged by
-    family and error class only (C-12.6), at `error` for `orders` and `executions`, else at
-    `warning`; a failing logger changes nothing (a cancellation still propagates)."""
-    with contextlib.suppress(Exception):  # never into the fan-out
-        family = sub.topic.family
-        fields = {"connection_id": authz.connection_id, "family": family.family}
-        log = _log().error if family.never_throttled else _log().warning
-        log("ws snapshot failed", **fields, error=type(exc).__name__)
 
 
 # -- book depth-window deltas (§7.3) -------------------------------------------------------------

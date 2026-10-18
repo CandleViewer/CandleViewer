@@ -13,9 +13,10 @@
   scales, or a `FrameEncodeError`.
 - **Generations** (§8.2, ADR-0033, #2704). Any change, up or down, is a swap: the series' live,
   snapshotted, unpaused subscriptions are re-snapshotted (`swap_reason`), with no delta; a pending
-  one keeps its reason, as under ctl. One the swap leaves pending (no snapshot yet) is retried on
-  each later emission, one `build` per such subscription, so `build` must be cheap; no other
-  flow's pending one is (`_left_pending`). `Subscription.announced` holds a swap's `snap` until
+  one keeps its reason, as under ctl. One the swap leaves pending (no snapshot yet), or one a `d`
+  the hub failed to emit leaves pending `upstream_desync` (#3363), is retried on each later
+  emission, one `build` per such subscription, so `build` must be cheap; no other flow's pending
+  one is (`_left_pending`). `Subscription.announced` holds a swap's `snap` until
   the subscription's `sub_ok` is queued (#2831); only a `d` for a §7.6 continuity attach, which is
   settled at admit, can still go out before it (#2909).
   Swaps are counted; over `SWAP_STORM` per `SWAP_WINDOW_S` on a channel warns once per window with
@@ -64,7 +65,8 @@ if TYPE_CHECKING:
 #: Series tracked: twice the process-wide spec cap, so a live series is rarely the one dropped.
 MAX_SERIES: Final = 2 * CAP_GLOBAL
 #: Pending reasons that belong to another flow (the subscribe flow, E17's backpressure hold),
-#: so a swap may not use one: the publisher only ever flushes what its own swap left pending.
+#: so a swap may not use one: the publisher only ever flushes what its own swap, or a `d` the hub
+#: failed to emit (`upstream_desync`), left pending.
 _FOREIGN_REASONS: Final = frozenset({"initial", "backpressure"})
 #: A baseline no emission carries (a generation is 0..`MAX_GENERATION`: `check_generation` on
 #: write and on read, `_sendable` on the wire), so the next emission swaps.
@@ -270,10 +272,13 @@ class BarsPublisher:
             self._hub.flush_pending(lambda s: s.ch == ch and self._left_pending(s))
 
     def _left_pending(self, sub: Subscription) -> bool:
-        """The retry's match: live, unpaused and pending with this publisher's swap reason. A
-        hub-level match must never accept `initial` (the subscribe flow's hold) or `backpressure`
-        (E17's hold), so `__init__` refuses both as `swap_reason` (`_FOREIGN_REASONS`)."""
-        pending = sub.snapshot_pending and sub.pending_reason == self._swap
+        """The retry's match: live, unpaused and pending with this publisher's swap reason, or with
+        `upstream_desync`, which on `bars.*` only a `d` the hub failed to emit leaves (#3363; the
+        hub's own `upstream_desync` trigger is book-only). The retry runs once the store holds the
+        emission, so its `snap` does too. A hub-level match must never accept `initial` (the
+        subscribe flow's hold) or `backpressure` (E17's hold), so `__init__` refuses both as
+        `swap_reason` (`_FOREIGN_REASONS`)."""
+        pending = sub.snapshot_pending and sub.pending_reason in (self._swap, "upstream_desync")
         return pending and _live(sub) and not _paused(sub)
 
     def _parts(self, series: _Series, gen: int, bars: list[Bar], flow: bool) -> tuple[Frame, ...]:
