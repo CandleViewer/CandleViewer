@@ -1,24 +1,20 @@
 name: e2e-nightly
 
 # #3383 (C-9.2, the nightly full Playwright matrix): calls the PR lane's own _job-e2e.yml on `main`,
-# so the four e2e-web shards, e2e-staging and a11y-axe run every night, including after changes
-# that pr.yml's `e2e` filter leaves out on purpose, such as the root dependency manifests
-# (docs/ci-runbook.md section 2). Not a required check (C-9.1 unchanged), but a red nightly blocks
-# the next release (C-9.2), so a red scheduled run opens an issue, as the bar-determinism, perf and
-# fixture-drift nightlies do. Only the `report` job can write; it runs no checkout and no action.
-# e2e-electron stays off on the schedule until it is green (#3366): a manual run with `electron`
-# ticked proves it on `main`, then the flip sets `electron: true` below (runbook section 2).
-# Cost: six jobs of about 1 to 1.5 minutes each (pr.yml medians), capped by CV_CI_TIMEOUT_MINUTES.
+# so the four e2e-web shards, e2e-staging, a11y-axe and e2e-electron run every night, including
+# after changes that pr.yml's `e2e` filter leaves out on purpose, such as the root dependency
+# manifests (docs/ci-runbook.md section 2). pr.yml runs e2e-electron on release/* heads only; the
+# nightly asks for it through the lane's `electron` input (green since #3393, run 39105058132).
+# Not a required check (C-9.1 unchanged), but a red nightly blocks the next release (C-9.2): the
+# release checklist needs a green run on the tip it cuts (docs/plan/07-release-and-prr.md §4.1),
+# and a red scheduled run opens an issue, as the bar-determinism, perf and fixture-drift nightlies
+# do. Only the `report` job can write; it runs no checkout and no action.
+# Cost: seven jobs of about 1 to 1.5 minutes each (pr.yml medians), capped by CV_CI_TIMEOUT_MINUTES.
 
 on:
   schedule:
     - cron: "53 2 * * *"
-  workflow_dispatch:
-    inputs:
-      electron:
-        description: "Also run e2e-electron (the schedule leaves it off until it is green, #3366)"
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -32,8 +28,7 @@ jobs:
     name: e2e-nightly
     uses: ./.github/workflows/_job-e2e.yml
     with:
-      # `== true`: a scheduled run has no inputs, and the callee's input must get a boolean.
-      electron: ${{ inputs.electron == true }}
+      electron: true
 
   report:
     name: e2e-nightly-report
