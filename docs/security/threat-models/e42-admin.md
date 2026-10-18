@@ -672,9 +672,10 @@ adaptation, C-10.1). The security engineer and Architect sign-off is orchestrato
 - **D2 (open; routed to E42-X02, #1220)** The owner-equivalent band-raise of §1.4 is not adopted: rows are rated
   on E27's plain matrix and tagged OE. If it is adopted, the six High OE rows (AD-S05, AD-R05, AD-I05, AD-E02,
   AD-E04, AD-E07) become Critical inherent and the Medium OE rows High, and the accepted Medium residual of
-  AD-E12 is decided again. E42-X02, the security review that re-reads this model, decides D2 for the security
-  engineer, and AD-E12's accepted Medium residual with it, before the R3 gate (2027-02-04), AD-E12's review date
-  (§13.2), or sooner if a change proposes raising a band.
+  AD-E12 is decided again. E42-X02, the security review that re-reads this model, decides D2 in its reviewed PR
+  under the delegated security-engineer sign-off (#1778), before the R3 gate (2027-02-04), AD-E12's review date
+  (§13.2), or sooner if a change proposes raising a band. If D2 is adopted, AD-E12's accepted Medium residual goes
+  back to its owner, the Owner (§13.2), for a new acceptance.
 - **D3** The file is `e42-admin.md`, the path the ticket names. GOV-008 matches model names case-insensitively
   (`scripts/check_threat_model_ticket_map.py:23`), so the section under the first heading that carries the word the
   check keys on must list all 35 non-retired E42 keys. That section is the control map (§12, S4); no earlier
@@ -1025,7 +1026,7 @@ this model filed.
 | E42-S07 (#1136) | Onboarding wizard: secrets straight to the vault, every step stepped up and audited `[ticket body]`; key handling is E27's |
 | E42-S08 (#1137) | Statechart inspector screen: the acknowledge is dangerous and audited; no unredacted context `[ticket body]` |
 | E42-T01 (#963) | Overview and capacity: no secret in a response, deny by default, a recorded 403 `[ticket body]`; the audited guard and `settings.change` `shipped in #2874, #2901, #2930, #2946`. Required by this model: the guard's denial budget (#2836, SR-E42-09) |
-| E42-T02 (#889) | Audit query, verify and export: no write path, Manager scoping in the repository, a signed and limited export `[ticket body]`; the contract, the verify slot, the read budget, the page check and the 501 `shipped in #2392, #2446, #2917, #2433, #2443, #2444`. Required by this model: SR-E42-08, SR-E42-10, the download's handler test (§3.3) and its record's name (AC-ADM-21) |
+| E42-T02 (#889) | Audit query, verify and export: no write path, Manager scoping in the repository, a signed and limited export `[ticket body]`; the contract, the verify slot, the read budget, the page check and the 501 `shipped in #2392, #2446, #2917, #2433, #2443, #2444`. Required by this model: SR-E42-08 (its verify part `shipped in #2449, #2451, #2459, #2461, #2463, #2470`; the export part open), SR-E42-10, the download's handler test (§3.3) and its record's name (AC-ADM-21) |
 | E42-T03 (#964) | Flags: the allowlist, server-side resolution, every change audited, restrictive defaults when the store fails `[ticket body]`; the contract, `0027`, the registry and the read path `shipped in #2592, #2796, #2928, #2981`. Required by this model: SR-E42-02, SR-E42-07 (its composition `shipped in #3221`), SR-E42-11 (`maintenance.*`, `shipped in #3241`), SR-E42-14 (`shipped in #3221`; the per-user snapshot owed, #3217) and AD-I02's `reason` check; AC-ADM-06 to AC-ADM-13 |
 | E42-T04 (#965) | Lifecycle: Owner-only, stepped up, never self, write-ahead audit, the soft revoke `[ticket body]`; the contract, store, service and cascade `shipped in #2658, #3062, #3096, #3135`. Required by this model: an alert on failed cascade steps (AD-F25) |
 | E42-T05 (#966) | Health, incidents and backups: restore preconditions, step-up, high-severity audit, single-use download links `[ticket body]`; `0028` and the guard contract `shipped in #2820, #2957`. Required by this model: SR-E42-04 with #3084, SR-E42-05, SR-E42-11 (`backup.*`, `incident.acknowledged`) and health behind the audited guard (AD-F22, `shipped in #3199`) |
@@ -1239,10 +1240,11 @@ AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
   on #2701 (issuecomment-6244844061; D7: issuecomment-6231423922) (agent-delivery adaptation, as in
   `E27-accounts.md`).
 - **Open, not blocking the sign-off.** D2, the owner-equivalent band-raise (§1.4, §5.2), is routed to E42-X02
-  (#1220), to decide before the R3 gate (2027-02-04) or sooner if a change proposes raising a band, with AD-E12's
-  accepted Medium residual decided again with it; rows are rated on the plain matrix and tagged OE, so it can
-  re-rate them without a new analysis. The DoD item "automated checks merged and running in CI" is E42-X03's
-  (#1026; Deviation 3 in the header), and the High remediations (#3084, #3085) gate the epic (#63), not #890.
+  (#1220), to decide before the R3 gate (2027-02-04) or sooner if a change proposes raising a band; if it is
+  adopted, AD-E12's accepted Medium residual goes back to the Owner (§13.2). Rows are rated on the plain matrix and
+  tagged OE, so D2 can re-rate them without a new analysis. The DoD item "automated checks merged and running in
+  CI" is E42-X03's (#1026; Deviation 3 in the header), and the High remediations (#3084, #3085) gate the epic
+  (#63), not #890.
 
 ### Review log
 
@@ -1257,7 +1259,7 @@ AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
 | 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; PR #3195 | Round 1 at 37448846: APPROVE x2, five MINORs and six NITs. The model's items were carried to S4 and closed there: the grace-window signal, #3196 as owner, AC-ADM-02, -12, -21, -25 and -35, the 401 and 422 notes, the cascade alert, the annex's Method bullet. The size MINOR and NIT and the gitleaks NIT were PR-process items, handled in #3195's body. Merged as 9be04b43 |
 | 2026-10-17 | author (agent, S4) | §12 and §13; RSK-072 to RSK-075 and three refinements; `04-security-program.md` §5.15 and RR-17, at 77085426 |
 | 2026-10-17 | security-reviewer and code-reviewer, independent; S4 | Round 1 at 77085426: security APPROVE, code REQUEST_CHANGES. One MAJOR: RR-16 is ADR-0037's residual, so this model's row is RR-17. MINORs: the rating rule against AD-F06 and AD-F24 (AD-F25 too), the R3 schedule of #3084 and #3085, STRIDE and L x I in the UL-F rows, fixed in a second commit after S4 was rebased onto `main` 9a9daa29 (77085426 became 3f40e033); the §5.11 overlap with #3213 and the C-4.8 note are PR-process items. NITs fixed: the heat-map rule, the review-log rows, owners for notes 3, 5 to 7 |
-| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; S4 | Round 2 at 66ac2100: APPROVE x2. Two register wording MINORs (RSK-046's restore note, RSK-020's Manager scope), fixed at 65436df2; delta at 65436df2: APPROVE x2, with the same Manager-scope overstatement found in §5.1, AD-E01, N2 and AC-ADM-01 and fixed in this slice. Process items (the R3 milestones of #3084 and #3085, the §5.11 overlap with #3213 and #3220) are the orchestrator's |
+| 2026-10-17 | security-reviewer (fable) and code-reviewer (opus), independent; S4 | Round 2 at 66ac2100: APPROVE x2. Two register wording MINORs (RSK-046's restore note, RSK-020's Manager scope), fixed at 65436df2; delta at 65436df2 (opus security and opus code): APPROVE x2, with the same Manager-scope overstatement found in §5.1, AD-E01, N2 and AC-ADM-01 and fixed in this slice. Process items (the R3 milestones of #3084 and #3085, the §5.11 overlap with #3213 and #3220) are the orchestrator's |
 | 2026-10-17 | security-reviewer and code-reviewer (opus x2), independent; PR #3238 | Delta at 892a8f46 (the Manager-scope fix): APPROVE x2, NITs only; rebase checks at 493f73fe and 7dc93b27 (onto `main` 4074dedc): APPROVE x2, 04 §5.11 at 128 residuals before and after with no High dropped, RR-17 consistent. Records on #3238; merged as 474fc683 |
 | 2026-10-18 | QA (sonnet, independent; #890) | FAIL on `main` c3c9d934, on process only: every acceptance criterion passes; open were the Status and sign-off (G1), the hand-offs (G2), the CI DoD item (G3), the rows #3164 and #3221 made stale (G4) and the #2701 queue (G5). Closed by this amendment and the sign-off and hand-off comments |
 | 2026-10-18 | Security engineer and Architect sign-off, orchestrator-delegated per #1778 2026-10-12 | By the independent reviews of every slice above: Status Approved (Sign-off, above). D2 (§1.4, §5.2) routed to E42-X02 (#1220), before the R3 gate |

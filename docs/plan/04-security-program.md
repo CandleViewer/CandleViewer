@@ -581,9 +581,9 @@ user-lifecycle annex against the admin API as served and contracted: 60 operatio
 three view-as operations of #3164), the WS `system` topic, the
 Postgres grant model and the flag registry. 74 rows (AD-S01..AD-E13) on E27's plain matrix: 8 inherent High, six of
 them owner-equivalent and tagged OE, two referenced (E04 H4, E16 R-E1); whether OE raises a band, as value leaving an
-account does in Area 13, is the model's decision D2, routed to E42-X02 (#1220) before the R3 gate (2027-02-04).
-The append-only audit storage is verified layer by layer
-(grants and triggers), and so is the flag registry's refusal of security-gating flags. Three concerns get dedicated
+account does in Area 13, is the model's decision D2, routed to E42-X02 (#1220) to decide before the R3 gate
+(2027-02-04). The append-only audit storage is verified layer by layer (grants and triggers), and so is the flag
+registry's refusal of security-gating flags. Three concerns get dedicated
 analysis: the elevation boundary (per-class step-up, the SCR-149 window, view-as), the store boundary (writes outside
 the API) and the restore path, which can roll back security state. Controls SR-E42-01..SR-E42-14 (model §11) are
 traced to the E42 tickets in model §12; abuse cases AC-ADM-01..AC-ADM-35 go to E42-X03 (see RSK-072 to RSK-075).
