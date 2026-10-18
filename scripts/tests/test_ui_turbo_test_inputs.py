@@ -204,3 +204,13 @@ def test_unit_frontend_selects_the_ui_tests_by_their_inputs() -> None:
     turbo, manifest = _unit_frontend_filters()
     assert turbo == manifest, "the coverage manifest records what the turbo run selects"
     assert f"'tag:{TAG}[origin/main]'" in turbo
+
+
+def test_turbo_stays_pinned_to_one_2_x_release_from_2_11() -> None:
+    # The lane rests on a documented turbo rule (2.11 docs/reference/run.mdx, "Filtering by tag"):
+    # a git-qualified tag selector matches the changed files against the task's inputs. An exact
+    # pin makes every turbo bump a reviewed change, and a new major must re-check that rule here.
+    manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    version = manifest["devDependencies"]["turbo"]
+    found = re.fullmatch(r"2\.(\d+)\.\d+", version)
+    assert found is not None and int(found[1]) >= 11, version
