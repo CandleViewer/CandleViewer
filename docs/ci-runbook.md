@@ -206,8 +206,9 @@ here, or the check fails the `governance` lane.
 - **CI-GATE-004** (C-10.2 security path, label not added): `security-review-label` lists each
   matched file and its rule, then could not add `security-review` (a fork's token cannot write: a
   maintainer adds the label and re-runs the job), or could not read every changed file while the
-  label was missing (an API error: re-run; over the API's 3000 files: split the PR). The job never
-  removes the label, and the label must not be removed to go green.
+  label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
+  the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
+  merge guard is the backstop.
 
 ### CI-JS-* — JS/TS lane
 

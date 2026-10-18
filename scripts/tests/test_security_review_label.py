@@ -32,6 +32,7 @@ SECURITY = [
     *(f"services/api/candleviewer/{m}/sub/x.py" for m in s.MODULES),  # the real package (#2708)
     "infra/compose/docker-compose.yml",
     "infra/images/Dockerfile.api",
+    "infra/compose/docker compose.override.yml",  # a space is a name character
     *(p + "Screen.tsx" if p.endswith("/") else p for p in s.WEB_AUTH_PATHS),
     "apps/web/src/features/sessions/SessionsScreen.tsx",  # a future slice, before the list names it
     "apps/web/src/lib/session/store.ts",
@@ -40,6 +41,8 @@ SECURITY = [
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     ".npmrc",
+    ".pnpmfile.cjs",  # its readPackage hook rewrites dependencies at install time
+    "tools/ci/allowed-postinstall.json",  # SR-138: whose install scripts CI runs
     "services/api/pyproject.toml",
     "services/api/uv.lock",
     "scripts/requirements-ci.txt",
@@ -47,7 +50,11 @@ SECURITY = [
     "packages/chart-engine/bench/matrix/tauri/src-tauri/Cargo.toml",
     ".github/workflows/pr.yml",
     ".github/workflows/_job-js.yml",
+    ".github/actions/setup/action.yml",  # a composite action runs with the calling job's token
+    *s.GATE,  # this rule's own code: main's copy labels a PR that narrows it
     "docs/a/b/c/apikey-rotation.md",  # the four globs on a file name in a deep path
+    "services/api/tests/fixtures/key_verification/error_10003.json",  # and on a directory's (C-2.8)
+    "packages/fixtures/accounts/expired_key/manifest.json",
     "services/api/candleviewer/ws/client_secret.py",
     "apps/web/src/lib/ws/AccessToken.ts",  # any case: camelCase TS names
     "tools/x/y/ENCRYPT_notes.txt",
@@ -62,6 +69,7 @@ NOT_SECURITY = [
     "services/api/candleviewer/accounts/service.py",
     "services/api/candleviewer/migrations/versions/0001_init.py",
     "apps/web/src/lib/ws/core/engine.ts",
+    "apps/web/src/lib/ws/protocol/codec.ts",  # checks every frame's shape; `auth_ok` has no token
     "apps/web/src/features/appearance/AppearanceScreen.tsx",
     "apps/web/e2e/auth/login.spec.ts",
     "my-infra/x.yml",
@@ -69,6 +77,7 @@ NOT_SECURITY = [
     ".github/dependabot.yml",
     "docs/package.json.md",
     "docs/requirements.md",
+    "docs/ключ.md",  # the four words are ASCII: a translation does not match
     "README.md",
 ]
 
@@ -103,8 +112,33 @@ def test_the_rules_follow_the_c10_2_clause_verbatim() -> None:
 
 def test_the_named_paths_exist_so_a_rename_cannot_drop_one_silently() -> None:
     assert all((ROOT / "services/api/candleviewer" / m).is_dir() for m in s.MODULES)
-    for path in s.WEB_AUTH_PATHS:
+    for path in (*s.WEB_AUTH_PATHS, s.POSTINSTALL, *s.GATE):
         assert (ROOT / path).is_dir() if path.endswith("/") else (ROOT / path).is_file(), path
+
+
+# apps/web code that names a token or session-claims seam is auth code, so it must be a security
+# path; only these files may name one to pass it through. A new user (a worker's TokenSource, a
+# shell that wires one) fails here until WEB_AUTH_PATHS or this list names it; both are security
+# paths themselves (GATE), so either change is labelled.
+SEAMS = re.compile(
+    r"\b(TokenSource|getToken|access_?[Tt]oken|[gs]etMeClaims|recordStepUp|requireStepUp"
+    r"|requiresStepUp|requireAuth)\b"
+)
+PASS_THROUGH = {
+    "apps/web/src/lib/ws/api.ts": "declares TokenSource; connection.ts is what uses a token",
+    "apps/web/src/lib/ws/core/engine.ts": "hands the TokenSource to connection.ts unread",
+}
+
+
+def test_web_code_naming_an_auth_seam_is_a_security_path_or_passes_it_through() -> None:
+    src = ROOT / "apps/web/src"
+    users = {
+        path.relative_to(ROOT).as_posix()
+        for path in src.rglob("*.ts*")
+        if path.suffix in {".ts", ".tsx"} and not re.search(r"\.(test|spec|stories)\.", path.name)
+        if SEAMS.search(path.read_text(encoding="utf-8"))
+    }
+    assert sorted(p for p in users if s.rule_for(p) is None) == sorted(PASS_THROUGH)
 
 
 def test_the_combined_regex_is_portable_ere_for_the_merge_guard(
@@ -222,6 +256,11 @@ def test_every_page_is_read(count: int, pages: int) -> None:
     assert s.main([], api) == 0
     assert len(api.calls) - 1 - len(api.posts()) == pages
     assert api.posts() == ([ADD] if count else [])
+
+
+def test_a_deleted_security_file_counts() -> None:
+    api = FakeApi([{"filename": AUTH, "status": "removed"}])
+    assert (s.main([], api), api.posts()) == (0, [ADD])
 
 
 @pytest.mark.parametrize("old_is_security", [True, False])

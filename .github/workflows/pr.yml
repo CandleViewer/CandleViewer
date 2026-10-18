@@ -12,7 +12,8 @@ name: pr
 #
 # CV-ERR codes surfaced by the resolver: CI-GATE-001 (applicable lane not
 # successful), CI-GATE-002 (gate misconfiguration: applicable lane skipped),
-# CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py).
+# CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py);
+# by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892).
 
 on:
   pull_request:

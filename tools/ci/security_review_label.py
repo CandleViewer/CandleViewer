@@ -11,13 +11,16 @@ added with GITHUB_TOKEN starts no other workflow run.
 The rules follow C-10.2 verbatim (scripts/tests/test_security_review_label.py parses the clause):
 - its backend prefixes in its own spelling, `services/api/<module>/`, and in the real package,
   `services/api/candleviewer/<module>/` (the gap #2708 closed in CODEOWNERS);
-- anything under `infra/`; CI workflow files, `.github/workflows/`;
+- anything under `infra/`; CI workflow files: `.github/workflows/`, `.github/actions/` and GATE,
+  this rule's own code, so a PR that narrows the rule is labelled by main's copy of it;
 - authentication/session code in apps/web: WEB_AUTH_PATHS, and any `auth`, `session` or `sessions`
   directory under apps/web/src/, so a new slice counts before the list names it;
 - dependency manifests in any directory: MANIFESTS (package and lock files, and the pnpm and npm
-  configs that set overrides, install scripts and the registry) and pip's `requirements*.txt`;
-- a file name containing `key`, `secret`, `token` or `crypt` in any case (`*key*` and the rest;
-  camelCase TS names count). Verbatim, so the keymap and the design tokens match too.
+  configs and hooks that set overrides, install scripts and the registry), pip's
+  `requirements*.txt`, and POSTINSTALL, the packages whose install scripts CI runs (SR-138);
+- a path with `key`, `secret`, `token` or `crypt` in any case in a file or directory name (`*key*`
+  and the rest, matched as CODEOWNERS matches a slash-less glob; camelCase TS names count).
+  Verbatim, so the keymap and the design tokens match too.
 SECURITY_PATH_RE joins the rules into one POSIX ERE (`--print-regex`) for a merge guard to reuse.
 
 Exit 0: no security path; the label is on the PR or was added now; a merge group (no PR).
@@ -53,13 +56,18 @@ WEB_AUTH_PATHS = (
     "apps/web/src/lib/http/csrfFetch.ts",  # CSRF double submit, the session cookie's re-issue
     "apps/web/src/lib/ws/core/connection.ts",  # the WS `auth` and re-`auth`, the token's lifetime
     "apps/web/src/lib/ws/policy/closePolicy.ts",  # 4401: drop the refused token, refresh first
+    "apps/web/src/lib/ws/protocol/frames.ts",  # the `auth` frame: the token's one way onto the wire
     "apps/web/src/routes/guards.ts",  # requireAuth -> requireRole -> requireStepUp
-    "apps/web/src/routes/rbac.ts",  # which routes need no session, which need a step-up
+    "apps/web/src/routes/manifest.ts",  # each route's access: public, roles, step-up
+    "apps/web/src/routes/rbac.ts",  # the roles and the RouteAccess shape the guards read
     "apps/web/src/routes/StepUpGate.tsx",  # step-up re-authentication
+    "apps/web/src/routes/tree.tsx",  # wires the guards to every route; no session -> /login
     "apps/web/src/shell/bootstrap/bootstrap.ts",  # `/me` -> the session claims the guards read
 )
 MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")
-MANIFESTS += ("pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")
+MANIFESTS += (".pnpmfile.cjs", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")
+POSTINSTALL = "tools/ci/allowed-postinstall.json"
+GATE = ("tools/ci/security_review_label.py", "scripts/tests/test_security_review_label.py")
 WORDS = ("key", "secret", "token", "crypt")
 API_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException)
 
@@ -82,10 +90,11 @@ RULES = (
     ),
     (
         "dependency manifest",
-        rf"^([^/]+/)*({'|'.join(map(_literal, MANIFESTS))}|requirements[^/]*\.txt$)",
+        rf"^(([^/]+/)*({'|'.join(map(_literal, MANIFESTS))}|requirements[^/]*\.txt$)|"
+        rf"{_literal(POSTINSTALL)})",
     ),
-    ("CI workflow file", r"^\.github/workflows/"),
-    ("file name glob", rf"^([^/]+/)*[^/]*({'|'.join(map(_any_case, WORDS))})[^/]*$"),
+    ("CI workflow file", rf"^(\.github/(workflows|actions)/|{'|'.join(map(_literal, GATE))})"),
+    ("name glob", rf"^.*({'|'.join(map(_any_case, WORDS))})"),  # a directory's name counts too
 )
 _COMPILED = tuple((name, re.compile(pattern)) for name, pattern in RULES)
 SECURITY_PATH_RE = re.compile("|".join(f"({pattern})" for _, pattern in RULES))
