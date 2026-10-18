@@ -471,6 +471,8 @@ def test_a_shape_the_proof_cannot_read_fails_it(tmp_path, workflow, edit, reinde
     "file,job",
     [
         ("shadow.yaml", "    name: ci-required\n    runs-on: x\n"),
+        ("shadow.yml", "    name: 'ci-required' # quoted\n    runs-on: x\n"),
+        ("shadow.yml", '    name: "ci-required"\n    runs-on: x\n'),
         ("shadow.yml", '    name: "ci\\x2drequired"\n    runs-on: x\n'),
         ("shadow.yml", "    name: >-\n      ci-required\n    runs-on: x\n"),
         ("shadow.yml", "    name: ${{ 'ci-required' }}\n    runs-on: x\n"),
