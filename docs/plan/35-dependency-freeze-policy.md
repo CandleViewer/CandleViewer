@@ -12,6 +12,7 @@ Owner: Security engineer + @basiltt. Requirements: SR-130..SR-139, SR-156
 | JS      | `pnpm-lock.yaml`                                    | `pnpm install --frozen-lockfile --ignore-scripts`              |
 | Images  | `FROM ...@sha256:` in `infra/images/Dockerfile.api` | `tools/ci/check_dockerfile_pins.py`, `check_image_non_root.py` |
 | Actions | full SHAs, ledger `.github/actions-pins.md`         | `tools/ci/check_action_pins.py`, Semgrep `cv-unpinned-action`  |
+| CI      | `tools/ci/requirements-*.txt` (hashes)              | `pip install --require-hashes` in `_job-security.yml`          |
 
 Tags: `pentest-freeze-<yyyymmdd>` (the build under test) and `pentest-retest-<yyyymmdd>`;
 both hashes go in the evidence pack (E43-X07). Create the tag on the commit that
@@ -32,8 +33,9 @@ The `freeze` step of `read-only-scans` compares the installed graph to
 intended: the manifest is the reviewer's proof that the graph only changed where the PR says it
 did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-human**:
 
-1. **Grouped, labelled bumps.** `.github/dependabot.yml` opens at most one PR per ecosystem per
-   week (`github-actions`, `pip`, `npm` minor+patch, `docker`), labelled
+1. **Grouped, labelled bumps.** `.github/dependabot.yml` opens at most one PR per ecosystem and
+   directory per week (`github-actions`, `pip` for `services/api` and for the `tools/ci` scanner
+   locks, `npm` minor+patch, `docker`), labelled
    `dependencies` plus the area / `sla/*` labels. Ungrouped single-package PRs from before this
    policy are closed in favour of the next grouped run (`@dependabot recreate` is acceptable).
 2. **CI proposes, never commits.** `check_freeze_manifest.py --propose` runs in that `freeze`
@@ -44,9 +46,10 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
 3. **Review = diff + bump.** The reviewer (Security for `security-review`-labelled bumps, i.e. all
    `github-actions` ones; otherwise the area CODEOWNER) checks that (a) the other required checks
    are green, (b) the manifest diff touches exactly the components the bump should touch
-   (`pnpm-lock.yaml`/`pnpm-graph` for npm, `uv.lock`/`uv-graph` for pip, nothing for
-   actions/docker — those PRs must be green without a manifest change), and (c) during the freeze
-   window the bump is a §2 security fix with Owner approval.
+   (`pnpm-lock.yaml`/`pnpm-graph` for npm, `uv.lock`/`uv-graph` for `services/api` pip, nothing
+   for actions/docker or the `tools/ci` scanner locks — those PRs must be green without a
+   manifest change), and (c) during the freeze window the bump is a §2 security fix with Owner
+   approval.
 4. **Human commits the manifest.** Approved: the reviewer checks out the Dependabot branch, runs
    `python tools/ci/check_freeze_manifest.py --write`, commits
    `chore(<area>): regenerate freeze manifest for <bump>` and pushes (Dependabot keeps rebasing
