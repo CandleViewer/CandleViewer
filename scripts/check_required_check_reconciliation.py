@@ -80,11 +80,13 @@ FILTER_ENV_RE = re.compile(
     re.M,
 )
 USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
-# A called job that never gates its lane: `if:` the literal false (quoted, braced or with a comment)
-# or a block scalar (unread), or continue-on-error that is not the literal false (its failure would
-# not fail the lane).
+# A called job that never gates its lane: an `if:` that reads no context and calls no status
+# function, so a constant (`false`, `False`, `0`, `''`, `null`, ...) or a block scalar (unread), or
+# continue-on-error that is not the literal false (its failure would not fail the lane).
+_CONTEXT = r"\b(?:github|inputs|needs|vars|env|steps|matrix|strategy|runner|jobs?|secrets)\s*[.\[]"
+_STATUS = r"\b(?:always|success|failure|cancelled)\s*\("
 NEVER_RE = re.compile(
-    r"^    (if:\s*(?:[|>].*|([\"']?)(?:\$\{\{\s*)?false\s*(?:\}\})?\2(?:\s+#.*)?\s*$)"
+    rf"^    (if:(?![^\n#]*(?:{_CONTEXT}|{_STATUS})).*"
     r"|continue-on-error:(?!\s*false(?:\s+#.*)?\s*$).*)",
     re.M,
 )

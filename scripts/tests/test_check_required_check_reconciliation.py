@@ -367,6 +367,15 @@ SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - 
         ("pr.yml", CI_NAME, "$&    container: node:20\n", "no job keys but"),
         # ... and no other job may report a check run of its name.
         ("pr.yml", "  ci-required:\n", SHADOW, "the check-run name of 2 jobs"),
+        # Review round 5 of #3103: an `if:` that reads no context is a constant (YAML's False and
+        # FALSE are false too), so the proof refuses it whatever its value.
+        ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: False", "trivy"),
+        ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: 0", "trivy"),
+        ("_job-js.yml", "    name: lint\n", "$&    if: FALSE\n", "no judged js/lint"),
+        ("pr.yml", "        id: filter\n", "$&        if: False\n", "'changed-paths' must"),
+        ("pr.yml", "the architecture contract)\n", "$&        if: ${{ 0 }}\n", "'architecture' must"),
+        ("pr.yml", "the architecture contract)\n", "$&        if: null\n", "'architecture' must"),
+        ("pr.yml", "    name: architecture\n", '$&    defaults: {"run":{"shell":"sh"}}\n', "a flow"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
