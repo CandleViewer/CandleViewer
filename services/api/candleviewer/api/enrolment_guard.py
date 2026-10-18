@@ -161,7 +161,8 @@ def sessionless_operations(spec: Mapping[str, Any]) -> frozenset[tuple[str, str]
     """(METHOD, path template) of each operation the contract serves without a session: its
     `security` admits an anonymous caller (`[]`, or a `{}` alternative), or its `x-rbac` names
     no permission with scope `none` (the pre-session invite operations; info "CSRF",
-    "Exempt"). The RBAC matrix's `public: true` rows are exactly these (pinned by a test)."""
+    "Exempt"). The RBAC matrix's `public: true` rows are exactly these, except the
+    issue-linked rows the contract has opened ahead of the matrix (pinned by a test)."""
     out: set[tuple[str, str]] = set()
     for path, item in spec.get("paths", {}).items():
         if not isinstance(item, dict):

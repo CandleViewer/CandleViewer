@@ -47,6 +47,10 @@ _SPEC = cast(dict[str, Any], load_openapi_spec())
 _OPERATIONS = frozenset(declared_operations(_SPEC))
 _SESSIONLESS = sessionless_operations(_SPEC)
 _MATRIX = Path(__file__).resolve().parents[2] / "contract" / "rbac" / "matrix.yaml"
+#: Rows where the contract admits an anonymous caller but the matrix still says `public: false`.
+#: Each names its issue, and the set only shrinks. #3419 made the backup download token-addressed
+#: (bearer optional); its unmounted matrix row is settled when E42-T05 mounts it (#3500).
+_CONTRACT_AHEAD_OF_MATRIX = {"GET /admin/backups/{backupId}/download/{token}": "#3500"}
 _VERDICTS = {
     "enrolling": SessionClass.ENROLMENT_ONLY,
     "full": SessionClass.FULL,
@@ -266,12 +270,15 @@ def test_guard_matches_a_sessionless_operation_on_its_method_and_template(
 
 
 def test_sessionless_operations_are_the_matrix_public_rows() -> None:
-    """The reviewed RBAC matrix (SR-018) marks exactly these rows `public: true`."""
+    """The reviewed RBAC matrix (SR-018) marks exactly these rows `public: true`, except the
+    issue-linked rows the contract has opened ahead of it."""
     with _MATRIX.open(encoding="utf-8") as fh:
         rows: dict[str, dict[str, Any]] = yaml.safe_load(fh)["operations"]
     public = {key for key, row in rows.items() if row.get("public") is True}
+    lagging = set(_CONTRACT_AHEAD_OF_MATRIX)
 
-    assert {f"{method} {path}" for method, path in _SESSIONLESS} == public
+    assert lagging.isdisjoint(public)  # an exception the matrix has caught up with must go
+    assert {f"{method} {path}" for method, path in _SESSIONLESS} == public | lagging
 
 
 # -- what the guard leaves alone ---------------------------------------------------------------
