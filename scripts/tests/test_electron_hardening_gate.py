@@ -545,7 +545,7 @@ def test_a_missing_handler_response_fails_closed_in_runtime_mode(
     assert srs(tree.violations()) == {"SR-112"}
 
 
-@pytest.mark.parametrize("probes", [None, {"GET": 200}, ["not-a-probe"]])
+@pytest.mark.parametrize("probes", [None, {"GET": 200}, []])
 def test_absent_or_malformed_handler_responses_fail_closed_in_runtime_mode(
     tree: Tree, probes: object
 ) -> None:
@@ -554,6 +554,50 @@ def test_absent_or_malformed_handler_responses_fail_closed_in_runtime_mode(
         del tree.facts["appProbes"]
     vs = tree.violations()
     assert srs(vs) == {"SR-112"} and len(vs) == len(GOOD_PROBES)
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ("not-a-probe", "is not an object"),
+        ({**GOOD_PROBES[0], "method": ["GET"]}, "wrong type for method"),
+        ({**GOOD_PROBES[0], "url": {"path": "/"}}, "wrong type for url"),
+        ({**GOOD_PROBES[0], "status": "200"}, "wrong type for status"),
+        ({**GOOD_PROBES[0], "status": True}, "wrong type for status"),
+        ({**GOOD_PROBES[0], "csp": [GOOD_CSP]}, "wrong type for csp"),
+    ],
+    ids=[
+        "not-an-object",
+        "method-list",
+        "url-object",
+        "status-text",
+        "status-bool",
+        "csp-list",
+    ],
+)
+def test_a_handler_response_with_a_mistyped_field_fails_sr112(
+    tree: Tree, entry: object, message: str
+) -> None:
+    tree.probes.append(copy.deepcopy(entry))
+    vs = tree.violations()
+    assert len(vs) == 1 and vs[0].sr == "SR-112"
+    assert f"facts appProbes[{len(GOOD_PROBES)}]: {message}" in vs[0].render()
+
+
+@pytest.mark.parametrize(
+    "first_status", [404, 200], ids=["failing-then-passing", "twice"]
+)
+def test_a_handler_response_collected_twice_fails_sr112(
+    tree: Tree, first_status: int
+) -> None:
+    tree.probes[0]["status"] = first_status
+    tree.probes.append(copy.deepcopy(GOOD_PROBES[0]))
+    vs = tree.violations()
+    assert srs(vs) == {"SR-112"}
+    assert any(
+        "app:// handler GET app://candleviewer/: collected more than once" in v.render()
+        for v in vs
+    )
 
 
 @pytest.mark.parametrize(

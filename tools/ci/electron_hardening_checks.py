@@ -495,21 +495,54 @@ def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8") if p.is_file() else ""
 
 
+def _mistyped_fields(p: dict[str, Any]) -> list[str]:
+    """The fields of one collected app:// response that have the wrong JSON type. A null status
+    or csp is allowed: the collector writes it when a fetch fails or the header is absent, and
+    check_app_responses() reports that by name."""
+    status, csp = p.get("status"), p.get("csp")
+    ok = {
+        "method": isinstance(p.get("method"), str),
+        "url": isinstance(p.get("url"), str),
+        # A JSON number: bool is an int subclass, so true and false must not pass.
+        "status": status is None or type(status) is int,
+        "csp": csp is None or isinstance(csp, str),
+    }
+    return [field for field, good in ok.items() if not good]
+
+
 def check_app_responses(probes: Any, header_csp: Any, require: bool) -> list[Violation]:
     """SR-112: the app:// handler's responses, 404 and 405 included, carry the main-process CSP.
 
     The status shows which handler path answered. The header must hold the main-process CSP's
     tokens in the same order: comparing parse_csp() dicts would miss a repeated directive, which
     the browser enforces by its first occurrence. Absent facts fail only under --require-runtime.
+    A mistyped entry, or a second response for the same request, is a violation too, so every
+    collected response is judged; the first copy of a request is the one checked below.
     """
     if probes is None and not require:
         return []
-    got = {
-        (p.get("method"), p.get("url")): p
-        for p in (probes if isinstance(probes, list) else [])
-        if isinstance(p, dict)
-    }
     vs: list[Violation] = []
+    got: dict[tuple[str, str], dict[str, Any]] = {}
+    for i, p in enumerate(probes if isinstance(probes, list) else []):
+        where = f"facts appProbes[{i}]"
+        if not isinstance(p, dict):
+            vs.append(Violation("SR-112", where, "is not an object"))
+            continue
+        bad = _mistyped_fields(p)
+        if bad:
+            need = "method and url strings, status an integer or null, csp a string or null"
+            vs.append(
+                Violation(
+                    "SR-112", where, f"wrong type for {', '.join(bad)} (need {need})"
+                )
+            )
+            continue
+        key = (p["method"], p["url"])
+        if key in got:
+            subject = f"app:// handler {key[0]} {key[1]}"
+            vs.append(Violation("SR-112", subject, "collected more than once"))
+            continue
+        got[key] = p
     for (method, url), status in APP_PROBES.items():
         subject = f"app:// handler {method} {url}"
         p = got.get((method, url))
