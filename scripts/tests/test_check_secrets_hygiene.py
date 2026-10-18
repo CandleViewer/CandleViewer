@@ -241,7 +241,9 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
     + [("#!/usr/bin/env -S zsh --xtrace-not", 0)]
     + [("#!/usr/bin/env -S bash -x # secrets-hygiene: allow", 0)]
     # #3400: verbose, which echoes each line read.
-    + [("#!/bin/bash -v", 1), ("#!/usr/bin/env -S bash --verbose", 1)],
+    + [("#!/bin/bash -v", 1), ("#!/usr/bin/env -S bash --verbose", 1)]
+    # #3400: `env -S` takes the quotes off its words (uutils env 0.8.0 traced it).
+    + [('#!/usr/bin/env -S bash "-x"', 1)],
 )
 def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
     _write(tmp_path, WF, _runs("./tools/x.sh"))
@@ -401,6 +403,39 @@ TRACED = [
     "trap 'echo \"+ $BASH_COMMAND\"' DEBUG",
     "trap -- 'echo $BASH_COMMAND' INT debug",
     "TRAPDEBUG() { print -r -- $ZSH_DEBUG_CMD; }",
+    # #3400: the shell takes the quotes and escapes off each word, an empty quoted string inside
+    # a word too (bash 5.3 traced each).
+    'set "-x"',
+    "set '-x'",
+    'set -o "xtrace"',
+    'set -"x"',
+    "set -e''x",
+    "set $'-x'",
+    "set -\\x",
+    'bash "-x" ci.sh',
+    '"bash" -x ci.sh',
+    "b\\ash -x ci.sh",
+    "'/bin/bash' -x ci.sh",
+    'shopt -so "xtrace"',
+    # #3400: a shell named by $BASH (the running bash) or $SHELL (the login shell).
+    '"$BASH" -x ci.sh',
+    "$SHELL -x ci.sh",
+    "${SHELL} -x ci.sh",
+    "${SHELL:-sh} -x ci.sh",
+    'exec "$BASH" -x "$0" "$@"',
+    # #3400: a long option's argument (bash's --rcfile and --init-file, zsh's --emulate), and
+    # redirections, which the shell takes out of the words it passes.
+    "bash --rcfile x.rc -x ci.sh",
+    "bash --init-file x -x ci.sh",
+    "zsh --emulate csh -x ci.sh",
+    "bash 2>&1 -x ci.sh",
+    "bash >log -x ci.sh",
+    "bash > log -x ci.sh",
+    "bash &>>log -x ci.sh",
+    "bash {fd}>log -x ci.sh",
+    'bash </dev/null -x -c "make test"',
+    "bash <<'EOF' -x",
+    'bash <<<"" -x ci.sh',
 ]
 NOT_TRACED = [
     "set -e",
@@ -465,6 +500,17 @@ NOT_TRACED = [
     "trap '' DEBUG",
     "trap 'rm -f x.tmp' EXIT",
     "trap 'echo \"failed: $BASH_COMMAND\"' ERR",
+    # #3400: an empty quoted word is a word (`set "" -x` sets $1); quotes inside a word and an
+    # escaped space join it (`bash\ -x` is one word); a trap's quoted action is one word; the
+    # rcfile named -x; other variables; a process substitution, a file bash runs with -x as $1.
+    'set "" -x',
+    'my"bash" -x ci.sh',
+    "bash\\ -x ci.sh",
+    "trap 'echo DEBUG' EXIT",
+    "bash --rcfile -x ci.sh",
+    "$SHELLCHECK -x ci.sh",
+    "echo ${BASH_VERSION} -x",
+    "bash <(make) -x",
 ]
 VIA = ["run", "script"]
 
@@ -547,20 +593,39 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         "trap x " * 14000,
         "trap '" * 20000,
         'trap "' + "\\\\" * 45000,
+        # #3400: quotes and escapes, taken off in one pass (each quote read to its end once, an
+        # unclosed one to the end of the line); the words they leave; a long option's argument;
+        # redirections; $SHELL, braced, with a default that ends at `$`.
+        "'" * 96000,
+        "\"'" * 48000,
+        '\\"' * 48000,
+        '"\\' * 48000,
+        "$'" * 48000,
+        "-''" * 32000,
+        "'bash' " * 13000,
+        "bash " + "--rcfile " * 10000,
+        "bash " + "2>&1 " * 19000,
+        "bash" + " >" * 48000,
+        "$SHELL " * 13000,
+        "${SHELL:-" * 10000,
+        "${SHELL:-a" * 9000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
     + ["shellcheck-words", "shellcheck-options", "shellcheck-mid-word", "shellcheck-paths"]
     + ["name-separators", "dashes", "shopt-flags", "shopt-long-flag", "shopt-names"]
     + ["setopt-o-words", "unsetopt-words", "shellopts-assignments", "shellopts-items"]
-    + ["trap-words", "trap-quotes", "trap-escapes"],
+    + ["trap-words", "trap-quotes", "trap-escapes"]
+    + ["single-quotes", "mixed-quotes", "escaped-quotes", "quote-escapes", "ansi-c-quotes"]
+    + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
+    + ["shell-vars", "shell-defaults", "shell-default-runs"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
     # to it. Each line takes milliseconds; a quadratic rule took seconds (about 20 s at 96k).
     start = time.process_time()
     h._sr146_hits(line)
-    h._SHEBANG_X.match(f"#!/bin/sh {line}")
+    h._SHEBANG_X.match(h._unquoted(f"#!/bin/sh {line}"))
     assert time.process_time() - start < 1.0
 
 
