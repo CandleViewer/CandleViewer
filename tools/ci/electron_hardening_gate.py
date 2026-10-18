@@ -4,9 +4,10 @@
 Inspects the *built* artefacts (compiled main/preload output and the renderer
 bundle), not the TypeScript source, because source-level checks miss build-time
 configuration and bundler output (ticket Technical notes). Facts that only a
-running app can report (live `webPreferences`, the CSP header the main process
-actually builds) come from `apps/desktop/scripts/collect-hardening-facts.mjs`
-as a JSON file passed with `--facts`.
+running app can report (each window's live `webPreferences` and URL, the CSP
+header the main process builds, the app:// handler's responses) come from
+`apps/desktop/scripts/collect-hardening-facts.mjs` as a JSON file passed with
+`--facts`.
 
 Every failure names the SR requirement and links its section 6.11 or 6.11a row so
 a developer can self-serve the fix. Exit 0 = clean, 1 = violations, 2 = usage.
@@ -38,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--require-runtime",
         action="store_true",
-        help="fail if the facts file has no live window webPreferences (CI sets this)",
+        help="fail if a runtime fact (CSP header, windows, app:// responses) is missing",
     )
     args = ap.parse_args(argv)
 

@@ -60,17 +60,35 @@ GOOD_SHELLPORT = (
 )
 GOOD_UPDATE = "export function isAutoUpdateEnabled() {\n    return false;\n}\n"
 GOOD_BUILDER = 'files:\n  - dist/**/*\n  - "!**/*.map"\n'
-GOOD_WINDOWS = [
+GOOD_WINDOWS: list[dict[str, object]] = [
     {
         "name": "window-0",
         "title": "CandleViewer",
+        "url": "app://candleviewer/",
         "webPreferences": dict(SR110_REQUIRED),
     },
     {
         "name": "popout-1",
         "title": "CandleViewer",
+        "url": "app://candleviewer/popout/chart?id=1",
         "webPreferences": dict(SR110_REQUIRED),
     },
+]
+# The app:// handler responses collect-hardening-facts.mjs fetches, pinned here as literals:
+# the page, a missing asset and an /api path (both 404, no SPA fallback) and a non-GET (405).
+GOOD_PROBES: list[dict[str, object]] = [
+    {
+        "method": method,
+        "url": f"app://candleviewer{path}",
+        "status": status,
+        "csp": GOOD_CSP,
+    }
+    for method, path, status in (
+        ("GET", "/", 200),
+        ("GET", "/assets/cv-hardening-probe.js", 404),
+        ("GET", "/api/cv-hardening-probe", 404),
+        ("POST", "/", 405),
+    )
 ]
 
 
@@ -93,12 +111,15 @@ class Tree:
             ),
             "electron-builder.yml": GOOD_BUILDER,
         }
+        self.windows = copy.deepcopy(GOOD_WINDOWS)
+        self.probes = copy.deepcopy(GOOD_PROBES)
         self.facts: dict[str, object] = {
             "cspHeader": GOOD_CSP,
-            "windows": copy.deepcopy(GOOD_WINDOWS),
+            "windows": self.windows,
+            "appProbes": self.probes,
         }
 
-    def violations(self) -> list:  # type: ignore[type-arg]
+    def violations(self, require: bool = True) -> list:  # type: ignore[type-arg]
         for rel, text in self.files.items():
             p = self.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +129,7 @@ class Tree:
             web_dist=self.root / "web",
             builder_config=self.root / "electron-builder.yml",
             facts=self.facts,
-            require_runtime=True,
+            require_runtime=require,
         )
 
 
@@ -474,6 +495,102 @@ def test_a_module_in_a_sub_directory_is_scanned(
     tree.files[f"desktop/{rel}"] = js
     vs = tree.violations()
     assert srs(vs) == {sr} and f"violated by {subject}:" in vs[0].render()
+
+
+@pytest.mark.parametrize("i", [1, 2])
+def test_a_404_without_the_csp_header_fails_sr112(tree: Tree, i: int) -> None:
+    tree.probes[i]["csp"] = None
+    vs = tree.violations()
+    assert srs(vs) == {"SR-112"} and str(tree.probes[i]["url"]) in vs[0].render()
+
+
+@pytest.mark.parametrize(
+    "csp",
+    [
+        GOOD_CSP.replace("frame-ancestors 'none'", "frame-ancestors *"),
+        # A repeated directive is enforced by its first occurrence; parse_csp keeps the last.
+        "default-src *; " + GOOD_CSP,
+        "",
+    ],
+    ids=["frame-ancestors-relaxed", "repeated-default-src", "empty"],
+)
+def test_a_405_with_a_different_csp_header_fails_sr112(tree: Tree, csp: str) -> None:
+    tree.probes[3]["csp"] = csp
+    assert srs(tree.violations()) == {"SR-112"}
+
+
+@pytest.mark.parametrize(
+    ("i", "status"),
+    [(0, 404), (1, 200), (2, 200), (3, 200), (3, None)],
+    ids=[
+        "page-404",
+        "missing-asset-200",
+        "api-spa-fallback-200",
+        "post-200",
+        "no-status",
+    ],
+)
+def test_a_handler_response_with_the_wrong_status_fails_sr112(
+    tree: Tree, i: int, status: int | None
+) -> None:
+    tree.probes[i]["status"] = status
+    assert srs(tree.violations()) == {"SR-112"}
+
+
+@pytest.mark.parametrize("i", range(len(GOOD_PROBES)))
+def test_a_missing_handler_response_fails_closed_in_runtime_mode(
+    tree: Tree, i: int
+) -> None:
+    del tree.probes[i]
+    assert srs(tree.violations()) == {"SR-112"}
+
+
+@pytest.mark.parametrize("probes", [None, {"GET": 200}, ["not-a-probe"]])
+def test_absent_or_malformed_handler_responses_fail_closed_in_runtime_mode(
+    tree: Tree, probes: object
+) -> None:
+    tree.facts["appProbes"] = probes
+    if probes is None:
+        del tree.facts["appProbes"]
+    vs = tree.violations()
+    assert srs(vs) == {"SR-112"} and len(vs) == len(GOOD_PROBES)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///opt/CandleViewer/resources/web/dist/index.html",
+        "app://other/",
+        "app://candleviewer.evil/",
+        "app://candleviewer@evil/",
+        "app://user@candleviewer/",
+        "app://candleviewer:8443/",
+        "http://127.0.0.1:5173/",
+        "about:blank",
+        "",
+        None,
+    ],
+)
+def test_a_window_off_the_app_origin_fails_sr174(tree: Tree, url: str | None) -> None:
+    tree.windows[1]["url"] = url
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "window 'popout-1'" in vs[0].render()
+
+
+def test_a_window_without_a_url_fails_closed_in_runtime_mode(tree: Tree) -> None:
+    del tree.windows[0]["url"]
+    assert srs(tree.violations()) == {"SR-174"}
+
+
+def test_handler_responses_and_window_urls_stay_optional_without_require_runtime(
+    tree: Tree,
+) -> None:
+    del tree.facts["appProbes"]
+    for w in tree.windows:
+        del w["url"]
+    assert tree.violations(require=False) == []
+    tree.windows[0]["url"] = "file:///index.html"
+    assert srs(tree.violations(require=False)) == {"SR-174"}
 
 
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:

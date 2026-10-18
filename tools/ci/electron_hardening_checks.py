@@ -39,6 +39,19 @@ ABSENT_MEANS_DEFAULT = frozenset({"nodeIntegrationInWorker"})
 # deliberate change made here, in review.
 APP_SCHEME_PRIVILEGES: dict[str, bool] = {"standard": True, "secure": True}
 
+# SR-174: the one origin the app:// handler serves (APP_SCHEME and APP_HOST in appProtocol.ts).
+APP_ORIGIN = "app://candleviewer"
+
+# SR-112: the app:// handler responses collect-hardening-facts.mjs fetches from the packaged
+# main process (same list there), with the status each must get: the page, a missing asset and
+# an /api path (the SPA fallback leaves both 404) and a non-GET method (405).
+APP_PROBES: dict[tuple[str, str], int] = {
+    ("GET", f"{APP_ORIGIN}/"): 200,
+    ("GET", f"{APP_ORIGIN}/assets/cv-hardening-probe.js"): 404,
+    ("GET", f"{APP_ORIGIN}/api/cv-hardening-probe"): 404,
+    ("POST", f"{APP_ORIGIN}/"): 405,
+}
+
 # SR-112: directives whose value must match verbatim (connect-src handled separately).
 SR112_EXACT: dict[str, str] = {
     "default-src": "'self'",
@@ -479,10 +492,67 @@ def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8") if p.is_file() else ""
 
 
+def check_app_responses(probes: Any, header_csp: Any, require: bool) -> list[Violation]:
+    """SR-112: the app:// handler's responses, 404 and 405 included, carry the main-process CSP.
+
+    The status shows which handler path answered. The header must hold the main-process CSP's
+    tokens in the same order: comparing parse_csp() dicts would miss a repeated directive, which
+    the browser enforces by its first occurrence. Absent facts fail only under --require-runtime.
+    """
+    if probes is None and not require:
+        return []
+    got = {
+        (p.get("method"), p.get("url")): p
+        for p in (probes if isinstance(probes, list) else [])
+        if isinstance(p, dict)
+    }
+    vs: list[Violation] = []
+    for (method, url), status in APP_PROBES.items():
+        subject = f"app:// handler {method} {url}"
+        p = got.get((method, url))
+        if p is None:
+            vs.append(Violation("SR-112", subject, "no response collected"))
+            continue
+        if p.get("status") != status:
+            vs.append(
+                Violation(
+                    "SR-112", subject, f"status is {p.get('status')!r}, need {status}"
+                )
+            )
+        csp = p.get("csp")
+        if not isinstance(csp, str):
+            vs.append(Violation("SR-112", subject, "no Content-Security-Policy header"))
+        elif not isinstance(header_csp, str) or csp.split() != header_csp.split():
+            vs.append(
+                Violation(
+                    "SR-112", subject, "CSP header differs from the main-process CSP"
+                )
+            )
+    return vs
+
+
+def check_window_url(window: str, url: Any) -> list[Violation]:
+    """SR-174: a window shows the web app from the app:// handler's one origin.
+
+    A prefix match on the URL the window reports, so the scheme is app and the host exactly
+    candleviewer: no file: page, userinfo, port or look-alike host.
+    """
+    if isinstance(url, str) and url.startswith(f"{APP_ORIGIN}/"):
+        return []
+    return [
+        Violation(
+            "SR-174",
+            f"window '{window}'",
+            f"shows {url!r}; a window must show the web app from {APP_ORIGIN}/",
+        )
+    ]
+
+
 def check_runtime_facts(
     facts: dict[str, Any], meta_csp: str | None, require: bool
 ) -> list[Violation]:
-    """Live facts from the packaged app: CSP header + every window's webPreferences."""
+    """Live facts from the packaged app: the CSP header, the app:// handler's responses and
+    every window's webPreferences and URL."""
     vs: list[Violation] = []
     header_csp = facts.get("cspHeader")
     if isinstance(header_csp, str):
@@ -498,6 +568,8 @@ def check_runtime_facts(
         for w in windows:
             name = str(w.get("name", "?"))
             vs += check_webprefs(name, dict(w.get("webPreferences", {})))
+            if require or "url" in w:
+                vs += check_window_url(name, w.get("url"))
             # Env word in the title is an a11y disclosure; enforced once the env badge
             # ticket lands it (collector sets requireEnvTitle).
             if facts.get("requireEnvTitle") and not re.search(
@@ -512,6 +584,7 @@ def check_runtime_facts(
         vs.append(
             Violation("SR-110", "facts", "no live window webPreferences collected")
         )
+    vs += check_app_responses(facts.get("appProbes"), header_csp, require)
     return vs
 
 
