@@ -232,6 +232,8 @@ UNIT_ENGINE = "    name: unit-engine\n    needs: install\n"
 PY_OUT = "      py: ${{ steps.filter.outputs.py }}\n"
 JS_OUT = "      js: ${{ steps.filter.outputs.js }}\n"
 PR_OUT = "      pr: ${{ steps.change.outputs.pr }}\n"
+CONTRACT = "    uses: ./.github/workflows/_job-contract.yml\n"
+MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
 
 
 @pytest.mark.parametrize(
@@ -399,6 +401,9 @@ PR_OUT = "      pr: ${{ steps.change.outputs.pr }}\n"
         ("pr.yml", PR_OUT, PR_OUT.replace("change", "filter"), "'commitlint' reads ['FILTER_PR']"),
         ("pr.yml", "        id: filter\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
         ("pr.yml", "        id: change\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
+        # ... and a lane credited by name calls a workflow of this repository the proof reads.
+        ("pr.yml", CONTRACT, CONTRACT.replace("./", "o/r/").replace("\n", "@" + "0" * 40 + "\n"), "calls"),
+        ("pr.yml", MIGRATIONS, MIGRATIONS.replace("./", '"./').replace("\n", '"\n'), "'migrations' calls"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(

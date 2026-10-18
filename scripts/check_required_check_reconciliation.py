@@ -260,8 +260,8 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls that can fail it (keys at 4 spaces, not NEVER_RE, and a
-    readable `needs:` that names no job that cannot).
+    of the reusable workflow it calls, which must be a ./.github/workflows/ file, that can fail it
+    (keys at 4 spaces, not NEVER_RE, and a readable `needs:` that names no job that cannot).
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
     call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
@@ -364,8 +364,14 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
         if applicable == "false" or unset:
             continue
         if source == f"needs.{lane}.result" and lane in needs and lane in jobs:
+            uses = USES_RE.search(lane_text := "\n".join(jobs[lane]))
+            if not uses and re.search(r"^    uses:", lane_text, re.M):
+                errors.append(
+                    f"{path}: lane '{lane}' calls a workflow this proof cannot read (only "
+                    "./.github/workflows/<file>, unquoted)"
+                )
+                continue
             lanes.add(lane)
-            uses = USES_RE.search("\n".join(jobs[lane]))
             if uses:
                 called_path = os.path.join(workflows_dir, uses.group(1))
                 called_text = _read(called_path)
