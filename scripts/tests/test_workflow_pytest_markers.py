@@ -24,7 +24,6 @@ Not read: pytest that any other script runs."""
 from __future__ import annotations
 
 import ast
-import configparser
 import re
 import shlex
 import subprocess
@@ -33,6 +32,7 @@ from collections.abc import Iterator
 from itertools import combinations
 from pathlib import Path
 
+import iniconfig
 import pytest
 import yaml
 
@@ -270,7 +270,8 @@ def _keeps_quarantine_out(addopts: str) -> bool:
 
 def _config_addopts(path: Path) -> str | None:
     """The addopts of a file that pytest reads as its config ("" when it sets none), or None when
-    pytest skips the file. Raises on a TOML-mode config, which this reader does not read."""
+    pytest skips the file. Raises on a TOML-mode config, which this reader does not read. An INI
+    config is read with iniconfig, as pytest reads it: case-sensitive keys, no [DEFAULT] merge."""
     text = path.read_text(encoding="utf-8")
     if path.name in ("pytest.toml", ".pytest.toml"):
         raise ValueError("cannot read a TOML mode config: write pytest.ini")
@@ -282,11 +283,10 @@ def _config_addopts(path: Path) -> str | None:
             raise ValueError("cannot read TOML mode [tool.pytest]: use [tool.pytest.ini_options]")
         addopts = table["ini_options"].get("addopts", "")
         return addopts if isinstance(addopts, str) else shlex.join(addopts)
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read_string(text)
+    sections = iniconfig.IniConfig(path, data=text).sections
     section = "tool:pytest" if path.suffix == ".cfg" else "pytest"
-    if parser.has_section(section):
-        return parser.get(section, "addopts", fallback="")
+    if section in sections:
+        return sections[section].get("addopts", "")
     return "" if path.name in ("pytest.ini", ".pytest.ini") else None  # read even when empty
 
 
@@ -300,7 +300,7 @@ def _configs(root: Path = ROOT) -> dict[str, str]:
             continue
         try:
             addopts = _config_addopts(root / path)
-        except (ValueError, configparser.Error) as err:
+        except (ValueError, iniconfig.ParseError) as err:
             raise ValueError(f"{path}: {err}") from err
         if addopts is not None:
             configs[path] = addopts
@@ -390,6 +390,22 @@ def test_config_reader_returns_the_addopts_pytest_reads(
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        '[pytest]\nAddopts = -m "not flaky"\n',  # keys are case-sensitive: not an addopts
+        '[DEFAULT]\naddopts = -m "not flaky"\n\n[pytest]\n',  # DEFAULT is a plain section
+    ],
+)
+def test_config_reader_reads_an_ini_config_as_pytest_does(tmp_path: Path, text: str) -> None:
+    """pytest reads an INI config with iniconfig: it matches an option name as written and does
+    not merge [DEFAULT] into [pytest]. Each config here lets a quarantined test run."""
+    (tmp_path / "pytest.ini").write_text(text, encoding="utf-8")
+    addopts = _config_addopts(tmp_path / "pytest.ini")
+    assert addopts == ""
+    assert not _keeps_quarantine_out(addopts)
+
+
+@pytest.mark.parametrize(
     ("name", "text"),
     [
         ("pytest.toml", ""),
@@ -424,6 +440,9 @@ def test_config_scan_reads_tracked_configs_and_names_an_unreadable_one(tmp_path:
     assert _configs(tmp_path) == {"pytest.ini": '-m "not flaky"', "a/pytest.ini": ""}
     subprocess.run([*git, "add", "d/pytest.toml"], check=True, timeout=60)
     with pytest.raises(ValueError, match=r"^d/pytest\.toml: cannot read a TOML mode config"):
+        _configs(tmp_path)
+    (tmp_path / "b" / "tox.ini").write_text("[pytest]\n  -q\n", encoding="utf-8")  # pytest fails
+    with pytest.raises(ValueError, match=r"^b/tox\.ini: .*unexpected value continuation"):
         _configs(tmp_path)
 
 
