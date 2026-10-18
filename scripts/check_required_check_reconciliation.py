@@ -38,7 +38,7 @@ LANE_ALIASES: dict[str, tuple[str, ...]] = {
     "e2e-smoke": ("e2e/e2e-web",),
     "sast": ("security/codeql", "security/semgrep-bandit"),
     "sca": ("security/read-only-scans",),
-    "secrets-scan": ("security/gitleaks",),
+    "secrets-scan": ("security/gitleaks", "secret-scan"),
     "container-scan": ("security/trivy",),
     "license-check": ("security/read-only-scans",),
     "generated-code-check": ("gen",),
@@ -52,6 +52,14 @@ LANE_RE = re.compile(
     r'"?([a-z0-9-]+)"?:\s*\{\s*applicable:\s*([^{}]*?),\s*'
     r"result:\s*process\.env\.(RESULT_[A-Z0-9_]+)"
 )
+# The step that decides `ci-required`: a `run:` block that starts with the resolver call and
+# ends its argument (the lane table) with nothing after it that could override its exit.
+RESOLVER_RUN_RE = re.compile(
+    rf"^\s+run: \|\n\s+node {re.escape(RESOLVER)} \"\$\(node -e '$(.*?)^\s+'\)\"$", re.M | re.S
+)
+USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
+NEVER_RE = re.compile(r"^    if:\s*(\$\{\{\s*)?false\s*(\}\})?\s*$", re.M)
+PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
 
 
 class ReconciliationError(Exception):
@@ -107,40 +115,58 @@ def _job_blocks(text: str) -> dict[str, list[str]]:
     return jobs
 
 
+def _check_name(job_id: str, lines: list[str]) -> str | None:
+    """A job's check-run name: its literal `name:`, else its id. None when GitHub expands it (an
+    expression, or a matrix, which appends its values)."""
+    named = [m.group(1) for m in map(re.compile(r"^    name:\s*(.+?)\s*$").match, lines) if m]
+    name = named[0].split(" #")[0].strip("\"' ") if named else job_id
+    return None if "${{" in name or re.search(r"^      matrix:", "\n".join(lines), re.M) else name
+
+
 def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") -> set[str]:
-    """Check-run names reported by the jobs of every workflow that `event` triggers (stdlib only):
-    a job's literal `name:`, else its id. Empty when no workflow matches."""
+    """Check-run names reported on every `event` (stdlib only): a job's literal `name:`, else its
+    id, and `<caller> / <job>` for each job of a reusable workflow a job calls (the caller's own
+    name reports only as a skipped placeholder); see `_check_name`. A workflow with a `paths`
+    filter reports nothing here: on other changes its checks never arrive. Empty when none runs."""
     names: set[str] = set()
     for wf_path in sorted(glob.glob(workflows_glob)):
-        with open(wf_path, encoding="utf-8") as fh:
-            text = fh.read()
+        text = _read(wf_path)
         on = re.search(r"^[\"']?on[\"']?:(.*?)^[^\s#]", text + "\nend", re.M | re.S)
-        if not (on and re.search(rf"(?<![\w-]){event}(?![\w-])", re.sub("#.*", "", on.group(1)))):
+        trigger = re.sub("#.*", "", on.group(1)) if on else ""
+        if not re.search(rf"(?<![\w-]){event}(?![\w-])", trigger) or PATHS_RE.search(trigger):
             continue
         for job_id, lines in _job_blocks(text).items():
-            named = [
-                m.group(1) for m in map(re.compile(r"^    name:\s*(.+?)\s*$").match, lines) if m
-            ]
-            name = named[0].split(" #")[0].strip("\"' ") if named else job_id
-            if "${{" not in name:
+            name, uses = _check_name(job_id, lines), USES_RE.search("\n".join(lines))
+            if uses:
+                called = _job_blocks(_read(os.path.join(os.path.dirname(wf_path), uses.group(1))))
+                subs = [_check_name(*job) for job in called.items()]
+                names.update(f"{name} / {sub}" for sub in subs if name and sub)
+            elif name:
                 names.add(name)
     return names
 
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls. A lane counts when the resolver table takes its result from
-    a job `ci-required` needs, or from a `gates` output that a step backs, and its applicability is
-    not the literal `false`. Returns (lanes, errors)."""
+    of the reusable workflow it calls whose `if:` is not the literal `false`. `ci-required` must
+    run `if: always()`, never `continue-on-error`, and decide its step by the resolver call
+    (RESOLVER_RUN_RE). A lane counts when its applicability is not the literal `false` and the
+    table, with no key twice, takes its result from the needed job of the lane's own name, or from
+    the `gates` output of that name, which the step of that id backs. Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     jobs = _job_blocks(_read(path))
     body = "\n".join(jobs.get(AGGREGATE_CONTEXT, []))
-    table = re.search(r"const lanes = \{(.*?)\n\s*\};", body, re.S)
+    run = RESOLVER_RUN_RE.search(body)
     if (
         not re.search(r"^    if:\s*(\$\{\{\s*)?always\(\)\s*(\}\})?\s*$", body, re.M)
-        or RESOLVER not in body
+        or re.search(r"^\s+continue-on-error:", body, re.M)
+        or not run
     ):
-        return set(), [f"{path}: `{AGGREGATE_CONTEXT}` must run {RESOLVER} with `if: always()`"]
+        return set(), [
+            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error, "
+            f"in a `run:` block that starts with {RESOLVER} and whose exit is the resolver's"
+        ]
+    table = re.search(r"const lanes = \{(.*?)\n\s*\};", run.group(1), re.S)
     needs = set(re.findall(r"^      - ([A-Za-z0-9_-]+)\s*$", body.split("\n    steps:")[0], re.M))
     env = dict(re.findall(r"^\s+(RESULT_[A-Z0-9_]+):\s*\$\{\{\s*(\S+)\s*\}\}\s*$", body, re.M))
     gates = "\n".join(jobs.get("gates", []))
@@ -148,24 +174,25 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     outputs = re.findall(
         r"^      ([a-z0-9-]+):\s*\$\{\{\s*steps\.([\w-]+)\.outcome\s*\}\}", gates, re.M
     )
-    exported = {key for key, step in outputs if step in step_ids}
+    exported = {key for key, step in outputs if key == step and step in step_ids}
+    found = LANE_RE.findall(table.group(1) if table else "")
+    keys = [lane for lane, _, _ in found]
+    errors = [f"{path}: lane '{k}' repeats" for k in sorted(set(keys)) if keys.count(k) > 1]
     lanes: set[str] = set()
-    for lane, applicable, var in LANE_RE.findall(table.group(1) if table else ""):
-        job = re.fullmatch(r"needs\.([\w-]+)\.result", env.get(var, ""))
-        step = re.fullmatch(r"needs\.gates\.outputs\.([\w-]+)", env.get(var, ""))
+    for lane, applicable, var in found:
+        source = env.get(var, "")
         if applicable.strip() == "false":
             continue
-        if job and job.group(1) in needs and job.group(1) in jobs:
+        if source == f"needs.{lane}.result" and lane in needs and lane in jobs:
             lanes.add(lane)
-            uses = re.search(
-                r"^    uses:\s*\./\.github/workflows/(\S+)", "\n".join(jobs[job.group(1)]), re.M
-            )
+            uses = USES_RE.search("\n".join(jobs[lane]))
             if uses:
                 called = _job_blocks(_read(os.path.join(workflows_dir, uses.group(1))))
-                lanes.update(f"{lane}/{called_job}" for called_job in called)
-        elif step and "gates" in needs and step.group(1) in exported:
+                skip = {job for job, block in called.items() if NEVER_RE.search("\n".join(block))}
+                lanes.update(f"{lane}/{job}" for job in set(called) - skip)
+        elif source == f"needs.gates.outputs.{lane}" and "gates" in needs and lane in exported:
             lanes.add(lane)
-    return lanes, [] if lanes else [f"{path}: no lane table in `{AGGREGATE_CONTEXT}`"]
+    return lanes, errors + ([] if lanes else [f"{path}: no lane table in `{AGGREGATE_CONTEXT}`"])
 
 
 def aggregated_checks(names: list[str], lanes: set[str]) -> tuple[set[str], list[str]]:
@@ -209,11 +236,14 @@ def reconcile(
     errors: list[str] = []
     constitution_set = set(constitution_names)
     contexts = required_contexts(desired_state)
-    reasons = desired_state.get("pending_checks", {}).items()
-    pending = {name for name, why in reasons if name[:1] != "$" and str(why).strip()}
+    reasons = desired_state.get("pending_checks", {})
+    if not isinstance(reasons, dict):
+        raise ReconciliationError("pending_checks must be an object: check name -> reason")
+    listed = {name for name in reasons if name[:1] != "$"}
+    pending = {name for name in listed if str(reasons[name]).strip()}
     enforced = contexts | (set(aggregated) if AGGREGATE_CONTEXT in contexts else set())
 
-    for name in sorted(contexts | pending):
+    for name in sorted(contexts | listed):
         if name not in constitution_set and name != AGGREGATE_CONTEXT:
             errors.append(
                 f"'{name}' in branch-protection.json is not a §9 check name in CONSTITUTION.md"
@@ -233,8 +263,8 @@ def reconcile(
     for name in sorted(contexts):
         if name not in workflow_job_names:
             errors.append(
-                f"'{name}' is required on main but no job named '{name}' runs on pull_request "
-                "in .github/workflows/*.yml"
+                f"'{name}' is required on main but no check run named '{name}' arrives on every "
+                "pull_request (a reusable workflow's jobs report as `<caller> / <job>`)"
             )
 
     return errors

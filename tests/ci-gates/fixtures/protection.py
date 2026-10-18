@@ -57,5 +57,5 @@ def build_drift_fixture() -> tuple[bool, str]:
     )
     job_names = {"lint", "typecheck", "unit-backend", "coverage-check", "contract"}
     errors = _reconcile_mod.reconcile(desired, _CONSTITUTION_NAMES, job_names)
-    ok = any("coverage-thresholds" in e and "no job named" in e for e in errors)
+    ok = any("coverage-thresholds" in e and "no check run named" in e for e in errors)
     return (not ok, f"{len(errors)} error(s): {errors}")

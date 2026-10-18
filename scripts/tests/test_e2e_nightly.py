@@ -365,7 +365,7 @@ def test_e2e_nightly_adds_no_check_a_required_context_names() -> None:
     # C-9.1 is unchanged: the nightly's check runs carry names no branch-protection context uses.
     protection = json.loads((ROOT / ".github/branch-protection.json").read_text(encoding="utf-8"))
     required = {check["context"] for check in protection["required_status_checks"]["checks"]}
-    required |= set(protection["pending_checks"])
+    required |= {name for name in protection["pending_checks"] if name[:1] != "$"}
     jobs = _load(NIGHTLY)["jobs"]
     lane = _load(LANE_FILE)["jobs"]
     checks = {f"{jobs['e2e']['name']} / {job.get('name', name)}" for name, job in lane.items()}

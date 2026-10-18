@@ -339,8 +339,8 @@ def apply_state(repo: str, token: str, payload: dict, branch: str = "main") -> N
 # The GitHub merge queue is not part of classic branch protection; it is
 # configured as a repository ruleset (`target: branch`) carrying a
 # `merge_queue` rule whose `parameters` mirror this file's `merge_queue`
-# block. `NON_API_KEYS` still excludes `merge_queue` from the protection PUT
-# body — it is applied and drift-checked separately via the functions below.
+# block. `META_KEYS` keeps `merge_queue` out of the protection PUT body —
+# it is applied and drift-checked separately via the functions below.
 MERGE_QUEUE_RULESET_NAME = "candleviewer-main-merge-queue"
 
 
