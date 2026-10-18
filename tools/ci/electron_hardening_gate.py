@@ -58,8 +58,10 @@ def main(argv: list[str] | None = None) -> int:
         print("electron-hardening: clean (SR-110..SR-119 and SR-174 assertions hold)")
         return 0
     for v in violations:
-        print(f"::error title=electron-hardening {v.sr}::{v.render()}")
-        print(v.render(), file=sys.stderr)
+        # One line each: escape %, CR and LF as GitHub's workflow commands expect.
+        text = v.render().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=electron-hardening {v.sr}::{text}")
+        print(text, file=sys.stderr)
     print(f"electron-hardening: {len(violations)} violation(s)", file=sys.stderr)
     return 1
 

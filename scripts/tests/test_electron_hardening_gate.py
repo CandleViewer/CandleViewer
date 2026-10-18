@@ -752,3 +752,8 @@ def test_cli_exit_codes_and_annotation(
     out = capsys.readouterr()
     assert "::error title=electron-hardening SR-110::" in out.out
     assert "section 6.11" in out.err
+    tree.windows[0]["name"] = "pop\nout%"  # fact text never starts a new output line
+    facts.write_text(json.dumps(tree.facts), encoding="utf-8")
+    assert gate_main(argv) == 1
+    out = capsys.readouterr()
+    assert "window 'pop%0Aout%25'" in out.out and "\nout" not in out.out + out.err
