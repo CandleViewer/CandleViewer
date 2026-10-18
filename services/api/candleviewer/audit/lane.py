@@ -17,6 +17,7 @@ import errno
 import fcntl
 import json
 import os
+import time
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -70,11 +71,15 @@ class AuditLane:
         """Boot: the scan; unless it holds, `audit.lane_started` when frame 1 is due and
         `audit.lane_resumed` with the head its frame follows, past any cap; then the drain. A
         failed `open()` (a file longer than any the lane writes, a symlinked file) holds the lane,
-        then raises: the caller boots on, and every append is refused with `held` (S2b-2a)."""
+        then raises: the caller boots on, and every append is refused with `held` (S2b-2a). One
+        cancelled meanwhile stops it, though the shielded open runs on to its end."""
         try:
             result = await self.journal.open(self._new_lane)
         except (lj.LaneError, OSError):
             self.journal.hold()
+            raise
+        except BaseException as exc:  # no lane accepts an append that no drain hands over
+            self.journal.stop(exc)
             raise
         journal, self._lane = self.journal, result.lane
         self._units.extend(result.units)
@@ -256,6 +261,12 @@ class AuditLane:
 
 #: Decision 9: held exclusively by the one running cv-api; S2c's release command takes it too.
 LOCK_FILE = "lane.lock"
+#: The hard-link probe's file in `lane/` (and its link, `.link`); the scan reads neither.
+PROBE_FILE = "link.probe"
+#: The façade logs `audit.lane.fallback` once per refusal reason per this many seconds, with the
+#: fallbacks it did not log: a held or stopped lane falls back on every admitted record until a
+#: restart, so S4a's refusal counter is the signal, not this line.
+FALLBACK_LOG_S = 60.0
 
 
 class LaneBootRefused(lj.LaneError):
@@ -274,7 +285,8 @@ def lane_dir(audit_wal_path: str) -> Path:
 def lock_lane(audit_wal_path: str) -> FileIO:
     """Take `lane.lock` exclusively without waiting; closing the file drops it. The WAL path must
     be absolute and free of `..`, and neither the audit directory, `lane/` nor the lock may be a
-    symlink (the `anchored_journal_dir` rule; the lock by `O_NOFOLLOW`); `lane/` is made `0700`."""
+    symlink (the `anchored_journal_dir` rule; the lock by `O_NOFOLLOW`). A missing `lane/` is made
+    `0700`; one that exists keeps its mode, in the `0700` audit directory the image creates."""
     raw, directory = Path(audit_wal_path), lane_dir(audit_wal_path)
     if not raw.is_absolute() or ".." in raw.parts:
         raise LaneBootRefused("CV_AUDIT_WAL_PATH must be absolute and free of '..'")
@@ -298,6 +310,27 @@ def lock_lane(audit_wal_path: str) -> FileIO:
         _log().critical("audit lane lock unavailable; the lane holds", error=type(exc).__name__)
         raise LaneLockUnavailable(type(exc).__name__) from exc
     return FileIO(fd, "r")
+
+
+def links_work(audit_wal_path: str) -> bool:
+    """§15.6 Failures while running: a segment is published by a hard link, so on a volume
+    without them the lane would stop at its first publish. Probed at boot, under `lane.lock`, in
+    a worker thread; any error is a boot failure, so the lane holds (READY-21), logged critical."""
+    probe = lane_dir(audit_wal_path) / PROBE_FILE
+    link = probe.with_name(f"{PROBE_FILE}.link")
+    try:
+        for path in (link, probe):  # a crash's leftovers
+            path.unlink(missing_ok=True)
+        os.close(lj._open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+        try:
+            os.link(probe, link, follow_symlinks=False)
+        finally:
+            for path in (link, probe):
+                path.unlink(missing_ok=True)
+    except OSError as exc:
+        _log().critical("audit lane hard-link probe failed; it holds", error=type(exc).__name__)
+        return False
+    return True
 
 
 async def boot_lane(
@@ -332,9 +365,11 @@ class LaneFacade:
         journal_first: Callable[[], bool],
         *,
         wait_s: float = lj.APPEND_WAIT_S,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._writer, self._lane, self._journal_first = writer, lane, journal_first
-        self._wait_s = wait_s
+        self._wait_s, self._clock = wait_s, clock
+        self._fallbacks: dict[str, tuple[float, int]] = {}  # per reason: last line, since then
 
     async def emit(
         self,
@@ -382,10 +417,20 @@ class LaneFacade:
             async with asyncio.timeout(self._wait_s):
                 await self._lane.append(record)
         except (lj.LaneRefused, TimeoutError) as exc:
-            refusal = exc.reason if isinstance(exc, lj.LaneRefused) else "timeout"
-            _log().warning("audit.lane.fallback", reason=refusal, action=record.action)
+            self._fell_back(exc.reason if isinstance(exc, lj.LaneRefused) else "timeout", record)
             return False
         return True
+
+    def _fell_back(self, reason: str, record: AuditEmission) -> None:
+        """One `audit.lane.fallback` WARNING per §15.6 reason per `FALLBACK_LOG_S`, which counts
+        the fallbacks since the last one; the reasons are a closed set, so the map is bounded."""
+        now, last = self._clock(), self._fallbacks.get(reason)
+        if last is not None and now - last[0] < FALLBACK_LOG_S:
+            self._fallbacks[reason] = (last[0], last[1] + 1)
+            return
+        self._fallbacks[reason] = (now, 0)
+        skipped = 0 if last is None else last[1]
+        _log().warning("audit.lane.fallback", reason=reason, action=record.action, skipped=skipped)
 
     async def flush(self, timeout_s: float) -> None:
         """§15.6 Ingest step 3, for a test that reads rows after a lane write; no lane, no wait."""

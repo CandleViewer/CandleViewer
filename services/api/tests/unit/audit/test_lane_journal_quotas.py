@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.audit import lane_journal as lj
 
@@ -140,6 +141,39 @@ async def test_lane_boot_rows_go_past_both_caps_once_per_boot_and_are_counted(
     await lane.close()
 
     assert (seqs, refused, count) == ([1, 2], ["full", "full"], 2)
+
+
+async def test_lane_a_second_resumed_row_is_refused_at_the_segment_cap_alone(
+    tmp_path: Path,
+) -> None:
+    """With the byte cap out of the way, the segment cap still lets one `audit.lane_resumed` a
+    boot past it, counted, and refuses a second one `full`."""
+    resumed = rec(0, "audit.lane_resumed")
+    lane, _ = await boot(tmp_path, max_segments=1, segment_max_bytes=1)
+    seqs = [await lane.append(record) for record in (STARTED, resumed)]
+    with pytest.raises(lj.LaneRefused) as full:
+        await lane.append(resumed)
+    count = lane.boot_overshoot_frames
+    await lane.close()
+
+    assert (seqs, full.value.reason, count) == ([1, 2], "full", 1)
+
+
+async def test_lane_logs_each_boot_row_past_a_cap_without_its_record(tmp_path: Path) -> None:
+    """A crash loop can end before a scrape: each boot row past a cap leaves a warning with its
+    `seq`, class and the count, and nothing of the record."""
+    lane, _ = await boot(tmp_path, lane_max_bytes=1, max_segments=1, segment_max_bytes=1)
+    with capture_logs() as logs:
+        for record in (STARTED, rec(0, "audit.lane_resumed")):
+            await lane.append(record)
+    await lane.close()
+    lines = [e for e in logs if e["event"] == "audit.lane.boot_overshoot"]
+
+    assert [(e["log_level"], e["seq"], e["cls"], e["frames"]) for e in lines] == [
+        ("warning", 1, "reserved", 1),
+        ("warning", 2, "reserved", 2),
+    ]
+    assert all(set(e) == {"event", "log_level", "seq", "cls", "frames"} for e in lines)
 
 
 async def test_lane_over_quota_append_is_refused_at_once_while_the_lock_is_held(

@@ -850,6 +850,7 @@ class LaneJournal:
         self._units: deque[tuple[Pos, int, bool]] = deque()  # (end, bytes, shared) of each
         self._end: Pos = (1, 0)  # the furthest unit end counted; no marker passes it
         self._opened = self._closed = False  # `open()` runs once; `close()` ends the drain's ops
+        self._stopped = False  # `stop()` ran: an `open()` still running ends stopped too
         self.lane, self._next_seq, self._prev = uuid.UUID(int=0), 1, ZERO_MAC
         self.refusal: LaneReason | None = "stopped"  # until `open()`
         self._pos: Pos | None = None  # the verified marker's; a new lane writes its own first
@@ -879,7 +880,8 @@ class LaneJournal:
             if any(isinstance(unit, Run) and unit.marker_ahead for unit in result.units):
                 self._pos = None  # row 2: no compaction until the first `confirm()`
             held = result.held or (result.lane is None and bool(segments))
-            self.refusal = "held" if held else ("stopped" if self._closed else None)
+            ended = self._closed or self._stopped
+            self.refusal = "held" if held else ("stopped" if ended else None)
             for unit in result.units:
                 shared = isinstance(unit, Handover) and unit.frame.cls == "shared"
                 self._count(
@@ -959,6 +961,9 @@ class LaneJournal:
             self._next_seq, self._prev = seq + 1, frame[-65:-1].decode("ascii")
             self._count((self._active, self._size), len(frame), cls == "shared")
             self.boot_overshoot_frames += past
+            if past:  # a crash loop can end before a scrape: a line outlives the counter
+                count = self.boot_overshoot_frames
+                _log().warning("audit.lane.boot_overshoot", seq=seq, cls=cls, frames=count)
             self._resumed = self._resumed or rec["action"] == "audit.lane_resumed"
             _log().info(
                 "audit.lane.appended", seq=seq, cls=cls, action=rec["action"], mac=self._prev[:16]
@@ -1049,7 +1054,7 @@ class LaneJournal:
     def stop(self, exc: BaseException) -> None:
         """Failures while running, a dead drain among them: no append until a restart; a hold
         stays a hold."""
-        self.refusal = self.refusal or "stopped"
+        self.refusal, self._stopped = self.refusal or "stopped", True
         _log().critical("audit lane stopped until a restart", error=type(exc).__name__)
 
     @contextlib.asynccontextmanager
