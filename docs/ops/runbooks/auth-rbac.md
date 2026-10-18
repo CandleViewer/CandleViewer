@@ -786,7 +786,7 @@ sign-out in the alert runbook entry (row 7) is the check.
 
 ## 11. A disable or a grant change left a step undone (`UserLifecycleStepFailed`, `UserGrantsPushFailed`, `UserDisableFailed`)
 
-Written 2026-10-18 against `main` at `f6aad808e` for #965 and #2648 (R7 of each: a step after the
+Written 2026-10-18 against `main` at `bb9b2be89` for #965 and #2648 (R7 of each: a step after the
 commit is counted and alerted, never rolled back). The alert runbooks are the anchors
 `alert-userlifecyclestepfailed`, `alert-usergrantspushfailed` and `alert-userdisablefailed` of
 `docs/plan/07-release-and-prr.md`; this section says where their signals come from.
