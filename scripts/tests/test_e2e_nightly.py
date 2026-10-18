@@ -69,7 +69,8 @@ FAKE_GIT = "import sys\nsys.exit(97)\n"
 A11Y_LANE = "_job-a11y.yml"
 #: A command that reaches the repository's remote, or GitHub, from a lane's step. git's global
 #: options (`-C dir`, `-c key=value`, `--no-pager`) may come before the subcommand. `-c` and `-C`
-#: take the next word, as git reads them, and no other option word can be read as either: each
+#: take the next word, as git reads them, or an attached `=value` (git rejects that form, so
+#: matching it only makes the check stricter). No other option word can be read as either: each
 #: word has one parse, so a match cannot backtrack exponentially (CodeQL py/redos).
 REMOTE = re.compile(
     r"\bgit(?:\s+(?:-[cC](?:\s+|=)\S+|-(?:[^\WcC]|-|[cC][\w-])[\w-]*(?:=\S+)?))*\s+"
@@ -295,6 +296,7 @@ def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
         ("git --no-pager -c core.quotepath=off pull", True),
         ("base=$(git --git-dir=.git ls-remote origin HEAD)", True),
         ("git -C -- -C -- submodule update", True),
+        ("git -c=core.x=y push origin HEAD", True),
         ("gh api repos/owner/repo", True),
         ("git -C fetch", False),
         ("git -C . diff --exit-code", False),
