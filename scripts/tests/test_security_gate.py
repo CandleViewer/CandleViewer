@@ -1438,7 +1438,6 @@ def test_pnpm_audit_fixtures_keep_pnpms_own_formatting(name: str) -> None:
 # --------------------------------------------------------------------------
 
 _ROOT = Path(__file__).resolve().parents[2]
-_REGISTER = _ROOT / "security" / "accepted-risks.yaml"
 _TOKEN_HASH = 'return hashlib.sha256(token.encode("utf-8")).hexdigest()'
 # `rule:path` of every line-keyed codeql entry -> the code its line must still hold.
 _CODEQL_LINE_PINS = {
@@ -1459,7 +1458,7 @@ _MFA_TOKEN_RESULT = (_MFA_RULE, _MFA_PATH, int(_MFA_LINE))
 def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> None:
     stale: list[str] = []
     keys: set[str] = set()
-    for risk in load_accepted_risks(_REGISTER):
+    for risk in load_accepted_risks(REGISTER):
         parts = risk.finding_id.rsplit(":", 2)
         if risk.tool != "codeql" or len(parts) != 3 or not parts[2].isdigit():
             continue
@@ -1606,7 +1605,7 @@ def _real_codeql_gate(
 def test_real_codeql_gate_mfa_token_hash_without_its_entry_blocks(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    doc = yaml.safe_load(_REGISTER.read_text(encoding="utf-8"))
+    doc = yaml.safe_load(REGISTER.read_text(encoding="utf-8"))
     rest = [e for e in doc["entries"] if e["id"] != _MFA_TOKEN_ENTRY]
     without = _write_yaml(tmp_path, {"entries": rest})
     rc, out = _real_codeql_gate(tmp_path, capsys, without, [_MFA_TOKEN_RESULT])
@@ -1618,7 +1617,7 @@ def test_real_codeql_gate_mfa_token_hash_without_its_entry_blocks(
 def test_real_codeql_gate_mfa_token_hash_with_its_entry_passes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT])
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT])
     assert rc == 0, out
     assert "security_gate[codeql]: OK" in out
     assert f"accepted risk: codeql finding {_MFA_TOKEN_ENTRY} (HIGH)" in out
@@ -1637,7 +1636,7 @@ def test_real_codeql_gate_mfa_token_hash_with_its_entry_passes(
 def test_real_codeql_gate_mfa_token_entry_other_result_still_blocks(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], other: tuple[str, str, int]
 ) -> None:
-    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT, other])
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT, other])
     rule, path, line = other
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
@@ -1648,9 +1647,9 @@ def test_real_codeql_gate_mfa_token_entry_other_result_still_blocks(
 def test_real_codeql_gate_mfa_token_entry_on_its_expiry_blocks(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    expires = {r.finding_id: r for r in load_accepted_risks(_REGISTER)}[_MFA_TOKEN_ENTRY].expires
+    expires = {r.finding_id: r for r in load_accepted_risks(REGISTER)}[_MFA_TOKEN_ENTRY].expires
     run_date = expires.isoformat()
-    rc, out = _real_codeql_gate(tmp_path, capsys, _REGISTER, [_MFA_TOKEN_RESULT], run_date)
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT], run_date)
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-004)" in out
     assert f"CI-SEC-004: accepted risk expired for {_MFA_TOKEN_ENTRY}" in out
