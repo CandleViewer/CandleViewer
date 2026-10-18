@@ -47,6 +47,24 @@ export const MAX_TABS = 64;
 /** The latest update of each `system` kind is kept for a tab that joins late; a server that invents kinds gets no more room. */
 export const MAX_SYSTEM_KINDS = 16;
 
+/**
+ * Whether the worker may open a socket to `wsUrl`: `wss:` to any host, cleartext `ws:` only to this machine,
+ * so the access token (sent in `auth` once the socket is up) never crosses a network unencrypted. This machine
+ * is `localhost`, 127.0.0.0/8 and `[::1]`; the URL parser has already written any other spelling of them
+ * (`127.1`, `[0:0:0:0:0:0:0:1]`) in these forms.
+ */
+export function isSocketAllowed(wsUrl: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(wsUrl);
+    if (protocol === "wss:") return true;
+    const here =
+      hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+    return protocol === "ws:" && here;
+  } catch {
+    return false;
+  }
+}
+
 interface Session {
   readonly id: string;
   readonly port: PortLike;
@@ -164,7 +182,8 @@ export function createPortHost(options: PortHostOptions): PortHost {
 
   function join(session: Session, message: ConnectMessage): boolean {
     if (session.joined || sessions.size >= MAX_TABS) return false;
-    if (engine !== undefined && engineUrl !== message.wsUrl) return false; // one socket, one gateway: a tab that wants another is refused
+    if (!isSocketAllowed(message.wsUrl)) return false; // a token in the clear to another machine: refused, and counted
+    if (engine !== undefined && engineUrl !== message.wsUrl) return false; // one socket, one gateway, fixed by the first connect: a tab that wants another is refused
     session.joined = true;
     sessions.add(session);
     if (engine === undefined) {

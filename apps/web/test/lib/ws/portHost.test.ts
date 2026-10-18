@@ -2,7 +2,7 @@
 // fake gateway and fake tabs. One engine serves every tab; the connection state and the kill switch reach every tab
 // the moment they change; the access token goes from the tab that was asked to the `auth` frame and nowhere else.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_TABS } from "../../../src/lib/ws/worker/portHost";
+import { isSocketAllowed, MAX_TABS } from "../../../src/lib/ws/worker/portHost";
 import { tokenOf } from "./support/connectionHarness";
 import { CONNECT, FakeTab, hostHarness } from "./support/hostHarness";
 
@@ -90,6 +90,75 @@ describe("joining", () => {
     const a = t.tab();
     a.say({ t: "consume", id: "k1", ch: "book.BTCUSDT.50", pane: "p1", priority: "focused" });
     expect(t.host.counters.rejectedMessages).toBe(1);
+  });
+});
+
+describe("the gateway a tab names (4.3)", () => {
+  const OTHER = { ...CONNECT, wsUrl: "wss://other.test/api/v1/ws" };
+
+  it.each([
+    "wss://cv.test/api/v1/ws",
+    "ws://127.0.0.1:8000/api/v1/ws",
+    "ws://127.9.9.9/api/v1/ws",
+    "ws://localhost:8000/api/v1/ws",
+    "ws://[::1]:8000/api/v1/ws",
+    "ws://127.1/api/v1/ws", // the parser writes it 127.0.0.1
+  ])("opens a socket to %s", async (wsUrl) => {
+    const t = hostHarness();
+    const tab = t.tab(true, { ...CONNECT, wsUrl });
+    await t.advance(400);
+    expect(t.host.counters).toMatchObject({ tabs: 1, rejectedMessages: 0 });
+    expect(t.gateway.conns).toHaveLength(1);
+    expect(tab.last("state").state.transport).toBe("connected");
+  });
+
+  it.each([
+    "ws://cv.test/api/v1/ws",
+    "ws://100.64.0.1:8000/api/v1/ws", // a Tailscale address is another machine
+    "ws://0.0.0.0:8000/api/v1/ws",
+    "ws://localhost.evil.test/api/v1/ws",
+    "ws://127.0.0.1.evil.test/api/v1/ws",
+    "ws://[::ffff:7f00:1]/api/v1/ws",
+  ])(
+    "never sends a token in the clear to %s: refused and counted, no socket, no token asked",
+    async (wsUrl) => {
+      const t = hostHarness();
+      const tab = t.tab(true, { ...CONNECT, wsUrl });
+      await t.advance(400);
+      expect(t.host.counters).toMatchObject({ tabs: 0, rejectedMessages: 1 });
+      expect([t.gateway.conns, tab.sent]).toEqual([[], []]);
+    },
+  );
+
+  it("allows cleartext to this machine and nothing else of what a URL can be", () => {
+    expect(isSocketAllowed("ws://localhost/ws")).toBe(true);
+    expect(isSocketAllowed("wss://cv.test/ws")).toBe(true);
+    expect(isSocketAllowed("wss://localhost/ws")).toBe(true);
+    for (const url of [
+      "http://localhost/ws",
+      "https://cv.test/ws",
+      "ftp://127.0.0.1/ws",
+      "not a url",
+      "",
+    ]) {
+      expect(isSocketAllowed(url)).toBe(false);
+    }
+  });
+
+  it("is the one the first connect named, for as long as a tab is there; the next connect after the last left may name another", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    await t.advance(400);
+    const b = t.tab(true, OTHER);
+    expect(t.host.counters).toMatchObject({ tabs: 1, rejectedMessages: 1 });
+    expect(b.sent).toEqual([]);
+    expect(t.gateway.conns.map((conn) => conn.url)).toEqual([CONNECT.wsUrl]);
+    a.say({ t: "stop" });
+    const c = t.tab(true, OTHER);
+    await t.advance(400);
+    expect(t.gateway.conns.map((conn) => conn.url)).toEqual([CONNECT.wsUrl, OTHER.wsUrl]);
+    expect(t.host.counters).toMatchObject({ tabs: 1, rejectedMessages: 1 });
+    expect(c.last("state").state.transport).toBe("connected");
   });
 });
 
