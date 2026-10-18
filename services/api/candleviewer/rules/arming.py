@@ -25,6 +25,9 @@ class Refusal:
     code: str
     status: int
     message: str
+    #: The budget fields an Owner-only refusal names (#3232); the manager answers each one as
+    #: an `errors` entry, as a save does.
+    raised_limits: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,9 @@ class ArmingFacts:
     flatten_all_acknowledged: bool = False
     owner_override_reason: str | None = None
     is_owner: bool = False
+    #: Budget fields of the active version above their `RuleLimits` default (#3232, decision 5):
+    #: arming it needs the arming actor to be the Owner, whoever saved it.
+    limits_above_default: tuple[str, ...] = ()
     min_fires: int = DEFAULT_MIN_SIMULATION_FIRES
     min_hours: float = DEFAULT_MIN_SIMULATION_HOURS
     extra: dict[str, str] = field(default_factory=dict)
@@ -80,6 +86,13 @@ def check_arming(f: ArmingFacts) -> Refusal | None:
                 f"Simulation needs {f.min_fires} fires or {f.min_hours:g} hours before arming. "
                 "Only the Owner can override this, with a written reason.",
             )
+    if f.limits_above_default and not f.is_owner:
+        return Refusal(
+            "forbidden",
+            403,
+            "Only the Owner can arm a rule whose action budget is above the default.",
+            f.limits_above_default,
+        )
     if f.sends_orders and not f.is_owner and ORDERS_WRITE not in f.perms:
         return Refusal(
             "orders_write_required",

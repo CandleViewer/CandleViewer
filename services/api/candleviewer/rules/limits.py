@@ -1,10 +1,11 @@
-"""A rule's action budget at save: the IR defaults and the hard caps (SR-104, issue #3232).
+"""A rule's action budget at save and at arming: the IR defaults and the hard caps (SR-104, #3232).
 
 SR-104 budgets a rule in two layers (`docs/plan/04-security-program.md` §6.5). This module owns
 the first, the evaluation budget in the IR `limits` block: `max_fires_per_hour` and
 `max_fires_per_day`, counted per scope instance. A value above its default needs the Owner role
-(04 §7.2.2 row 26); a value above its hard cap is refused for every role. The second layer, the
-order budget counted at dispatch with its circuit breaker, belongs to the action executor (#863).
+(04 §7.2.2 row 26); a value above its hard cap is refused for every role. Arming checks both
+again, the Owner check on the arming actor. The second layer, the order budget counted at
+dispatch with its circuit breaker, belongs to the action executor (#863).
 
 The defaults are read from `RuleLimits`, never restated. The caps live only here (C-16.5): the
 contract mirrors them as `x-cv-limit-caps` on `RuleIr`, and a contract test keeps the two equal.
@@ -14,7 +15,7 @@ not held to the caps (#3259).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Final
 
@@ -51,6 +52,15 @@ def owner_message(name: str) -> str:
     return f"{_LABELS[name]} above the default of {LIMIT_DEFAULTS[name]} needs the Owner."
 
 
+def owner_only_errors(names: Iterable[str]) -> list[dict[str, str]]:
+    """The `errors` of the `403 forbidden` a non-Owner gets, at save and at arming: one entry
+    per budget field above its default."""
+    return [
+        {"field": f"limits.{n}", "rule": "owner_only_above_default", "message": owner_message(n)}
+        for n in names
+    ]
+
+
 __all__ = [
     "BUDGET_FIELDS",
     "LIMIT_CAPS",
@@ -59,4 +69,5 @@ __all__ = [
     "above_default",
     "cap_message",
     "owner_message",
+    "owner_only_errors",
 ]

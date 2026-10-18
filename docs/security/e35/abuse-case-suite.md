@@ -33,7 +33,7 @@ Each ships a positive (`# ruleid:`) and negative (`# ok:`) fixture, and is verif
 | l schema bounds + expensive IR                                           | `test_ac_l_*` | enforced (bounds 422; timeout aborts; auto-disable)                                                                                                                                                                        |
 | m signal loop                                                            | `test_ac_m_*` | enforced at save (`feedback_loop`); runtime chain-depth limit not built                                                                                                                                                    |
 | n read another user's rules                                              | `test_ac_n_*` | enforced (404, no existence leak, no mutation)                                                                                                                                                                             |
-| o raise a rule's action budget above its default (04 §7.2.2 row 26)      | `test_ac_o_*` | enforced at save and activation (403 `forbidden` + `rule.scope_refused` audit for a non-Owner, no state change; 422 `rule_ir_invalid` above the hard cap for every role); the arming re-check is the second slice of #3232 |
+| o raise a rule's action budget above its default (04 §7.2.2 row 26)      | `test_ac_o_*` | enforced at save, activation and arming (403 `forbidden` + denied audit for a non-Owner, no state change; 422 `rule_ir_invalid`, or `rule_invalid` at arming, above the hard cap for every role); armed above it: disarmed |
 
 `test_rbac_matrix.py` asserts every `/rules*` write/read operation x role (anonymous, no perms, reader, writer).
 
