@@ -1,4 +1,4 @@
-import { expect, it, vi, type Mock } from "vitest";
+import { afterAll, expect, it, vi, type Mock } from "vitest";
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from "electron";
 
 // index.ts decides on CV_DEV_SERVER_URL once, in its whenReady wiring, and hands that one decision
@@ -30,8 +30,9 @@ vi.mock("electron", () => ({
 }));
 vi.mock("../src/main/logger", () => ({ logStartup: vi.fn(), logAuditEvent: vi.fn() }));
 
-process.env["CV_DEV_SERVER_URL"] = "http://localhost:5173";
+vi.stubEnv("CV_DEV_SERVER_URL", "http://localhost:5173");
 const { IpcSenderRefusedError } = await import("../src/main/index");
+afterAll(() => vi.unstubAllEnvs());
 
 /** Calls the KEK-handle channel from the main frame of a page on `url`. */
 function kekHandleFrom(url: string): unknown {
