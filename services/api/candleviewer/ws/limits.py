@@ -9,6 +9,8 @@ Single home for every bound the gateway enforces. Overflow policy:
   budget `ws/codec.py` sets for that window -> `frame_malformed`.
 - JSON text frame with > `MAX_JSON_CONTAINERS` `[` and `{` characters -> `frame_malformed` (a
   protocol violation); it is never depth-scanned or decoded.
+- From the first `auth_ok`, a `pong` > `MAX_PONG_BYTES` -> `bye protocol_violation` + close `1002`
+  (§8.5); one whose first member is `t: "pong"` is never decoded.
 - `sub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
   `too_many_topics` (`field: topics`) before any entry is read; nothing is subscribed (SR-192).
 - The refusals of one `sub` that `ws.subscribe.denied` records -> ONE record for the frame, which
@@ -56,6 +58,10 @@ MAX_JSON_DEPTH = 32
 #: token of that many characters can exceed it, and is refused here. Checked on the raw frame
 #: BEFORE any scan or decode.
 MAX_PREAUTH_FRAME_BYTES = 8 * 1024
+#: §8.5: max size, in encoded bytes, of a `pong` from the first `auth_ok`. A `pong` echoes the `id`
+#: of the server `ping` it answers (ASCII, at most `ENVELOPE_ID_MAX_LEN` characters); with `ts` and
+#: every heartbeat field at 2**53 - 1 it is about 210 bytes of JSON text, so this is headroom.
+MAX_PONG_BYTES = 256
 #: SR-184: max `[` plus `{` characters in an inbound JSON text frame. The count ignores strings,
 #: so it can only over-count. The widest conforming frame, a `sub` of 50 topics with every option
 #: the schema defines and every list full, has about 400: this is about 2.5x that. Checked BEFORE

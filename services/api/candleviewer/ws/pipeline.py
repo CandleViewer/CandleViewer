@@ -384,8 +384,8 @@ class ConnectionPipeline:
 
     def pong(self, probe: str, now: float) -> None:
         """A client `pong` (`dispatch`, §9.1) received at `now`: the outstanding probe's answer,
-        an RTT sample. Any other id (a heartbeat's, an answered or retired probe's, one the
-        client made up) is ignored at the cost of one comparison and keeps nothing: a client
+        an RTT sample. Any other id (a heartbeat's, an answered or retired probe's, or made up) is
+        ignored at the cost of one comparison and keeps nothing. Within its own budget a client
         answers at will, and its `pong`s are exempt from the inbound rate limit (§8.5)."""
         if self.released:  # E17-T06: a late `pong` is no RTT sample, and retires no probe
             return

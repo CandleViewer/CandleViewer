@@ -6,10 +6,13 @@ MessagePack frame is decoded under `MAX_PREAUTH_MSGPACK_VALUES` (SR-185), and a 
 toward the inbound rate like any other frame. A JSON text frame holds at most `MAX_JSON_CONTAINERS`
 `[` and `{` characters: more is a `frame_malformed` strike, and the depth scan never walks it
 (SR-184). The tests count sizes, what the depth scan and each decoder were handed, the values the
-MessagePack decoder charged and the limiter's answers (spies on the modules' own references)."""
+MessagePack decoder charged and the limiter's answers (spies on the modules' own references).
+After `auth_ok`, a `pong` past 256 bytes gets `bye protocol_violation` and 1002 (§8.5), and no
+parser is handed one that opens with its `t`."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Callable, Iterator
@@ -22,6 +25,8 @@ import pytest
 
 import candleviewer.ws.codec as codec
 import candleviewer.ws.gateway as gateway
+from candleviewer.ws import pacing
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.codec import (
     MAX_MSGPACK_ARRAY_LEN,
     MAX_MSGPACK_VALUES,
@@ -41,6 +46,7 @@ from candleviewer.ws.limits import (
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.unit.ws.test_gateway_decode import _conn
 from tests.unit.ws.test_lifecycle_socket import (
+    BASE_MS,
     JSON,
     MSGPACK,
     _auth,
@@ -51,6 +57,9 @@ from tests.unit.ws.test_lifecycle_socket import (
     _World,
 )
 from tests.unit.ws.test_msgpack_decode_bounds import _budget_frame
+from tests.unit.ws.test_pipeline_invalidation import _connected
+from tests.unit.ws.test_pipeline_outbound import _ENCODINGS, _Rig, _Wire
+from tests.unit.ws.test_pipeline_quality import _at
 
 REPO = Path(__file__).resolve().parents[5]
 _SCHEMAS: Final[dict[str, Any]] = json.loads(
@@ -586,9 +595,9 @@ def test_gateway_frame_past_the_pre_auth_cap_is_served_once_auth_ok_is_sent(
 def test_gateway_pong_counts_toward_the_inbound_rate_until_auth_ok_only(
     allowed: list[bool],
 ) -> None:
-    """§8.5: the limiter is asked about a `pong` before `auth_ok`, as about any frame, and never
-    after it. Each `ping` is answered before the next count is read, so every frame before it
-    has been handled."""
+    """§8.5: the limiter is asked about a `pong` before `auth_ok`, as about any frame, and, within
+    its budget, not after it. Each `ping` is answered before the next count is read, so every
+    frame before it has been handled."""
     w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _hello(ws)
@@ -619,3 +628,208 @@ def test_gateway_pongs_before_auth_ok_get_client_rate_limited_then_4429() -> Non
         _send(ws, {"t": "pong", "id": "s-hb-1"})
         bye, code = _bye_then_close(ws)
     assert (bye["p"]["reason"], code) == ("client_rate_limited", 4429)
+
+
+# -- a `pong` after `auth_ok`: at most 256 bytes (§8.5) -------------------------------------------
+
+#: The bound 23 §8.5 states, spelled out like `_STATED_CAP`.
+_STATED_PONG_BYTES = 256
+_MOST = 2**53 - 1  # no maximum in the schema: the largest integer a JS client keeps
+
+
+def _wire(subprotocols: list[str], frame: dict[str, Any]) -> str | bytes:
+    return msgpack.packb(frame) if subprotocols == MSGPACK else json.dumps(frame)
+
+
+def _bye(conn: _Connection) -> tuple[str, int] | None:
+    """The reason and code of the close `conn` queued, if any."""
+    p = None if conn.bye_frame is None else conn.bye_frame["p"]
+    return None if p is None else (p["reason"], p["code"])
+
+
+def _schema_valid_long_pong() -> dict[str, Any]:
+    """A `pong` the §13 schemas accept, with `id`, `ch` and `rs` at their bounds and every
+    heartbeat field: over 256 bytes on either wire."""
+    heartbeat = {"client_ms": _MOST, "server_ms": _MOST, "rtt_hint_ms": _MOST}
+    bounded = {"id": "i" * 64, "ch": "a" + ".b" * 59, "rs": str(uuid.UUID(int=1))}
+    return {"t": "pong", **bounded, "ts": _MOST, "p": heartbeat}
+
+
+@pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
+def test_an_oversized_pong_after_auth_ok_closes_protocol_violation(
+    handed: _Handed, subprotocols: list[str], decoder: str
+) -> None:
+    """Past 256 bytes, padded, at the schemas' bounds or as a 15-key map, a `pong` led by its `t`
+    gets `bye protocol_violation` (1002) and no parser is handed it; at 256 it is handled."""
+    at_bound = _padded(subprotocols, "pong", _STATED_PONG_BYTES)
+    assert _decode(_connection(subprotocols[0], authed=True), at_bound)["t"] == "pong"
+    assert [name for name, _ in handed.decoded] == [decoder]
+    handed.clear()
+    wide = {"t": "pong", **{f"k{i:02}": "x" * 20 for i in range(14)}}  # 15 keys: a fixmap's most
+    for frame in (
+        _padded(subprotocols, "pong", _STATED_PONG_BYTES + 1),
+        _wire(subprotocols, _schema_valid_long_pong()),
+        _wire(subprotocols, wide),
+    ):
+        conn = _connection(subprotocols[0], authed=True)
+        assert _decode(conn, frame) is _OVERSIZE and _bye(conn) == ("protocol_violation", 1002)
+    assert handed.nothing
+
+
+@pytest.mark.parametrize(
+    ("subprotocols", "raw", "read"),
+    [
+        pytest.param(JSON, '{"id":"p","t":"pong","p":{"pad":"%s"}}', True, id="json-t-later"),
+        pytest.param(JSON, ' \n{ "t" : "pong" , "p": {"pad": "%s"}}', False, id="json-spaced"),
+        pytest.param(JSON, '{"\\u0074": "pong", "p": {"pad": "%s"}}', True, id="json-t-escaped"),
+        pytest.param(JSON, " " * 256 + '{"t":"pong","p":{"pad":"%s"}}', True, id="json-late-brace"),
+        pytest.param(MSGPACK, {"id": "p", "t": "pong"}, True, id="msgpack-t-later"),
+    ],
+)
+def test_an_oversized_pong_closes_protocol_violation_however_its_t_is_written(
+    handed: _Handed, subprotocols: list[str], raw: str | dict[str, Any], read: bool
+) -> None:
+    """However its `t` is written, it closes. It is decoded first when its `t` comes later, is
+    escaped or follows 256 characters of whitespace; a `t` that opens it, spaced or not, is not."""
+    pad = "x" * _STATED_PONG_BYTES
+    frame = raw % pad if isinstance(raw, str) else msgpack.packb({**raw, "p": {"pad": pad}})
+    conn = _connection(subprotocols[0], authed=True)
+    assert _decode(conn, frame) is _OVERSIZE and _bye(conn) == ("protocol_violation", 1002)
+    assert bool(handed.decoded) is read
+
+
+_LONG_PONG: Final = {"t": "pong", "id": "p", "p": {"pad": "x" * _STATED_PONG_BYTES}}
+_NO_PONGS: Final[dict[str, Any]] = {
+    **{t: {"t": t, "id": "p", "p": {"pad": "x" * 300}} for t in ("ping", "pond", "pongs", "Pong")},
+    "pong-inside": {"id": "pong", "t": "ping", "p": {"t": "pong", "pad": "x" * 300}},
+}
+
+
+@pytest.mark.parametrize(
+    ("encoding", "raw", "decoded"),
+    [
+        *(
+            pytest.param(s[0], _wire(s, f), f, id=f"{s[0]}-{n}")
+            for s in (JSON, MSGPACK)
+            for n, f in _NO_PONGS.items()
+        ),
+        pytest.param(MSGPACK[0], json.dumps(_LONG_PONG), [], id="text-on-msgpack"),
+        pytest.param(JSON[0], msgpack.packb(_LONG_PONG), [], id="binary-on-json"),
+        pytest.param(MSGPACK[0], b"\x80" + msgpack.packb(_LONG_PONG)[1:], [], id="empty-map"),
+    ],
+)
+def test_an_oversized_frame_that_is_no_pong_is_handled_as_before_after_auth_ok(
+    encoding: str, raw: str | bytes, decoded: Any
+) -> None:
+    """One that only mentions `pong` is decoded and served; a frame of the other kind, or an empty
+    map, that starts like a `pong` is a strike (`[]`). Neither closes."""
+    conn = _connection(encoding, authed=True)
+    assert _decode(conn, raw) == decoded and conn.bye_frame is None
+
+
+_EMOJI_ID: Final = {"t": "pong", "id": "\U0001f600" * 64}  # 64 characters, 256 bytes of UTF-8
+
+
+@pytest.mark.parametrize(
+    ("encoding", "raw"),
+    [
+        pytest.param(JSON[0], json.dumps(_EMOJI_ID, ensure_ascii=False), id="json-non-ascii-id"),
+        pytest.param(MSGPACK[0], msgpack.packb(_EMOJI_ID), id="msgpack-non-ascii-id"),
+        pytest.param(JSON[0], '{"t":"pong","p":{"pad":"' + "x" * 300, id="json-malformed"),
+        pytest.param(MSGPACK[0], msgpack.packb(_LONG_PONG)[:-1], id="msgpack-malformed"),
+    ],
+)
+def test_a_frame_led_by_t_pong_past_256_bytes_closes_even_if_non_ascii_or_malformed(
+    handed: _Handed, encoding: str, raw: str | bytes
+) -> None:
+    """The bound counts bytes: a 64-character non-ASCII `id` passes it in under 100 characters of
+    JSON. A frame that opens with `t: "pong"` and would not parse closes too: no strike."""
+    conn = _connection(encoding, authed=True)
+    assert _decode(conn, raw) is _OVERSIZE and _bye(conn) == ("protocol_violation", 1002)
+    assert handed.nothing
+
+
+@pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
+def test_an_oversized_pong_before_auth_ok_is_handled_as_before(
+    handed: _Handed, subprotocols: list[str], decoder: str
+) -> None:
+    conn = _connection(subprotocols[0])
+    assert _decode(conn, _wire(subprotocols, _schema_valid_long_pong()))["t"] == "pong"
+    assert _bye(conn) is None and [name for name, _ in handed.decoded] == [decoder]
+
+
+# -- the `pong` budget after `auth_ok` (§8.5), through the real router, flag off and on -----------
+
+_FLAGS = pytest.mark.parametrize("flag", [None, BackpressureConfig()], ids=["flag-off", "flag-on"])
+_BURST = 8  # the budget's most at once, as 23 §8.5 states it
+_PONG: Final = {"t": "pong", "id": "s-hb-1"}
+
+
+async def _fenced(sock: _Wire, *frames: dict[str, Any]) -> list[dict[str, Any]]:
+    """Feed `frames`, then a `ping`: what was sent before its `pong`, once all were handled."""
+    for frame in (*frames, {"t": "ping", "id": "fence"}):
+        sock.feed(frame)
+    sent: list[dict[str, Any]] = []
+    while (frame := (await sock.next())[0]).get("id") != "fence":
+        sent.append(frame)
+    return sent
+
+
+@_FLAGS
+@_ENCODINGS
+async def test_pongs_within_their_budget_never_reach_the_inbound_limiter(
+    flag: BackpressureConfig | None, encoding: str, allowed: list[bool]
+) -> None:
+    """Before `auth_ok` each `pong` is counted and spends no budget; after it the budget's 8, at
+    one instant, are not counted by the limiter, and the 9th is the first it counts."""
+    rig, sock = _Rig(flag), _Wire(encoding)
+    handler = asyncio.create_task(rig.endpoint(sock))
+    try:
+        async with asyncio.timeout(5.0):
+            sock.feed({"t": "hello", "id": "h", "p": {"clock_ms": BASE_MS}})
+            assert [f["t"] for f in await sock.next()] == ["welcome"]
+            assert await _fenced(sock, *[_PONG] * _BURST) == []
+            assert len(allowed) == 1 + _BURST + 1  # `hello`, each `pong`, the fence
+            sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
+            assert [f["t"] for f in await sock.next()] == ["auth_ok"]
+            assert await _fenced(sock, *[_PONG] * _BURST) == []
+            assert len(allowed) == 1 + _BURST + 1 + 2  # then `auth` and the fence alone
+            assert await _fenced(sock, _PONG) == []
+    finally:
+        handler.cancel()
+        await asyncio.wait({handler})
+    assert len(allowed) == 1 + _BURST + 1 + 2 + 2 and all(allowed)  # the 9th `pong` and a fence
+
+
+@_ENCODINGS
+async def test_a_client_answering_every_ping_at_the_fastest_probe_interval_stays_within_budget(
+    encoding: str, allowed: list[bool]
+) -> None:
+    """60 s at the 500 ms classification floor, each writer turn late, mid or on time in its tick
+    (probes as close as 250 ms apart), every server `ping` answered at once: no `pong` reaches
+    the limiter, which counts `hello`, `auth` and the two fences of each turn alone."""
+    rig, sock = _Rig(BackpressureConfig(classify_interval_ms=500)), _Wire(encoding)
+    async with _connected(rig, sock):
+        for k in range(1, 121):
+            await _at(rig, sock, 0.5 * k + (0.4375, 0.25, 0.0)[k % 3])
+    assert len(sock.pings) == 120
+    assert len(allowed) == 2 + 2 * 120 and all(allowed)
+
+
+@_ENCODINGS
+async def test_the_widest_reply_pong_with_a_64_character_id_feeds_the_rtt_probe(
+    encoding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `pong` echoing a 64-character probe `id` with `ts` and every heartbeat field is under the
+    bound on either wire (`_Wire` writes JSON with spaces): taken, it is the RTT sample (§9.1)."""
+    monkeypatch.setattr(pacing, "PROBE_TOKEN_BYTES", 28)  # `s-rtt-1-` and 56 hex characters
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
+    sock.answer = False
+    async with _connected(rig, sock) as conn:
+        await _at(rig, sock, 1.0)  # the first classification sends the probe
+        [ping] = sock.pings
+        heartbeat = {"client_ms": _MOST, "server_ms": _MOST, "rtt_hint_ms": _MOST}
+        await _at(rig, sock, 1.125, {"t": "pong", "id": ping["id"], "ts": _MOST, "p": heartbeat})
+        assert conn.pipeline is not None and conn.pipeline.ladder is not None
+        sample = conn.pipeline.ladder.pacer.probe.sample_ms
+    assert (len(ping["id"]), conn.bye_frame, sample) == (64, None, 125.0)
