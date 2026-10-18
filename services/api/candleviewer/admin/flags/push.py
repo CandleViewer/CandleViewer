@@ -68,18 +68,31 @@ class FlagPush:
         start = self._clock()
         spec = self._service.registry[key]
         toggled = key == MAINTENANCE_MODE and stored_transition(spec, before, after)
-        notice = None
-        if toggled:
-            reason, severity, message = NOTICES[after.value is True]
-            notice = {"kind": "notice", "severity": severity, "reason": reason, "message": message}
+        notice = _notice(after.value is True) if toggled else None
         for session in tuple(self._sessions.authenticated()):
             frames: list[dict[str, Any]] = [] if notice is None else [notice]
             if spec.visible_to(session.roles):
                 value = resolve(spec, after, user_id=session.user_id, roles=session.roles)
                 frames.append({"kind": "feature_flags", "feature_flags": {key: value}})
             for frame in frames:
-                try:
-                    session.push_system(frame)
-                except Exception:  # one broken session never stops the fan-out
-                    logger().exception("feature_flag_push_session_failed", key=key)
+                _send(session, frame, key)
         flag_push_latency_seconds.observe(self._clock() - start)
+
+    def notify_maintenance(self, on: bool) -> None:
+        """The maintenance `notice` to every session, for a stored transition the controller
+        reads (`setFeatureFlag`); a write's own transition is announced by `flag_changed`."""
+        notice = _notice(on)
+        for session in tuple(self._sessions.authenticated()):
+            _send(session, notice, MAINTENANCE_MODE)
+
+
+def _notice(on: bool) -> dict[str, Any]:
+    reason, severity, message = NOTICES[on]
+    return {"kind": "notice", "severity": severity, "reason": reason, "message": message}
+
+
+def _send(session: Session, frame: dict[str, Any], key: str) -> None:
+    try:
+        session.push_system(frame)
+    except Exception:  # one broken session never stops the fan-out
+        logger().exception("feature_flag_push_session_failed", key=key)

@@ -2064,6 +2064,42 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=256,
         exported=True,
     ),
+    _s(
+        "cv_flag_push_latency_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "Time from a committed flag write to the last session frame queued (budget 2 s).",
+        "dashboard only (the push budget is 2 s)",
+        _L,
+        "E42",
+        exported=True,
+    ),
+    _s(
+        "cv_maintenance_mode",
+        "gauge",
+        "state",
+        (),
+        "1 while the order gate is engaged (maintenance or order kill switch).",
+        "dashboard only (a maintenance window or the order kill switch)",
+        _L,
+        "E42",
+        exported=True,
+    ),
+    # The order-entry gate (#837 Q5, E42-T03) is never flag-gated (C-4.14), so it has its own row in
+    # 20-architecture.md section 12.1; it is served by the same exporter.
+    _s(
+        "cv_order_entry_refusals_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "Orders refused by the order-entry gate before any OMS work, per refusal reason.",
+        "dashboard only (a maintenance window shows here)",
+        _L,
+        "E42",
+        max_series=4,
+        exported=True,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",

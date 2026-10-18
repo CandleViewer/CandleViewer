@@ -1,6 +1,8 @@
 """Feature-flag service of the admin module (E42-T03): the code-only registry with its
 security-control allowlist, the flag definitions, the pure resolver, the cached read path and
-the write path (`FlagWriter`, its evidence rules and its store and user-directory ports)."""
+the write path (`FlagWriter`, its evidence rules and its store and user-directory ports).
+The `MaintenanceGate` and the order-entry refusal counter, which the API-edge order-entry gate
+uses, are exported here too."""
 
 from __future__ import annotations
 
@@ -15,10 +17,10 @@ from candleviewer.admin.flags.maintenance import (
     AlgoCanceller,
     MaintenanceController,
     MaintenanceGate,
-    OrderEntryPausedError,
     RecorderControl,
     chain_hooks,
 )
+from candleviewer.admin.flags.metrics import order_entry_refusals_total
 from candleviewer.admin.flags.registry import (
     DENIED,
     Category,
@@ -70,7 +72,6 @@ __all__ = [
     "FlagsWriteDenied",
     "MaintenanceController",
     "MaintenanceGate",
-    "OrderEntryPausedError",
     "Prepare",
     "RecorderControl",
     "Resolution",
@@ -84,6 +85,7 @@ __all__ = [
     "Visibility",
     "chain_hooks",
     "default_registry",
+    "order_entry_refusals_total",
     "resolve",
     "rollout_bucket",
     "value_matches",

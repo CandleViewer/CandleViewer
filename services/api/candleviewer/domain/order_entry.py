@@ -22,11 +22,12 @@ scope, so the protocol is how the type-checker keeps an account check out of the
 also requires `scope == "global"` on an instance at run time, because the annotation is invisible
 then: an account check or a class object raises `TypeError`. Passing the `MaintenanceGate` itself
 remains the composition root's job. Every call names the target account (`account_id: UUID`, never
-`None`), so the per-account checks always run. A check must return `None` or the kernel's own
-`OrderEntryRefusal`, never a look-alike: anything else raises `TypeError` naming the check's type,
-so the route answers a redacted 500 and no out-of-contract refusal reaches a caller. A check that
-raises propagates the same way: the order is never admitted, and an exception is never turned into
-a refusal or an admit.
+`None`), so the per-account checks always run. A check must return `None` or exactly the kernel's
+`OrderEntryRefusal` (`@final`, compared by exact type), never a look-alike or a subclass: anything
+else raises `TypeError` naming the check's and the result's module-qualified types, so the route
+answers a redacted 500 and no out-of-contract refusal reaches a caller. A check that raises
+propagates the same way: the order is never admitted, and an exception is never turned into a
+refusal or an admit.
 
 These types live in the shared kernel (`candleviewer.domain`, importable by every module) so the
 admin maintenance gate and the accounts checks can return a refusal without importing the API
@@ -44,7 +45,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import ClassVar, Final, Literal, Protocol, get_args
+from typing import ClassVar, Final, Literal, Protocol, final, get_args
 from uuid import UUID
 
 RefusalReason = Literal[
@@ -56,6 +57,7 @@ DETAIL_MAX_LEN: Final = 200
 _ID_SHAPED: Final = re.compile(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}")
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class OrderEntryRefusal:
     reason: RefusalReason
@@ -107,10 +109,14 @@ class OrderEntryGate:
         for check in self.checks:
             refusal = check.refusal(account_id)
             if refusal is not None:
-                if not isinstance(refusal, OrderEntryRefusal):
+                if type(refusal) is not OrderEntryRefusal:  # exact: no look-alike, no subclass
                     raise TypeError(
-                        f"order-entry check {type(check).__name__} returned "
-                        f"{type(refusal).__name__}, not an OrderEntryRefusal"
+                        f"order-entry check {_qualified(type(check))} returned "
+                        f"{_qualified(type(refusal))}, not {_qualified(OrderEntryRefusal)}"
                     )
                 return refusal
         return None
+
+
+def _qualified(kind: type) -> str:
+    return f"{kind.__module__}.{kind.__qualname__}"

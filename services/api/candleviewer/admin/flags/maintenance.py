@@ -1,9 +1,10 @@
 """Maintenance mode control plane (E42-T03, module M21).
 
 Enforcement is synchronous code, never a statechart (C-2.21): `MaintenanceGate` is a
-process-wide boolean that the order-entry check (`api.order_entry_gate`) consults before any OMS
-work, so refusing is structural, not best effort. It is engaged while `maintenance.mode` **or**
-`killswitch.order_entry` is on, and while either is unknown: it starts engaged and stays engaged
+process-wide boolean, and its `refusal()` adapter is the first check of the composed order-entry
+gate (`domain.order_entry.OrderEntryGate`, #837 Q5), consulted before any OMS work, so refusing
+is structural, not best effort. While `maintenance.mode` **or** `killswitch.order_entry` is on,
+or either is unknown, it refuses with `reason="maintenance"`: it starts engaged and stays engaged
 when the store or a row cannot be read (fail closed, D1).
 
 `MaintenanceController` keeps the gate in step: `gate_hook` runs first on `FlagWriter`'s change
@@ -18,14 +19,18 @@ store or committed by a write, never on a fail-closed reading (an outage or an u
 entering maintenance cancels running emulated algos through `AlgoCanceller` and pauses the
 recorder only when `maintenance.keep_recorder` is false. Resting orders are not cancelled and
 can still fill. Each effect has a timeout, and an entry that fails is retried on the next poll.
-Native exchange stop-losses are never touched: no port here can reach them (C-2.6).
+A transition the poll reads (a boot that finds a stored `True` included, as unknown to `True`
+counts) also sends every session the `notice` and writes the `maintenance.*` audit as
+`system:maintenance`, once, under the same timeout; a write announces its own. Native exchange
+stop-losses are never touched: no port here can reach them (C-2.6).
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Final, Protocol
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol
+from uuid import UUID
 
 import structlog
 
@@ -33,12 +38,17 @@ from candleviewer.admin.flags.catalogue import MAINTENANCE_KEEP_RECORDER, MAINTE
 from candleviewer.admin.flags.metrics import maintenance_mode_gauge
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import KILLSWITCH_TTL_S, FlagService
-from candleviewer.admin.flags.writes import ChangeHook, readable
+from candleviewer.admin.flags.writes import AuditEmitter, ChangeHook, readable
+from candleviewer.audit.models import Severity
+from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryRefusal
 
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
 REFRESH_S: Final = KILLSWITCH_TTL_S
 EFFECT_TIMEOUT_S: Final = 1.0  # each; two fit the hook bound if the store and lock are prompt
+#: The refusal the gate hands the shared order-entry gate while it is engaged (#837 Q5). The
+#: detail is neutral: the order kill switch and an unreadable store engage the gate too.
+MAINTENANCE_REFUSAL: Final = OrderEntryRefusal("maintenance", "Order entry is paused.")
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -46,12 +56,12 @@ def logger() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
 
 
-class OrderEntryPausedError(Exception):
-    """Order acceptance is refused while the gate is engaged (`403 trading_disabled`)."""
-
-
 class MaintenanceGate:
     """Synchronous and lock-free: one boolean, read on every order acceptance."""
+
+    #: Declares the global scope, so this gate is a `GlobalOrderEntryCheck`: the type of
+    #: `OrderEntryGate`'s first slot, which no account check fits.
+    scope: ClassVar[Literal["global"]] = "global"
 
     def __init__(self) -> None:
         self._engaged = True  # engaged until both flags have been read (fail closed)
@@ -65,9 +75,14 @@ class MaintenanceGate:
         self._engaged = engaged
         maintenance_mode_gauge.set(1 if engaged else 0)
 
-    def check(self) -> None:
-        if self._engaged:
-            raise OrderEntryPausedError("order entry is paused")
+    def refusal(self, account_id: UUID | None = None) -> OrderEntryRefusal | None:
+        """The `OrderEntryCheck` adapter: `reason="maintenance"` while engaged, whichever flag
+        engaged it (maintenance mode, the order kill switch, or an unknown state)."""
+        return MAINTENANCE_REFUSAL if self._engaged else None
+
+
+if TYPE_CHECKING:  # mypy proves the gate fits the kernel's maintenance slot
+    _MAINTENANCE_SLOT: GlobalOrderEntryCheck = MaintenanceGate()
 
 
 class AlgoCanceller(Protocol):
@@ -88,6 +103,8 @@ class MaintenanceController:
         service: FlagService,
         gate: MaintenanceGate,
         *,
+        notify: Callable[[bool], None],
+        audit: AuditEmitter,
         algos: AlgoCanceller | None = None,
         recorder: RecorderControl | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -95,6 +112,7 @@ class MaintenanceController:
     ) -> None:
         self._service, self.gate = service, gate
         self._algos, self._recorder, self._sleep = algos, recorder, sleep
+        self._notify, self._audit = notify, audit
         self._timeout = effect_timeout_s
         self._lock = asyncio.Lock()
         self._generation = 0
@@ -102,6 +120,8 @@ class MaintenanceController:
         self._values: dict[str, bool | None] = dict.fromkeys(GATE_FLAGS)
         self._entered = False
         self._recorder_paused = False
+        #: The stored `maintenance.mode` last announced; `None` until known (`setFeatureFlag`).
+        self._announced: bool | None = None
 
     def _apply(self) -> None:
         self.gate.set(any(value is not False for value in self._values.values()))
@@ -111,6 +131,8 @@ class MaintenanceController:
             self._generation += 1
             self._values[key] = after.value is True
             self._apply()
+            if key == MAINTENANCE_MODE:  # the write announces its own transition
+                self._announced = after.value is True
 
     async def effects_hook(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
         if key == MAINTENANCE_MODE:
@@ -130,11 +152,36 @@ class MaintenanceController:
             if generation == self._generation:  # a write applied meanwhile is newer: keep it
                 self._values.update(readings)
                 self._apply()
+                await self._announce(readings[MAINTENANCE_MODE])
             maintenance = self._values[MAINTENANCE_MODE]
             if maintenance is None:
                 logger().warning("maintenance_state_unknown")  # an outage or unreadable row
                 return
             await self._effects(maintenance)
+
+    async def _announce(self, now: bool | None) -> None:
+        """Notice and audit a stored transition read here (`setFeatureFlag`): unknown to `True`
+        counts, unknown to `False` does not, and an outage or unreadable row (`None`) is silent."""
+        was = self._announced
+        if now is None or now == was:
+            return
+        self._announced = now
+        if was is None and not now:
+            return
+        self._notify(now)
+        try:
+            async with asyncio.timeout(self._timeout):  # a stalled emit must not wedge the poll
+                await self._audit.emit(
+                    "maintenance.enabled" if now else "maintenance.disabled",
+                    actor_label="system:maintenance",
+                    object_kind="feature_flag",
+                    object_id=MAINTENANCE_MODE,
+                    severity=Severity.WARNING,
+                    reason="read from the flag store",
+                    after_state={"value": now},
+                )
+        except Exception:  # never stop the poll: the gate and the notice already stand
+            logger().exception("maintenance_audit_failed", key=MAINTENANCE_MODE)
 
     async def _effects(self, on: bool) -> None:
         if on and not self._entered:
