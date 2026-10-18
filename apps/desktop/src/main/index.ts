@@ -295,13 +295,13 @@ interface SenderFrame {
 /**
  * Reads the sender frame's URL and whether it is the main frame of the web contents that sent the
  * call, by identity: the root of a nested frame tree has no parent either. No frame (navigated away
- * or gone) is not a main frame; a frame or web contents disposed mid-call throws on read.
+ * or destroyed) and a getter that throws (disposed mid-call) both mean the frame is unavailable.
  */
 function readSenderFrame(event: IpcMainInvokeEvent): SenderFrame {
   try {
     const frame = event.senderFrame;
     if (frame === null) {
-      return { url: "", kind: "not-main-frame" };
+      return { url: "", kind: "frame-unavailable" };
     }
     const isMainFrame = frame === event.sender.mainFrame;
     return { url: frame.url, kind: isMainFrame ? "main-frame" : "not-main-frame" };

@@ -429,7 +429,7 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
     ["", "main", "not-shell-origin", "invalid-url"],
     ["app://candleviewer/", "sub", "not-main-frame", "app://candleviewer"],
     ["app://candleviewer/", "nested-root", "not-main-frame", "app://candleviewer"],
-    ["", "none", "not-main-frame", "invalid-url"],
+    ["", "none", "frame-unavailable", "invalid-url"],
   ] as const)("refuses %j from a %s frame (%s), logged once", (url, frame, reason, origin) => {
     vi.mocked(app.getGPUInfo).mockClear();
     // Every registered handler, not a fixed list: a new one without the check fails here.
