@@ -51,6 +51,8 @@ GOOD_MAIN = (
     "protocol.registerSchemesAsPrivileged("
     "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
     "void win.loadURL(APP_ENTRY_URL);\n"
+    'const APP_ROOT_DIR = path.resolve(__dirname, "../../../web/dist");\n'
+    "const read = createDistReader(APP_ROOT_DIR);\n"
 )
 GOOD_APP_PROTOCOL = (
     "export const APP_SCHEME_PRIVILEGES = "
@@ -725,6 +727,7 @@ def test_dot_dot_after_the_exclusion_fails_sr116(tree: Tree, pattern: str) -> No
         "extraResources:\n- filter:\n  - '!**/*.map'\n  to: ./web/dist/\n  from: web\n",
         WEB_ENTRY + '    filter:\n      - "${env.X}/**/*"\n      - "!**/*.map"\n',
         GOOD_WEB_RESOURCES + "  - from: docs\n    to: web/docs\n" + MAP_FILTER,
+        GOOD_WEB_RESOURCES.replace("\n", "\r\n"),
     ],
     ids=[
         "exclusion-only",
@@ -732,6 +735,7 @@ def test_dot_dot_after_the_exclusion_fails_sr116(tree: Tree, pattern: str) -> No
         "compact-reordered",
         "macro-before-exclusion",
         "sibling-entry",
+        "crlf",
     ],
 )
 def test_web_dist_entry_excluding_maps_last_passes(tree: Tree, resources: str) -> None:
@@ -822,6 +826,44 @@ def test_other_packaging_that_could_ship_maps_fails_sr116(
     assert srs(vs) == {"SR-116"} and any(reason in v.message for v in vs)
 
 
+# Text the old line reader passed that js-yaml 4.3.2, electron-builder's loader, reads
+# otherwise: a comment or plain item running on past a non-LF break, a value left open over
+# the lists, a flow mapping's escaped key, a filter item off its column (js-yaml rejects the
+# flow and less-indented cases). A lone CR is refused though js-yaml breaks on it.
+QUOTED = GOOD_PACKAGING.replace('"', "'")
+WEB_ITEMS = (
+    GOOD_BUILDER + WEB_ENTRY + '    filter:\n      - "**/*"\n      - index.html\n'
+)
+MISREAD = {
+    **{
+        f"comment-U+{ord(c):04X}": (f"# x{c}" + GOOD_PACKAGING.replace("\n", c), "U+")
+        for c in "\u2028\u2029\x85\x0c"
+    },
+    "lone-CR": (GOOD_PACKAGING.replace("\n", "\r"), "line 1: it holds U+000D"),
+    "item-NEL": (WEB_ITEMS[:-1] + '\x85      - "!**/*.map"\n', "9: it holds U+0085"),
+    "double": ('productName: "x\n' + QUOTED + 'copyright: "\n', "productName:"),
+    "single": ("productName: 'x\n" + GOOD_PACKAGING + "win: '\n", "productName:"),
+    "tagged": ('productName: !!str "x\n' + QUOTED + 'win: "\n', "productName:"),
+    "flow": ("productName: [x,\n" + QUOTED + "win: ]\n", "productName:"),
+    "flow-comment": ("productName: [x # ]\n" + QUOTED + "win: ]\n", "productName:"),
+    "anchored": ('productName: &n "x\n' + QUOTED + 'win: "\n', "productName:"),
+    "quoted-key": ('publish:\n  - "x": "y\n' + QUOTED + 'win: "\n', 'line \'- "x":'),
+    "explicit-key": ('publish:\n  - ? "x\n' + QUOTED + 'win: "\n', "line '- ? \"x'"),
+    "flow-mapping": (GOOD_PACKAGING + 'mac: {"fil\\x65s": ["**/*"]}\n', "line 'mac: {"),
+    "more-indented": (WEB_ITEMS + '        - "!**/*.map"\n', "unreadable line '- \"!"),
+    "less-indented": (WEB_ITEMS + '    - "!**/*.map"\n', "unreadable line '- \"!"),
+}
+
+
+@pytest.mark.parametrize(("builder", "reason"), MISREAD.values(), ids=MISREAD.keys())
+def test_text_js_yaml_reads_otherwise_fails_sr116(
+    tree: Tree, builder: str, reason: str
+) -> None:
+    tree.files["electron-builder.yml"] = builder
+    vs = tree.violations()
+    assert srs(vs) == {"SR-116"} and any(reason in v.message for v in vs)
+
+
 @pytest.mark.parametrize(
     "builder",
     [
@@ -844,6 +886,24 @@ def test_the_shipped_builder_config_packages_the_web_dist_without_maps() -> None
     config = root / "apps/desktop/electron-builder.yml"
     text = config.read_text(encoding="utf-8")
     assert check_packaging(text, config.parent, root / "apps/web/dist") == []
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('"../../../web/dist"', '"../../web/dist"'),
+        ("createDistReader(APP_ROOT_DIR)", "createDistReader(OTHER_DIR)"),
+        ("const read", "const two = createDistReader(x);\nconst read"),
+        ("APP_ROOT_DIR = path.resolve(__dirname", "APP_ROOT_DIR = path.resolve(cwd"),
+    ],
+    ids=["elsewhere", "another-root", "a-second-reader", "not-from-dist-main"],
+)
+def test_a_handler_root_off_the_packaged_web_dist_fails_sr174(
+    tree: Tree, old: str, new: str
+) -> None:
+    tree.files["desktop/main/index.js"] = GOOD_MAIN.replace(old, new)
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "'../../../web/dist'" in vs[0].message
 
 
 def test_ipcrenderer_exposed_directly_fails_sr111(tree: Tree) -> None:
