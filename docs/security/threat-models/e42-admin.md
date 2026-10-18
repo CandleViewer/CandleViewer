@@ -1196,6 +1196,7 @@ sink-refusal residual, from #2914).
 | AD-S10 | Code running in cv-api can insert an audit row naming any actor; SR-062's actor type (#2763) makes a writer-side check testable | Low | Security engineer | 2027-03-25 (GA cut) |
 | AD-I01 (AD-F19) | Refusals name the missing permission and the contract is public, so route existence is known (E09 U25) | Low | Security engineer | 2027-03-25 (GA cut) |
 | AD-D07 | A flag change can stop ingestion or recording, an operational choice shown on SCR-145 | Low | Owner/PO | 2027-03-25 (GA cut) |
+| A-13 (#966 BK-3) | A `backups` CHECK or NOT NULL violation's DETAIL (SQLSTATE 23514 / 23502) is the whole row, the class S `encryption_ref` alias included, and Postgres writes it to its server log; the store never surfaces it (BK-3) and the log is owner-only. #3514 sets `log_error_verbosity = terse` in production, which closes this row | Low until #3514 | Security engineer | When #3514 lands, and by 2027-02-25 (R4) |
 
 The annex's fourteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
 (#2318; #2272, via #2690), so it is Low, and #3413 closes its race at registration, leaving the registry's cap
