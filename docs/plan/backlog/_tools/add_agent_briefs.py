@@ -348,7 +348,6 @@ def main():
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
 
         report.append((epic, tickets_updated))
 

@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 1.2.1 · Last updated 2026-10-17 · Owner `@basiltt`
+> **Version:** 1.2.2 · Last updated 2026-10-18 · Owner `@basiltt`
 
 ---
 
@@ -386,7 +386,12 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | Single-source-of-truth duplication check (GOV-003)                                 | `python scripts/check_sot_duplication.py`                                                                     |
 | Backlog ticket schema + cross-file rule validation (GOV-004)                       | `python scripts/validate-backlog.py` (`--summary` for the per-epic point rollup, `--json` for machine output) |
 | Both, as `pr-metadata`'s `governance` job will invoke them (job wiring: `E01-Q02`) | `make governance`                                                                                             |
+| Backlog twins: rebuild `all-tickets.json` + report; `--check` writes nothing (CI)  | `python docs/plan/backlog/_tools/validate.py` (`--check` in CI: byte-checks the twins)                        |
 | Governance script tests                                                            | `python -m pytest scripts/tests --cov=scripts --cov-fail-under=85`                                            |
+
+The backlog twins (`docs/plan/backlog/E<nn>.json`, `all-tickets.json`) are formatted by `validate.py`,
+not prettier (`.prettierignore` skips them): edit them via Python as §3a says, never by hand or with
+prettier, then run `validate.py`. CI's `--check` fails on any twin it would not write byte for byte.
 
 ### Release / changelog (docs/plan/07-release-and-prr.md §3)
 
