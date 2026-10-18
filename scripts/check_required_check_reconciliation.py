@@ -88,6 +88,7 @@ OUTPUT_RE = re.compile(
 )
 OUTPUT_STEPS = {"pr": "change"}
 USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
+JOB_USES_RE = re.compile(r"^    uses:", re.M)  # a job that calls a reusable workflow
 # A called job that never gates its lane: an `if:` that reads no context and calls no status
 # function, so a constant (`false`, `False`, `0`, `''`, `null`, ...) or a block scalar (unread), or
 # continue-on-error that is not the literal false (its failure would not fail the lane).
@@ -284,7 +285,8 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls, which must be a ./.github/workflows/ file, that can fail it
+    of the reusable workflow it calls, which must be a ./.github/workflows/ file whose jobs call no
+    workflow (JOB_USES_RE, refused: this does not read a nested call's jobs), that can fail it
     (keys at 4 spaces, not NEVER_RE, and a readable `needs:` that names no job that cannot); a lane
     that calls one keeps its own name only while it has a job and every job can.
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
@@ -402,7 +404,7 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             continue
         if source == f"needs.{lane}.result" and lane in needs and lane in jobs:
             uses = USES_RE.search(lane_text := "\n".join(jobs[lane]))
-            if not uses and re.search(r"^    uses:", lane_text, re.M):
+            if not uses and JOB_USES_RE.search(lane_text):
                 errors.append(
                     f"{path}: lane '{lane}' calls a workflow this proof cannot read (only "
                     "./.github/workflows/<file>, unquoted)"
@@ -416,6 +418,15 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                     errors.append(f"{called_path}: a YAML anchor, alias or merge key hides content")
                 errors += _form_errors(called_path, called_text)
                 called = _job_blocks(called_text)
+                # A job that calls a workflow itself hides that workflow's jobs from this proof.
+                nested = {
+                    job for job, block in called.items() if JOB_USES_RE.search("\n".join(block))
+                }
+                errors += [
+                    f"{called_path}: job '{job}' of lane '{lane}' calls another workflow, whose "
+                    "jobs this proof does not read"
+                    for job in sorted(nested)
+                ]
                 deps = {job: _needs(block) for job, block in called.items()}
                 skip = {
                     job
@@ -423,7 +434,7 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                     if deps[job] is None
                     or NEVER_RE.search("\n".join(block))
                     or not _keyed_at_four(block)
-                }
+                } | nested
                 # GitHub skips a job whose needed job was skipped; a skipped job passes its lane.
                 while more := {job for job, need in deps.items() if need and need & skip} - skip:
                     skip |= more

@@ -247,6 +247,8 @@ NAMED_LANES = [
 ]
 SPARE = "\n  spare:\n    if: false\n    runs-on: x\n    steps:\n      - run: echo$&"
 FILTER_STEP = "one step `filter`, which uses dorny/paths-filter pinned"
+NESTED = "    uses: ./.github/workflows/_job-a11y.yml\n"
+NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
 
 
 @pytest.mark.parametrize(
@@ -428,6 +430,11 @@ FILTER_STEP = "one step `filter`, which uses dorny/paths-filter pinned"
         # ... and the step whose outputs decide which lanes apply is the pinned paths filter.
         ("pr.yml", "dorny/paths-filter@", "other/paths-filter@", FILTER_STEP),
         ("pr.yml", "filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d", "filter@v4", FILTER_STEP),
+        # Review round 7 of #3103, second pass: a judged lane's job that calls a workflow hides
+        # that workflow's jobs from the proof, so it is refused and credits nothing.
+        ("_job-contract.yml", "\njobs:\n", "$&  nested:\n" + NESTED, NESTED_ERROR),
+        ("_job-contract.yml", "\n  contract:\n", "$&" + NESTED, "§9 check 'contract' is missing"),
+        ("_job-py.yml", "\n  py-tests:\n", "$&" + NESTED, "'unit-backend'] is stale: no judged"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
