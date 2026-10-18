@@ -20,15 +20,19 @@ from typing import TYPE_CHECKING
 
 from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
+from candleviewer.auth.errors import AuthServiceUnavailable
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import (
     BackstopAuditSink,
     BackstopRevocation,
     RevocationSink,
+    SessionClass,
     SessionService,
+    classify_session,
 )
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp_skew import TotpSkewReporter
@@ -151,6 +155,25 @@ class AuthService:
     @property
     def break_glass_notice(self) -> BreakGlassNotice:
         return self._break_glass_notice
+
+    @property
+    def enrolment_gate_is_active(self) -> bool:
+        """#2295: every session is classified whenever the session store is wired. Without
+        it nothing authenticates, so no enrolment-only session can exist. A session store
+        wired without the user store (a wiring fault: `build_auth_service` wires both or
+        neither) keeps the gate on, and `classify` then refuses every session, so the HTTP
+        guard answers 503 and the WS refuses (deny by default, C-12.4), as it does when a
+        store fails."""
+        return self._sessions is not None
+
+    async def classify(self, session: SessionRecord) -> SessionClass:
+        """The class of a resolved session from its user's state, read now and never cached
+        (#2295). Raises when no user store is wired and lets a store failure propagate:
+        the HTTP guard and the WS authenticator turn either into a refusal (fail closed)."""
+        if self._repository is None:
+            raise AuthServiceUnavailable("no user store wired; the session cannot be classified")
+        user = await self._repository.find_by_id(str(session.user_id))
+        return classify_session(session, user, now=self._clock())
 
     def attach_revocation_sink(self, sink: RevocationSink) -> None:
         """Publish every session this module revokes to *sink*

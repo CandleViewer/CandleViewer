@@ -290,7 +290,7 @@ def test_every_decision_sentence_is_pinned(doc: str, sentence: str) -> None:
 
 def test_put_answers_step_up_classes_conflict_and_additive_request() -> None:
     assert set(_PUT["responses"]) == {"200", "401", "403", "404", "409", "422", "503"}
-    assert set(_LIST["responses"]) == {"200", "401", "403"}
+    assert set(_LIST["responses"]) == {"200", "401", "403", "503"}  # 503: #2295 guard
     assert _PUT["responses"]["503"] == _ref("ServiceUnavailable", "responses")
     assert _PUT["x-idempotency"] == "ignored"
     codes = {"validation_failed", "step_up_required", "conflict", "not_found", "store_unavailable"}

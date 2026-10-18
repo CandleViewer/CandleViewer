@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource
@@ -33,6 +34,8 @@ from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, E
 _BASE = "urn:cv:openapi"
 _CODE = "mfa_enrollment_required"
 _PLAN = Path(__file__).resolve().parents[4] / "docs" / "plan"
+#: The reviewed RBAC matrix: its `public: false` rows are the operations that need a session.
+_MATRIX = Path(__file__).resolve().parent / "rbac" / "matrix.yaml"
 #: The only operations an enrolment-only session may call (decision on #2295).
 _ALLOWED = {
     ("post", "/auth/mfa/enroll"),
@@ -199,6 +202,47 @@ def test_contract_promises_no_undeclared_status_and_no_production_claim(
         assert "production" not in text.lower()  # C-12.2 forbids the state; #965 refuses it
     for path in ("/auth/login", "/auth/mfa/recovery"):
         assert "501" not in _op(spec, "post", path)["responses"]
+
+
+def _needs_a_session() -> set[tuple[str, str]]:
+    rows = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["operations"]
+    lines = (line.split(" ", 1) for line, row in rows.items() if not row["public"])
+    return {(method.lower(), path) for method, path in lines}
+
+
+def _response(spec: dict[str, Any], method: str, path: str, status: str) -> dict[str, Any]:
+    response: dict[str, Any] = _op(spec, method, path)["responses"].get(status, {})
+    ref = response.get("$ref", "")
+    return spec["components"]["responses"][ref.rsplit("/", 1)[1]] if ref else response
+
+
+def test_every_operation_that_refuses_an_enrolment_only_session_declares_403(
+    spec: dict[str, Any],
+) -> None:
+    """C-6.2: each operation that needs a session, outside the five, answers such a session
+    `403 mfa_enrollment_required`, so it declares the status and its response names the code
+    (#2295 review)."""
+    refused = _needs_a_session() - _ALLOWED
+    undeclared = sorted(
+        f"{method.upper()} {path}"
+        for method, path in refused
+        if _CODE not in _response(spec, method, path, "403").get("description", "")
+    )
+    assert refused and undeclared == []
+
+
+def test_every_operation_that_needs_a_session_declares_503(spec: dict[str, Any]) -> None:
+    """C-6.2: the guard answers `503 store_unavailable` on each operation that needs a session,
+    the five included, when the session or its user cannot be read (#2295 review)."""
+    undeclared = sorted(
+        f"{method.upper()} {path}"
+        for method, path in _needs_a_session()
+        if "503" not in _op(spec, method, path)["responses"]
+    )
+    assert undeclared == []
+    example = spec["components"]["responses"]["ServiceUnavailable"]["content"]
+    code = example["application/problem+json"]["examples"]["storeUnavailable"]["value"]["code"]
+    assert code == "store_unavailable"
 
 
 def test_login_mints_an_enrolment_only_session_for_a_user_without_a_method(

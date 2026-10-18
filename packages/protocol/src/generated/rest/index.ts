@@ -9515,7 +9515,7 @@ export interface components {
     };
   };
   responses: {
-    /** @description The targeted exchange account is outside the caller's granted scope. */
+    /** @description The targeted exchange account is outside the caller's granted scope. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
     AccountScopeDenied: {
       headers: {
         [name: string]: unknown;
@@ -9619,7 +9619,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once. */
+    /** @description SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead, from every operation outside its allow-list (see `Forbidden` and the Enrolment-only session section of `info.description`); that refusal is not retryable. */
     CsrfTokenInvalid: {
       headers: {
         "Retry-After": components["headers"]["RetryAfter"];
@@ -10599,6 +10599,8 @@ export interface operations {
           "application/json": components["schemas"]["CapacityReport"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setSubaccountTier: {
@@ -10664,6 +10666,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setFeatureFlag: {
@@ -10948,6 +10951,7 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getAdminOverview: {
@@ -10968,6 +10972,8 @@ export interface operations {
           "application/json": components["schemas"]["AdminOverview"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   compactRecorder: {
@@ -11010,6 +11016,7 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   importTradeArchive: {
@@ -11074,6 +11081,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   purgeRecordedData: {
@@ -11146,6 +11154,8 @@ export interface operations {
           "application/json": components["schemas"]["SecuritySummary"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listStatecharts: {
@@ -11183,6 +11193,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getStatechart: {
@@ -11211,6 +11222,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   exportStatechart: {
@@ -11237,6 +11249,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createSupportBundle: {
@@ -11288,6 +11301,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getSupportBundle: {
@@ -11323,6 +11337,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   startViewAs: {
@@ -11395,6 +11410,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createAlert: {
@@ -11432,6 +11448,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["RuleIrInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getAlert: {
@@ -11454,8 +11471,10 @@ export interface operations {
           "application/json": components["schemas"]["Alert"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateAlert: {
@@ -11495,6 +11514,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteAlert: {
@@ -11527,6 +11547,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setAlertEnabled: {
@@ -11567,6 +11588,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listAlertDeliveries: {
@@ -11604,6 +11626,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   ackAlertDelivery: {
@@ -11637,6 +11660,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   reportAlertDesktopOutcome: {
@@ -11682,6 +11706,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   ackAllAlertDeliveries: {
@@ -11716,6 +11741,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authGetArgon2Params: {
@@ -11745,6 +11771,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authLogin: {
@@ -11941,6 +11968,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authMfaRecovery: {
@@ -12036,6 +12064,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authRefresh: {
@@ -12221,6 +12250,7 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -12394,6 +12424,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createChartTemplate: {
@@ -12430,6 +12461,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getChartTemplate: {
@@ -12452,7 +12484,9 @@ export interface operations {
           "application/json": components["schemas"]["ChartTemplate"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateChartTemplate: {
@@ -12492,6 +12526,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteChartTemplate: {
@@ -12523,6 +12558,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getDetectorConfig: {
@@ -12543,6 +12579,8 @@ export interface operations {
           "application/json": components["schemas"]["DetectorConfig"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setDetectorConfig: {
@@ -12577,6 +12615,7 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getDetectorMethodology: {
@@ -12599,6 +12638,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listDrawings: {
@@ -12847,6 +12888,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createExchangeAccount: {
@@ -12885,6 +12927,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getExchangeAccount: {
@@ -12909,6 +12952,7 @@ export interface operations {
       };
       403: components["responses"]["AccountScopeDenied"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteExchangeAccount: {
@@ -13127,6 +13171,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listApiKeys: {
@@ -13152,6 +13197,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createApiKey: {
@@ -13374,6 +13420,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   testApiKey: {
@@ -13469,6 +13516,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createAccountProfile: {
@@ -13508,6 +13556,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getAccountProfile: {
@@ -13531,7 +13580,9 @@ export interface operations {
           "application/json": components["schemas"]["AccountProfile"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateAccountProfile: {
@@ -13573,6 +13624,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteAccountProfile: {
@@ -13605,6 +13657,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listExecutions: {
@@ -13644,6 +13697,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listClosedPnl: {
@@ -13681,6 +13735,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getLiveness: {
@@ -13769,6 +13824,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createIndicatorPreset: {
@@ -13805,6 +13861,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateIndicatorPreset: {
@@ -13843,6 +13900,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteIndicatorPreset: {
@@ -13875,6 +13933,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listIndicators: {
@@ -13897,6 +13956,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listInstruments: {
@@ -13932,6 +13993,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -13956,6 +14018,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -13980,6 +14043,7 @@ export interface operations {
           "application/json": components["schemas"]["Ticker"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -14018,6 +14082,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getInvite: {
@@ -14200,6 +14265,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listJournalTags: {
@@ -14231,6 +14297,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createJournalTag: {
@@ -14275,6 +14342,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listJournalTrades: {
@@ -14315,6 +14383,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getJournalTrade: {
@@ -14337,7 +14406,9 @@ export interface operations {
           "application/json": components["schemas"]["JournalTradeDetail"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateJournalTrade: {
@@ -14375,6 +14446,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getJournalTradeContext: {
@@ -14401,7 +14473,9 @@ export interface operations {
           "application/json": components["schemas"]["JournalTradeContext"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listJournalNotes: {
@@ -14429,6 +14503,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createJournalNote: {
@@ -14467,6 +14542,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listLayoutPresets: {
@@ -14506,6 +14582,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getBars: {
@@ -14569,7 +14646,9 @@ export interface operations {
           "application/json": components["schemas"]["DataCoverage"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getFootprint: {
@@ -14609,7 +14688,9 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   recomputeFootprint: {
@@ -14659,6 +14740,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getFundingHistory: {
@@ -14736,7 +14818,9 @@ export interface operations {
           "application/json": components["schemas"]["HeatmapResponse"];
         };
       };
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getKlines: {
@@ -14817,6 +14901,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getMetrics: {
@@ -14851,7 +14936,9 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getOpenInterestHistory: {
@@ -14894,6 +14981,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getOrderbookSnapshot: {
@@ -14961,7 +15049,9 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   explainRegime: {
@@ -14984,6 +15074,8 @@ export interface operations {
           "application/json": components["schemas"]["RegimeExplanation"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getTrades: {
@@ -15020,7 +15112,9 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getMe: {
@@ -15095,6 +15189,8 @@ export interface operations {
           "application/json": components["schemas"]["EffectiveLimits"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getMyPreferences: {
@@ -15155,6 +15251,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listMySessions: {
@@ -15177,6 +15274,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   revokeMySession: {
@@ -15240,6 +15339,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getOnboardingChecklist: {
@@ -15260,7 +15361,9 @@ export interface operations {
           "application/json": components["schemas"]["OnboardingChecklist"];
         };
       };
+      403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   dismissOnboardingChecklist: {
@@ -15296,6 +15399,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   completeOnboarding: {
@@ -15324,6 +15428,7 @@ export interface operations {
         content?: never;
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listOrders: {
@@ -15364,6 +15469,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   placeOrder: {
@@ -15432,7 +15538,9 @@ export interface operations {
           "application/json": components["schemas"]["OrderWithEvents"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   cancelOrder: {
@@ -15469,6 +15577,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   amendOrder: {
@@ -15513,6 +15622,7 @@ export interface operations {
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getOrderDiagnostics: {
@@ -15535,7 +15645,9 @@ export interface operations {
           "application/json": components["schemas"]["OrderDiagnostics"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   cancelAllOrders: {
@@ -15572,6 +15684,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listPermissions: {
@@ -15601,6 +15714,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listPositions: {
@@ -15631,6 +15745,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getPosition: {
@@ -15653,7 +15768,9 @@ export interface operations {
           "application/json": components["schemas"]["Position"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   closePosition: {
@@ -15694,6 +15811,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setPositionLeverage: {
@@ -15736,6 +15854,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   reversePosition: {
@@ -15776,6 +15895,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setPositionTpSl: {
@@ -15817,6 +15937,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   closeAllPositions: {
@@ -15860,6 +15981,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRetentionPolicies: {
@@ -15885,6 +16007,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setRetentionPolicies: {
@@ -15926,6 +16049,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRecordingSessions: {
@@ -15961,6 +16085,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRecordingStatus: {
@@ -15982,6 +16107,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getStorageUsage: {
@@ -16005,6 +16131,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRecordedSymbols: {
@@ -16036,6 +16163,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   addRecordedSymbol: {
@@ -16082,6 +16210,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRecordedSymbol: {
@@ -16104,7 +16233,9 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   removeRecordedSymbol: {
@@ -16140,6 +16271,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateRecordedSymbol: {
@@ -16178,6 +16310,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   pinRecordedSymbol: {
@@ -16219,6 +16352,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listReplaySessions: {
@@ -16250,6 +16384,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createReplaySession: {
@@ -16287,6 +16422,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getReplaySession: {
@@ -16309,7 +16445,9 @@ export interface operations {
           "application/json": components["schemas"]["ReplaySession"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteReplaySession: {
@@ -16341,6 +16479,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   controlReplaySession: {
@@ -16379,6 +16518,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   overrideRiskLockout: {
@@ -16420,6 +16560,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRiskSummary: {
@@ -16445,6 +16586,7 @@ export interface operations {
         };
       };
       403: components["responses"]["AccountScopeDenied"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRoles: {
@@ -16468,6 +16610,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRules: {
@@ -16502,6 +16645,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createRule: {
@@ -16539,6 +16683,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       422: components["responses"]["RuleIrInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRule: {
@@ -16561,7 +16706,9 @@ export interface operations {
           "application/json": components["schemas"]["RuleDetail"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateRule: {
@@ -16602,6 +16749,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["RuleIrInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteRule: {
@@ -16633,6 +16781,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setActiveRuleVersion: {
@@ -16674,6 +16823,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   compileRule: {
@@ -16734,6 +16884,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["RuleIrInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setRuleMode: {
@@ -16817,6 +16968,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   simulateRule: {
@@ -16868,6 +17020,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRuleVersions: {
@@ -16900,6 +17053,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRuleVersion: {
@@ -16923,7 +17077,9 @@ export interface operations {
           "application/json": components["schemas"]["RuleVersionDetail"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRuleAccounts: {
@@ -16953,13 +17109,14 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description Missing rules:read. */
+      /** @description Missing rules:read, or `code: mfa_enrollment_required` for an enrolment-only session (see `Forbidden`). */
       403: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listRuleRunEvents: {
@@ -16992,6 +17149,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   validateRule: {
@@ -17031,6 +17189,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRuleVocabulary: {
@@ -17061,6 +17220,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["Forbidden"];
       /** @description Engine offline - the registry is empty or not wired. */
       503: {
         headers: {
@@ -17107,6 +17267,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getRuleIrSchema: {
@@ -17129,6 +17291,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setSessionEnvironment: {
@@ -17191,6 +17355,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateSettings: {
@@ -17226,6 +17391,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   armOneClickTrading: {
@@ -17269,6 +17435,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   recordHotkeyBindingAudit: {
@@ -17303,6 +17470,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listHotkeyProfiles: {
@@ -17328,6 +17496,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createHotkeyProfile: {
@@ -17364,6 +17533,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateHotkeyProfile: {
@@ -17404,6 +17574,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteHotkeyProfile: {
@@ -17435,6 +17606,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   activateHotkeyProfile: {
@@ -17468,6 +17640,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getBuildInfo: {
@@ -17488,6 +17661,8 @@ export interface operations {
           "application/json": components["schemas"]["BuildInfo"];
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   postFrontendTelemetry: {
@@ -17523,6 +17698,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listTradeGroups: {
@@ -17559,6 +17735,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createTradeGroup: {
@@ -17598,6 +17775,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getTradeGroup: {
@@ -17620,7 +17798,9 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   amendTradeGroup: {
@@ -17661,6 +17841,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   cancelTradeGroup: {
@@ -17705,6 +17886,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   previewTradeGroup: {
@@ -17740,6 +17922,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getKillSwitch: {
@@ -17763,6 +17946,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setKillSwitch: {
@@ -17832,6 +18016,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createUser: {
@@ -17870,6 +18055,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getUser: {
@@ -17896,6 +18082,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteUser: {
@@ -18091,6 +18278,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   revokeInvite: {
@@ -18122,6 +18310,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   resetUserMfa: {
@@ -18204,6 +18393,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   setUserRoles: {
@@ -18278,6 +18468,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   revokeUserSession: {
@@ -18334,6 +18525,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listWatchlists: {
@@ -18356,6 +18549,8 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createWatchlist: {
@@ -18390,6 +18585,7 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateWatchlist: {
@@ -18427,6 +18623,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteWatchlist: {
@@ -18458,6 +18655,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listWorkspaces: {
@@ -18682,7 +18880,9 @@ export interface operations {
           "application/json": components["schemas"]["WorkspaceBundle"];
         };
       };
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listLayouts: {

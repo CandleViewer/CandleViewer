@@ -76,6 +76,10 @@ _SHARED_RESPONSE = {
     429: "RateLimited",
     503: "ServiceUnavailable",
 }
+#: Statuses the enrolment-only guard answers before any session router runs (#2295), with their
+#: shared response: out of `_DECLARED` and `_ANSWERS`, proved through the mounted guard by
+#: `tests/contract/rbac/test_enrolment_only_matrix.py`.
+_GUARD_ONLY: dict[str, dict[int, str]] = {"authListSessions": {403: "Forbidden"}}
 
 
 @pytest.fixture(scope="module")
@@ -98,7 +102,7 @@ def test_session_operation_declares_exactly_the_statuses_it_answers(
     spec: dict[str, Any], operation_id: str
 ) -> None:
     declared = {int(code) for code in _declared(spec, operation_id)["responses"]}
-    assert declared == _DECLARED[operation_id]
+    assert declared - set(_GUARD_ONLY.get(operation_id, {})) == _DECLARED[operation_id]
 
 
 @pytest.mark.parametrize("operation_id", _DECLARED)
@@ -107,9 +111,9 @@ def test_session_operation_failures_reuse_the_shared_response_of_their_status(
 ) -> None:
     responses = _declared(spec, operation_id)["responses"]
     failures = {int(code): response for code, response in responses.items() if int(code) >= 400}
+    shared = {**_SHARED_RESPONSE, **_GUARD_ONLY.get(operation_id, {})}
     assert failures == {
-        status: {"$ref": f"#/components/responses/{_SHARED_RESPONSE[status]}"}
-        for status in failures
+        status: {"$ref": f"#/components/responses/{shared[status]}"} for status in failures
     }
 
 

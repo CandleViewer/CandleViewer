@@ -69,8 +69,15 @@ info:
       enrolment (R-006 `/login/2fa/enroll`, SCR-003), which has no skip.
     * **Allowed operations.** Only `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
       `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout`. Every other operation
-      that needs a session answers `403 mfa_enrollment_required` and changes nothing. The
-      WebSocket refuses the session at `auth` (`23-ws-protocol.md` section 4.3).
+      that needs a session answers `403 mfa_enrollment_required` and changes nothing. The refusal
+      is audited as `auth.mfa_enrollment_required`, up to a per-user budget (beyond it, or while
+      the audit writer is saturated: the same `403` and no audit record; the metric
+      `auth_enrolment_refused_total` counts every refusal). A session that cannot be checked
+      answers `503 store_unavailable` (fail closed). One past its 15 minutes, or whose expiry lies
+      further ahead or that proved a second factor (it was not minted as one), answers `401` as an
+      expired token does (`refresh_token_invalid` on `POST /auth/refresh`), except on
+      `POST /auth/logout`. The WebSocket refuses the session at `auth` (`23-ws-protocol.md` section
+      4.3), audited the same way.
     * **Lifetime.** A session minted enrolment-only lives at most 15 minutes from sign-in.
       `POST /auth/refresh` rotates it as usual, but the successor keeps the same absolute expiry,
       so refresh never extends it; `refresh_expires_in` and the cookies' `Max-Age` count down to
@@ -1216,6 +1223,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/refresh:
     post:
@@ -1703,6 +1711,7 @@ paths:
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -1725,6 +1734,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/_perf/argon2-params:
     get:
@@ -1752,6 +1762,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
           description: "`CV_AUTH_PERF_ENABLED` is off (always so in live and demo): the route is not mounted."
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # USERS & ROLES  (owner-gated admin screens inside the web app)
@@ -1787,6 +1798,7 @@ paths:
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/User" } }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [users]
       operationId: createUser
@@ -1822,6 +1834,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -1842,6 +1855,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [users]
       operationId: updateUser
@@ -2083,6 +2097,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/sessions/{sessionId}:
     parameters:
@@ -2152,6 +2167,7 @@ paths:
                           user_count: 1,
                         }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /permissions:
     get:
@@ -2177,6 +2193,7 @@ paths:
                         description: { type: string }
                         category: { type: string, examples: [trading] }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # EXCHANGE ACCOUNTS, API KEYS, PER-ACCOUNT PROFILES
   # ===========================================================================
@@ -2275,6 +2292,7 @@ paths:
                         created_at: "2026-09-02T09:10:00Z"
                     meta: { next_cursor: null, has_more: false, count: 2 }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [exchange-accounts]
       operationId: createExchangeAccount
@@ -2317,6 +2335,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}:
     parameters: [{ $ref: "#/components/parameters/AccountId" }]
@@ -2333,6 +2352,7 @@ paths:
               schema: { $ref: "#/components/schemas/ExchangeAccount" }
         "403": { $ref: "#/components/responses/AccountScopeDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [exchange-accounts]
       operationId: updateExchangeAccount
@@ -2431,6 +2451,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/ApiKey" } }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [exchange-accounts]
       operationId: createApiKey
@@ -2689,6 +2710,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}/keys/{keyId}/test:
     parameters:
@@ -2880,6 +2902,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/AccountProfile" } }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [exchange-accounts]
       operationId: createAccountProfile
@@ -2924,6 +2947,7 @@ paths:
               schema: { $ref: "#/components/schemas/AccountProfile" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}/profiles/{profileId}:
     parameters:
@@ -2940,7 +2964,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [exchange-accounts]
       operationId: updateAccountProfile
@@ -2967,6 +2993,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [exchange-accounts]
       operationId: deleteAccountProfile
@@ -2978,6 +3005,7 @@ paths:
         "204": { description: "Deleted." }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}/fee-rate:
     parameters: [{ $ref: "#/components/parameters/AccountId" }]
@@ -3028,6 +3056,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # INSTRUMENTS / SYMBOLS
@@ -3114,6 +3143,7 @@ paths:
                         stale_since: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /instruments/{symbol}:
@@ -3135,6 +3165,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/InstrumentDetail" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3158,6 +3189,7 @@ paths:
                   scheduled_at: { type: string, format: date-time }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /instruments/{symbol}/ticker:
     parameters: [{ $ref: "#/components/parameters/SymbolPath" }]
@@ -3195,6 +3227,7 @@ paths:
                     next_funding_time: "2026-09-14T16:00:00Z"
                     ts: "2026-09-14T10:31:02.100Z"
                     stale: false
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
@@ -3532,7 +3565,9 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/profile:
     get:
@@ -3635,7 +3670,9 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/trades:
     get:
@@ -3702,7 +3739,9 @@ paths:
                           tick_direction: MinusTick,
                         }
                     meta: { next_cursor: "eyJ0cyI6MTc4OH0", has_more: true, count: 2 }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/orderbook:
     get:
@@ -3792,7 +3831,9 @@ paths:
                     max_value: 12.5
                     normalize: window
                     estimated: false
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/metrics:
     get:
@@ -3893,7 +3934,9 @@ paths:
                         next_cursor: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/open-interest:
     get:
@@ -3951,6 +3994,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/funding:
     get:
@@ -4075,6 +4119,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/data-coverage:
     get:
@@ -4139,7 +4184,9 @@ paths:
                           ]
                         gaps: []
                     generated_at: "2026-09-14T10:31:02.800Z"
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # RECORDING
   # ===========================================================================
@@ -4209,6 +4256,7 @@ paths:
                         added_by: null
                     meta: { next_cursor: null, has_more: false, count: 2 }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [recording]
       operationId: addRecordedSymbol
@@ -4253,6 +4301,7 @@ paths:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/symbols/{recordedSymbolId}:
     parameters: [{ $ref: "#/components/parameters/RecordedSymbolId" }]
@@ -4267,7 +4316,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [recording]
       operationId: updateRecordedSymbol
@@ -4296,6 +4347,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [recording]
       operationId: removeRecordedSymbol
@@ -4320,6 +4372,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/symbols/{recordedSymbolId}/pin:
     parameters: [{ $ref: "#/components/parameters/RecordedSymbolId" }]
@@ -4354,6 +4407,7 @@ paths:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/status:
     get:
@@ -4407,6 +4461,7 @@ paths:
                     write_backlog_rows: 0
                     generated_at: "2026-09-14T10:31:02.900Z"
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/storage:
     get:
@@ -4449,6 +4504,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/retention-policies:
     get:
@@ -4496,6 +4552,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [recording]
       operationId: setRetentionPolicies
@@ -4529,6 +4586,7 @@ paths:
                   items: { type: array, items: { $ref: "#/components/schemas/RetentionPolicy" } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/sessions:
     get:
@@ -4576,6 +4634,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # REPLAY
@@ -4606,6 +4665,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [replay]
       operationId: createReplaySession
@@ -4670,6 +4730,7 @@ paths:
                     progress_pct: 0
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /replay/sessions/{replayId}:
     parameters: [{ $ref: "#/components/parameters/ReplayId" }]
@@ -4684,7 +4745,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReplaySession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [replay]
       operationId: deleteReplaySession
@@ -4695,6 +4758,7 @@ paths:
         "204": { description: "Destroyed." }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /replay/sessions/{replayId}/control:
     parameters: [{ $ref: "#/components/parameters/ReplayId" }]
@@ -4727,6 +4791,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # TRADING — orders, trade groups (fan-out), kill-switch
   # ===========================================================================
@@ -4811,6 +4876,7 @@ paths:
                         environment: live
                     meta: { next_cursor: null, has_more: false, count: 1 }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [trading]
       operationId: placeOrder
@@ -4915,7 +4981,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderWithEvents" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [trading]
       operationId: amendOrder
@@ -4955,6 +5023,7 @@ paths:
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [trading]
       operationId: cancelOrder
@@ -4976,6 +5045,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /orders/cancel-all:
     post:
@@ -5045,6 +5115,7 @@ paths:
                     requested: 2
                     succeeded: 1
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups:
     get:
@@ -5076,6 +5147,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [trading]
       operationId: createTradeGroup
@@ -5261,6 +5333,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups/{tradeGroupId}:
     parameters: [{ $ref: "#/components/parameters/TradeGroupId" }]
@@ -5275,7 +5348,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroup" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups/{tradeGroupId}/amend:
     parameters: [{ $ref: "#/components/parameters/TradeGroupId" }]
@@ -5307,6 +5382,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups/{tradeGroupId}/cancel:
     parameters: [{ $ref: "#/components/parameters/TradeGroupId" }]
@@ -5343,6 +5419,7 @@ paths:
               schema: { $ref: "#/components/schemas/BulkLegResult" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trading/kill-switch:
     get:
@@ -5359,6 +5436,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [trading]
       operationId: setKillSwitch
@@ -5509,6 +5587,7 @@ paths:
                         updated_at: "2026-09-14T10:33:20Z"
                     aggregates: []
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}:
     parameters: [{ $ref: "#/components/parameters/PositionId" }]
@@ -5523,7 +5602,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Position" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/tpsl:
     parameters: [{ $ref: "#/components/parameters/PositionId" }]
@@ -5589,6 +5670,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/close:
     parameters: [{ $ref: "#/components/parameters/PositionId" }]
@@ -5629,6 +5711,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/reverse:
     parameters: [{ $ref: "#/components/parameters/PositionId" }]
@@ -5665,6 +5748,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/{positionId}/leverage:
     parameters: [{ $ref: "#/components/parameters/PositionId" }]
@@ -5699,6 +5783,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /positions/close-all:
     post:
@@ -5733,6 +5818,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # EXECUTIONS
@@ -5794,6 +5880,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /executions/closed-pnl:
     get:
@@ -5823,6 +5910,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # RULE ENGINE
   # ===========================================================================
@@ -5887,6 +5975,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [rules]
       operationId: createRule
@@ -6016,6 +6105,7 @@ paths:
               schema: { $ref: "#/components/schemas/Rule" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -6036,7 +6126,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [rules]
       operationId: updateRule
@@ -6070,6 +6162,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [rules]
       operationId: deleteRule
@@ -6081,6 +6174,7 @@ paths:
         "204": { description: "Deleted." }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/versions:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -6121,6 +6215,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/versions/{versionId}:
     parameters:
@@ -6137,7 +6232,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleVersionDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/active-version:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -6172,6 +6269,7 @@ paths:
               schema: { $ref: "#/components/schemas/RuleDetail" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/validate:
     post:
@@ -6235,6 +6333,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/simulate:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -6308,6 +6407,7 @@ paths:
                   status: { const: running }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/mode:
     parameters: [{ $ref: "#/components/parameters/RuleId" }]
@@ -6400,6 +6500,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/runs/{runId}/events:
     parameters: [{ $ref: "#/components/parameters/RunId" }]
@@ -6459,6 +6560,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # ALERTS
@@ -6491,6 +6593,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [alerts]
       operationId: createAlert
@@ -6551,6 +6654,7 @@ paths:
               schema: { $ref: "#/components/schemas/Alert" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}:
     parameters: [{ $ref: "#/components/parameters/AlertId" }]
@@ -6565,8 +6669,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [alerts]
       operationId: updateAlert
@@ -6587,6 +6693,7 @@ paths:
               schema: { $ref: "#/components/schemas/Alert" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [alerts]
       operationId: deleteAlert
@@ -6598,6 +6705,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}/enabled:
     parameters: [{ $ref: "#/components/parameters/AlertId" }]
@@ -6625,6 +6733,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/deliveries:
     get:
@@ -6678,6 +6787,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/deliveries/{deliveryId}/ack:
     parameters: [{ $ref: "#/components/parameters/DeliveryId" }]
@@ -6696,6 +6806,7 @@ paths:
               schema: { $ref: "#/components/schemas/AlertDelivery" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/deliveries/{deliveryId}/desktop-outcome:
     parameters: [{ $ref: "#/components/parameters/DeliveryId" }]
@@ -6735,6 +6846,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/deliveries/ack-all:
     post:
@@ -6755,6 +6867,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # JOURNAL
@@ -6826,6 +6939,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/trades/{journalTradeId}:
     parameters: [{ $ref: "#/components/parameters/JournalTradeId" }]
@@ -6840,7 +6954,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JournalTradeDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [journal]
       operationId: updateJournalTrade
@@ -6872,6 +6988,7 @@ paths:
               schema: { $ref: "#/components/schemas/JournalTradeDetail" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/trades/{journalTradeId}/notes:
     parameters: [{ $ref: "#/components/parameters/JournalTradeId" }]
@@ -6892,6 +7009,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [journal]
       operationId: createJournalNote
@@ -6913,6 +7031,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/tags:
     get:
@@ -6940,6 +7059,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [journal]
       operationId: createJournalTag
@@ -6970,6 +7090,7 @@ paths:
                   colour: { type: string }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/analytics:
     get:
@@ -7051,6 +7172,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # WORKSPACES, LAYOUTS, TEMPLATES, DRAWINGS, INDICATOR PRESETS
   # ===========================================================================
@@ -7497,6 +7619,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createChartTemplate
@@ -7541,6 +7664,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /chart-templates/{templateId}:
     parameters: [{ $ref: "#/components/parameters/TemplateId" }]
@@ -7555,7 +7679,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ChartTemplate" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [workspaces]
       operationId: updateChartTemplate
@@ -7576,6 +7702,7 @@ paths:
               schema: { $ref: "#/components/schemas/ChartTemplate" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteChartTemplate
@@ -7586,6 +7713,7 @@ paths:
         "204": { description: "Deleted." }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /drawings:
     get:
@@ -7863,6 +7991,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createIndicatorPreset
@@ -7894,6 +8023,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /indicator-presets/{presetId}:
     parameters: [{ $ref: "#/components/parameters/PresetId" }]
@@ -7917,6 +8047,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteIndicatorPreset
@@ -7928,6 +8059,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   # ===========================================================================
   # SETTINGS & HOTKEYS
@@ -8003,6 +8135,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     patch:
       tags: [settings]
       operationId: updateSettings
@@ -8028,6 +8161,7 @@ paths:
               schema: { $ref: "#/components/schemas/Settings" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /settings/arm:
     post:
@@ -8077,6 +8211,7 @@ paths:
                       },
                   }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /settings/hotkeys:
     get:
@@ -8163,6 +8298,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [settings]
       operationId: createHotkeyProfile
@@ -8189,6 +8325,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /settings/hotkeys/{hotkeyProfileId}:
     parameters: [{ $ref: "#/components/parameters/HotkeyProfileId" }]
@@ -8213,6 +8350,7 @@ paths:
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [settings]
       operationId: deleteHotkeyProfile
@@ -8224,6 +8362,7 @@ paths:
         "204": { description: "Deleted." }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /settings/hotkey-audit:
     post:
@@ -8246,6 +8385,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /settings/hotkeys/{hotkeyProfileId}/activate:
     parameters: [{ $ref: "#/components/parameters/HotkeyProfileId" }]
@@ -8263,6 +8403,7 @@ paths:
               schema: { $ref: "#/components/schemas/HotkeyProfile" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # ADMIN — audit, health, feature flags, backups
   # ===========================================================================
@@ -8999,6 +9140,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/support-bundle:
     post:
@@ -9040,6 +9182,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: A bundle is already being generated (BUNDLE_ALREADY_RUNNING).
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/support-bundle/{job_id}:
     get:
@@ -9067,6 +9210,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /telemetry/frontend:
     post:
@@ -9093,6 +9237,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/feature-flags:
     get:
@@ -9203,6 +9348,7 @@ paths:
                         value: true
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/feature-flags/{flagKey}:
     parameters:
@@ -9979,6 +10125,7 @@ paths:
               schema: { $ref: "#/components/schemas/Settings" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /me/sessions:
     get:
@@ -9995,6 +10142,8 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /me/sessions/{sessionId}:
     parameters:
@@ -10037,6 +10186,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EffectiveLimits" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /me/keymap:
     get:
@@ -10338,6 +10489,7 @@ paths:
                   message: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/mfa/reset:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -10447,7 +10599,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OnboardingChecklist" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /onboarding/checklist/dismiss:
     post:
@@ -10463,6 +10617,7 @@ paths:
         "204": { description: Dismissed. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { description: Checklist is not complete. }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /onboarding/complete:
     post:
@@ -10474,6 +10629,7 @@ paths:
       responses:
         "204": { description: Marked complete. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /invites/{inviteToken}:
     parameters:
@@ -10601,6 +10757,8 @@ paths:
                 required: [items]
                 properties:
                   items: { type: array, items: { type: object } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/invite:
     parameters:
@@ -10618,6 +10776,7 @@ paths:
         "201": { description: New invitation with one-time link. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [users]
       operationId: revokeInvite
@@ -10628,6 +10787,7 @@ paths:
         "200": { description: Revoked. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /session/environment:
     post:
@@ -10697,6 +10857,8 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /watchlists:
     get:
@@ -10713,6 +10875,8 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Watchlist" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createWatchlist
@@ -10731,6 +10895,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Watchlist" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /watchlists/{watchlistId}:
     parameters:
@@ -10757,6 +10922,7 @@ paths:
               schema: { $ref: "#/components/schemas/Watchlist" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteWatchlist
@@ -10767,6 +10933,7 @@ paths:
         "204": { description: Deleted. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /scanner:
     get:
@@ -10809,6 +10976,8 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/ScannerRow" } }
                   meta: { $ref: "#/components/schemas/DataMeta" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /indicators:
     get:
@@ -10832,6 +11001,8 @@ paths:
                 properties:
                   items:
                     { type: array, items: { $ref: "#/components/schemas/IndicatorDescriptor" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /layout-presets:
     get:
@@ -10867,6 +11038,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /workspaces/{workspaceId}/export:
     parameters:
@@ -10886,7 +11058,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceBundle" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /orders/{orderId}/diagnostics:
     parameters:
@@ -10907,7 +11081,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrderDiagnostics" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups/preview:
     post:
@@ -10936,6 +11112,7 @@ paths:
               schema: { $ref: "#/components/schemas/TradeGroupPreview" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /risk/summary:
     get:
@@ -10959,6 +11136,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RiskSummary" }
         "403": { $ref: "#/components/responses/AccountScopeDenied" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /risk/lockouts/{accountId}/override:
     parameters:
@@ -10993,6 +11171,7 @@ paths:
               schema: { $ref: "#/components/schemas/RiskSummary" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /detectors/config:
     get:
@@ -11006,6 +11185,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DetectorConfig" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [market-data]
       operationId: setDetectorConfig
@@ -11024,6 +11205,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DetectorConfig" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /detectors/methodology:
     get:
@@ -11047,6 +11229,8 @@ paths:
                 properties:
                   items:
                     { type: array, items: { $ref: "#/components/schemas/DetectorMethodology" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/regime/explain:
     get:
@@ -11065,6 +11249,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RegimeExplanation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/footprint/recompute:
     post:
@@ -11105,6 +11291,7 @@ paths:
                   job_id: { type: string, format: uuid }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/accounts:
     get:
@@ -11126,7 +11313,9 @@ paths:
                 properties:
                   accounts: { type: array, items: { type: string, format: uuid } }
         "401": { description: No verified session. }
-        "403": { description: Missing rules:read. }
+        "403":
+          description: "Missing rules:read, or `code: mfa_enrollment_required` for an enrolment-only session (see `Forbidden`)."
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/vocabulary:
     get:
@@ -11158,6 +11347,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RuleVocabulary" }
         "304": { description: Not modified (`If-None-Match` matched). }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "503":
           description: Engine offline - the registry is empty or not wired.
           content:
@@ -11176,6 +11366,8 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/compile:
     parameters:
@@ -11236,6 +11428,7 @@ paths:
                             counterpart: {}
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /journal/trades/{journalTradeId}/context:
     parameters:
@@ -11266,7 +11459,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JournalTradeContext" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /system/build:
     get:
@@ -11283,6 +11478,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BuildInfo" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/overview:
     get:
@@ -11339,6 +11536,8 @@ paths:
                       kill_switch_engaged: false
                     incidents_open: 0
                     incidents: { status: ok, generated_at: "2026-10-15T18:00:03Z", open: 0 }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/capacity:
     get:
@@ -11427,6 +11626,8 @@ paths:
                       used: 0
                       tier_source: unrecorded
                       recorded_at: null
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/capacity/subaccount-tier:
     put:
@@ -11713,6 +11914,7 @@ paths:
                       }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/statecharts/{machineKey}:
     parameters:
@@ -11776,6 +11978,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/statecharts/{machineKey}/export:
     parameters:
@@ -11815,6 +12018,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/view-as:
     post:
@@ -11904,6 +12108,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecuritySummary" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/keys/kek-rewrap:
     post:
@@ -12080,6 +12286,7 @@ paths:
                 properties:
                   job_id: { type: string, format: uuid }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/recorder/import:
     post:
@@ -12132,6 +12339,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/recorder/purge:
     post:
@@ -12875,7 +13083,7 @@ components:
                   reason: maintenance,
                 }
     CsrfTokenInvalid:
-      description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
+      description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead, from every operation outside its allow-list (see `Forbidden` and the Enrolment-only session section of `info.description`); that refusal is not retryable."
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
@@ -12893,7 +13101,7 @@ components:
                   code: csrf_token_invalid,
                 }
     AccountScopeDenied:
-      description: The targeted exchange account is outside the caller's granted scope.
+      description: "The targeted exchange account is outside the caller's granted scope. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
