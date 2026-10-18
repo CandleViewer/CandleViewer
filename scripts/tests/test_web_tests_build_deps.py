@@ -5,17 +5,28 @@ before `turbo run test`, but many jobs call pnpm, vitest, vite or Playwright on 
 directly, and the app's build resolves `@candleviewer/ui/theme.css` to a built file. The scan below
 finds every such job in `.github/workflows/`. Each must build `@candleviewer/web^...` and check
 that the built exports of `packages/ui`, `packages/chart-engine` and `packages/protocol` exist
-before its first apps/web step, and AGENTS.md says so next to the web test command."""
+before its first apps/web step, and AGENTS.md says so next to the web test command.
+
+#3367: the scan reads a run script as the shell runs it. Backslash-continued lines are joined, the
+commands are split at newlines, `;`, `&&`, `||` and `|`, and a `cd` or `pushd` moves the folder
+of the commands after it. `pnpm -C` or `--dir` and `npm --prefix` run one command in a folder. A
+folder counts when it is apps/web or inside it, relative to the checkout or under
+`${{ github.workspace }}`, and a path selector (`./apps/web`, `{apps/web}`) or `--filter-prod`
+selects the app as its name does. A job-level `continue-on-error`, or a job or workflow
+`defaults.run.shell`, would weaken the pinned steps without touching them, so no scanned job may
+set one. Out of scope, as a static scan cannot resolve them and no workflow uses them: commands in
+a script file or a composite action, and folders or filters held in variables (`cd "$DIR"`)."""
 
 from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
@@ -28,29 +39,72 @@ GUARD_STEP = {
     "name": "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)",
     "run": GUARD,
 }
-# pnpm selecting exactly the app, not `@candleviewer/web^...` (its deps) or `...web...[ref]`.
-WEB_FILTER = re.compile(r"""(?:--filter|-F)[= ](["']?)@candleviewer/web\1(?=\s|$)""")
+# pnpm selecting exactly the app by name or folder, with --filter, -F or --filter-prod: not
+# `@candleviewer/web^...` (its deps) or `...web...[ref]`.
+WEB_SELECTOR = r"(?:@candleviewer/web|\./apps/web/?|\{(?:\./)?apps/web/?\})"
+WEB_FILTER = re.compile(rf"""(?:--filter(?:-prod)?|-F)[= ](["']?){WEB_SELECTOR}\1(?=\s|$)""")
 # A build or test word (`pnpm run build`, `vite build`, `playwright test`, `pnpm e2e`) or vitest.
 WEB_TASK = re.compile(r"(?:^|\s)(?:run\s+)?(?:build|test|test:cov|e2e)(?=\s|$)|\bvitest\b")
+# One command run in another folder (`pnpm -C apps/web`, `--dir=apps/web`, `npm --prefix`).
+DIR_FLAG = re.compile(r"""(?:^|\s)(?:-C|--dir|--prefix)[= ]["']?([^\s"']+)""")
+CD = re.compile(r"""(?:cd|pushd)\s+["']?([^\s"']+)""")
+# The checkout root as a working-directory or a shell names it.
+WORKSPACE = re.compile(r"^(?:\$\{\{\s*github\.workspace\s*\}\}|\$\{?GITHUB_WORKSPACE\}?)(?:/|$)")
 Steps = list[dict[str, Any]]
+
+
+class WebJob(NamedTuple):
+    steps: Steps
+    first: int  # the first step that builds or tests apps/web
+    weakeners: tuple[str, ...]  # keys outside the steps that change how every step runs
+
+
+def _folder(path: object, here: str = ".") -> str:
+    """`path` relative to the checkout; a relative path resolves against `here`."""
+    text = str(path or "").strip()
+    if WORKSPACE.match(text):
+        here, text = ".", WORKSPACE.sub("", text)
+    elif text.startswith(("/", "$", "~")):  # outside the checkout, or not known statically
+        return text
+    return posixpath.normpath(posixpath.join(here, text))
+
+
+def _in_web(folder: str) -> bool:
+    return folder == "apps/web" or folder.startswith("apps/web/")
+
+
+def _commands(run: object) -> list[str]:
+    """A run script's commands: continued lines joined, split at newlines, ;, &&, || and |."""
+    script = re.sub(r"\\\r?\n", " ", str(run or ""))
+    return [re.sub(r"^[\s({]+|[\s)]+$", "", part) for part in re.split(r"&&|\|\|?|;|\n", script)]
 
 
 def _builds_or_tests_web(step: dict[str, Any], cwd: object = None) -> bool:
     """A build, test or Playwright run of apps/web that turbo does not drive."""
-    folder = str(step.get("working-directory", cwd) or "").removeprefix("./").rstrip("/")
-    return any(
-        "turbo" not in line
-        and WEB_TASK.search(line) is not None
-        and (folder == "apps/web" or WEB_FILTER.search(line) is not None)
-        for line in str(step.get("run", "")).splitlines()
-    )
+    here = _folder(step.get("working-directory", cwd))
+    for command in _commands(step.get("run")):
+        if (cd := CD.match(command)) is not None:
+            here = _folder(cd[1], here)
+        elif "turbo" not in command and WEB_TASK.search(command) is not None:
+            flag = DIR_FLAG.search(command)
+            folder = here if flag is None else _folder(flag[1], here)
+            if _in_web(folder) or WEB_FILTER.search(command) is not None:
+                return True
+    return False
 
 
-def _web_jobs(
-    folder: Path = ROOT / ".github" / "workflows",
-) -> dict[tuple[str, str], tuple[Steps, int]]:
-    """(workflow, job) -> (steps, index of the first apps/web step), over every workflow."""
-    found: dict[tuple[str, str], tuple[Steps, int]] = {}
+def _weakeners(doc: dict[str, Any], name: str, job: dict[str, Any]) -> tuple[str, ...]:
+    """The job- and workflow-level keys that change how every step of the job runs."""
+    keys = [f"jobs.{name}.continue-on-error"] if "continue-on-error" in job else []
+    for prefix, owner in ((f"jobs.{name}.", job), ("", doc)):
+        if "shell" in ((owner.get("defaults") or {}).get("run") or {}):
+            keys.append(f"{prefix}defaults.run.shell")
+    return tuple(keys)
+
+
+def _web_jobs(folder: Path = ROOT / ".github" / "workflows") -> dict[tuple[str, str], WebJob]:
+    """(workflow, job) -> the job's steps, its first apps/web step and its weakening keys."""
+    found: dict[tuple[str, str], WebJob] = {}
     for path in sorted(folder.glob("*.y*ml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         default = ((doc.get("defaults") or {}).get("run") or {}).get("working-directory")
@@ -59,7 +113,7 @@ def _web_jobs(
             steps: Steps = job.get("steps") or []
             hits = [i for i, step in enumerate(steps) if _builds_or_tests_web(step, cwd)]
             if hits:
-                found[(path.name, name)] = (steps, hits[0])
+                found[(path.name, name)] = WebJob(steps, hits[0], _weakeners(doc, name, job))
     return found
 
 
@@ -183,7 +237,7 @@ def test_the_scan_reads_a_default_working_directory(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(("workflow", "job"), sorted(WEB_JOBS.keys() - DORMANT.keys()))
 def test_lane_builds_web_deps_and_guards_before_web_tests(workflow: str, job: str) -> None:
-    steps, first_web = WEB_JOBS[(workflow, job)]
+    steps, first_web, _ = WEB_JOBS[(workflow, job)]
     install = _index(steps, "pnpm install --frozen-lockfile")
     build, guard = _index(steps, BUILD), _index(steps, GUARD)
     assert install < build < guard < first_web
@@ -195,7 +249,7 @@ def test_lane_builds_web_deps_and_guards_before_web_tests(workflow: str, job: st
 def test_a_dormant_web_step_is_still_dormant(workflow: str, job: str) -> None:
     folder = DORMANT[(workflow, job)]
     assert not (ROOT / folder).exists(), f"{folder} exists: {job} needs install, build and guard"
-    steps, first_web = WEB_JOBS[(workflow, job)]
+    steps, first_web, _ = WEB_JOBS[(workflow, job)]
     assert f"[ -d {folder} ]" in str(steps[first_web].get("run", ""))
 
 
