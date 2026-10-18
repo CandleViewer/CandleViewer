@@ -60,6 +60,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # caller's live sessions (the response is the same 404 for a foreign id, an unknown id and
         # the caller's own ended session).
         "auth.session_revoke_denied",
+        # #2295: an enrolment-only session refused outside its allow-list, on HTTP (403) or at
+        # the WS `auth` (4403); emitted by api/enrolment_guard.py within its audit budgets.
+        "auth.mfa_enrollment_required",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

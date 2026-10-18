@@ -131,6 +131,27 @@ auth_totp_clock_skew_total = Counter(
     # closed set: authenticator_behind | authenticator_ahead
     ["kind"],
 )
+#: `auth_enrolment_refused_total{transport, reason}` (#2295) closed sets. Each refusal of an
+#: enrolment-only session counts once under its reason, and an `enrolment_only` one counts again
+#: under an audit reason when its `auth.mfa_enrollment_required` record was not written normally.
+ENROLMENT_REFUSAL_TRANSPORTS: tuple[str, ...] = ("http", "ws")
+ENROLMENT_REFUSAL_REASONS: tuple[str, ...] = (
+    "enrolment_only",  # 403 / `bye mfa_enrollment_required` (audited)
+    "expired",  # it would outlive its 15 minutes (Q7): 401 / a failed WS `auth`
+    "unclassified",  # the session could not be read or classified: 503 / a failed WS `auth`
+    "audit_throttled",  # over the per-user budget or the in-flight cap: no write, on purpose
+    "audit_slow",  # the request stopped waiting at the timeout; the write may still land
+    "audit_unavailable",  # the write failed: after the wait, or still running at shutdown
+)
+auth_enrolment_refused_total = Counter(
+    "auth_enrolment_refused_total",
+    "Requests and WS auths refused for an enrolment-only session (#2295), by transport and reason.",
+    ["transport", "reason"],
+)
+# Bound now, so the first refusal after a restart is a visible 0 -> 1 `increase()`.
+for _transport in ENROLMENT_REFUSAL_TRANSPORTS:
+    for _reason in ENROLMENT_REFUSAL_REASONS:
+        auth_enrolment_refused_total.labels(transport=_transport, reason=_reason)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, another user's, or rotated away, presented"
@@ -268,6 +289,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_audit_outcome_lost_total",
         "auth_csrf_refused_total",
         "auth_session_fixation_attempts_total",
+        "auth_enrolment_refused_total",
         "auth_lockouts_total",
         "auth_stepup_failures_total",
         "authz_denied_total",

@@ -2537,6 +2537,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_enrolment_refused_total",
+        "counter",
+        "refusals",
+        ("transport", "reason"),
+        "Enrolment-only session refusals (#2295) by transport (http/ws) and bounded reason.",
+        "none yet (#2746); audited as auth.mfa_enrollment_required",
+        _L,
+        "E09",
+        max_series=12,
+        exported=True,
+    ),
+    _s(
         "auth_totp_clock_skew_total",
         "counter",
         "rejections",
