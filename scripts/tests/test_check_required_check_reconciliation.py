@@ -226,6 +226,9 @@ RESULT_PY = "          RESULT_PY: ${{ needs.py.result }}\n"
 CI_NAME = "    name: ci-required\n"
 SETUP_NODE = '          node-version: "20"\n'
 SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - run: echo\n$&"
+INSTALL = "    name: install\n"
+NODE_CHECK = "    name: node-version-check (CI-JS-001)\n"
+UNIT_ENGINE = "    name: unit-engine\n    needs: install\n"
 
 
 @pytest.mark.parametrize(
@@ -376,6 +379,16 @@ SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - 
         ("pr.yml", "the architecture contract)\n", "$&        if: ${{ 0 }}\n", "'architecture' must"),
         ("pr.yml", "the architecture contract)\n", "$&        if: null\n", "'architecture' must"),
         ("pr.yml", "    name: architecture\n", '$&    defaults: {"run":{"shell":"sh"}}\n', "a flow"),
+        # ... and a called job that needs a job that never runs is skipped, which passes its lane.
+        ("_job-js.yml", INSTALL, "$&    if: false\n", "§9 check 'unit-frontend' is missing"),
+        ("_job-js.yml", NODE_CHECK, "$&    if: false\n", "§9 check 'unit-engine' is missing"),
+        (
+            "_job-js.yml",
+            (INSTALL, UNIT_ENGINE),
+            ("$&    if: false\n", "    name: unit-engine\n    needs:\n    - install # a list\n"),
+            "§9 check 'unit-engine' is missing",
+        ),
+        ("_job-js.yml", UNIT_ENGINE, "    name: unit-engine\n    needs: >-\n      install\n", "'unit-e"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(

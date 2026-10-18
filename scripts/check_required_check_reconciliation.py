@@ -157,6 +157,16 @@ def _job_blocks(text: str) -> dict[str, list[str]]:
     return jobs
 
 
+def _needs(lines: list[str]) -> set[str] | None:
+    """The jobs a job `needs:` at 4 spaces (one id, a flow list or a block list), or None when its
+    value is a block scalar, which this does not read."""
+    text = re.sub(r"(?:^|[ \t])#.*", "", "\n".join(lines), flags=re.M)
+    found = re.search(r"^    needs:(.*)((?:\n(?:[ \t]*$| {4,}- .*))*)", text, re.M)
+    if found and re.match(r"\s*[|>]", found[1]):
+        return None
+    return set(re.findall(r"[\w-]+", found[1] + found[2])) if found else set()
+
+
 def _form_errors(path: str, text: str) -> list[str]:
     """Lines outside the YAML this line-based proof reads: plain `key:` and `- ` lines (and a quoted
     top-level `on`), block scalars, and one-line scalars with no tag, no key inside and no flow
@@ -244,7 +254,8 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls that can fail it (keys at 4 spaces, not NEVER_RE).
+    of the reusable workflow it calls that can fail it (keys at 4 spaces, not NEVER_RE, and a
+    readable `needs:` that names no job that cannot).
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
     call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
@@ -337,12 +348,17 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                     errors.append(f"{called_path}: a YAML anchor, alias or merge key hides content")
                 errors += _form_errors(called_path, called_text)
                 called = _job_blocks(called_text)
+                deps = {job: _needs(block) for job, block in called.items()}
                 skip = {
                     job
                     for job, block in called.items()
-                    if NEVER_RE.search(job_text := "\n".join(block))
+                    if deps[job] is None
+                    or NEVER_RE.search(job_text := "\n".join(block))
                     or not re.match(r"(?:[ \t]*(?:#.*)?\n)*    [^\s#]", job_text)
                 }
+                # GitHub skips a job whose needed job was skipped, and a skipped job passes its lane.
+                while more := {job for job, need in deps.items() if need and need & skip} - skip:
+                    skip |= more
                 lanes.update(f"{lane}/{job}" for job in set(called) - skip)
         elif source == f"needs.gates.outputs.{lane}" and "gates" in needs and lane in exported:
             lanes.add(lane)
