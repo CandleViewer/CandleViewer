@@ -1880,12 +1880,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "steps",
         ("reason",),
-        "WS 23 section 8.4: per topic drop/unmergeable/resnapshot, per close_budget/close_redrop, "
-        "and close_flush_deadline per close whose flush expired (also counted beside a step 3).",
+        "WS 23 section 8.4: per topic drop/drop_share/unmergeable/resnapshot, per "
+        "close_budget/close_redrop, and close_flush_deadline per close whose flush expired (also "
+        "counted beside a step 3).",
         "client health",
         _L,
         "E17",
-        max_series=6,
+        max_series=7,
         exported=True,
     ),
     _s(
