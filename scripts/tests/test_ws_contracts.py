@@ -290,6 +290,76 @@ def test_snap_meta_names_the_bar_history_repair_reason(schemas: dict[str, object
     assert re.search(c18, MD_TEXT, re.MULTILINE)
 
 
+def test_snap_meta_carries_stale_as_a_boolean_that_may_be_absent(
+    schemas: dict[str, object],
+) -> None:
+    """#3202 (§7.2): `meta.stale` says a snapshot may be behind the live market. It is a boolean the
+    server sends only when true; a string or an integer is refused, and `snapMeta` stays closed
+    (a near-miss key is refused, not ignored)."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"stale": True}) and meta.is_valid({"stale": False})
+    assert meta.is_valid({"reason": "initial"}), "a healthy snapshot's meta has no stale key"
+    for bad in ("true", "false", "", 1, 0, None):
+        assert not meta.is_valid({"stale": bad}), bad
+    for near in ("Stale", "is_stale", "stale_", "stales"):
+        assert not meta.is_valid({near: True}), near
+
+
+def test_envelope_carries_stale_on_a_binary_and_a_structured_snap(
+    schemas: dict[str, object],
+) -> None:
+    """#3202: `meta.stale` is on the envelope, so a binary snapshot (an opaque `p` with no field
+    for the flag) and a structured one carry it alike (§7.2)."""
+    from jsonschema import Draft202012Validator
+
+    registry = val.build_registry(schemas)
+    env = Draft202012Validator({"$ref": "cv://ws/v1/envelope.schema.json"}, registry=registry)
+    bars = Draft202012Validator({"$ref": "cv://ws/v1/bars.schema.json"}, registry=registry)
+    identity = {"spec_hash": "0" * 64, "build_version": 1, "include_delta": False}
+    meta = {"reason": "initial", **identity, "stale": True}
+    frame = {"t": "snap", "ch": "bars.BTCUSDT.time.5", "s": 1, "ts": 1789132262404}
+    payload = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
+    binary = {**frame, "e": "b", "meta": meta, "p": "AAAA"}
+    structured = {**frame, "e": "j", "meta": meta, "p": payload}
+    assert env.is_valid(binary) and env.is_valid(structured) and bars.is_valid(payload)
+    assert not env.is_valid({**binary, "meta": {**meta, "stale": "true"}})
+    assert not env.is_valid({**structured, "meta": {**meta, "stale": 1}})
+
+
+def test_bars_payload_refuses_a_stale_field_so_the_carrier_is_the_meta(
+    schemas: dict[str, object],
+) -> None:
+    """#3202: the carrier is `meta.stale`, not a payload field. A binary `p` has no field to hold
+    one, so a payload `stale` would reach structured subscribers only; `BarsBatch` stays closed."""
+    from jsonschema import Draft202012Validator
+
+    bars = Draft202012Validator(
+        {"$ref": "cv://ws/v1/bars.schema.json"}, registry=val.build_registry(schemas)
+    )
+    payload = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
+    assert bars.is_valid(payload)
+    assert not bars.is_valid({**payload, "stale": True})
+
+
+def test_doc_names_meta_stale_and_its_two_causes_where_it_said_the_wire_had_none() -> None:
+    """#3202: §7.7 no longer says `BarsBatch` has no `stale` field yet, §14.3 says where the flag
+    is instead, §7.2 names its two causes and `meta.stale`, §16.1 gives the client C21, and §12
+    shows one `meta.stale` frame, which the gate validates."""
+    assert "has no `stale` field yet" not in MD_TEXT
+    batch = MD_TEXT.split("### 14.3 `BarsBatch`")[1].split("\n### 14.4 ")[0]
+    assert "`BarsBatch` has no `stale` field" in batch and "`meta.stale`" in batch
+    snapshot = MD_TEXT.split("### 7.2 Snapshot frame")[1].split("\n### 7.3 ")[0]
+    assert "freshness SLO" in snapshot and "quarantined" in snapshot and "`meta.stale`" in snapshot
+    assert len(re.findall(r"^\| C21 \| Show the staleness badge", MD_TEXT, re.MULTILINE)) == 1
+    frames = [frame for _, frame in val.parse_examples(MD_TEXT)]
+    assert any(f.get("meta", {}).get("stale") is True for f in frames), "§12: no meta.stale frame"
+
+
 _RS = "bb000000-0000-4000-8000-000000000001"
 _ENDED = {"ch": "trades.BTCUSDT", "ok": True, "ended": [{"sub_id": "s_01", "rs": _RS}]}
 

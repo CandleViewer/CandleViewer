@@ -353,6 +353,10 @@ export interface SnapMeta {
    * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
    */
   include_delta?: boolean;
+  /**
+   * snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.
+   */
+  stale?: boolean;
 }
 
 // Source: cv://ws/v1/ctl.schema.json
@@ -474,6 +478,10 @@ export interface SnapMeta {
    * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
    */
   include_delta?: boolean;
+  /**
+   * snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.
+   */
+  stale?: boolean;
 }
 
 // Source: cv://ws/v1/executions.schema.json

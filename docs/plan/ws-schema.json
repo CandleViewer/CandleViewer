@@ -246,6 +246,11 @@
             "include_delta": {
               "type": "boolean",
               "description": "bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1)."
+            },
+            "stale": {
+              "type": "boolean",
+              "default": false,
+              "description": "snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d."
             }
           },
           "additionalProperties": false
