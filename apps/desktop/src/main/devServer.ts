@@ -1,7 +1,7 @@
 /**
- * The `CV_DEV_SERVER_URL` development hook (#3411, C-12.9). When honoured, the main window loads
- * that URL instead of the shell's own `app://candleviewer` bundle, and the navigation guard
- * (SR-113) accepts its origin, so the page it serves gets the preload bridge (`window.cv`).
+ * The `CV_DEV_SERVER_URL` development hook (#3411; C-12.9, C-12.10). When honoured, the main
+ * window loads that URL instead of the shell's own `app://candleviewer` bundle, and the navigation
+ * guard (SR-113) accepts its origin, so the page it serves gets the preload bridge (`window.cv`).
  * The shell therefore honours it only in an unpackaged build and only for a loopback http origin
  * with an explicit port, decided on the parsed URL, never by string prefix.
  */
@@ -15,7 +15,7 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"]);
 
 /**
  * Printable ASCII without spaces. The URL parser silently drops tabs and newlines and trims
- * spaces and controls, so such a value is refused rather than repaired.
+ * spaces and controls, so a value carrying any of them is refused rather than repaired.
  */
 const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
 
@@ -36,6 +36,8 @@ export type DevServerResolution =
  * Decides whether the shell honours `raw`, the `CV_DEV_SERVER_URL` value (undefined when not
  * set). Accepted: `http://127.0.0.1:<port>` or `http://localhost:<port>` with a port from 1 to
  * 65535 and no credentials, in an unpackaged build. The result never carries a rejected value.
+ * An accepted value comes back as the parser's canonical href, the URL the window loads, so
+ * another spelling of the two hosts (`127.1`, `0x7f.0.0.1`) loads as one of those two origins.
  */
 export function resolveDevServerUrl(
   raw: string | undefined,

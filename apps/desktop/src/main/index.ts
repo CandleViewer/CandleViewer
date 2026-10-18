@@ -90,6 +90,7 @@ export function isNavigationAllowed(url: string, devServerUrl: DevServerUrl | un
     try {
       dev = new URL(devServerUrl);
     } catch {
+      // Unreachable for a value resolveDevServerUrl produced; kept so a forged one fails closed.
       return false;
     }
     return target.origin === dev.origin;
