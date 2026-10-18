@@ -102,6 +102,7 @@ const REPLY_OF: Readonly<Record<string, "sub_ok" | "unsub_ok" | "ctl_ok" | undef
   ctl: "ctl_ok",
 };
 const FAMILY_THROTTLE: Readonly<Record<string, number>> = { book: 50, trades: 100 };
+const MAX_WINDOW_SECONDS = 300;
 const familyOf = (ch: string): string => ch.split(".", 1)[0] ?? ch;
 const keyOf = (ch: string, rs?: string): string => `${ch}#${rs ?? "live"}`;
 const asJson = (v: unknown): Json => (typeof v === "object" && v !== null ? (v as Json) : {});
@@ -138,6 +139,10 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     return {
       ...opts,
       ...(bucket !== undefined && { time_bucket_ms: bucket }),
+      // this server keeps at most 5 minutes of a heatmap
+      ...(opts["window_seconds"] !== undefined && {
+        window_seconds: Math.min(Number(opts["window_seconds"]), MAX_WINDOW_SECONDS),
+      }),
       ...(options.bloatEffective === true && { junk: Array.from({ length: 2_000 }, (_, i) => i) }),
       throttle_ms: Math.max(asked, limits.min_throttle_ms),
     };
