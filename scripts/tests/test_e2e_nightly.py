@@ -7,7 +7,9 @@
 `e2e-web` shards, `e2e-staging`, `a11y-axe` and `e2e-electron`. `e2e-electron` runs when its caller
 sets `_job-e2e.yml`'s `electron` input, as the nightly does (the suite is green since #3393), or on
 a `release/*` head: `pr.yml` keeps the default. A red scheduled run opens an issue from a job that
-holds `issues: write` and nothing else, and runs no checkout and no action."""
+holds `issues: write` and nothing else, and runs no checkout and no action. A red nightly blocks the
+next release (C-9.2) through the release checklist: 07 section 4.1 and the issue form `release.yml`
+opens for each cut both ask for a green run on the `main` tip being cut."""
 
 from __future__ import annotations
 
@@ -21,6 +23,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
+RELEASE_DOC = ROOT / "docs" / "plan" / "07-release-and-prr.md"
+RELEASE_FORM = ROOT / ".github" / "ISSUE_TEMPLATE" / "release-checklist.yml"
 NIGHTLY = "e2e-nightly.yml"
 LANE_FILE = "_job-e2e.yml"
 LANE = f"./.github/workflows/{LANE_FILE}"
@@ -122,6 +126,20 @@ def test_e2e_nightly_report_opens_an_issue_for_a_red_scheduled_run() -> None:
     # Values reach the script through env, never as expressions expanded into it.
     assert "${{" not in step["run"]
     assert "gh issue create" in step["run"] and "/actions/runs/$GITHUB_RUN_ID" in step["run"]
+
+
+def test_release_checklist_needs_a_green_e2e_nightly_on_the_tip_it_cuts() -> None:
+    # C-9.2: a red nightly blocks the next release. 07 section 4.1 lists the pre-cut items, and the
+    # issue form release.yml opens copies them, so the box the release owner ticks names the run.
+    pre_cut = RELEASE_DOC.read_text(encoding="utf-8").split("### 4.1 ", 1)[1].split("\n### ", 1)[0]
+    items = [line for line in pre_cut.splitlines() if line.startswith("- [ ] ")]
+    named = [item for item in items if f"`{NIGHTLY}`" in item]
+    assert len(named) == 1 and "`e2e-electron` included" in named[0]
+    form = yaml.safe_load(RELEASE_FORM.read_text(encoding="utf-8"))
+    (box,) = [item for item in form["body"] if item.get("id") == "pre-cut"]
+    labels: list[str] = [option["label"] for option in box["attributes"]["options"]]
+    named = [label for label in labels if NIGHTLY in label]
+    assert len(named) == 1 and "e2e-electron included" in named[0]
 
 
 def test_e2e_nightly_adds_no_check_a_required_context_names() -> None:
