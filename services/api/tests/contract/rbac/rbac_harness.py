@@ -370,7 +370,10 @@ class LifecycleStore:
 def user_disable_service(audit: Any) -> UserDisableService:
     """The real service (its guards are the cells' subject) over a store that finds no user."""
     unreached: Any = object()
-    ports = ("sessions", "session_rows", "chart", "publish_revocation", "invites", "rules", "scope")
+    ports = (
+        *("sessions", "session_rows", "chart", "publish_revocation", "close_user_sockets"),
+        *("invites", "rules", "scope"),
+    )
     return UserDisableService(
         LifecycleStore(),
         audit,

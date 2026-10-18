@@ -118,11 +118,12 @@ async def _kept(dsn: str) -> tuple[Any, list[Any]]:
 
 
 def test_delete_route_two_sessions_one_rule(pg_dsn: str) -> None:
-    """AC1, SR-029, O4 on Postgres: two sessions and one armed rule of manager M; the Owner's
-    DELETE ends both sessions (REST 401) and both sockets (`bye user_disabled`, 4403) within 5 s
-    on the test clock, the refresh in flight mints no successor (#2911), the rule is disarmed
-    through B9 and audited, and every row of M stays: the user (disabled, with its role), the
-    grant (soft-revoked, freeze state and cap kept) and the three session rows."""
+    """AC1, SR-029, O4 on Postgres: two live sessions and one armed rule of manager M; the Owner's
+    DELETE ends both sessions (REST 401) and all four sockets (`bye user_disabled`, 4403) within
+    5 s on the test clock, the two on `rotated` sessions too (S7), the refresh in flight mints no
+    successor (#2911), the rule is disarmed through B9 and audited, and every row of M stays: the
+    user (disabled, with its role), the grant (soft-revoked, freeze state and cap kept) and the
+    four session rows."""
     asyncio.run(_seed(pg_dsn))
     w = SimpleNamespace(clock=_Clock())
     w.clock.now = datetime.now(UTC).replace(microsecond=0)  # one time base with the database's
@@ -138,5 +139,5 @@ def test_delete_route_two_sessions_one_rule(pg_dsn: str) -> None:
     rule_disarmed(w, _OWNER, _M)
     kept, sessions = asyncio.run(_kept(pg_dsn))
     assert kept == ("disabled", 1, False, False, True, "drawdown", Decimal(250))
-    assert sessions == ["rotated", "user_disabled", "user_disabled"]
+    assert sessions == ["rotated", "rotated", "user_disabled", "user_disabled"]
     assert not w.rule_row.deleted and len(w.rule_row.versions) == 1

@@ -10,9 +10,9 @@ deferred constraints (23514 maps onto the floor refusal); await the caller's aud
 by `audit_timeout_s` (C-2.9); commit. A raise before the commit rolls all of it back; if the hook
 had started, its record may be durable, and the caller closes it. The post-commit steps (B16
 REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
-statement's snapshot, so a successor that an in-flight refresh mints after it stays live. No
-slice of E42-T04 removes that window (S4's post-commit sweep only narrows it): refresh, mint and
-require_active read no `users.status`, which #2911 tracks.
+statement's snapshot, but a successor that an in-flight refresh mints after it is refused: the
+mint reads `users.status` under the user-row lock (#2911), and `require_active` revokes any
+session of a disabled user on its next use (S7's AC1 test covers the window end to end).
 """
 
 from __future__ import annotations
@@ -100,9 +100,9 @@ class SqlAlchemyUserLifecycleStore:
         `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
         landed, the revoked ids are lost with the exception, so no post-commit step runs for
-        those sessions, and a retry, which is AC5's no-op and returns no ids, does not settle
-        them: their sockets stay open until their access token expires (up to 12 min,
-        ADR-0020) and no B16 REVOKE record is written for them."""
+        those sessions, and a retry, which is AC5's no-op and returns no ids, settles them only
+        in part: the service's retry closes every socket of the user (E42-T04 S7), but no B16
+        REVOKE record is written for those sessions."""
         if user_id == actor:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)

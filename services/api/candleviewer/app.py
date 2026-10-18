@@ -1339,7 +1339,7 @@ def create_app(
     kill_switch = KillSwitchView()
     app.state.ws_registry = ws_registry
     app.state.ws_hub = ws_hub
-    app.state.ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
+    app.state.ws_events = ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
     app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved)
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
@@ -1403,6 +1403,7 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             positions=_NoPositionStore(),
             publish_revocation=_hub_publisher(revocation_hub),
+            close_user_sockets=ws_events.user_disabled,  # every socket of the user (S7)
             clock=auth_clock,
         )
     app.state.user_disable = user_disable

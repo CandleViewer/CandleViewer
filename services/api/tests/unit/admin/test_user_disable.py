@@ -92,6 +92,7 @@ class _World:
         self.positions, self.orders = positions, orders
         self.armed, self.refuse = armed, refuse or {}
         self.disarms = list[tuple[str, uuid.UUID, uuid.UUID, datetime]]()
+        self.socket_users = list[uuid.UUID]()
         self.svc = UserDisableService(
             store or _store(self.rel),
             self,
@@ -101,6 +102,7 @@ class _World:
             session_rows=ports.get("rows", self),
             chart=ports.get("chart", SimpleNamespace(revoke=self.record)),
             publish_revocation=ports.get("publish", self.publish),
+            close_user_sockets=ports.get("sockets", self.close_user_sockets),
             invites=ports.get("invites", SimpleNamespace(revoke=self.revoke_invite)),
             rules=ports.get("rules", self),
             scope=ports.get("scope", SimpleNamespace(refresh=self.refresh_scope)),
@@ -132,6 +134,11 @@ class _World:
 
     async def publish(self, session_id: str, reason: str) -> None:
         self.mark(f"socket:{reason}")
+
+    async def close_user_sockets(self, user_id: uuid.UUID) -> int:
+        self.mark("socket:user")  # every socket of the user, on whatever session (S7)
+        self.socket_users.append(user_id)
+        return 0
 
     async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]:
         self.mark(f"sweep:{reason}")
@@ -172,16 +179,18 @@ class _World:
 
 
 async def test_step_order() -> None:
-    """R7: exposure, `users.disable` before the commit, then sockets, sweep, B16, the scope
-    refresh, the rule disarm (list, then each rule) and the invite."""
+    """R7: exposure, `users.disable` before the commit, then sockets (each revoked session's, then
+    every one of the user's, S7), sweep, B16, the scope refresh, the rule disarm (list, then each
+    rule) and the invite."""
     w = _World(_Rel(status="invited", sessions=(_S1, _S2)), armed=("r1", "r2"))
     assert await w.disable() == DisableResult(changed=True)
     assert w.log == [
         *("positions", "orders", "users.disable", "socket:user_disabled", "socket:user_disabled"),
-        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled"),
+        *("socket:user", "sweep:user_disabled", "b16:user_disabled", "b16:user_disabled"),
         *("scope", "rules", "disarm:r1", "disarm:r2", "rules", "invite"),
         "users.invite_revoked",
     ]
+    assert w.socket_users == [_TARGET]
     (invite,) = w.of("users.invite_revoked")
     assert (invite["actor_user_id"], invite["object_id"]) == (_OWNER.user_id, str(_TARGET))
     assert (invite["reason"], invite["after_state"]) == ("user_disabled", {"role": "viewer"})
@@ -447,14 +456,15 @@ async def test_invited_revokes_invite(
 
 async def test_already_disabled_is_a_noop_that_sweeps_and_disarms_again() -> None:
     """AC5: a repeat needs no acknowledgement, commits nothing (`!open`), writes no record, and
-    sweeps, refreshes the scope and looks for armed rules again (SR-029): all three are idempotent
-    and keep the cascade re-drivable."""
+    closes every socket of the user (S7), sweeps, refreshes the scope and looks for armed rules
+    again (SR-029): all four are idempotent and keep the cascade re-drivable."""
     w = _World(_Rel(status="disabled"), positions=None)
     assert await w.disable() == DisableResult(changed=False)
     assert w.calls == [] and w.log == [
-        *("positions", "orders", "sweep:user_disabled!open", "scope!open", "rules!open"),
-        "rules!open",
+        *("positions", "orders", "socket:user!open", "sweep:user_disabled!open", "scope!open"),
+        *("rules!open", "rules!open"),
     ]
+    assert w.socket_users == [_TARGET]
 
 
 async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
@@ -464,16 +474,17 @@ async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
     assert await w.disable() == DisableResult(changed=False)
     assert w.disarms == [("r1", _TARGET, _OWNER.user_id, _NOW)]
     assert w.post_commit() == [
-        *("sweep:user_disabled!open", "scope!open", "rules!open", "disarm:r1!open"),
-        "rules!open",
+        *("socket:user!open", "sweep:user_disabled!open", "scope!open", "rules!open"),
+        *("disarm:r1!open", "rules!open"),
     ]
 
 
-async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> None:
-    """AC5, S3: the commit failed on the wire but had gone through (`outcome_unknown`), and the
-    ids it revoked died with the error. The retry finds the user disabled: it writes no record,
-    commits nothing and has no ids, so it only sweeps (SR-029). Those two sessions get no socket
-    close and no B16 REVOKE from it: their sockets stay open until the access token expires."""
+async def test_retry_after_an_unknown_commit_closes_the_sockets_not_b16() -> None:
+    """AC5, S3, S7 (S6's Left item 7): the commit failed on the wire but had gone through
+    (`outcome_unknown`), and the ids it revoked died with the error, so the call ran no step. The
+    retry finds the user disabled: it writes no record, commits nothing and has no ids, so it
+    closes every socket of the user, which ends the sockets of those two sessions, and sweeps
+    (SR-029). B16 records neither session: a residual (`e42-user-lifecycle.md` §6)."""
     w = _World(_Rel(sessions=(_S1, _S2), commit_error=TimeoutError("commit lost")))
     with pytest.raises(TimeoutError):
         await w.disable()
@@ -481,8 +492,10 @@ async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> Non
     w.rel.rows[LOCK_USER] = [("disabled",)]  # the commit had gone through after all
     assert await w.disable() == DisableResult(changed=False)
     assert len(w.of("users.disable")) == 2 and w.post_commit() == [
-        *("sweep:user_disabled!open", "scope!open", "rules!open", "rules!open"),
+        *("socket:user!open", "sweep:user_disabled!open", "scope!open", "rules!open"),
+        "rules!open",
     ]
+    assert w.socket_users == [_TARGET]
 
 
 async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
@@ -500,7 +513,8 @@ async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
     gate.set()
     await w.svc.drain()
     assert w.post_commit() == [
-        *("sweep:user_disabled", "b16:user_disabled", "scope", "rules", "rules", "invite"),
+        *("socket:user", "sweep:user_disabled", "b16:user_disabled", "scope", "rules", "rules"),
+        "invite",
     ]
 
 
@@ -554,8 +568,9 @@ def _steps(step: str, outcome: str) -> float:  # `cv_user_lifecycle_steps_total`
         ({"sessions": SimpleNamespace(revoke_all=Mock(side_effect=LookupError))}, "session_sweep"),
         ({"scope": SimpleNamespace(refresh=Mock(side_effect=LookupError))}, "scope_refresh"),
         ({"rules": SimpleNamespace(armed_rule_ids=Mock(side_effect=LookupError))}, "rule_disarm"),
+        ({"sockets": Mock(side_effect=LookupError)}, "socket_close"),
     ],
-    ids=["sink", "sweep", "scope", "rules"],
+    ids=["sink", "sweep", "scope", "rules", "user_sockets"],
 )
 async def test_port_that_raises_before_its_awaitable_fails_its_step_alone(
     ports: dict[str, Any], failed: str
@@ -576,12 +591,14 @@ async def test_port_that_raises_before_its_awaitable_fails_its_step_alone(
 
 
 async def test_sink_that_raises_is_tried_for_every_session() -> None:
-    """R7: one session's sink raising does not stop the next session's socket close."""
+    """R7: one session's sink raising does not stop the next session's socket close, nor the close
+    of every socket of the user after them (S7): three runs of the step."""
     w = _World(_Rel(sessions=(_S1, _S2)), publish=Mock(side_effect=LookupError))
     with capture_logs() as logs:
         assert await w.disable() == DisableResult(True, _STEPS[:1])
     (socket,) = [e for e in logs if e.get("step") == "socket_close"]
-    assert (socket["attempted"], socket["outcome"]) == (2, "failed")
+    assert (socket["attempted"], socket["outcome"]) == (3, "failed")
+    assert w.socket_users == [_TARGET]
 
 
 async def test_raise_outside_a_step_fails_the_rest_never_the_caller() -> None:
@@ -628,8 +645,9 @@ async def test_hung_count_is_unknown(read: str, monkeypatch: pytest.MonkeyPatch)
         ({"publish": _hang, "deadline_s": 0}, _STEPS),
         ({"publish": _hang, "deadline_s": 0, "status": "active"}, _STEPS[:5]),
         ({"rows": SimpleNamespace(find_by_id=AsyncMock(return_value=None))}, _STEPS[2:3]),
+        ({"sockets": _hang, "step_timeout_s": 0}, _STEPS[:1]),
     ],
-    ids=[*_STEPS, "deadline", "deadline_active", "b16_row_missing"],
+    ids=[*_STEPS, "deadline", "deadline_active", "b16_row_missing", "user_sockets"],
 )
 async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple[str, ...]) -> None:
     """R7: each await after the commit and all of them are bounded; hung, unreached or broken, a

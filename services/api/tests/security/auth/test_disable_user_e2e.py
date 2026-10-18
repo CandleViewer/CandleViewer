@@ -5,9 +5,12 @@ composition root builds the disable service itself and the test pins the argumen
 `build_user_disable_service` at its call site. Only the SQL edges are faked: the rows behind the
 S3 store's statements, the identity and scope reads (O5: only an `active` user holds a
 permission) and the rule store, under the app's own rule manager and B9 charts. The session,
-step-up and B16 services are the real ones. Manager M has two sessions, a socket on each, an armed
-rule and a frozen grant with a cap; a refresh of a third session of M has claimed it and waits to
-mint (#2911). The Owner disables M, once. Postgres: `test_user_disable_route_pg.py`.
+step-up and B16 services are the real ones. Manager M has two live sessions, a socket on each, an
+armed rule and a frozen grant with a cap. One of the two was minted by a refresh that completed,
+and a socket that never re-authed is still on its predecessor; a refresh of a third session of M,
+with a socket, has claimed it and waits to mint (#2911). So two of M's four sockets are on a session
+no id list names (S7). The Owner disables M, once. Postgres: `test_user_disable_route_pg.py`.
+A second world holds a new socket's `auth` of M across the disable (#2739).
 """
 
 from __future__ import annotations
@@ -200,11 +203,23 @@ async def _armed_rule(manager: Any, m: str) -> str:
 
 
 def _ended(ws: Any) -> tuple[dict[str, Any], int]:
-    """The socket's last frame and its close code."""
+    """The socket's last frame, which must be its `bye`, and its close code. A first frame that is
+    not the `bye` fails here, named, before any wait for the close: a socket left open (an
+    `auth_ok`, say) would otherwise fail only at the close's deadline, without the frame it got."""
     bye = _recv(ws)
+    assert bye.get("t") == "bye", f"the first frame is {bye.get('t')!r}, not the bye: {bye}"
     with pytest.raises(WebSocketDisconnect) as close:
         _recv(ws)
     return bye, close.value.code
+
+
+def _owner_headers(app: Any, run: Any, w: SimpleNamespace, owner: str) -> dict[str, str]:
+    """A new session of the Owner with the `users` step-up made (SR-025): its bearer and CSRF."""
+    mine = run(app.state.app_context.auth.sessions.mint, owner)
+    until = w.clock.now + timedelta(minutes=5)
+    run(w.repo.update_step_up_state, str(mine.session_id), lambda _: ({"users": until}, 0, None))
+    bearer = {"Authorization": f"Bearer {mine.access_token}"}
+    return bearer | csrf_headers(app.state.csrf_codec, mine.session_id)
 
 
 def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: str) -> None:
@@ -215,38 +230,41 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
     assert portal is not None  # inside the client's `with`
     run, sessions = portal.call, ctx.auth.sessions
     run(ctx.rules.start, ctx)
-    mine, w.a, w.b, w.c = (run(sessions.mint, u) for u in (owner, m, m, m))
-    until = w.clock.now + timedelta(minutes=5)  # the step-up the Owner made
-    run(w.repo.update_step_up_state, str(mine.session_id), lambda _: ({"users": until}, 0, None))
+    headers = _owner_headers(app, run, w, owner)
+    w.a, w.p, w.c = (run(sessions.mint, m) for _ in range(3))
     w.rule = run(_armed_rule, ctx.rules.manager(), m)
-    headers = {"Authorization": f"Bearer {mine.access_token}"}
-    headers |= csrf_headers(app.state.csrf_codec, mine.session_id)
 
     def rest(minted: Any) -> int:  # M's next REST call on that session
         bearer = {"Authorization": f"Bearer {minted.access_token}"}
         return int(client.get("/auth/session", headers=bearer).status_code)
 
-    w.before = [rest(s) for s in (w.a, w.b, w.c)]
-    w.repo.park = park = asyncio.Event()
-    refresh = portal.start_task_soon(sessions.refresh, w.c.refresh_token)
-    try:
-        with (
-            client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_a,
-            client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_b,
-        ):
-            w.auth = [_auth_ws(ws, s.access_token)["t"] for ws, s in ((ws_a, w.a), (ws_b, w.b))]
+    with (
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_a,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_b,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_c,
+        client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws_p,
+    ):
+        w.auth = [_auth_ws(ws, s.access_token)["t"] for ws, s in ((ws_a, w.a), (ws_c, w.c))]
+        w.auth.append(_auth_ws(ws_p, w.p.access_token)["t"])  # it never re-auths: it stays on p
+        w.b = run(sessions.refresh, w.p.refresh_token).minted  # a refresh that completes
+        w.auth.append(_auth_ws(ws_b, w.b.access_token)["t"])
+        w.before = [rest(s) for s in (w.a, w.b, w.c)]
+        w.repo.park = park = asyncio.Event()
+        refresh = portal.start_task_soon(sessions.refresh, w.c.refresh_token)
+        try:
             run(functools.partial(asyncio.wait_for, w.repo.parked.wait(), _GUARD_S))  # claimed
             w.unacked = client.delete(f"/users/{m}", headers=headers)
             w.action_at = w.clock.now
             path = f"/users/{m}?acknowledge_unknown_positions=true"
             w.disabled = client.delete(path, headers=headers)
-            w.ended = [_ended(ws_a), _ended(ws_b)]
-    finally:
-        run(park.set)  # the claimed refresh mints its successor after the disable
+            w.ended = [_ended(ws) for ws in (ws_a, ws_b, ws_c, ws_p)]
+        finally:
+            run(park.set)  # the claimed refresh mints its successor after the disable
     w.refresh_error = refresh.exception(timeout=_GUARD_S)
     w.after = [rest(s) for s in (w.a, w.b, w.c)]
     w.live = run(w.repo.find_live_by_user, m)
-    w.rows_after = [run(w.repo.find_by_id, str(s.session_id)) for s in (w.a, w.b, w.c)]
+    sessions_of_m = (w.a, w.b, w.c, w.p)
+    w.rows_after = [run(w.repo.find_by_id, str(s.session_id)) for s in sessions_of_m]
     w.rule_row = run(w.rules.get, w.rule)
     w.leaf = ctx.rules.manager().lifecycle.leaf(w.rule)
     w.records = list(ctx.audit.writer.records)
@@ -254,17 +272,21 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
 
 def sessions_ended(w: SimpleNamespace) -> None:
     """AC1 on the sessions, whatever the store under them: within 5 s on the test clock (0 s: no
-    timer, no poll) each of M's two sessions is revoked `user_disabled` and refused on its next
-    REST call, and each socket gets `bye user_disabled` (`reconnect: false`), then the close 4403
-    (§9.5), before the DELETE returns. The refresh that claimed M's third session before the
-    disable mints no successor after it (#2911), so M has no live session."""
-    assert (w.before, w.auth, w.disabled.status_code) == ([200] * 3, ["auth_ok"] * 2, 204)
+    timer, no poll) each of M's two live sessions is revoked `user_disabled` and refused on its
+    next REST call, and each of M's four sockets gets one `bye user_disabled` (`reconnect:
+    false`), then the close 4403 (§9.5), before the DELETE returns: the two on those sessions, the
+    one on the session a refresh in flight claimed, and the one left on the predecessor of a
+    completed refresh (both `rotated`, S7). A second `bye` would fail `_ended`. The refresh that
+    claimed M's third session before the disable mints no successor after it (#2911), so M has
+    no live session."""
+    assert (w.before, w.auth, w.disabled.status_code) == ([200] * 3, ["auth_ok"] * 4, 204)
     for bye, code in w.ended:
         p = bye["p"]
         assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
     for row in w.rows_after[:2]:
         assert row.revoked_reason == "user_disabled" and row.revoked_at == w.action_at
-    assert w.after == [401] * 3 and w.rows_after[2].revoked_reason == "rotated"
+    rotated = [row.revoked_reason for row in w.rows_after[2:]]
+    assert w.after == [401] * 3 and rotated == ["rotated"] * 2
     assert isinstance(w.refresh_error, UserDisabled) and w.live == ()
 
 
@@ -284,8 +306,9 @@ def rule_disarmed(w: SimpleNamespace, owner: uuid.UUID, m: uuid.UUID) -> None:
     assert revoked == {str(w.a.session_id), str(w.b.session_id)}
 
 
-@pytest.fixture(scope="module")
-def disabled() -> Iterator[SimpleNamespace]:
+@contextmanager
+def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
+    """A new `w` over `_Rows`, and the deployed app with only its SQL edges on those rows."""
     w = SimpleNamespace(repo=_Rows(), rules=InMemoryRuleStore(), clock=_Clock())
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):
@@ -297,8 +320,14 @@ def disabled() -> Iterator[SimpleNamespace]:
         mp.setattr(relational, lambda *_: w.repo)  # the S3 store's unit of work
         mp.setattr(appmod, "PostgresRuleStore", lambda _relational: w.rules)
         with deployed(mp, _settings(), w) as (app, client):
-            scenario(app, client, w, str(_OWNER), str(_M))
-            yield w
+            yield w, app, client
+
+
+@pytest.fixture(scope="module")
+def disabled() -> Iterator[SimpleNamespace]:
+    with _world() as (w, app, client):
+        scenario(app, client, w, str(_OWNER), str(_M))
+        yield w
 
 
 @contextmanager
@@ -332,9 +361,10 @@ def deployed(
 
 
 def test_rest_401_ws_4403_within_5s(disabled: SimpleNamespace) -> None:
-    """AC1, SR-029, US-ADMIN-001 (`sessions_ended`). The bye comes through the cascade's own sink,
-    the call site's `publish_revocation`: the session service's sink published nothing, as the
-    sweep found no session left live, and the instant on the rows is the call site's `clock`."""
+    """AC1, SR-029, US-ADMIN-001 (`sessions_ended`). The byes come through the cascade's own
+    ports, the call site's `publish_revocation` and, for the sockets on `rotated` sessions, its
+    `close_user_sockets`: the session service's sink published nothing, as the sweep found no
+    session left live, and the instant on the rows is the call site's `clock`."""
     sessions_ended(disabled)
     assert disabled.published == []
 
@@ -359,7 +389,7 @@ def test_positions_come_from_the_deployed_source(disabled: SimpleNamespace) -> N
 def test_data_retained(disabled: SimpleNamespace) -> None:
     """AC1, O4: nothing of M is deleted. The user row stays (disabled) with its role, the grant
     row stays soft-revoked with its freeze state and cap, every session row stays (two revoked
-    `user_disabled`, the claimed one `rotated`, no successor), and the rule stays with its
+    `user_disabled`, two `rotated`, no successor of the claimed one), and the rule stays with its
     versions. The store ran only the statements this world models: no DELETE."""
     w = disabled
     assert w.repo.status(_M) is UserStatus.DISABLED and w.repo.roles[_M] == {"manager"}
@@ -367,7 +397,45 @@ def test_data_retained(disabled: SimpleNamespace) -> None:
     assert (grant["can_view"], grant["can_trade"], grant["frozen"]) == (False, False, True)
     assert (grant["frozen_reason"], grant["max_daily_loss_usd"]) == ("drawdown", Decimal(250))
     mine = {sid for sid, s in w.repo.sessions.items() if s.user_id == _M}
-    assert mine == {str(s.session_id) for s in (w.a, w.b, w.c)}
+    assert mine == {str(s.session_id) for s in (w.a, w.b, w.c, w.p)}
     assert not w.rule_row.deleted and len(w.rule_row.versions) == 1
     assert lifecycle._REVOKE_GRANTS in w.repo.statements
     assert not [s for s in w.repo.statements if re.search(r"\bDELETE\b", str(s), re.I)]
+
+
+def test_an_auth_in_flight_across_the_disable_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2739, SR-029: a new socket of M whose `auth` passed `authenticate` before the disable
+    committed, and registers only after it, gets `bye user_disabled` and 4403, never `auth_ok`.
+    The per-user close ran before it registered and its principal is read after the commit, so
+    what refuses it is the hub's memory of M's revoked session, which only the call site's
+    `publish_revocation` feeds: a no-op there fails this test (the S7 review's Low)."""
+    with _world() as (w, app, client):
+        portal = client.portal
+        assert portal is not None  # inside the client's `with`
+        run, sessions = portal.call, app.state.app_context.auth.sessions
+        headers, s = _owner_headers(app, run, w, str(_OWNER)), run(sessions.mint, str(_M))
+        passed, release = asyncio.Event(), asyncio.Event()
+        authenticate = sessions.authenticate_access_token
+
+        async def in_flight(token: str, **kwargs: Any) -> SessionRecord:  # M's auth waits
+            record: SessionRecord = await authenticate(token, **kwargs)
+            if token == s.access_token:
+                passed.set()
+                await release.wait()
+            return record
+
+        monkeypatch.setattr(sessions, "authenticate_access_token", in_flight)
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            ws.send_json({"t": "hello", "id": "h"})
+            assert _recv(ws)["t"] == "welcome"
+            ws.send_json({"t": "auth", "id": "a", "p": {"access_token": s.access_token}})
+            try:
+                run(functools.partial(asyncio.wait_for, passed.wait(), _GUARD_S))
+                path = f"/users/{_M}?acknowledge_unknown_positions=true"
+                status = client.delete(path, headers=headers).status_code
+            finally:
+                run(release.set)
+            bye, code = _ended(ws)
+    assert status == 204
+    p = bye["p"]
+    assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
