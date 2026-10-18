@@ -221,7 +221,11 @@ INDENTLESS = ARCH_STEP.replace("      - ", "    - ").replace(
     "        run", "      continue-on-error: true\n      run"
 )
 FORM = "plain block-style YAML"
+FILTER_PY = "          FILTER_PY: ${{ needs.changed-paths.outputs.py }}\n"
+RESULT_PY = "          RESULT_PY: ${{ needs.py.result }}\n"
 CI_NAME = "    name: ci-required\n"
+SETUP_NODE = '          node-version: "20"\n'
+SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - run: echo\n$&"
 
 
 @pytest.mark.parametrize(
@@ -328,6 +332,41 @@ CI_NAME = "    name: ci-required\n"
             FORM,
         ),
         ("_job-security.yml", "name: trivy\n", '$&    "continue-on-error": true\n', FORM),
+        # `ci-required` reads only its resolver step's own env (a step's env wins at runtime) ...
+        (
+            "pr.yml",
+            (FILTER_PY, CI_NAME),
+            ('          FILTER_PY: "false"\n', "$&    env:\n" + FILTER_PY[4:]),
+            "no job keys but",
+        ),
+        (
+            "pr.yml",
+            (RESULT_PY, CI_NAME),
+            ("          RESULT_PY: success\n", "$&    env:\n" + RESULT_PY[4:]),
+            "no job keys but",
+        ),
+        (
+            "pr.yml",
+            (RESULT_PY, SETUP_NODE + RESOLVE),
+            ("          RESULT_PY: success\n", SETUP_NODE + "        env:\n" + RESULT_PY + RESOLVE),
+            "the resolver step's env",
+        ),
+        (
+            "pr.yml",
+            "        env:\n          FILTER_JS",
+            "        env:\n          A: b\n$&",
+            "step's env",
+        ),
+        ("pr.yml", "\nconcurrency:\n", "\nenv:\n  NODE_OPTIONS: --x$&", "may set no env"),
+        (
+            "pr.yml",
+            RESOLVE,
+            "      - working-directory: x\n        name: Resolve ci",
+            "no keys but",
+        ),
+        ("pr.yml", CI_NAME, "$&    container: node:20\n", "no job keys but"),
+        # ... and no other job may report a check run of its name.
+        ("pr.yml", "  ci-required:\n", SHADOW, "the check-run name of 2 jobs"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
@@ -359,11 +398,21 @@ def _prove(tmp_path: Path, workflow: str, *edits: tuple[str, str], reindent: str
     return errors
 
 
-# Review round 4 of #3103: valid YAML whose shape the proof misread: a called job whose keys sit
-# at 6 spaces.
+# Review round 4 of #3103: valid YAML whose shape the proof misread. A resolver call inside an
+# action step's block scalar, with no real resolver step; a called job whose keys sit at 6 spaces.
 @pytest.mark.parametrize(
     "workflow,edit,reindent,expected",
     [
+        (
+            "pr.yml",
+            (
+                RESOLVE + "-required conclusion\n",
+                "      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n"
+                "        name: |\n",
+            ),
+            "c15c1\n        name: |\n",
+            "no keys but",
+        ),
         (
             "_job-security.yml",
             ("if: ${{ inputs.image_changed }}", "if: false"),

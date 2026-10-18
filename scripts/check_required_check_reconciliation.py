@@ -93,6 +93,10 @@ ANY_NEVER_RE = re.compile(NEVER_RE.pattern.replace("^    ", r"^\s*(?:-\s+)?", 1)
 # A YAML anchor, alias or merge key: it hides a node's content from this text-based proof.
 ANCHOR_RE = re.compile(r"^\s*(?:- )?(?:[\w\"'-]+\s*:\s+)?[&*]\w|^\s*(?:- )?<<\s*:", re.M)
 PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
+# The only keys `ci-required` and its resolver step may set: no env, defaults, container or
+# continue-on-error on the job, no shell, working-directory or if: on the step.
+JOB_KEYS = ("name", "if", "needs", "runs-on", "timeout-minutes", "permissions", "steps")
+STEP_KEYS = ("name", "id", "env", "run", "timeout-minutes")
 # GitHub's default pull_request activity types: a `types` filter that drops one stops a check
 # arriving on every pull request.
 DEFAULT_TYPES = {"pull_request": {"opened", "synchronize", "reopened"}}
@@ -239,16 +243,16 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
     of the reusable workflow it calls that can fail it (keys at 4 spaces, not NEVER_RE).
-    `ci-required` must run `if: always()`, with no continue-on-error, defaults or shell: (pr.yml's
-    own defaults too), its steps checkout, setup-node and one `run:` step, with no `if:`, that is
-    the resolver call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program. A lane counts when its
-    applicability is not the literal `false` and reads only FILTER_<NAME> set from the
-    `changed-paths` output <name>, and the table, with no key twice and nothing but lanes, takes
-    its result from the needed job of the lane's own name, or from the `gates` output of that name,
-    which the step of that id backs. Every job `ci-required` needs must fail when its work fails:
-    no ANY_NEVER_RE, on the job or on a step, but continue-on-error on a `gates` step whose outcome
-    is a lane. These files are plain block-style YAML (`_form_errors`), with no anchor, alias or
-    merge key (ANCHOR_RE). Returns (lanes, errors)."""
+    `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
+    its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
+    call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
+    or RESULT_ name. A lane counts when its applicability is not the literal `false` and reads
+    only FILTER_<NAME> set from the `changed-paths` output <name>, and the table, with no key twice
+    and nothing but lanes, takes its result from the needed job of the lane's own name, or from the
+    `gates` output of that name, which the step of that id backs. Every job `ci-required` needs
+    must fail when its work fails: no ANY_NEVER_RE, on the job or on a step, but continue-on-error
+    on a `gates` step whose outcome is a lane. These files are plain block-style YAML
+    (`_form_errors`), with no anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     text = _read(path)
     if ANCHOR_RE.search(text):
@@ -260,22 +264,35 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     body = "\n".join(jobs.get(AGGREGATE_CONTEXT, []))
     run = RESOLVER_RUN_RE.search(body)
     steps = re.split(r"^      - ", body.split("\n    steps:\n", 1)[-1], flags=re.M)[1:]
-    decider = [step for step in steps if RESOLVER in step]
+    decider = [f"      - {step}" for step in steps if RESOLVER in step]
+    step_keys = re.findall(r"^(?:      - |        )([\w-]+):", "".join(decider[:1]), re.M)
     actions = re.findall(r"^\s+(?:- )?uses:\s*(\S+)", body, re.M)
     if (
         not re.search(r"^    if:\s*(\$\{\{\s*)?always\(\)\s*(\}\})?\s*$", body, re.M)
+        or not set(re.findall(r"^    ([\w-]+):", body, re.M)) <= set(JOB_KEYS)
         or re.search(r"^\s+(?:- )?(continue-on-error|defaults|shell)\s*:", body, re.M)
-        or re.search(r"^[\"']?defaults[\"']?\s*:", text, re.M)
+        or re.search(r"^(?:defaults|env):", text, re.M)
         or not run
         or len(re.findall(r"^\s+(?:- )?run:", body, re.M)) != 1
         or len(decider) != 1
+        or not set(step_keys) <= set(STEP_KEYS)
         or re.search(r"^\s*if:", decider[0], re.M)
         or not all(map(STEP_ACTION_RE.fullmatch, actions))
     ):
         return set(), [
-            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error, "
-            "defaults (pr.yml's own too) or shell:, with steps checkout, setup-node and one `run:` "
-            f"step, with no `if:`, that is the {RESOLVER} call alone, whose exit is the resolver's"
+            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()` with no job keys but "
+            f"{', '.join(JOB_KEYS)} (pr.yml may set no env or defaults), with steps checkout, "
+            "setup-node and one step with no `if:`, continue-on-error or shell: (no keys but "
+            f"{', '.join(STEP_KEYS)}) that is the {RESOLVER} call alone, whose exit is the resolver's"
+        ]
+    env_block = re.search(r"^        env:\n((?:          .*\n)*)", decider[0] + "\n", re.M)
+    env_text = env_block[1] if env_block else ""
+    named = re.findall(r"^\s+(?:- +)?((?:FILTER|RESULT)_\w+)\s*:", body, re.M)
+    if sorted(named) != sorted(set(re.findall(r"^          (\w+):", env_text, re.M))):
+        return set(), [
+            f"{path}: the resolver step's env must set each FILTER_ and RESULT_ name once and "
+            f"nothing else, and no other part of `{AGGREGATE_CONTEXT}` may set one (a step's own "
+            "env wins over the job's)"
         ]
     program = PROGRAM_RE.fullmatch(run.group(2))
     if not program:
@@ -284,8 +301,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             "and `console.log(JSON.stringify(lanes));`, nothing else"
         ]
     needs = set(re.findall(r"^      - ([A-Za-z0-9_-]+)\s*$", body.split("\n    steps:")[0], re.M))
-    env = dict(re.findall(r"^\s+(RESULT_[A-Z0-9_]+):\s*\$\{\{\s*(\S+)\s*\}\}\s*$", body, re.M))
-    pairs = FILTER_ENV_RE.findall(body) if "changed-paths" in needs else []
+    env = dict(re.findall(r"^\s+(RESULT_[A-Z0-9_]+):\s*\$\{\{\s*(\S+)\s*\}\}\s*$", env_text, re.M))
+    pairs = FILTER_ENV_RE.findall(env_text) if "changed-paths" in needs else []
     filters = {f"FILTER_{var}" for var, out in pairs if var.lower().replace("_", "-") == out}
     gates = "\n".join(jobs.get("gates", []))
     step_ids = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", gates, re.M))
@@ -339,6 +356,22 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                 if not (judged and m.group(1).startswith("continue-on-error"))
             ]
     return lanes, errors + ([] if lanes else [f"{path}: no lane table in `{AGGREGATE_CONTEXT}`"])
+
+
+def duplicate_check_names(workflows_glob: str, contexts: set[str]) -> list[str]:
+    """Each required check that more than one job, in any workflow, reports by name (its literal
+    `name:`, else its id): GitHub matches a required check by name and app, and every Actions job
+    is the same app, so another job could pass it."""
+    names = [
+        _check_name(*job)
+        for wf_path in sorted(glob.glob(workflows_glob))
+        for job in _job_blocks(_read(wf_path)).items()
+    ]
+    return [
+        f"'{name}' is required on main and the check-run name of {names.count(name)} jobs"
+        for name in sorted(contexts)
+        if names.count(name) > 1
+    ]
 
 
 def aggregated_checks(names: list[str], lanes: set[str]) -> tuple[set[str], list[str]]:
@@ -431,6 +464,7 @@ def reconcile_repo(
         errors += alias_errors
     job_names = load_workflow_job_names(workflows_glob)
     errors += reconcile(desired_state, names, job_names, aggregated)
+    errors += duplicate_check_names(workflows_glob, required_contexts(desired_state))
     pending = desired_state.get("pending_checks", {})
     return errors, sorted(name for name in pending if name[:1] != "$")
 
