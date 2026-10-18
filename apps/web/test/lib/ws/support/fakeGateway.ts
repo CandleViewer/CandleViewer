@@ -28,6 +28,14 @@ export interface FakeGatewayOptions {
   readonly pingsBeforeWelcome?: number;
   /** `welcome` leaves out `clock_skew_ms` (it is optional, 4.2). */
   readonly omitSkew?: boolean;
+  /** Every `sub_ok` result says `snapshot_forced` (7.6). */
+  readonly forceSnapshots?: boolean;
+  /**
+   * Replies of these types are held back until `releaseHeld()`, in the order they were made: what the
+   * client sent meanwhile overtakes them. A held `sub_ok` takes the initial snapshots with it, and a
+   * `sub` refused (whole, or `client_rate_limited`) its `err`.
+   */
+  readonly hold?: readonly ("sub_ok" | "unsub_ok" | "ctl_ok")[];
 }
 
 export interface FakeConn {
@@ -65,6 +73,8 @@ export interface FakeConn {
   skip(ch: string, rs?: string): void;
   /** A `snap` the server sends unasked (7.4). */
   snap(ch: string, reason: string, rs?: string, extra?: Json): void;
+  /** The held replies go out. */
+  releaseHeld(): void;
 }
 
 interface Sub {
@@ -102,6 +112,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
   let refusals = 0;
   let authsToRefuse = options.refuseAuths ?? 0;
   let serverPings = 0;
+  let subsToFail = 0;
+  let unsubsToFail = 0;
+  const refusedTopics = new Set<string>();
   const now = () => Date.now() + skewMs;
 
   /** What `sub_ok.effective` says: the options after the clamps (5.2), a heatmap's throttle following its bucket (6.1). */
@@ -144,6 +157,14 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     };
 
     const subs = new Map<string, Sub>();
+    const held: (() => void)[] = [];
+    /** A reply, now, or when the test lets the held ones go. */
+    const later = (t: "sub_ok" | "unsub_ok" | "ctl_ok", go: () => void) => {
+      if (options.hold?.includes(t) === true) held.push(go);
+      else go();
+    };
+    const answer = (t: "unsub_ok" | "ctl_ok", frame: Json, id: unknown) =>
+      later(t, () => reply(t, frame, id));
     let subIds = 0;
     const payloadOf = (ch: string): Json =>
       ch === "system"
@@ -180,6 +201,16 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     };
 
     const onSub = (frame: Json) => {
+      if (subsToFail > 0) {
+        subsToFail -= 1; // a malformed or over-long sub is answered by an err, not a sub_ok (5.2)
+        return later("sub_ok", () =>
+          reply(
+            "err",
+            { p: { code: "invalid_options", message: "refused", field: "topics" } },
+            frame["id"],
+          ),
+        );
+      }
       const p = asJson(frame["p"]);
       const topics = (p["topics"] as Json[]) ?? [];
       if (topics.length > limits.max_topics_per_request) {
@@ -190,6 +221,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       const made: Sub[] = [];
       const results = topics.map((entry) => {
         const ch = String(entry["ch"]);
+        if (refusedTopics.has(ch))
+          return { ch, ok: false, error: { code: "forbidden", message: "refused" } };
         if (subs.has(keyOf(ch, rs))) {
           problems.push(`${ch} subscribed twice`);
           return { ch, ok: false, error: { code: "duplicate_subscription", message: "twice" } };
@@ -202,13 +235,24 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           sub_id: sub.id,
           snapshot_pending: true,
           effective: sub.effective,
+          ...(options.forceSnapshots === true && { snapshot_forced: true }),
         };
       });
-      reply("sub_ok", { p: { results } }, frame["id"]);
-      for (const sub of made) emitSnap(sub, "initial");
+      later("sub_ok", () => {
+        reply("sub_ok", { p: { results } }, frame["id"]);
+        for (const sub of made) emitSnap(sub, "initial");
+      });
     };
     /** 5.3: one `unsub` ends every subscription of a `ch`, live and replay alike; `system` stays. */
     const onUnsub = (frame: Json) => {
+      if (unsubsToFail > 0) {
+        unsubsToFail -= 1; // a malformed unsub is refused whole, and nothing is unsubscribed (5.3)
+        return reply(
+          "err",
+          { p: { code: "invalid_options", message: "refused", field: "topics" } },
+          frame["id"],
+        );
+      }
       const chs = asJson(frame["p"])["topics"] as string[];
       const results = chs.map((ch) => {
         if (ch === "system") return { ch, ok: false };
@@ -216,7 +260,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         for (const sub of gone) subs.delete(keyOf(sub.ch, sub.rs));
         return gone.length > 0 ? { ch, ok: true } : { ch, ok: true, noop: true };
       });
-      reply("unsub_ok", { p: { results } }, frame["id"]);
+      answer("unsub_ok", { p: { results } }, frame["id"]);
     };
     const onResync = (frame: Json) => {
       const sub = find(frame["ch"]);
@@ -335,6 +379,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       lateClose: (code) => events.close(code),
       lateMessage: (frame) => events.message(JSON.stringify({ ts: now(), ...frame })),
       of: (t) => received.filter((f) => f["t"] === t),
+      releaseHeld: () => held.splice(0).forEach((send) => send()),
       subs: () =>
         [...subs.values()].map(({ ch, rs, id, seq, effective }) => ({
           ch,
@@ -391,6 +436,18 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     /** The next `n` connects fail before they open (unreachable). */
     refuse(n = 1) {
       refusals += n;
+    },
+    /** The next `n` `unsub` frames are refused whole, with an `err` and no `unsub_ok`. */
+    failUnsubs(n: number) {
+      unsubsToFail = n;
+    },
+    /** The next `n` `sub` frames are refused whole, with an `err` and no `sub_ok`. */
+    failSubs(n: number) {
+      subsToFail = n;
+    },
+    /** A `sub` of `ch` is answered `forbidden`. */
+    refuseTopic(ch: string) {
+      refusedTopics.add(ch);
     },
     /** The next `n` `auth` frames, re-auths included, are refused. */
     refuseAuths(n: number) {

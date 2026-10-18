@@ -356,6 +356,47 @@ describe("what the session settles and what it hands on", () => {
     expect(t.types()).toEqual(["connecting", "welcome"]);
   });
 
+  it("keeps what bye says of the costly topics, five at most and each a bounded name", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    const topics = ["heatmap.BTCUSDT", "x".repeat(121), "x".repeat(120), "a", "b", "c", "d"];
+    t.gateway.latest.bye("slow_consumer", 4429, { hint: { most_expensive_topics: topics } });
+    expect(t.connection.slowConsumerHint).toEqual([
+      "heatmap.BTCUSDT",
+      "x".repeat(120),
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("keeps no hint that is not a list of names", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    t.gateway.latest.bye("slow_consumer", 4429, {
+      hint: { most_expensive_topics: "heatmap.BTCUSDT" },
+    });
+    expect(t.connection.slowConsumerHint).toEqual([]);
+    expect(t.connection.counters.malformedFrames).toBe(0); // and it did not throw out of the handler
+  });
+
+  it("surfaces the request_id of an error for the diagnostics, bounded", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    const err = (request_id: unknown) => ({
+      t: "err",
+      p: { code: "degraded_data", message: "m", request_id },
+    });
+    t.gateway.latest.send(err("urn:cv:req:1"));
+    t.gateway.latest.send(err("x".repeat(121)));
+    t.gateway.latest.send(err("y".repeat(120)));
+    t.gateway.latest.send(err(7));
+    expect(t.events.filter((e) => e.type === "request_id")).toEqual([
+      { type: "request_id", requestId: "urn:cv:req:1" },
+      { type: "request_id", requestId: "y".repeat(120) },
+    ]);
+  });
+
   it("starts once, stops once, and sends nothing before it is ready", async () => {
     const t = connectionHarness();
     t.connection.send({ t: "ping", id: "c-0", p: { client_ms: 0 } });
