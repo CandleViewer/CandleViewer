@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E03-T05: generated-code freshness gate for ``packages/protocol``.
+"""E03-T05: generated-code gate for ``packages/protocol`` and the other generated paths.
 
 ADR-0013 binding rule 3: "packages/protocol is regenerated from
 22-api-openapi.yaml and the WS schema; any diff fails the build. Generated
@@ -117,10 +117,11 @@ GENERATE_OUTPUTS: tuple[Path, ...] = (
 # `pnpm generate` does not write, keyed by the generator. Running those generators would
 # need the backend venv (datamodel-code-generator, the candleviewer package), which this
 # job does not install, and each writes a fixed set of files, so the gate compares what
-# git tracks there with this table. Tests pin each entry to its generator's own output
-# paths: scripts/tests/test_check_gen_freshness.py, and for generate_cvwb_vectors.py,
-# which imports the backend, services/api/tests/unit/ws/test_cvwb_binary.py. Step 7 judges
-# names only: each file's content is checked by its generator's --check or by a test.
+# git tracks there with this table. scripts/tests/test_check_gen_freshness.py pins each
+# entry to its generator's own output paths (generate_cvwb_vectors.py's read from its
+# source, as importing it needs the backend), and services/api/tests/unit/ws/
+# test_cvwb_binary.py pins that entry to the evaluated TARGETS too. Step 7 judges names
+# only: each file's content is checked by its generator's --check or by a test.
 FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
     "tools/contracts/gen_ws_constants.py": (
         "packages/protocol/generated/ws_constants.py",
@@ -524,7 +525,10 @@ def main(argv: list[str] | None = None) -> int:
         _note_missing(removed)
         raise
 
-    print("check_gen_freshness: OK — packages/protocol is fresh and deterministic")
+    print(
+        "check_gen_freshness: OK — the generated paths are fresh and deterministic, "
+        "and no committed file there poses as generated"
+    )
     return 0
 
 

@@ -10,6 +10,7 @@ needs PyYAML (scripts/requirements-ci.txt), as the gate does in CI.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -101,11 +102,46 @@ def _rel(path: Path) -> str:
     return path.resolve().relative_to(_REPO_ROOT).as_posix()
 
 
+_CVWB_SCRIPT = "services/api/scripts/generate_cvwb_vectors.py"
+_CVWB_REPO = "Path(__file__).resolve().parents[3]"  # the repository root
+
+
+def _cvwb_targets() -> set[str]:
+    """generate_cvwb_vectors.py's TARGETS, read from its source: importing the script
+    needs the backend, which this always-on job does not install. Each key must be
+    spelt `REPO / "part" / ...`, with REPO the repository root, or collection fails."""
+    module = ast.parse((_REPO_ROOT / _CVWB_SCRIPT).read_text(encoding="utf-8"))
+    values: dict[str, ast.expr | None] = {}
+    for node in module.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            values[node.target.id] = node.value
+        elif isinstance(node, ast.Assign):
+            for name in node.targets:
+                if isinstance(name, ast.Name):
+                    values[name.id] = node.value
+    repo, targets = values.get("REPO"), values.get("TARGETS")
+    assert repo is not None and ast.unparse(repo) == _CVWB_REPO, _CVWB_SCRIPT
+    assert isinstance(targets, ast.Dict), _CVWB_SCRIPT
+    written: set[str] = set()
+    for key in targets.keys:
+        parts: list[str] = []
+        while isinstance(key, ast.BinOp) and isinstance(key.op, ast.Div):
+            right = key.right
+            assert isinstance(right, ast.Constant), ast.unparse(key)
+            assert isinstance(right.value, str), ast.unparse(key)
+            parts.insert(0, right.value)
+            key = key.left
+        shown = "**" if key is None else ast.unparse(key)
+        assert isinstance(key, ast.Name) and key.id == "REPO" and parts, shown
+        written.add("/".join(parts))
+    return written
+
+
 # #3392: the gated directories `pnpm generate` does not write, and what each generator
-# writes, read from the generator's own output paths. generate_cvwb_vectors.py imports
-# the backend, so its files are listed here and services/api/tests/unit/ws/
-# test_cvwb_binary.py pins them to its TARGETS. The tracked files in those directories are
-# those files, the CVWB layout twin (step 3's) and one corpus kept by hand (SR-185).
+# writes, read from the generator's own output paths (for generate_cvwb_vectors.py, from
+# its source; services/api/tests/unit/ws/test_cvwb_binary.py also pins its evaluated
+# TARGETS). The tracked files in those directories are those files, the CVWB layout twin
+# (step 3's) and one corpus kept by hand (SR-185).
 _GATED_DIRS = {
     "packages/fixtures/golden/cvwb",
     "packages/protocol/generated",
@@ -129,11 +165,7 @@ _WRITES: dict[str, set[str]] = {
         for path in (out, out.parent / "__init__.py")
     }
     | {_rel(_MODELS.CONTRACT_OUT)},
-    "services/api/scripts/generate_cvwb_vectors.py": {
-        "packages/fixtures/golden/cvwb/structured.json",
-        "packages/fixtures/golden/cvwb/vectors.json",
-        "tests/fuzz/ws-frames/corpus.json",
-    },
+    _CVWB_SCRIPT: _cvwb_targets(),
 }
 _FIXED_OUTPUTS = {
     writer: sorted(rel for rel in files if posixpath.dirname(rel) in _GATED_DIRS)
