@@ -8,9 +8,12 @@ outputs synthesised in-test (no network, no real scanner invocation).
 from __future__ import annotations
 
 import json
+import re
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -235,17 +238,6 @@ def test_pip_audit_unscored_advisory_treated_as_high_fail_closed(
     )
     findings = parse_pip_audit(report)
     assert findings[0].severity == "HIGH"
-
-
-def test_npm_audit_high_severity_blocks(tmp_path: Path) -> None:
-    report = _write_json(
-        tmp_path,
-        "npm-audit.json",
-        {"vulnerabilities": {"left-pad": {"severity": "high", "via": [{"source": "GHSA-zzzz"}]}}},
-    )
-    findings = parse_npm_audit(report)
-    result = evaluate_findings(findings, risks=[], run_date=date(2026, 1, 1))
-    assert result.blocked
 
 
 def test_low_severity_finding_does_not_block(tmp_path: Path) -> None:
@@ -837,27 +829,6 @@ def test_main_cli_ok_on_clean_report(tmp_path: Path) -> None:
     assert rc == 0
 
 
-def test_npm_audit_ghsa_url_becomes_finding_id(tmp_path: Path) -> None:
-    report = _write_json(
-        tmp_path,
-        "npm-audit.json",
-        {
-            "vulnerabilities": {
-                "braces": {
-                    "severity": "high",
-                    "via": [
-                        {
-                            "source": 1098094,
-                            "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
-                        }
-                    ],
-                }
-            }
-        },
-    )
-    assert parse_npm_audit(report)[0].finding_id == "GHSA-vfj7-8cjw-p6xm"
-
-
 def test_repo_register_accepts_the_braces_ghsa_exception_with_approver_and_expiry() -> None:
     register = Path(__file__).resolve().parents[2] / "security" / "accepted-risks.yaml"
     risks = {r.finding_id: r for r in load_accepted_risks(register)}
@@ -1113,3 +1084,346 @@ def test_repo_register_covers_the_0004_migration_findings() -> None:
     hits = [r for r in risks if r.tool == "semgrep" and mig in r.finding_id]
     assert len(hits) == 3
     assert all(r.expires == date(2026, 12, 31) for r in hits)
+
+
+# --------------------------------------------------------------------------
+# #3494: the npm-audit leg reads what CI runs, `pnpm audit --json` (pnpm 12.5.1)
+# --------------------------------------------------------------------------
+
+PNPM_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pnpm-audit"
+REGISTER = Path(__file__).resolve().parents[2] / "security" / "accepted-risks.yaml"
+# pnpm-12.5.1-main.json (main at d77138f07): one finding per advisory, in pnpm's order.
+MAIN_FINDINGS = [
+    ("GHSA-w5hq-g745-h8pq", "MEDIUM", "uuid@9.0.1"),
+    ("GHSA-g7r4-m6w7-qqqr", "LOW", "esbuild@0.27.7"),
+    ("GHSA-wrjc-x8rr-h8h6", "MEDIUM", "react-router@6.30.6"),
+    ("GHSA-337j-9hxr-rhxg", "MEDIUM", "react-router@6.30.6"),
+    ("GHSA-82fw-gwwq-j7x9", "MEDIUM", "vitest@3.2.7"),
+    ("GHSA-82fw-gwwq-j7x9", "MEDIUM", "@vitest/mocker@3.2.7"),
+    ("GHSA-vfj7-8cjw-p6xm", "HIGH", "braces@3.0.3"),
+    ("GHSA-hp3w-g68c-fv3c", "MEDIUM", "sprintf-js@1.1.3"),
+    ("GHSA-68fv-2mgg-jv7q", "HIGH", "source-map-js@1.2.1"),
+    ("GHSA-5gmw-xhrv-c9v3", "CRITICAL", "tinypool@1.1.1"),
+    ("GHSA-85c8-ppgw-ccpr", "CRITICAL", "tinypool@1.1.1"),
+]
+SOURCE_MAP_JS, BRACES, TINYPOOL = "1241209", "1240992", "1241260"  # their advisories' keys
+VITEST, VITEST_MOCKER = "1193683", "1193684"  # GHSA-82fw-gwwq-j7x9 on each module
+CRITICAL_RULE = "Critical findings take no accepted-risk entry (30-release-roadmap.md §4.4 R0)"
+
+
+def _pnpm_doc(*keys: str) -> dict[str, Any]:
+    """pnpm-12.5.1-main.json cut down to the advisories `keys`, recounted as pnpm counts them."""
+    doc: dict[str, Any] = json.loads(
+        (PNPM_FIXTURES / "pnpm-12.5.1-main.json").read_text(encoding="utf-8")
+    )
+    doc["advisories"] = {key: doc["advisories"][key] for key in keys}
+    counts = dict.fromkeys(doc["metadata"]["vulnerabilities"], 0)
+    for advisory in doc["advisories"].values():
+        counts[advisory["severity"]] += 1
+    doc["metadata"]["vulnerabilities"] = counts
+    return doc
+
+
+def _npm_gate(
+    capsys: pytest.CaptureFixture[str],
+    report: Path,
+    risks: Path = REGISTER,
+    run_date: str = "2026-10-18",
+) -> tuple[int, str, str]:
+    argv = ["--tool", "npm-audit", "--report", str(report), "--accepted-risks", str(risks)]
+    rc = main([*argv, "--run-date", run_date])
+    out, err = capsys.readouterr()
+    return rc, out, err
+
+
+def test_real_pnpm_audit_report_from_main_gives_one_finding_per_advisory() -> None:
+    findings = parse_npm_audit(PNPM_FIXTURES / "pnpm-12.5.1-main.json")
+    assert [(f.finding_id, f.severity, f.package) for f in findings] == MAIN_FINDINGS
+    assert {f.tool for f in findings} == {"npm-audit"}
+    assert findings[-1].detail == (
+        "tinypool@1.1.1: Tinypool: Prototype Pollution Gadget to RCE in run() options "
+        "(2 dependency paths, e.g. packages__config>@vitest/coverage-v8>vitest>tinypool)"
+    )
+
+
+def test_real_pnpm_audit_report_from_main_blocks_on_its_critical_and_high_advisories(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc, out, err = _npm_gate(capsys, PNPM_FIXTURES / "pnpm-12.5.1-main.json")
+    assert (rc, out) == (1, "")
+    blocking = re.findall(r"^CI-SEC-001: npm-audit finding (\S+) \((\w+)\)", err, re.MULTILINE)
+    assert blocking == [
+        ("GHSA-68fv-2mgg-jv7q", "HIGH"),
+        ("GHSA-5gmw-xhrv-c9v3", "CRITICAL"),
+        ("GHSA-85c8-ppgw-ccpr", "CRITICAL"),
+    ]
+    lines = err.splitlines()
+    assert (len(lines), lines[-1]) == (5, "security_gate[npm-audit]: BLOCKED (CI-SEC-001)")
+    (accepted,) = [line for line in lines if line.startswith("accepted risk: ")]
+    head = "accepted risk: npm-audit finding GHSA-vfj7-8cjw-p6xm (HIGH) until 2026-12-31 - EX-06: "
+    assert accepted.startswith(head)
+
+
+def test_clean_pnpm_audit_report_passes_with_no_findings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = PNPM_FIXTURES / "pnpm-12.5.1-clean.json"
+    assert parse_npm_audit(report) == []
+    assert _npm_gate(capsys, report) == (0, "security_gate[npm-audit]: OK\n", "")
+
+
+def test_pnpm_advisory_on_several_versions_and_paths_is_one_finding() -> None:
+    findings = parse_npm_audit(PNPM_FIXTURES / "pnpm-12.5.1-multi-version.json")
+    assert [(f.finding_id, f.severity, f.package) for f in findings] == [
+        ("GHSA-grv7-fg5c-xmjg", "HIGH", "braces@2.3.2,3.0.2"),
+        ("GHSA-952p-6rrq-rcjv", "MEDIUM", "micromatch@3.1.10"),
+        ("GHSA-vcc3-ghjq-m6fr", "MEDIUM", "decode-uri-component@0.2.2"),
+        ("GHSA-vfj7-8cjw-p6xm", "HIGH", "braces@2.3.2,3.0.2"),
+    ]
+    assert "(5 dependency paths, e.g. .>micromatch>snapdragon>" in findings[2].detail
+
+
+def test_pnpm_report_missing_an_advisory_its_metadata_counts_raises_ci_sec_005(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # pnpm leaves an advisory on its auditConfig ignore list out of `advisories` but still counts
+    # it (fixtures README): exceptions go through security/accepted-risks.yaml only (C-12.3).
+    report = PNPM_FIXTURES / "pnpm-12.5.1-ignored.json"
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    assert err == (
+        f"CI-SEC-005: npm-audit: {report} lists 1 high, 2 moderate advisories but its metadata "
+        "counts 2 high, 2 moderate: every advisory pnpm counts must reach the gate\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("keys", "high", "says"),
+    [
+        ((), 1, "lists no advisories but its metadata counts 1 high"),
+        ((SOURCE_MAP_JS,), 0, "lists 1 high advisories but its metadata counts none"),
+    ],
+)
+def test_pnpm_report_whose_counts_disagree_with_its_advisories_raises_ci_sec_005(
+    tmp_path: Path, keys: tuple[str, ...], high: int, says: str
+) -> None:
+    doc = _pnpm_doc(*keys)
+    doc["metadata"]["vulnerabilities"]["high"] = high
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_npm_audit(_write_json(tmp_path, "npm-audit.json", doc))
+    assert (exc_info.value.code, exc_info.value.message.split(" ", 2)[2]) == (
+        "CI-SEC-005",
+        f"{says}: every advisory pnpm counts must reach the gate",
+    )
+
+
+def test_pnpm_high_advisory_without_a_register_entry_blocks_with_ci_sec_001(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(SOURCE_MAP_JS))
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    head = "CI-SEC-001: npm-audit finding GHSA-68fv-2mgg-jv7q (HIGH) has no accepted-risk entry"
+    assert err.startswith(head + " — source-map-js@1.2.1: ")
+
+
+def test_braces_stays_accepted_by_ex06_until_it_expires(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(BRACES))
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, err) == (0, "")
+    assert out.startswith("accepted risk: npm-audit finding GHSA-vfj7-8cjw-p6xm (HIGH) until ")
+    rc, out, err = _npm_gate(capsys, report, run_date="2026-12-31")
+    assert (rc, out) == (1, "")
+    assert err.startswith("CI-SEC-004: accepted risk expired for GHSA-vfj7-8cjw-p6xm ")
+
+
+def test_one_register_entry_covers_its_ghsa_on_every_module_pnpm_reports(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Entries match on id and tool, never on the package (security/accepted-risks.yaml's schema
+    # comment): pnpm reports GHSA-82fw-gwwq-j7x9 on vitest and on @vitest/mocker, and one entry
+    # covers both. Raised to high, since only a finding at the gate's threshold meets the register.
+    doc = _pnpm_doc(VITEST, VITEST_MOCKER)
+    for advisory in doc["advisories"].values():
+        advisory["severity"] = "high"
+    doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 2}
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "HIGH"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
+    assert (rc, err) == (0, "")
+    accepted = "accepted risk: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) until 2099-01-01 - test"
+    assert out.splitlines() == [accepted, accepted, "security_gate[npm-audit]: OK"]
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": []}))
+    assert (rc, out) == (1, "")
+    assert [line.split(" — ")[-1].split(":")[0] for line in err.splitlines()[:2]] == [
+        "vitest@3.2.7",
+        "@vitest/mocker@3.2.7",
+    ]
+
+
+def test_critical_pnpm_advisory_blocks_even_with_a_matching_register_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The register refuses a CRITICAL entry at load, so a matching entry has a lower severity.
+    report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(TINYPOOL))
+    entry = {"id": "GHSA-5gmw-xhrv-c9v3", "tool": "npm-audit", "severity": "HIGH"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
+    assert (rc, out) == (1, "")
+    head = "CI-SEC-001: npm-audit finding GHSA-5gmw-xhrv-c9v3 (CRITICAL) has an accepted-risk entry"
+    assert err.startswith(f"{head}, but {CRITICAL_RULE} — tinypool@1.1.1: ")
+
+
+@pytest.mark.parametrize("tool", ["codeql", "semgrep", "bandit", "pip-audit", "npm-audit", "trivy"])
+def test_no_register_entry_covers_a_critical_finding(tool: str) -> None:
+    finding = Finding(tool=tool, finding_id="X-1", severity="CRITICAL", detail="d")
+    risk = AcceptedRisk("X-1", tool, "HIGH", "why", "basiltt", date(2099, 1, 1))
+    result = evaluate_findings([finding], [risk], run_date=date(2026, 10, 18))
+    assert (result.blocked, result.code) == (True, "CI-SEC-001")
+    head = f"CI-SEC-001: {tool} finding X-1 (CRITICAL) has an accepted-risk entry"
+    assert result.messages == [f"{head}, but {CRITICAL_RULE} — d"]
+
+
+# npm 7+'s `npm audit --json`: nothing in CI or `make security` writes it any more.
+NPM_V7 = {
+    "auditReportVersion": 2,
+    "vulnerabilities": {
+        "braces": {
+            "name": "braces",
+            "severity": "high",
+            "via": [
+                {"source": 1098094, "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"}
+            ],
+        }
+    },
+    "metadata": {"vulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 1}},
+}
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        pytest.param(NPM_V7, id="npm-audit-schema"),
+        pytest.param({}, id="empty-object"),
+        pytest.param([], id="array"),
+        pytest.param(None, id="null"),
+        pytest.param("advisories", id="string"),
+        pytest.param({"error": {"code": "ERR_PNPM_AUDIT_BAD_RESPONSE"}}, id="error-object"),
+        pytest.param({"advisories": {}}, id="no-metadata"),
+        pytest.param({"metadata": _pnpm_doc()["metadata"]}, id="no-advisories"),
+    ],
+)
+def test_unrecognised_npm_audit_document_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], doc: object
+) -> None:
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_npm_audit(report)
+    assert exc_info.value.code == "CI-SEC-005"
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    assert err == (
+        f"CI-SEC-005: npm-audit: {report} is not a `pnpm audit --json` report "
+        "(an object with an 'advisories' object and a 'metadata' object)\n"
+    )
+
+
+@pytest.mark.parametrize("text", ["", "\n"])
+def test_empty_npm_audit_report_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str
+) -> None:
+    # pnpm 12.5.1 writes nothing to stdout when the registry is unreachable (fixtures README).
+    report = tmp_path / "npm-audit.json"
+    report.write_text(text, encoding="utf-8")
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    assert err.startswith(f"CI-SEC-005: npm-audit: {report} is empty: pnpm audit wrote no report")
+
+
+def test_npm_audit_report_that_is_not_json_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = tmp_path / "npm-audit.json"
+    report.write_text('{"advisories": {', encoding="utf-8")
+    rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    assert err.startswith(f"CI-SEC-005: npm-audit: {report} is not JSON: ")
+
+
+def _advisory(doc: dict[str, Any]) -> dict[str, Any]:
+    (advisory,) = doc["advisories"].values()
+    result: dict[str, Any] = advisory
+    return result
+
+
+def _counts(doc: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = doc["metadata"]["vulnerabilities"]
+    return result
+
+
+COUNTS = "has no counts per severity in 'metadata.vulnerabilities'"
+SEVERITY = "has no known severity (critical, high, moderate, low or info)"
+GHSA = "has no GHSA id (github_advisory_id, or the last segment of url)"
+FINDINGS = "has no findings (a non-empty list of objects with a version and a non-empty paths list)"
+# Each edit breaks one key of a one-advisory report -> how the CI-SEC-005 message ends.
+MISTYPED: dict[str, tuple[Callable[[dict[str, Any]], object], str]] = {
+    "counts-missing": (lambda d: d["metadata"].pop("vulnerabilities"), COUNTS),
+    "count-string": (lambda d: _counts(d).update(high="1"), COUNTS),
+    "count-bool": (lambda d: _counts(d).update(high=True), COUNTS),
+    "count-negative": (lambda d: _counts(d).update(low=-1), COUNTS),
+    "count-unknown-severity": (lambda d: _counts(d).update(severe=0), COUNTS),
+    "count-severity-missing": (lambda d: _counts(d).pop("info"), COUNTS),
+    "advisory-not-object": (
+        lambda d: d["advisories"].update({SOURCE_MAP_JS: []}),
+        f"advisory {SOURCE_MAP_JS} is not an object",
+    ),
+    "severity-unknown": (lambda d: _advisory(d).update(severity="severe"), SEVERITY),
+    "severity-missing": (lambda d: _advisory(d).pop("severity"), SEVERITY),
+    "module-missing": (lambda d: _advisory(d).pop("module_name"), "has no module_name"),
+    "module-empty": (lambda d: _advisory(d).update(module_name=""), "has no module_name"),
+    "no-ghsa": (
+        lambda d: _advisory(d).update(github_advisory_id=None, url="https://example.invalid/1"),
+        GHSA,
+    ),
+    "ghsa-malformed": (lambda d: _advisory(d).update(github_advisory_id="GHSA-1", url=None), GHSA),
+    "findings-missing": (lambda d: _advisory(d).pop("findings"), FINDINGS),
+    "findings-empty": (lambda d: _advisory(d).update(findings=[]), FINDINGS),
+    "finding-not-object": (lambda d: _advisory(d).update(findings=["1.2.1"]), FINDINGS),
+    "version-missing": (lambda d: _advisory(d)["findings"][0].pop("version"), FINDINGS),
+    "paths-not-list": (lambda d: _advisory(d)["findings"][0].update(paths="a>b"), FINDINGS),
+    "paths-empty": (lambda d: _advisory(d)["findings"][0].update(paths=[]), FINDINGS),
+    "path-not-string": (lambda d: _advisory(d)["findings"][0].update(paths=[1]), FINDINGS),
+    "title-not-string": (lambda d: _advisory(d).update(title=7), "has no title"),
+}
+
+
+@pytest.mark.parametrize("edit", sorted(MISTYPED))
+def test_pnpm_report_with_a_missing_or_mistyped_key_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str
+) -> None:
+    doc = _pnpm_doc(SOURCE_MAP_JS)
+    change, tail = MISTYPED[edit]
+    change(doc)
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    if not tail.startswith(("advisory", COUNTS)):
+        tail = f"advisory {SOURCE_MAP_JS} {tail}"
+    assert _npm_gate(capsys, report) == (1, "", f"CI-SEC-005: npm-audit: {report} {tail}\n")
+
+
+def test_pnpm_advisory_without_github_advisory_id_takes_the_ghsa_from_its_url(
+    tmp_path: Path,
+) -> None:
+    doc = _pnpm_doc(BRACES)
+    del _advisory(doc)["github_advisory_id"]
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    assert [f.finding_id for f in parse_npm_audit(report)] == ["GHSA-vfj7-8cjw-p6xm"]
+
+
+@pytest.mark.parametrize("name", sorted(p.name for p in PNPM_FIXTURES.glob("*.json")))
+def test_pnpm_audit_fixtures_keep_pnpms_own_formatting(name: str) -> None:
+    # pnpm writes JSON.stringify(report, null, 2) and a newline; .prettierignore keeps it so.
+    raw = (PNPM_FIXTURES / name).read_text(encoding="utf-8")
+    assert raw == json.dumps(json.loads(raw), indent=2) + "\n"

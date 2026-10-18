@@ -14,6 +14,11 @@
 #                       exception key "license:<package>@<version>", etc.)
 #                       Must match exactly what the normalised tool output in
 #                       security_gate.py reports as `finding_id`.
+#                       An entry matches on id and tool only, never on the
+#                       package: an npm-audit entry (a GHSA id) covers that
+#                       advisory on every module pnpm reports it for (e.g.
+#                       GHSA-82fw-gwwq-j7x9 on vitest and @vitest/mocker),
+#                       a module that starts reporting it later included.
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
 #                       gitleaks, license-scan, trivy
 #   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW (informational only;

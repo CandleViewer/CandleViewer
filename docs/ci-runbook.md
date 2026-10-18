@@ -332,9 +332,12 @@ index alone, removing nothing.
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
 - **CI-SEC-001** (blocking finding): a CodeQL/Semgrep/Bandit/pip-audit/
-  npm-audit/gitleaks finding has no accepted-risk entry, or trufflehog found a
+  npm-audit/gitleaks finding has no accepted-risk entry or is Critical, which
+  no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
-  step, §3). Fix the finding.
+  step, §3). Fix the finding: for an npm-audit advisory on a transitive
+  package, a `pnpm-workspace.yaml` override to the patched release
+  (`docs/plan/35-dependency-freeze-policy.md` §8.4).
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
   comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
@@ -361,6 +364,17 @@ index alone, removing nothing.
   `level` whose rule descriptor is on neither `tool.driver` nor
   `tool.extensions`. CodeQL, Semgrep, Bandit and Trivy each write a run
   with a `results` list on a clean scan too (#3337, #3372).
+  For `npm-audit` it is a report that is not what `pnpm audit --json` writes
+  (#3494): an empty file (pnpm writes nothing to stdout when it cannot reach
+  the registry: its `ERR_PNPM_AUDIT_BAD_RESPONSE` on stderr says why), another
+  schema (npm's own `npm audit --json` included), a missing or mistyped key,
+  or advisories that disagree with its `metadata.vulnerabilities` counts.
+  pnpm still counts an advisory on an `auditConfig` ignore list but leaves it
+  out of the report, so remove the ignore: an exception belongs in
+  `security/accepted-risks.yaml`. A report that passes is only as complete as
+  the registry's answer: pnpm builds it from the advisories the registry's
+  audit endpoint returns, so the gate cannot tell a registry that listed none
+  from a tree with none.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

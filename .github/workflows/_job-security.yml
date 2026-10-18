@@ -421,6 +421,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # security_gate.py reads pnpm's own report (`advisories` + `metadata`, not npm's schema;
+      # #3494). `|| true`: pnpm audit exits 1 on any advisory, so the gate decides. When pnpm
+      # fails it writes nothing to stdout, and the gate fails an empty or unrecognised report
+      # (CI-SEC-005). continue-on-error only lets the later scans run: the verdict step fails
+      # the job on this step's outcome (test_security_lane.py, test_verdict_fails_on_any_red_scan_*).
       - name: npm-audit (pnpm audit, JSON)
         id: npm-audit
         if: ${{ !cancelled() }}

@@ -185,10 +185,16 @@ def run_npm_audit(tmpdir: Path) -> ToolResult:
         return ToolResult("npm-audit", "SKIPPED", "pnpm not installed")
     report = tmpdir / "npm-audit.json"
     proc = _run(["pnpm", "audit", "--json"])
-    report.write_text(proc.stdout or "{}", encoding="utf-8")
+    # Verbatim, as CI's step writes it (#3494): pnpm prints no report when the registry gives it
+    # no answer, and the gate fails that empty file (CI-SEC-005) and points at pnpm's stderr,
+    # which CI's step log shows and this result carries.
+    report.write_text(proc.stdout, encoding="utf-8")
     gate_proc = _run([sys.executable, str(GATE), "--tool", "npm-audit", "--report", str(report)])
     status = "PASS" if gate_proc.returncode == 0 else "FAIL"
-    return ToolResult("npm-audit", status, gate_proc.stdout + gate_proc.stderr)
+    detail = gate_proc.stdout + gate_proc.stderr
+    if not proc.stdout.strip():
+        detail += proc.stderr
+    return ToolResult("npm-audit", status, detail)
 
 
 def run_gitleaks(tmpdir: Path) -> ToolResult:

@@ -438,3 +438,55 @@ def test_gate_requirements_hash_pin_what_security_gate_imports_at_the_ci_version
     # The hashes name CPython 3.12 wheels: a new PYTHON_VERSION needs new hashes.
     env = yaml.safe_load((WORKFLOWS / "_job-security.yml").read_text(encoding="utf-8"))["env"]
     assert env["PYTHON_VERSION"] == "3.12"
+
+
+# #3494: the npm-audit step as the runner runs it (`bash -e`), with a stand-in `pnpm` that prints a
+# recorded `pnpm audit --json` report, or nothing, as pnpm 12.5.1 does when the registry is
+# unreachable (scripts/tests/fixtures/pnpm-audit/README.md), and exits like pnpm audit.
+PNPM_AUDIT = Path(__file__).resolve().parent / "fixtures" / "pnpm-audit"
+
+
+def _npm_audit_step(tmp_path: Path, report: str | None, status: int) -> tuple[int, str, str]:
+    (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "npm-audit"]
+    ws, bin_dir = tmp_path / "ws", tmp_path / "bin"
+    for d in (ws / "security", bin_dir):
+        d.mkdir(parents=True)
+    (ws / "tools").symlink_to(ROOT / "tools")
+    (ws / "security" / "accepted-risks.yaml").write_text("entries: []\n", encoding="utf-8")
+    shown = f'cat "{PNPM_AUDIT / report}"\n' if report else ""
+    pnpm = bin_dir / "pnpm"  # `pnpm audit --json` and nothing else
+    pnpm.write_text(f'#!/bin/sh\n[ "$*" = "audit --json" ] || exit 99\n{shown}exit {status}\n')
+    python = bin_dir / "python"  # this interpreter (with PyYAML); -B: no bytecode in the repo
+    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "$@"\n', encoding="utf-8")
+    for exe in (pnpm, python):
+        exe.chmod(0o755)
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    proc = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        cwd=ws,
+        env=env,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def test_npm_audit_step_fails_closed_when_pnpm_audit_writes_no_report(tmp_path: Path) -> None:
+    rc, out, err = _npm_audit_step(tmp_path, None, 1)
+    assert (rc, out) == (1, "")
+    assert err.startswith("CI-SEC-005: npm-audit: npm-audit.json is empty: pnpm audit wrote no ")
+
+
+def test_npm_audit_step_passes_a_clean_pnpm_report(tmp_path: Path) -> None:
+    rc, out, err = _npm_audit_step(tmp_path, "pnpm-12.5.1-clean.json", 0)
+    assert (rc, out, err) == (0, "security_gate[npm-audit]: OK\n", "")
+
+
+def test_npm_audit_step_fails_on_a_pnpm_report_with_findings(tmp_path: Path) -> None:
+    # pnpm audit exits 1 on findings; the gate, not that status, decides the step.
+    rc, out, err = _npm_audit_step(tmp_path, "pnpm-12.5.1-main.json", 1)
+    assert (rc, out) == (1, "")
+    assert err.count("CI-SEC-001: npm-audit finding ") == 4  # 2 Critical, 2 High
+    assert err.endswith("security_gate[npm-audit]: BLOCKED (CI-SEC-001)\n")

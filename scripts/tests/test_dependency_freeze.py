@@ -334,3 +334,25 @@ def test_http_cache_semantics_override_clears_high_advisory() -> None:
     lock = (root / "pnpm-lock.yaml").read_text(encoding="utf-8")
     assert "http-cache-semantics@4.2.0:" not in lock
     assert "http-cache-semantics@4.3.0:" in lock
+
+
+def _locked_versions(name: str) -> set[tuple[int, ...]]:
+    """Every version of `name` that pnpm-lock.yaml resolves, as integer tuples."""
+    import re
+
+    lock = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")
+    keys = re.findall(rf"^  '?{re.escape(name)}@(\d+\.\d+\.\d+)'?:$", lock, re.MULTILINE)
+    return {tuple(int(part) for part in key.split(".")) for key in keys}
+
+
+def test_tinypool_and_source_map_js_overrides_clear_their_advisories() -> None:
+    # #3494 (policy §8.4): tinypool <2.1.2 is Critical twice and source-map-js <1.2.2 is High.
+    # vitest 3.2.7 asks for tinypool ^1.1.1 and no 1.x is fixed, so only the override fixes it.
+    # postcss (^1.2.1) and magicast (^1.2.0) already accept source-map-js 1.2.2: that override
+    # is a floor, without which a lockfile that pins 1.2.1 keeps it.
+    overrides = yaml.safe_load((ROOT / "pnpm-workspace.yaml").read_text(encoding="utf-8"))
+    assert overrides["overrides"]["tinypool"] == ">=2.1.2 <3"
+    assert overrides["overrides"]["source-map-js"] == ">=1.2.2 <2"
+    tinypool, source_map_js = _locked_versions("tinypool"), _locked_versions("source-map-js")
+    assert tinypool and min(tinypool) >= (2, 1, 2)
+    assert source_map_js and min(source_map_js) >= (1, 2, 2)
