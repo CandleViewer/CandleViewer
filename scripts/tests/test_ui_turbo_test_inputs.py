@@ -1,4 +1,4 @@
-"""#3272, #3367, #3471: turbo inputs name every file the vitest suites and ui's build read.
+"""#3272, #3367, #3471: turbo inputs name every file the tests, ui's build and its typecheck read.
 
 #3272: the root `test` and `test:cov` inputs are `src/**`, `test/**` and `tests/**`, but ui's
 tests also read its token sources (`tokens/**`) and token build scripts (`scripts/**`), so a cached
@@ -24,7 +24,12 @@ no future flag): ui's `test:cov` carries the lane's tag and the lane adds that s
 runner reads, its `vitest.config.mjs`, the preset and the tsconfig chain. The preset was in ui's
 hash only: the one packages/config task the suites depend on (`^build`) hashes only `src/` and
 `package.json`. The suites are derived from the workspace globs; packages/config's own suite
-imports the preset by a relative path, so the scan leaves it out."""
+imports the preset by a relative path, so the scan leaves it out.
+
+ui's `typecheck` reads the token formats' declarations (its token-build tests import the
+formats), derived from the static imports in the files its tsconfig includes; the tsconfig chain
+reaches its hash through `^typecheck`. The typecheck lane's `...[origin/main]` filter selected no
+package for a change only there, so ui's typecheck carries a tag and the lane adds its selector."""
 
 from __future__ import annotations
 
@@ -53,6 +58,13 @@ OUTPUTS = ("build", "coverage", "dist", "node_modules", "storybook-static")
 FORMATS_MANIFEST = "tools/style-dictionary/package.json"
 #: A vitest config's import of a packages/config module by its package name.
 CONFIG_IMPORT = re.compile(r"""from ["'](@candleviewer/config/[^"']+)["']""")
+#: A static import or re-export of a relative module: tsc reads the file it resolves to.
+STATIC_IMPORT = re.compile(
+    r"""^\s*(?:import|export)\b[^"';]*["'](\.\.?/[^"']+)["']""", re.MULTILINE
+)
+#: What tsc reads for a `.js` or `.mjs` specifier: the TypeScript source, else its declarations.
+DECLARATIONS = {".js": (".ts", ".tsx", ".d.ts"), ".mjs": (".mts", ".d.mts")}
+TS = {".ts", ".tsx"}  # what tsc includes without allowJs
 
 
 def _root_inputs(task: str) -> list[str]:
@@ -87,9 +99,11 @@ def _anchored(pattern: str, package: str) -> str:
 
 
 def _glob(pattern: str) -> re.Pattern[str]:
-    """turbo's glob syntax as these inputs use it: `**` spans folders and `*` stays in one."""
-    assert not set(pattern) & set("{}[]?"), f"extend _glob before using {pattern!r}"
+    """turbo's glob syntax as these inputs use it: `**` spans folders, `*` stays in one and
+    `{a,b}` matches either."""
+    assert not set(pattern) & set("[]?"), f"extend _glob before using {pattern!r}"
     regex = re.escape(pattern).replace(r"\*\*/", "(?:.*/)?").replace(r"\*\*", ".*")
+    regex = re.sub(r"\\\{(.*?)\\\}", lambda m: f"(?:{m[1].replace(',', '|')})", regex)
     return re.compile(regex.replace(r"\*", "[^/]*"))
 
 
@@ -230,10 +244,37 @@ def test_ui_build_inputs_cover_what_the_build_reads() -> None:
     assert [path for path in every if not _covered(path, inputs)] == []
 
 
-def _unit_frontend_filters() -> list[list[str]]:
-    """The `--filter=` arguments of each unit-frontend step that passes any, sorted per step."""
-    job = yaml.safe_load(JS_LANE.read_text(encoding="utf-8"))["jobs"]["unit-frontend"]
-    runs = [str(step.get("run", "")) for step in job["steps"]]
+def _typecheck_reads() -> set[str]:
+    """The files outside packages/ui that its typecheck reads: what each relative module that a
+    TypeScript file its tsconfig includes imports statically resolves to."""
+    include = json.loads((ROOT / UI / "tsconfig.json").read_text(encoding="utf-8"))["include"]
+    tops = sorted({ROOT / UI / entry.split("/")[0] for entry in include})
+    files = [file for top in tops for file in ([top] if top.is_file() else sorted(top.rglob("*")))]
+    reads: set[str] = set()
+    for source in [file.relative_to(ROOT).as_posix() for file in files if file.suffix in TS]:
+        for specifier in STATIC_IMPORT.findall((ROOT / source).read_text(encoding="utf-8")):
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(source), specifier))
+            stem, suffix = posixpath.splitext(target)
+            candidates = [stem + ext for ext in DECLARATIONS.get(suffix, ())]
+            found = [path for path in candidates if (ROOT / path).is_file()]
+            if found and not PurePosixPath(target).is_relative_to(UI):
+                reads.add(found[0])
+    return reads
+
+
+def test_ui_typecheck_hashes_the_declarations_it_reads_outside_the_package() -> None:
+    reads = _typecheck_reads()
+    # An empty scan proves nothing: ui's token-build tests import the formats today.
+    assert "tools/style-dictionary/formats/json-flat.d.ts" in reads
+    inputs = _inputs(UI, "typecheck")
+    assert set(_root_inputs("typecheck")) <= set(inputs), "keeps the sources and tsconfig files"
+    assert sorted(path for path in reads if not _covered(path, inputs)) == []
+
+
+def _lane_filters(job: str) -> list[list[str]]:
+    """The `--filter=` arguments of each step of a js lane job that passes any, sorted per step."""
+    steps = yaml.safe_load(JS_LANE.read_text(encoding="utf-8"))["jobs"][job]["steps"]
+    runs = [str(step.get("run", "")) for step in steps]
     return [sorted(re.findall(r"--filter=(\S+)", run)) for run in runs if "--filter=" in run]
 
 
@@ -241,9 +282,16 @@ def test_unit_frontend_selects_the_ui_tests_by_their_inputs() -> None:
     # The name filter maps a changed file to its package and tools/ is in none, so a change only
     # there selected nothing; the tag selector matches it against ui's test:cov inputs.
     assert _tasks(UI)["test:cov"].get("tags") == [TAG]
-    turbo, manifest = _unit_frontend_filters()
+    turbo, manifest = _lane_filters("unit-frontend")
     assert turbo == manifest, "the coverage manifest records what the turbo run selects"
     assert f"'tag:{TAG}[origin/main]'" in turbo
+
+
+def test_typecheck_selects_ui_typecheck_by_its_inputs() -> None:
+    # `...[origin/main]` maps a changed file to its package and tools/ is in none; the tag selector
+    # matches a change to the formats' declarations against ui's typecheck inputs.
+    assert _tasks(UI)["typecheck"].get("tags") == ["typecheck"]
+    assert _lane_filters("typecheck") == [["'...[origin/main]'", "'tag:typecheck[origin/main]'"]]
 
 
 def test_turbo_stays_pinned_to_one_2_x_release_from_2_11() -> None:

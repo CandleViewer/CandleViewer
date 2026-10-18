@@ -68,7 +68,8 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'turbo.json'
               # packages/ui's token build and token-build tests import these formats (#3182).
-              # unit-frontend's tag filter selects ui's tests for them and tools/contrast (#3367).
+              # unit-frontend's tag filter selects ui's tests for them and tools/contrast (#3367),
+              # and typecheck's selects ui's typecheck for their declarations (#3471).
               - 'tools/style-dictionary/**'
               # The lane's own workflow, Node version (CI-JS-001), its steps' scripts and the
               # postinstall allow-list one of them reads (#3182).
