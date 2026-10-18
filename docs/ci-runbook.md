@@ -91,16 +91,17 @@ open gap with no decision recorded yet (#3384), not an accepted control.
 **Nightly e2e matrix (#3383).** `e2e-nightly.yml` calls `_job-e2e.yml` on `main` daily at 02:53 UTC
 and on demand, for C-9.2's full Playwright matrix: the four `e2e-web` shards, `e2e-staging`,
 `a11y-axe` and `e2e-electron`. `pr.yml` runs `e2e-electron` on `release/*` heads only; the nightly
-sets the lane's `electron` input to `true` (the Electron smoke suite went green in #3393's run
-39105058132). It is not a required check (C-9.1 is unchanged), but a red nightly blocks the next
+sets the lane's `electron` input to `true`. The Electron smoke suite is green since #3393: job
+117609983250 (`e2e / e2e-electron`) passed in run 39105058132, a proof run whose other jobs were
+cancelled. The nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next
 release (C-9.2): the release checklist needs a green run on the `main` tip being cut
 (`docs/plan/07-release-and-prr.md` §4.1). A red scheduled run also opens a `qa`, `priority/p1`
 issue that links the run; its `e2e-nightly-report` job is the only one that can write
 (`issues: write`, no checkout). A manual run (`gh workflow run e2e-nightly.yml`) runs the same jobs
-and opens no issue. Triage the red job by its error code, as in §4's Playwright and accessibility
-recipes. Cost: seven jobs, about 7.5 runner-minutes a night. The four `e2e-web` shards,
+and opens no issue. Triage the red job by its error code, as in §4's Playwright, accessibility and
+build recipes. Cost: seven jobs, about 7.5 runner-minutes a night. The four `e2e-web` shards,
 `e2e-staging` and `a11y-axe` take 0.9 to 1.5 minutes each (medians over 11 green `pr.yml` runs on
-2026-10-17 and 18), and `e2e-electron` about a minute (62 s in the #3393 run). The total is at most
+2026-10-17 and 18), and `e2e-electron` about a minute (62 s in that job). The total is at most
 140 if every job reaches its 20-minute cap (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are
 free on this public repository, so the cost is seven runner slots for about two minutes.
 
@@ -226,6 +227,10 @@ diff` cannot see because they were never tracked. `git add` them in the
   build what the job builds (the packages `apps/web` imports, `apps/web`,
   `apps/desktop`), then run `pnpm --filter @candleviewer/desktop e2e`, under
   `xvfb-run -a` on a machine with no display.
+  If a check in `apps/desktop/e2e/hardening.spec.ts` failed (the `webPreferences`
+  flags, the SR-112 CSP, the SR-113 navigation and window-open denials), follow
+  `SECURITY.md`: the nightly's auto-filed issue is public, so keep the analysis
+  out of it and out of any other public thread (C-12.13).
   If it fails intermittently across three runs in a week, quarantine per
   §9 (flaky-test process) rather than re-running indefinitely.
 - **CI-E2E-002** (demo-REST-only tag matched zero specs): the
