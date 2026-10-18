@@ -32,6 +32,8 @@ export function engineHarness(
   onTestFinished(() => assertEngineOrder(events)); // the order the reducer relies on, in every test
   const delivered = new Map<string, TopicFrame[]>();
   let changes = 0;
+  let probe: (() => unknown) | undefined;
+  const reads: unknown[] = [];
   const engine = createWsEngine({
     url: URL,
     createSocket: gateway.createSocket,
@@ -42,7 +44,10 @@ export function engineHarness(
         const key = `${ch}#${rs ?? "live"}`;
         delivered.set(key, [...(delivered.get(key) ?? []), frame]);
       },
-      changed: () => void (changes += 1),
+      changed: () => {
+        changes += 1;
+        if (probe !== undefined) reads.push(probe());
+      },
     },
     client: { version: "1.0.0", shell: "browser", locale: "en-GB" },
     random: () => 0.5, // no jitter: a delay is its row of the 9.2 table
@@ -77,5 +82,11 @@ export function engineHarness(
     peek,
     subscribed,
     changes: () => changes,
+    /** From now on, what `read` returns each time the sink is told something changed (the state at that moment, not a count). */
+    watch: (read: () => unknown): unknown[] => {
+      probe = read;
+      reads.length = 0;
+      return reads;
+    },
   };
 }

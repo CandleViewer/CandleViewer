@@ -99,7 +99,7 @@ export interface WsEngine {
   /**
    * The sink dropped frames of a stream it could not keep up with: a fresh snapshot is asked for,
    * within the resync budget (7.5), and reaches every consumer of the stream. Nothing for a stream
-   * the engine does not hold.
+   * the engine does not hold, or while there is no connection to ask on (the next one subscribes afresh).
    */
   rebaseline(ch: string, rs?: string | undefined): void;
   /** `bye.hint.most_expensive_topics` of the last close (8.4): kept, never acted on. */
@@ -273,7 +273,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const s of streams.values()) for (const { spec } of s.consumers) yield { spec, rs: s.rs };
   }
 
-  /** `ctl` names a `ch` and, since #3293, a replay session (C20): the gateway takes the live subscription, else the first (#572) while it ignores `rs`, so that is the stream its reply is for. */
+  /** `ctl` names its stream by `ch` and `rs` (5.4, C20; the gateway resolves it so since #3398): the live one's carries none. Flow control still keys by `ch` alone, so a `ch` with a live and a replay stream retunes the live one; each twin's own `ctl` is #3439. */
   function sendCtl(ch: string, payload: F.CtlPayload): void {
     const held = [...streams.values()].filter((s) => s.ch === ch && s.held);
     const target = held.find((s) => s.rs === undefined) ?? held[0];
@@ -683,7 +683,9 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     },
 
     rebaseline(ch, rs) {
-      if (ch === SYSTEM || streams.has(topicKey(ch, rs))) askBaseline(ch, rs);
+      if (!connection.ready) return; // nothing leaves, so the guard's budget is not spent on it
+      const session = ch === SYSTEM ? undefined : rs; // `system` has no replay twin
+      if (ch === SYSTEM || streams.has(topicKey(ch, rs))) askBaseline(ch, session);
     },
 
     consume(spec, rs) {

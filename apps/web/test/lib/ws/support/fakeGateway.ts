@@ -127,6 +127,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
   let serverPings = 0;
   let denials = 0;
   let rebuildsToRefuse = 0;
+  let ctlsToRefuse = 0;
   let subsToFail = 0;
   let snapsWithheld = false;
   let unsubsToFail = 0;
@@ -297,8 +298,10 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       const rebucketed =
         asked["time_bucket_ms"] !== undefined &&
         asked["time_bucket_ms"] !== sub.effective["time_bucket_ms"];
-      if (rebucketed && rebuildsToRefuse > 0) {
-        rebuildsToRefuse -= 1; // the rebuild budget (SR-193, 5.4): nothing is applied and no snapshot follows
+      if ((rebucketed && rebuildsToRefuse > 0) || ctlsToRefuse > 0) {
+        if (rebucketed && rebuildsToRefuse > 0) rebuildsToRefuse -= 1;
+        else ctlsToRefuse -= 1;
+        // the rebuild budget (SR-193, 5.4): nothing is applied and no snapshot follows
         return later("ctl_ok", () =>
           reply(
             "err",
@@ -528,6 +531,10 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     /** The next `n` `ctl`s that would re-snapshot are refused `resync_rate_limited` (SR-193): nothing is applied. */
     refuseRebuilds(n: number) {
       rebuildsToRefuse = n;
+    },
+    /** The next `n` `ctl`s of any kind are refused `resync_rate_limited`: a server that does so to a throttle too. */
+    refuseCtls(n: number) {
+      ctlsToRefuse = n;
     },
     /** The snapshots a `sub`, a `resync` or a retune would bring are not sent; `conn.snap(ch, reason)` still sends one. */
     withholdSnaps(on: boolean) {

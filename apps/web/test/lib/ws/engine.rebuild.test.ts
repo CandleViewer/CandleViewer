@@ -148,3 +148,82 @@ describe("a bucket ctl the rebuild budget refused (SR-193)", () => {
     expect(handle.effective["time_bucket_ms"]).toBe(5_000);
   });
 });
+
+describe("a ctl refused while others are in flight, and a throttle ctl (SR-193)", () => {
+  it("a resize that settles after the ctl left, before its refusal arrives, sends nothing inside the wait", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.gateway.refuseRebuilds(1);
+    t.engine.setPane("p1", size(601)); // 5 000 ms wanted
+    await t.advance(CTL_DEBOUNCE_MS); // the ctl leaves, its refusal is held
+    t.engine.setPane("p1", size(12_000)); // 250 ms wanted: a debounce is running
+    await t.advance(100);
+    t.gateway.latest.releaseHeld(); // the refusal arrives inside the debounce
+    await t.advance(CTL_DEBOUNCE_MS); // when the debounce would have fired
+    expect(bucketCtls(t)).toEqual([5_000]);
+    await t.advance(REFUSED_BACKOFF_MS + 100); // the wait is over: asked from the geometry of this moment
+    expect(bucketCtls(t)).toEqual([5_000, 250]);
+  });
+
+  it("a second refusal while the first wait runs replaces it: nothing is asked until the longer wait is over", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.gateway.refuseRebuilds(2);
+    t.engine.setPane("p1", size(601)); // 5 000 ms wanted
+    await t.advance(CTL_DEBOUNCE_MS); // ctl A leaves, its refusal is held
+    t.engine.setPane("p1", size(12_000)); // 250 ms wanted
+    await t.advance(CTL_DEBOUNCE_MS); // ctl B leaves, its refusal is held
+    expect(bucketCtls(t)).toEqual([5_000, 250]);
+    t.gateway.latest.releaseHeld(); // both refused: a wait of 5 s, then one of 10 s
+    await t.advance(REFUSED_BACKOFF_MS + CTL_DEBOUNCE_MS + 100); // the first wait is over, the second is not
+    expect(bucketCtls(t)).toEqual([5_000, 250]);
+    await t.advance(REFUSED_BACKOFF_MS + CTL_DEBOUNCE_MS); // the longer wait is over
+    expect(bucketCtls(t)).toEqual([5_000, 250, 250]);
+  });
+
+  it("the back-off starts again from its first wait only when a bucket was applied, not on any other reply", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.setPane("p1", size(12_000)); // 250 ms: a hidden tab changes its throttle (1 000 ms)
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.gateway.refuseRebuilds(2);
+    t.engine.setPane("p1", size(601));
+    await t.advance(CTL_DEBOUNCE_MS); // the bucket ctl leaves, its refusal is held
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: true,
+      size: { cssWidth: 601, dpr: 1 },
+    });
+    await t.advance(50); // the throttle ctl leaves behind it, its reply held
+    t.gateway.latest.releaseHeld(); // the refusal first (a wait of 5 s), then the throttle's ctl_ok: a reply that applied no bucket
+    await t.advance(REFUSED_BACKOFF_MS + CTL_DEBOUNCE_MS + 100); // the first wait is over: the bucket is asked for again
+    expect(bucketCtls(t)).toEqual([5_000, 5_000]);
+    t.gateway.latest.releaseHeld(); // refused again: the second wait is twice the first
+    await t.advance(REFUSED_BACKOFF_MS + CTL_DEBOUNCE_MS + 100);
+    expect(bucketCtls(t)).toEqual([5_000, 5_000]); // not after one more first wait
+    await t.advance(REFUSED_BACKOFF_MS);
+    expect(bucketCtls(t)).toEqual([5_000, 5_000, 5_000]);
+  });
+
+  it("a throttle ctl refused the same way waits like a bucket ctl: not asked again at once", async () => {
+    const t = engineHarness();
+    const handle = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.gateway.refuseCtls(1);
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    await t.advance(300);
+    const throttles = () => t.gateway.latest.of("ctl").length;
+    expect(throttles()).toBe(1);
+    expect(handle.effective["throttle_ms"]).toBe(100); // refused: what the server runs
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false }); // a new pass, inside the wait
+    await t.advance(REFUSED_BACKOFF_MS - 301);
+    expect(throttles()).toBe(1); // still waiting
+    await t.advance(400);
+    expect(throttles()).toBe(2); // asked again, and applied
+    expect(handle.effective["throttle_ms"]).toBe(1_000);
+  });
+});

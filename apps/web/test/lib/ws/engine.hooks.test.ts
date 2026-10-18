@@ -43,6 +43,24 @@ describe("a replay stream is named on ctl and unsub (23 5.3, 5.4, C20)", () => {
     expect(t.gateway.problems).toEqual([]); // every one of them validated against the schemas
   });
 
+  it("a ctl the gateway keeps refusing for its rate is asked for once more, not for ever; a reply starts it again", async () => {
+    const t = engineHarness({ keepsDenying: true });
+    t.engine.consume(spec(TRADES));
+    await t.start();
+    t.gateway.deny(6);
+    t.engine.setPane("p1", hidden);
+    await t.advance(10_000);
+    expect(t.gateway.latest.of("ctl")).toHaveLength(2); // the ctl, and the one more try
+    t.gateway.deny(0);
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false }); // any change is a new pass: what is wanted is asked for, and answered
+    await t.advance(300);
+    expect(t.gateway.latest.of("ctl")).toHaveLength(3);
+    t.gateway.deny(1);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false }); // refused once, and asked again: the refusals before did not use it up
+    await t.advance(300);
+    expect(t.gateway.latest.of("ctl")).toHaveLength(5);
+  });
+
   it("a ctl the gateway refused for its rate goes again with the same replay session", async () => {
     const t = engineHarness();
     t.engine.consume(spec(BOOK), RS);
@@ -96,31 +114,59 @@ describe("a snapshot answers the resync of its own stream only (7.5)", () => {
 });
 
 describe("the sink hears what a reply changes (changed)", () => {
-  it("after a reply, and not after a data frame", async () => {
+  // Each test reads the state of a handle at the moment the sink is told: the reply is already applied then.
+  it("after a retune is confirmed, and not after a data frame", async () => {
     const t = engineHarness();
     const handle = t.engine.consume(spec(TRADES));
     await t.start();
-    const settled = t.changes();
-    expect(settled).toBeGreaterThan(0); // the sub_ok
+    const reads = t.watch(() => handle.effective["throttle_ms"]);
     t.gateway.latest.delta(TRADES);
-    expect(t.changes()).toBe(settled); // a frame goes through deliver alone
+    expect(reads).toEqual([]); // a frame goes through deliver alone
     t.engine.setPane("p1", hidden);
     await t.advance(300);
-    expect(t.changes()).toBe(settled + 1); // the ctl_ok moved `effective`, and no frame says so
-    expect(handle.effective).toEqual({ throttle_ms: 1_000 });
+    expect(reads).toEqual([1_000]); // the ctl_ok moved `effective`, and no frame says so
   });
 
-  it("when a snapshot is overdue and the stream reads stale", async () => {
+  it("after the server ends a stream", async () => {
+    const t = engineHarness();
+    const handle = t.engine.consume(spec(TRADES));
+    await t.start();
+    const reads = t.watch(() => handle.status);
+    t.gateway.latest.revoke(TRADES, "permission_revoked");
+    expect(reads).toEqual(["revoked"]);
+  });
+
+  it("after an err answers a sub: its streams are refused", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined); // invalid_options is a client bug (10.3)
+    const t = engineHarness();
+    t.gateway.failSubs(1);
+    const handle = t.engine.consume(spec(TRADES));
+    const reads = t.watch(() => handle.status);
+    await t.start();
+    expect(reads).toEqual(["revoked"]);
+  });
+
+  it("after an unsub is answered: the request that waited for it is settled", async () => {
+    const t = engineHarness({ hold: ["unsub_ok"] });
+    const handle = t.engine.consume(spec(TRADES));
+    await t.start();
+    handle.release();
+    await t.advance(300);
+    const reads = t.watch(() => t.engine.counters.pendingRequests);
+    t.gateway.latest.releaseHeld();
+    expect(reads).toEqual([0]);
+  });
+
+  it("when a snapshot is overdue: the stream reads stale", async () => {
     const t = engineHarness();
     const handle = t.engine.consume(spec(TRADES));
     t.gateway.withholdSnaps(true);
     await t.start();
-    const waiting = t.changes();
+    const reads = t.watch(() => handle.status);
     await t.advance(BASELINE_DEADLINE_MS); // asked again, within the budget: nothing to report yet
-    expect(t.changes()).toBe(waiting);
+    expect(reads).toEqual([]);
     await t.advance(BASELINE_DEADLINE_MS);
-    expect(handle.status).toBe("stale"); // no snapshot came in time
-    expect(t.changes()).toBe(waiting + 2); // trades, and system, whose snapshot is withheld too
+    expect(reads.at(-1)).toBe("stale"); // no snapshot came in time
   });
 });
 
@@ -154,6 +200,26 @@ describe("rebaseline: the sink dropped frames of a stream", () => {
       [BOOK, RS],
       ["system", undefined],
     ]);
+  });
+
+  it("ignores the session it is given for system: it has no replay twin", async () => {
+    const t = engineHarness();
+    await t.start();
+    t.engine.rebaseline("system", RS);
+    await t.advance(100);
+    expect(named(t.gateway.latest.of("resync"))).toEqual([["system", undefined]]);
+  });
+
+  it("does nothing while there is no connection, and spends none of the resync budget on it", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec(BOOK));
+    for (let i = 0; i < 6; i += 1) t.engine.rebaseline(BOOK); // before the socket is up: nothing can leave
+    await t.start();
+    for (let i = 0; i < 5; i += 1) {
+      t.engine.rebaseline(BOOK);
+      await t.advance(50);
+    }
+    expect(t.gateway.latest.of("resync")).toHaveLength(5); // all five of the minute are still there
   });
 
   it("is held to the resync budget: the sixth in a minute waits", async () => {

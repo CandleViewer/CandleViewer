@@ -46,9 +46,9 @@ export interface FlowControl {
   /** The gateway refused a `ctl` of ours: it never applied, so the next pass asks for it again. */
   denied(ch: string): void;
   /**
-   * The rebuild budget (SR-193, 8.5) refused a `ctl` that would have re-snapshotted: it never applied
-   * either, but asking again at once would be refused again. What the engine took for applied is
-   * undone now, and the bucket is derived again after a back-off that doubles with every refusal.
+   * The rebuild budget (SR-193, 8.5) refused a `ctl`, whatever it asked: it never applied, and asking
+   * again at once would be refused again. What the engine took for applied is undone now, and
+   * nothing is asked of this `ch` until a back-off that doubles with every refusal is over.
    */
   refused(ch: string): void;
   /** Collapsed everywhere: not wanted on the server (8.5). */
@@ -89,6 +89,8 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
   /** How long the last refusal of each `ch` made it wait, and the timer of that wait while it runs. */
   const backoffs = new Map<string, number>();
   const holds = new Map<string, unknown>();
+  /** The `ch`s whose last `ctl` was refused for rate and asked for again: one more refusal and nothing is asked until a reply (8.5). */
+  const latched = new Set<string>();
   const debouncer = createCtlDebouncer({
     emit: (ch, bucket) => host.ctl(ch, { time_bucket_ms: bucket }),
     timers,
@@ -134,6 +136,7 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
         continue;
       }
       moved ||= released.delete(ch);
+      if (holds.has(ch)) continue; // a refusal of the rebuild budget: nothing is asked of this `ch` until its wait is over
       // Acted on by difference to the last intent: a hide and a show before the first `ctl_ok` must still send the restore.
       const last = intents.get(ch);
       if (last === undefined || last === want.throttleMs) continue;
@@ -152,6 +155,7 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
     debouncer.forget(ch);
     derivedFrom.delete(ch);
     backoffs.delete(ch);
+    latched.delete(ch);
     endHold(ch);
   }
 
@@ -188,11 +192,18 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
       ? (bucketOf(confirmedOptions.get(ch)?.["time_bucket_ms"]) ?? HEATMAP_FALLBACK_BUCKET_MS)
       : undefined;
 
-  function denied(ch: string): void {
+  /** What the server last confirmed is what it runs: what was taken for applied since is not. */
+  function undo(ch: string): void {
     const held = finite(confirmedOptions.get(ch)?.["throttle_ms"]);
     if (held !== undefined) intents.set(ch, held);
     const bucket = heldBucket(ch);
     if (bucket !== undefined) activate(ch, bucket);
+  }
+
+  function denied(ch: string): void {
+    undo(ch);
+    if (latched.has(ch)) return; // asked again once and refused again: a server that keeps refusing is not fed
+    latched.add(ch);
     evaluate();
   }
 
@@ -216,6 +227,7 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
     },
 
     confirmed(ch, effective) {
+      latched.delete(ch);
       confirmedOptions.set(ch, effective);
       const heatmap = familyOf(ch) === "heatmap";
       const bucket = bucketOf(effective["time_bucket_ms"]) ?? HEATMAP_FALLBACK_BUCKET_MS;
@@ -243,15 +255,16 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
         REFUSED_BACKOFF_MAX_MS,
       );
       backoffs.set(ch, wait);
-      endHold(ch);
+      endHold(ch); // a second refusal replaces the wait of the first
       holds.set(
         ch,
         timers.setTimeout(() => {
           holds.delete(ch);
-          rederive(ch); // from the geometry of this moment: the derivation that was refused may be stale
+          evaluate(); // asks again for whatever is wanted now: a throttle too, from the geometry of this moment
         }, wait),
       );
-      denied(ch); // undoes the optimistic bucket; its pass finds the heatmap waiting
+      debouncer.forget(ch); // a settle that is still running would send inside the wait
+      undo(ch);
     },
 
     isReleased: (ch) => released.has(ch),

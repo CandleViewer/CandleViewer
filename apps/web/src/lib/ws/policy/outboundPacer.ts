@@ -70,7 +70,7 @@ export interface OutboundPacer {
   readonly size: number;
 }
 
-/** A `ctl` merges only into the last waiting frame that names its `ch`, so it never crosses a `sub`, `unsub` or `resync` of it, and never into the `ctl` of another stream of the `ch` (`rs`). */
+/** A waiting `sub`, `unsub` or `resync` that names `ch`: a `ctl` of it never merges across one, since the stream changes there. */
 const names = (frame: ClientFrame, ch: string): boolean =>
   frame.t === "sub"
     ? frame.p.topics.some((topic) => topic.ch === ch)

@@ -1,7 +1,7 @@
 # src/lib/ws
 
 The web WebSocket client (E17-T04, #413; wire contract `docs/plan/23-ws-protocol.md`). It lands as
-twenty-three stacked slices (S1, S1b, S2a to S2d, S3, S3b, S4a to S4h, S5a to S5g) and nothing here is
+twenty-five stacked slices (S1, S1b, S2a to S2d, S3, S3b, S4a to S4h, S5a, S5a-2, S5b, S5b-2, S5c to S5g) and nothing here is
 reachable from `main.tsx` until the last one wires it (C-4.13). State is a plain store read through
 `useSyncExternalStore`; RxJS, Zustand and Jotai are not dependencies. Layers depend downwards:
 `protocol` -> `state` -> `core` -> `policy` -> `client`/`port`/`worker`.
@@ -16,8 +16,8 @@ reachable from `main.tsx` until the last one wires it (C-4.13). State is a plain
 | `core/connection.ts`                    | one socket: handshake, token, heartbeat, close policy, reconnect, re-auth | S4b, S4c   |
 | `core/engine.ts`                        | streams to `sub`/`unsub`/`resync`, replies, revocation, system, baselines | S4d to S4h |
 | `core/flowControl.ts`                   | panes: throttles, collapsed topics, heatmap bucket                        | S4g, S4h   |
-| engine hooks                            | `rs` on `ctl`/`unsub`, SR-193 back-off, `rebaseline`, `changed`           | S5a        |
-| `port/`                                 | port protocol (validated both ways) and the bounded frame queue           | S5b        |
+| `core/engine.ts`, `flowControl.ts`      | `rs` on `ctl`/`unsub`, SR-193 back-off, `rebaseline`, `changed`           | S5a, S5a-2 |
+| `port/`                                 | port messages (checked both ways); frame queue and buffer copies          | S5b, S5b-2 |
 | `worker/portHost.ts`                    | the shared worker's host: tabs, token over ports, state; then streams     | S5c, S5d   |
 | `worker/wsWorker.ts`, `faultChannel.ts` | shared-worker entry; dev-only fault channel, absent from production       | S5e        |
 | `client/`                               | `createWsClient`, rAF frame scheduler; `useWsState` and the shell wiring  | S5f, S5g   |
