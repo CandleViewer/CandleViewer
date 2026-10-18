@@ -253,6 +253,23 @@ async def test_classify_fails_closed_without_a_readable_user_store(
         await auth.classify(_session(uuid.uuid4(), expires_in=timedelta(minutes=5)))
 
 
+async def test_find_user_reads_the_store_on_every_call_and_fails_closed_without_one() -> None:
+    """#2295: enrol and confirm read the caller's user here, never a cached copy; with no user
+    store wired the read fails closed (`AuthServiceUnavailable`), as `classify` does."""
+    users = FakeUserRepository()
+    user = _user()
+    users.add(user)
+    auth = await _auth(users)
+    assert await auth.find_user(str(user.id)) == user
+
+    users.add(user.model_copy(update={"mfa_methods": _TOTP}))  # confirmed elsewhere
+    found = await auth.find_user(str(user.id))
+
+    assert found is not None and found.mfa_methods == _TOTP
+    with pytest.raises(AuthServiceUnavailable):
+        await (await _auth(None)).find_user(str(user.id))
+
+
 # -- lifetime and refresh (Q7): refresh never extends it ---------------------------------------
 
 

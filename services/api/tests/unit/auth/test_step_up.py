@@ -244,6 +244,31 @@ async def test_owner_reset_sets_the_targets_mfa_required() -> None:
     assert stored is not None and stored.mfa_required is True
 
 
+async def test_owner_reset_whose_audit_is_refused_leaves_mfa_required_as_it_was() -> None:
+    """C-2.9 write-ahead: the record precedes the `mfa_required` write too, so a refused record
+    changes nothing (#2295 review: setting it ahead of the hook passed every test)."""
+    svc, clock, seed, owner, _ = await _setup()
+    users = svc._users
+    assert isinstance(users, FakeUserRepository)
+    target = make_user(password_hash="unused", username="t", email="t@example.test")
+    users.add(target.model_copy(update={"mfa_required": False}))
+    await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
+
+    async def refused(_methods: int, _sessions: int, /) -> None:
+        raise OSError("audit WAL unavailable")
+
+    with pytest.raises(OSError, match="audit WAL"):
+        await svc.reset_totp(
+            actor_session_id="o1",
+            actor_user_id=str(owner),
+            target_user_id=str(target.id),
+            audit=refused,
+        )
+
+    stored = await users.find_by_id(str(target.id))
+    assert stored is not None and stored.mfa_required is False
+
+
 async def test_preview_with_no_position_store_reports_unknown_not_zero() -> None:
     svc, *_ = await _setup()
     preview = await svc.preview_reset(str(uuid.uuid4()), _NoStore())
