@@ -108,11 +108,13 @@ class FakeStepUp:
 
     def __init__(self, missing: frozenset[str] = frozenset()) -> None:
         self.demanded: list[str] = []
+        self.changes: list[FlagWrite] = []  # what each demand would restate
         self.missing = missing
         self.hold: asyncio.Event | None = None
 
-    async def __call__(self, principal: AuditPrincipal, action_class: str) -> None:
+    async def __call__(self, who: AuditPrincipal, action_class: str, change: FlagWrite) -> None:
         self.demanded.append(action_class)
+        self.changes.append(change)
         if self.hold is not None:
             await self.hold.wait()
         if action_class in self.missing:

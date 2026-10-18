@@ -139,6 +139,7 @@ def _app(stops: _Stops) -> FastAPI:
     ):
         setattr(app.state, attr, _Task(attr, stops))
     app.state.bars_runtime = _AsyncStart("bars_runtime", stops)
+    app.state.feature_flags = _AsyncStart("feature_flags", stops)  # E42-T03: a maintenance poll
     app.state.kline_boundary_refresh = _Kline("kline_boundary_refresh", stops)
     app.state.health_pg = _Pool("health_pg", stops)
     app.state.kline_boundary_pg = _Pool("kline_boundary_pg", stops)
@@ -156,6 +157,7 @@ async def test_lifespan_stops_the_ws_gateway_before_anything_else() -> None:
     # Everything else did stop, after it: every runtime, task, pool and supervised module.
     assert {"health_registry", "bars_runtime", "health_pg", "mesh_self_check"} <= set(stops.order)
     assert {f"module:{name}" for name in _MODULES} <= set(stops.order)
+    assert stops.order.index("feature_flags") < stops.order.index("module:audit")  # its poll audits
 
 
 async def test_lifespan_drains_the_user_disable_cascades_before_the_modules_they_use_stop() -> None:

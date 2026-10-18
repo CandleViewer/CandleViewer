@@ -10,7 +10,8 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
   `"sub_id"`. The topic is `"system"`, `SYSTEM_TOPIC` (as an import alias too), a name a module
   copies it to (`TOPIC = SYSTEM_TOPIC`, at any scope) and `getattr(m, "SYSTEM_TOPIC")`;
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
-  `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`) and
+  `GatewayHub.shutdown`, `run_auth` (the notices after the first `auth_ok`),
+  `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push) and
   `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
   resolve each session's frame, so there is no one body to broadcast; `push_system` still
   filters it, the path B3's review asked for). A new caller of `_send` is an RBAC change too.
@@ -41,6 +42,7 @@ BUILDERS = {("ws/gateway.py", "_Connection.push_system")}
 SENDERS = {
     ("ws/gateway.py", "GatewayHub.broadcast_system"),
     ("ws/gateway.py", "GatewayHub.shutdown"),
+    ("ws/gateway.py", "GatewayHub.system_sessions"),
     ("ws/gateway.py", "run_auth"),
     ("admin/flags/push.py", "_send"),
 }

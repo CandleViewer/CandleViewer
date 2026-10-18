@@ -371,6 +371,16 @@ class GatewayHub:
         view of it, or none; every one gets the `bye`)."""
         return len(self._authenticated())
 
+    def system_sessions(
+        self,
+    ) -> list[tuple[uuid.UUID, frozenset[str], Callable[[dict[str, Any]], None]]]:
+        """Each authenticated socket's user, roles and `system` push (the feature-flag push)."""
+        return [
+            (c.user_id, c.authz.principal.roles, c.push_system)
+            for c in self._authenticated()
+            if c.user_id is not None and c.authz is not None
+        ]
+
     def broadcast_system(self, body: dict[str, Any]) -> int:
         """Offer one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket: each
         queues its §15.9 view of it, or nothing. Returns how many were offered it."""

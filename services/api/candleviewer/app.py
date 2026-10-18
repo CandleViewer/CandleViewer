@@ -35,6 +35,7 @@ from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.flags import default_registry
+from candleviewer.admin.flags.metrics import export_flag_metrics
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.ops.health import AdminHealthService
 from candleviewer.admin.overview.metrics import export_overview_metrics
@@ -113,6 +114,7 @@ from candleviewer.api.step_up import (
     make_read_only_guard,
     make_step_up_router,
     require_session_elevation,
+    step_up_port,
 )
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
@@ -156,6 +158,7 @@ from candleviewer.exchange.base.service import ExchangeBaseService
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.service import ExchangeBybitService
+from candleviewer.flags_wiring import build_feature_flags, restate_flag_write
 from candleviewer.funding_wiring import wire_funding
 from candleviewer.health_wiring import (
     HealthSystemPublisher,
@@ -1367,6 +1370,18 @@ def create_app(
             clock=auth_clock,
         )
     app.state.user_disable = user_disable
+    # E42-T03: the feature-flag runtime (store, service, writer, push, maintenance) and the shared
+    # order-entry gate it composes; the lifespan starts it.
+    feature_flags = build_feature_flags(
+        resolved,
+        audit=_LazyAuditEmitter(ctx.audit),
+        step_up=step_up_port(ctx.auth, restate_flag_write),
+        hub=ws_hub,
+        users=user_role_store,
+    )
+    app.state.feature_flags = feature_flags
+    app.state.order_entry_gate = feature_flags.order_entry_gate
+    app.state.flag_metrics = export_flag_metrics(ctx.metrics, env=resolved.environment.value)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
         make_step_up_router(

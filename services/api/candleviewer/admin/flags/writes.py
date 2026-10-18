@@ -147,6 +147,11 @@ class FlagWriter:
 
         async def prepare(row: StoredFlag) -> FlagWrite:
             locked.append(row)
+            # Omitted overrides keep the stored ones and a list replaces them (`[]` clears); a
+            # safety flag keeps none, not even a row that reached the store another way.
+            kept = row.user_overrides if user_overrides is None else user_overrides
+            overrides = {k: cast(FlagValue, v) for k, v in kept.items()} if spec.overridable else {}
+            new = cast(FlagValue, value)
             try:
                 async with asyncio.timeout(self._timeout):  # bounds the row lock's hold
                     try:
@@ -158,15 +163,12 @@ class FlagWriter:
                     except FlagValidationError as refusal:  # validation precedes the gate
                         await audit.refused(row, refusal.rule)
                         raise
-                    await self._step_up(principal, step_up_class(spec, row, value))
+                    change = FlagWrite(key, new, overrides, expected, principal.user_id)
+                    await self._step_up(principal, step_up_class(spec, row, value), change)
                     await audit.intent(row)  # write-ahead: unrecorded, nothing is written
             except TimeoutError:  # nothing commits: answered as a store outage
                 raise StoreUnavailableError("a write await timed out") from None
-            # Omitted overrides keep the stored ones and a list replaces them (`[]` clears); a
-            # safety flag keeps none, not even a row that reached the store another way.
-            kept = row.user_overrides if user_overrides is None else user_overrides
-            overrides = {k: cast(FlagValue, v) for k, v in kept.items()} if spec.overridable else {}
-            return FlagWrite(key, cast(FlagValue, value), overrides, expected, principal.user_id)
+            return change  # the change the step-up restated
 
         try:
             after = await self._service.store.write(key, prepare)

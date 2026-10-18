@@ -124,7 +124,7 @@ def _changes(key: str, result: str) -> float:
 
 
 async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() -> None:
-    writer, store, audit = await _writer(_Hook())
+    writer, store, audit = await _writer(_Hook(), step_up=(step_up := FakeStepUp()))
     ok = _changes("rules.form_editor", "ok")
     await _set(writer, "rules.form_editor", False, user_overrides={_B: True})
     (a1, intent), (a2, outcome) = audit.records
@@ -144,6 +144,7 @@ async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() 
     }
     assert (outcome["outcome"], outcome["reason"]) == (AuditOutcome.SUCCESS, "ok")
     assert [w.user_overrides for w in store.writes] == [{_B: True}]
+    assert step_up.changes == store.writes  # restated with its overrides
     assert _changes("rules.form_editor", "ok") == ok + 1
 
 
@@ -437,6 +438,7 @@ async def test_each_write_demands_exactly_one_elevation_for_its_key_and_value() 
         stored = store.rows[LIVE_ENABLED].updated_at
         await _set(writer, LIVE_ENABLED, False, expected_updated_at=stored)  # off: no evidence
     assert step_up.demanded == ["flags", "live_enablement", "flags"]
+    assert step_up.changes == store.writes  # each restates the change it lets through
     assert store.rows[LIVE_ENABLED].value is False and logs == []
     assert users.lookups == []  # no overrides given: no user lookup
     assert audit.records[2][1]["after_state"]["evidence_url"] == "https://h.example/pt-1"
