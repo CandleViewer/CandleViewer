@@ -23,18 +23,25 @@ rules:
       # #2453: each name below has a closed value set in code and a `max_series` cap in the
       # catalogue; none carries an identifier (user, account, order id, raw path, free text).
       # action (#2914): audit action of a lost outcome record, closed set + `other`; max_series=4.
+      # action, also (E42-T04, #965, cv_user_lifecycle_total): {disable}; with `result`,
+      #   max_series=9 (`admin/lifecycle_metrics.ACTION_RESULTS`).
       # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.
       # cause (E42-T02): audit read over budget {budget, pool, statement_timeout}; max_series=3.
       # entity_kind (E17-T08): the closed 23 §6.4 machine kinds (`ws/topics.MACHINE_KINDS`, 13);
       #   max_series=13.
       # filter_class (E42-T02): the audit query's 10 shape classes; max_series=10.
       # operation (E15-T01): the 11 /workspaces router operations; max_series=11.
+      # outcome (E42-T04, #965, cv_user_lifecycle_steps_total): a cascade step's {ok, failed,
+      #   skipped} or the grants push's {pushed, timeout, failed}; with `step`, max_series=24
+      #   (`admin/lifecycle_metrics.STEP_OUTCOMES`).
       # resource (E15-T01): {workspace, layout}; max_series=2.
       # route (#2421): the matched route TEMPLATE (`scope["route"].path`), never the raw path,
       #   plus `unmatched`; bounded by the app's route table; max_series=1000 as a backstop.
       # rule (E14-T01): drawing write conflicts {version_conflict, target_unavailable,
       #   id_unavailable, idempotency_key_reuse}; max_series=4.
       # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
+      # step (E42-T04, #965, cv_user_lifecycle_steps_total): the seven disable cascade steps,
+      #   closing record included, and grants_push (#2648); with `outcome`, max_series=24.
       # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
       # flag (E42-T03): only feature-flag registry keys, a closed code-reviewed set (about 16);
       #   unknown keys are refused before any series is touched; max_series=32.
@@ -42,6 +49,8 @@ rules:
       #   conflict, store_unavailable, required, kind_mismatch, unknown_user,
       #   overrides_not_allowed, gate_evidence_required, https_required, credential_in_url,
       #   string_too_long}; with `flag`, max_series=256.
+      # result, also (E42-T04, #965, cv_user_lifecycle_total): the nine closed results of a
+      #   disable; with `action`, max_series=9 (`admin/lifecycle_metrics.ACTION_RESULTS`).
       # table (E12, #1998): a bars table name, `bars_{kind}` for the six bar kinds {time, tick,
       #   volume, range, renko, delta} (`bars/rows.RETENTION`); max_series=6, or 12 with `reason`.
       # from_source, to_source (E12, SR-E12-10, #1998): bar sources from `bars/rows.SOURCE_RANK`
@@ -53,7 +62,7 @@ rules:
       #   `RefusalReason` set (4 values, checked when a refusal is built); max_series=4.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

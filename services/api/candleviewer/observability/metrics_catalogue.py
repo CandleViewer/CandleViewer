@@ -2556,6 +2556,37 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E43",
     ),
+    # --- User lifecycle (E42-T04, #965); served by admin.lifecycle_metrics, bound at import ---
+    _s(
+        "cv_user_lifecycle_total",
+        "counter",
+        "calls",
+        ("action", "result"),
+        "User lifecycle calls by action and result, refusals and failures included. action: "
+        "disable; result: disabled, noop, forbidden, self_target, not_found, positions_unknown, "
+        "last_owner, audit_unavailable or error.",
+        "none (diagnostic; every refusal is audited)",
+        _L,
+        "E42",
+        max_series=9,  # the closed sets: one action, nine results
+        exported=True,
+    ),
+    _s(
+        "cv_user_lifecycle_steps_total",
+        "counter",
+        "steps",
+        ("step", "outcome"),
+        "User lifecycle steps by outcome (R7). The disable cascade after its commit (socket_close, "
+        "session_sweep, b16_revoke, scope_refresh, rule_disarm, invite_revoke) and the closing "
+        "record of a change that did not commit (closing_record): ok, failed or skipped. The "
+        "grants push (grants_push, #2648): pushed, timeout or failed.",
+        "UserLifecycleStepFailed (a cascade step or closing record failed in 15m, ticket); "
+        "UserGrantsPushFailed (a grants push failed or timed out in 15m, ticket)",
+        _L,
+        "E42",
+        max_series=24,  # the closed sets: seven steps x three outcomes, the push's three
+        exported=True,
+    ),
     # --- Latency budget (E04-T06, US-OBS-002) -------------------------------
     _s(
         "ingest_stage_seconds",

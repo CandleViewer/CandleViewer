@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import typing
 from pathlib import Path
 
 import structlog
@@ -292,6 +293,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     """E12-T03: the bars series are `live` via `export_bars_metrics`, not `register_r0`."""
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
     from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
+    from candleviewer.admin.lifecycle_metrics import EXPORTED_NAMES as LIFECYCLE_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars import reader, writer  # noqa: F401 - the write and read path (#1998)
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
@@ -314,6 +316,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= FLAG_NAMES
     assert FLAG_NAMES <= {s.name for s in live_specs() if s.exported}
     others |= AUDIT_NAMES
+    others |= LIFECYCLE_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -432,3 +435,56 @@ def test_exported_audit_query_metrics_served_with_env_and_closed_labels() -> Non
         assert 'cv_audit_query_timeouts_total{cause="pool",env="demo"}' in text
     finally:
         collector.close()
+
+
+def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
+    """E42-T04 (#965 R7): the label values are closed sets fixed by their writers: the cascade's
+    steps (`admin/user_disable.py`, its closing record too) and the grants push
+    (`admin/account_access.py`, #2648: `pushed`, `timeout`, `failed`). Each cap is the size of its
+    sets and each help names every value, for the dashboard and alert authors who read it."""
+    from candleviewer.admin import account_access, user_disable
+    from candleviewer.admin import lifecycle_metrics as lm
+
+    push = lm.STEP_OUTCOMES[account_access.PUSH_STEP]
+    assert push == ("pushed", "timeout", "failed")
+    assert typing.get_args(typing.get_type_hints(account_access._pushed)["outcome"]) == push
+    cascade = [step for step in lm.STEP_OUTCOMES if step != account_access.PUSH_STEP]
+    assert cascade == [*user_disable.STEPS, "closing_record"]
+    specs = {s.name: s for s in CATALOGUE}
+    for name, sets in (
+        ("cv_user_lifecycle_total", lm.ACTION_RESULTS),
+        ("cv_user_lifecycle_steps_total", lm.STEP_OUTCOMES),
+    ):
+        assert specs[name].max_series == sum(map(len, sets.values())), name
+        named = {*sets, *(value for values in sets.values() for value in values)}
+        assert named <= set(re.findall(r"\w+", specs[name].help)), name
+
+
+def test_user_lifecycle_series_are_bound_at_import_and_served_with_env() -> None:
+    """#965 R7: every value of the closed sets exists from import, so a first failure is an
+    `increase()` the tickets can see; the export serves each with `env`, and so does the app."""
+    from candleviewer.admin import lifecycle_metrics as lm
+    from candleviewer.app import create_app
+    from candleviewer.settings import Environment, Settings
+
+    m = Metrics("demo")
+    collector = lm.export_user_lifecycle_metrics(m.registry, env="demo")
+    try:
+        text = generate_latest(m.registry).decode()
+    finally:
+        collector.close()
+    for action, results in lm.ACTION_RESULTS.items():
+        for result in results:
+            assert (
+                f'cv_user_lifecycle_total{{action="{action}",env="demo",result="{result}"}} '
+                in text
+            )
+    for step, outcomes in lm.STEP_OUTCOMES.items():
+        for outcome in outcomes:
+            series = (
+                f'cv_user_lifecycle_steps_total{{env="demo",outcome="{outcome}",step="{step}"}}'
+            )
+            assert f"{series} " in text
+    app = create_app(Settings(environment=Environment.DEMO))
+    scraped = generate_latest(app.state.app_context.metrics).decode()
+    assert all(f"# HELP {name} " in scraped for name in lm.EXPORTED_NAMES)

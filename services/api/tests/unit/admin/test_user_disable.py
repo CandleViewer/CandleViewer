@@ -6,6 +6,7 @@ adapters in the last tests (`tests/unit/test_user_cascade_wiring.py` covers the 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -18,7 +19,12 @@ from sqlalchemy.exc import IntegrityError
 from structlog.testing import capture_logs
 
 from candleviewer.admin import errors
-from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
+from candleviewer.admin.lifecycle_metrics import (
+    ACTION_RESULTS,
+    export_user_lifecycle_metrics,
+    user_lifecycle_steps_total,
+    user_lifecycle_total,
+)
 from candleviewer.admin.user_disable import DisableResult, UserDisableService
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import InviteNotFound
@@ -27,9 +33,10 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.auth.session_chart import SessionChart
+from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
+from candleviewer.observability.metrics import CollectorRegistry, generate_latest
 from candleviewer.rules.manager import RuleError
 from candleviewer.rules.scope_state import SnapshotScopeState
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
@@ -742,3 +749,130 @@ async def test_overlapping_repeats_disarm_a_rule_once_and_park_nothing() -> None
     assert engine.manager.lifecycle._charts[rid].deferred_count == 0
     await engine.manager.set_mode(rid, "armed", _actor(_TARGET), "arm-again")
     assert await engine.mode(rid) == ("armed", None)
+
+
+# --- #965 Observability (R7): what each call and each step counts and logs --------------------
+
+
+def _calls(result: str) -> float:  # `cv_user_lifecycle_total`, read as a delta
+    return float(user_lifecycle_total.labels(action="disable", result=result)._value.get())
+
+
+def _store_self_target() -> _World:  # the store's own SR-055 refusal
+    return _World(store=SimpleNamespace(disable=AsyncMock(side_effect=UserSelfTargetError("me"))))
+
+
+def _audit_down() -> _World:  # a fresh list each call: `emit` pops the failures it raises
+    return _World(fail={"users.disable": [AuditUnavailable("wal")]})
+
+
+#: (result, world, actor, error): one call per result of the closed set, in its order.
+_RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
+    ("disabled", _World, _OWNER, None),
+    ("noop", lambda: _World(_Rel(status="disabled"), positions=None), _OWNER, None),
+    ("forbidden", _World, _MANAGER, errors.LifecycleForbiddenError),
+    ("self_target", _store_self_target, _OWNER, errors.LifecycleForbiddenError),
+    ("not_found", lambda: _World(_Rel(status=None)), _OWNER, errors.UserNotFoundError),
+    ("positions_unknown", lambda: _World(positions=None), _OWNER, errors.PositionsUnknownError),
+    ("last_owner", lambda: _World(_Rel(roles=("owner",), owners=1)), _OWNER, errors.LastOwnerError),
+    ("audit_unavailable", _audit_down, _OWNER, _AUDIT_DOWN),
+    (
+        "error",
+        lambda: _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001")),
+        _OWNER,
+        IntegrityError,
+    ),
+]
+
+
+def test_the_counted_results_are_the_closed_set() -> None:
+    assert [result for result, *_ in _RESULTS] == list(ACTION_RESULTS["disable"])
+
+
+@pytest.mark.parametrize(
+    ("result", "world", "actor", "error"), _RESULTS, ids=[r[0] for r in _RESULTS]
+)
+async def test_each_call_is_counted_once_under_its_result(
+    result: str, world: Callable[[], _World], actor: PrincipalSnapshot, error: Any
+) -> None:
+    """#965: one count per call, under its result only; a refusal is never an `error` (the
+    store's own self-target is the audited 403, SR-055)."""
+    w, before = world(), {r: _calls(r) for r in ACTION_RESULTS["disable"]}
+    with pytest.raises(error) if error else contextlib.nullcontext():
+        await w.svc.disable(_TARGET, actor=actor)
+    moved = {r: _calls(r) - n for r, n in before.items() if _calls(r) != n}
+    assert moved == {result: 1}
+
+
+async def test_log_and_metrics_per_step() -> None:
+    """#965: one line and one count per step, correlated by `request_id`, the call counted, and
+    the series served with `env`."""
+    ok, disabled = {s: _steps(s, "ok") for s in _STEPS}, _calls("disabled")
+    with bind_context(request_id=str(_RID)), capture_logs() as logs:
+        assert await _World(_Rel(status="invited")).disable() == DisableResult(changed=True)
+    lines = [(e["step"], e["outcome"], e["request_id"]) for e in logs if "step" in e]
+    assert lines == [(s, "ok", str(_RID)) for s in _STEPS]
+    assert [_steps(s, "ok") - ok[s] for s in _STEPS] == [1] * len(_STEPS)
+    assert _calls("disabled") == disabled + 1
+    registry = CollectorRegistry()
+    collector = export_user_lifecycle_metrics(registry, env="demo")
+    try:
+        text = generate_latest(registry).decode()
+    finally:
+        collector.close()
+    assert 'cv_user_lifecycle_total{action="disable",env="demo",result="disabled"} ' in text
+
+
+async def test_post_commit_failure_alerts() -> None:
+    """R7: every step fails, each alone (the scope refresh by outliving its bound). Each is
+    counted `failed` once and logged at error with its error class (the `UserLifecycleStepFailed`
+    signal); the commit stands and every other run still goes: the other session's socket and
+    B16 record, the other rule's disarm."""
+    refusal = RuleError(422, "illegal_transition", "A rule cannot change from armed.")
+    failed = {s: _steps(s, "failed") for s in _STEPS}
+    w = _World(
+        _Rel(status="invited"),
+        armed=("r1", "r2"),
+        refuse={"r1": refusal},
+        invite=OSError("invites down"),
+        publish=AsyncMock(side_effect=[OSError("socket gone"), None]),
+        sessions=SimpleNamespace(revoke_all=AsyncMock(side_effect=OSError("sweep down"))),
+        chart=SimpleNamespace(revoke=AsyncMock(side_effect=[SessionChartError("refused"), None])),
+        scope=SimpleNamespace(refresh=_hang),
+        step_timeout_s=0,  # only the hung refresh suspends, so only it outlives the bound
+    )
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(changed=True, failed_steps=_STEPS)
+    assert w.rel.committed and [rule for rule, *_ in w.disarms] == ["r1", "r2"]
+    assert [_steps(s, "failed") - failed[s] for s in _STEPS] == [1] * len(_STEPS)
+    lines = [(e["step"], e["error"], e["log_level"]) for e in logs if "step" in e]
+    kinds = ("OSError", "OSError", "SessionChartError", "TimeoutError", "RuleError", "OSError")
+    assert lines == list(zip(_STEPS, kinds, ["error"] * len(_STEPS), strict=True))
+
+
+async def test_cancelled_steps_are_counted_failed() -> None:
+    """R7: steps that a cancellation of their task (shutdown) cuts off are counted failed first."""
+    before = {s: _steps(s, "failed") for s in _STEPS}
+    w = _World(_Rel(status="invited"), publish=AsyncMock(side_effect=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):
+        await w.disable()
+    assert [_steps(s, "failed") - before[s] for s in _STEPS] == [1] * len(_STEPS)
+
+
+@pytest.mark.parametrize(
+    ("fail", "outcome"),
+    [([TimeoutError()], "ok"), ([TimeoutError(), AuditUnavailable("down")], "failed")],
+    ids=["closed", "closing_failed"],
+)
+async def test_closing_record_is_counted_and_a_failed_one_alerts(
+    fail: list[BaseException], outcome: str
+) -> None:
+    """C-2.9, R7: the record closing a `users.disable` whose change never committed counts as
+    the step `closing_record`; one that could not be written is `failed` and logged at error."""
+    before = {o: _steps("closing_record", o) for o in ("ok", "failed")}
+    with capture_logs() as logs, pytest.raises(_AUDIT_DOWN):
+        await _World(fail={"users.disable": list(fail)}).disable()
+    moved = {o: _steps("closing_record", o) - n for o, n in before.items()}
+    assert moved == {o: float(o == outcome) for o in before}
+    (line,) = [e for e in logs if e.get("step") == "closing_record"]
+    assert (line["outcome"], line["log_level"]) == (outcome, "info" if outcome == "ok" else "error")

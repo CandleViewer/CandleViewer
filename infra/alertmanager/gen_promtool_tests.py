@@ -164,6 +164,17 @@ _STRAY = 'auth_disabled_user_sessions_revoked_total{env="live"}'
 # the 15 m window is 21 m (3.x range selectors: 20 m), so `keep_firing_for: 9h30m` ends at 9 h 51 m
 # (3.x: 9 h 50 m): firing at 9 h 49 m, resolved at 9 h 52 m.
 _ONE_STRAY = {_STRAY: "0+0x5 1+0x700"}
+
+
+def _steps(step: str, outcome: str) -> str:
+    """#965: a `cv_user_lifecycle_steps_total` series (every one is bound at 0 from import)."""
+    return f'cv_user_lifecycle_steps_total{{env="live",outcome="{outcome}",step="{step}"}}'
+
+
+# One failure at 6 min, held and resolved as _ONE_STRAY is; a flat count is an old failure.
+_RISE, _FLAT = "0+0x5 1+0x700", "3+0x700"
+_SWEEP_FAILED = {_steps("session_sweep", "failed"): _RISE}
+_PUSH_TIMEOUT = {_steps("grants_push", "timeout"): _RISE}
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: no
@@ -187,6 +198,32 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("9h49m", True, _ONE_STRAY),
         ("9h52m", False, _ONE_STRAY),
         ("30m", False, {_STRAY: "3+0x700"}),
+    ),
+    # #965 R7: a failed cascade step fires on the first evaluation after it and is held past the
+    # mute. A step that passed, an old failure and a failed grants push (the ticket below) never
+    # fire it.
+    "UserLifecycleStepFailed": (
+        ("6m", True, _SWEEP_FAILED),
+        ("9h49m", True, _SWEEP_FAILED),
+        ("9h52m", False, _SWEEP_FAILED),
+        (
+            "6m",
+            False,
+            {
+                _steps("session_sweep", "ok"): _RISE,
+                _steps("rule_disarm", "failed"): _FLAT,
+                _steps("grants_push", "failed"): _RISE,
+            },
+        ),
+    ),
+    # #2648 R7: a push that timed out or failed fires it, held the same way. A push that ended
+    # `pushed` and a failed cascade step (the ticket above) never fire it.
+    "UserGrantsPushFailed": (
+        ("6m", True, _PUSH_TIMEOUT),
+        ("6m", True, {_steps("grants_push", "failed"): _RISE}),
+        ("9h49m", True, _PUSH_TIMEOUT),
+        ("9h52m", False, _PUSH_TIMEOUT),
+        ("6m", False, {_steps("grants_push", "pushed"): _RISE, **_SWEEP_FAILED}),
     ),
 }
 
