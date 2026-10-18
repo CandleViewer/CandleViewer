@@ -72,6 +72,7 @@ KNOWN = {
     ("_job-e2e.yml", "e2e-web"),
     ("_job-e2e.yml", "e2e-staging"),
     ("_job-e2e.yml", "a11y-axe"),
+    ("_job-e2e.yml", "e2e-electron"),
     ("_job-a11y.yml", "a11y"),
     ("a11y-nightly.yml", "sweep"),
     ("_job-js.yml", "build"),
