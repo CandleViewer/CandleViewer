@@ -21,7 +21,7 @@ from candleviewer.ws.bars_wire import bar_item
 from candleviewer.ws.binary import FrameEncodeError, decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription, handle_sub
-from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody
+from candleviewer.ws.sequencing import SNAP_REASONS, SequencingHub, SnapReason, SnapshotBody
 from tests.unit.ws._seq_support import Clock, Conn, Source
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
@@ -376,7 +376,12 @@ async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> 
     assert [f["t"] for f in conn.take()] == ["snap"]
 
 
-@pytest.mark.parametrize("reason", ["initial", "backpressure"])  # a `sub` in flight, E17's hold
+#: Every pending reason but the retry's match (the publisher's swap and `upstream_desync`,
+#: #3363): `initial` is a `sub` in flight, `backpressure` E17's hold, and the rest another flow's.
+_OTHER_FLOWS: Final = tuple(r for r in SNAP_REASONS if r not in (SWAP, "upstream_desync"))
+
+
+@pytest.mark.parametrize("reason", _OTHER_FLOWS)
 async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(
     reason: SnapReason,
 ) -> None:

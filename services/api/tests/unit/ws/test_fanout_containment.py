@@ -3,7 +3,8 @@
 Every other connection is still served; a `snap` that a flush or a waking publish cannot build
 or queue stays pending with its reason; a `d` that raises leaves its subscription, only that
 one, pending an `upstream_desync` `snap`, counted as a malformed update, so its client gets that
-`snap`, never a `d` across the update it lost. A connection's `on_rebuild` that raises is
+`snap`, never a `d` across the update it lost; a waking publish (`machines.*`) sends that `snap`
+at once, an entity's last publish included. A connection's `on_rebuild` that raises is
 contained too, and a failure that repeats logs one line an interval, `orders` and `executions`
 aside. A cancellation is never contained. Flag on, the sink is a `ConnectionPipeline`, which
 contains these itself (`test_pipeline_pacing.py`, `test_resnapshot_containment.py`).
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -22,10 +24,12 @@ from structlog.typing import EventDict
 
 from candleviewer.ws import sequencing
 from candleviewer.ws.binary import BOOK_DELTA, Frame
+from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody, cv_ws_resync_total
 from tests.unit.ws._seq_support import ACC_A, Book, Clock, Conn, Source
+from tests.unit.ws.test_machines import OID, ON_A, _attach, _payload
 from tests.unit.ws.test_pipeline_outbound import _BOOK, _MARK, _counter
 from tests.unit.ws.test_pipeline_pacing import _raises
 from tests.unit.ws.test_resnapshot_containment import (
@@ -42,6 +46,8 @@ _BODIES: dict[str, dict[str, Any]] = {
     _BOOK: {"symbol": "BTCUSDT", "bids": [], "asks": []},
     "orders": {"orders": []},
 }
+#: A private family that is not `never_throttled` (only `orders` and `executions` are).
+_POSITIONS = {"ch": "positions", "opts": {"exchange_account_ids": [str(ACC_A)]}}
 _HELD: Final[SnapReason] = "upstream_reconnect"  # what a flushed or woken one awaits here
 _Pair = list[tuple[Conn, Subscription]]
 
@@ -55,12 +61,36 @@ def _pair(hub: SequencingHub, entry: Any = _BOOK_ENTRY, second: Any = None) -> _
         source.books["BTCUSDT"] = Book("BTCUSDT")
         source.books["BTCUSDT"].apply([["100", "1"]], [])
         source.bodies["orders"] = SnapshotBody({"orders": []})
+        source.bodies["positions"] = SnapshotBody({"positions": []})
         conn = Conn(source)
         hub.register(conn.authz, conn.emitter)
         _, sub = conn.sub(e)
         conn.take()
         pairs.append((conn, sub))
     return pairs
+
+
+def _machines(hub: SequencingHub) -> tuple[MachineStateRegistry, MachineEntity, _Pair]:
+    """Two flag-off connections subscribed to one `order` entity of a registry that fans out
+    through `hub` (§6.4), each with its first `snap` sent."""
+    registry, order = MachineStateRegistry(hub=hub), MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    pairs: _Pair = []
+    for _ in range(2):
+        conn = Conn(Source())
+        _attach(conn, registry, hub)
+        _, sub = conn.sub(order.ch)
+        conn.take()
+        pairs.append((conn, sub))
+    return registry, order, pairs
+
+
+def _d_raises(
+    conn: Conn, mp: pytest.MonkeyPatch, otherwise: Callable[..., Any] | None = None
+) -> None:
+    """`conn` raises in its push for a `d`, and sends every other frame (or runs `otherwise`)."""
+    push = otherwise or conn.emitter.push
+    mp.setattr(conn.emitter, "push", lambda f: _raises() if f["t"] == "d" else push(f))
 
 
 def _arm(
@@ -207,6 +237,92 @@ def test_a_failed_d_is_contained_to_its_subscription_not_its_connection(
     assert [(f["ch"], f["s"]) for f in bad.take()] == [("orders", 2), ("orders", 3)]
 
 
+def test_a_failed_d_of_a_waking_publish_gets_its_snap_at_once_even_for_the_last_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The registry stores a payload before it fans it out, so a `snap` built after a failed `d`
+    holds it (§6.4). An entity's last publish (`terminal`) has no later one to wake the
+    subscription, so that publish sends the `snap` itself: `upstream_desync`, after the `s` the
+    failed `d` took, with no `d` before it. The other connection gets its `d`."""
+    hub = SequencingHub()
+    registry, order, ((bad, bs), (good, _)) = _machines(hub)
+    _d_raises(bad, monkeypatch)
+    desyncs = _counter(cv_ws_resync_total, reason="upstream_desync")
+    assert registry.terminal(order, _payload(state="filled"))
+    assert not registry.publish(order, _payload())  # the entity's last: nothing wakes it later
+    meta = {"reason": "upstream_desync", "source": "live", "previous_seq": 2}
+    assert [(f["t"], f["s"], f["meta"], f["p"]["state"]) for f in bad.take()] == [
+        ("snap", 3, meta, "filled")
+    ]
+    assert [(f["t"], f["s"], f["p"]["state"]) for f in good.take()] == [("d", 2, "filled")]
+    assert (bs.snapshot_pending, bs.seq) == (False, 3)
+    assert _counter(cv_ws_resync_total, reason="upstream_desync") == desyncs + 1
+
+
+@pytest.mark.parametrize("wake", [True, False], ids=["wake", "plain"])
+def test_only_a_waking_publish_sends_the_snap_of_its_failed_d_at_once(
+    wake: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A publish whose source may not hold the update yet (`bars.*`, which retries at its next
+    emission) leaves the `snap` pending: one built now could miss that update. A waking publish
+    counts the `snap` it sends."""
+    hub = SequencingHub()
+    (bad, bs), _ = _pair(hub)
+    _d_raises(bad, monkeypatch)
+    assert hub.publish(_BOOK, _BODIES[_BOOK], account=ACC_A, wake=wake) == (2 if wake else 1)
+    assert [(f["t"], f["s"]) for f in bad.take()] == ([("snap", 3)] if wake else [])
+    assert (bs.snapshot_pending, bs.seq) == ((False, 3) if wake else (True, 2))
+
+
+def test_the_snap_after_a_failed_waking_d_is_that_subscriptions_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contained per subscription, as a wake's `snap` is: the failing connection's other pending
+    subscription (its `orders`) waits for its own flush."""
+    hub = SequencingHub()
+    (bad, book), _ = _pair(hub)
+    _, orders = bad.sub(_ORDERS)
+    bad.take()
+    orders.snapshot_pending, orders.pending_reason = True, _HELD
+    _d_raises(bad, monkeypatch)
+    assert hub.publish(_BOOK, _BODIES[_BOOK], account=ACC_A, wake=True) == 2
+    assert [(f["ch"], f["t"]) for f in bad.take()] == [(_BOOK, "snap")]
+    assert (book.snapshot_pending, orders.snapshot_pending) == (False, True)
+
+
+@pytest.mark.parametrize(
+    ("raiser", "error"), [(_raises, "RuntimeError"), (_lookup_fails, "KeyError")], ids=["rt", "key"]
+)
+def test_a_snap_that_raises_after_a_failed_waking_d_stays_pending_and_is_logged(
+    raiser: Callable[..., Any], error: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contained like any wake's `snap` (`_snapshot_failed`): the connection's push raises for the
+    `d` and for the `snap` after it, so it stays pending `upstream_desync` with the `s` that `snap`
+    took, one `ws delta failed` and one `ws snapshot failed` are logged at `warning` (`machines`
+    is private but not `never_throttled`), and the other connection still gets its `d`. The next
+    flush sends the `snap`."""
+    hub = SequencingHub()
+    registry, order, ((bad, bs), (good, _)) = _machines(hub)
+    monkeypatch.setattr(bad.emitter, "push", raiser)
+    with capture_logs() as logs:
+        assert registry.terminal(order, _payload(state="filled"))
+    failed = [(e["event"], e["family"], e["error"], e["log_level"]) for e in logs]
+    assert failed == [
+        ("ws delta failed", "machines", error, "warning"),
+        ("ws snapshot failed", "machines", error, "warning"),
+    ]
+    assert (bad.take(), bs.snapshot_pending, bs.pending_reason, bs.seq) == (
+        [],
+        True,
+        "upstream_desync",
+        3,
+    )
+    assert [(f["t"], f["s"]) for f in good.take()] == [("d", 2)]
+    monkeypatch.undo()
+    assert hub.flush_pending() == 1
+    assert [(f["t"], f["s"], f["meta"]["previous_seq"]) for f in bad.take()] == [("snap", 4, 3)]
+
+
 @pytest.mark.parametrize("site", ["flush", "wake"])
 def test_a_snap_whose_push_raises_stays_pending_and_takes_no_d(
     site: str, monkeypatch: pytest.MonkeyPatch
@@ -231,14 +347,17 @@ def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_ev
 ) -> None:
     """A build that keeps failing (as the bars retry runs on every emission) logs at most one
     `warning` per (event, family) per `FAILURE_LOG_INTERVAL_S` on the hub's clock, the next one
-    counting those held back (`suppressed`); another event of that family has its own interval.
-    `orders` logs each failure, at `error`, as flag on logs each of its closes."""
+    counting those held back (`suppressed`); another event of that family has its own interval,
+    and so has another family: `positions` (private, but not `never_throttled`) fails the same
+    event in the same interval and still logs its own line, once. `orders` logs each failure, at
+    `error`, as flag on logs each of its closes."""
     clock = Clock()
     hub = SequencingHub(clock=clock)
     (bad, book), (good, _) = _pair(hub)
     _, orders = bad.sub(_ORDERS)
+    _, positions = bad.sub(_POSITIONS)
     bad.take()
-    for sub in (book, orders):
+    for sub in (book, orders, positions):
         sub.snapshot_pending, sub.pending_reason = True, _HELD
     bad.emitter.cache.invalidate(_BOOK)
     monkeypatch.setattr(bad.emitter.source, "build", _raises)
@@ -251,11 +370,20 @@ def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_ev
         hub.flush_pending()
     lines = [(e["event"], e["family"], e["log_level"], e.get("suppressed")) for e in logs]
     snap, orders_line = ("ws snapshot failed", "book", "warning"), ("ws snapshot failed", "orders")
+    positions_line = ("ws snapshot failed", "positions", "warning")
     assert lines == [
-        (*snap, 0), (*orders_line, "error", None), (*orders_line, "error", None),
-        (*orders_line, "error", None), ("ws delta failed", "book", "warning", 0),
-        (*snap, 2), (*orders_line, "error", None),
+        (*snap, 0), (*orders_line, "error", None), (*positions_line, 0),
+        (*orders_line, "error", None), (*orders_line, "error", None),
+        ("ws delta failed", "book", "warning", 0),
+        (*snap, 2), (*orders_line, "error", None), (*positions_line, 2),
     ]  # fmt: skip
+
+
+def test_the_log_interval_is_a_second_and_the_default_clock_is_the_monotonic_one() -> None:
+    """§10.1 says "a second" (the flag-on classify interval), and the app builds `SequencingHub()`
+    with no clock: a wall clock steps, so the default is `time.monotonic`."""
+    assert sequencing.FAILURE_LOG_INTERVAL_S == 1.0
+    assert SequencingHub()._clock is time.monotonic
 
 
 @pytest.mark.parametrize("raiser", [_lookup_fails, _cancelled], ids=["error", "cancel"])
@@ -314,6 +442,19 @@ def test_a_cancellation_from_a_connection_is_never_contained(
     pending = (True, _HELD) if site != "delta" else (False, "initial")
     assert [(s.snapshot_pending, s.pending_reason) for s in (bs, gs)] == [pending] * 2
     assert (bs.seq, gs.seq) == (2 if site == "delta" else 1, 1)
+
+
+def test_a_cancellation_from_the_snap_after_a_failed_waking_d_is_never_contained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `d` raises an `Exception`, which is contained; the `snap` sent after it a cancellation,
+    which leaves the fan-out there: the other connection gets nothing."""
+    hub = SequencingHub()
+    registry, order, ((bad, _), (good, _)) = _machines(hub)
+    _d_raises(bad, monkeypatch, otherwise=_cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        registry.terminal(order, _payload(state="filled"))
+    assert (bad.take(), good.take()) == ([], [])
 
 
 def test_a_pending_reason_stays_and_a_server_owned_meta_key_is_the_callers_error(

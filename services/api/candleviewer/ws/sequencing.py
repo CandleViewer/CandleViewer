@@ -884,14 +884,15 @@ class SequencingHub:
     or `delta`, or its `on_rebuild`, raises is contained to its subscription (to its connection
     for `on_rebuild`), so no connection stops a fan-out (§10.1): the flag-on sink contains it
     itself, and the hub contains what a `TopicEmitter` lets through (flag off: `_snapshot_failed`,
-    `_delta_failed`). A cancellation is never contained, nor, flag off, a `d` whose `meta` names a
-    key the server owns: that is the caller's own error. `clock` paces the failure lines."""
+    `_delta_failed`, which a waking publish follows with that `snap` at once). A cancellation is
+    never contained, nor, flag off, a `d` whose `meta` names a key the server owns: that is the
+    caller's own error. `clock` paces the failure lines."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._conns: dict[int, tuple[ConnectionAuthz, Sink]] = {}
         self._clock = clock
         #: `_quiet`, per (event, family): when its interval ends, and the lines held back in it.
-        self._held: dict[tuple[str, str], tuple[float, int]] = {}
+        self._log_window: dict[tuple[str, str], tuple[float, int]] = {}
 
     def __len__(self) -> int:
         return len(self._conns)
@@ -956,6 +957,11 @@ class SequencingHub:
                 if meta and SERVER_META_KEYS.intersection(meta):
                     raise  # the caller's own error, refused before any `s` was taken
                 self._delta_failed(authz, sub, exc)
+                if wake:  # the source holds `body`: its `snap` goes out now, as a woken one does
+                    try:
+                        sent += emitter.flush_pending((sub,))
+                    except Exception as snap_exc:  # contained to `sub`: the fan-out goes on
+                        self._snapshot_failed(authz, sub, snap_exc)
         return sent
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
@@ -1060,9 +1066,10 @@ class SequencingHub:
         """A `d` that raised through its sink (flag off): `TopicEmitter` queues a `d` last, so that
         update never reached `sub`'s client, though its `s` may be taken, as by a frame lost in
         transit (§7.1). `sub` now awaits an `upstream_desync` `snap`, the §7.4 reason for a stream
-        with a gap ("the only correct recovery is drop-and-rebuild"), so no `d` crosses the gap;
-        one already pending keeps its reason, as it took no `d`. Marked first, which its count and
-        log line cannot skip; counted as a malformed update, as flag on counts one (§8.6 D9)."""
+        with a gap ("the only correct recovery is drop-and-rebuild"), so no `d` crosses the gap; a
+        waking `publish` sends that `snap` at once, any other waits for the next flush. One already
+        pending keeps its reason, as it took no `d`. Marked first, which its count and log line
+        cannot skip; counted as a malformed update, as flag on counts one (§8.6 D9)."""
         if not sub.snapshot_pending:
             sub.snapshot_pending, sub.pending_reason = True, "upstream_desync"
         cv_ws_malformed_updates_total.labels(topic=sub.topic.family.family).inc()
@@ -1090,11 +1097,11 @@ class SequencingHub:
         """None holds a log line back: one per `key` (event, family) per `FAILURE_LOG_INTERVAL_S`
         on the hub's clock, as `ConnectionPipeline._quiet` does per connection. Else how many it
         held back since the last line (`suppressed`). Bounded: one entry per (event, family)."""
-        now, last = self._clock(), self._held.get(key)
+        now, last = self._clock(), self._log_window.get(key)
         if last is not None and now < last[0]:
-            self._held[key] = (last[0], last[1] + 1)
+            self._log_window[key] = (last[0], last[1] + 1)
             return None
-        self._held[key] = (now + FAILURE_LOG_INTERVAL_S, 0)
+        self._log_window[key] = (now + FAILURE_LOG_INTERVAL_S, 0)
         return 0 if last is None else last[1]
 
 
