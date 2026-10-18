@@ -1,9 +1,11 @@
 """Pair proving the autouse structlog reset (#2057): test A configures logging; test B, ordered
 after it, must see pristine structlog state. Test C runs the pair in a fresh session that also
-collects a module importing `candleviewer.main` (#3357, #2519)."""
+collects a module importing `candleviewer.main` (#3357, #2519); test D collects this module
+through a symlinked path."""
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import subprocess
@@ -17,9 +19,12 @@ from structlog.testing import capture_logs
 from candleviewer.observability.logging import configure_logging
 
 _module_logger = structlog.get_logger("isolation-standin")
-_API_ROOT = Path(__file__).resolve().parents[3]
+# Resolved once for both: pytest keeps a symlinked path as given, and node ids taken from it would
+# not lie under the resolved root, so the module would fail to import (test D).
+_HERE = Path(__file__).resolve()
+_API_ROOT = _HERE.parents[3]
 _PAIR = tuple(
-    f"{Path(__file__).relative_to(_API_ROOT).as_posix()}::{name}"
+    f"{_HERE.relative_to(_API_ROOT).as_posix()}::{name}"
     for name in ("test_a_configure_logging_leaves_state_behind", "test_b_state_is_pristine_after_a")
 )
 # Its module imports `candleviewer.main`, so collecting it runs `configure_logging()`. Node ids
@@ -29,6 +34,24 @@ _MAIN_IMPORTER = (
     "tests/unit/test_main_lifespan_stop_order.py"
     "::test_lifespan_stops_the_ws_gateway_before_anything_else"
 )
+
+
+def _fresh_session(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """`pytest *args` in a new interpreter, free of the outer run's PYTHON* and PYTEST_* settings
+    (PYTEST_ADDOPTS=--sw or --lf is an unknown option next to `-p no:cacheprovider`). It writes
+    no bytecode, so test D cannot cache code compiled under the link path in the real tree."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "PYTEST_"))}
+    env |= {"PYTHONPATH": str(_API_ROOT), "PYTHONDONTWRITEBYTECODE": "1"}
+    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly"]
+    return subprocess.run(  # noqa: S603 -- fixed argv: this interpreter, pytest, paths built here
+        [*argv, "--no-cov", f"--basetemp={tmp_path / 'inner'}", *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=_API_ROOT,
+        env=env,
+        check=False,
+    )
 
 
 def test_a_configure_logging_leaves_state_behind() -> None:
@@ -63,16 +86,20 @@ def test_c_the_pair_passes_when_collection_imports_candleviewer_main(
     first, pytest's `__test__` probe then pinned `_module_logger` to that chain, so B captured
     nothing; collected last, B ran first under it. A fresh session makes the collection order
     this test's own, whatever order the outer run collects in."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
-    env["PYTHONPATH"] = str(_API_ROOT)
-    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly"]
-    done = subprocess.run(  # noqa: S603 -- fixed argv: this interpreter, pytest, literal node ids
-        [*argv, "--no-cov", f"--basetemp={tmp_path / 'inner'}", *order],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=_API_ROOT,
-        env=env,
-        check=False,
-    )
+    importer = _API_ROOT / _MAIN_IMPORTER.partition("::")[0]
+    body = ast.parse(importer.read_text(encoding="utf-8")).body
+    imported = {n.module for n in body if isinstance(n, ast.ImportFrom)}
+    imported |= {a.name for n in body if isinstance(n, ast.Import) for a in n.names}
+    # The premise: with a lazy import there, collecting it configures nothing, and this test would
+    # pass with the conftest hook gone.
+    assert "candleviewer.main" in imported, f"{importer.name} must import it at module level"
+    done = _fresh_session(tmp_path, *order)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_d_the_module_collects_through_a_symlinked_path(tmp_path: Path) -> None:
+    """IDE runners and checkouts behind a symlinked directory hand pytest the unresolved path."""
+    link = tmp_path / "api"
+    link.symlink_to(_API_ROOT)
+    done = _fresh_session(tmp_path, "--collect-only", str(link / _HERE.relative_to(_API_ROOT)))
     assert done.returncode == 0, done.stdout + done.stderr
