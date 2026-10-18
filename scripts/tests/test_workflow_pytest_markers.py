@@ -405,6 +405,28 @@ def test_config_reader_fails_loudly_on_a_toml_mode_config(
         _config_addopts(tmp_path / name)
 
 
+def test_config_scan_reads_tracked_configs_and_names_an_unreadable_one(tmp_path: Path) -> None:
+    files = {
+        "pytest.ini": '[pytest]\naddopts = -m "not flaky"\n',
+        "a/pytest.ini": "",  # pytest reads it even when it is empty
+        "b/tox.ini": "[tox]\n",  # no [pytest]: pytest skips it
+        "c/my_pytest.ini": "[pytest]\n",  # a name pytest does not look for
+        "d/pytest.toml": "",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / "e").mkdir()
+    (tmp_path / "e" / "pytest.ini").write_text("", encoding="utf-8")  # untracked
+    git = ["git", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True, timeout=60)
+    subprocess.run([*git, "add", *list(files)[:4]], check=True, timeout=60)
+    assert _configs(tmp_path) == {"pytest.ini": '-m "not flaky"', "a/pytest.ini": ""}
+    subprocess.run([*git, "add", "d/pytest.toml"], check=True, timeout=60)
+    with pytest.raises(ValueError, match=r"^d/pytest\.toml: cannot read a TOML mode config"):
+        _configs(tmp_path)
+
+
 def test_on_purpose_never_exempts_a_quarantined_test() -> None:
     """C-9.3 keeps a quarantined test out of every blocking lane, with no exemption."""
     assert all(QUARANTINE not in markers for markers in ON_PURPOSE.values())
