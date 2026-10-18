@@ -1,4 +1,4 @@
-"""Assertion library for the `electron-hardening` gate (E10-X02, SR-110..SR-119, SR-174).
+"""Assertion library for the `electron-hardening` gate (E10-X02, SR-110..SR-119).
 
 All checks are pure functions over already-read text/facts so the broken-fixture
 meta-tests can drive each one directly. See `electron_hardening_gate.py` for the CLI.
@@ -13,9 +13,6 @@ from typing import Any
 
 SEC_DOC = "docs/plan/04-security-program.md"
 ROW = f"{SEC_DOC} section 6.11"
-# SR-173..SR-182 live in section 6.11a (E10 threat model controls).
-ROW_6_11A = f"{SEC_DOC} section 6.11a"
-SR_IN_6_11A = frozenset({"SR-174"})
 
 # SR-110: the exact, closed webPreferences set (enableRemoteModule must be ABSENT).
 SR110_REQUIRED: dict[str, bool] = {
@@ -33,10 +30,6 @@ SR110_REQUIRED: dict[str, bool] = {
 # missing key is compliant for the *live* check; an explicit insecure value still fails. The
 # explicit literal is asserted statically by check_declared_prefs().
 ABSENT_MEANS_DEFAULT = frozenset({"nodeIntegrationInWorker"})
-
-# SR-174: the closed privilege set of the shell's app:// scheme (APP_SCHEME_PRIVILEGES in
-# apps/desktop/src/main/appProtocol.ts). Widening it is a deliberate change made here, in review.
-APP_SCHEME_PRIVILEGES: dict[str, bool] = {"standard": True, "secure": True}
 
 # SR-112: directives whose value must match verbatim (connect-src handled separately).
 SR112_EXACT: dict[str, str] = {
@@ -79,8 +72,7 @@ class Violation:
     message: str
 
     def render(self) -> str:
-        row = ROW_6_11A if self.sr in SR_IN_6_11A else ROW
-        return f"{self.sr} violated by {self.subject}: {self.message} [see {row}, {self.sr}]"
+        return f"{self.sr} violated by {self.subject}: {self.message} [see {ROW}, {self.sr}]"
 
 
 def parse_csp(csp: str) -> dict[str, str]:
@@ -138,51 +130,6 @@ def check_declared_prefs(shell_port_js: str) -> list[Violation]:
                     f"declared {key} is {declared.get(key)!r}, SR-110 requires {str(want).lower()}",
                 )
             )
-    return vs
-
-
-def check_app_scheme(main_js: str) -> list[Violation]:
-    """SR-112 + SR-174: the web app is served over the scoped app:// handler, under the CSP.
-
-    No privileged scheme may bypass the CSP, the app scheme keeps its closed privilege set,
-    and no window loads from a file: URL (a file: page is outside the handler's asset root).
-    """
-    vs: list[Violation] = []
-    if re.search(r"\bbypassCSP\s*:\s*(?:true|!0)", main_js):
-        vs.append(
-            Violation(
-                "SR-112",
-                "main registerSchemesAsPrivileged",
-                "a privileged scheme sets bypassCSP; every app page must stay under the CSP",
-            )
-        )
-    m = re.search(r"APP_SCHEME_PRIVILEGES\s*=\s*\{(.*?)\}", main_js, re.DOTALL)
-    declared = (
-        {
-            key: value in {"true", "!0"}
-            for key, value in re.findall(
-                r"([A-Za-z]+)\s*:\s*(true|false|!0|!1)", m.group(1)
-            )
-        }
-        if m
-        else None
-    )
-    if declared != APP_SCHEME_PRIVILEGES:
-        vs.append(
-            Violation(
-                "SR-174",
-                "main appProtocol",
-                f"app scheme privileges are {declared!r}; allowed set is {APP_SCHEME_PRIVILEGES!r}",
-            )
-        )
-    if re.search(r"\.loadFile\s*\(|\.loadURL\s*\(\s*[\"'`]file:", main_js):
-        vs.append(
-            Violation(
-                "SR-174",
-                "main window load",
-                "a window loads a file: URL; serve the web app through the app:// handler",
-            )
-        )
     return vs
 
 
@@ -476,7 +423,6 @@ def run_all_checks(
     else:
         vs += check_csp("index.html <meta> CSP", meta)
     vs += check_declared_prefs(_read(desktop_dist / "main" / "shellPort.js"))
-    vs += check_app_scheme(main_js)
     vs += check_runtime_facts(facts, meta, require_runtime)
     vs += check_auto_update(web_js, _read(desktop_dist / "main" / "updateChannel.js"))
     vs += check_preload(

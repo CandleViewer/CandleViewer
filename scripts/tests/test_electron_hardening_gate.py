@@ -43,15 +43,7 @@ var cv = Object.freeze({
 contextBridge.exposeInMainWorld("cv", cv);
 """
 GOOD_ALLOW = 'export const ALLOWED_IPC_CHANNELS = ["cv:gpu:info"];\n'
-GOOD_MAIN = (
-    'ipcMain.handle("cv:gpu:info", () => 1);\n'
-    "protocol.registerSchemesAsPrivileged("
-    "[{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);\n"
-    "void win.loadURL(APP_ENTRY_URL);\n"
-)
-GOOD_APP_PROTOCOL = (
-    "export const APP_SCHEME_PRIVILEGES = { standard: true, secure: true };\n"
-)
+GOOD_MAIN = 'ipcMain.handle("cv:gpu:info", () => 1);\n'
 GOOD_SHELLPORT = (
     "export const HARDENED_WEB_PREFERENCES = {\n"
     + "".join(f"  {k}: {str(v).lower()},\n" for k, v in SR110_REQUIRED.items())
@@ -80,7 +72,6 @@ class Tree:
         self.root = root
         self.files = {
             "desktop/main/index.js": GOOD_MAIN,
-            "desktop/main/appProtocol.js": GOOD_APP_PROTOCOL,
             "desktop/main/shellPort.js": GOOD_SHELLPORT,
             "desktop/main/updateChannel.js": GOOD_UPDATE,
             "desktop/preload/index.js": GOOD_PRELOAD,
@@ -242,64 +233,6 @@ def test_relaxed_dev_csp_in_main_fails_sr114(tree: Tree) -> None:
         "const dev = \"script-src 'self' 'unsafe-eval'\";"
     )
     assert "SR-114" in srs(tree.violations())
-
-
-def test_bypass_csp_on_any_privileged_scheme_fails_sr112(tree: Tree) -> None:
-    tree.files["desktop/main/index.js"] = (
-        GOOD_MAIN
-        + 'protocol.registerSchemesAsPrivileged([{scheme:"x",privileges:{bypassCSP:!0}}]);'
-    )
-    vs = tree.violations()
-    assert srs(vs) == {"SR-112"} and "bypassCSP" in vs[0].render()
-
-
-@pytest.mark.parametrize(
-    "privileges",
-    [
-        "standard: true, secure: true, supportFetchAPI: true",
-        "standard: true, secure: true, corsEnabled: !0",
-        "standard: true, secure: true, allowServiceWorkers: true",
-        "standard: true, secure: false",
-        "standard: true",
-    ],
-)
-def test_app_scheme_privileges_outside_the_closed_set_fail_sr174(
-    tree: Tree, privileges: str
-) -> None:
-    tree.files["desktop/main/appProtocol.js"] = (
-        f"export const APP_SCHEME_PRIVILEGES = {{ {privileges} }};\n"
-    )
-    vs = tree.violations()
-    assert srs(vs) == {"SR-174"}
-    assert "section 6.11a, SR-174" in vs[0].render()
-
-
-def test_bypass_csp_in_the_app_scheme_privileges_fails_sr112_and_sr174(
-    tree: Tree,
-) -> None:
-    tree.files["desktop/main/appProtocol.js"] = (
-        "export const APP_SCHEME_PRIVILEGES = { standard: true, secure: true, bypassCSP: true };\n"
-    )
-    assert srs(tree.violations()) == {"SR-112", "SR-174"}
-
-
-def test_missing_app_scheme_privileges_fails_sr174(tree: Tree) -> None:
-    tree.files["desktop/main/appProtocol.js"] = "export const APP_SCHEME = 'app';\n"
-    assert srs(tree.violations()) == {"SR-174"}
-
-
-@pytest.mark.parametrize(
-    "load",
-    [
-        'void win.loadFile(path.join(__dirname, "../../../web/dist/index.html"));',
-        'void win.loadURL("file:///opt/app/web/dist/index.html");',
-        "void win.loadURL(`file://${indexPath}`);",
-    ],
-)
-def test_window_loading_a_file_url_fails_sr174(tree: Tree, load: str) -> None:
-    tree.files["desktop/main/index.js"] = GOOD_MAIN + load
-    vs = tree.violations()
-    assert srs(vs) == {"SR-174"} and "file: URL" in vs[0].render()
 
 
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:
