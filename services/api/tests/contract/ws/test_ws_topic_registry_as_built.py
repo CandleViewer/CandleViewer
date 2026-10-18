@@ -20,7 +20,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.permissions import ConnectionAuthz, auth_ok_payload
-from candleviewer.ws.topics import CTL_KEYS, FAMILIES, IDENTITY_OPTIONS, UNIVERSAL
+from candleviewer.ws.topics import CTL_KEYS, FAMILIES, IDENTITY_OPTIONS, OPTION_NAMES, UNIVERSAL
 from tests.contract.ws._harness import PROTOCOL_DOC, SCHEMAS
 from tests.unit.ws.test_subscriptions import _services, _sub
 
@@ -70,6 +70,12 @@ def test_a_the_ctl_keys_are_13_6s_and_5_4_lists_the_re_snapshot_ones() -> None:
     marker = "**invalidates the current state**"
     paragraph = _paragraph(_between("### 5.4 ", "## 6. Topic catalogue"), marker)
     assert set(re.findall(r"`([a-z_]+)`", paragraph.split(marker)[0])) == IDENTITY_OPTIONS
+
+
+def test_a_the_option_names_a_ctl_refusal_may_name_are_13_5s_and_13_6s() -> None:
+    """#3370: the registry's names are §13.5's less `params` (test_c below) and §13.6's keys."""
+    ctl_keys = set(SCHEMAS["cv://ws/v1/ctl.schema.json"]["properties"])
+    assert OPTION_NAMES == (set(_OPTS) - {"params"}) | ctl_keys
 
 
 def test_c_13_5_lists_params_and_no_topic_takes_it() -> None:

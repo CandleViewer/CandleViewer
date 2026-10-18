@@ -401,6 +401,11 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
         _MACHINES,
     )
 }
+#: Every option name the registry knows: `sub`'s universal and per-family options, and `ctl`'s own
+#: keys. A `ctl` refusal names its key in `field` only if it is one of these (§5.4, #3370).
+OPTION_NAMES: Final = (
+    frozenset(UNIVERSAL) | CTL_KEYS | {k for f in FAMILIES.values() for k in f.options}
+)
 
 
 @dataclass(frozen=True)
