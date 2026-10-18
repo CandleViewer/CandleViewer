@@ -50,10 +50,11 @@ class _Teardown:
     never keeps a later one, or `Supervisor.stop_all` and with it `secrets.stop()` zeroing the
     KEK (C-2.7, C-12.2), from running. A failed step is logged with its name and exception type.
     An `Exception` goes no further. Anything else, a cancellation, `KeyboardInterrupt` or
-    `SystemExit` included, is never swallowed: the first one is held and re-raised, unchanged,
-    once `stop_all` has run, as `Supervisor.start_all` re-raises only after its stops. Only a
-    `GeneratorExit` leaves at once: the coroutine is being closed, so the later steps are skipped
-    and only the `finally` still tries `stop_all`.
+    `SystemExit` included, is never swallowed: the first one is held, before its log line is
+    written, and re-raised, unchanged, once `stop_all` has run, even over whatever else left the
+    steps meanwhile (that log line's own error, say), as `Supervisor.start_all` re-raises only
+    after its stops. Only a `GeneratorExit` leaves at once: the coroutine is being closed, so the
+    later steps are skipped and only the `finally` still tries `stop_all`.
 
     No step gets a new time bound. The two that can run long, `BarsRuntime` and the metrics
     listener's drain, are #2878's to bound together with the stop budget (see
@@ -72,11 +73,11 @@ class _Teardown:
         except GeneratorExit:
             raise
         except BaseException as exc:  # an `Exception` ends here; anything else is held as well
+            if self._held is None and not isinstance(exc, Exception):
+                self._held = exc  # first: a log line that raises must not lose it
             logger().exception(
                 "lifespan: teardown step failed", step=step, exc_type=type(exc).__name__
             )
-            if self._held is None and not isinstance(exc, Exception):
-                self._held = exc
             return None
 
     def raise_held(self) -> None:
@@ -191,7 +192,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # #3403: each step below is isolated (`_Teardown.run`), so whatever one raises, the later
         # ones still run; `stop_all`, and with it the KEK zeroing, runs in a `finally`, so not
-        # even an error outside a step's isolation can skip it.
+        # even an error outside a step's isolation can skip it, and the held exception leaves
+        # only after it.
         teardown = _Teardown()
         try:
             # §9.4: the client gateway stops FIRST. Under `candleviewer.server` the notice, grace
@@ -254,7 +256,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("account_health", account_health.stop)
         finally:
             await teardown.run("supervisor.stop_all", supervisor.stop_all)
-        teardown.raise_held()
+            teardown.raise_held()
 
 
 app = create_app()

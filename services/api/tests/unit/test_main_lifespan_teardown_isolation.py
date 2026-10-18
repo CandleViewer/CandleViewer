@@ -298,6 +298,28 @@ async def test_lifespan_teardown_when_a_failure_cannot_be_logged_still_runs_stop
     assert modules == [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
 
 
+async def test_lifespan_teardown_when_a_held_failure_cannot_be_logged_reraises_it_after_stop_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A step's `KeyboardInterrupt` is held before its log line is written. That line's own error
+    leaves the steps, `stop_all` stops every module, and then the `KeyboardInterrupt` leaves the
+    lifespan, with the log error as its context. Held only after the log line, or re-raised only
+    after the `finally`, it is lost, and that fails."""
+    ran: list[str] = []
+    app, steps = _app(ran, monkeypatch)
+    exc = steps["ws_runtime"].fail = KeyboardInterrupt()
+    lifespan = _lifespan(app)
+    await lifespan.__aenter__()
+    monkeypatch.setattr(main, "logger", _BrokenLog)  # the boot lines were written by now
+    with pytest.raises(KeyboardInterrupt) as raised:
+        await lifespan.__aexit__(None, None, None)
+    assert raised.value is exc
+    assert isinstance(raised.value.__context__, RuntimeError)
+    assert str(raised.value.__context__) == "log sink down"
+    modules = [r for r in ran if r.startswith("module:")]
+    assert modules == [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
+
+
 def _stop_all_raising(fail: BaseException) -> type[Supervisor]:
     """The real supervisor, whose `stop_all` raises `fail` once it has stopped every module."""
 
@@ -357,3 +379,22 @@ async def test_lifespan_teardown_after_a_step_raised_generator_exit_skips_later_
     assert raised.value is exc
     assert ran == ["ws_runtime", *(f"module:{name}" for name in reversed(_SUPERVISOR_ORDER))]
     assert _failed_steps(logs) == []
+
+
+async def test_lifespan_teardown_with_a_held_exception_then_a_generator_exit_reraises_the_held_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A step's `KeyboardInterrupt` is held; a later step's `GeneratorExit` skips the steps after
+    it, and once the `finally` has run `stop_all`, the held one leaves the lifespan, the
+    `GeneratorExit` as its context. Re-raised only after the `finally`, it is lost."""
+    ran: list[str] = []
+    app, steps = _app(ran, monkeypatch)
+    first = steps["ws_runtime"].fail = KeyboardInterrupt()
+    steps["feature_flags"].fail = GeneratorExit()
+    with capture_logs() as logs, pytest.raises(KeyboardInterrupt) as raised:
+        await _run(app)
+    assert raised.value is first
+    assert isinstance(raised.value.__context__, GeneratorExit)
+    modules = [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
+    assert ran == ["ws_runtime", "user_disable", "feature_flags", *modules]
+    assert _failed_steps(logs) == [("ws_runtime", "KeyboardInterrupt", "error", True)]
