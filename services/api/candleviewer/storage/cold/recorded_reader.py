@@ -111,12 +111,15 @@ def _moment(us: int) -> datetime:
 
 def _months(lo_us: int, hi_us: int) -> list[str]:
     """`YYYY-MM` of every month overlapping `[lo_us, hi_us)`, refused rather than cut when there
-    are more than one read may open (`months_between` keeps only the newest ones)."""
+    are more than one read may open: `months_between` keeps only the newest 120."""
     if hi_us - lo_us > _MAX_PARTITIONS * 31 * _US_PER_DAY:
         raise _too_many()
     first, last = _moment(lo_us), _moment(hi_us - 1)
     expected = (last.year - first.year) * 12 + last.month - first.month + 1
-    months = months_between(lo_us, hi_us)
+    try:
+        months = months_between(lo_us, hi_us)
+    except (OverflowError, ValueError):  # its float path can step past year 9999
+        raise ColdReplayReadError("cold read window is out of range") from None
     if len(months) != expected or expected > _MAX_PARTITIONS:
         raise _too_many()
     return months
@@ -169,10 +172,13 @@ def _contained(paths: ColdPaths, file_name: object) -> Path:
 @contextmanager
 def _typed_listing() -> Iterator[None]:
     """Registry refusals and filesystem errors while listing partitions, and a manifest that is
-    not text, become one typed error that names no path and carries none in its chain."""
+    not text or that the JSON parser cannot hold (nesting deeper than its stack, an integer past
+    Python's digit limit), become one typed error that names no path and carries none in its
+    chain."""
     try:
         yield
-    except (DatasetNotRegistered, ManifestCorrupt, UnicodeDecodeError):
+    except (DatasetNotRegistered, ManifestCorrupt, ValueError, RecursionError):
+        # ValueError: a manifest that is not text (UnicodeDecodeError) or an over-long integer
         raise ColdReplayReadError("the cold registry refused the read (SR-097)") from None
     except OSError as exc:
         raise ColdReplayReadError(f"cold partition listing failed: {type(exc).__name__}") from None
@@ -368,7 +374,10 @@ class ParquetRecordedReader:
         if "interval" in template:  # klines: one partition tree per interval
             months = set(_months(lo_us, hi_us)) if hi_us > lo_us else set()
             listed = self._registry.manifested_partitions(stream, symbol)
-            return [p for p in listed if p.partition_dir.name.removeprefix("ym=") in months]
+            parts = [p for p in listed if p.partition_dir.name.removeprefix("ym=") in months]
+            if len(parts) > _MAX_PARTITIONS:  # a month per interval: up to 120 x 13
+                raise _too_many()
+            return parts
         keys = _time_keys(template, lo_us, hi_us)
         values = [{"symbol": symbol} | key for key in keys]
         return [self._registry.resolve_partition(stream, partition_values=v) for v in values]
