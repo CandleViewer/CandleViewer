@@ -308,7 +308,8 @@ class UserDisableService:
                 _log().error("users.disable.steps_failed", error=type(exc).__name__, exc_info=exc)
 
     async def drain(self) -> None:
-        """Shutdown: wait for the steps still in flight; each run ends by its deadline."""
+        """Shutdown: wait for the steps still in flight; each run ends by its deadline (after a
+        recovered change's record, which has its own closing bound)."""
         if self._cascades:
             await asyncio.wait(set(self._cascades))
 
@@ -480,7 +481,7 @@ class UserDisableService:
         cut off (the deadline, a raise outside a step, a cancellation) is failed, not skipped. No
         `Exception` reaches the caller after the commit; a cancellation (a non-`Exception`) is
         re-raised once counted. `recovered`: the error of a commit that a read-back found (#3445),
-        whose record comes first."""
+        whose record comes first, in its own closing bound, so the steps keep their deadline."""
         user, t = change.user_id, {name: _Tally(self._step_timeout_s) for name in STEPS}
         logged: list[str] = []
 
@@ -492,9 +493,9 @@ class UserDisableService:
             await t["socket_close"].run(partial(self._publish, session_id, reason))
 
         try:
+            if recovered is not None:  # its record first, then the steps whatever its fate
+                await self._record_recovered(change, actor, rid, recovered)
             async with asyncio.timeout(self._deadline_s):
-                if recovered is not None:  # its record, then the steps whatever its fate
-                    await self._record_recovered(change, actor, rid, recovered)
                 await publish_revoked(publish, map(str, change.revoked_session_ids), REVOKED_REASON)
                 # Then every socket of the user, on every run (AC5's no-op too): no id list holds
                 # a session a refresh rotated, nor, on a repeat, those of a commit lost on the wire.
