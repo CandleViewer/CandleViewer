@@ -133,10 +133,15 @@ jobs:
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: node tools/ci/run-allowed-postinstall.mjs
+      # A name filter maps each changed file to the package that holds it, and tools/ is in none:
+      # a change only to tools/contrast or the token formats selected no package. The tag selector
+      # matches the changed files against the inputs of the test:cov tasks tagged `unit-frontend`
+      # (packages/ui/turbo.json lists those files), so it selects ui's tests (#3367).
       - name: Turbo test:cov (ui, app-web, app-electron) --filter=...[origin/main]
         run: >
           pnpm turbo run test:cov
           --filter='@candleviewer/ui...[origin/main]'
+          --filter='tag:unit-frontend[origin/main]'
           --filter='@candleviewer/web...[origin/main]'
           --filter='@candleviewer/desktop...[origin/main]'
           --summarize
@@ -145,6 +150,7 @@ jobs:
         run: >
           node tools/ci/turbo-affected-packages.mjs affected-packages.txt --
           --filter='@candleviewer/ui...[origin/main]'
+          --filter='tag:unit-frontend[origin/main]'
           --filter='@candleviewer/web...[origin/main]'
           --filter='@candleviewer/desktop...[origin/main]'
       - name: Record lane duration in job summary
