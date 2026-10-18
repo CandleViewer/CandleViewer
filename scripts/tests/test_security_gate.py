@@ -785,6 +785,20 @@ def test_malformed_accepted_risks_entry_raises_ci_sec_005(tmp_path: Path) -> Non
     assert exc_info.value.code == "CI-SEC-005"
 
 
+@pytest.mark.parametrize("severity", ["Moderate", "medium", "HIGH ", "critical", None, ["HIGH"]])
+def test_register_refuses_a_severity_the_gate_cannot_rank(tmp_path: Path, severity: object) -> None:
+    # #3558: the cap ranks an entry's severity, so an entry in pnpm's words or another case is
+    # malformed on load (CI-SEC-005), not a KeyError on the first finding that matches it. So is
+    # an empty `severity:` (None) or a list, which only the str check keeps from a TypeError.
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": severity}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    with pytest.raises(SecurityGateError) as exc_info:
+        load_accepted_risks(_write_yaml(tmp_path, {"entries": [entry]}))
+    message = f"severity {severity!r} is not one of LOW, MEDIUM, HIGH, CRITICAL"
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == f"accepted-risk entry #0 is malformed: {message}"
+
+
 # --------------------------------------------------------------------------
 # CLI entrypoint
 # --------------------------------------------------------------------------
@@ -1286,6 +1300,39 @@ def test_no_register_entry_covers_a_critical_finding(tool: str) -> None:
     assert (result.blocked, result.code) == (True, "CI-SEC-001")
     head = f"CI-SEC-001: {tool} finding X-1 (CRITICAL) has an accepted-risk entry"
     assert result.messages == [f"{head}, but {CRITICAL_RULE} — d"]
+
+
+def test_an_entry_accepts_findings_up_to_its_own_severity_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3558: an entry records a decision about one severity. An advisory accepted as a Medium,
+    # then re-scored High, needs a new decision, not that entry.
+    doc = _pnpm_doc(VITEST)
+    doc["advisories"][VITEST]["severity"] = "high"
+    doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 1}
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "MEDIUM"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
+    assert (rc, out) == (1, "")
+    head = "CI-SEC-001: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) has an accepted-risk entry"
+    assert err.startswith(f"{head} for MEDIUM only, so it needs a new decision — vitest@3.2.7: ")
+
+
+def test_an_entry_still_accepts_a_finding_below_its_own_severity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3558: up to, not only at. Bandit blocks from MEDIUM, and a HIGH entry still covers its
+    # MEDIUM finding: a finding re-scored lower keeps the decision it already has.
+    report = SARIF_FIXTURES / "bandit-1.9.4-finding.sarif"
+    entry = {"id": "B307:finding/parse_expr.py:2", "tool": "bandit", "severity": "HIGH"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    argv = ["--tool", "bandit", "--report", str(report), "--run-date", "2026-10-18"]
+    rc = main([*argv, "--accepted-risks", str(_write_yaml(tmp_path, {"entries": [entry]}))])
+    out, err = capsys.readouterr()
+    head = "accepted risk: bandit finding B307:finding/parse_expr.py:2 (MEDIUM)"
+    assert (rc, err) == (0, "")
+    assert out == f"{head} until 2099-01-01 - test\nsecurity_gate[bandit]: OK\n"
 
 
 # npm 7+'s `npm audit --json`: nothing in CI or `make security` writes it any more.

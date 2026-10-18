@@ -50,4 +50,4 @@ docs/plan/backlog/*.json
 docs/plan/backlog/_reconciliation-report.md
 # #3494: `pnpm audit --json` reports as pnpm wrote them (JSON.stringify, 2-space indent, LF),
 # format-checked by scripts/tests/test_security_gate.py; prettier would fold their short arrays.
-scripts/tests/fixtures/pnpm-audit/
+scripts/tests/fixtures/pnpm-audit/*.json

@@ -353,7 +353,10 @@ index alone, removing nothing.
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
 - **CI-SEC-001** (blocking finding): a CodeQL/Semgrep/Bandit/pip-audit/
-  npm-audit/gitleaks finding has no accepted-risk entry or is Critical, which
+  npm-audit/gitleaks finding has no accepted-risk entry, only one filed for a
+  lower severity than the gate scores the finding (an advisory re-scored since
+  needs a new decision; pip-audit usually gives no severity, so the gate
+  scores its findings HIGH and their entries need HIGH, #3558), or is Critical, which
   no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
   step, §3). Fix the finding: for an npm-audit advisory on a transitive
@@ -392,10 +395,18 @@ index alone, removing nothing.
   or advisories that disagree with its `metadata.vulnerabilities` counts.
   pnpm still counts an advisory on an `auditConfig` ignore list but leaves it
   out of the report, so remove the ignore: an exception belongs in
-  `security/accepted-risks.yaml`. A report that passes is only as complete as
+  `security/accepted-risks.yaml`. `pnpm audit --audit-level=high --json`
+  causes the same mismatch: it leaves every advisory below High out of the
+  report but still counts it, so the step runs plain `pnpm audit --json` and
+  the gate applies the threshold (#3558). A report that passes is only as complete as
   the registry's answer: pnpm builds it from the advisories the registry's
   audit endpoint returns, so the gate cannot tell a registry that listed none
-  from a tree with none.
+  from a tree with none. C-9.1 #11's Dependabot alert gate, the independent
+  second signal, is not wired yet (#3558). It needs no new secret: the job's
+  `GITHUB_TOKEN` lists the alerts with `vulnerability-alerts: read`, a read
+  permission a workflow may grant on fork and Dependabot runs too. But alerts
+  describe `main`, not the PR, so it first needs a way for the PR that fixes a
+  Critical alert to merge.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_accepted_risks_are_time_boxed_and_never_critical() -> None:
     doc = yaml.safe_load((ROOT / "security/accepted-risks.yaml").read_text(encoding="utf-8"))
     for e in doc["entries"]:
-        assert e["severity"] != "CRITICAL", e["id"]
+        assert e["severity"] in {"HIGH", "MEDIUM", "LOW"}, e["id"]  # never Critical (#3558)
         exp = (
             e["expires"]
             if isinstance(e["expires"], dt.date)

@@ -8,8 +8,8 @@ exactly once (technical notes, E03-T07 ticket body) instead of per-tool.
 
 Error codes (ticket "Technical notes / design"):
     CI-SEC-001  blocking finding (severity meets/exceeds the tool's policy
-                and no unexpired accepted-risk entry covers it; none covers a
-                Critical)
+                and no unexpired accepted-risk entry covers it: an entry covers
+                up to its own severity, and none covers a Critical)
     CI-SEC-002  licence violation (prohibited licence, no exception)
     CI-SEC-003  licence needs approval (LGPL) and no unexpired, correctly
                 approved accepted-risk entry covers it
@@ -154,6 +154,11 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
                     f"accepted-risk entry #{i}: gitleaks findings cannot be accepted "
                     "(SR-142: any finding blocks unconditionally)",
                 )
+            # evaluate_findings ranks the entry's severity against the finding's (#3558).
+            if not isinstance(severity, str) or severity not in _SEVERITY_ORDER:
+                raise ValueError(
+                    f"severity {severity!r} is not one of {', '.join(_SEVERITY_ORDER)}"
+                )
             if severity == "CRITICAL":
                 raise SecurityGateError(
                     "CI-SEC-005",
@@ -242,6 +247,17 @@ def evaluate_findings(
                 f"CI-SEC-001: {finding.tool} finding {finding.finding_id} "
                 f"({finding.severity}) has an accepted-risk entry, but Critical findings take "
                 f"no accepted-risk entry (30-release-roadmap.md §4.4 R0) — {finding.detail}"
+            )
+            blocking_code = blocking_code or "CI-SEC-001"
+            continue
+
+        # An entry accepts up to its own severity: a finding reported above it (an advisory
+        # re-scored after the decision, say) needs a new decision, not the old entry (#3558).
+        if not _severity_at_least(risk.severity, finding.severity):
+            messages.append(
+                f"CI-SEC-001: {finding.tool} finding {finding.finding_id} "
+                f"({finding.severity}) has an accepted-risk entry for {risk.severity} only, "
+                f"so it needs a new decision — {finding.detail}"
             )
             blocking_code = blocking_code or "CI-SEC-001"
             continue
