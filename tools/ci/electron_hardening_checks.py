@@ -52,6 +52,9 @@ APP_PROBES: dict[tuple[str, str], int] = {
     ("POST", f"{APP_ORIGIN}/"): 405,
 }
 
+# SR-114: the top-level entries of apps/desktop/dist the build emits; the scans below cover both.
+DIST_DIRS = frozenset({"main", "preload"})
+
 # SR-112: directives whose value must match verbatim (connect-src handled separately).
 SR112_EXACT: dict[str, str] = {
     "default-src": "'self'",
@@ -606,6 +609,19 @@ def run_all_checks(
             )
         ]
     vs: list[Violation] = []
+    # electron-builder packages all of dist/ but the scans read only main/ and preload/.
+    unscanned = sorted(
+        p.name for p in desktop_dist.iterdir() if p.name not in DIST_DIRS
+    )
+    if unscanned:
+        vs.append(
+            Violation(
+                "SR-114",
+                str(desktop_dist),
+                f"top-level {unscanned} would be packaged but is not scanned; build into "
+                "main/ or preload/, or extend the gate's scans",
+            )
+        )
     main_js = "\n".join(_read(p) for p in main_files)
     for p in main_files + preload_files:
         vs += check_dev_affordances(p.relative_to(desktop_dist).as_posix(), _read(p))

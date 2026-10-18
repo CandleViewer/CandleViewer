@@ -593,6 +593,17 @@ def test_handler_responses_and_window_urls_stay_optional_without_require_runtime
     assert srs(tree.violations(require=False)) == {"SR-174"}
 
 
+@pytest.mark.parametrize(
+    ("rel", "entry"), [("shared/util.js", "shared"), ("index.js", "index.js")]
+)
+def test_an_unscanned_top_level_entry_in_the_desktop_dist_fails_sr114(
+    tree: Tree, rel: str, entry: str
+) -> None:
+    tree.files[f"desktop/{rel}"] = "export const x = 1;\n"
+    vs = tree.violations()
+    assert srs(vs) == {"SR-114"} and f"['{entry}'] would be packaged" in vs[0].message
+
+
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:
     tree.files["web/assets/index-abc.js"] = "var caps={autoUpdate:!0}"
     assert srs(tree.violations()) == {"SR-115"}
