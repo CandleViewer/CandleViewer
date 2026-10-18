@@ -25,6 +25,10 @@ jobs:
       CV_A11Y_INFRA_WAIVER_UNTIL: ${{ vars.CV_A11Y_INFRA_WAIVER_UNTIL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # #3449: `pnpm install` below runs dependency lifecycle scripts, and no step pushes or
+          # fetches: the baseline step reads the PR base's copy from the checkout before it.
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -34,15 +38,30 @@ jobs:
         with:
           python-version: "3.12"
 
+      # #3449: actions/checkout reads the base's copy with the job's token and keeps none, so the
+      # step below runs no git and works whether the repository is public or private. Cone mode:
+      # the root files and tools/a11y/ only; the step removes the copy before `pnpm install`.
+      - name: Check out the PR base's accessibility baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .a11y-base
+          sparse-checkout: tools/a11y
+          persist-credentials: false
+
       - name: Baseline changes must cite finding id in PR description
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch -q --depth=1 origin "$BASE_SHA"
           # First introduction: the baseline file does not exist on base yet -> empty base.
-          git show "$BASE_SHA:tools/a11y/axe-baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null             || echo '{"entries": []}' > "$RUNNER_TEMP/base-baseline.json"
+          if [ -f .a11y-base/tools/a11y/axe-baseline.json ]; then
+            cp .a11y-base/tools/a11y/axe-baseline.json "$RUNNER_TEMP/base-baseline.json"
+          else
+            echo '{"entries": []}' > "$RUNNER_TEMP/base-baseline.json"
+          fi
+          rm -rf .a11y-base
           printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.txt"
           python -m tools.a11y.gates baseline-pr "$RUNNER_TEMP/base-baseline.json" tools/a11y/axe-baseline.json "$RUNNER_TEMP/pr-body.txt"
 

@@ -73,8 +73,8 @@ scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-nightly.yml, 
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
 ├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
 └─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
-                            scheduled run opens an issue (CI-E2E-001/002, CI-A11Y-001,
-                            CI-BUILD-001; below)
+                            scheduled run comments on its tracker issue or opens one
+                            (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
@@ -102,15 +102,25 @@ sets the lane's `electron` input to `true`. The Electron smoke suite is green si
 117609983250 (`e2e / e2e-electron`) passed in run 39105058132, a proof run whose other jobs were
 cancelled. The nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next
 release (C-9.2): the release checklist needs a green run on the `main` tip being cut
-(`docs/plan/07-release-and-prr.md` §4.1). A red scheduled run also opens a `qa`, `priority/p1`
-issue that links the run; its `e2e-nightly-report` job is the only one that can write
-(`issues: write`, no checkout). A manual run (`gh workflow run e2e-nightly.yml`) runs the same jobs
-and opens no issue. Triage the red job by its error code, as in §4's Playwright, accessibility and
-build recipes. Cost: seven jobs, about 7.5 runner-minutes a night. The four `e2e-web` shards,
-`e2e-staging` and `a11y-axe` take 0.9 to 1.5 minutes each (medians over 11 green `pr.yml` runs on
-2026-10-17 and 18), and `e2e-electron` about a minute (62 s in that job). The total is at most
-140 if every job reaches its 20-minute cap (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are
-free on this public repository, so the cost is seven runner slots for about two minutes.
+(`docs/plan/07-release-and-prr.md` §4.1). A red scheduled run also files a report that links the
+run, from its `e2e-nightly-report` job, the only one that can write (`issues: write`, no checkout).
+While the repository variable `CV_E2E_NIGHTLY_TRACKER_ISSUE` is unset, each red night opens a new
+`qa`, `priority/p1` issue. Set it to an open issue's number and each red night comments on that
+issue instead (#3449; named, never searched for, as `xstate-nightly.yml` does with
+`CV_XSTATE_TRACKER_ISSUE`). Setting, changing or deleting the variable is an owner/admin action:
+Settings → Secrets and variables → Actions → Variables, or
+`gh variable set CV_E2E_NIGHTLY_TRACKER_ISSUE --body <issue number>`. A value that is not a
+positive integer (`#12`, `012`, a URL, a stray space) fails the report job with an error naming the
+variable, and nothing is filed: fix or delete it. The workflow has no concurrency group (#3449), so
+no run waits in a pending slot that a later one can take: the group it shared with manual runs let
+two dispatches drop a night's scheduled run and its report. A manual run
+(`gh workflow run e2e-nightly.yml`) runs the same jobs and files no report. Triage the red job by
+its error code, as in §4's Playwright, accessibility and build recipes. Cost: seven jobs, about 7.5
+runner-minutes a night. The four `e2e-web` shards, `e2e-staging` and `a11y-axe` take 0.9 to 1.5
+minutes each (medians over 11 green `pr.yml` runs on 2026-10-17 and 18), and `e2e-electron` about a
+minute (62 s in that job). The total is at most 140 if every job reaches its 20-minute cap
+(`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are free on this public repository, so the cost
+is seven runner slots for about two minutes.
 
 ## 3. Reading the `ci-required` resolver summary
 
