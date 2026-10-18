@@ -38,7 +38,12 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - **Heartbeats / deadlines** (§9.1): the writer checks a `Watchdog` before
   every dequeue and every send, not only when idle, on the injected clocks
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
-  timeout), so tests drive time instead of sleeping.
+  timeout), so tests drive time instead of sleeping. From the first `auth_ok` a timer the
+  connection owns runs the same check at the token expiry and the heartbeat deadline (#3100),
+  so those closes, and with the flag on their flush deadline, start then even while the writer
+  is parked in a send. A re-`auth` re-arms it; it stops at the first close; a check that raises
+  on it ends the connection `internal_error` (as a writer fault does, if no close took); and
+  teardown cancels it first.
 - **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
   30/s and 300/min, excluding `pong` once `auth_ok` is sent (`client_rate_limited`, then
   `4429`). An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters
@@ -195,6 +200,14 @@ CLOSE_ITEMS: Final = 3
 #: #2155 (§4.3): the `bye` reason of a socket shed at `GatewayHub.max_unauthenticated`.
 SHED_REASON: Final = "server_shedding_load"
 WATCHDOG_TICK_S: Final = 0.05
+#: #3100: the close timer reads its deadlines again at least every this many ticks (1 s by default),
+#: so a clock no loop timer can wait on is read within it: the wall clock, which an NTP step or a
+#: resume moves on its own, or an injected `clock` that is not the loop's.
+CLOSE_RECHECK_TICKS: Final = 20
+#: #3100: the least delay of the timer's re-arm after a check that found nothing due. uvloop rounds
+#: a delay to whole milliseconds and can fire a little early, so the rest is waited to the
+#: millisecond, not a tick; only a check that raised is re-armed a tick on.
+CLOSE_REARM_MIN_S: Final = 0.001
 #: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes; a fault too).
 WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer", "internal_error"})
 #: The close code uvicorn's own shutdown sends every socket it closes (no `bye`). A client may send
@@ -474,6 +487,7 @@ class _Connection:
         auth_timeout_s: float,
         backpressure: BackpressureConfig | None = None,
         flag_visible: FlagVisible | None = None,
+        tick_s: float = WATCHDOG_TICK_S,
     ) -> None:
         self.ws = ws
         self.encoding = encoding
@@ -514,6 +528,14 @@ class _Connection:
         self.close_code: int | None = None
         #: The token's real expiry (epoch ms), also checked on the wall clock.
         self.token_expires_at_ms: int | None = None
+        #: #3100: the one close timer (`arm_close_timer`), from the first `auth_ok` until a close.
+        self.close_timer: asyncio.Handle | None = None
+        self.tick_s, self.recheck_s = tick_s, CLOSE_RECHECK_TICKS * tick_s
+        self.timer_stopped = False
+        #: Set by the handler: ends the writer as its own fault would, when a check that raised
+        #: on the close timer left no close (`_close_timer_fired`); that check's is `timer_fault`.
+        self.end_writer: Callable[[], object] = lambda: None
+        self.timer_fault: BaseException | None = None
         self.opened_at = now
         #: E17-T03 (#412): the budgeted outbound path while `CV_WS_BACKPRESSURE_ENABLED` is on;
         #: None keeps `outbound` and its `OUTBOUND_QUEUE_MAX` push bound.
@@ -534,6 +556,84 @@ class _Connection:
         if self.token_expires_at_ms is not None and self.wall_ms() >= self.token_expires_at_ms:
             return "token_expired"
         return self.watchdog.due(self.clock())
+
+    def watch(self) -> bool:
+        """Apply the watchdog; True when an unsolicited `ping` is due. The writer runs it before
+        every dequeue and every send, not only on an idle tick, so a socket fed faster than
+        `tick_s` still expires (#2259 review); the close timer runs it at each deadline (#3100)."""
+        due = self.due()
+        if due == "token_expired":
+            self.close_with(due, seal=True)  # also seals a close already under way
+        elif due == "ping":
+            return not self.closing
+        elif due is not None:
+            self.close_with(due)
+        return False
+
+    def close_in(self) -> float:
+        """Seconds to the next close deadline: the token expiry on either clock and the heartbeat
+        deadline. Each is compared as `due` compares it, so it is positive exactly while its
+        close is not due. The timer runs only until a close, so it reads nothing else."""
+        dog, now = self.watchdog, self.clock()
+        terms = [dog.heartbeat_timeout_s - (now - dog.last_inbound)]
+        if dog.token_expires_at is not None:
+            terms.append(dog.token_expires_at - now)
+        if self.token_expires_at_ms is not None:
+            terms.append((self.token_expires_at_ms - self.wall_ms()) / 1000)
+        return min(terms)
+
+    def arm_close_timer(self, floor_s: float = 0.0) -> None:
+        """#3100: (re-)arm the connection's one close timer, cancelling the one it replaces. It
+        runs `watch` at `close_in`, or `recheck_s` from now if that is sooner, never sooner than
+        `floor_s`, so the token-expiry and heartbeat closes are queued at their deadline even
+        while the writer is parked in a send. It waits on the loop's clock for what is left on
+        `clock` (in production both read the monotonic clock); after `stop_close_timer`, none."""
+        if self.close_timer is not None:
+            self.close_timer.cancel()
+            self.close_timer = None
+        if not self.timer_stopped:
+            delay = max(floor_s, min(self.close_in(), self.recheck_s))
+            loop = asyncio.get_running_loop()
+            self.close_timer = loop.call_later(delay, self._close_timer_fired)
+
+    def _close_timer_fired(self) -> None:
+        """The timer's turn: the writer's check, then the next arm while no close is under way.
+        A check that raises fails closed (`internal_error`): the close first, then the log line,
+        each guarded. If no close took (the fault came after `close_with` began: no `bye`, or
+        with the flag on no flush deadline), the connection ends as on a writer fault: the writer
+        is cancelled and the handler sends `bye internal_error` + `1011` itself. A cancellation
+        raised here cancels no task, so it fails closed too, then is re-raised; any other
+        `BaseException` passes through. After a check that found nothing due the rest is waited
+        to the millisecond (`CLOSE_REARM_MIN_S`); after one that raised, never under a tick."""
+        self.close_timer = None
+        failed = False
+        try:
+            self.watch()
+        except (Exception, asyncio.CancelledError) as exc:
+            failed = True
+            with contextlib.suppress(Exception):
+                self.close_with("internal_error")
+            pipe = self.pipeline
+            if self.bye_frame is None or (pipe is not None and pipe.deadline is None):
+                self.bye_frame = None  # the close never took: the handler sends its own `bye`
+                self.timer_fault = exc
+                self.end_writer()
+            with contextlib.suppress(Exception):
+                _log().error(
+                    "ws close timer failed",
+                    connection_id=self.connection_id,
+                    error=type(exc).__name__,
+                    exc_info=exc,
+                )
+            if not isinstance(exc, Exception):
+                raise
+        if not self.closing:
+            self.arm_close_timer(self.tick_s if failed else CLOSE_REARM_MIN_S)
+
+    def stop_close_timer(self) -> None:
+        """Teardown (C-2.18, TG5): the close timer is cancelled and none is armed after it."""
+        self.timer_stopped = True
+        self.arm_close_timer()
 
     # -- outbound -----------------------------------------------------------
 
@@ -855,7 +955,9 @@ def make_ws_router(
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
     deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
     can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`). So does
-    each `auth` call's bound, `auth_call_timeout_s` (#2155), for a call that never returns.
+    each `auth` call's bound, `auth_call_timeout_s` (#2155), for a call that never returns. The
+    close timer (#3100) is a loop timer too, armed for what is left of a deadline on `clock` and
+    every `CLOSE_RECHECK_TICKS` ticks at most, so a fake `clock` still drives it.
 
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
     `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
@@ -1145,6 +1247,7 @@ def make_ws_router(
         conn.watchdog.auth_deadline = None
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
+        conn.arm_close_timer()  # #3100: at the new expiry, a re-auth's too
         if conn.session_id != session_id:  # the old registration goes only after the check
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)
@@ -1312,26 +1415,13 @@ def make_ws_router(
                 return
             await dispatch(conn, frame)
 
-    def watch(conn: _Connection) -> bool:
-        """Apply the watchdog; True when an unsolicited `ping` is due. Runs
-        before every dequeue and every send, not only on an idle tick, so a
-        socket fed faster than `tick_s` still expires (#2259 review)."""
-        due = conn.due()
-        if due == "token_expired":
-            conn.close_with(due, seal=True)  # also seals a close already under way
-        elif due == "ping":
-            return not conn.closing
-        elif due is not None:
-            conn.close_with(due)
-        return False
-
     async def writer(conn: _Connection) -> None:
         if conn.pipeline is not None:
             await budgeted_writer(conn, conn.pipeline)
             return
         pings = 0
         while True:
-            if watch(conn):
+            if conn.watch():
                 pings += 1
                 now_ms = conn.wall_ms()
                 conn.push(
@@ -1347,7 +1437,7 @@ def make_ws_router(
                 with contextlib.suppress(Exception):
                     await conn.ws.close(code=code)
                 return
-            watch(conn)  # the dequeue may have waited a tick; a ping is queued only above
+            conn.watch()  # the dequeue may have waited a tick; a ping is queued only above
             if conn.sealed and item is not conn.bye_frame:
                 continue  # the identity ended while this frame was queued: never send it
             try:
@@ -1392,7 +1482,7 @@ def make_ws_router(
             async with asyncio.timeout(None) as deadline:
                 pipe.arm(deadline)
                 while True:
-                    if watch(conn):
+                    if conn.watch():
                         pings += 1
                         now_ms = conn.wall_ms()
                         ping = {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms}
@@ -1408,7 +1498,7 @@ def make_ws_router(
                         with contextlib.suppress(TimeoutError):
                             await asyncio.wait_for(queue.ready.wait(), timeout=wait)
                         continue
-                    watch(conn)  # a close may land after the pop: send only what it keeps
+                    conn.watch()  # a close may land after the pop: send only what it keeps
                     end = pipe.terminal
                     if end is not None and not (item.priority and end.flush):
                         continue
@@ -1477,6 +1567,7 @@ def make_ws_router(
             auth_timeout_s=auth_timeout_s,
             backpressure=backpressure,
             flag_visible=flag_visible,
+            tick_s=tick_s,
         )
         if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
             await shed(conn)
@@ -1488,6 +1579,7 @@ def make_ws_router(
         # TG5: exactly one reader (this handler task) and one writer task,
         # owned here and always cancelled + awaited before returning (C-2.18).
         write_task = spawn(writer(conn), name=f"{conn.connection_id}-writer")
+        conn.end_writer = write_task.cancel  # #3100: a close timer fault that left no close
         handler = asyncio.current_task()
         reading = True
 
@@ -1515,11 +1607,12 @@ def make_ws_router(
         except Exception as exc:
             fault = exc
         finally:
+            conn.stop_close_timer()  # first: no deadline closes a connection that is ending
             reading = False
             write_task.cancel()
             try:
                 if fault is None:
-                    fault = await _join_writer(write_task)
+                    fault = await _join_writer(write_task) or conn.timer_fault
                 if fault is not None:
                     # The handler's own `bye` and 1011 do not go through `close_with`: count here.
                     # A fault after a `close_with` is counted under both reasons (that close was
