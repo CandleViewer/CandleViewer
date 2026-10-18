@@ -1,7 +1,8 @@
 """Regenerate (or ``--check``) the committed CVWB vectors + SR-155 fuzz corpus (E17-T02).
 
-Usage: uv run python scripts/generate_bar_artifacts.py [--check]
-The TS decoder consumes both files in packages/protocol/test/cvwb-vectors.test.ts.
+Usage: uv run python scripts/generate_cvwb_vectors.py [--check]; `make gen` runs it too.
+The TS decoder consumes both files in packages/protocol/test/cvwb-vectors.test.ts. CI runs no
+--check: tests/unit/ws/test_cvwb_binary.py byte-checks every file in TARGETS (#3452).
 """
 
 from __future__ import annotations

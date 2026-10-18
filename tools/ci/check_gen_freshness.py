@@ -10,11 +10,13 @@ This script is the single implementation invoked by the ``gen`` step of the
 ``gates`` job in ``.github/workflows/pr.yml`` and locally via ``make gen-check``:
 
 1. Removes every tracked file under the outputs ``pnpm generate`` writes in
-   full (``GENERATE_OUTPUTS``: ``packages/protocol/src/generated`` and the
-   Python twin of the CVWB layout) from the working tree, never from the
-   index, so the first generation run starts without them (#3299).
-2. Runs the generator (``pnpm generate``, i.e. ``make gen``) twice in a row
-   on the current checkout and hashes the generated tree after each run.
+   full (``GENERATE_OUTPUTS``: ``packages/protocol/src/generated``, the
+   Python twin of the CVWB layout and the instrument-policy goldens) from the
+   working tree, never from the index, so the first generation run starts
+   without them (#3299, #3452).
+2. Runs the generator (``pnpm generate``, the first step of ``make gen``)
+   twice in a row on the current checkout and hashes the generated tree after
+   each run.
    Each run sets ``TURBO_FORCE=true``, so the generators really execute and a
    turbo cache entry is never replayed as fresh output (#2783).
    If the two hashes differ, generation is non-deterministic (CI-GEN-003)
@@ -34,30 +36,30 @@ This script is the single implementation invoked by the ``gen`` step of the
    (``git --literal-pathspecs``), so a name holding ``*``, ``?`` or ``[`` names
    no other file. Step 1 fails closed (CI-GEN-004) when git tracks nothing
    under the outputs, which would leave this step nothing to check.
-4. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
-   against a committed schema change). This is also the hand-edit guard for
-   committed generated files: regenerating overwrites the edit, so it shows
-   up as a diff. No committed manifest takes part (#2743).
-5. Runs ``git status --porcelain -- packages/protocol`` (CI-GEN-002:
+4. Runs ``git diff --exit-code`` on the generated paths (``GENERATED_PATHS``;
+   CI-GEN-001: drift against a committed source change). This is also the
+   hand-edit guard for committed generated files: regenerating overwrites the
+   edit, so it shows up as a diff. No committed manifest takes part (#2743).
+5. Runs ``git status --porcelain`` on the generated paths (CI-GEN-002:
    untracked generated output the diff cannot see).
 6. Renders the packaged contract subset (#2555) again from the committed
    ``docs/plan/22-api-openapi.yaml`` with the generator's own renderer and
    compares it with the committed artifact (CI-GEN-001), the way step 4 does
-   for packages/protocol: a YAML edit that skipped regeneration and a hand
+   for the generated paths: a YAML edit that skipped regeneration and a hand
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
 7. Fails CI-GEN-006, naming each path, for a committed file that no generator
-   writes in the gated directories ``pnpm generate`` does not write (#3392):
-   ``packages/protocol/generated``, the CVWB vectors and fuzz corpus, and the
-   ``_generated`` packages of services/api. Their generators run in ``make gen``
-   or need the backend venv, and each writes a fixed set of files there, so the
-   gate does not regenerate them: it compares what git tracks there with
-   ``FIXED_OUTPUTS`` (each generator's files, which tests pin to the generator's
-   own output paths) and ``HAND_KEPT`` (files kept there by hand on purpose,
-   each with its reason). It removes nothing, and the report prints one
-   `git rm` command. A file either table names that git does not track fails
-   closed (CI-GEN-004): a stale entry would let a hand-written file of that
-   name pass later.
+   writes in the gated directories that generators outside ``pnpm generate``
+   write (#3392): ``FIXED_OUTPUT_DIRS``, derived from the two tables below.
+   Those generators run in ``make gen``, most need the backend venv, and each
+   writes a fixed set of files there, so the gate does not regenerate them: it
+   compares what git tracks there with ``FIXED_OUTPUTS`` (each generator's
+   files, which tests pin to the generator's own output paths) and
+   ``HAND_KEPT`` (files kept there by hand on purpose, each with its reason),
+   and leaves a file under ``GENERATE_OUTPUTS`` to step 3. It removes nothing,
+   and the report prints one `git rm` command. A file either table names that
+   git does not track fails closed (CI-GEN-004): a stale entry would let a
+   hand-written file of that name pass later.
 
 Exit codes: 0 clean; 1 on a failed check (each reports a CI-GEN-* code on
 stderr, CI-GEN-004 when the gate could not run a check: the generator, git or a
@@ -98,8 +100,13 @@ GENERATED_ROOT = Path("packages/protocol")
 # services/api/scripts/generate_cvwb_vectors.py and byte-checked by
 # tests/unit/ws/test_cvwb_binary.py; included here so any stray churn fails).
 CVWB_LAYOUT_TWIN = Path("services/api/candleviewer/ws/_generated/cvwb_layout.py")
+# #3452: the instrument-policy goldens. packages/protocol/scripts/generate-policy-rules.mjs
+# runs tools/gen/export_instrument_policy_{rules,corpus}.py (stdlib only), which write
+# rules.json and corpus.json, the only files there.
+POLICY_GOLDENS = Path("packages/fixtures/golden/policy")
 EXTRA_GENERATED: tuple[Path, ...] = (
     CVWB_LAYOUT_TWIN,
+    POLICY_GOLDENS,
     Path("packages/fixtures/golden/cvwb"),
     Path("tests/fuzz/ws-frames"),
 )
@@ -112,17 +119,23 @@ GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
 GENERATE_OUTPUTS: tuple[Path, ...] = (
     GENERATED_ROOT / "src" / "generated",
     CVWB_LAYOUT_TWIN,
+    POLICY_GOLDENS,
 )
-# #3392: step 7 (CI-GEN-006). Every file each generator writes in the gated directories
-# `pnpm generate` does not write, keyed by the generator. Running those generators would
-# need the backend venv (datamodel-code-generator, the candleviewer package), which this
-# job does not install, and each writes a fixed set of files, so the gate compares what
-# git tracks there with this table. scripts/tests/test_check_gen_freshness.py pins each
-# entry to its generator's own output paths (generate_cvwb_vectors.py's read from its
-# source, as importing it needs the backend), and services/api/tests/unit/ws/
-# test_cvwb_binary.py pins that entry to the evaluated TARGETS too. Step 7 judges names
-# only: each file's content is checked by its generator's --check or by a test.
+# #3392: step 7 (CI-GEN-006). Every file each generator outside `pnpm generate` writes in
+# the gated directories, keyed by the generator. Running most of those generators would
+# need the backend venv (datamodel-code-generator, the candleviewer package), which the
+# `gen` step cannot count on (the gates job installs it only for the py lane), and each
+# writes a fixed set of files, so the gate compares what git tracks there with this table.
+# scripts/tests/test_check_gen_freshness.py pins each entry to its generator's own output
+# paths (generate_cvwb_vectors.py's read from its source, as importing it needs the
+# backend), and services/api/tests/unit/ws/test_cvwb_binary.py pins that entry to the
+# evaluated TARGETS too. Step 7 judges names only; each file's content is checked by its
+# generator's --check or by a test. #3452: generate_cvwb_vectors.py's --check runs in no
+# lane, as the py lane's test_cvwb_binary.py already byte-checks every file it writes with
+# the script's own renderers, and the governance job runs keymap_lint.py --check-docs on
+# every PR.
 FIXED_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "scripts/keymap_lint.py": ("docs/generated/default-keymap.md",),
     "tools/contracts/gen_ws_constants.py": (
         "packages/protocol/generated/ws_constants.py",
     ),
@@ -245,6 +258,10 @@ def _bullets(paths: list[str]) -> str:
     return "".join(f"  - {rel}\n" for rel in paths)
 
 
+def _shown(roots: tuple[Path, ...]) -> str:
+    return ", ".join(root.as_posix() for root in roots)
+
+
 def _git_command(verb: str, paths: list[str]) -> str:
     """One copy-pasteable command; git matches each path literally, so a name holding
     ``*``, ``?`` or ``[`` cannot also name another file."""
@@ -317,8 +334,8 @@ def check_determinism() -> None:
     if first_hash != second_hash:
         raise GenGateError(
             "CI-GEN-003",
-            "codegen is not deterministic: two consecutive `make gen` runs "
-            f"produced different output under {GENERATED_ROOT} "
+            "codegen is not deterministic: two consecutive `pnpm generate` runs "
+            f"produced different output under {_shown(GENERATED_PATHS)} "
             f"(run 1 hash {first_hash}, run 2 hash {second_hash}). "
             "Reproduce locally with `make gen && make gen` and diff the tree.",
         )
@@ -365,8 +382,8 @@ def check_freshness() -> None:
     if diff.returncode != 0:
         raise GenGateError(
             "CI-GEN-001",
-            "generated output is stale — `make gen` produced a diff "
-            "against docs/plan/22-api-openapi.yaml / docs/plan/23-ws-protocol.md.\n"
+            "generated output is stale — regenerating it from the committed sources "
+            "(the contract docs, the generators and what they read) produced a diff.\n"
             "Reproduce locally with `make gen`, review, and commit the result.\n\n"
             f"{diff.stdout}",
         )
@@ -381,10 +398,11 @@ def check_untracked() -> None:
     if untracked:
         raise GenGateError(
             "CI-GEN-002",
-            "`make gen` produced untracked output under packages/protocol "
+            "`pnpm generate` produced untracked output in the generated paths "
             "(new generated file not committed, possibly git-ignored by "
             "mistake). Reproduce locally with `make gen && git status "
-            "--porcelain -- packages/protocol`.\n\n" + "\n".join(untracked),
+            f"--porcelain -- {shlex.join(p.as_posix() for p in GENERATED_PATHS)}`.\n\n"
+            + "\n".join(untracked),
         )
 
 
