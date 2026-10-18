@@ -5844,28 +5844,30 @@ class KekRewrapResult(BaseModel):
     resumed: Annotated[
         bool,
         Field(
-            description="True when an earlier run had already moved rows of this rotation and this run opened with `security.kek_rotation_resumed`; false when it opened with `security.kek_rotation_started`.\n"
+            description="True when this run opened with `security.kek_rotation_resumed`: an earlier run had already moved rows of this rotation and unrevoked API key rows were still left at `from_version`. False when it opened with `security.kek_rotation_started`: no earlier run had moved a row, or no row was left to move.\n"
         ),
     ]
-    rewrapped: Annotated[int, Field(description="Rows this run moved to `to_version`.", ge=0)]
+    rewrapped: Annotated[
+        int, Field(description="API key rows this run moved to `to_version`.", ge=0)
+    ]
     remaining: Annotated[
         int,
         Field(
-            description="Unrevoked rows of the environment still at `from_version` after this run, failed rows included.\n",
+            description="Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves.\n",
             ge=0,
         ),
     ]
     failed: Annotated[
         int,
         Field(
-            description="Rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`.\n",
+            description="API key rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`.\n",
             ge=0,
         ),
     ]
     complete: Annotated[
         bool,
         Field(
-            description="True when the run ended with `security.kek_rotated`: no unrevoked row is left at `from_version` and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
+            description="True when the run ended with `security.kek_rotated`: no unrevoked API key row and no auth keyring row is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
         ),
     ]
 

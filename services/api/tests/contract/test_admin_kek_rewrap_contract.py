@@ -50,6 +50,21 @@ _EXAMPLES = support.example_cases([(_PATH, "post")]) + [
     (f"post request {name}", "/components/schemas/KekRewrapRequest", example["value"])
     for name, example in _BODY["examples"].items()
 ]
+#: The terminal record waits for both kinds of row (ruling item 2; ADR-0009 Amendment 4).
+_TERMINAL = (
+    "a terminal `security.kek_rotated` when no unrevoked API key row and no auth keyring row of "
+    "the environment is left at the previous version and no row failed, else "
+    "`security.kek_rotation_incomplete`."
+)
+#: KekRewrapResult member -> the rows it counts, in the schema and the generated model.
+_COUNTS = {
+    "rewrapped": "API key rows this run moved to `to_version`.",
+    "remaining": "Rows of the environment still at `from_version` after this run: unrevoked API "
+    "key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves.",
+    "failed": "API key rows this run could not re-wrap.",
+    "complete": "True when the run ended with `security.kek_rotated`: no unrevoked API key row "
+    "and no auth keyring row is left at `from_version`, and no row failed.",
+}
 
 
 def test_operation_declares_exactly_its_statuses_rbac_and_idempotency() -> None:
@@ -140,9 +155,21 @@ def test_only_the_retryable_conflict_carries_retry_after() -> None:
     assert examples["inProgress"]["value"]["retry_after_seconds"] >= 1
     assert "retry_after_seconds" not in examples["notStaged"]["value"]
     assert (
-        "Only `kek_rotation_in_progress` carries `Retry-After` and `retry_after_seconds`: a "
-        "restart, not a wait, clears `kek_rotation_not_staged`." in text(conflict["description"])
+        "Only `kek_rotation_in_progress` carries `Retry-After` and `retry_after_seconds`; no wait "
+        "clears `kek_rotation_not_staged`." in text(conflict["description"])
     )
+
+
+def test_not_staged_is_cleared_by_a_corrected_body_or_a_staged_restart() -> None:
+    """Each cause of `kek_rotation_not_staged` has its own remedy; neither is a wait."""
+    conflict = text(_OP["responses"]["409"]["description"])
+    assert (
+        "When the body differs from the boot, a corrected body clears it; when no previous KEK "
+        "is loaded, only a restart into the staged boot does." in conflict
+    )
+    assert "a restart, not a wait" not in conflict
+    cause = "`409 kek_rotation_not_staged` when no previous KEK is loaded or the body differs"
+    assert f"{cause} from the boot" in _DESC
 
 
 @pytest.mark.parametrize(
@@ -150,10 +177,10 @@ def test_only_the_retryable_conflict_carries_retry_after() -> None:
     [
         "Only that environment's rows are read or changed; every other environment's rows and "
         "KEK lineage are untouched.",
-        "A row that is revoked (`revoked_at` set or status `revoked`) is never re-wrapped, and a "
-        "revocation that lands while the run is under way fences every row the run has not yet "
-        "moved. A fenced row stays at the previous version, is not counted in `remaining`, and "
-        "becomes unreadable once that version is destroyed.",
+        "An API key row that is revoked (`revoked_at` set or status `revoked`) is never "
+        "re-wrapped, and a key revoked while the run is under way is fenced too, unless its row "
+        "has already moved. A fenced row stays at the previous version, is not counted in "
+        "`remaining`, and becomes unreadable once that version is destroyed.",
         "Before the first row, the call latches order entry read-only (gate reason "
         "`secrets.kek_rotation`), and only the restart that ends the rotation clears the latch.",
         "cancels and stop-loss amendments keep signing (C-2.6)",
@@ -167,6 +194,12 @@ def test_description_states_the_ruled_rule(rule: str) -> None:
     assert rule in _DESC
 
 
+def _assert_result_member_says(name: str, rule: str) -> None:
+    schema = _SCHEMAS["KekRewrapResult"]["properties"][name]["description"]
+    generated = api.KekRewrapResult.model_fields[name].description or ""
+    assert rule in text(schema) and rule in text(generated), name
+
+
 def test_revoked_rows_neither_move_nor_hold_back_completion() -> None:
     """Ruling item 2 (the round-5 fence): nothing revoked is re-wrapped to reach `complete`, so
     destroying the previous KEK still makes every revoked credential unreadable."""
@@ -175,21 +208,48 @@ def test_revoked_rows_neither_move_nor_hold_back_completion() -> None:
         "is wrapped under the previous KEK version (`to_version - 1`) is re-wrapped under "
         "`to_version`."
     )
-    terminal = (
-        "a terminal `security.kek_rotated` when no unrevoked row is left at the previous version "
-        "and no row failed, else `security.kek_rotation_incomplete`."
+    assert scope in _DESC and _TERMINAL in _DESC
+    for name in ("remaining", "complete"):
+        _assert_result_member_says(name, _COUNTS[name])
+
+
+def test_auth_keyring_rows_hold_back_completion_and_move_only_at_the_rotation_boot() -> None:
+    """ADR-0009 Amendment 4 (#2152): M2 re-wraps the environment's `auth_keys` rows at the
+    rotation boot, and `security.kek_rotated` waits until none is left at the previous version
+    (`docs/plan/spikes/e27-kek.md` section 5)."""
+    boot = (
+        "The environment's auth keyring rows (`auth_keys`) are not re-wrapped here: M2 re-wraps "
+        "them at the rotation boot (ADR-0009 Amendment 4, #2152). The call counts them, and the "
+        "rotation is complete only once none of them is left at the previous version."
     )
-    assert scope in _DESC and terminal in _DESC
-    counts = {
-        "remaining": "Unrevoked rows of the environment still at `from_version` after this run, "
-        "failed rows included.",
-        "complete": "True when the run ended with `security.kek_rotated`: no unrevoked row is "
-        "left at `from_version` and no row failed.",
-    }
-    for name, rule in counts.items():
-        schema = _SCHEMAS["KekRewrapResult"]["properties"][name]["description"]
-        generated = api.KekRewrapResult.model_fields[name].description or ""
-        assert rule in text(schema) and rule in text(generated), name
+    assert boot in _DESC and _TERMINAL in _DESC
+    assert (
+        "Calling again moves API key rows only: an auth keyring row left at `from_version` "
+        "moves at the next rotation boot (ADR-0009 Amendment 4)."
+        in text(_OP["responses"]["200"]["description"])
+    )
+    for name, rule in _COUNTS.items():
+        _assert_result_member_says(name, rule)
+
+
+def test_resumed_is_true_only_when_an_earlier_run_moved_rows_and_rows_are_left() -> None:
+    """The ruling's opening record: `kek_rotation_resumed` only if rows are left and an earlier
+    run moved some, else `kek_rotation_started` (an abort that moved no row reads as started)."""
+    opening = (
+        "The opening record is `security.kek_rotation_resumed` (`resumed: true`) only when an "
+        "earlier run had already moved rows and unrevoked API key rows are still left at the "
+        "previous version; otherwise it is `security.kek_rotation_started` (`resumed: false`), "
+        "so a run after an earlier one that moved no row, or after the last row moved, reads as "
+        "started."
+    )
+    assert opening in _DESC and "resumes (`resumed: true`)" not in _DESC
+    _assert_result_member_says(
+        "resumed",
+        "True when this run opened with `security.kek_rotation_resumed`: an earlier run had "
+        "already moved rows of this rotation and unrevoked API key rows were still left at "
+        "`from_version`. False when it opened with `security.kek_rotation_started`: no earlier "
+        "run had moved a row, or no row was left to move.",
+    )
 
 
 def test_request_confirms_the_boot_and_forbids_any_other_member() -> None:

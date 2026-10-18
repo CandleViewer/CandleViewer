@@ -767,13 +767,14 @@ export interface paths {
      *     are untouched. Ciphertext and nonces never change: each new wrap is verified by opening
      *     the credential before a compare-and-set on the row's KEK version, and each moved row
      *     writes its `security.credential_rewrapped` record in the same transaction. The
-     *     environment's auth keyring rows are not re-wrapped here: M2 re-wraps them at the
-     *     rotation boot (ADR-0009 Amendment 4).
+     *     environment's auth keyring rows (`auth_keys`) are not re-wrapped here: M2 re-wraps them
+     *     at the rotation boot (ADR-0009 Amendment 4, #2152). The call counts them, and the
+     *     rotation is complete only once none of them is left at the previous version.
      *
-     *     **Revoked rows are fenced.** A row that is revoked (`revoked_at` set or status
-     *     `revoked`) is never re-wrapped, and a revocation that lands while the run is under way
-     *     fences every row the run has not yet moved. A fenced row stays at the previous version,
-     *     is not counted in `remaining`, and becomes unreadable once that version is destroyed.
+     *     **Revoked rows are fenced.** An API key row that is revoked (`revoked_at` set or status
+     *     `revoked`) is never re-wrapped, and a key revoked while the run is under way is fenced
+     *     too, unless its row has already moved. A fenced row stays at the previous version, is not
+     *     counted in `remaining`, and becomes unreadable once that version is destroyed.
      *
      *     **Staged boot.** The call acts only in a process booted for this rotation, with the
      *     current KEK at `to_version` and the previous KEK (`CV_KEK_PREV_HANDLE`) at
@@ -795,20 +796,23 @@ export interface paths {
      *     version opens with the previous KEK.
      *
      *     **Resumable.** A run that stops part-way leaves each row at one version or the other, and
-     *     calling again resumes (`resumed: true`). `Idempotency-Key` is not used: every call reads
-     *     the rows afresh, so a repeat resumes the run and never replays an earlier answer. A run
-     *     that fails part-way is answered `503 audit_unavailable` when a write-ahead record (the
-     *     opening, a failed-row or the terminal record) cannot be written, and
-     *     `503 store_unavailable` when the credential store fails; each moved row's record shares
-     *     its compare-and-set transaction, so a failure there is a store failure. Either way the
-     *     rows moved so far stay moved, the latch stays, and calling again resumes. A run writes
-     *     one opening record (`security.kek_rotation_started`, or `security.kek_rotation_resumed`
-     *     when an earlier run already moved rows), one `security.credential_rewrapped` per moved
-     *     row, one `security.kek_rotation_failed` per row it could not re-wrap (that row stays at
-     *     the previous version), and a terminal `security.kek_rotated` when no unrevoked row is
-     *     left at the previous version and no row failed, else `security.kek_rotation_incomplete`.
-     *     Every record of a run carries its `run_id` and the acting Owner, and none carries key
-     *     material.
+     *     calling again resumes it. `Idempotency-Key` is not used: every call reads the rows
+     *     afresh, so a repeat resumes the run and never replays an earlier answer. A run that fails
+     *     part-way is answered `503 audit_unavailable` when a write-ahead record (the opening, a
+     *     failed-row or the terminal record) cannot be written, and `503 store_unavailable` when
+     *     the credential store fails; each moved row's record shares its compare-and-set
+     *     transaction, so a failure there is a store failure. Either way the rows moved so far stay
+     *     moved, the latch stays, and calling again resumes. A run writes one opening record, one
+     *     `security.credential_rewrapped` per moved row, one `security.kek_rotation_failed` per row
+     *     it could not re-wrap (that row stays at the previous version), and a terminal
+     *     `security.kek_rotated` when no unrevoked API key row and no auth keyring row of the
+     *     environment is left at the previous version and no row failed, else
+     *     `security.kek_rotation_incomplete`. The opening record is
+     *     `security.kek_rotation_resumed` (`resumed: true`) only when an earlier run had already
+     *     moved rows and unrevoked API key rows are still left at the previous version; otherwise
+     *     it is `security.kek_rotation_started` (`resumed: false`), so a run after an earlier one
+     *     that moved no row, or after the last row moved, reads as started. Every record of a run
+     *     carries its `run_id` and the acting Owner, and none carries key material.
      *
      *     The response holds counts only: no key id and no key check value (KCV).
      */
@@ -6869,18 +6873,18 @@ export interface components {
     };
     /** @description `rewrapKek`: the counts of one run, never a key id or a key check value (KCV). */
     KekRewrapResult: {
-      /** @description True when the run ended with `security.kek_rotated`: no unrevoked row is left at `from_version` and no row failed. False when it ended with `security.kek_rotation_incomplete`. */
+      /** @description True when the run ended with `security.kek_rotated`: no unrevoked API key row and no auth keyring row is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`. */
       complete: boolean;
       environment: components["schemas"]["Environment"];
-      /** @description Rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`. */
+      /** @description API key rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`. */
       failed: number;
       /** @description The previous KEK version, `to_version - 1`. */
       from_version: number;
-      /** @description Unrevoked rows of the environment still at `from_version` after this run, failed rows included. */
+      /** @description Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves. */
       remaining: number;
-      /** @description True when an earlier run had already moved rows of this rotation and this run opened with `security.kek_rotation_resumed`; false when it opened with `security.kek_rotation_started`. */
+      /** @description True when this run opened with `security.kek_rotation_resumed`: an earlier run had already moved rows of this rotation and unrevoked API key rows were still left at `from_version`. False when it opened with `security.kek_rotation_started`: no earlier run had moved a row, or no row was left to move. */
       resumed: boolean;
-      /** @description Rows this run moved to `to_version`. */
+      /** @description API key rows this run moved to `to_version`. */
       rewrapped: number;
       /**
        * Format: uuid
@@ -10872,7 +10876,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description The run ended. `complete: false` means unrevoked rows are left at `from_version`: investigate every failed row, then call again. */
+      /** @description The run ended. `complete: false` means a row failed or rows are left at `from_version` (`remaining`): investigate every failed row, then call again. Calling again moves API key rows only: an auth keyring row left at `from_version` moves at the next rotation boot (ADR-0009 Amendment 4). */
       200: {
         headers: {
           [name: string]: unknown;
@@ -10883,7 +10887,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      /** @description No rotation is staged as the body states (`kek_rotation_not_staged`), or a run for the environment is in progress (`kek_rotation_in_progress`). Nothing was latched or moved. Only `kek_rotation_in_progress` carries `Retry-After` and `retry_after_seconds`: a restart, not a wait, clears `kek_rotation_not_staged`. */
+      /** @description No rotation is staged as the body states (`kek_rotation_not_staged`), or a run for the environment is in progress (`kek_rotation_in_progress`). Nothing was latched or moved. Only `kek_rotation_in_progress` carries `Retry-After` and `retry_after_seconds`; no wait clears `kek_rotation_not_staged`. When the body differs from the boot, a corrected body clears it; when no previous KEK is loaded, only a restart into the staged boot does. */
       409: {
         headers: {
           "Retry-After": components["headers"]["RetryAfter"];
