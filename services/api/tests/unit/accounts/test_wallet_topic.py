@@ -94,6 +94,7 @@ def _unbuildable(world: WalletWorld) -> WalletSnapshot:
 
 def test_a_manager_snapshot_holds_only_its_granted_accounts() -> None:
     world = WalletWorld()
+    world.topic.balance_refreshed(ACC_B)  # B owes a turn to stale: still not in A's snapshot
     conn = world.conn(manager(ACC))
     result = conn.sub(ACC, ACC_B)  # B is monitored and has a balance, but is not granted
     [(kind, body)] = conn.take()
