@@ -11,6 +11,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from candleviewer.account_health_wiring import AccountHealthRuntime, wire_account_health
+from candleviewer.accounts.service import AccountHealthFeed, AccountsService
 from candleviewer.accounts.wallet import WalletSnapshot
 from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Metrics
@@ -44,11 +45,13 @@ async def settle() -> None:
 
 class Sleeper:
     """The loops' `sleep`: a sleeper wakes when `run()` moves the fake clock to its deadline, or
-    raises `fail` if it is set (a loop that ends on it)."""
+    raises `fail` if it is set (a loop that ends on it). With `stubborn` a cancelled sleep returns
+    as if woken instead of raising the cancellation (a sleep that breaks its contract)."""
 
     def __init__(self, clock: FakeClock) -> None:
         self.clock = clock
         self.fail: Exception | None = None
+        self.stubborn = False
         self._waiting: list[tuple[float, int, asyncio.Future[None]]] = []
         self._order = itertools.count()
 
@@ -57,7 +60,11 @@ class Sleeper:
             raise self.fail
         wake = asyncio.get_running_loop().create_future()
         heapq.heappush(self._waiting, (self.clock.monotonic() + seconds, next(self._order), wake))
-        await wake
+        try:
+            await wake
+        except asyncio.CancelledError:
+            if not self.stubborn:
+                raise
 
     async def run(self, seconds: float) -> None:
         """Move the fake time on by `seconds`, waking each sleeper at its own deadline."""
@@ -102,9 +109,9 @@ class Rest:
 class FakeWs:
     """One account's private socket: the auth reply, then a pong every `PING_S` until it is
     dropped (the close event is seen) or goes silent (it hangs: no pong, no close). `beats`
-    holds the second of each heartbeat given to the runtime's feed."""
+    holds the second of each heartbeat the feed was given."""
 
-    def __init__(self, feed: AccountHealthRuntime, sleeper: Sleeper, account: UUID = ACC) -> None:
+    def __init__(self, feed: AccountHealthFeed, sleeper: Sleeper, account: UUID = ACC) -> None:
         self.feed, self.sleeper, self.account = feed, sleeper, account
         self.beats: list[float] = []
         self._task: asyncio.Task[None] | None = None
@@ -131,7 +138,8 @@ class FakeWs:
 class Rig:
     """The runtime `create_app` builds, on a fake clock and sleeper, with `accounts` (`ACC` by
     default) tracked by `boot()`. `rest` swaps the production REST port (every read unavailable)
-    for the fake."""
+    for the fake. The socket feeds the runtime through `ctx.accounts.account_health`, the path the
+    E29-T05 consumer will use."""
 
     def __init__(
         self,
@@ -145,7 +153,8 @@ class Rig:
         self.dms = Dms(clock=self.clock)
         self.rest = Rest(self.clock)
         self.metrics = metrics or Metrics("demo")
-        self.accounts = accounts or (ACC,)
+        self.accounts = AccountsService()
+        self.wanted: frozenset[UUID] = frozenset(accounts or (ACC,))
         self.runtime: AccountHealthRuntime = wire_account_health(
             settings or Settings(),
             self.metrics,
@@ -154,10 +163,11 @@ class Rig:
             dms=self.dms,
             rest=self.rest if rest else None,
         )
-        self.ws = FakeWs(self.runtime, self.sleeper)
+        self.accounts.attach_account_health(self.runtime.feed)
+        self.ws = FakeWs(self.accounts.account_health, self.sleeper)
 
     def track(self) -> None:
-        for account in self.accounts:
+        for account in self.wanted:
             self.runtime.monitor.track(account)
             self.runtime.wallets.track(account)
 

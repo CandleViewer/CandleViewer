@@ -109,7 +109,9 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name="secrets", ok=ok, detail=rep.detail))
-        if accounts_health is not None:  # E27-T03: a failing stored key or a latched self-check
+        # E27-T03: a failing stored key or a latched self-check; E27-T04: an account health loop
+        # that ended or keeps failing
+        if accounts_health is not None:
             rep = accounts_health()
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK

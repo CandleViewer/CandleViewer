@@ -1626,8 +1626,10 @@ def create_app(
     # started `AccountsService` before the app serves (real backend only).
     wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit))
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
-    # and stops it.
-    app.state.account_health = wire_account_health(resolved, metrics_facade)
+    # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's.
+    account_health = wire_account_health(resolved, metrics_facade)
+    app.state.account_health = account_health
+    ctx.accounts.attach_account_health(account_health.feed)
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
     # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
     app.state.audit_verify_job = build_audit_verify_job(

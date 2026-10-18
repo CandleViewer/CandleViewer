@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.accounts.errors import AccountsError
 from candleviewer.accounts.service import (
     REFRESH_INTERVAL_S,
     STALE_AFTER_INTERVALS,
+    AccountHealthFeed,
     AccountsService,
 )
 from candleviewer.app import AppContext
@@ -237,3 +241,31 @@ async def test_a_loop_that_dies_degrades_health_at_once_and_logs_the_error() -> 
     assert [e["error"] for e in died] == ["RuntimeError"]
     await svc.stop(1.0)
     assert svc.health().status is HealthStatus.STOPPED
+
+
+def _feed(fault: str | None = None) -> Any:
+    return SimpleNamespace(fault=fault)
+
+
+def test_the_account_health_feed_is_not_served_until_it_is_attached() -> None:
+    with pytest.raises(AccountsError, match="account health is not wired"):
+        _ = AccountsService().account_health
+
+
+def test_the_attached_feed_is_what_the_private_ws_consumer_gets() -> None:
+    svc, feed = AccountsService(), _feed()
+    svc.attach_account_health(cast(AccountHealthFeed, feed))
+    assert svc.account_health is feed
+
+
+async def test_a_fault_of_the_account_health_runtime_degrades_the_check_until_it_clears() -> None:
+    svc, feed = AccountsService(), _feed()
+    svc.attach_account_health(cast(AccountHealthFeed, feed))
+    await svc.start(_CTX)
+    assert svc.health().status is HealthStatus.OK
+    feed.fault = "the account-health-tick loop ended"
+    report = svc.health()
+    assert report.status is HealthStatus.DEGRADED
+    assert report.detail == "the account-health-tick loop ended"
+    feed.fault = None
+    assert svc.health().status is HealthStatus.OK
