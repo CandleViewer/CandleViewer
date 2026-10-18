@@ -400,6 +400,9 @@ def test_codeql_installs_only_the_hash_pinned_gate_dependency_after_analyze() ->
         if PY_INSTALLER.search(line) and not line.strip().startswith("#")
     ]
     assert lines == [install["run"]]
+    # setup-python takes no input that installs from the index (e.g. pip-version) before analyze.
+    setup = next(s for s in steps if s.get("uses", "").startswith("actions/setup-python@"))
+    assert set(setup.get("with", {})) == {"python-version"}
 
 
 def test_codeql_gate_stops_on_an_import_error_when_its_install_failed(tmp_path: Path) -> None:

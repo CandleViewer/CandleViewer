@@ -271,7 +271,8 @@ diff` cannot see because they were never tracked. `git add` them in the
   holds a non-object; or a run whose invocation does not report
   `executionSuccessful: true`, or reports an error-level
   `toolConfigurationNotifications` entry (Bandit lists each file it could not
-  scan there, so fix or exclude that file). So is a `codeql` result with no
+  scan there: fix that file; if Bandit fails on valid code, take it to security
+  review, because an exclusion narrows the scan). So is a `codeql` result with no
   `level` whose rule descriptor is on neither `tool.driver` nor
   `tool.extensions`. CodeQL, Semgrep, Bandit and Trivy each write a run
   with a `results` list on a clean scan too (#3337, #3372).
