@@ -1,9 +1,12 @@
 """SR-193 (#2293): `resync`, re-snapshotting `ctl` and `sub` starts draw on one rebuild budget per
-connection (`23-ws-protocol.md` §5.2, §5.4, §7.5, §7.7); the limits are §7.5's numbers."""
+connection (`23-ws-protocol.md` §5.2, §5.4, §7.5, §7.7), and on its user's, which all of the
+user's connections share (#3476); the limits are §7.5's numbers."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -11,13 +14,23 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
-from candleviewer.ws.permissions import handle_ctl, handle_sub
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.ws.permissions import (
+    ConnectionRegistry,
+    SubscriptionServices,
+    VersionedSnapshot,
+    handle_ctl,
+    handle_sub,
+)
 from candleviewer.ws.sequencing import SequencingHub
-from tests.unit.ws._seq_support import ACC_A, ACC_B, Conn
+from candleviewer.ws.upstream import UpstreamRefs
+from tests.unit.ws._seq_support import ACC_A, ACC_B, USER, Clock, Conn
+from tests.unit.ws.test_revocation_fanout import _DroppedSeries
 from tests.unit.ws.test_sequencing import RS, _book_source, _CappedBars, _hold, _resync
 
-TOPIC, CONNECTION, WINDOW = 5, 400, 60.0  # 23 §7.5
-BOOK, HEAT = "book.BTCUSDT.50", "heatmap.BTCUSDT"
+TOPIC, CONNECTION, WINDOW, USER_LIMIT = 5, 400, 60.0, 1600  # 23 §7.5, §16.2
+BOOK, HEAT, BARS = "book.BTCUSDT.50", "heatmap.BTCUSDT", "bars.BTCUSDT.time.5"
 NOT_TAKEN = "Rebuild budget spent ({} a minute per {}); no snapshot was taken."
 
 
@@ -39,7 +52,7 @@ def _resume(conn: Conn, ch: str = BOOK) -> dict[str, Any]:
     return _ctl(conn, {"paused": False}, ch)
 
 
-def _sub(conn: Conn, *topics: Any) -> list[dict[str, Any]]:
+async def _asub(conn: Conn, *topics: Any) -> list[dict[str, Any]]:
     """One `sub` frame through `handle_sub`; its results (the `sub_ok` is schema-checked)."""
     sent: list[dict[str, Any]] = []
 
@@ -48,9 +61,13 @@ def _sub(conn: Conn, *topics: Any) -> list[dict[str, Any]]:
         sent.append(frame)
 
     entries = [t if isinstance(t, dict) else {"ch": t} for t in topics]
-    asyncio.run(handle_sub(conn.authz, {"t": "sub", "p": {"topics": entries}}, send, now_ms=1))
+    await handle_sub(conn.authz, {"t": "sub", "p": {"topics": entries}}, send, now_ms=1)
     results: list[dict[str, Any]] = sent[0]["p"]["results"]
     return results
+
+
+def _sub(conn: Conn, *topics: Any) -> list[dict[str, Any]]:
+    return asyncio.run(_asub(conn, *topics))
 
 
 def test_a_ctl_identity_flip_loop_is_refused_at_the_sixth_and_the_refusal_changes_nothing() -> None:
@@ -255,3 +272,189 @@ def test_an_entry_refused_at_the_upstream_step_draws_nothing_and_releases_nothin
     assert (capped["error"]["code"], book["ok"]) == ("subscription_limit", True)
     conn.authz.services.bars = None  # no lease to take now
     assert [r["ok"] for r in _sub(conn, bars)] == [True]  # still a first `sub`, and with room
+
+
+def _one_user(n: int, upstream: UpstreamRefs | None = None, limit: int | None = None) -> list[Conn]:
+    """#3476: `n` connections of one user, on one process's services and the router's clock."""
+    return _connections([USER] * n, upstream, limit)
+
+
+def _connections(
+    users: list[uuid.UUID], upstream: UpstreamRefs | None = None, limit: int | None = None
+) -> list[Conn]:
+    """A connection of each of `users`, on one process's services and the router's clock."""
+    src, clock = _book_source(), Clock()
+    refs = UpstreamRefs() if upstream is None else upstream  # an empty one is falsy
+    services = SubscriptionServices(upstream=refs, snapshots=src)
+    if limit is not None:  # every user's, before any connection reads it
+        services.user_rebuilds.limit = limit
+    return [Conn(src, clock=clock, services=services, user=user) for user in users]
+
+
+class _Rows:
+    """An audit sink that keeps each row with the frame types `out` held when it came; `block`: the
+    action whose write waits until it is cancelled."""
+
+    def __init__(self, out: list[dict[str, Any]] | None = None, block: str | None = None) -> None:
+        self.rows: list[tuple[str, dict[str, Any], list[str]]] = []
+        self.out, self.block, self.entered = [] if out is None else out, block, asyncio.Event()
+
+    async def emit(self, action: str, **row: Any) -> None:
+        if action == self.block:
+            self.entered.set()
+            await asyncio.Event().wait()
+        self.rows.append((action, row, [f["t"] for f in self.out]))
+
+
+def _spend(conns: list[Conn], draws: int) -> None:
+    """`draws` of the user's limit, on `conns` in turn, each up to its connection's limit."""
+    for conn in conns:
+        for i in range(min(draws, CONNECTION)):
+            assert conn.authz.rebuilds.take((f"trades.S{i:03d}USDT", None), "ctl") is None
+        draws -= min(draws, CONNECTION)
+
+
+class _ParkedSink:
+    """An upstream whose first `open` waits for `go`: a `sub` entry parked mid-subscribe."""
+
+    def __init__(self) -> None:
+        self.entered, self.go = asyncio.Event(), asyncio.Event()
+
+    async def open(self, key: Any) -> None:
+        if not self.entered.is_set():  # only the first: any later entry goes straight through
+            self.entered.set()
+            await self.go.wait()
+
+    async def drop(self, key: Any) -> None:
+        pass
+
+
+async def _park(conn: Conn, ch: str, sink: _ParkedSink) -> asyncio.Task[list[dict[str, Any]]]:
+    """`conn`'s `sub` of `ch`, once it waits in its upstream (bounded: 5 s)."""
+    task = asyncio.create_task(_asub(conn, ch))
+    async with asyncio.timeout(5):
+        await sink.entered.wait()
+    return task
+
+
+def test_a_spent_user_refuses_its_other_connections_and_outlives_them() -> None:
+    """#3476 (§7.5): four connections spend their user's 1 600 (with a fifth's `sub`); that fifth's
+    `bars.*` entry, `resync` (never revoked) and resuming `ctl` are refused for the user. The window
+    outlives every connection: one opened after they all close is refused too, until it slides."""
+    *others, late, newcomer = _one_user(6)
+    registry = ConnectionRegistry(AsyncMock(), lambda: 1, late.authz.services)
+    for conn in (*others, late):
+        registry.register(conn.authz, AsyncMock())
+    assert [r["ok"] for r in _sub(late, BOOK)] == [True]
+    _spend(others, USER_LIMIT - 1)
+    before = [_refused(path, "user") for path in ("sub", "resync", "ctl")]
+    with capture_logs() as logs:
+        (refused,) = _sub(late, BARS)
+        late.take()
+        _resync(late, BOOK)
+        frames, resumed = late.take(), _resume(late)
+    told, (err,) = "Rebuild budget spent (1600 a minute per user);", frames  # no `revoked`
+    error = refused["error"]
+    assert (error["code"], error["retryable"]) == ("resync_rate_limited", True)
+    assert error["message"] == f"{told} not subscribed."
+    assert err["p"]["message"] == f"{told} no snapshot was taken."
+    assert resumed["p"]["message"] == f"{told} nothing was changed." and late.authz.find(BOOK)
+    spent = [e for e in logs if e["event"] == "ws resync rate limited"]
+    assert [(e["path"], e["scope"], e["limit"]) for e in spent] == [
+        (path, "user", USER_LIMIT) for path in ("sub", "resync", "ctl")
+    ]
+    assert [_refused(path, "user") for path in ("sub", "resync", "ctl")] == [n + 1 for n in before]
+    for conn in (*others, late):
+        registry.unregister(conn.authz)
+    registry.register(newcomer.authz, AsyncMock())
+    assert [r["ok"] for r in _sub(newcomer, BOOK)] == [False]
+    newcomer.clock.now = WINDOW  # every draw was at t = 0: they leave the window
+    assert [r["ok"] for r in _sub(newcomer, BOOK, BARS)] == [True, True]
+    _resync(newcomer, BOOK)
+    assert [f["t"] for f in newcomer.take()][-1] == "snap"
+    assert _resume(newcomer)["p"]["resnapshot"] is True
+
+
+async def test_an_entry_parked_mid_subscribe_holds_its_user_s_last_draw() -> None:
+    """#3476: the user one draw short; A's `sub` entry passes the check and waits in its upstream,
+    holding that draw, so B's entry is refused for the user. A's start turns its hold into the
+    draw: B is refused again, and the user has drawn exactly its limit."""
+    sink = _ParkedSink()
+    a, b, *others = _one_user(5, UpstreamRefs(sink))
+    _spend([*others, a], USER_LIMIT - 1)  # A keeps room for its own
+    parked = await _park(a, "trades.BTCUSDT", sink)
+    (refused,) = await _asub(b, "trades.ETHUSDT")
+    sink.go.set()
+    (started,) = await parked
+    (again,) = await _asub(b, "trades.ETHUSDT")
+    told = "Rebuild budget spent (1600 a minute per user); not subscribed."
+    messages = [r.get("error", {}).get("message") for r in (refused, started, again)]
+    assert messages == [told, None, told]
+    assert [s.rebuild_held for s in a.authz.by_id.values()] == [False]  # started: holds none
+    users = a.authz.services.user_rebuilds
+    assert (len(users._stamps[USER]), users._held) == (USER_LIMIT, {})
+
+
+async def test_an_entry_closed_or_refused_mid_subscribe_gives_its_user_s_draw_back() -> None:
+    """#3476: an entry waiting in its upstream when its connection ends, whose lease release then
+    raises (#2735), and one refused at the upstream step (as above) let their held draw go first
+    in `_drop`: neither started, so the user still has that draw."""
+    sink = _ParkedSink()
+    a, probe, *others = _one_user(6, UpstreamRefs(sink))
+    _spend(others, USER_LIMIT - 1)
+    a.authz.services.bars = _DroppedSeries(every=True)  # the lease it takes cannot be released
+    parked = await _park(a, BARS, sink)
+    (entry,) = a.authz.by_id.values()
+    held = entry.rebuild_held
+    parked.cancel()  # the connection ends: the gateway cancels its handler mid-`sub` ...
+    with contextlib.suppress(asyncio.CancelledError):
+        await parked
+    a.authz.release_all()  # ... and its teardown lets go of what the entry held
+    assert (held, entry.rebuild_held) == (True, False)
+    probe.authz.services.bars = _CappedBars()  # its lease is refused: `subscription_limit`
+    (capped,) = await _asub(probe, BARS)
+    assert capped["error"]["code"] == "subscription_limit"
+    takes = [probe.authz.rebuilds.take((ch, None), "ctl") for ch in ("x.1", "x.2")]
+    assert takes == [None, "user"]  # the user's last draw was still there
+
+
+async def test_two_users_each_spend_only_their_own_limit_and_get_their_own_record() -> None:
+    """C-12.4, #3476: two users on one process's limiter, 4 each. A is spent, with an entry parked
+    holding a draw; B's `sub` entry, `resync` and resuming `ctl` pass while A's are refused, and
+    each user's first `user` refusal in the window writes that user's own record."""
+    sink, rows, other = _ParkedSink(), _Rows(), uuid.UUID(int=0x200)
+    a, parker, b = _connections([USER, USER, other], UpstreamRefs(sink), limit=4)
+    a.authz.services.audit = rows
+    parked = await _park(parker, "trades.BTCUSDT", sink)  # first: the sink parks one `open`
+    for conn in (a, b):
+        await _asub(conn, BOOK)
+    for _ in range(2):
+        _resync(a, BOOK)  # A: three draws and the hold, its limit
+    answers = []
+    for conn in (a, b):
+        conn.take()
+        (entry,) = await _asub(conn, HEAT)
+        _resync(conn, BOOK)
+        answers.append((entry["ok"], conn.take()[-1]["t"], _resume(conn)["t"]))
+    assert answers == [(False, "err", "err"), (True, "snap", "ctl_ok")]
+    assert [r["ok"] for r in await _asub(b, "trades.ETHUSDT")] == [False]  # B's first refusal
+    records = [(action, row["actor_user_id"]) for action, row, _ in rows.rows]
+    assert records == [("ws.rebuild.refused", USER), ("ws.rebuild.refused", other)]
+    sink.go.set()
+    await parked
+
+
+async def test_an_entry_a_revocation_ends_mid_subscribe_never_draws_on_its_user() -> None:
+    """#3476, an exact bound: a revocation that ends an entry waiting in its upstream lets its hold
+    go; when the wait ends, the entry draws on its connection (SR-193), never on its user."""
+    sink = _ParkedSink()
+    (conn,) = _one_user(1, UpstreamRefs(sink))
+    parked = await _park(conn, "trades.BTCUSDT", sink)
+    reader = PrincipalSnapshot(
+        USER, frozenset({"manager"}), frozenset({Permission.ORDERS_READ}), ()
+    )
+    assert conn.authz.apply_snapshot(VersionedSnapshot(reader, 1), 1)  # revokes the entry
+    sink.go.set()
+    await parked
+    users = conn.authz.services.user_rebuilds
+    assert (users._stamps, users._held, len(conn.authz.rebuilds._all)) == ({}, {}, 1)

@@ -60,7 +60,7 @@ from candleviewer.ws.limits import (
     SUB_ID_MAX_LEN,
 )
 from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
-from candleviewer.ws.rebuild_budget import RebuildBudget, topic_key
+from candleviewer.ws.rebuild_budget import RebuildBudget, UserRebuilds, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
     EVICTION_LOG_EVERY_S,
@@ -204,6 +204,8 @@ class SubscriptionServices:
     #: E17-T06: draws each connection's span ids (`sp`, 23 §3.1); the app sets it from
     #: `CV_TELEMETRY_ENABLED`, and `None` (latency telemetry off) means no frame carries one.
     span_ids: Callable[[], str] | None = None
+    #: #3476 (§7.5): the rebuild limit per user, which every connection's budget draws on too.
+    user_rebuilds: UserRebuilds = field(default_factory=UserRebuilds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +279,9 @@ class Subscription:
     announced: bool = True
     #: E17-T03: set when it ends (`_drop`), after which `TopicEmitter` sends nothing of it.
     ended: bool = False
+    #: #3476: `_admit` holds one of its user's draws, which its start draws (`handle_sub`) or
+    #: its end lets go (`_drop`): its draw comes after an await, so the check is not enough.
+    rebuild_held: bool = False
 
     @property
     def ch(self) -> str:
@@ -369,8 +374,10 @@ class ConnectionAuthz:
         self.by_id: dict[str, Subscription] = {}
         self._by_topic: dict[str, set[str]] = {}
         self._ids = itertools.count(1)
-        #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it).
-        self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock)
+        #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it),
+        #: and its user's, which all of the user's connections share (#3476).
+        user = (self.services.user_rebuilds, principal.user_id)
+        self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock, user=user)
         #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
@@ -531,10 +538,12 @@ class ConnectionAuthz:
             held |= s.symbols
         if len(held | sub.symbols) > MAX_SYMBOLS_PER_CONNECTION:
             raise TopicError("subscription_limit", "40 symbols per connection reached.")
-        if (scope := self.rebuilds.refusal(topic_key(topic, rs), "sub")) is not None:
+        key = topic_key(topic, rs)
+        if (scope := self.rebuilds.refusal(key, "sub")) is not None:
             self.refusal_scope = scope  # SR-193: after every refusal decided from the entry (§5.2)
-            spent = self.rebuilds.count_refusal("sub", scope)
+            spent = self.rebuilds.count_refusal("sub", scope, key)
             raise TopicError("resync_rate_limited", f"{spent}; not subscribed.")
+        sub.rebuild_held = self.rebuilds.hold()  # #3476: the user's draw, until it starts or ends
         self._record(sub)
         result = {
             "ch": topic.ch,
@@ -699,6 +708,9 @@ class ConnectionAuthz:
                 del self._by_topic[sub.ch]
         consumer = self._consumer(sub)
         now = self.services.clock()
+        if sub.rebuild_held:  # #3476: it never started, so no draw; before a release can raise
+            sub.rebuild_held = False
+            self.rebuilds.unhold()
         hold, sub.series_hold = sub.series_hold, None
         if hold is not None:  # first: a lease release below can raise (#2735)
             # A lease never taken (refused, or the connection ended mid-subscribe): no grace.
@@ -774,7 +786,7 @@ class ConnectionAuthz:
             key = topic_key(sub.topic, sub.replay_session_id)
             if (scope := self.rebuilds.take(key, "ctl")) is not None:
                 self.rebuilds.log("ctl", scope, self.connection_id, sub.ch)
-                spent = self.rebuilds.count_refusal("ctl", scope)
+                spent = self.rebuilds.count_refusal("ctl", scope, key)
                 raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if paused or "paused" in changes:
             effective["paused"] = paused
@@ -1384,7 +1396,9 @@ async def handle_sub(
                 result = await authz.subscribe_upstream(sub) or result
                 if result["ok"]:
                     admitted.append(sub)
-                    authz.rebuilds.draw(topic_key(sub.topic, sub.replay_session_id), "sub")
+                    key, held = topic_key(sub.topic, sub.replay_session_id), sub.rebuild_held
+                    sub.rebuild_held = False  # #3476: its hold becomes the draw, in one step
+                    authz.rebuilds.draw(key, "sub", held=held)
             if rs is not None and ch != SYSTEM_TOPIC:
                 result["rs"] = rs
             results.append(result)
@@ -1407,6 +1421,7 @@ async def handle_sub(
     for sub in admitted:  # with no await since `send` queued the reply
         sub.announced = True
     await _audit_grants(authz, admitted)  # after the reply is queued, never ahead of it
+    await audit_rebuild_refusal(authz)  # #3476: a user's first `user` refusal in a window
 
 
 def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:
@@ -1574,6 +1589,47 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             actor_user_id=authz.principal.user_id,
             exc_info=True,
         )
+    except asyncio.CancelledError:
+        count_audit_failure()  # lost unless its append had begun; the cancel still propagates
+        raise
+
+
+async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
+    """#3476 (§7.7): the one `ws.rebuild.refused` record of a user's window, for the `user` refusal
+    the connection's last request left due (`RebuildBudget.audit_due`): written after that
+    request's reply, by `handle_sub` and by the gateway after a `ctl` or `resync`. The window is
+    marked here, as the write starts (`first_user_refusal`), so a request that ended first leaves
+    it to the user's next refusal. Its object is named as `ws.subscribe.denied`'s (`_denial`),
+    never with the client's text. Best effort, bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record not
+    confirmed is counted and logged, and a cancellation is counted and propagates; neither changes
+    the refusal, which already went out."""
+    key, authz.rebuilds.audit_due = authz.rebuilds.audit_due, None
+    audit = authz.services.audit
+    if key is None or audit is None or not authz.rebuilds.first_user_refusal():
+        return
+    object_id, _, reason = _denial(key[0], "resync_rate_limited", "user")
+    try:
+        await _emit_bounded(
+            audit,
+            "ws.rebuild.refused",
+            actor_label="ws",
+            actor_user_id=authz.principal.user_id,
+            object_kind="ws_topic",
+            object_id=object_id,
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=reason,
+        )
+    except Exception:
+        count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`
+        with contextlib.suppress(Exception):  # a failing logger must not reach the request
+            _log().warning(
+                "ws audit not confirmed",
+                action="ws.rebuild.refused",
+                object_id=object_id,
+                actor_user_id=authz.principal.user_id,
+                exc_info=True,
+            )
     except asyncio.CancelledError:
         count_audit_failure()  # lost unless its append had begun; the cancel still propagates
         raise

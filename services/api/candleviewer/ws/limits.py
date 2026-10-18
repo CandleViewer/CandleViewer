@@ -34,7 +34,7 @@ Single home for every bound the gateway enforces. Overflow policy:
   `FANOUT_AUDIT_TIMEOUT_S`; after `FANOUT_AUDIT_MAX_FAILURES` failed rows in a
   row the rest are abandoned and logged with a count (#2824).
 - A `resync`, a `ctl` that would re-snapshot or a `sub` entry that would start a
-  subscription, past the connection's rebuild budget -> `resync_rate_limited`; it
+  subscription, past the connection's or its user's rebuild budget -> `resync_rate_limited`; it
   changes nothing, and only a topic's own resync loop is revoked (SR-193).
 - With the backpressure flag on, a connection's queued `bars.*` frames past
   `BARS_SHARE_PCT` of either limit of its outbound budget -> those topics alone are
@@ -95,6 +95,10 @@ BARS_SHARE_PCT = 50
 REBUILD_MAX_PER_TOPIC = 5
 REBUILD_MAX_PER_CONNECTION = 2 * MAX_SUBSCRIPTIONS
 REBUILD_WINDOW_S = 60.0
+#: #3476 (§7.5, §16.2): the rebuild budget of a user, which every connection of the user draws on
+#: too, in the same window. Fixed, never derived from `MAX_CONNECTIONS_PER_USER` (a setting can
+#: raise that): one full attach of 8 connections of `MAX_SUBSCRIPTIONS`, the §16.2 defaults.
+REBUILD_MAX_PER_USER = 4 * REBUILD_MAX_PER_CONNECTION
 #: §16.2: `machines.{entity}.state` registry entries, live and terminal. Past it a payload for a
 #: new entity is refused, counted and logged (rate-limited); no entry is evicted, so no live
 #: machine's state is lost.

@@ -1801,7 +1801,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "sustained: a client in a rebuild loop",
         _L,
         "E17",
-        max_series=6,
+        max_series=9,  # 3 kinds x 3 causes (#3476: `user`)
         exported=True,
     ),
     _s(

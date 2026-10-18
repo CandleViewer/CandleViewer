@@ -96,6 +96,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "ws.connection.closed",
         # SR-189 (#2172): an older WS permission snapshot refused in favour of a newer one.
         "ws.permission_snapshot.refused",
+        # #3476: a user's first WS rebuild refused for its per-user limit in a window, one record.
+        "ws.rebuild.refused",
         "users.create",
         "users.invited",
         "users.invite_redeemed",
