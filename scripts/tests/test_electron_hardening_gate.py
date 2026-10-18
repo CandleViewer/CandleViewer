@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci.electron_hardening_checks import (
+    APP_PROBES,
     SR110_REQUIRED,
     SR112_EXACT,
     parse_csp,
@@ -598,6 +599,26 @@ def test_a_handler_response_collected_twice_fails_sr112(
         "app:// handler GET app://candleviewer/: collected more than once" in v.render()
         for v in vs
     )
+
+
+COLLECTOR = (
+    Path(__file__).resolve().parents[2]
+    / "apps/desktop/scripts/collect-hardening-facts.mjs"
+)
+
+
+def collector_probes() -> list[tuple[str, str]]:
+    """The collector's PROBES literal: the text from `const PROBES = [` to the next `];`, read
+    as JSON once the trailing comma prettier leaves after the last pair is dropped."""
+    text = COLLECTOR.read_text(encoding="utf-8")
+    start = text.index("const PROBES = [") + len("const PROBES = ")
+    body = text[start : text.index("];", start)].rstrip().removesuffix(",")
+    return [(method, url) for method, url in json.loads(body + "]")]
+
+
+def test_the_collector_fetches_the_requests_the_gate_judges() -> None:
+    # Drift would otherwise show only in CI's packaged-build job, as a missing response.
+    assert collector_probes() == list(APP_PROBES)
 
 
 @pytest.mark.parametrize(
