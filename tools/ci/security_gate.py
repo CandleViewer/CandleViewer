@@ -252,6 +252,17 @@ def evaluate_findings(
             blocking_code = blocking_code or "CI-SEC-001"
             continue
 
+        # An entry accepts up to its own severity: a finding reported above it (an advisory
+        # re-scored after the decision, say) needs a new decision, not the old entry (#3558).
+        if not _severity_at_least(risk.severity, finding.severity):
+            messages.append(
+                f"CI-SEC-001: {finding.tool} finding {finding.finding_id} "
+                f"({finding.severity}) has an accepted-risk entry for {risk.severity} only, "
+                f"so it needs a new decision — {finding.detail}"
+            )
+            blocking_code = blocking_code or "CI-SEC-001"
+            continue
+
         if risk.expires <= run_date:
             messages.append(
                 f"CI-SEC-004: accepted risk expired for {finding.finding_id} "

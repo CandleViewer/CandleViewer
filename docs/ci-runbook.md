@@ -353,7 +353,8 @@ index alone, removing nothing.
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
 - **CI-SEC-001** (blocking finding): a CodeQL/Semgrep/Bandit/pip-audit/
-  npm-audit/dependabot/gitleaks finding has no accepted-risk entry or is Critical, which
+  npm-audit/dependabot/gitleaks finding has no accepted-risk entry, only one filed for a
+  lower severity (re-decide it), or is Critical, which
   no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
   step, §3). Fix the finding: for an npm-audit advisory on a transitive

@@ -26,8 +26,9 @@
 #                       is for an advisory no other scanner reports.
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
 #                       dependabot, gitleaks, license-scan, trivy
-#   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW (informational only;
-#                       does not override the tool's own reported severity)
+#   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW: the highest severity
+#                       the entry accepts. The tool's own severity counts; a
+#                       finding above the entry's blocks (CI-SEC-001, #3558).
 #   reason:    str   — why this is accepted now (not "will fix later")
 #   approver:  str   — GitHub handle; MUST be security or the owner per
 #                       SR-135/SR-136 approval rule (CI-SEC-003 licence path)

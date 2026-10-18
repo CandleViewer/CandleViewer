@@ -125,6 +125,24 @@ def test_a_dependabot_entry_covers_no_other_tools_finding() -> None:
     assert (result.blocked, result.code) == (True, "CI-SEC-001")
 
 
+def test_alert_re_scored_above_its_entry_blocks_until_re_decided(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An advisory accepted as a Medium, then re-scored High, needs a new decision (#3558).
+    (alerts,) = _alert_pages()
+    alerts[0]["security_advisory"]["severity"] = "high"
+    entry = {"id": TAURI, "tool": "dependabot", "severity": "MEDIUM", "reason": "test"}
+    risks = _write_yaml(
+        tmp_path, {"entries": [entry | {"approver": "basiltt", "expires": "2099-01-01"}]}
+    )
+    rc, out, err = _dependabot_gate(capsys, _write_json(tmp_path, "alerts.json", [alerts]), risks)
+    assert (rc, out) == (1, "")
+    assert err.startswith(
+        "CI-SEC-001: dependabot finding GHSA-7gmj-67g7-phm9 (HIGH) has an accepted-risk entry "
+        "for MEDIUM only, so it needs a new decision — alert 55, rust:tauri in "
+    )
+
+
 NOT_FOUND = (ALERTS / "gh-2.67.0-not-found.json").read_text(encoding="utf-8")
 UNREADABLE = {
     "": "is empty: the alerts API call wrote nothing",
