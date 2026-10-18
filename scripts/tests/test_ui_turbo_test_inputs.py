@@ -284,7 +284,11 @@ def test_unit_frontend_selects_the_ui_tests_by_their_inputs() -> None:
     assert _tasks(UI)["test:cov"].get("tags") == [TAG]
     turbo, manifest = _lane_filters("unit-frontend")
     assert turbo == manifest, "the coverage manifest records what the turbo run selects"
-    assert f"'tag:{TAG}[origin/main]'" in turbo
+    # The tag selector adds to the name filters and cannot replace them (#3471): tags are not
+    # hashed, a package's turbo.json and package.json are not task inputs, a changed dependency
+    # is not one of ui's inputs either, and web and desktop carry no tag.
+    names = [f"'@candleviewer/{name}...[origin/main]'" for name in ("desktop", "ui", "web")]
+    assert turbo == [*names, f"'tag:{TAG}[origin/main]'"]
 
 
 def test_typecheck_selects_ui_typecheck_by_its_inputs() -> None:
