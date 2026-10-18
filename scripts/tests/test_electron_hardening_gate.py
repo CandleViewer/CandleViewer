@@ -672,10 +672,14 @@ def test_autoupdate_enabled_in_main_fails_sr115(tree: Tree) -> None:
     assert srs(tree.violations()) == {"SR-115"}
 
 
+MAP_FILTER = "    filter:\n      - '!**/*.map'\n"
+GOOD_PACKAGING = GOOD_BUILDER + GOOD_WEB_RESOURCES
+
+
 @pytest.mark.parametrize(
     "files",
-    ["files:\n  - dist/**/*\n", "", "files: dist/**/*\n"],
-    ids=["no-exclusion", "absent", "one-pattern"],
+    ["files:\n  - dist/**/*\n", "", "files: dist/**/*\n", "files: []\n", "files:\n"],
+    ids=["no-exclusion", "absent", "one-pattern", "empty", "null"],
 )
 def test_sourcemaps_shipped_fails_sr116(tree: Tree, files: str) -> None:
     tree.files["electron-builder.yml"] = files + GOOD_WEB_RESOURCES
@@ -691,8 +695,9 @@ def test_sourcemaps_shipped_fails_sr116(tree: Tree, files: str) -> None:
         '    filter:\n      - "**/*"\n      - "!*.map"\n',
         '    filter:\n      - "**/*"\n      - "!**/*.map"\n      - assets/*.js.map\n',
         '    filter:\n      - "**/*"\n      - "!**/*.map"\n      - "!!**/*.js.map"\n',
+        '    filter:\n      - "**/*"\n      - "!**/*.map"\n      - "!${env.X}"\n',
     ],
-    ids=["none", "empty", "all", "top-level-only", "re-included", "double-negation"],
+    ids=["none", "empty", "all", "shallow", "re-included", "double-negation", "macro"],
 )
 def test_web_dist_entry_that_could_package_maps_fails_sr116(
     tree: Tree, web_filter: str
@@ -709,8 +714,16 @@ def test_web_dist_entry_that_could_package_maps_fails_sr116(
         WEB_ENTRY
         + "    filter:\n      - '**/*'\n\n      - '!**/*.map'\n      - '!*.txt'\n",
         "extraResources:\n- filter:\n  - '!**/*.map'\n  to: ./web/dist/\n  from: web\n",
+        WEB_ENTRY + '    filter:\n      - "${env.X}/**/*"\n      - "!**/*.map"\n',
+        GOOD_WEB_RESOURCES + "  - from: docs\n    to: web/docs\n" + MAP_FILTER,
     ],
-    ids=["exclusion-only", "exclusion-then-exclusion", "compact-reordered"],
+    ids=[
+        "exclusion-only",
+        "exclusion-then-exclusion",
+        "compact-reordered",
+        "macro-before-exclusion",
+        "sibling-entry",
+    ],
 )
 def test_web_dist_entry_excluding_maps_last_passes(tree: Tree, resources: str) -> None:
     tree.files["electron-builder.yml"] = GOOD_BUILDER + resources
@@ -723,8 +736,10 @@ def test_web_dist_entry_excluding_maps_last_passes(tree: Tree, resources: str) -
         GOOD_BUILDER,
         GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("to: web/dist", "to: web"),
         GOOD_BUILDER + GOOD_WEB_RESOURCES.replace("from: web", "from: web/assets"),
+        GOOD_PACKAGING + "  - from: src\n    to: web/dist/src\n" + MAP_FILTER,
+        GOOD_PACKAGING + "  - from: src\n" + MAP_FILTER,
     ],
-    ids=["absent", "other-destination", "other-source"],
+    ids=["absent", "other-destination", "other-source", "inside", "at-root"],
 )
 def test_web_dist_missing_from_the_asset_root_fails_sr174(
     tree: Tree, builder: str
@@ -750,6 +765,12 @@ def test_web_dist_missing_from_the_asset_root_fails_sr174(
         ("  -\n", "unreadable line '-'"),
         ("extraFiles: x\n  - y\n", "cannot read extraFiles: a value and a block"),
         ("extraFiles: [{from: docs}]\n", "cannot read extraFiles: unreadable value"),
+        ("!!str extraFiles:\n  - from: docs\n", "cannot read line '!!str extraFiles:'"),
+        ('"extra\\x46iles":\n  - from: docs\n', "cannot read line '\"extra"),
+        ("? extraFiles\n: [docs]\n", "cannot read line '? extraFiles'"),
+        ("extraFiles :\n  - from: docs\n", "cannot read line 'extraFiles :'"),
+        ("linux:\n  !!str files: [x]\n", "cannot read line '!!str files: [x]'"),
+        ("extends: base.yml\n", "does not follow 'extends'"),
     ],
 )
 def test_other_packaging_that_could_ship_maps_fails_sr116(
@@ -758,6 +779,23 @@ def test_other_packaging_that_could_ship_maps_fails_sr116(
     tree.files["electron-builder.yml"] = GOOD_BUILDER + GOOD_WEB_RESOURCES + extra
     vs = tree.violations()
     assert srs(vs) == {"SR-116"} and any(reason in v.message for v in vs)
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        GOOD_BUILDER + "  - from: a.js.map\n" + MAP_FILTER + GOOD_WEB_RESOURCES,
+        GOOD_PACKAGING + "  - from: web/x.js.map\n    to: maps/x.js\n" + MAP_FILTER,
+        GOOD_PACKAGING + "extraFiles:\n  - from: a.txt\n    to: a.MAP\n" + MAP_FILTER,
+    ],
+    ids=["files-source", "extraResources-source", "extraFiles-destination"],
+)
+def test_single_file_map_entry_fails_sr116_whatever_its_filter(
+    tree: Tree, builder: str
+) -> None:
+    tree.files["electron-builder.yml"] = builder
+    vs = tree.violations()
+    assert srs(vs) == {"SR-116"} and any("copies a .map file" in v.message for v in vs)
 
 
 def test_the_shipped_builder_config_packages_the_web_dist_without_maps() -> None:
