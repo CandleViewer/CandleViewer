@@ -1,8 +1,8 @@
 // E17-T04 S4 (23 5, 7.5, 9.3, 11; C2, C5): the engine. It composes the connection, the stream
 // core (S2) and the reducer's events (S1b): the registry's `subscribe`/`unsubscribe`/`resync` become
 // `sub`, `unsub` and `resync` frames, every reply is correlated to the stream its request was for
-// (`to`), and after a reconnect every stream subscribes again in the 9.3 order. Worker-agnostic:
-// everything platform-shaped is injected.
+// (`to`), what a stream's `system` says drives the reducer, and after a reconnect every stream
+// subscribes again in the 9.3 order. Worker-agnostic: everything platform-shaped is injected.
 import type { ConsumerSpec, TokenSource, TopicFrame } from "../api";
 import type { Timers } from "../policy/timers";
 import { platformTimers } from "../policy/timers";
@@ -65,6 +65,8 @@ export interface EngineCounters {
   forcedSnapshots: number;
   /** Inbound frames that could not be trusted: undecodable, or over the 4 MiB cap. */
   malformedFrames: number;
+  /** Frames the gateway refused with `client_rate_limited`. */
+  deniedFrames: number;
   /** Requests whose reply is still due (bounded: the oldest is forgotten past `LEDGER_MAX`). */
   pendingRequests: number;
   /** Subscriptions kept: wanted ones, and ones the server still holds after their last consumer left. */
@@ -78,6 +80,8 @@ export interface WsEngine {
   stop(): void;
   /** `rs` selects a replay stream of the `ch` (23 11). `system` is implicit and shared. */
   consume(spec: ConsumerSpec, rs?: string | undefined): StreamHandle;
+  /** The focused pane's topics come back first after a reconnect (9.3); `null` leaves it to each spec's `priority`. */
+  focusPane(paneId: string | null): void;
   /** `bye.hint.most_expensive_topics` of the last close (8.4): kept, never acted on. */
   readonly slowConsumerHint: readonly string[];
   /** A fresh snapshot of the counters. */
@@ -85,6 +89,8 @@ export interface WsEngine {
 }
 
 const SYSTEM = "system";
+/** A `snap` is due this long after `sub_ok`, a resync or a `resnapshot`: else one resync, then the stream reads stale. */
+export const BASELINE_DEADLINE_MS = 10_000;
 /** Requests whose reply or error is still due, bounded (C-2.18): the oldest is forgotten first. */
 export const LEDGER_MAX = 512;
 /** 9.3: after the implicit `system`, these private families come first, in this order. */
@@ -117,6 +123,8 @@ interface Stream {
    * been let go or sent again since is an old one's: the reply scope (`rs`) alone cannot tell.
    */
   gen: number;
+  /** A consumer arrived for a subscription the server still holds: no `sub`, but a baseline is asked for. */
+  attach: boolean;
 }
 
 /**
@@ -128,6 +136,8 @@ interface Request {
   readonly rs: string | undefined;
   readonly frame: F.ClientFrame;
   readonly gens: ReadonlyMap<string, number>;
+  /** The gateway refused it once (8.5) and it went again: a second refusal of it is final. */
+  readonly resent: boolean;
 }
 
 const NO_GENS: ReadonlyMap<string, number> = new Map();
@@ -156,6 +166,12 @@ const mapNonEmpty = <T, U>([first, ...rest]: NonEmpty<T>, map: (item: T) => U): 
   ...rest.map(map),
 ];
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+/** The reducer vets every field it reads (S1b); this only says the payload is shaped like an update at all. */
+const isSystemUpdate = (v: unknown): v is F.SystemUpdate =>
+  isRecord(v) && typeof v["kind"] === "string";
+
 export function createWsEngine(options: EngineOptions): WsEngine {
   const { sink } = options;
   const timers: Timers = { ...platformTimers, ...options.timers };
@@ -163,9 +179,12 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   const ledger = new Map<string, Request>();
   /** `ch` -> `unsub` requests whose `unsub_ok` is due (9.3: a new `sub` of it waits, and its old frames are dropped). */
   const unsubbing = new Set<string>();
-  const own = { resyncsSent: 0 };
+  /** `(ch, rs)` -> the wait for a baseline, and whether it already got its one retry. */
+  const deadlines = new Map<string, { timer: unknown; retried: boolean }>();
+  const own = { resyncsSent: 0, deniedFrames: 0 };
   let generation = 0;
   const nextGeneration = (): number => (generation += 1);
+  let focusedPane: string | null = null;
   let syncQueued = false;
 
   const connection: Connection = createConnection({
@@ -180,6 +199,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     emit: (event) => sink.event(event),
     hooks: {
       ready: () => {
+        arm(SYSTEM, undefined); // attached by the server at `auth_ok`: its snapshot is due
         sync();
       },
       down,
@@ -188,17 +208,18 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     },
   });
 
-  /** Sends a request whose reply is due: `rs` is the stream the reply is for (`to`), `gens` the subscriptions it is about, and the frame is kept in case the gateway refuses it. */
+  /** Sends a request whose reply is due: `rs` is the stream the reply is for (`to`), `gens` the subscriptions it is about, and the frame is kept in case the gateway refuses it (`resent`: it already went again once). */
   function submit(
     frame: F.ClientFrame,
     rs: string | undefined,
     gens: ReadonlyMap<string, number> = NO_GENS,
+    resent = false,
   ): void {
     if (ledger.size >= LEDGER_MAX) {
       const oldest = ledger.keys().next();
       if (!oldest.done) ledger.delete(oldest.value);
     }
-    ledger.set(frame.id, { rs, frame, gens });
+    ledger.set(frame.id, { rs, frame, gens, resent });
     connection.send(frame);
   }
 
@@ -242,6 +263,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         handle: undefined,
         held: kept !== undefined,
         gen: kept?.gen ?? 0,
+        attach: kept !== undefined,
       });
       if (kept !== undefined) inherit(kept);
       scheduleSync();
@@ -253,9 +275,17 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       own.resyncsSent += 1;
       const pin = subId === undefined ? {} : { sub_id: subId };
       submit(F.resync(connection.nextId(), ch, { ...payload, ...pin }, rs), rs);
+      arm(ch, rs);
     },
     deliver(ch, rs, frame) {
       if (frame.kind === "snap") forgetResyncs(ch, rs);
+      // A snapshot ends the wait for one, and so does the server ending the stream (a stream the engine lets go of is disarmed where it is dropped, a lost connection by `down`); a `resnapshot` brings one by itself.
+      if (frame.kind === "snap" || (frame.kind === "reset" && frame.reason === "revoked")) {
+        disarm(topicKey(ch, rs));
+      } else if (frame.kind === "reset" && frame.reason === "resnapshot") {
+        arm(ch, rs);
+      }
+      if (ch === SYSTEM && rs === undefined) bridgeSystem(frame);
       sink.deliver(ch, rs, frame);
     },
   };
@@ -278,6 +308,25 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     clearTimer: timers.clearTimeout,
   });
   const registry = createSubscriptionRegistry({ host, guard, now: timers.now });
+  /** The engine's own consumer of `system`: it drives the reducer (WS-E06, C12). Never released, never subscribed. */
+  const system = registry.consume({ ch: SYSTEM, paneId: "engine", priority: "private" });
+
+  /**
+   * The status goes first, so a resynced `system` stream is `live` before the update of the
+   * snapshot that ended the resync (the ordering `EngineEvent` promises): a kill-switch fact that
+   * arrives sooner is dropped by the reducer, never trusted. The reconnect is the reducer's own
+   * business (`connecting` resets the stream).
+   */
+  function bridgeSystem(frame: TopicFrame): void {
+    if (frame.kind === "reset") {
+      if (frame.reason !== "reconnect")
+        sink.event({ type: "system_stream", status: system.status });
+      return;
+    }
+    if (frame.kind === "snap") sink.event({ type: "system_stream", status: system.status });
+    const body = frame.kind === "snap" ? frame.bodies[0] : frame.body;
+    if (body.e === "j" && isSystemUpdate(body.p)) sink.event({ type: "system", update: body.p });
+  }
 
   function scheduleSync(): void {
     if (syncQueued) return;
@@ -288,7 +337,13 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   function priorityOf(stream: Stream): SubscriptionPriority {
     let best: SubscriptionPriority = "other";
     for (const { spec } of stream.consumers) {
-      const asked = spec.priority;
+      // The focused pane is whichever the app says; without one, each spec says its own.
+      const asked =
+        spec.priority === "private" || focusedPane === null
+          ? spec.priority
+          : spec.paneId === focusedPane
+            ? "focused"
+            : "other";
       if (PRIORITY_RANK[asked] < PRIORITY_RANK[best]) best = asked;
     }
     return best;
@@ -315,8 +370,9 @@ export function createWsEngine(options: EngineOptions): WsEngine {
 
   /**
    * Brings the server in line with what is wanted: subscribes what is new (in the 9.3 order, in
-   * frames of at most `max_topics_per_request`) and unsubscribes what nobody wants. One `unsub` ends
-   * every subscription of a `ch`, live and replay alike (5.3), so it is sent only when none is wanted.
+   * frames of at most `max_topics_per_request`), unsubscribes what nobody wants, and asks for a
+   * baseline of a subscription a new consumer found still held. One `unsub` ends every
+   * subscription of a `ch`, live and replay alike (5.3), so it is sent only when none is wanted.
    */
   function sync(): void {
     syncQueued = false;
@@ -333,9 +389,12 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         for (const s of held) {
           s.held = false;
           s.gen = nextGeneration(); // what the server held goes with the `unsub`
+          disarm(s.key); // no snapshot is due of a subscription that is going
         }
       }
       for (const s of group.filter(wanted)) {
+        if (s.attach && s.held) askBaseline(s.ch, s.rs);
+        s.attach = false;
         if (!s.held && !unsubbing.has(ch)) adds.push(s);
       }
     }
@@ -365,6 +424,47 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     }
   }
 
+  /** The server holds the subscription, but this consumer has no baseline: ask for one, within the resync budget (7.5). */
+  function askBaseline(ch: string, rs: string | undefined): void {
+    guard.request(ch, topicKey(ch, rs), () => {
+      const subId = streams.get(topicKey(ch, rs))?.handle?.subId;
+      host.resync(ch, rs, { last_seq: null, reason: "client_restart" }, subId);
+    });
+  }
+
+  function arm(ch: string, rs: string | undefined): void {
+    const key = topicKey(ch, rs);
+    const prior = deadlines.get(key);
+    if (prior !== undefined) timers.clearTimeout(prior.timer);
+    deadlines.set(key, {
+      retried: prior?.retried ?? false,
+      timer: timers.setTimeout(() => overdue(ch, rs), BASELINE_DEADLINE_MS),
+    });
+  }
+
+  function disarm(key: string): void {
+    const wait = deadlines.get(key);
+    if (wait === undefined) return;
+    timers.clearTimeout(wait.timer);
+    deadlines.delete(key);
+  }
+
+  /** No snapshot in time: ask once more, within the resync budget; if that fails too the stream reads stale until one comes, so a `system` fact the stream missed is never trusted (WS-E06). */
+  function overdue(ch: string, rs: string | undefined): void {
+    const wait = deadlines.get(topicKey(ch, rs));
+    if (wait === undefined) return;
+    if (!wait.retried) {
+      wait.retried = true;
+      askBaseline(ch, rs);
+      return;
+    }
+    deadlines.delete(topicKey(ch, rs));
+    registry.markOverdue(ch, rs);
+    if (ch === SYSTEM && rs === undefined) {
+      sink.event({ type: "system_stream", status: system.status });
+    }
+  }
+
   function onFrame(frame: Inbound, decodeMs: number): void {
     switch (frame.t) {
       case "snap":
@@ -376,6 +476,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         return onSubOk(frame);
       case "unsub_ok":
         return onUnsubOk(frame);
+      case "revoked":
+        return onRevoked(frame);
       case "err":
         return onErr(frame);
     }
@@ -397,7 +499,11 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     registry.onSubOk({ ...frame, p: { ...frame.p, results } }, scopeOf(request));
     // A refused topic is not held; the registry ended its stream, and an ended stream is not wanted, so it is not asked for again.
     for (const { result, stream } of current) {
-      if (!result.ok) stream.held = false;
+      if (!result.ok) {
+        stream.held = false;
+        continue;
+      }
+      arm(result.ch, request.rs);
     }
   }
 
@@ -411,10 +517,23 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     scheduleSync(); // what waited behind it can go
   }
 
+  function onRevoked(frame: ControlOf<"revoked">): void {
+    registry.onRevoked(frame);
+    for (const s of streams.values()) {
+      if (s.ch === frame.ch && s.handle?.status === "revoked") s.held = false; // the server dropped it
+    }
+    scheduleSync();
+  }
+
   /** The `err` that answers a request settles it (the connection has mapped it already, and settled any `auth`). */
   function onErr(frame: ControlOf<"err">): void {
     const request = take(frame.id);
     if (request === undefined) return;
+    if (frame.p.code === "client_rate_limited") {
+      // 8.5: the gateway dropped the frame unhandled and answered with its id. Send it again, once: a second refusal of it is final (the gateway closes 4429 at the second, and one that does not must not be fed for ever).
+      own.deniedFrames += 1;
+      if (!request.resent) return resubmit(request);
+    }
     if (request.frame.t === "sub") {
       refuseSub(request, request.frame, frame.p);
     } else if (request.frame.t === "unsub") {
@@ -422,6 +541,24 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       for (const ch of request.frame.p.topics) unsubbing.delete(ch);
       scheduleSync();
     }
+  }
+
+  /**
+   * The gateway dropped a frame unhandled: it goes again with its id. A `sub` goes only for the
+   * streams it is still about: one let go meanwhile has its `unsub` ahead of this frame at the
+   * gateway, and subscribing it again would leave the server holding what nobody reads.
+   */
+  function resubmit(request: Request): void {
+    const { frame } = request;
+    if (frame.t !== "sub") return submit(frame, request.rs, request.gens, true);
+    const [first, ...rest] = frame.p.topics.filter(({ ch }) => streamOf(request, ch) !== undefined);
+    if (first === undefined) return;
+    submit(
+      F.sub(frame.id, { ...frame.p, topics: [first, ...rest] }),
+      request.rs,
+      request.gens,
+      true,
+    );
   }
 
   /** A `sub` the gateway answered with an `err` subscribed nothing: each of its topics is refused, as a `sub_ok` would say. */
@@ -442,6 +579,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   /** The connection is gone: every stream is pending again (9.3: no session resumption) and subscribes afresh on the next one. */
   function down(): void {
     registry.onDisconnect();
+    for (const key of [...deadlines.keys()]) disarm(key);
     for (const s of streams.values()) {
       s.held = false;
       if (s.consumers.size === 0) streams.delete(s.key);
@@ -457,6 +595,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       connection.stop();
       streams.clear();
       registry.dispose(); // what it still held, and the resyncs that wait for their budget, are not coming back
+    },
+
+    focusPane(paneId) {
+      focusedPane = paneId;
     },
 
     consume(spec, rs) {

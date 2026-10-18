@@ -108,6 +108,113 @@ describe("backoff (9.2, C7)", () => {
   });
 });
 
+describe("what the user sees", () => {
+  it.each([
+    [true, "tailnet_unreachable"],
+    [false, "offline"],
+  ])(
+    "a connect that never opens is offline for the tracker's cause (online %s)",
+    async (online, cause) => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(online);
+      const t = connectionHarness();
+      t.gateway.refuse(1);
+      t.connection.start();
+      await t.advance(0);
+      expect(t.events).toEqual([{ type: "connecting" }, { type: "offline", cause }]);
+      await t.advance(500);
+      expect(t.gateway.conns).toHaveLength(2); // and it keeps trying
+    },
+  );
+
+  it("an open socket is a reachable network: a later refused token is offline for no network cause", async () => {
+    const t = connectionHarness();
+    t.gateway.refuse(1);
+    t.connection.start();
+    await t.advance(0);
+    expect(t.events.at(-1)).toEqual({ type: "offline", cause: "tailnet_unreachable" });
+    await t.advance(500); // the second attempt opens, and the gateway hangs up before auth_ok
+    t.gateway.latest.close(1011);
+    t.tokens.queue.push({ kind: "unavailable" }); // the third finds no token
+    await t.advance(1_000);
+    expect(t.events.at(-1)).toEqual({ type: "offline", cause: "offline" });
+  });
+
+  it("tells the streams their baseline is gone before it announces the reconnect", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    let seen = -1;
+    t.hooks.down.mockImplementation(() => void (seen = t.events.length));
+    t.gateway.latest.close(1011);
+    expect(t.hooks.down).toHaveBeenCalledTimes(1);
+    expect(t.events[seen]).toMatchObject({ type: "reconnecting" });
+  });
+});
+
+describe("ending the connection", () => {
+  it("a stop closes 1000 and never reconnects, not even from the wait", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    t.connection.stop();
+    expect(t.gateway.latest.closedByClient).toEqual({ code: 1000, reason: "client_stop" });
+    const u = connectionHarness();
+    await u.connect();
+    u.gateway.latest.close(1011); // in the wait
+    u.connection.stop();
+    expect(vi.getTimerCount()).toBe(0); // the reconnect is cancelled, not left to fire
+    await t.advance(60_000);
+    expect([
+      t.gateway.conns.length,
+      u.gateway.conns.length,
+      t.types().includes("reconnecting"),
+    ]).toEqual([1, 1, false]);
+  });
+
+  it("a stop during the token wait never opens a socket", async () => {
+    const t = connectionHarness();
+    t.tokens.getToken.mockImplementationOnce(() => new Promise(() => {}));
+    t.connection.start();
+    t.connection.stop();
+    await t.advance(60_000);
+    expect(t.gateway.conns).toHaveLength(0);
+  });
+
+  it("frames queued when the socket goes are dropped with it: nothing is retried", async () => {
+    const t = connectionHarness();
+    t.connection.start();
+    await t.advance(0); // hello is out, welcome is back, and auth waits for its 40 ms
+    t.gateway.latest.close(1011);
+    expect(vi.getTimerCount()).toBe(1); // the reconnect, and not the pacer's wait for a frame with no socket
+    await t.advance(500);
+    await t.advance(100);
+    expect(t.gateway.latest.of("auth")).toHaveLength(1);
+  });
+
+  it("ignores what a socket it gave up on still says", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    const old = t.gateway.latest;
+    old.mute();
+    await t.advance(45_100); // silence: abandoned, reconnect in 500 ms
+    old.lateClose(1006); // its close event arrives late
+    old.lateMessage({ t: "d", ch: "ticker.BTCUSDT", s: 1, p: {} });
+    expect(t.events.filter((e) => e.type === "reconnecting")).toHaveLength(1);
+    expect(t.frames.filter((f) => f.t === "d")).toEqual([]); // nor does its data reach the streams
+    await t.advance(500);
+    expect(t.gateway.conns).toHaveLength(2);
+  });
+
+  it("a socket factory that throws fails the attempt like any other", async () => {
+    const createSocket = vi.fn(() => {
+      throw new SyntaxError("bad url");
+    });
+    const t = connectionHarness(undefined, { createSocket });
+    t.connection.start();
+    await t.advance(500);
+    expect(createSocket).toHaveBeenCalledTimes(2);
+    expect(t.types()).toEqual(["connecting", "offline", "connecting", "offline"]);
+  });
+});
+
 describe("subscribing again after a reconnect (9.3)", () => {
   /** Consumed in no order that helps: the private topics last, a pane that is not focused first. */
   const consumeWorkspace = (t: ReturnType<typeof engineHarness>) => {
@@ -153,5 +260,15 @@ describe("subscribing again after a reconnect (9.3)", () => {
       "auth",
       "sub",
     ]);
+  });
+
+  it("a focused pane that changed is the one that comes after the private topics", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p2", priority: "focused" }));
+    t.engine.consume(spec(BOOK, { paneId: "p1", priority: "focused" }));
+    t.engine.consume(spec("orders", { paneId: "account", priority: "private" }));
+    t.engine.focusPane("p1"); // both specs say focused; the app has moved the focus to p1
+    await t.start();
+    expect(t.subscribed()).toEqual(["orders", BOOK, "trades.BTCUSDT"]);
   });
 });
