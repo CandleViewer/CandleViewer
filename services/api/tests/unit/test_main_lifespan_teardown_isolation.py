@@ -6,9 +6,10 @@ calls `stop_all`. These tests run the real `_lifespan` over a fake for each of t
 every supervised module, each recording its stop under its name, and make one step raise, or hang
 until the task running the teardown is cancelled, or make `stop_all` itself raise. Nothing sleeps
 or reads a clock: the fakes never suspend, except the hung one, which is cancelled once it has
-started. Each test compares the stops
-with those of a teardown in which nothing failed, so the order the teardown's comments name
-(`audit_budget_flush` and `account_health` before the modules, `stop_all` last) is kept as it is.
+started. A test whose teardown reaches every step compares the stops with those of a teardown in
+which nothing failed, so the order the teardown's comments name (`audit_budget_flush` and
+`account_health` before the modules, `stop_all` last) is kept as it is. The others check what
+they can: that every module still stops, or which steps a `GeneratorExit` skips.
 """
 
 from __future__ import annotations
@@ -363,6 +364,29 @@ async def test_lifespan_teardown_when_stop_all_raises_an_error_logs_it_and_goes_
         await _run(app)
     assert ran == unfailed
     assert _failed_steps(logs) == [("supervisor.stop_all", "RuntimeError", "error", True)]
+
+
+@pytest.mark.parametrize(
+    "make",
+    [asyncio.CancelledError, KeyboardInterrupt, lambda: SystemExit(3)],
+    ids=["cancelled-error", "keyboard-interrupt", "system-exit"],
+)
+async def test_lifespan_teardown_when_only_stop_all_raises_a_base_exception_reraises_it(
+    monkeypatch: pytest.MonkeyPatch, make: Callable[[], BaseException]
+) -> None:
+    """No step held anything: what `stop_all` raises, once it has stopped every module, is
+    logged and then leaves the lifespan unchanged. Re-raised before `stop_all` ran (at the end of
+    the steps, say), it is lost, and that fails."""
+    unfailed = await _unfailed(monkeypatch)
+    ran: list[str] = []
+    app, _ = _app(ran, monkeypatch)
+    exc = make()
+    monkeypatch.setattr(main, "Supervisor", _stop_all_raising(exc))
+    with capture_logs() as logs, pytest.raises(type(exc)) as raised:
+        await _run(app)
+    assert raised.value is exc
+    assert ran == unfailed
+    assert _failed_steps(logs) == [("supervisor.stop_all", type(exc).__name__, "error", True)]
 
 
 async def test_lifespan_teardown_after_a_step_raised_generator_exit_skips_later_steps_not_stop_all(
