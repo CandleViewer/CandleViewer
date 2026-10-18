@@ -9,6 +9,7 @@ so this suite needs no network and no installed scanners.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +26,24 @@ from tools.ci.run_security_local import (
     run_pip_audit,
     run_semgrep,
 )
+from tools.ci.run_security_local import _run as real_run
+
+PNPM_CLEAN = Path(__file__).resolve().parent / "fixtures" / "pnpm-audit" / "pnpm-12.5.1-clean.json"
+
+
+def _npm_audit_with_pnpm_output(tmp_path: Path, rc: int, stdout: str, stderr: str) -> ToolResult:
+    """run_npm_audit with pnpm faked (no network); the gate on its report runs for real."""
+
+    def fake_run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        if cmd[0] == "pnpm":
+            return subprocess.CompletedProcess(cmd, rc, stdout, stderr)
+        return real_run(cmd, cwd)
+
+    with (
+        patch("tools.ci.run_security_local._which", return_value="/usr/bin/pnpm"),
+        patch("tools.ci.run_security_local._run", side_effect=fake_run),
+    ):
+        return run_npm_audit(tmp_path)
 
 
 def test_run_semgrep_skips_when_binary_missing(tmp_path: Path) -> None:
@@ -56,6 +75,25 @@ def test_run_npm_audit_skips_when_pnpm_missing(tmp_path: Path) -> None:
     with patch("tools.ci.run_security_local._which", return_value=None):
         result = run_npm_audit(tmp_path)
     assert result.status == "SKIPPED"
+
+
+def test_run_npm_audit_hands_the_gate_pnpms_empty_report_verbatim(tmp_path: Path) -> None:
+    # pnpm prints no report when the registry gives it no answer (#3494). The gate must judge
+    # that empty file as it does in CI (CI-SEC-005, "is empty"), not a stand-in document, and
+    # the result carries pnpm's stderr, which says why.
+    result = _npm_audit_with_pnpm_output(tmp_path, 1, "", "ERR_PNPM_AUDIT_BAD_RESPONSE\n")
+    assert (tmp_path / "npm-audit.json").read_text(encoding="utf-8") == ""
+    assert result.status == "FAIL"
+    assert "CI-SEC-005: npm-audit: " in result.detail
+    assert "is empty: pnpm audit wrote no report" in result.detail
+    assert result.detail.endswith("ERR_PNPM_AUDIT_BAD_RESPONSE\n")
+
+
+def test_run_npm_audit_passes_pnpms_clean_report_to_the_gate(tmp_path: Path) -> None:
+    clean = PNPM_CLEAN.read_text(encoding="utf-8")
+    result = _npm_audit_with_pnpm_output(tmp_path, 0, clean, "")
+    assert (tmp_path / "npm-audit.json").read_text(encoding="utf-8") == clean
+    assert (result.status, result.detail) == ("PASS", "security_gate[npm-audit]: OK\n")
 
 
 def test_run_gitleaks_skips_when_no_binary_and_no_docker(tmp_path: Path) -> None:
