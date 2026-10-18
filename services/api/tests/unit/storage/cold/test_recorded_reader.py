@@ -26,12 +26,9 @@ from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.cold.observability import Severity, SystemEventSink
-from candleviewer.storage.cold.recorded_reader import (
-    ColdReplayReadError,
-    ColdReplayReadTimeout,
-    ParquetRecordedReader,
-)
+from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
 from candleviewer.storage.cold.scrub import verify_partition
+from candleviewer.storage.errors import ColdReplayReadError, ColdReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     ManifestCoverage,

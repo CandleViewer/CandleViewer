@@ -53,7 +53,11 @@ from candleviewer.storage.cold.layout import (
 from candleviewer.storage.cold.manifest import ManifestCorrupt, ManifestStore
 from candleviewer.storage.cold.observability import LoggingSystemEventSink, SystemEventSink
 from candleviewer.storage.cold.scrub import verify_partition
-from candleviewer.storage.errors import StorageExportVerifyFailed, StorageTierUnavailable
+from candleviewer.storage.errors import (
+    ColdReplayReadError,
+    ColdReplayReadTimeout,
+    StorageExportVerifyFailed,
+)
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
@@ -92,19 +96,6 @@ DEFAULT_TIMEOUT_S: Final = 20.0
 #: How often a stopping read interrupts its scan again until the scan's thread has returned.
 _STOP_POLL_S: Final = 0.1
 _US_PER_DAY: Final = 24 * _US_PER_HOUR
-
-
-class ColdReplayReadError(StorageTierUnavailable):
-    """The cold read was refused or failed: a path outside the registry, a manifest that names
-    a foreign file, a partition that failed verification, or a DuckDB error."""
-
-    code = "COLD_REPLAY_READ_ERROR"
-
-
-class ColdReplayReadTimeout(StorageTierUnavailable):
-    """The DuckDB scan exceeded its deadline and was interrupted."""
-
-    code = "COLD_REPLAY_READ_TIMEOUT"
 
 
 def _too_many() -> ColdReplayReadError:
