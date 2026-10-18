@@ -28,9 +28,12 @@ from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.key_selfcheck_wiring import JudgedCalls
 from candleviewer.key_test_wiring import wire_key_test
 from candleviewer.settings import Environment
-from candleviewer.storage.repositories.accounts import AccountsStoreScopeDeniedError
+from candleviewer.storage.repositories.accounts import (
+    AccountsStoreScopeDeniedError,
+    SelfCheckTargetRow,
+)
 from tests._signing import fake_capability
-from tests.contract._admin_support import validate_example
+from tests.contract._admin_support import SPEC, validate_example
 from tests.contract.test_create_api_key_provider import Resolver
 from tests.unit.accounts.test_key_import import ACCT, KEY, OTHER, OWNER
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW, World, facts, target
@@ -42,6 +45,9 @@ _TEST = f"/exchange-accounts/{ACCT}/keys/{KEY}/test"
 _RESULT, _PROBLEM, _EXCHANGE = "KeyTestResult", "Problem", "KeyExchangeProblem"
 _THROTTLED = "/components/responses/KeyTestThrottled/content/application~1problem+json/schema"
 _DEMO = "wss://stream-demo.bybit.com/v5/private"
+_OK = SPEC["paths"]["/exchange-accounts/{accountId}/keys/{keyId}/test"]["post"]["responses"]["200"]
+#: The contract's `wsBudgetSpent` example (SR-E27-05).
+_SPENT: dict[str, Any] = _OK["content"]["application/json"]["examples"]["wsBudgetSpent"]["value"]
 
 
 class OwnerOnly(Reads):
@@ -84,7 +90,7 @@ def answer(response: httpx.Response, status: int, schema: str) -> dict[str, Any]
     return body
 
 
-def adapter_route(stream: Stream) -> tuple[Route, Rig]:
+def adapter_route(stream: Stream) -> tuple[Route, Rig, ExchangeBybitService]:
     """The route over the wiring's flow: the job's calls and the socket half on the real adapter,
     signed by a fake M2, its REST on a recording `MockTransport` (`Rig`), its stream `stream`."""
     w, rig = World(target()), Rig()
@@ -108,7 +114,7 @@ def adapter_route(stream: Stream) -> tuple[Route, Rig]:
     reads = AccountsRepository(Reads())  # type: ignore[arg-type]  # the two reads a test makes
     imports = SimpleNamespace(flow=SimpleNamespace(accounts=reads))
     flow = wire_key_test(ctx, job, imports)  # type: ignore[arg-type]  # the context's doubles
-    return Route(w, flow), rig
+    return Route(w, flow), rig, exchange
 
 
 async def test_a_passing_test_is_a_200_with_both_halves_and_its_verification() -> None:
@@ -134,7 +140,7 @@ async def test_ac4_a_whitelist_without_the_egress_ip_shows_it_and_blocks_trading
 
 async def test_ac6_an_unreachable_demo_stream_is_a_websocket_failure_on_demo_hosts_only() -> None:
     stream = Stream(dial=OSError("unreachable"))
-    route, rig = adapter_route(stream)
+    route, rig, _ = adapter_route(stream)
     body = answer(await route.post(), 200, _RESULT)
     assert body["websocket"] == {"ok": False, "latency_ms": None, "error": "transport_error"}
     assert (body["passed"], body["rest"]["ok"]) == (False, True)
@@ -149,11 +155,28 @@ async def test_ac7_an_auth_that_times_out_is_a_200_with_rest_ok_and_websocket_no
 ) -> None:
     monkeypatch.setattr(key_ws_probe, "timeout", lambda _delay: asyncio.timeout(0))
     stream = Stream(None)  # the stream never answers `auth`
-    route, _ = adapter_route(stream)
+    route, _, _ = adapter_route(stream)
     body = answer(await route.post(), 200, _RESULT)
     assert (body["passed"], body["rest"]["ok"]) == (False, True)
     assert body["websocket"] == {"ok": False, "latency_ms": None, "error": "timeout"}
     assert route.w.gate.latched_reason_code is None and route.w.armed[ACCT] is True
+
+
+async def test_a_spent_ws_budget_is_the_contracts_ws_budget_spent_answer() -> None:
+    """SR-E27-05: the deployment's opens are spent by other tests, so the WebSocket half is
+    `rate_limited` with no connection opened, as `wsBudgetSpent` shows; the REST verdict stands."""
+    stream = Stream()  # it would grant `auth`
+    route, _, exchange = adapter_route(stream)
+    for _ in range(key_ws_probe.OPENS_PER_WINDOW):  # tests of another key spend the budget
+        await exchange.key_ws_probe("demo", OTHER)
+    body = answer(await route.post(), 200, _RESULT)
+    assert body["websocket"] == _SPENT["websocket"] == {
+        "ok": False, "latency_ms": None, "error": "rate_limited",
+    }  # fmt: skip
+    assert (body["passed"], body["rest"]["ok"], body["verification"]["passed"]) == (
+        False, True, True,
+    )  # fmt: skip
+    assert stream.dialled == [_DEMO] * key_ws_probe.OPENS_PER_WINDOW  # none for this test
 
 
 async def test_without_include_ws_the_answer_has_no_websocket_member() -> None:
@@ -255,6 +278,35 @@ async def test_a_second_test_inside_the_minute_is_a_429_with_retry_after() -> No
         "rate_limited", 60, "60",
     )  # fmt: skip
     assert len(route.w.built) == 1  # nothing was probed the second time
+
+
+class Held(World):
+    """Its key-info call waits until `released`: a test still at the exchange."""
+
+    def __init__(self, *rows: SelfCheckTargetRow) -> None:
+        super().__init__(*rows)
+        self.reached, self.released = asyncio.Event(), asyncio.Event()
+
+    async def key_info(self) -> Any:
+        self.reached.set()
+        await self.released.wait()
+        return await super().key_info()
+
+
+async def test_a_test_racing_one_still_at_the_exchange_is_a_429_and_probes_nothing() -> None:
+    """The ticket's denial-of-service threat is simultaneous tests: a key's minute is taken before
+    the first await that reaches the exchange, so a second request is refused at once, never
+    queued behind a hung first one."""
+    route = Route(w := Held(target()))
+    async with asyncio.timeout(1.0):
+        first = asyncio.create_task(route.post())
+        await w.reached.wait()  # the first test is at the exchange, its answer held
+        again = await route.post()
+        w.released.set()
+        answer(await first, 200, _RESULT)
+    body = answer(again, 429, _THROTTLED)
+    assert (body["code"], again.headers["retry-after"]) == ("rate_limited", "60")
+    assert len(w.built) == 1  # the second request built no client and signed nothing
 
 
 @pytest.mark.parametrize(
