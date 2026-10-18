@@ -573,8 +573,9 @@ Violations of this list are treated as incidents, not mistakes. If you are about
    is allowed **only** on your own feature branch after a rebase.
 2. **Never edit a migration that has been merged to `main`** — fix forward with a new revision (C-5.4).
    Never create two migrations in one PR. Never grant `UPDATE`/`DELETE` on audit tables.
-3. **Never touch `services/api/secrets/`, `services/api/auth/`, `services/api/audit/`, `infra/`, CI
-   workflows or dependency manifests without the `security-review` label** and a security-team reviewer.
+3. **Never touch a C-10.2 security path without the `security-review` label** and a security-team
+   reviewer. C-10.2 owns the list; `pr.yml`'s `security-review-label` job adds the label from it, reading
+   its `services/api/<module>/` as the real `services/api/candleviewer/<module>/` too (#2892).
 4. **Never disable, skip, weaken, or "temporarily" bypass a check**: no lowering coverage thresholds, no
    `--no-verify`, no `# noqa`/`eslint-disable`/`# type: ignore` without a rule name **and** a linked
    issue, no `@skip`/`.skip`/`.only` left in tests, no admin merge, no editing branch-protection settings,
