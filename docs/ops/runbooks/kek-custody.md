@@ -71,9 +71,25 @@ credential operation raises `kek_unavailable`. The log line contains this remedi
 | `kek_retired` | `CV_KEK_VERSION` (or the previous version) has `kek_versions.retired_at` set in this environment — a downgrade |
 | `kek_version_out_of_sequence` | version is neither this environment's max recorded nor max+1 with the previous KEK = max; other environments' versions never count |
 | `process_hardening_failed` | (`live`) core-dump limit or `PR_SET_DUMPABLE` could not be applied — check container/systemd limits |
-| `kcv_store_unavailable` | `kek_versions` unreadable (Postgres down, schema older than `0026_kek_versions_env`) — not a custody problem; or two environments raced to enrol one KEK (`kv_kcv_unique`) — a custody problem, see `kek_reused` |
-| `audit_unavailable` | the audit writer refused `security.kek_loaded`; the KEK was zeroed — fix the audit WAL/DB first |
+| `kcv_store_unavailable` | `kek_versions` unreadable (Postgres down, schema older than `0026_kek_versions_env`) — not a custody problem; the count of stranded rows unreadable within 2 s; an enrolment that cannot commit with its `security.kek_enrolled` record, which shares the row's transaction (the audit row builder refused it, an `audit_log` constraint or trigger failed, or none is wired) — check `audit_log` and the Postgres log too, since `secrets.io_failed` names only a typed refusal such as `KcvEnrolmentNotAudited`; or two environments raced to enrol one KEK (`kv_kcv_unique`) — a custody problem, see `kek_reused` |
+| `audit_unavailable` | the audit writer refused `security.kek_loaded`, or `security.kek_rows_stranded` (a stranded boot that cannot record itself degrades fully rather than keep the broker); the KEK was zeroed — fix the audit WAL/DB first. An enrolment's record no longer goes through the writer: its failure is `kcv_store_unavailable` |
 | `no_credential_store` | (`live`) started without the Postgres credential store |
+| `kek_rows_stranded` | the KEK loaded, but unrevoked API key rows of this environment are wrapped under a version this process did not load: typically a restart without `CV_KEK_PREV_HANDLE` before a re-wrap finished. Unlike the reasons above, cv-api keeps the broker: those keys fail closed, every other key still signs (cancels and SL amendments included), and new orders stay latched with `secrets.kek_rows_stranded`. Its log line and `security.kek_rows_stranded` give the count. Of the signals above, `security.kek_load_failed`, `cv_kek_version_state` = 0 and "every credential operation raises" do not apply here: the record is `security.kek_rows_stranded`, the version gauge shows the loaded version, and only the stranded keys fail. Recover as below |
+
+**Recovering from `kek_rows_stranded`** (either way ends with a restart that finds no stranded row).
+Neither of the two tools these paths name exists yet: the re-wrap entry point (#2266 D2) and the
+audited revoke flow (#898). Do not mark `api_keys` rows revoked by hand to clear the latch: that
+revocation would not be audited (C-2.9).
+
+1. The previous KEK is in custody: restart via the launcher with `CV_KEK_PREV_HANDLE` = that KEK
+   beside the current one, so the stranded keys sign again. Finishing the re-wrap, which resumes
+   where it stopped, needs the entry point; until it ships, do not restart without the previous
+   handle, or the rows left at the old version strand again. After the re-wrap finishes, restart
+   without it.
+2. The previous KEK is lost: those keys can never be opened again. Revoke each at Bybit, then in
+   CandleViewer through the audited key-management flow (#898), which has to work under this
+   degrade because revocation needs no KEK. Until it ships the stranded keys stay failed and new
+   orders stay latched. Restart, then provision new keys.
 
 Enrolment: the first boot at a new version with no rows records its KCV and writes
 `security.kek_enrolled` (with the KCV). A wrongly enrolled KCV can be re-enrolled **only while

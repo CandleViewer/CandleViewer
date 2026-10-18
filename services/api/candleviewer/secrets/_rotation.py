@@ -19,15 +19,15 @@ from candleviewer.secrets.store import AuthKeyStore, KcvStore
 class RotatingBroker(CredentialBroker):
     """The broker the service runs: borrow/store/destroy plus KCV and KEK re-wrap."""
 
-    async def verify_kcv(self, kek: LoadedKek, kcvs: KcvStore, *, must_exist: bool) -> bool:
-        """No trust-on-first-use, inside this process's environment lineage (#2338). Returns
-        True iff this call enrolled a new KCV.
+    async def verify_kcv(self, kek: LoadedKek, kcvs: KcvStore, *, must_exist: bool) -> None:
+        """No trust-on-first-use, inside this process's environment lineage (#2338).
 
         An unknown KCV is recorded only if no live row exists at that version, or after a
         trial unwrap of one such row succeeds; `must_exist` (previous KEK) refuses unknown.
+        An enrolment commits its `security.kek_enrolled` record with the row (#2266), and the
+        KCV the store holds afterwards, a concurrent winner's included, is the one checked.
         """
         expected = await self._io(kcvs.kcv_for(self._env, kek.version), "kcv_store_unavailable")
-        enrolled = False
         if expected is None:
             if must_exist:
                 raise KekLoadError("kek_mismatch")
@@ -40,12 +40,16 @@ class RotatingBroker(CredentialBroker):
                     env.zero(kek.unwrap_dek(row.dek_ref, credential_id=row.id))
                 except (InvalidTag, ValueError):
                     raise KekLoadError("kek_mismatch") from None
-            stored = kcvs.record_kcv(self._env, kek.version, kek.kcv())
-            expected = await self._io(stored, "kcv_store_unavailable")
-            enrolled = True
+            kind, role, _ = _SYSTEM
+            fields = {"actor_kind": kind, "actor_role": role, "env": self._env}
+            fields |= {"kek_version": str(kek.version), "kcv": kek.kcv().hex()}
+            put = kcvs.record_kcv(
+                self._env, kek.version, kek.kcv(), audit=("security.kek_enrolled", fields)
+            )
+            stored, _enrolled = await self._io(put, "kcv_store_unavailable")
+            expected = stored
         if not kcv_matches(kek, expected):
             raise KekLoadError("kek_mismatch")
-        return enrolled
 
     async def rewrap_all(
         self,

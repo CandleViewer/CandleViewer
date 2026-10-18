@@ -224,6 +224,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.credential_rewrapped",
         # #2266: a KEK re-wrap run opens with it when an earlier run moved rows and rows are left.
         "security.kek_rotation_resumed",
+        # #2266: a boot found unrevoked API key rows at a KEK version it did not load (error).
+        "security.kek_rows_stranded",
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",

@@ -195,7 +195,8 @@ async def test_kcv_trial_unwrap_row_vanished() -> None:
 
 async def test_kcv_concurrent_record_returns_winner(store: Any) -> None:
     store.kcvs[("demo", 1)] = kek(KEK_V2).kcv()
-    assert await store.record_kcv("demo", 1, kek().kcv()) == kek(KEK_V2).kcv()
+    stored = await store.record_kcv("demo", 1, kek().kcv(), audit=("security.kek_enrolled", {}))
+    assert stored == (kek(KEK_V2).kcv(), False) and store.kcv_audit == []  # the winner's record
 
 
 async def test_rewrap_refuses_reused_kek() -> None:

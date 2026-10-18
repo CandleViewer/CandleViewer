@@ -16,6 +16,7 @@ from candleviewer.storage.errors import (
     HotReplayReadTimeout,
     IlpRowError,
     InvalidSymbol,
+    KcvEnrolmentNotAudited,
     MissingDesignatedTimestamp,
     RewrapAuditNotWired,
     RewrapAuditNotWritten,
@@ -62,6 +63,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         RewrapAuditNotWritten: "STORAGE_REWRAP_AUDIT_NOT_WRITTEN",
         BackupWriteOnceViolation: "STORAGE_BACKUP_WRITE_ONCE",
         BackupCheckViolation: "STORAGE_BACKUP_CHECK_VIOLATION",
+        KcvEnrolmentNotAudited: "STORAGE_KCV_ENROLMENT_NOT_AUDITED",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 

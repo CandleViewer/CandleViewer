@@ -31,7 +31,8 @@ credential_touch_failures_total = Counter(
     "cv_credential_touch_failures_total", "Best-effort last_used_at writes that failed."
 )
 kek_degraded_state = Gauge(
-    "cv_kek_degraded_state", "1 while M2 is latched degraded (KEK unavailable), else 0."
+    "cv_kek_degraded_state",
+    "1 while M2 is latched degraded (KEK unavailable or API key rows stranded), else 0.",
 )
 process_hardening_failures_total = Counter(
     "cv_process_hardening_failures_total", "SR-009 hardening that did not take effect."

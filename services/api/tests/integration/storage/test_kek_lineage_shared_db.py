@@ -19,6 +19,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.admin.wiring import secrets_audit_row
 from candleviewer.observability.health import HealthStatus
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import SecretsService
@@ -53,6 +54,12 @@ def _sql(dsn: str, query: str, params: tuple[object, ...] = ()) -> list[tuple[An
         return cur.fetchall() if cur.description else []
 
 
+def _audit_row(action: str, fields: dict[str, str]) -> dict[str, Any]:
+    """The production row builder, bound per record to the environment of the boot that writes
+    it: one store here stands in for each environment's process (#2266: `kek_enrolled`)."""
+    return secrets_audit_row(fields["env"])(action, fields)
+
+
 @pytest.fixture
 async def store(pg_dsn: str) -> AsyncIterator[SqlAlchemyCredentialStore]:
     """No lineage and no key at the start of every test."""
@@ -60,7 +67,7 @@ async def store(pg_dsn: str) -> AsyncIterator[SqlAlchemyCredentialStore]:
     _sql(pg_dsn, "DELETE FROM kek_versions")
     rel = SqlAlchemyRelationalRepository(pg_dsn)
     try:
-        yield SqlAlchemyCredentialStore(rel)
+        yield SqlAlchemyCredentialStore(rel, audit_row=_audit_row)
     finally:
         await rel.dispose()
 

@@ -23,7 +23,7 @@ async def _seed(n: int) -> tuple[InMemoryCredentialStore, list[UUID]]:
     s = InMemoryCredentialStore()
     b = RotatingBroker(s, AuditLog(), kek(KEK_V1, 1))
     ids = [(await _store(b, f"KEY{i:04d}ABCDEFGH")).key_id for i in range(n)]
-    await s.record_kcv("demo", 2, kek(KEK_V2, 2).kcv())
+    await s.record_kcv("demo", 2, kek(KEK_V2, 2).kcv(), audit=("security.kek_enrolled", {}))
     return s, sorted(ids)
 
 

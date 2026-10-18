@@ -4,8 +4,9 @@
 step), then records metric/log/audit. A KEK is published only after: process hardening
 (checked; live fails closed), an off-loop load under a timeout (a late load from an abandoned
 worker is zeroed), the FIFO nonce-ack written once every handle is drained, the KEK version
-policy (no reused/retired/out-of-sequence KEK) and a KCV check without trust-on-first-use,
-and a successful `security.kek_loaded` audit. No runtime re-load; recovery is a restart.
+policy (no reused/retired/out-of-sequence KEK), a KCV check without trust-on-first-use (the
+previous KEK first, #2266), the count of stranded rows (latched, but the broker is kept), and
+a successful `security.kek_loaded` audit. No runtime re-load; recovery is a restart.
 
 Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/health only);
 `admin` is injected `SecretsMetadata`; the M4 signing capability is minted once in
@@ -48,6 +49,15 @@ REMEDIATION = (
     "See docs/ops/runbooks/kek-custody.md."
 )
 GATE_REASON = "secrets.kek_unavailable"
+#: #2266: a boot that left unrevoked API key rows at a KEK version it did not load.
+STRANDED_GATE_REASON = "secrets.kek_rows_stranded"
+STRANDED_REMEDIATION = (
+    "KEK rows stranded: API keys of this environment are wrapped under a KEK version this "
+    "process did not load, so they cannot sign; new orders are disabled. Restart cv-api via the "
+    "launcher with CV_KEK_PREV_HANDLE supplying the previous KEK and finish the re-wrap, or, if "
+    "that KEK is lost, revoke those keys at the exchange and in CandleViewer, then restart. "
+    "See docs/ops/runbooks/kek-custody.md."
+)
 #: Bounded `reason` label values of `cv_kek_load_failures_total` (pre-initialised at 0).
 REASONS = (
     "kek_unavailable",
@@ -60,6 +70,7 @@ REASONS = (
     "kcv_store_unavailable",
     "audit_unavailable",
     "no_credential_store",
+    "kek_rows_stranded",
 )
 _LOAD_MARGIN_S = 5.0
 _AUDIT_TIMEOUT_S = 2.0
@@ -321,18 +332,24 @@ class SecretsService:
                 self._store, self._audit, kek, prev_kek=prev,
                 dek_cache_ttl_s=settings.dek_cache_ttl_s, env_name=settings.environment.value,
             )  # fmt: skip
-            try:
-                enrolled = await broker.verify_kcv(kek, self._kcv, must_exist=False)
+            try:  # #2266: the previous KEK first, so a wrong one never pins v(n+1)
                 if prev is not None:
                     await broker.verify_kcv(prev, self._kcv, must_exist=True)
+                await broker.verify_kcv(kek, self._kcv, must_exist=False)
             except KekLoadError:
                 raise
             except Exception:
                 raise KekLoadError("kcv_store_unavailable") from None
+            try:  # #2266: unrevoked rows at a KEK version not loaded; unreadable fails closed
+                async with asyncio.timeout(_AUDIT_TIMEOUT_S):
+                    loaded = (k.version for k in held)
+                    stranded = await self._store.count_stranded(env_name, *loaded)
+            except Exception:
+                raise KekLoadError("kcv_store_unavailable") from None
             fields = {"env": env_name, "kek_version": str(kek.version), "kcv": kek.kcv().hex()}
-            if enrolled:
-                await self._audit("security.kek_enrolled", fields)
             await self._audit("security.kek_loaded", fields)
+            if stranded:
+                await self._strand(ctx, kek.version, stranded)
         except GeneratorExit:
             self._close(*held)
             self._latch(ctx, "kek_unavailable")
@@ -357,10 +374,26 @@ class SecretsService:
         for k in keks:
             k.close()
 
-    def _latch(self, ctx: AppContext, reason: str) -> str:
-        text = REMEDIATION.format(reason=reason)
+    async def _strand(self, ctx: AppContext, version: int, stranded: int) -> None:
+        """#2266 item 5: the latch first, then the page and the record; `start()` then publishes
+        the broker: stranded keys fail closed, the others sign, `destroy` needs no KEK."""
+        self._latch(ctx, "kek_rows_stranded", code=STRANDED_GATE_REASON, text=STRANDED_REMEDIATION)
+        m.kek_load_failures_total.labels(reason="kek_rows_stranded").inc()
+        _log().critical(
+            "secrets.kek_rows_stranded",
+            stranded=stranded,
+            kek_version=version,
+            remediation=STRANDED_REMEDIATION,
+        )
+        fields = {"env": ctx.settings.environment.value, "kek_version": str(version)}
+        await self._audit("security.kek_rows_stranded", {**fields, "stranded": str(stranded)})
+
+    def _latch(
+        self, ctx: AppContext, reason: str, *, code: str = GATE_REASON, text: str = ""
+    ) -> str:
+        text = text or REMEDIATION.format(reason=reason)
         gate: LatchableGate = ctx.oms_read_only_gate
-        gate.latch(reason_code=GATE_REASON, reason_text=text)
+        gate.latch(reason_code=code, reason_text=text)
         self._reason, self._latched = reason, True
         m.kek_degraded_state.set(1)
         return text
@@ -385,7 +418,7 @@ class SecretsService:
         """Metadata only, for `admin` (C-3.2)."""
         if self._broker is None:
             return KekCheckResult(None, False, self._reason or "kek_unavailable")
-        return KekCheckResult(self._kek_version, True, None)
+        return KekCheckResult(self._kek_version, True, self._reason)  # `kek_rows_stranded`
 
     async def _prove_possession(self, settings: Settings) -> KekCheckResult:
         """`prove_kek_possession`: the shared custody path, then a KCV check that never enrols."""
@@ -430,7 +463,7 @@ class SecretsService:
             return HealthReport(
                 module="secrets", status=HealthStatus.STOPPED, detail=self._reason or ""
             )
-        if self._broker is None:
+        if self._broker is None or self._latched:  # stranded rows keep the broker (#2266)
             return HealthReport(
                 module="secrets", status=HealthStatus.DEGRADED, detail=self._reason or ""
             )

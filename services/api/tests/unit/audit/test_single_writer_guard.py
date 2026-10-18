@@ -13,9 +13,9 @@ a statement that writes to `audit_log` (`INSERT INTO`, `COPY`, `MERGE INTO`; quo
 schema-qualified names), an asyncpg bulk copy into it, a Core `insert()` on it (aliases such
 as `pg_insert` too; positional or keyword table arguments), and a table or ORM object naming
 it, an import of the schema's `audit_log` or a `.tables["audit_log"]` lookup, outside the
-two files that define one for reading. It sees SQL, not calls: the helper's callers (the
-repository's `insert`, the credential store's `rewrap`) are pinned by review until a caller
-scan lands with its third caller, PR C of #2266's ruling (issuecomment-6174244911).
+two files that define one for reading. It sees SQL, not calls, so a second scan pins the helper's
+callers: the repository's `insert`, and the credential store's `rewrap` and `record_kcv`, each
+inside the transaction of the change its record states (#2266).
 """
 
 from __future__ import annotations
@@ -40,6 +40,12 @@ _WRITE = re.compile(rf"\b(?:INSERT\s+INTO|COPY|MERGE\s+INTO)\s+{_NAME}", re.IGNO
 _COMMENT = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 _COPIES = frozenset({"copy_records_to_table", "copy_to_table"})
 _TABLE_KEYWORDS = frozenset({"table_name", "name", "table"})
+_HELPER = "insert_audit_row_locked"
+#: The functions that may run the helper; a new one joins this map only after review.
+_CALLERS = {
+    _WRITER: ["insert"],
+    Path("storage/repositories/credentials_sqlalchemy.py"): ["record_kcv", "rewrap"],
+}
 
 
 def _name(node: ast.AST) -> str:
@@ -87,6 +93,25 @@ def _findings(source: str) -> list[str]:
             if any(alias.name == "audit_log" for alias in node.names):
                 found.append("table")  # the schema's Table object, imported to use
     return found
+
+
+def _callers(source: str) -> list[str]:
+    """The functions in `source` that name the helper: a call, the name passed on, reflection
+    or an import alias (`<module>` outside any function)."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST, scope: str) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            scope = node.name
+        named = isinstance(node, ast.Name | ast.Attribute) and _name(node) == _HELPER
+        aliased = isinstance(node, ast.alias) and node.name == _HELPER and node.asname
+        if named or aliased or (isinstance(node, ast.Constant) and node.value == _HELPER):
+            found.add(scope)
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(ast.parse(source), "<module>")
+    return sorted(found)
 
 
 @pytest.mark.parametrize(
@@ -161,3 +186,23 @@ async def test_the_writer_takes_the_chain_lock_before_its_insert() -> None:
     await repo.insert({**record, "severity": "info", "event_ts": "2026-10-15T00:00:00+00:00"})
     assert statements[0] == "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
     assert statements[1].startswith("INSERT INTO audit_log") and statements[2] == "COMMIT"
+
+
+@pytest.mark.parametrize(
+    ("snippet", "callers"),
+    [
+        ("def f():\n    return run(audit_sqlalchemy.insert_audit_row_locked)", ["f"]),
+        ('write = getattr(audit_sqlalchemy, "insert_audit_row_locked")', ["<module>"]),
+        ("from m import insert_audit_row_locked as write", ["<module>"]),
+    ],
+)
+def test_the_caller_scan_sees_each_way_to_the_helper(snippet: str, callers: list[str]) -> None:
+    assert _callers(snippet) == callers
+
+
+def test_only_the_reviewed_functions_run_the_locked_writer() -> None:
+    found = {}
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        if callers := _callers(path.read_text("utf-8")):
+            found[path.relative_to(_PACKAGE)] = callers
+    assert found == _CALLERS

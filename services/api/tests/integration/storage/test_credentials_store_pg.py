@@ -42,6 +42,7 @@ pytestmark = pytest.mark.integration
 _ROOT = Path(__file__).resolve().parents[3]
 _SNAP: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
 _REWRAPPED = "security.credential_rewrapped"
+_ENROLLED = "security.kek_enrolled"
 _CHAIN_LOCK = "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
 _TERMINATE = "SELECT pg_terminate_backend(%s)"
 #: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
@@ -146,6 +147,20 @@ def _move(key_id: UUID, ref: str, action: str = _REWRAPPED, **cas: Any) -> dict[
     }
 
 
+async def _enrol(
+    store: SqlAlchemyCredentialStore, env: str, version: int, kcv: bytes
+) -> tuple[bytes, bool]:
+    """`record_kcv` with the record `verify_kcv` commits with the row (#2266)."""
+    fields = {"actor_kind": "system", "actor_role": "secrets", "env": env, "kcv": kcv.hex()}
+    return await store.record_kcv(env, version, kcv, audit=(_ENROLLED, fields))
+
+
+def _enrolments(dsn: str, kcv: bytes) -> list[tuple[Any, ...]]:
+    """The `security.kek_enrolled` records of `kcv` (`kek_version` is redacted in the state)."""
+    query = "SELECT env::text FROM audit_log WHERE action = %s AND after_state->>'kcv' = %s"
+    return _sql(dsn, query, _ENROLLED, kcv.hex())
+
+
 @pytest.fixture
 async def one_key(pg_dsn: str) -> AsyncIterator[tuple[SqlAlchemyCredentialStore, UUID]]:
     rel, store = _store(pg_dsn)
@@ -245,16 +260,21 @@ async def test_rewrap_cas_with_concurrent_writer(pg_dsn: str) -> None:
 
 
 async def test_kcv_record_and_reread(pg_dsn: str) -> None:
+    """Two boots enrol one version at once: one KCV is stored, and only the boot whose insert
+    landed commits a `security.kek_enrolled` record, with the row (#2266)."""
     rel, store = _store(pg_dsn)
     try:
         assert await store.kcv_for("demo", 77) is None
         first, second = await asyncio.gather(
-            store.record_kcv("demo", 77, b"A" * 8), store.record_kcv("demo", 77, b"B" * 8)
+            _enrol(store, "demo", 77, b"A" * 8), _enrol(store, "demo", 77, b"B" * 8)
         )
-        assert first == second and await store.kcv_for("demo", 77) == first
+        assert first[0] == second[0] and await store.kcv_for("demo", 77) == first[0]
+        assert sorted((first[1], second[1])) == [False, True]
+        records = [len(_enrolments(pg_dsn, kcv)) for kcv in (b"A" * 8, b"B" * 8)]
+        assert sorted(records) == [0, 1] and len(_enrolments(pg_dsn, first[0])) == 1
         # #2338: (live, 77) is another lineage's key; it neither conflicts nor shadows demo's
-        assert await store.record_kcv("live", 77, b"C" * 8) == b"C" * 8
-        assert await store.kcv_for("demo", 77) == first
+        assert await _enrol(store, "live", 77, b"C" * 8) == (b"C" * 8, True)
+        assert await store.kcv_for("demo", 77) == first[0]
     finally:
         await rel.dispose()
 
@@ -287,9 +307,9 @@ async def test_status_env_and_flags_from_real_rows(pg_dsn: str) -> None:
 async def test_kcv_unique_and_versions(pg_dsn: str) -> None:
     rel, store = _store(pg_dsn)
     try:
-        await store.record_kcv("demo", 90, b"U" * 8)
+        await _enrol(store, "demo", 90, b"U" * 8)
         with pytest.raises(Exception):  # noqa: B017 -- kv_kcv_unique IntegrityError
-            await store.record_kcv("live", 91, b"U" * 8)  # one KEK, two environments (#2338)
+            await _enrol(store, "live", 91, b"U" * 8)  # one KEK, two environments (#2338)
         assert ("demo", 90, b"U" * 8, False) in await store.kcv_versions()
     finally:
         await rel.dispose()
@@ -480,8 +500,8 @@ async def test_a_demo_run_moves_and_counts_only_the_demo_rows_of_a_shared_databa
         demo = await _keys(CredentialBroker(store, _audit, _kek(110, 8)), pg_dsn, 3, "DEMO")
         live_broker = CredentialBroker(store, _audit, _kek(140, 8, "live"), env_name="live")
         live = await _keys(live_broker, pg_dsn, 2, "LIVE", "live")
-        await store.record_kcv("demo", 9, _kek(120, 9).kcv())  # the rotation boot enrols v9
-        await store.record_kcv("live", 9, _kek(141, 9, "live").kcv())  # live's own lineage
+        await _enrol(store, "demo", 9, _kek(120, 9).kcv())  # the rotation boot enrols v9
+        await _enrol(store, "live", 9, _kek(141, 9, "live").kcv())  # live's own lineage
         wraps = {k: _wrap(pg_dsn, k) for k in live}
         rot = CredentialBroker(store, _audit, _kek(120, 9), prev_kek=_kek(110, 8))
         rep = await rot.rewrap_all(9, batch=2)
@@ -506,7 +526,7 @@ async def test_a_run_resumes_from_every_row_an_earlier_run_moved_revoked_or_not(
     rel, store = _store(pg_dsn)
     try:
         ids = await _keys(CredentialBroker(store, _audit, _kek(150, 12)), pg_dsn, 4, "RSME")
-        await store.record_kcv("demo", 13, _kek(160, 13).kcv())
+        await _enrol(store, "demo", 13, _kek(160, 13).kcv())
         await _keys(CredentialBroker(store, _audit, _kek(160, 13)), pg_dsn, 1, "NEWK")
         for k in ids[:2]:  # an earlier run moved two rows
             assert await store.rewrap(k, **_move(k, "v1:moved", from_version=12, kek_version=13))
@@ -523,5 +543,49 @@ async def test_a_run_resumes_from_every_row_an_earlier_run_moved_revoked_or_not(
         assert (fields["remaining"], fields["already_rewrapped"]) == ("1", "2")
         assert (rep.resumed, rep.rewrapped, rep.remaining) == (True, 1, 0)
         assert _wrap(pg_dsn, ids[2])[0] == 12
+    finally:
+        await rel.dispose()
+
+
+@pytest.mark.parametrize(
+    ("n", "action", "fields", "error"),
+    [
+        (1, "security.not_registered", {}, UnknownAuditAction),  # the row builder refuses it
+        (2, _ENROLLED, {"actor_user_id": str(UUID(int=1))}, sa.exc.IntegrityError),  # no such user
+    ],
+    ids=["builder", "insert"],
+)
+async def test_a_kcv_enrolment_whose_record_fails_commits_nothing(
+    pg_dsn: str, n: int, action: str, fields: dict[str, str], error: type[Exception]
+) -> None:
+    """#2266 item 6: the `kek_versions` row and its `security.kek_enrolled` commit together or
+    not at all, so no KCV is pinned without its record; a rerun enrols it with one."""
+    rel, store = _store(pg_dsn)
+    version, kcv = 30 + n, bytes([70 + n]) * 8
+    try:
+        with pytest.raises(error):
+            await store.record_kcv("demo", version, kcv, audit=(action, fields))
+        assert await store.kcv_for("demo", version) is None and _enrolments(pg_dsn, kcv) == []
+        assert await _enrol(store, "demo", version, kcv) == (kcv, True)
+        assert _enrolments(pg_dsn, kcv) == [("demo",)]
+    finally:
+        await rel.dispose()
+
+
+async def test_a_stranded_count_is_of_unrevoked_rows_of_its_environment(pg_dsn: str) -> None:
+    """#2266 item 5: the rows a boot at v21 alone cannot open, never a revoked one (either signal)
+    nor another environment's (C-2.11); other tests' rows share the database, hence deltas."""
+    rel, store = _store(pg_dsn)
+    loads = (("demo", 21), ("demo", 20, 21), ("live", 21))
+    try:
+        before = [await store.count_stranded(*load) for load in loads]
+        old = await _keys(CredentialBroker(store, _audit, _kek(170, 20)), pg_dsn, 4, "STRD")
+        await _keys(CredentialBroker(store, _audit, _kek(172, 21)), pg_dsn, 1, "CURR")
+        live_broker = CredentialBroker(store, _audit, _kek(174, 20, "live"), env_name="live")
+        await _keys(live_broker, pg_dsn, 1, "LIVE", "live")
+        _sql(pg_dsn, "UPDATE api_keys SET revoked_at = now() WHERE id = %s", old[0])
+        _sql(pg_dsn, "UPDATE api_keys SET status = 'revoked' WHERE id = %s", old[1])
+        after = [await store.count_stranded(*load) for load in loads]
+        assert [a - b for a, b in zip(after, before, strict=True)] == [2, 0, 1]
     finally:
         await rel.dispose()

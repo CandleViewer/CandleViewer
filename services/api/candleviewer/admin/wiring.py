@@ -81,6 +81,12 @@ AuditHandle = AuditService
 AuditVerifyRunner = VerifyRunner
 
 
+#: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266).
+_SECRETS_ERRORS = frozenset(
+    {"security.kek_load_failed", "security.kek_rotation_failed", "security.kek_rows_stranded"}
+)
+
+
 def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
     """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
     are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
@@ -89,11 +95,7 @@ def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any
         "actor_user_id": fields.get("actor_user_id"),
         "object_kind": "api_key" if "key_id" in fields else "kek",
         "object_id": fields.get("key_id"),
-        "severity": (
-            Severity.ERROR
-            if action in ("security.kek_load_failed", "security.kek_rotation_failed")
-            else Severity.INFO
-        ),
+        "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": dict(fields),
     }
 
@@ -116,7 +118,8 @@ def secrets_audit_row(
 ) -> Callable[[str, dict[str, str]], dict[str, Any]]:
     """M2 `(action, fields)` -> one `audit_log` record in the WAL's format, which the M10
     credential store inserts in the transaction of the change it records (#2266: a re-wrap's
-    `security.credential_rewrapped`). The columns `secrets_audit_sink` writes, and what
+    `security.credential_rewrapped`, an enrolment's `security.kek_enrolled`). The columns
+    `secrets_audit_sink` writes, and what
     `AuditWriter.emit` does to a record: the action validated, the state redacted, a fresh
     `record_id` and the clock's `event_ts`; plus the process environment `env`. M2 passes only
     `(action, fields)`: neither M2 nor M10 imports `audit` (CONSTITUTION §3)."""

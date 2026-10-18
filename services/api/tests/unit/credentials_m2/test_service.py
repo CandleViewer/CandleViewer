@@ -29,12 +29,13 @@ from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, AuditLog
 
 
 async def test_start_with_kek_is_ok_and_audited_with_enrolment() -> None:
-    audit = AuditLog()
-    svc, ctx = _svc(_Src(KEK_V1, 1), audit=audit), _ctx()
+    audit, store = AuditLog(), InMemoryCredentialStore()
+    svc, ctx = _svc(_Src(KEK_V1, 1), store=store, audit=audit), _ctx()
     await svc.start(ctx)
     assert svc.health().status is HealthStatus.OK and not ctx.oms_read_only_gate.is_read_only
-    assert audit.actions() == ["security.kek_enrolled", "security.kek_loaded"]
-    loaded = audit.records[1][1]
+    assert [a for a, _ in store.kcv_audit] == ["security.kek_enrolled"]  # with its row (#2266)
+    assert audit.actions() == ["security.kek_loaded"]
+    loaded = audit.records[0][1]
     assert loaded["env"] == "demo"
     assert loaded["kcv"] == LoadedKek(bytearray(KEK_V1), 1, env_name="demo").kcv().hex()
     res = await svc.verify_kek_possession()
