@@ -4,6 +4,7 @@ scan succeeded or was skipped, and `ci-required` still judges one `security` lan
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -335,3 +336,49 @@ def test_codeql_finder_ignores_the_workspace(tmp_path: Path, present: tuple[str,
     assert proc.returncode == 0
     found = out.read_text(encoding="utf-8") if out.exists() else ""
     assert found == "found=true\n" * len(present)
+
+
+# #3337: a language SARIF with no run records no scan of that language.
+def test_codeql_gate_fails_a_language_sarif_without_runs(tmp_path: Path) -> None:
+    empty = json.dumps({"version": "2.1.0", "runs": []})
+    proc = _run("security_gate.py", tmp_path, {"javascript.sarif": empty, "python.sarif": CLEAN})
+    assert (proc.returncode, proc.stdout.count("security_gate[codeql]: OK")) == (1, 1)
+    assert re.search(r"^CI-SEC-005: codeql: \S+/javascript\.sarif has no runs", proc.stderr, re.M)
+
+
+# #3337: the gate's one third-party module, by hash, from wheels only, after analyze.
+GATE_REQUIREMENTS = "tools/ci/requirements-security-gate.txt"
+GATE_INSTALL = "python -m pip install --require-hashes --only-binary=:all: --no-deps -r "
+
+
+def test_codeql_installs_only_the_hash_pinned_gate_dependency_after_analyze() -> None:
+    # No step before analyze runs a command, so nothing the PR names is installed before init
+    # or analyze; the install that follows can place only the wheel the hashes name.
+    steps, install = _steps("codeql"), _codeql("--require-hashes")
+    analyze, gate = steps.index(_codeql("/analyze@")), steps.index(_codeql("security_gate.py"))
+    assert [s for s in steps[:analyze] if "run" in s] == []
+    assert analyze < steps.index(install) < gate
+    assert (install["if"], install["run"]) == ("always()", GATE_INSTALL + GATE_REQUIREMENTS)
+    assert "requirements-ci.txt" not in json.dumps(JOBS["codeql"])
+
+
+def test_gate_requirements_hash_pin_what_security_gate_imports_at_the_ci_version() -> None:
+    imports: set[str] = set()
+    for module in ("security_gate", "suppressions"):
+        tree = ast.parse((ROOT / "tools" / "ci" / f"{module}.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                imports.add(node.module.split(".")[0])
+    # `tools` is this repository's own package.
+    assert imports - set(sys.stdlib_module_names) - {"tools"} == {"yaml"}
+    text = (ROOT / GATE_REQUIREMENTS).read_text(encoding="utf-8").replace("\\\n", " ")
+    (requirement,) = [line.split() for line in text.splitlines() if line and line[0] != "#"]
+    ci = (ROOT / "scripts" / "requirements-ci.txt").read_text(encoding="utf-8").splitlines()
+    assert [requirement[0]] == [line for line in ci if line.startswith("PyYAML==")]
+    hashes = requirement[1:]
+    assert hashes and all(re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", h) for h in hashes)
+    # The hashes name CPython 3.12 wheels: a new PYTHON_VERSION needs new hashes.
+    env = yaml.safe_load((WORKFLOWS / "_job-security.yml").read_text(encoding="utf-8"))["env"]
+    assert env["PYTHON_VERSION"] == "3.12"

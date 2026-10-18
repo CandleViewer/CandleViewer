@@ -213,13 +213,20 @@ diff` cannot see because they were never tracked. `git add` them in the
   acceptance with a fresh, shorter expiry and a note on why it is still
   acceptable.
 - **CI-SEC-005** (scanner infrastructure failure): a scanner produced no
-  output at all (crashed, mis-configured, or a > 1 non-finding exit code).
+  output at all (crashed, mis-configured, or a > 1 non-finding exit code),
+  or a SARIF report that records no scan: no `runs`, or a run without a
+  named `tool.driver` (the message names the file and the run). CodeQL,
+  Semgrep, Bandit and Trivy each write a run on a clean scan too (#3337).
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).
   For `codeql` it also fires per language: each one in the job's
   `CV_CODEQL_LANGUAGES` needs a SARIF that this run's analyze wrote under the
   runner's temp directory, and the message names the language without one.
+  The codeql job installs the gate's PyYAML after analyze, by hash, from
+  `tools/ci/requirements-security-gate.txt`; if that step fails on a hash,
+  refresh it with the command in that file (it tracks the PyYAML pin in
+  `scripts/requirements-ci.txt` and the workflow's `PYTHON_VERSION`).
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`
