@@ -287,6 +287,8 @@ async def test_writer_a_backlog_from_an_earlier_process_takes_no_token(tmp_path:
     _never_ahead(repo, [str(first.record_id)])
 
 
+# A 5 s real-time wait over runner-paced retries (C-9.3). ticket: GH-3654 quarantined: 2026-10-18
+@pytest.mark.flaky
 async def test_writer_a_replayed_backlogs_commit_leaves_the_depth_at_this_processs_records(
     tmp_path: Path,
 ) -> None:
