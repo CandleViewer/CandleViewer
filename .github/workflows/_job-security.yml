@@ -203,9 +203,10 @@ jobs:
           # want to swallow the "findings present" exit code (1), never a
           # genuine engine/config failure (>1) — CI-SEC-005 must not pass-by-default.
           # The SARIF does not say which targets a rule did not analyse and still reads as a
-          # complete scan; the JSON report's errors do, and the gate fails on them (#3549).
+          # complete scan. The JSON report does: its errors, and with --verbose the targets
+          # Semgrep skipped (one over the size limit, say). The gate fails on them (#3549).
           set +e
-          semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif --json-output semgrep.json
+          semgrep scan $CONFIG_ARGS --verbose --sarif --output semgrep.sarif --json-output semgrep.json
           status=$?
           set -e
           if [ "$status" -gt 1 ]; then
@@ -352,7 +353,8 @@ jobs:
   # - security-auth — E09-X03 (SR-011/012/017/025/026/051/112/122). Proves every
   #   auth Semgrep rule on its fixtures (missing fixture = fail), scans the auth
   #   surface with the pack (any finding blocks; triage path in
-  #   docs/security/auth-security-gates.md), and polices suppressions.
+  #   docs/security/auth-security-gates.md), and polices suppressions. The gate
+  #   fails the scan on a target or rule it did not analyse (#3549).
   # - pip-audit, npm-audit — CONSTITUTION §9 #11 (sca), Python and JS/TS advisories.
   # - license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy, after its
   #   backend install and package-scope check (license-scope) and the freeze check.
@@ -389,8 +391,12 @@ jobs:
           export PATH="$RUNNER_TEMP/security-auth-venv/bin:$PATH"
           pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt
           python tools/ci/check_auth_semgrep.py
-          semgrep scan --config security/semgrep/auth --error --metrics=off \
+          # --error fails the step on any finding. The gate reads the JSON report as it does the
+          # main scan's, with every auth rule counted like a cv-* rule (#3549).
+          semgrep scan --config security/semgrep/auth --error --metrics=off --verbose \
+            --json-output "$RUNNER_TEMP/semgrep-auth.json" \
             --exclude fixtures services/api/candleviewer apps packages/ui
+          python tools/ci/security_gate.py --tool semgrep-auth --report "$RUNNER_TEMP/semgrep-auth.json"
 
       - name: pip-audit (services/api dependencies)
         id: pip-audit

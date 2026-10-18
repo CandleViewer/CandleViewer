@@ -9,10 +9,13 @@ so this suite needs no network and no installed scanners.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -28,7 +31,10 @@ from tools.ci.run_security_local import (
 )
 from tools.ci.run_security_local import _run as real_run
 
-PNPM_CLEAN = Path(__file__).resolve().parent / "fixtures" / "pnpm-audit" / "pnpm-12.5.1-clean.json"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+PNPM_CLEAN = FIXTURES / "pnpm-audit" / "pnpm-12.5.1-clean.json"
+SEMGREP_CLEAN_SARIF = FIXTURES / "sarif" / "semgrep-1.178.0-clean.sarif"
+SEMGREP_SKIPS = FIXTURES / "semgrep" / "semgrep-1.181.0-skips.json"  # slow.py: over the size limit
 
 
 def _npm_audit_with_pnpm_output(tmp_path: Path, rc: int, stdout: str, stderr: str) -> ToolResult:
@@ -52,6 +58,45 @@ def test_run_semgrep_skips_when_binary_missing(tmp_path: Path) -> None:
     assert result.status == "SKIPPED"
     assert "semgrep" in result.name
     assert "not installed" in result.detail
+
+
+@pytest.mark.parametrize(
+    ("edit", "status", "detail"),
+    [
+        ({}, "FAIL", "slow.py (skipped: exceeded_size_limit)"),
+        ({"errors": [], "paths": {"scanned": [], "skipped": []}}, "PASS", "OK"),
+    ],
+)
+def test_run_semgrep_gates_the_verbose_json_report_its_scan_wrote(
+    tmp_path: Path, edit: dict[str, object], status: str, detail: str
+) -> None:
+    # #3549: the scan writes a --verbose JSON report beside its SARIF, and the gate (run for
+    # real) judges that very report, so a target Semgrep did not analyse fails here as in CI.
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[0] == "semgrep":
+            sarif = Path(cmd[cmd.index("--output") + 1])
+            sarif.write_bytes(SEMGREP_CLEAN_SARIF.read_bytes())
+            doc = json.loads(SEMGREP_SKIPS.read_text(encoding="utf-8")) | edit
+            Path(cmd[cmd.index("--json-output") + 1]).write_text(json.dumps(doc), "utf-8")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[1].endswith("check_semgrep_rule_tests.py"):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, cwd)
+
+    with (
+        patch("tools.ci.run_security_local._which", return_value="/usr/bin/semgrep"),
+        patch("tools.ci.run_security_local._run", side_effect=fake_run),
+    ):
+        result = run_semgrep(tmp_path)
+    (scan,) = [cmd for cmd in calls if cmd[0] == "semgrep"]
+    gate = calls[-1]
+    assert "--verbose" in scan
+    assert gate[gate.index("--semgrep-json") + 1] == scan[scan.index("--json-output") + 1]
+    assert result.status == status
+    assert detail in result.detail
 
 
 def test_run_bandit_skips_when_binary_missing(tmp_path: Path) -> None:

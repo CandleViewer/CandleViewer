@@ -64,31 +64,37 @@
       ]
     }
   ],
-  "paths": { "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"] },
+  "paths": {
+    "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"],
+    "skipped": [
+      { "path": "drill.sh", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "unparsed.py", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
   "time": {
     "rules": [],
-    "rules_parse_time": 0.0006039142608642578,
+    "rules_parse_time": 0.0007040500640869141,
     "profiling_times": {
-      "config_time": 0.14089274406433105,
-      "core_time": 0.27327632904052734,
-      "ignores_time": 0.0001621246337890625,
-      "total_time": 0.4595768451690674
+      "config_time": 0.13961577415466309,
+      "core_time": 0.16605663299560547,
+      "ignores_time": 0.00014281272888183594,
+      "total_time": 0.34784913063049316
     },
     "parsing_time": {
-      "total_time": 0.033184051513671875,
-      "per_file_time": { "mean": 0.011061350504557291, "std_dev": 1.1093865295050718e-6 },
+      "total_time": 0.0190732479095459,
+      "per_file_time": { "mean": 0.006357749303181966, "std_dev": 1.951037436103636e-6 },
       "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
       "very_slow_files": []
     },
     "scanning_time": {
-      "total_time": 0.04321885108947754,
-      "per_file_time": { "mean": 0.010804712772369385, "std_dev": 2.4424932984601355e-5 },
+      "total_time": 0.029787302017211914,
+      "per_file_time": { "mean": 0.0074468255043029785, "std_dev": 1.4096079961944952e-5 },
       "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
       "very_slow_files": []
     },
     "matching_time": {
-      "total_time": 0.007326841354370117,
-      "per_file_and_rule_time": { "mean": 0.0024422804514567056, "std_dev": 1.041591619670928e-6 },
+      "total_time": 0.009313106536865234,
+      "per_file_and_rule_time": { "mean": 0.0031043688456217446, "std_dev": 1.7622900764359253e-6 },
       "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
       "very_slow_rules_on_files": []
     },
@@ -109,7 +115,7 @@
     },
     "targets": [],
     "total_bytes": 0,
-    "max_memory_bytes": 105108160
+    "max_memory_bytes": 103011008
   },
   "engine_requested": "OSS",
   "skipped_rules": [],

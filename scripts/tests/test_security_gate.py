@@ -782,6 +782,8 @@ def test_real_bandit_sarif_with_a_file_it_could_not_scan_raises_ci_sec_005(
 SEMGREP_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "semgrep"
 LOST = "target(s) a rule did not analyse, so their clean result means nothing: "
 GAPS = "semgrep-1.181.0-rule-gaps.json"  # timeouts, too many matches, a YAML snippet
+SKIPS = "semgrep-1.181.0-skips.json"  # a size limit, an exclude, a rule it cannot run
+FAILED = "analysis_failed_parser_or_internal_error"  # a skip reason: the error says why
 OK = "security_gate[semgrep]: OK"
 
 
@@ -800,19 +802,38 @@ def _semgrep_errors(name: str) -> list[dict[str, Any]]:
     return errors
 
 
-def _semgrep_report_with(tmp_path: Path, name: str, errors: list[dict[str, Any]]) -> Path:
-    """Recorded report `name` with `errors` in place of its own."""
+def _semgrep_report_with(
+    tmp_path: Path,
+    name: str,
+    errors: list[dict[str, Any]],
+    skipped: list[dict[str, Any]] | None = None,
+) -> Path:
+    """Recorded report `name` with `errors` in place of its own.
+
+    As Semgrep writes it, `paths.skipped` keeps a target whose analysis failed only while an
+    error names it; `skipped` replaces the whole list instead.
+    """
     doc = json.loads((SEMGREP_FIXTURES / name).read_text(encoding="utf-8"))
     doc["errors"] = errors
+    if skipped is None:
+        named = {error.get("path") for error in errors}
+        skipped = [
+            entry
+            for entry in doc["paths"]["skipped"]
+            if entry["reason"] != FAILED or entry["path"] in named
+        ]
+    doc["paths"]["skipped"] = skipped
     return _write_json(tmp_path, f"edited-{name}", doc)
 
 
 def _semgrep_gate(
-    tmp_path: Path, report: Path | None, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    report: Path | None,
+    capsys: pytest.CaptureFixture[str],
+    sarif: Path = SARIF_FIXTURES / "semgrep-1.178.0-clean.sarif",
 ) -> tuple[int, str, str]:
-    """Gate a clean Semgrep SARIF with `report` as the scan's JSON report."""
+    """Gate a Semgrep SARIF, clean by default, with `report` as the scan's JSON report."""
     risks = _write_yaml(tmp_path, {"entries": []})
-    sarif = SARIF_FIXTURES / "semgrep-1.178.0-clean.sarif"
     args = ["--tool", "semgrep", "--report", str(sarif), "--accepted-risks", str(risks)]
     rc = main(args + (["--semgrep-json", str(report)] if report else []))
     out, err = capsys.readouterr()
@@ -1045,6 +1066,199 @@ def test_semgrep_partial_parse_without_a_span_raises_ci_sec_005(
     assert (rc, out) == (1, "")
     no_span = "has a PartialParsing error with no target or line span: "
     assert err.startswith(f"CI-SEC-005: semgrep: {report} {no_span}")
+
+
+def test_semgrep_skips_report_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As recorded: only --verbose says Semgrep skipped slow.py for its size, and newer.yml's
+    # rule never ran. The excluded unparsed.py and workflow.yml's YAML snippet gap would pass.
+    report = _semgrep_report(tmp_path, SKIPS)
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    lost = (
+        "../newer.yml (IncompatibleRule in newer-semgrep-only); "
+        "slow.py (skipped: exceeded_size_limit)"
+    )
+    assert err == f"CI-SEC-005: semgrep: {report} shows 2 {LOST}{lost}\n"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "semgrepignore_patterns_match",
+        "Gitignore_patterns_match",
+        "cli_include_flags_do_not_match",
+        "cli_exclude_flags_match",
+    ],
+)
+def test_semgrep_target_skipped_by_configuration_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], reason: str
+) -> None:
+    # An ignore file or a CLI include/exclude is configuration that review sees. workflow.yml
+    # is listed as skipped because its analysis failed in part: its error is a warning.
+    (snippet,) = [e for e in _semgrep_errors(SKIPS) if e["path"] == "workflow.yml"]
+    skipped = [
+        {"path": "slow.py", "reason": reason},
+        {"path": "unparsed.py", "reason": "cli_exclude_flags_match"},
+        {"path": "workflow.yml", "reason": FAILED},
+    ]
+    report = _semgrep_report_with(tmp_path, SKIPS, [snippet], skipped)
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, err) == (0, "")
+    note = "workflow-run-echo could not parse the snippet on line(s) 7-9; the rest was analysed"
+    assert out.splitlines() == [
+        f"::warning file=workflow.yml,line=7::semgrep: workflow.yml: {note}, not failing",
+        OK,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entry", "lost"),
+    [
+        ({"path": "workflow.yml", "reason": FAILED}, f"workflow.yml (skipped: {FAILED})"),
+        ({"path": "app.min.js", "reason": "minified"}, "app.min.js (skipped: minified)"),
+        ({"path": ".git", "reason": "always_skipped"}, ".git (skipped: always_skipped)"),
+        ({"path": "slow.py", "reason": "a new reason"}, "slow.py (skipped: a new reason)"),
+        ({"path": "slow.py"}, "slow.py (skipped: no reason given)"),
+        (
+            {"reason": "semgrepignore_patterns_match"},
+            "an unnamed target (skipped: semgrepignore_patterns_match)",
+        ),
+    ],
+)
+def test_semgrep_target_skipped_for_another_reason_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], entry: dict[str, str], lost: str
+) -> None:
+    # Fail closed: a target whose analysis failed with no error to say why, a reason that is
+    # not configuration (one Semgrep's schema has, or a new one), or an entry it cannot place.
+    report = _semgrep_report_with(tmp_path, SKIPS, [], [entry])
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err == f"CI-SEC-005: semgrep: {report} shows 1 {LOST}{lost}\n"
+
+
+def test_semgrep_rule_it_skipped_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 1.181.0 always writes `skipped_rules: []` and reports a rule it cannot run in `errors`
+    # (IncompatibleRule above); an entry, shaped as semgrep_output_v1's skipped_rule, fails.
+    rule = {"rule_id": "x", "details": "unsupported", "position": {"line": 3, "col": 5}}
+    doc = json.loads(_semgrep_report_with(tmp_path, SKIPS, [], []).read_text(encoding="utf-8"))
+    report = _write_json(tmp_path, "skipped-rule.json", doc | {"skipped_rules": [rule]})
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err == f"CI-SEC-005: semgrep: {report} shows 1 {LOST}a rule Semgrep skipped: " + (
+        json.dumps(rule) + "\n"
+    )
+
+
+NO_SKIPPED_TARGETS = (
+    "has no 'paths.skipped' list of objects (semgrep writes it with --verbose), so the targets "
+    "it skipped are unknown"
+)
+NO_SKIPPED_RULES = "has no 'skipped_rules' list of objects, so the rules it skipped are unknown"
+
+
+@pytest.mark.parametrize(
+    ("edit", "problem"),
+    [
+        (lambda doc: doc["paths"].pop("skipped"), NO_SKIPPED_TARGETS),
+        (lambda doc: doc.pop("paths"), NO_SKIPPED_TARGETS),
+        (lambda doc: doc["paths"].update(skipped=[["slow.py"]]), NO_SKIPPED_TARGETS),
+        (lambda doc: doc.pop("skipped_rules"), NO_SKIPPED_RULES),
+        (lambda doc: doc.update(skipped_rules=["x"]), NO_SKIPPED_RULES),
+    ],
+)
+def test_semgrep_report_without_its_skip_lists_raises_ci_sec_005(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    edit: Callable[[dict[str, Any]], object],
+    problem: str,
+) -> None:
+    # A report written without --verbose cannot say which targets Semgrep skipped.
+    doc = json.loads((SEMGREP_FIXTURES / SKIPS).read_text(encoding="utf-8"))
+    edit(doc)
+    report = _write_json(tmp_path, "semgrep.json", doc)
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out, err) == (1, "", f"CI-SEC-005: semgrep: {report} {problem}\n")
+
+
+def test_semgrep_lost_targets_are_escaped_onto_one_log_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The runner reads workflow commands from stderr too: no target name may start a new line.
+    error = {"code": 2, "level": "error", "type": "Fatal error", "message": "x"}
+    report = _semgrep_report_with(tmp_path, SKIPS, [error | {"path": "a%\r\n::error::x.py"}], [])
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    lost = "a%25%0D%0A::error::x.py (Fatal error)"
+    assert err == f"CI-SEC-005: semgrep: {report} shows 1 {LOST}{lost}\n"
+
+
+def test_semgrep_scan_with_findings_and_a_lost_target_reports_both(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The step log names the blocking finding as well as the target Semgrep did not analyse.
+    sarif = _write_json(tmp_path, "semgrep.sarif", _sarif_doc("cv-unpinned-action"))
+    (unparsed,) = [e for e in _semgrep_errors("semgrep-1.181.0.json") if e["path"] == "unparsed.py"]
+    report = _semgrep_report_with(tmp_path, "semgrep-1.181.0.json", [unparsed])
+    rc, out, err = _semgrep_gate(tmp_path, report, capsys, sarif)
+    assert (rc, out) == (1, "")
+    blocked, verdict, gap = err.splitlines()
+    assert blocked.startswith("CI-SEC-001: semgrep finding cv-unpinned-action:")
+    assert verdict == "security_gate[semgrep]: BLOCKED (CI-SEC-001)"
+    assert gap == f"CI-SEC-005: semgrep: {report} shows 1 {LOST}unparsed.py (Syntax error)"
+
+
+def _semgrep_auth_gate(
+    tmp_path: Path, report: Path, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str, str]:
+    risks = _write_yaml(tmp_path, {"entries": []})
+    rc = main(["--tool", "semgrep-auth", "--report", str(report), "--accepted-risks", str(risks)])
+    out, err = capsys.readouterr()
+    return rc, out, err
+
+
+def test_semgrep_auth_report_of_a_complete_scan_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = _semgrep_report_with(tmp_path, SKIPS, [], [])
+    assert _semgrep_auth_gate(tmp_path, report, capsys) == (
+        0,
+        "security_gate[semgrep-auth]: OK\n",
+        "",
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "lost"),
+    [
+        ("Timeout", "slow.py (Timeout in slow-sequence-a)"),
+        ("PartialParsing", "workflow.yml (PartialParsing in workflow-run-echo, line(s) 7-9)"),
+    ],
+)
+def test_semgrep_auth_gap_of_any_rule_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str, lost: str
+) -> None:
+    # Each auth pack rule guards RBAC or audit (C-12.4, C-2.9), so no gap is only a warning:
+    # neither one timeout nor a YAML snippet it could not parse.
+    error, *_ = [e for e in _semgrep_errors(GAPS) if kind in (e["type"], e["type"][0])]
+    report = _semgrep_report_with(tmp_path, GAPS, [error])
+    rc, out, err = _semgrep_auth_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err == f"CI-SEC-005: semgrep: {report} shows 1 {LOST}{lost}\n"
+
+
+def test_semgrep_auth_report_that_lists_no_skips_raises_ci_sec_005(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    doc = json.loads((SEMGREP_FIXTURES / SKIPS).read_text(encoding="utf-8"))
+    del doc["paths"]["skipped"]
+    report = _write_json(tmp_path, "semgrep-auth.json", doc)
+    rc, out, err = _semgrep_auth_gate(tmp_path, report, capsys)
+    assert (rc, out) == (1, "")
+    assert err.startswith(f"CI-SEC-005: semgrep: {report} has no 'paths.skipped' list")
 
 
 def test_missing_accepted_risks_file_raises_ci_sec_005(tmp_path: Path) -> None:

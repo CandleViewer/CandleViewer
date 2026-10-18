@@ -130,7 +130,15 @@
       ]
     }
   ],
-  "paths": { "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"] },
+  "paths": {
+    "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"],
+    "skipped": [
+      { "path": "drill.sh", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "partial.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "skipped.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "unparsed.py", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
   "interfile_languages_used": [],
   "skipped_rules": []
 }

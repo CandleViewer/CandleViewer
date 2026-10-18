@@ -94,6 +94,7 @@ def run_semgrep(tmpdir: Path) -> ToolResult:
             "p/sql-injection",
             "--config",
             ".semgrep",
+            "--verbose",  # the report then lists the targets Semgrep skipped (#3549)
             "--sarif",
             "--output",
             str(sarif),

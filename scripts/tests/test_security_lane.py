@@ -173,13 +173,48 @@ def test_semgrep_lock_pins_each_requirement_by_hash_at_the_ci_versions() -> None
 
 
 def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
-    # #3549: the SARIF cannot say which files the engine left unparsed; the JSON report can.
+    # #3549: the SARIF cannot say which files the engine left unparsed; the JSON report can,
+    # and with --verbose it also lists the targets Semgrep skipped (one over the size limit).
     (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
     lines = [line.strip() for line in step["run"].splitlines()]
-    scan = "semgrep scan $CONFIG_ARGS --sarif --output semgrep.sarif --json-output semgrep.json"
+    scan = "semgrep scan $CONFIG_ARGS --verbose --sarif --output semgrep.sarif"
     gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
-    assert scan in lines
+    assert scan + " --json-output semgrep.json" in lines
     assert lines[-1] == gate + " --semgrep-json semgrep.json"
+
+
+def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:
+    # #3549: the auth pack's scan fails on any finding itself (--error); the gate then fails it
+    # on a target or rule it did not analyse, every auth rule counted like a cv-* rule.
+    (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "security-auth"]
+    run = step["run"].replace("\\\n", " ")
+    lines = [" ".join(line.split()) for line in run.splitlines()]
+    report = '"$RUNNER_TEMP/semgrep-auth.json"'
+    scan = "semgrep scan --config security/semgrep/auth --error --metrics=off --verbose"
+    targets = "--exclude fixtures services/api/candleviewer apps packages/ui"
+    assert f"{scan} --json-output {report} {targets}" in lines
+    assert lines[-1] == f"python tools/ci/security_gate.py --tool semgrep-auth --report {report}"
+
+
+def test_every_semgrep_scan_lists_the_targets_it_skipped() -> None:
+    # #3549: only --verbose writes `paths.skipped`, and the gate refuses a report without it.
+    runs = [s["run"] for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    local = (ROOT / "tools" / "ci" / "run_security_local.py").read_text(encoding="utf-8")
+    assert len(runs) == 2
+    assert all("--verbose" in text for text in runs)
+    assert '"--verbose",' in local
+
+
+def test_every_custom_semgrep_rule_id_is_one_the_gate_counts_as_its_own() -> None:
+    # #3549: the gate tells the repo's rules from registry ones by the `cv-` id prefix, so a
+    # custom rule's timeout or snippet gap fails the scan instead of printing a warning.
+    ids = [
+        rule["id"]
+        for path in sorted((ROOT / ".semgrep").glob("cv-*.yml"))
+        for rule in yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]
+    ]
+    assert ids  # the glob found the rule files
+    assert [rule for rule in ids if not rule.startswith("cv-")] == []
 
 
 def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:

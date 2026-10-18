@@ -432,9 +432,23 @@ index alone, removing nothing.
   in a YAML file (a workflow's `run:` script read as Bash). So a
   `PartialParsing` error anywhere else fails however few lines it skips, and
   so does `Too many matches`, after which Semgrep drops every rule's findings
-  on the file. The message names each target and why: rewrite what Semgrep
-  cannot parse; for a timeout, look at what changed in the file or the rule.
-  The step installs semgrep by hash from `tools/ci/requirements-semgrep.txt`.
+  on the file. The scan runs with `--verbose`, so the report also lists each
+  target Semgrep skipped (`paths.skipped`). A target skipped for a reason
+  other than `.semgrepignore`, `.gitignore` or a CLI include or exclude fails
+  (one whose analysis failed is judged by its error, as above), and so do a
+  rule Semgrep skipped (`skipped_rules`) and a report without these lists.
+  The message names each target and why. Rewrite what Semgrep cannot parse.
+  Semgrep 1.181 parses a raw f-string with a replacement field
+  (`rf"...{name}..."`) and PEP 695 syntax (`class C[T]`, `def f[T]`,
+  `type X = ...`), but not both in one module: such a module shows as a
+  `Syntax error` with no line, so write the rf-string as an `f`-string
+  (doubling any backslash). For a timeout, look at what changed in the file
+  or the rule. A target over the 1 MB size limit (`exceeded_size_limit`) is
+  data or generated: list it in `.semgrepignore` with its reason (security
+  review), or split it. The security-auth step judges its auth pack scan the
+  same way (`--tool semgrep-auth`), with every auth rule counted like a cv-*
+  one. Both steps install semgrep by hash from
+  `tools/ci/requirements-semgrep.txt`.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

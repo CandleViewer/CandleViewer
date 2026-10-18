@@ -19,7 +19,18 @@ docs/plan/backlog/_tools/
 /.semgrep/tests/
 # YAML rule-test fixture lives outside the config dir so `--config .semgrep` validates (#2066); same treatment
 /.semgrep-fixtures/
-# Test data of the scripts/ tests: recorded scanner reports and inputs broken on purpose, such as
-# an unparsable backlog JSON and the Semgrep parse-gap sources (#3549). `tests/fixtures/` above
-# matches only the root one.
-/scripts/tests/fixtures/
+# Inputs of the scripts/ tests that are broken on purpose: the Semgrep parse-gap sources and an
+# unparsable backlog JSON (#3549). The other fixtures there, such as the recorded SARIF and audit
+# reports, stay in the scan. `tests/fixtures/` above matches only the root one.
+/scripts/tests/fixtures/semgrep/
+/scripts/tests/fixtures/self_test/backlog_broken/
+# Over Semgrep's 1 MB target limit (--max-target-bytes), so no rule ever read them, and the gate
+# fails a scan that skips a target for its size (#3549). all-tickets.json is what validate.py
+# merges from docs/plan/backlog/E*.json, which the scan reads one by one; the rest is recorded
+# market data and bar goldens, no code. trufflehog still reads them all for secrets.
+/docs/plan/backlog/all-tickets.json
+/packages/fixtures/bybit/2026-10-05/ws/orderbook_BTCUSDT.jsonl
+/packages/fixtures/golden/bars/conformance/goldens/btcusdt-2026-09-01/range-20.jsonl
+/packages/fixtures/golden/bars/conformance/goldens/btcusdt-2026-09-01/tick-100.jsonl
+/packages/fixtures/golden/bars/conformance/goldens/btcusdt-2026-09-01/vol-50.jsonl
+/packages/fixtures/golden/bars/conformance/tapes/btcusdt-2026-09-01.jsonl.gz

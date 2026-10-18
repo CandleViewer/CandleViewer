@@ -28,6 +28,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -688,19 +689,37 @@ def parse_sarif(
 # Only two error kinds leave the other rules' findings on a target intact, so only they are
 # notes: a rule `Timeout` on a file, and a `PartialParsing` error in a snippet a rule embeds in a
 # YAML file (a workflow's `run:` script read as Bash, say; the YAML itself parsed). Either one
-# fails the scan when it comes from a cv-* rule (`.semgrep/`, named `semgrep.cv-*` in CI): those
-# findings are the repo's own invariants. `Too many matches` drops every rule's findings on the
-# file, so it fails like any other error.
+# fails the scan when it comes from one of the repo's own rules, whose findings are its
+# invariants: a cv-* rule (`.semgrep/`, named `semgrep.cv-*` in CI) or an auth pack rule.
+# `Too many matches` drops every rule's findings on the file, so it fails like any other error.
 SEMGREP_TIMEOUT_THRESHOLD = 3  # Semgrep's default --timeout-threshold, which CI keeps
 _SEMGREP_SNIPPET = re.compile(
     r"When parsing a snippet as .+? for metavariable-pattern in rule '([^'\n]+)'"
 )
 _YAML_SUFFIXES = (".yml", ".yaml")
+# Why Semgrep skipped a target, as `--verbose` lists it in `paths.skipped`. An ignore file or a
+# CLI include/exclude is configuration that review sees. A target whose analysis failed is judged
+# by its entry in `errors`. Any other reason, such as a size above `--max-target-bytes`, means no
+# rule analysed the target, so the scan fails.
+_CONFIGURED_SKIPS = frozenset(
+    {
+        "Gitignore_patterns_match",  # Semgrep's spelling (semgrep_output_v1)
+        "semgrepignore_patterns_match",
+        "cli_include_flags_do_not_match",
+        "cli_exclude_flags_match",
+    }
+)
+_FAILED_ANALYSIS = "analysis_failed_parser_or_internal_error"
 
 
 def _is_cv_rule(rule_id: str) -> bool:
     """A `.semgrep/cv-*.yml` rule: `semgrep.cv-obs-no-print` as CI names it, or `cv-...`."""
     return rule_id.rsplit(".", 1)[-1].startswith("cv-")
+
+
+def _every_rule(_rule_id: str) -> bool:
+    """The auth pack's rules (`security/semgrep/auth`): each one guards RBAC or audit."""
+    return True
 
 
 def _line(point: object) -> int | None:
@@ -738,20 +757,21 @@ def _ranges(lines: set[int]) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
+def _escape(text: str) -> str:
+    """`text` escaped as the Actions toolkit escapes a command's data: no CR or LF survives."""
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
 def _annotate(note: str, target: str, line: int | None = None) -> str:
     """`note` as a GitHub Actions warning on `target`, so the checks UI shows it as well.
 
     Escaped as the Actions toolkit escapes a command, so no path or text can end it early.
     """
-
-    def data(text: str) -> str:
-        return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-    where = "file=" + data(target).replace(":", "%3A").replace(",", "%2C")
-    return f"::warning {where}" + (f",line={line}" if line else "") + f"::{data(note)}"
+    where = "file=" + _escape(target).replace(":", "%3A").replace(",", "%2C")
+    return f"::warning {where}" + (f",line={line}" if line else "") + f"::{_escape(note)}"
 
 
-def check_semgrep_coverage(path: Path) -> list[str]:
+def check_semgrep_coverage(path: Path, own_rule: Callable[[str], bool] = _is_cv_rule) -> list[str]:
     """Raise CI-SEC-005 when Semgrep's JSON report shows a target a rule did not analyse (#3549).
 
     Semgrep's SARIF lists such an error only as a `toolExecutionNotifications` entry with no
@@ -760,9 +780,11 @@ def check_semgrep_coverage(path: Path) -> list[str]:
     at all and reported no finding there; a part it skipped can hide a cv-* rule's match too.
 
     Every error fails the scan except two, which come back as GitHub warnings for the log and
-    the checks UI: a non-cv rule's `Timeout` on a file with fewer than
+    the checks UI: a `Timeout` of a rule that is not `own_rule` on a file with fewer than
     `SEMGREP_TIMEOUT_THRESHOLD` of them (at that count Semgrep runs no further rule on the
-    file), and a `PartialParsing` error in a snippet that a non-cv rule embeds in a YAML file.
+    file), and a `PartialParsing` error in a snippet that such a rule embeds in a YAML file.
+    The scan also fails on a target `--verbose` lists as skipped for a reason other than
+    configuration (`_CONFIGURED_SKIPS`) or an error above, and on a rule Semgrep skipped.
     """
 
     def lost_scan(reason: str) -> SecurityGateError:
@@ -772,13 +794,32 @@ def check_semgrep_coverage(path: Path) -> list[str]:
         text = json.dumps(error)  # escaped: no line breaks reach the log
         return text if len(text) <= 300 else text[:297] + "..."
 
+    def objects(value: object) -> list[dict[str, Any]] | None:
+        if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+            return value
+        return None
+
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise lost_scan(f"is not a readable JSON report: {exc}") from exc
-    errors = doc.get("errors") if isinstance(doc, dict) else None
-    if not isinstance(errors, list) or not all(isinstance(e, dict) for e in errors):
+    if not isinstance(doc, dict):
+        doc = {}
+    errors = objects(doc.get("errors"))
+    if errors is None:
         raise lost_scan("has no 'errors' list of objects (not a semgrep --json-output report)")
+    paths = doc.get("paths")
+    skipped = objects(paths.get("skipped") if isinstance(paths, dict) else None)
+    if skipped is None:
+        raise lost_scan(
+            "has no 'paths.skipped' list of objects (semgrep writes it with --verbose), so the "
+            "targets it skipped are unknown"
+        )
+    skipped_rules = objects(doc.get("skipped_rules"))
+    if skipped_rules is None:
+        raise lost_scan(
+            "has no 'skipped_rules' list of objects, so the rules it skipped are unknown"
+        )
     lost: list[str] = []
     timeouts: dict[str, list[str]] = {}  # target -> the rules that timed out on it
     snippets: dict[str, tuple[set[int], set[str]]] = {}  # YAML target -> lines, rules
@@ -797,8 +838,8 @@ def check_semgrep_coverage(path: Path) -> list[str]:
             message = error.get("message")
             snippet = _SEMGREP_SNIPPET.search(message) if isinstance(message, str) else None
             parser = snippet.group(1) if snippet else rule
-            cv_rule = any(_is_cv_rule(r) for r in (rule, parser) if r)
-            if snippet and not cv_rule and target.endswith(_YAML_SUFFIXES):
+            own = any(own_rule(r) for r in (rule, parser) if r)
+            if snippet and not own and target.endswith(_YAML_SUFFIXES):
                 gap = snippets.setdefault(target, (set(), set()))
                 gap[0].update(lines)
                 gap[1].add(snippet.group(1))
@@ -808,7 +849,7 @@ def check_semgrep_coverage(path: Path) -> list[str]:
             continue
         if name == "Timeout" and target:
             timeouts.setdefault(target, []).append(rule or "an unnamed rule")
-            if rule and not _is_cv_rule(rule):
+            if rule and not own_rule(rule):
                 continue
         by = f" in {rule}" if rule else ""
         lost.append(f"{target or 'an unnamed target'} ({name}{by})")
@@ -823,10 +864,20 @@ def check_semgrep_coverage(path: Path) -> list[str]:
         note = f"semgrep: {target}: {', '.join(sorted(parsers))} could not parse the snippet on "
         note += f"line(s) {_ranges(lines)}; the rest was analysed, not failing"
         notes.append(_annotate(note, target, min(lines)))
+    failed = {error["path"] for error in errors if isinstance(error.get("path"), str)}
+    for entry in skipped:
+        target = entry["path"] if isinstance(entry.get("path"), str) else None
+        reason = entry["reason"] if isinstance(entry.get("reason"), str) else "no reason given"
+        configured = reason in _CONFIGURED_SKIPS
+        judged = reason == _FAILED_ANALYSIS and target in failed  # by its entry in errors
+        if target and (configured or judged):
+            continue
+        lost.append(f"{target or 'an unnamed target'} (skipped: {reason})")
+    lost.extend(f"a rule Semgrep skipped: {clipped(entry)}" for entry in skipped_rules)
     if lost:
         raise lost_scan(
             f"shows {len(lost)} target(s) a rule did not analyse, so their clean result means "
-            "nothing: " + "; ".join(lost)
+            "nothing: " + "; ".join(_escape(entry) for entry in lost)
         )
     return sorted(notes)
 
@@ -1081,8 +1132,15 @@ _PARSERS: dict[str, Any] = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tool", required=True, choices=sorted(_PARSERS) + ["license-scan"])
-    parser.add_argument("--report", required=True, type=Path, help="tool's native report file")
+    parser.add_argument(
+        "--tool", required=True, choices=sorted(_PARSERS) + ["license-scan", "semgrep-auth"]
+    )
+    parser.add_argument(
+        "--report",
+        required=True,
+        type=Path,
+        help="tool's native report file; for semgrep-auth, the auth pack scan's --json-output",
+    )
     parser.add_argument(
         "--accepted-risks",
         type=Path,
@@ -1115,12 +1173,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     notes: list[str] = []
+    lost: SecurityGateError | None = None  # a Semgrep scan's gap, reported after its findings
     try:
         risks = load_accepted_risks(args.accepted_risks)
         if args.tool == "license-scan":
             deps = parse_license_report(args.report)
             allowlist = load_license_allowlist(args.allowlist)
             result = evaluate_licenses(deps, allowlist, risks, run_date=run_date)
+        elif args.tool == "semgrep-auth":
+            # The auth pack's scan (`--error`) fails on any finding itself; this judges what it
+            # did not analyse, every rule counted as the repo's own (#3549).
+            notes = check_semgrep_coverage(args.report, _every_rule)
+            result = evaluate_findings([], risks, run_date=run_date)
         else:
             if args.tool == "semgrep":
                 findings = parse_sarif(args.report, "semgrep", today=run_date)
@@ -1130,7 +1194,10 @@ def main(argv: list[str] | None = None) -> int:
                         "semgrep: no --semgrep-json report, so the files it did not parse are "
                         "unknown",
                     )
-                notes = check_semgrep_coverage(args.semgrep_json)
+                try:
+                    notes = check_semgrep_coverage(args.semgrep_json)
+                except SecurityGateError as exc:
+                    lost = exc  # the findings still print, so one run shows both
             else:
                 findings = _PARSERS[args.tool](args.report)
             result = evaluate_findings(findings, risks, run_date=run_date)
@@ -1145,6 +1212,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.blocked:
         print(f"security_gate[{args.tool}]: BLOCKED ({result.code})", file=sys.stderr)
+    if lost is not None:
+        print(f"{lost.code}: {lost.message}", file=sys.stderr)
+    if result.blocked or lost is not None:
         return 1
 
     print(f"security_gate[{args.tool}]: OK")
