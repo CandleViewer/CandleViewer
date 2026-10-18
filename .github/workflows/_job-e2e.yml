@@ -7,7 +7,8 @@ name: _job-e2e
 # reusable-workflow job names (precedent: `_job-py.yml`'s `architecture` job):
 #   - `e2e-web`      : Playwright web suite, sharded 4x, every PR.
 #   - `e2e-electron` : Electron smoke, `release/*` branches + nightly only
-#                      (not on every PR — Electron packaging is slow).
+#                      (not on every PR — Electron packaging is slow). The nightly
+#                      (e2e-nightly.yml) asks for it through the `electron` input below.
 #   - `a11y-axe`     : axe-core assertions over the E2E web routes (subset of
 #                      `e2e-web`'s own specs, e.g. smoke.spec.ts) plus this repo's
 #                      `vitest-axe` component suite (apps/web unit tests already
@@ -25,7 +26,16 @@ name: _job-e2e
 # E03-Q03's (deferred, R1) quarantine automation to consume later.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      # #3383: the caller asks for the Electron smoke. The job used to key on
+      # `github.event_name == 'schedule'`, which in a called workflow is the caller's event, so
+      # it depended on who called; pr.yml runs on pull_request only and never matched it. The
+      # default keeps pr.yml as it was: the smoke runs on release/* heads only.
+      electron:
+        description: "Run e2e-electron on any head (release/* heads always run it)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -166,7 +176,7 @@ jobs:
 
   e2e-electron:
     name: e2e-electron
-    if: ${{ startsWith(github.head_ref, 'release/') || github.event_name == 'schedule' }}
+    if: ${{ inputs.electron || startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:

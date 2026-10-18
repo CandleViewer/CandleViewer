@@ -59,12 +59,16 @@ merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/work
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
-scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml)
+scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml,
+           e2e-nightly.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
 ├─ coverage-ratchet       → baseline-raise PR from merged coverage runs
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
-└─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
+├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
+└─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
+                            scheduled run opens an issue (CI-E2E-001/002, CI-A11Y-001,
+                            CI-BUILD-001; below)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
@@ -74,14 +78,32 @@ release tag (.github/workflows/release.yml)
 or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
 and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the `e2e` filter on
 purpose: they would put seven more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`)
-on every bump. The accepted control is the nightly `a11y-nightly.yml` sweep on `main`, a named
-artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1). The Playwright suite
-has no scheduled run yet (#3383: C-9.2 asks for a nightly full matrix), so a bump that breaks it
-shows on the next PR the `e2e` filter starts. The decision covers those three files only. A backend
-manifest (`services/api/uv.lock`, `pyproject.toml`) skips `migrations`, `contract` and
-`rule-roundtrip`. The nightly `cold-cache.yml` runs the `services/api` pytest, `tests/contract`
-included (the contract job's pytest step), but no nightly runs `make contracts`, the `migrations`
-job or `rule-roundtrip`: an open gap with no decision recorded yet (#3384), not an accepted control.
+on every bump. The accepted controls are two nightlies on `main`, each a named artefact of the
+release checklist (`docs/plan/07-release-and-prr.md` §4.1): the `a11y-nightly.yml` sweep and
+`e2e-nightly.yml`, which runs the `e2e` lane's own jobs (next paragraph). So a bump that breaks the
+Playwright suite turns a nightly red within a day, and a release cut needs both green on its tip.
+The decision covers those three files only. A backend manifest (`services/api/uv.lock`,
+`pyproject.toml`) skips `migrations`, `contract` and `rule-roundtrip`. The nightly
+`cold-cache.yml` runs the `services/api` pytest, `tests/contract` included (the contract job's
+pytest step), but no nightly runs `make contracts`, the `migrations` job or `rule-roundtrip`: an
+open gap with no decision recorded yet (#3384), not an accepted control.
+
+**Nightly e2e matrix (#3383).** `e2e-nightly.yml` calls `_job-e2e.yml` on `main` daily at 02:53 UTC
+and on demand, for C-9.2's full Playwright matrix: the four `e2e-web` shards, `e2e-staging`,
+`a11y-axe` and `e2e-electron`. `pr.yml` runs `e2e-electron` on `release/*` heads only; the nightly
+sets the lane's `electron` input to `true`. The Electron smoke suite is green since #3393: job
+117609983250 (`e2e / e2e-electron`) passed in run 39105058132, a proof run whose other jobs were
+cancelled. The nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next
+release (C-9.2): the release checklist needs a green run on the `main` tip being cut
+(`docs/plan/07-release-and-prr.md` §4.1). A red scheduled run also opens a `qa`, `priority/p1`
+issue that links the run; its `e2e-nightly-report` job is the only one that can write
+(`issues: write`, no checkout). A manual run (`gh workflow run e2e-nightly.yml`) runs the same jobs
+and opens no issue. Triage the red job by its error code, as in §4's Playwright, accessibility and
+build recipes. Cost: seven jobs, about 7.5 runner-minutes a night. The four `e2e-web` shards,
+`e2e-staging` and `a11y-axe` take 0.9 to 1.5 minutes each (medians over 11 green `pr.yml` runs on
+2026-10-17 and 18), and `e2e-electron` about a minute (62 s in that job). The total is at most
+140 if every job reaches its 20-minute cap (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are
+free on this public repository, so the cost is seven runner slots for about two minutes.
 
 ## 3. Reading the `ci-required` resolver summary
 
@@ -201,6 +223,14 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-E2E-001** (Playwright suite failed after retry): a spec failed twice
   (not a single flake). Open the uploaded JSON reporter artifact for the
   failing shard; reproduce locally with `pnpm --filter @candleviewer/web e2e`.
+  For `e2e-electron`, open its `e2e-electron-failure` artifact; to reproduce,
+  build what the job builds (the packages `apps/web` imports, `apps/web`,
+  `apps/desktop`), then run `pnpm --filter @candleviewer/desktop e2e`, under
+  `xvfb-run -a` on a machine with no display.
+  If a check in `apps/desktop/e2e/hardening.spec.ts` failed (the `webPreferences`
+  flags, the SR-112 CSP, the SR-113 navigation and window-open denials), follow
+  `SECURITY.md`: the nightly's auto-filed issue is public, so keep the analysis
+  out of it and out of any other public thread (C-12.13).
   If it fails intermittently across three runs in a week, quarantine per
   §9 (flaky-test process) rather than re-running indefinitely.
 - **CI-E2E-002** (demo-REST-only tag matched zero specs): the
