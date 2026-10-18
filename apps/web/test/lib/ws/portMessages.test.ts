@@ -2,11 +2,15 @@
 // worker: it is checked field by field and rebuilt, or refused; the tab checks what the worker posts the same
 // way, for its shape. Each field is read once, so what was checked is what is returned.
 import { describe, expect, it } from "vitest";
+import type { DeltaFrame, ResetFrame, SnapFrame } from "../../../src/lib/ws/api";
+import type { DataBody } from "../../../src/lib/ws/protocol/codec";
 import {
+  copyFrame,
   isWsUrl,
   parseClientMessage,
   parseWorkerMessage,
   PORT_PROTOCOL_VERSION,
+  transferListOf,
 } from "../../../src/lib/ws/port/messages";
 import { INITIAL_WS_STATE } from "../../../src/lib/ws/state/reducer";
 
@@ -402,5 +406,72 @@ describe("the worker's message (worker -> tab)", () => {
     ],
   ])("reads %s once: what was checked is what is returned", (_name, message) => {
     expect(parseWorkerMessage(message)).toEqual({ t: "tokenRequest", req: 7, invalidate: true });
+  });
+});
+
+describe("a buffer reaches one receiver only (ADR-0005)", () => {
+  const bytes = (...values: number[]): ArrayBuffer => new Uint8Array(values).buffer;
+  /** The buffer of a binary body; a test that asks for another's is wrong. */
+  const buf = (body: DataBody | undefined): ArrayBuffer => {
+    if (body?.e !== "b64") throw new Error("not a binary body");
+    return body.bytes;
+  };
+  const base = { ts: 1, sp: undefined, decodeMs: 0, size: 12, meta: undefined };
+  /** Frames made afresh in each test: one of them detaches a buffer, and no other may feel it (any order, any seed). */
+  const snap = (): SnapFrame => ({
+    kind: "snap",
+    seq: 1,
+    ...base,
+    bodies: [
+      { e: "b64", bytes: bytes(1, 2, 3) },
+      { e: "j", p: { rows: [1] } },
+      { e: "b64", bytes: bytes(4) },
+    ],
+  });
+  const delta = (): DeltaFrame => ({
+    kind: "d",
+    seq: 2,
+    ...base,
+    body: { e: "b64", bytes: bytes(9, 8) },
+  });
+  const reset = (): ResetFrame => ({ kind: "reset", reason: "gap" });
+
+  it("copies the buffers of a snapshot and of a delta, and shares what is data nobody mutates", () => {
+    const original = snap();
+    const copy = copyFrame(original);
+    if (copy.kind !== "snap") throw new Error("not a snap");
+    expect(copy).toEqual(original);
+    expect(buf(copy.bodies[0])).not.toBe(buf(original.bodies[0]));
+    expect(buf(copy.bodies[2])).not.toBe(buf(original.bodies[2]));
+    expect(copy.bodies[1]).toBe(original.bodies[1]); // a structured body is read, never written
+    const originalDelta = delta();
+    const copyOfDelta = copyFrame(originalDelta);
+    if (copyOfDelta.kind !== "d") throw new Error("not a delta");
+    expect(copyOfDelta).toEqual(originalDelta);
+    expect(buf(copyOfDelta.body)).not.toBe(buf(originalDelta.body));
+    const gap = reset();
+    expect(copyFrame(gap)).toBe(gap);
+  });
+
+  it("a copy outlives the transfer of its original", () => {
+    const original = delta();
+    const copy = copyFrame(original);
+    if (copy.kind !== "d") throw new Error("not a delta");
+    const sent = structuredClone(original, { transfer: [buf(original.body)] });
+    expect(buf(original.body).byteLength).toBe(0); // detached at the sender
+    expect(new Uint8Array(buf(copy.body))).toEqual(new Uint8Array([9, 8])); // the other tab's copy is whole
+    expect(buf(sent.body).byteLength).toBe(2);
+  });
+
+  it("lists each buffer once, in order, and none for a reset or a structured body", () => {
+    const first = snap();
+    const second = delta();
+    expect(transferListOf([reset(), first, second, first])).toEqual([
+      buf(first.bodies[0]),
+      buf(first.bodies[2]),
+      buf(second.body),
+    ]);
+    expect(transferListOf([reset(), { ...delta(), body: { e: "j", p: {} } }])).toEqual([]);
+    expect(transferListOf([])).toEqual([]);
   });
 });

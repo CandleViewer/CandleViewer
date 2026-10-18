@@ -291,8 +291,8 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
       return lose(rec, "gap", "sequence_gap"); // discarded at once, never patched around (7.1)
     }
     if (replay) rec.replay = true;
-    const { ts, sp, meta, body } = frame;
-    send(rec, { kind: "d", seq: frame.s, ts, sp, decodeMs, meta, body });
+    const { ts, sp, meta, body, size } = frame;
+    send(rec, { kind: "d", seq: frame.s, ts, sp, decodeMs, size, meta, body });
   }
 
   function applySnap(
@@ -326,8 +326,8 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     rec.voided = false;
     rec.overflows = 0;
     const { ts, sp, meta } = frame;
-    const { seq: snapSeq, bodies, decodeMs: total } = result;
-    send(rec, { kind: "snap", seq: snapSeq, ts, sp, decodeMs: total, meta, bodies });
+    const { seq: snapSeq, bodies, size: total, decodeMs: decoded } = result;
+    send(rec, { kind: "snap", seq: snapSeq, ts, sp, decodeMs: decoded, size: total, meta, bodies });
     guard.cancel(rec.ch, rec.key); // it recovered by itself: its own wait is over, a twin's is not
   }
 
