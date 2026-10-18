@@ -4,7 +4,6 @@ Runs the real validate.py on a tmp copy of the real twins; the plan docs are onl
 import importlib.util
 import json
 import re
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,15 +22,63 @@ def _prettier_e17(backlog: Path) -> None:
         return line if len(line) <= 100 else m[0]
 
     twin = backlog / "E17.json"
-    twin.write_text(_ARRAY.sub(fold, twin.read_text(encoding="utf-8")) + "\n", encoding="utf-8")
+    text = _ARRAY.sub(fold, twin.read_text(encoding="utf-8")) + "\n"
+    twin.write_text(text, encoding="utf-8", newline="\n")  # LF, per prettier.config.mjs endOfLine
+
+
+def _reindent_e17(backlog: Path) -> None:
+    """A re-pad with other indentation (4 spaces), as an editor's JSON formatter writes it."""
+    twin = backlog / "E17.json"
+    data = json.loads(twin.read_text(encoding="utf-8"))
+    twin.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8", newline="\n")
+
+
+def _final_newline_e17(backlog: Path) -> None:
+    """E17.json plus the final newline an editor adds; json.dump writes none."""
+    twin = backlog / "E17.json"
+    twin.write_bytes(twin.read_bytes() + b"\n")
+
+
+def _unterminated_all_tickets(backlog: Path) -> None:
+    """all-tickets.json without the final newline validate.py writes."""
+    twin = backlog / "all-tickets.json"
+    twin.write_bytes(twin.read_bytes().removesuffix(b"\n"))
+
+
+def _double_newline_all_tickets(backlog: Path) -> None:
+    """all-tickets.json with a second final newline."""
+    twin = backlog / "all-tickets.json"
+    twin.write_bytes(twin.read_bytes() + b"\n")
+
+
+def _cr_e17(backlog: Path) -> None:
+    """E17.json with lone-CR line endings, which git commits as they are (a lone CR is binary to
+    text=auto): unlike CRLF, they stay off-layout."""
+    twin = backlog / "E17.json"
+    twin.write_bytes(twin.read_bytes().replace(b"\n", b"\r"))
+
+
+def _crcrlf_e17(backlog: Path) -> None:
+    """E17.json with CR CR LF line endings (a CRLF twin written again in Windows text mode), which
+    git commits as they are too: only the CRLF reads as LF, so the stray CR has to stay and fail."""
+    twin = backlog / "E17.json"
+    twin.write_bytes(twin.read_bytes().replace(b"\n", b"\r\r\n"))
 
 
 def _edit_e17(backlog: Path) -> None:
-    """A one-string twin edit the AGENTS.md §3a way: load, modify, json.dump(indent=2)."""
+    """A one-string twin edit the AGENTS.md §3a way: load, modify, json.dump(indent=2), in LF."""
     data = json.loads((backlog / "E17.json").read_text(encoding="utf-8"))
     data[0]["title"] += " (edited)"
-    with (backlog / "E17.json").open("w", encoding="utf-8") as fh:
+    with (backlog / "E17.json").open("w", encoding="utf-8", newline="\n") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
+
+
+def _crlf(backlog: Path, *twins: str, lines: int = -1) -> None:
+    """The twins as a Windows text-mode write or checkout leaves them: every line ends in CRLF, or
+    only the first `lines` lines do (a twin of mixed CRLF and LF lines)."""
+    for twin in twins:
+        path = backlog / f"{twin}.json"
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n", lines))
 
 
 def _validate(backlog: Path, *argv: str) -> int:
@@ -48,8 +95,10 @@ def _validate(backlog: Path, *argv: str) -> int:
 
 @pytest.fixture
 def backlog(tmp_path: Path) -> Path:
+    """The twins as git commits them, in LF: a CRLF checkout's twins would turn into CR CR LF
+    under _crlf()."""
     for twin in [*_BACKLOG.glob("E[0-9][0-9].json"), _BACKLOG / "all-tickets.json"]:
-        shutil.copyfile(twin, tmp_path / twin.name)
+        (tmp_path / twin.name).write_bytes(twin.read_bytes().replace(b"\r\n", b"\n"))
     return tmp_path
 
 
@@ -62,11 +111,47 @@ def test_validate_check_python_edit_then_validate_passes(
     assert codes == (0, 0)  # any other error is backlog health, not the twin layout
 
 
-@pytest.mark.parametrize(("edit", "twin"), [(_prettier_e17, "E17"), (_edit_e17, "all-tickets")])
+@pytest.mark.parametrize("lines", [-1, 1], ids=["crlf", "mixed"])
+def test_validate_check_crlf_twins_pass(
+    backlog: Path, capsys: pytest.CaptureFixture[str], lines: int
+) -> None:
+    """#3454: the §3a recipe in Windows text mode, or a Windows checkout, leaves CRLF twins (mixed
+    with LF lines after a partial edit); git commits them as LF, so validate.py and its --check take
+    them for the twins they are."""
+    _edit_e17(backlog)
+    _crlf(backlog, "E17", lines=lines)
+    first = _validate(backlog)  # rewrites all-tickets.json, in LF
+    _crlf(backlog, "all-tickets", lines=lines)
+    codes = (first, _validate(backlog, "--check"))
+    assert "TWIN-FORMAT" not in capsys.readouterr().out
+    assert codes == (0, 0)
+
+
+@pytest.mark.parametrize("crlf", [False, True], ids=["lf", "crlf"])
+@pytest.mark.parametrize(
+    ("edit", "twin"),
+    [
+        (_prettier_e17, "E17"),
+        (_reindent_e17, "E17"),
+        (_final_newline_e17, "E17"),
+        (_cr_e17, "E17"),
+        (_crcrlf_e17, "E17"),
+        (_edit_e17, "all-tickets"),
+        (_unterminated_all_tickets, "all-tickets"),
+        (_double_newline_all_tickets, "all-tickets"),
+    ],
+)
 def test_validate_check_prettier_or_stale_twin_fails_naming_validate_py(
-    backlog: Path, capsys: pytest.CaptureFixture[str], edit: Callable[[Path], None], twin: str
+    backlog: Path,
+    capsys: pytest.CaptureFixture[str],
+    edit: Callable[[Path], None],
+    twin: str,
+    crlf: bool,
 ) -> None:
     edit(backlog)
+    if crlf:  # #3454: only CRLF reads as LF; layout, a stray CR and the final newline stay exact
+        _crlf(backlog, "E17", "all-tickets")
     assert _validate(backlog, "--check") == 1
     out = capsys.readouterr().out
-    assert f"TWIN-FORMAT {twin}.json: " in out and "validate.py is the formatter" in out
+    assert re.findall(r"TWIN-FORMAT (\S+): ", out) == [f"{twin}.json"]  # never the CRLF twin
+    assert "validate.py is the formatter" in out

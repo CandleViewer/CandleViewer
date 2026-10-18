@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 1.2.2 · Last updated 2026-10-18 · Owner `@basiltt`
+> **Version:** 1.2.3 · Last updated 2026-10-18 · Owner `@basiltt`
 
 ---
 
@@ -240,8 +240,9 @@ If any of 1–15 is missing, contradictory, or the brief cannot be executed with
 the ticket fails DoR (Constitution §11.1) — stop and comment, do not guess.
 
 Edit ticket JSON only with `python`: load the file, modify the dict/list in memory, then
-`json.dump(..., ensure_ascii=False, indent=2)`. Never hand-edit with a text-replace tool — the schema
-is machine-checked by `docs/plan/backlog/_tools/validate.py`; run it after any backlog edit.
+`json.dump(..., ensure_ascii=False, indent=2)` back to it, opening it with `encoding="utf-8"` both
+times and with `newline="\n"` to write. Never hand-edit with a text-replace tool — the schema is
+machine-checked by `docs/plan/backlog/_tools/validate.py`; run it after any backlog edit.
 
 ### 3b. Board protocol
 
@@ -391,7 +392,8 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 
 The backlog twins (`docs/plan/backlog/E<nn>.json`, `all-tickets.json`) are formatted by `validate.py`,
 not prettier (`.prettierignore` skips them): edit them via Python as §3a says, never by hand or with
-prettier, then run `validate.py`. CI's `--check` fails on any twin it would not write byte for byte.
+prettier, then run `validate.py`. CI's `--check` fails on any twin it would not write byte for byte,
+reading CRLF line endings as LF (#3454).
 
 ### Release / changelog (docs/plan/07-release-and-prr.md §3)
 
