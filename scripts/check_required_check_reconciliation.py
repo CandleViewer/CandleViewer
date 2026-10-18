@@ -79,6 +79,12 @@ FILTER_ENV_RE = re.compile(
     r"^\s+FILTER_(\w+):\s*\$\{\{\s*needs\.changed-paths\.outputs\.([\w-]+)\s*\}\}\s*(?:#.*)?$",
     re.M,
 )
+# A `changed-paths` output: `<name>: ${{ steps.<id>.outputs.<key> }}`. Each one a FILTER_ name
+# reads must be set once, by the paths-filter step `filter`, but `pr` by the `change` step (#3433).
+OUTPUT_RE = re.compile(
+    r"^      ([\w-]+):\s*\$\{\{\s*steps\.([\w-]+\.outputs\.[\w-]+)\s*\}\}\s*(?:#.*)?$", re.M
+)
+OUTPUT_STEPS = {"pr": "change"}
 USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
 # A called job that never gates its lane: an `if:` that reads no context and calls no status
 # function, so a constant (`false`, `False`, `0`, `''`, `null`, ...) or a block scalar (unread), or
@@ -260,11 +266,12 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
     call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
     or RESULT_ name. A lane counts when its applicability is not the literal `false` and reads
-    only FILTER_<NAME> set from the `changed-paths` output <name>, and the table, with no key twice
-    and nothing but lanes, takes its result from the needed job of the lane's own name, or from the
-    `gates` output of that name, which the step of that id backs. Every job `ci-required` needs
-    must fail when its work fails: no ANY_NEVER_RE, on the job or on a step, but continue-on-error
-    on a `gates` step whose outcome is a lane. These files are plain block-style YAML
+    only FILTER_<NAME> set from the `changed-paths` output <name> (set once, from OUTPUT_STEPS),
+    and the table, with no key twice and nothing but lanes, takes its result from the needed job of
+    the lane's own name, or from the `gates` output of that name, which the step of that id backs.
+    Every job `ci-required` needs must fail when its work fails: no ANY_NEVER_RE, on the job or on
+    a step, but continue-on-error on a `gates` step whose outcome is a lane; and `changed-paths`,
+    which decides which lanes apply, has no `if:` at all. These files are plain block-style YAML
     (`_form_errors`), with no anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     text = _read(path)
@@ -316,8 +323,23 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
         ]
     needs = set(re.findall(r"^      - ([A-Za-z0-9_-]+)\s*$", body.split("\n    steps:")[0], re.M))
     env = dict(re.findall(r"^\s+(RESULT_[A-Z0-9_]+):\s*\$\{\{\s*(\S+)\s*\}\}\s*$", env_text, re.M))
+    paths_job = "\n".join(jobs.get("changed-paths", []))
+    block = re.search(r"^    outputs:\n((?:      .*\n|[ \t]*\n)*)", paths_job + "\n", re.M)
+    named_outputs = re.findall(r"^      ([\w-]+):", block[1] if block else "", re.M)
+    sources = dict(OUTPUT_RE.findall(block[1] if block else ""))
     pairs = FILTER_ENV_RE.findall(env_text) if "changed-paths" in needs else []
-    filters = {f"FILTER_{var}" for var, out in pairs if var.lower().replace("_", "-") == out}
+    filters = {
+        f"FILTER_{var}"
+        for var, out in pairs
+        if var.lower().replace("_", "-") == out
+        and named_outputs.count(out) == 1
+        and sources.get(out) == f"{OUTPUT_STEPS.get(out, 'filter')}.outputs.{out}"
+    }
+    errors = [
+        f"{path}: job 'changed-paths' decides which lanes apply, so neither it nor a step may set "
+        f"`if:`, but it sets {m[1]!r}"
+        for m in re.finditer(r"^\s*(?:-\s+)?(if:.*)", paths_job, re.M)
+    ]
     gates = "\n".join(jobs.get("gates", []))
     step_ids = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", gates, re.M))
     outputs = re.findall(
@@ -327,7 +349,7 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     found = LANE_RE.findall(program.group(1))
     rest = LANE_RE.sub("", program.group(1)).strip()
     keys = [lane for lane, _, _ in found]
-    errors = [f"{path}: lane '{k}' repeats" for k in sorted(set(keys)) if keys.count(k) > 1]
+    errors += [f"{path}: lane '{k}' repeats" for k in sorted(set(keys)) if keys.count(k) > 1]
     errors += [f"{path}: the lane table holds more than lanes: {rest[:80]!r}"] if rest else []
     lanes: set[str] = set()
     outcomes: set[str] = set()  # lanes judged by a `gates` step's outcome
@@ -335,7 +357,10 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
         source = env.get(var, "")
         unset = sorted(set(re.findall(r"FILTER_\w+", applicable)) - filters)
         if unset:
-            errors.append(f"{path}: lane '{lane}' reads {unset}, not set from changed-paths")
+            errors.append(
+                f"{path}: lane '{lane}' reads {unset}, not set from changed-paths (the output of "
+                "its name, set once, by the `filter` step, or `change` for pr)"
+            )
         if applicable == "false" or unset:
             continue
         if source == f"needs.{lane}.result" and lane in needs and lane in jobs:

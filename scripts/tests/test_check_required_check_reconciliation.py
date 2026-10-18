@@ -229,6 +229,9 @@ SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - 
 INSTALL = "    name: install\n"
 NODE_CHECK = "    name: node-version-check (CI-JS-001)\n"
 UNIT_ENGINE = "    name: unit-engine\n    needs: install\n"
+PY_OUT = "      py: ${{ steps.filter.outputs.py }}\n"
+JS_OUT = "      js: ${{ steps.filter.outputs.js }}\n"
+PR_OUT = "      pr: ${{ steps.change.outputs.pr }}\n"
 
 
 @pytest.mark.parametrize(
@@ -389,6 +392,13 @@ UNIT_ENGINE = "    name: unit-engine\n    needs: install\n"
             "§9 check 'unit-engine' is missing",
         ),
         ("_job-js.yml", UNIT_ENGINE, "    name: unit-engine\n    needs: >-\n      install\n", "'unit-e"),
+        # ... and changed-paths, which decides which lanes apply: each output a FILTER_ name reads
+        # comes from the step that sets it, and nothing in the job runs on a condition.
+        ("pr.yml", PY_OUT, "      py: 'false'\n", "lane 'py' reads ['FILTER_PY']"),
+        ("pr.yml", JS_OUT, JS_OUT.replace(".js", ".none"), "lane 'js' reads ['FILTER_JS']"),
+        ("pr.yml", PR_OUT, PR_OUT.replace("change", "filter"), "'commitlint' reads ['FILTER_PR']"),
+        ("pr.yml", "        id: filter\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
+        ("pr.yml", "        id: change\n", "$&        if: ${{ github.run_id < 0 }}\n", "decides"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
