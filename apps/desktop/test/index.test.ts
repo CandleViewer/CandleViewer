@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from "vitest";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
-import { app, BrowserWindow, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, type IpcMainInvokeEvent } from "electron";
 import { buildCsp } from "../src/main/csp";
 import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
@@ -49,8 +49,15 @@ vi.mock("../src/main/logger", () => ({ logStartup: vi.fn(), logAuditEvent: vi.fn
 // The default load path is under test: no dev server.
 delete process.env["CV_DEV_SERVER_URL"];
 
-const { isNavigationAllowed, safeOriginOf, isExternalLinkAllowed, createMainWindow } =
-  await import("../src/main/index");
+const {
+  isNavigationAllowed,
+  safeOriginOf,
+  isExternalLinkAllowed,
+  createMainWindow,
+  acceptedDevServerUrl,
+  isTrustedIpcSender,
+  IpcSenderRefusedError,
+} = await import("../src/main/index");
 
 /** A dev-server URL the shell accepted: the only kind isNavigationAllowed takes. */
 function acceptedDevUrl(raw: string): DevServerUrl {
@@ -195,33 +202,42 @@ interface MockWindow {
 
 type NavigateListener = (event: { preventDefault: () => void }, url: string) => void;
 
+/** The window `createMainWindow(devServerUrl)` built. */
+function openWindow(devServerUrl: DevServerUrl | undefined): MockWindow {
+  createMainWindow(devServerUrl);
+  return vi.mocked(BrowserWindow).mock.results.at(-1)?.value as MockWindow;
+}
+
+/** True when the window's `name` guard lets `url` through (it did not call preventDefault). */
+function passes(win: MockWindow, name: "will-navigate" | "will-redirect", url: string): boolean {
+  const listener = win.webContents.on.mock.calls.find(([event]) => event === name)?.[1];
+  if (typeof listener !== "function") {
+    throw new Error(`no ${name} listener registered`);
+  }
+  const event = { preventDefault: vi.fn() };
+  (listener as NavigateListener)(event, url);
+  return event.preventDefault.mock.calls.length === 0;
+}
+
 describe("CV_DEV_SERVER_URL in the main window (#3411)", () => {
   afterEach(() => {
     delete process.env["CV_DEV_SERVER_URL"];
     Object.assign(app, { isPackaged: false });
   });
 
-  /** Opens a main window with `raw` set; reports what it loaded, what it logged, and its guard. */
+  /** Opens a main window with `raw` set; reports what it loaded, what it logged, and its guards. */
   function openMainWindow(raw: string, isPackaged: boolean) {
     process.env["CV_DEV_SERVER_URL"] = raw;
     Object.assign(app, { isPackaged });
     vi.mocked(logAuditEvent).mockClear();
-    createMainWindow();
+    const win = openWindow(acceptedDevServerUrl());
     const logs = [...vi.mocked(logAuditEvent).mock.calls];
-    const win = vi.mocked(BrowserWindow).mock.results.at(-1)?.value as MockWindow;
-    const onNavigate = win.webContents.on.mock.calls.find(
-      ([name]) => name === "will-navigate",
-    )?.[1];
-    if (typeof onNavigate !== "function") {
-      throw new Error("no will-navigate listener registered");
-    }
-    /** True when the window's will-navigate guard lets `url` through. */
-    const navigates = (url: string): boolean => {
-      const event = { preventDefault: vi.fn() };
-      (onNavigate as NavigateListener)(event, url);
-      return event.preventDefault.mock.calls.length === 0;
+    return {
+      loaded: win.loadURL.mock.calls[0]?.[0] as unknown,
+      logs,
+      navigates: (url: string) => passes(win, "will-navigate", url),
+      redirects: (url: string) => passes(win, "will-redirect", url),
     };
-    return { loaded: win.loadURL.mock.calls[0]?.[0] as unknown, logs, navigates };
   }
 
   it("loads an accepted loopback dev server and allows navigation on its origin only", () => {
@@ -231,6 +247,9 @@ describe("CV_DEV_SERVER_URL in the main window (#3411)", () => {
     expect(win.navigates("http://127.0.0.1:4173/terminal")).toBe(true);
     expect(win.navigates("http://localhost:4173/")).toBe(false);
     expect(win.navigates("app://candleviewer/")).toBe(false);
+    expect(win.redirects("http://127.0.0.1:4173/login")).toBe(true);
+    expect(win.redirects("https://evil.test/")).toBe(false);
+    expect(win.redirects("app://candleviewer/")).toBe(false);
   });
 
   it.each([
@@ -247,8 +266,19 @@ describe("CV_DEV_SERVER_URL in the main window (#3411)", () => {
       expect(JSON.stringify(win.logs)).not.toContain(raw);
       expect(win.navigates(`${new URL(raw).origin}/`)).toBe(false);
       expect(win.navigates("app://candleviewer/terminal")).toBe(true);
+      expect(win.redirects(`${new URL(raw).origin}/`)).toBe(false);
+      expect(win.redirects("app://candleviewer/terminal")).toBe(true);
     },
   );
+
+  it("a packaged build never trusts an IPC call from the dev origin (#3608)", () => {
+    process.env["CV_DEV_SERVER_URL"] = "http://localhost:5173";
+    Object.assign(app, { isPackaged: true });
+    const decision = acceptedDevServerUrl();
+    expect(decision).toBeUndefined();
+    expect(isTrustedIpcSender("http://localhost:5173/", true, decision)).toBe(false);
+    expect(isTrustedIpcSender("app://candleviewer/", true, decision)).toBe(true);
+  });
 });
 
 describe("isExternalLinkAllowed (SR-113)", () => {
@@ -281,5 +311,116 @@ describe("isExternalLinkAllowed (SR-113)", () => {
 
   it("denies an unparseable URL", () => {
     expect(isExternalLinkAllowed("not a url")).toBe(false);
+  });
+});
+
+describe("redirects and <webview> (SR-113, #3608)", () => {
+  it("refuses a redirect off the app origin, logging its origin only; one on it passes", () => {
+    const win = openWindow(undefined);
+    vi.mocked(logAuditEvent).mockClear();
+    expect(passes(win, "will-redirect", "https://evil.test/phish?token=secret")).toBe(false);
+    expect(passes(win, "will-redirect", "http://localhost:5173/")).toBe(false);
+    expect(passes(win, "will-redirect", "file:///etc/hosts")).toBe(false);
+    expect(passes(win, "will-redirect", "app://candleviewer/terminal?tab=1")).toBe(true);
+    expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
+      ["redirect-denied", { url: "https://evil.test" }],
+      ["redirect-denied", { url: "http://localhost:5173" }],
+      ["redirect-denied", { url: "file:" }],
+    ]);
+  });
+
+  it("keeps webviewTag off in the window's webPreferences", () => {
+    openWindow(undefined);
+    const options = vi.mocked(BrowserWindow).mock.calls.at(-1)?.[0];
+    expect(options?.webPreferences?.webviewTag).toBe(false);
+  });
+
+  it("denies a <webview> attachment in every web contents, logging its origin only", () => {
+    type Listener = (...args: unknown[]) => void;
+    const created = (app.on as unknown as Mock).mock.calls.find(
+      ([name]) => name === "web-contents-created",
+    );
+    const contents = { on: vi.fn() };
+    (created?.[1] as Listener)({}, contents);
+    const attach = contents.on.mock.calls.find(([name]) => name === "will-attach-webview");
+    vi.mocked(logAuditEvent).mockClear();
+    const event = { preventDefault: vi.fn() };
+    (attach?.[1] as Listener)(event, {}, { src: "https://evil.test/x?token=secret" });
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
+      ["webview-denied", { url: "https://evil.test" }],
+    ]);
+  });
+});
+
+type IpcListener = (event: IpcMainInvokeEvent) => unknown;
+
+const IPC_CHANNELS = ["cv:gpu:info", "cv:keychain:getKekHandle", "cv:updates:check"] as const;
+
+/** The listener the shell registered for `channel` at startup (no dev server set). */
+function ipcListener(channel: string): IpcListener {
+  const listener = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === channel)?.[1];
+  if (listener === undefined) {
+    throw new Error(`no ipcMain handler for ${channel}`);
+  }
+  return listener as IpcListener;
+}
+
+/** An invoke event from the window's main frame on `url`, a sub-frame of it, or no frame. */
+function invokeFrom(url: string, frame: "main" | "sub" | "none"): IpcMainInvokeEvent {
+  const senderFrame = frame === "none" ? null : { url, parent: frame === "main" ? null : {} };
+  return { senderFrame } as unknown as IpcMainInvokeEvent;
+}
+
+describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", () => {
+  beforeAll(async () => {
+    await vi.waitFor(() => expect(ipcMain.handle).toHaveBeenCalledTimes(IPC_CHANNELS.length));
+  });
+
+  it("isTrustedIpcSender: a main frame on the app origin, or an accepted dev server's only", () => {
+    expect(isTrustedIpcSender("app://candleviewer/terminal", true, undefined)).toBe(true);
+    expect(isTrustedIpcSender("http://localhost:5173/terminal", true, DEV)).toBe(true);
+    expect(isTrustedIpcSender("app://candleviewer/", true, DEV)).toBe(false);
+    expect(isTrustedIpcSender("http://localhost:5174/", true, DEV)).toBe(false);
+    expect(isTrustedIpcSender("http://localhost:5173/", false, DEV)).toBe(false);
+    expect(isTrustedIpcSender("app://candleviewer/", false, undefined)).toBe(false);
+  });
+
+  it("answers every channel for the app origin's main frame", async () => {
+    const from = invokeFrom("app://candleviewer/terminal?tab=1", "main");
+    await expect(ipcListener("cv:gpu:info")(from)).resolves.toMatchObject({ vendor: "unknown" });
+    expect(ipcListener("cv:keychain:getKekHandle")(from)).toMatch(/^kek-handle-/);
+    expect(ipcListener("cv:updates:check")(from)).toEqual({
+      state: "error",
+      reason: "UPDATE_CHANNEL_DISABLED",
+    });
+  });
+
+  it.each([
+    ["https://evil.test/x?token=secret", "main", "not-shell-origin", "https://evil.test"],
+    ["http://localhost:5173/", "main", "not-shell-origin", "http://localhost:5173"],
+    ["app://candleviewer.evil.test/", "main", "not-shell-origin", "app://candleviewer.evil.test"],
+    ["about:blank", "main", "not-shell-origin", "about:"],
+    ["file:///app/web/dist/index.html", "main", "not-shell-origin", "file:"],
+    ["", "main", "not-shell-origin", "invalid-url"],
+    ["app://candleviewer/", "sub", "not-main-frame", "app://candleviewer"],
+    ["", "none", "not-main-frame", "invalid-url"],
+  ] as const)("refuses %j from a %s frame (%s), logged once", (url, frame, reason, origin) => {
+    vi.mocked(app.getGPUInfo).mockClear();
+    // Every registered handler, not a fixed list: a new one without the check fails here.
+    for (const [, listener] of vi.mocked(ipcMain.handle).mock.calls) {
+      vi.mocked(logAuditEvent).mockClear();
+      const call = () => (listener as IpcListener)(invokeFrom(url, frame));
+      expect(call).toThrow(IpcSenderRefusedError);
+      expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
+        ["ipc-sender-refused", { reason, origin }],
+      ]);
+    }
+    expect(app.getGPUInfo).not.toHaveBeenCalled();
+  });
+
+  it("the renderer sees the error's name and a fixed message, nothing about the sender", () => {
+    const shown = String(new IpcSenderRefusedError());
+    expect(shown).toBe("IpcSenderRefusedError: IPC sender refused: not the shell's own page");
   });
 });
