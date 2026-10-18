@@ -26,6 +26,12 @@ MAX_WINDOW_BARS: Final = 250_000
 #: an upper bound: a snapshot holds at most what the window holds, about 800 bars for 12h, 400
 #: for 1d, 57 for 1w, the last 31 d of a non-time kind (`21-database-schema.md` §9.5).
 MAX_TAIL: Final = 1_000
+#: The most WS series tail reads that run at once, process-wide (C-2.18; `bars.series_store`, #2787
+#: D2-G1). Every `SeriesStore` on the event loop shares them, and a read that cannot take a slot
+#: within `QUERY_TIMEOUT_S` fails like any timed-out read and is read again by a later `ensure`,
+#: so the process-wide series cap never turns into one read per series at once (BR-38: snapshot
+#: storms against the read path).
+MAX_CONCURRENT_TAIL_READS: Final = 16
 #: SR-E12-03: param floors/ceilings per non-time bar type.
 TICK_PARAM_RANGE: Final = (100, 1_000_000)
 RANGE_TICKS_RANGE: Final = (2, 100_000)
@@ -39,6 +45,7 @@ QTY_PARAM_MAX: Final = 10**12
 __all__ = [
     "DEFAULT_LIMIT",
     "MAX_BRICKS_PER_TRADE",
+    "MAX_CONCURRENT_TAIL_READS",
     "MAX_LIMIT",
     "MAX_NON_TIME_WINDOW_US",
     "MAX_REVERSAL_BRICKS",
