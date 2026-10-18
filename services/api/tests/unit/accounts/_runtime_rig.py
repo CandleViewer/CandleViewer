@@ -13,9 +13,11 @@ from uuid import UUID
 from candleviewer.account_health_wiring import AccountHealthRuntime, wire_account_health
 from candleviewer.accounts.service import AccountHealthFeed, AccountsService
 from candleviewer.accounts.wallet import WalletSnapshot
+from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.settings import Settings
+from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from tests.unit.accounts._fakes import ACC, Dms, FakeClock
 
 #: `FakeClock` starts its boot-time clock here: a time minus this is seconds into the scenario.
@@ -139,7 +141,9 @@ class Rig:
     """The runtime `create_app` builds, on a fake clock and sleeper, tracking `accounts` (`ACC` by
     default) through a fake source. The REST port is a fake only when `rest` is set; otherwise it
     is the production one, which answers every read as unavailable. The socket feeds the runtime
-    through `ctx.accounts.account_health`, the path the E29-T05 consumer will use."""
+    through `ctx.accounts.account_health`, the path the E29-T05 consumer will use. The runtime
+    publishes on the `wallet` topic through `hub`, which no client socket is on until a test
+    registers one (`_wallet_ws.Conn`)."""
 
     def __init__(
         self,
@@ -155,6 +159,8 @@ class Rig:
         self.rest = Rest(self.clock)
         self.metrics = metrics or Metrics("demo")
         self.accounts = AccountsService()
+        self.hub = SequencingHub()
+        self.topic = WalletTopic(self.hub.publish, SnapshotBody)
         self.wanted: frozenset[UUID] = frozenset(accounts or (ACC,))
         self.read_error: Exception | None = None  # the tracking source fails with this
         self.read_hangs = False  # or never answers
@@ -169,6 +175,7 @@ class Rig:
             rest=self.rest if rest else None,
             monitored=self._monitored if source else None,
             release=self._release if source else None,
+            topic=self.topic,
         )
         self.accounts.attach_account_health(self.runtime.feed)
         self.ws = FakeWs(self.accounts.account_health, self.sleeper)

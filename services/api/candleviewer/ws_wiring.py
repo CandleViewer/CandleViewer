@@ -8,10 +8,11 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `(symbol, family)` on the ingestion streams' existing `acquire`/`release` interface. Families
   with no ingestion stream yet are a logged no-op; a refused symbol never fails the socket.
 * **Snapshots** (E17-S03 port): `SnapshotRouter` dispatches per topic family to the owning
-  module's adapter: `book_snapshot_source` (#2196) and `BarsSnapshotSource` (#2195). Until
-  order-flow (#2197) lands, its families map to `PendingSnapshotSource`, which
-  raises `NotImplementedError`; the router turns that into `None`, so the subscription reports
-  `snapshot_pending` and no `d` is ever emitted.
+  module's adapter: `book_snapshot_source` (#2196), `BarsSnapshotSource` (#2195) and the accounts
+  module's `wallet` topic (`wallet_topic`, #837), which the account health runtime attaches to
+  and publishes its deltas on. Until order-flow (#2197) lands, its families map to
+  `PendingSnapshotSource`, which raises `NotImplementedError`; the router turns that into `None`,
+  so the subscription reports `snapshot_pending` and no `d` is ever emitted.
 * **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and
   account grants from the store at every `auth` and every re-evaluation. It fails closed to the
   deny-all snapshot and never raises.
@@ -37,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
+from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.book.resync import BookEngine
@@ -47,7 +49,7 @@ from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.permissions import ConnectionRegistry, Subscription
-from candleviewer.ws.sequencing import SnapshotBody, SnapshotSource
+from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, SnapshotSource
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
 if TYPE_CHECKING:
@@ -217,6 +219,13 @@ def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
         return None if inst is None else (inst.tick_size, inst.qty_step)
 
     return BookSnapshotSource(engine, steps, book_snapshot_body)
+
+
+def wallet_topic(hub: SequencingHub) -> WalletTopic[SnapshotBody]:
+    """#837: the `wallet` family's adapter, which the accounts module owns: it renders through the
+    gateway's `SnapshotBody` and publishes its deltas through `hub`. The account health runtime
+    attaches its monitor and wallet cache (`wire_account_health`); before, `build` gives `None`."""
+    return WalletTopic(hub.publish, SnapshotBody)
 
 
 class _Identity(Protocol):

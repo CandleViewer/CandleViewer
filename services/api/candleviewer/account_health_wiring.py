@@ -24,6 +24,13 @@ Three bindings are stand-ins that fail closed until their owners land: the excha
 is unavailable (E29), so sizing is off once a snapshot is stale after a failed attempt, or a period
 old; the dead-man's-switch hook (E39) logs the episode; a credential rejection (the key standing, a
 later slice of #837) is logged.
+
+The runtime serves health and balances on the WS `wallet` topic (`accounts/wallet_topic.py`), which
+`create_app` builds on the gateway's hub and hands in: the topic's snapshots read the monitor and
+the cache, and the runtime publishes a health delta when an account's monitoring starts and on each
+transition it commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`),
+and a balance delta on each refresh, pushed or read, and when the tick finds a refreshed balance
+turned stale.
 """
 
 from __future__ import annotations
@@ -57,6 +64,7 @@ from candleviewer.accounts.wallet import (
     WalletThresholds,
     WalletUnavailable,
 )
+from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
@@ -69,6 +77,7 @@ if TYPE_CHECKING:
     from candleviewer.accounts.service import AccountHealthFeed
     from candleviewer.observability.metrics import Metrics
     from candleviewer.settings import Settings
+    from candleviewer.ws.sequencing import SnapshotBody
 
 #: `tick()` and the reconciler's `run_due()` run this often: at least once a second (`health.py`),
 #: and a wallet read that is due waits no longer than this for its pass.
@@ -177,7 +186,8 @@ class AccountHealthRuntime:
 
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped.
-    Meant for one event loop, the one that runs the loops and the hook calls."""
+    `topic` is the `wallet` topic it publishes on. Meant for one event loop, the one that runs the
+    loops and the hook calls."""
 
     def __init__(
         self,
@@ -187,10 +197,11 @@ class AccountHealthRuntime:
         rejections: CredentialRejections,
         monitored: MonitoredAccounts | None,
         *,
+        topic: WalletTopic[SnapshotBody],
         release: Release | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
-        self.monitor, self.wallets = monitor, wallets
+        self.monitor, self.wallets, self.topic = monitor, wallets, topic
         self._monitored, self._release = monitored, release
         self._sleep = sleep
         self._tracked: set[UUID] = set()
@@ -211,16 +222,25 @@ class AccountHealthRuntime:
         return self.monitor.current(account_id)
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
-        return None if self._stopping else self.monitor.ws_heartbeat(account_id)
+        return None if self._stopping else self._moved(self.monitor.ws_heartbeat(account_id))
 
     def ws_dropped(self, account_id: UUID) -> HealthTransition | None:
-        return None if self._stopping else self.monitor.ws_dropped(account_id)
+        return None if self._stopping else self._moved(self.monitor.ws_dropped(account_id))
 
     def rest_ok(self, account_id: UUID) -> HealthTransition | None:
-        return None if self._stopping else self.monitor.rest_ok(account_id)
+        return None if self._stopping else self._moved(self.monitor.rest_ok(account_id))
 
     def wallet_pushed(self, account_id: UUID, snapshot: WalletSnapshot) -> bool:
-        return not self._stopping and self.wallets.apply(account_id, snapshot)
+        refreshed = not self._stopping and self.wallets.apply(account_id, snapshot)
+        if refreshed:
+            self.topic.balance_refreshed(account_id)
+        return refreshed
+
+    def _moved(self, transition: HealthTransition | None) -> HealthTransition | None:
+        """Publish the health of an account whose state a call just committed, on `wallet`."""
+        if transition is not None:
+            self.topic.health_changed(transition.account_id)
+        return transition
 
     @property
     def fault(self) -> str | None:
@@ -302,6 +322,7 @@ class AccountHealthRuntime:
         for account_id in added:
             self.monitor.track(account_id)
             self.wallets.track(account_id)
+            self.topic.health_changed(account_id)  # its monitoring starts (§15.4)
         for account_id in removed:
             self.monitor.untrack(account_id)
             self.wallets.untrack(account_id)
@@ -317,10 +338,15 @@ class AccountHealthRuntime:
     # -- the loops
 
     async def _tick(self) -> None:
-        self.monitor.tick()  # the monitor logs each transition and owes the hook its call
+        for transition in self.monitor.tick():  # the monitor logs each one and owes the hook
+            self._moved(transition)
+        self.topic.stale_check()
 
     async def _reconcile(self) -> None:
-        await self._reconciler.run_due()
+        polls = await self._reconciler.run_due()  # a read's `rest_ok` went through `rest_ok` above
+        for poll in polls:
+            if poll.refreshed:
+                self.topic.balance_refreshed(poll.account_id)
 
     async def _loop(self, loop: _Loop) -> None:
         while not self._stopping:  # a loop that a cut-off stop abandoned ends with its pass
@@ -417,6 +443,7 @@ def _repository_source(settings: Settings) -> tuple[MonitoredAccounts | None, Re
 def wire_account_health(
     settings: Settings,
     metrics: Metrics,
+    topic: WalletTopic[SnapshotBody],
     *,
     clock: Clock | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -426,12 +453,13 @@ def wire_account_health(
     monitored: MonitoredAccounts | None = None,
     release: Release | None = None,
 ) -> AccountHealthRuntime:
-    """Build the runtime; `create_app` calls it with nothing but the settings and its metrics. The
-    rest are the seams of the bindings that land later and of the tests: the clock, the loops'
-    sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39), the place a
-    credential rejection goes (the key standing) and the tracking source with the release of its
-    pool (`monitored` is the repository read; with neither given, the real backend's). A `release`
-    without the `monitored` it frees is refused. No I/O."""
+    """Build the runtime; `create_app` calls it with the settings, its metrics and the `wallet`
+    topic, which this attaches to the monitor and the cache. The rest are the seams of the bindings
+    that land later and of the tests: the clock, the loops' sleep, the exchange's wallet read
+    (E29), the dead-man's-switch hook (E39), the place a credential rejection goes (the key
+    standing) and the tracking source with the release of its pool (`monitored` is the repository
+    read; with neither given, the real backend's). A `release` without the `monitored` it frees is
+    refused. No I/O."""
     clock = clock or SystemClock()
     monitor = AccountHealthMonitor(
         clock, dms or LoggingDeadMansSwitch(), HealthThresholds.from_settings(settings)
@@ -445,12 +473,14 @@ def wire_account_health(
         if release is not None:
             raise ValueError("a release frees what `monitored` reads: pass both or neither")
         monitored, release = _repository_source(settings)
+    topic.attach(monitor, wallets)
     return AccountHealthRuntime(
         monitor,
         wallets,
         rest or UnavailableWalletRest(),
         rejections or LoggingCredentialRejections(),
         monitored,
+        topic=topic,
         release=release,
         sleep=sleep,
     )
