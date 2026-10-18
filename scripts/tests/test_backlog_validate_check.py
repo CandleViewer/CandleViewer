@@ -45,6 +45,19 @@ def _unterminated_all_tickets(backlog: Path) -> None:
     twin.write_bytes(twin.read_bytes().removesuffix(b"\n"))
 
 
+def _double_newline_all_tickets(backlog: Path) -> None:
+    """all-tickets.json with a second final newline."""
+    twin = backlog / "all-tickets.json"
+    twin.write_bytes(twin.read_bytes() + b"\n")
+
+
+def _cr_e17(backlog: Path) -> None:
+    """E17.json with lone-CR line endings, which git commits as they are (a lone CR is binary to
+    text=auto): unlike CRLF, they stay off-layout."""
+    twin = backlog / "E17.json"
+    twin.write_bytes(twin.read_bytes().replace(b"\n", b"\r"))
+
+
 def _edit_e17(backlog: Path) -> None:
     """A one-string twin edit the AGENTS.md §3a way: load, modify, json.dump(indent=2), in LF."""
     data = json.loads((backlog / "E17.json").read_text(encoding="utf-8"))
@@ -53,11 +66,12 @@ def _edit_e17(backlog: Path) -> None:
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
 
-def _crlf(backlog: Path, *twins: str) -> None:
-    """The twins as a Windows text-mode write or checkout leaves them: every line ends in CRLF."""
+def _crlf(backlog: Path, *twins: str, lines: int = -1) -> None:
+    """The twins as a Windows text-mode write or checkout leaves them: every line ends in CRLF, or
+    only the first `lines` lines do (a twin of mixed CRLF and LF lines)."""
     for twin in twins:
         path = backlog / f"{twin}.json"
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n", lines))
 
 
 def _validate(backlog: Path, *argv: str) -> int:
@@ -88,13 +102,17 @@ def test_validate_check_python_edit_then_validate_passes(
     assert codes == (0, 0)  # any other error is backlog health, not the twin layout
 
 
-def test_validate_check_crlf_twins_pass(backlog: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """#3454: the §3a recipe in Windows text mode, or a Windows checkout, leaves CRLF twins; git
-    commits them as LF, so validate.py and its --check take them for the twins they are."""
+@pytest.mark.parametrize("lines", [-1, 1], ids=["crlf", "mixed"])
+def test_validate_check_crlf_twins_pass(
+    backlog: Path, capsys: pytest.CaptureFixture[str], lines: int
+) -> None:
+    """#3454: the §3a recipe in Windows text mode, or a Windows checkout, leaves CRLF twins (mixed
+    with LF lines after a partial edit); git commits them as LF, so validate.py and its --check take
+    them for the twins they are."""
     _edit_e17(backlog)
-    _crlf(backlog, "E17")
+    _crlf(backlog, "E17", lines=lines)
     first = _validate(backlog)  # rewrites all-tickets.json, in LF
-    _crlf(backlog, "all-tickets")
+    _crlf(backlog, "all-tickets", lines=lines)
     codes = (first, _validate(backlog, "--check"))
     assert "TWIN-FORMAT" not in capsys.readouterr().out
     assert codes == (0, 0)
@@ -107,8 +125,10 @@ def test_validate_check_crlf_twins_pass(backlog: Path, capsys: pytest.CaptureFix
         (_prettier_e17, "E17"),
         (_reindent_e17, "E17"),
         (_final_newline_e17, "E17"),
+        (_cr_e17, "E17"),
         (_edit_e17, "all-tickets"),
         (_unterminated_all_tickets, "all-tickets"),
+        (_double_newline_all_tickets, "all-tickets"),
     ],
 )
 def test_validate_check_prettier_or_stale_twin_fails_naming_validate_py(
@@ -119,7 +139,7 @@ def test_validate_check_prettier_or_stale_twin_fails_naming_validate_py(
     crlf: bool,
 ) -> None:
     edit(backlog)
-    if crlf:  # #3454: only line endings read as LF; the layout and the final newline stay exact
+    if crlf:  # #3454: only CRLF reads as LF; the layout, a lone CR and the final newline stay exact
         _crlf(backlog, "E17", "all-tickets")
     assert _validate(backlog, "--check") == 1
     out = capsys.readouterr().out

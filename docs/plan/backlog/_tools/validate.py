@@ -248,7 +248,8 @@ def twin_text(data):
 
 
 def read_twin(path):
-    """A twin as git commits it: CRLF line endings read as LF, every other byte as it is."""
+    """A twin as git commits it: CRLF line endings read as LF, every other byte as it is. Not in
+    universal-newline mode: git commits a lone CR as it is, so a lone CR has to stay and fail."""
     with io.open(path, encoding="utf-8", newline="") as fh:
         return fh.read().replace("\r\n", "\n")
 
