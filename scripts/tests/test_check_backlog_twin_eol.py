@@ -30,7 +30,7 @@ BAD = {
     "mixed": (LF.replace(b"\n", b"\r\n", 1), "mixed"),
     "lone-cr": (LF.replace(b"\n", b"\r"), "-text"),  # a lone CR makes the blob binary to git
     "cr-crlf": (LF.replace(b"\n", b"\r\r\n"), "-text"),
-    "one-line": (b"[]", "none"),
+    "one-line": (b"[]", "none"),  # an empty twin: validate.py writes `[]`, no newline
 }
 
 

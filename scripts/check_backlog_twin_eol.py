@@ -7,7 +7,8 @@ it cannot see a twin blob that holds CRLF. The git CLI never commits one here (.
 contents-API commit. This gate fails unless `git ls-files --eol` names every
 `docs/plan/backlog/*.json` blob (the twins: E<nn>.json and all-tickets.json) `i/lf`. Anything else
 fails: `crlf` and `mixed` hold CRLF, `-text` a lone CR or a NUL byte, `none` no line ending at
-all; validate.py writes none of them.
+all. Every twin validate.py writes is `lf` once it holds a ticket; an empty E<nn>.json (`[]`) is
+`none` and fails here too (validate.py rejects one for a roadmap epic: MISSING-EPIC-FILE).
 
 Exit codes: 0 clean, 1 violation(s), 2 internal error. Stdlib only.
 """
