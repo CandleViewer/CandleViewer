@@ -368,8 +368,14 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
 #:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``
+#: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
+#:   ``mksh -x``, ``yash -x``
 #: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
-#: - a command going on to the next line: ``bash \`` then ``-x ci.sh`` (each line is read alone)
+#: - a quoted word inside a quoted string, whose inner quotes stay on (the scan takes one level
+#:   off): ``bash -c 'set "-x"'``, ``sh -c "set \"-x\""``; also after a quote that closes an
+#:   earlier line's string, which the scan reads as opening one: ``make'; set "-x"``
+#: - a command going on to the next line: ``bash \`` then ``-x ci.sh``, or ``set -e`` then ``-x``
+#:   in a folded ``run: >`` block (each line is read alone)
 #: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
 #:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
 #: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh

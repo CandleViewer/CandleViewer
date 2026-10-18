@@ -534,6 +534,17 @@ NOT_TRACED = [
     "set -e${O:?x}",
     "set -e$FLAGS",
     "/opt/a:b/bin/bash -x ci.sh",
+    # #3400: the rest of the forms listed beside _SET_X as not reported, though they trace (bash
+    # 5.3 traced each but mksh, which POSIX sh(1)'s -x covers): an option argument from an
+    # expansion, a shell through another variable or one the rules do not name, a quoted word
+    # inside a quoted string. A RETURN trap runs once per return, not before each command.
+    'bash -O "$opt" -x ci.sh',
+    "$SH -x ci.sh",
+    "${SHELL:+sh} -x ci.sh",
+    "mksh -x ci.sh",
+    "bash -c 'set \"-x\"'",
+    'sh -c "set \\"-x\\""',
+    "trap 'echo $BASH_COMMAND' RETURN",
 ]
 VIA = ["run", "script"]
 
