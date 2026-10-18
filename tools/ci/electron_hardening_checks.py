@@ -533,11 +533,8 @@ def check_app_responses(probes: Any, header_csp: Any, require: bool) -> list[Vio
         bad = _mistyped_fields(p)
         if bad:
             need = "method and url strings, status an integer or null, csp a string or null"
-            vs.append(
-                Violation(
-                    "SR-112", where, f"wrong type for {', '.join(bad)} (need {need})"
-                )
-            )
+            msg = f"wrong type for {', '.join(bad)} (need {need})"
+            vs.append(Violation("SR-112", where, msg))
             continue
         key = (p["method"], p["url"])
         if key in got:
@@ -552,20 +549,14 @@ def check_app_responses(probes: Any, header_csp: Any, require: bool) -> list[Vio
             vs.append(Violation("SR-112", subject, "no response collected"))
             continue
         if p.get("status") != status:
-            vs.append(
-                Violation(
-                    "SR-112", subject, f"status is {p.get('status')!r}, need {status}"
-                )
-            )
+            msg = f"status is {p.get('status')!r}, need {status}"
+            vs.append(Violation("SR-112", subject, msg))
         csp = p.get("csp")
         if not isinstance(csp, str):
             vs.append(Violation("SR-112", subject, "no Content-Security-Policy header"))
         elif not isinstance(header_csp, str) or csp.split() != header_csp.split():
-            vs.append(
-                Violation(
-                    "SR-112", subject, "CSP header differs from the main-process CSP"
-                )
-            )
+            msg = "CSP header differs from the main-process CSP"
+            vs.append(Violation("SR-112", subject, msg))
     return vs
 
 
@@ -645,18 +636,13 @@ def run_all_checks(
         ]
     vs: list[Violation] = []
     # electron-builder packages all of dist/ but the scans read only main/ and preload/.
-    unscanned = sorted(
-        p.name for p in desktop_dist.iterdir() if p.name not in DIST_DIRS
-    )
+    unscanned = sorted({p.name for p in desktop_dist.iterdir()} - DIST_DIRS)
     if unscanned:
-        vs.append(
-            Violation(
-                "SR-114",
-                str(desktop_dist),
-                f"top-level {unscanned} would be packaged but is not scanned; build into "
-                "main/ or preload/, or extend the gate's scans",
-            )
+        msg = (
+            f"top-level {unscanned} would be packaged but is not scanned; build into "
+            "main/ or preload/, or extend the gate's scans"
         )
+        vs.append(Violation("SR-114", str(desktop_dist), msg))
     main_js = "\n".join(_read(p) for p in main_files)
     for p in main_files + preload_files:
         vs += check_dev_affordances(p.relative_to(desktop_dist).as_posix(), _read(p))

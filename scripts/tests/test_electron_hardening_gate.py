@@ -525,14 +525,7 @@ def test_a_405_with_a_different_csp_header_fails_sr112(tree: Tree, csp: str) -> 
 @pytest.mark.parametrize(
     ("i", "status"),
     [(0, 404), (1, 200), (2, 200), (3, 200), (3, None), (4, 404)],
-    ids=[
-        "page-404",
-        "missing-asset-200",
-        "api-spa-fallback-200",
-        "post-200",
-        "no-status",
-        "client-route-404",
-    ],
+    ids=["page-404", "asset-200", "api-200", "post-200", "no-status", "route-404"],
 )
 def test_a_handler_response_with_the_wrong_status_fails_sr112(
     tree: Tree, i: int, status: int | None
@@ -570,14 +563,7 @@ def test_absent_or_malformed_handler_responses_fail_closed_in_runtime_mode(
         ({**GOOD_PROBES[0], "status": True}, "wrong type for status"),
         ({**GOOD_PROBES[0], "csp": [GOOD_CSP]}, "wrong type for csp"),
     ],
-    ids=[
-        "not-an-object",
-        "method-list",
-        "url-object",
-        "status-text",
-        "status-bool",
-        "csp-list",
-    ],
+    ids=["non-object", "method", "url", "status-str", "status-bool", "csp"],
 )
 def test_a_handler_response_with_a_mistyped_field_fails_sr112(
     tree: Tree, entry: object, message: str
@@ -588,9 +574,7 @@ def test_a_handler_response_with_a_mistyped_field_fails_sr112(
     assert f"facts appProbes[{len(GOOD_PROBES)}]: {message}" in vs[0].render()
 
 
-@pytest.mark.parametrize(
-    "first_status", [404, 200], ids=["failing-then-passing", "twice"]
-)
+@pytest.mark.parametrize("first_status", [404, 200], ids=["failing-first", "twice"])
 def test_a_handler_response_collected_twice_fails_sr112(
     tree: Tree, first_status: int
 ) -> None:
