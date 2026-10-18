@@ -236,13 +236,21 @@ def is_fe_story(t):
 # Load
 # --------------------------------------------------------------------------
 # validate.py is the twins' formatter (#3362; prettier skips them): an E<nn>.json is exactly what
-# json.dump(data, fh, ensure_ascii=False, indent=2) writes (AGENTS.md §3a).
+# json.dump(data, fh, ensure_ascii=False, indent=2) writes (AGENTS.md §3a), byte for byte except
+# line endings (#3454): git commits the twins as LF (.gitattributes), so read_twin() reads a CRLF
+# twin (a Windows text-mode write or checkout) as LF; the final newline still has to match.
 TWIN_FORMAT = ("TWIN-FORMAT %s: not byte-identical to what validate.py writes; validate.py is the "
                "formatter of the backlog twins, never prettier or a hand edit: %s")
 
 
 def twin_text(data):
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def read_twin(path):
+    """A twin as git commits it: CRLF line endings read as LF, every other byte as it is."""
+    with io.open(path, encoding="utf-8", newline="") as fh:
+        return fh.read().replace("\r\n", "\n")
 
 
 def load(fix=False):
@@ -254,8 +262,7 @@ def load(fix=False):
     for fn in files:
         path = os.path.join(BACKLOG, fn)
         try:
-            with io.open(path, encoding="utf-8", newline="") as fh:
-                raw = fh.read()
+            raw = read_twin(path)
             data = json.loads(raw)
         except json.JSONDecodeError as e:
             err("INVALID-JSON %s: %s" % (fn, e))
@@ -1046,10 +1053,7 @@ def write_all_tickets(tickets, check=False):
     text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
     p = os.path.join(BACKLOG, "all-tickets.json")
     if check:
-        old = None
-        if os.path.exists(p):
-            with io.open(p, encoding="utf-8", newline="") as fh:
-                old = fh.read()
+        old = read_twin(p) if os.path.exists(p) else None
         if old != text:
             err(TWIN_FORMAT % ("all-tickets.json", "run validate.py and commit what it writes"))
         return "not written (--check)", len(out)

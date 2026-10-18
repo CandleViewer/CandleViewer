@@ -240,8 +240,9 @@ If any of 1–15 is missing, contradictory, or the brief cannot be executed with
 the ticket fails DoR (Constitution §11.1) — stop and comment, do not guess.
 
 Edit ticket JSON only with `python`: load the file, modify the dict/list in memory, then
-`json.dump(..., ensure_ascii=False, indent=2)`. Never hand-edit with a text-replace tool — the schema
-is machine-checked by `docs/plan/backlog/_tools/validate.py`; run it after any backlog edit.
+`json.dump(..., ensure_ascii=False, indent=2)` to the file opened with `newline="\n"`. Never
+hand-edit with a text-replace tool — the schema is machine-checked by
+`docs/plan/backlog/_tools/validate.py`; run it after any backlog edit.
 
 ### 3b. Board protocol
 
