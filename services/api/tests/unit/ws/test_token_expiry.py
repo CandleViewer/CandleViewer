@@ -399,6 +399,30 @@ def test_revocation_drops_the_queued_backlog_and_sends_bye_next() -> None:
         assert _closed(ws) == 4401
 
 
+def test_an_enrolment_refused_re_auth_drops_the_queued_backlog_and_sends_bye_next() -> None:
+    """#2295 (§4.3): a refused re-`auth` ends the socket's identity, so its close is sealed: the
+    `bye` is the next frame, never one queued for the identity the socket held until then."""
+    clock, presented = _Clock(), list[str]()
+    gw: _Bare | None = None
+
+    async def authenticate(token: str) -> Any:
+        presented.append(token)
+        if len(presented) == 1:  # the first `auth`: a full session
+            return ("sess", _USER, _T0 + ACCESS_TOKEN_TTL)
+        assert gw is not None
+        for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):  # queued for the earlier identity
+            gw.hub.broadcast_system(_TICK)
+        raise gateway.AuthRefused("mfa_enrollment_required")
+
+    gw = _bare_gateway(authenticate, clock, tick_s=_NO_IDLE_TICK_S)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "full")["t"] == "auth_ok"
+        ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": "password-only"}})
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "mfa_enrollment_required"), bye
+        assert _closed(ws) == 4403
+
+
 def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
     clock = _Clock()
     expiry = _T0 + timedelta(minutes=1)
