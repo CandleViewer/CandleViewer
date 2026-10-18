@@ -248,7 +248,7 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
      rising) is expected only after an Owner TOTP reset, a recovery sign-in or a first sign-in.
      Otherwise treat it as U34 in `04-security-program.md` (a stolen password enrolling a TOTP,
      RR-15): find the `auth.session_created` record with `enrolment_only: true` and its source
-     IP. The paging rule on that series is not written yet (E09-X03).
+     IP. The paging rule on that series is not written yet (#2746).
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
    target user:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;
