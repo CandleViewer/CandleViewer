@@ -211,6 +211,10 @@ _QUOTING = re.compile(
 )
 
 
+#: In a double-quoted string ``\\``, ``\"`` and ``\$`` give the character as its quotes come off (as
+#: a backslash before a backtick does, which no rule reads): a string an inner shell runs keeps
+#: the quotes and escapes that shell takes off (``sh -c "set \"-x\""``, ``sh -c "set \\-x"``).
+_QUOTED_ESCAPE = re.compile(r"\\([\\\"$])")
 #: A name in a double-quoted string, braced as its quotes come off so that it stays that name:
 #: ``"$X"bash`` reads as ``${X}bash`` (a shell after an expansion), not ``$Xbash`` (another name).
 _QUOTED_NAME = re.compile(r"\$(\w+)")
@@ -218,7 +222,7 @@ _QUOTED_NAME = re.compile(r"\$(\w+)")
 
 def _unquote(m: re.Match[str]) -> str:
     if m[3] is not None:
-        return _QUOTED_NAME.sub(r"${\1}", m[3])
+        return _QUOTED_NAME.sub(r"${\1}", _QUOTED_ESCAPE.sub(r"\1", m[3]))
     return m[1] or m[2] or ""
 
 
@@ -377,8 +381,9 @@ _TRAP_DEBUG = re.compile(
 #: zsh's ``TRAPDEBUG`` function is a ``DEBUG`` trap (zshmisc(1), Trap Functions).
 _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: The rules reported as ``'set -x' tracing``: a match with an ``on`` group, in a line with its
-#: quotes off (``_unquoted``), or of ``_TRAP_DEBUG``, which reads the line with its quotes (a trap's
-#: quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
+#: quotes off (``_unquoted``) and again with a second level off, the quotes of a string an inner
+#: shell runs (``bash -c 'set "-x"'``); or of ``_TRAP_DEBUG``, which reads the line with its
+#: quotes (a trap's quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
 #:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
@@ -386,8 +391,8 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
 #:   ``mksh -x``, ``yash -x``
 #: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
-#: - a quoted word inside a quoted string, whose inner quotes stay on (the scan takes one level
-#:   off): ``bash -c 'set "-x"'``, ``sh -c "set \"-x\""``
+#: - a quoted word three quote levels deep (the scan takes two levels off):
+#:   ``bash -c "bash -c 'set \"-x\"'"``
 #: - a command going on to the next line: ``bash \`` then ``-x ci.sh``, or ``set -e`` then ``-x``
 #:   in a folded ``run: >`` block (each line is read alone)
 #: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
@@ -447,7 +452,10 @@ def _sr146_hits(text: str) -> list[tuple[int, str]]:
         body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
         words = _unquoted(body)
         if any(m["on"] for m in _TRAP_DEBUG.finditer(body)) or any(
-            m["on"] for rule in _SET_X for m in rule.finditer(words)
+            m["on"]
+            for text in (words, _unquoted(words))
+            for rule in _SET_X
+            for m in rule.finditer(text)
         ):
             hits.append((n, "'set -x' tracing"))
         if _ENV_DUMP.search(body):

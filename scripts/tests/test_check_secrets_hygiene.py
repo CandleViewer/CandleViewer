@@ -482,6 +482,12 @@ TRACED = [
     "true'; set \"-x\"",
     "bash -c 'set \"-x\"; make",
     "bash -c \"set '-x'; make",
+    # #3400: a quoted word in a string an inner shell runs, whose quotes come off in a second pass;
+    # in a double-quoted string \\, \" and \$ give the character first (bash 5.3 traced each).
+    "bash -c 'set \"-x\"'",
+    'sh -c "set \\"-x\\""',
+    'sh -c "set \\\\-x"',
+    "bash -c \"set \\$'-x'\"",
 ]
 NOT_TRACED = [
     "set -e",
@@ -568,14 +574,15 @@ NOT_TRACED = [
     # #3400: the rest of the forms listed beside _SET_X as not reported, though they trace (bash
     # 5.3 traced each but mksh, which POSIX sh(1)'s -x covers): an option argument from an
     # expansion, a shell through another variable or one the rules do not name, a quoted word
-    # inside a quoted string. A RETURN trap runs once per return, not before each command.
+    # three quote levels deep. A RETURN trap runs once per return, not before each command. An
+    # empty quoted word in a string an inner shell runs is still a word (bash 5.3: no trace).
     'bash -O "$opt" -x ci.sh',
     "$SH -x ci.sh",
     "${SHELL:+sh} -x ci.sh",
     "mksh -x ci.sh",
-    "bash -c 'set \"-x\"'",
-    'sh -c "set \\"-x\\""',
+    "bash -c \"bash -c 'set \\\"-x\\\"'\"",
     "trap 'echo $BASH_COMMAND' RETURN",
+    "bash -c 'set \"\" -x'",
     # #3400: words DEBUG or TRAPDEBUG only starts: other zsh functions, a signal bash refuses.
     "TRAPDEBUGGER() { :; }",
     "TRAPDEBUG-x() { :; }",
@@ -697,6 +704,8 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         # #3400: ${NAME} pieces before a shell's name, and quoted names braced as quotes come off.
         "${A}" * 19000 + "sh",
         '"$A"' * 19000,
+        # #3400: escapes a double-quoted string takes off, then a second pass over what is left.
+        '"\\\\\\"' * 24000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -708,7 +717,7 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
     + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
     + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
-    + ["value-words", "shell-prefixes", "quoted-names"],
+    + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
