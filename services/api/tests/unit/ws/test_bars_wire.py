@@ -26,6 +26,7 @@ from candleviewer.ws.bars_wire import (
     bar_record,
     bars_frames,
     covering_scales,
+    item_frames,
 )
 from candleviewer.ws.binary import BARS, Frame, FrameEncodeError, decode, encode
 from candleviewer.ws.cvwb_vectors import structured
@@ -532,3 +533,36 @@ def test_bars_frames_keep_every_bar_in_order_at_its_floored_time(
     assert [(b["index"], b["t_ms"]) for b in decoded] == [
         (i, t // 1000) for i, t in enumerate(opens)
     ]
+
+
+@pytest.mark.parametrize("include_delta", [False, True])
+@pytest.mark.parametrize("bar_type", ["time", "tick"])
+def test_item_frames_are_the_kind_4_frames_of_the_bars_the_items_came_from(
+    bar_type: WireBarType, include_delta: bool
+) -> None:
+    """#3353: a merged window's bars leave only as items; read back, they encode to the frames
+    `bars_frames` builds for the bars themselves, at the scales covering them from the same floor,
+    with `turnover` rounded the same way and a new frame past the u32 span (§3.4, §3.6)."""
+    bars = [
+        _bar(turnover=Decimal("1001.12345")),
+        _bar(index=4, open=Decimal("100.15"), delta=Decimal("-0.125"), open_time=T0_US + DAY_US),
+        _bar(index=5, open_time=T0_US + 60 * DAY_US, close_time=T0_US + 61 * DAY_US),
+    ]
+    items = [
+        bar_item(b, generation=7, bar_kind=bar_type, include_delta=include_delta) for b in bars
+    ]
+    ps, qs = covering_scales(bars, price_scale=1, qty_scale=3, include_delta=include_delta)
+    want = bars_frames(
+        bars, generation=7, include_delta=include_delta, price_scale=ps, qty_scale=qs
+    )
+    assert len(want) == 2  # the third bar opens past the first frame's u32 span
+    assert item_frames(items, include_delta=include_delta, price_scale=1, qty_scale=3) == want
+
+
+def test_item_frames_refuse_items_of_two_generations() -> None:
+    """A kind-4 frame holds one generation (`bars_frames`); a swap is a snapshot, never a `d`."""
+    items = [
+        bar_item(_bar(index=i), generation=i, bar_kind="time", include_delta=False) for i in (3, 4)
+    ]
+    with pytest.raises(FrameEncodeError, match="one generation"):
+        item_frames(items, include_delta=False, price_scale=1, qty_scale=3)

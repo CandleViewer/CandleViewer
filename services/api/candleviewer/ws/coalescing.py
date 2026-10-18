@@ -12,9 +12,12 @@ its latest payload only (§6.4), whatever `coalesce` says.
 Exactly one pending update leaves verbatim, with its binary `part`, its own replay `ts_ms` and its
 producer's own `coalesced_count`; two or more leave as one merged structured payload with the sum
 of their counts (each at least 1; an append batch counts 1) and the latest `ts_ms` (the
-emitter adds the §8.2 disclosure). A merged `book` window is also re-encoded as one CVWB book delta
-(§3.4 kind 2, flagged `coalesced` by the emitter) when every update in it carried one at the same
-scales; any other merged frame is structured, even for a binary subscriber. An update that carries
+emitter adds the §8.2 disclosure). While every update in a window carried a part of its family's
+body kind (`_BODY_KINDS`, §3.4), the merged payload keeps one (#3353): a `book` delta at their
+scales, a `trades` batch of their records (unless it carries `dropped` prints, which kind 3 has no
+field for), and `bars` through the kind-4 encoder of an unmerged frame, one frame per kind-4 frame
+past one frame's span (§3.6), structured by §3.4's trigger or an item kind 4 cannot read.
+Any other merged frame is structured, even for a binary subscriber. An update that carries
 nothing new is discarded
 as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
 column for a heatmap bucket already sent complete, by a window or by the snapshot that seeded the
@@ -48,7 +51,8 @@ from decimal import Context, Decimal, Inexact
 from typing import Any, Final, Literal
 
 from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
-from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, Frame
+from candleviewer.ws.bars_wire import item_frames
+from candleviewer.ws.binary import BARS, BOOK_DELTA, FLAG_COALESCED, FLAG_ESTIMATED, TRADES, Frame
 from candleviewer.ws.topics import FAMILIES
 
 Payload = Mapping[str, Any]
@@ -79,6 +83,11 @@ _DISCLOSURE: Final = frozenset({"coalesced", "coalesced_count"})
 #: Footprint cell fields that are increments within one bar (§8.2 "values summed").
 _SUMMED_DECIMALS: Final = ("bid_volume", "ask_volume", "delta", "total_volume")
 _SUMMED_COUNTS: Final = ("trades",)
+#: §3.4: the body kind a merged window keeps while every update in it carried a part of it (#3353).
+#: Footprint (5, #593) and heatmap (6, #605) have none yet; each kind also needs an `_encoded` arm.
+_BODY_KINDS: Final[Mapping[str, int]] = {"book": BOOK_DELTA, "trades": TRADES, "bars": BARS}
+#: Every `ts_offset_ms` is a u32 (§3.4).
+_MAX_OFFSET_MS: Final = 2**32 - 1
 
 
 class _BufferFullError(Exception):
@@ -98,11 +107,12 @@ _CAUSES: Final[Mapping[type[Exception], Refusal]] = {
 
 @dataclass(frozen=True, slots=True)
 class Emission:
-    """One frame's payload. `part` is the producer's CVWB form, kept only for an unmerged update.
-    `coalesced_count` sums the producers' counts merged into `body`, 1 for a batch of the append
-    families, which never merge. `window_count` is how many updates the queue itself merged into
-    it: 1 for a lone update, a whole frame or an append batch. `ts_ms` is the source event time a
-    replay frame carries; `meta` the envelope `meta` of the last update in it."""
+    """One frame's payload. `part` is its CVWB form: an unmerged update's own, or the one a merged
+    window keeps (`CoalescingQueue._encoded`). `coalesced_count` sums the producers' counts merged
+    into `body`, 1 for a batch of the append families, which never merge. `window_count` is how many
+    updates the queue itself merged into it: 1 for a lone update, a whole frame or an append batch
+    (a window cut in frames, §3.6: both on its first, 1 on the rest). `ts_ms` is the source event
+    time a replay frame carries; `meta` the envelope `meta` of the last update in it."""
 
     body: dict[str, Any]
     part: Frame | None = None
@@ -655,9 +665,11 @@ class CoalescingQueue:
         self._meta: Meta = None
         self._frames: list[Emission] = []
         self._frame_bytes = 0
-        #: The window's latest CVWB book delta while every update carried one at one scale,
-        #: `estimated` if any of them was.
-        self._delta: Frame | None = None
+        #: The window's latest part while it keeps its body kind (`_carry`), `estimated` if any
+        #: was; for `trades` every part (`_batch`) and their records (`_held`).
+        self._like: Frame | None = None
+        self._batch: list[Frame] = []
+        self._held = 0
         #: Why the queue refused an update, until `clear()`; None while it accepts updates.
         self.refusal: Refusal | None = None
         #: The class (never the message, which may quote the payload) of the error behind it.
@@ -769,10 +781,42 @@ class CoalescingQueue:
                 self._ts_ms = ts_ms
             if self._count == 1:
                 self._first = Emission(_own(body), part, count, ts_ms, meta)
-                self._delta = part if part is not None and part.body_kind == BOOK_DELTA else None
-            elif self._delta is not None:
-                self._delta = _next_delta(self._delta, part)
+            self._carry(part)
         self._bound()
+
+    def _carry(self, part: Frame | None) -> None:
+        """Keep the window's body kind while every update carries a part of it at the first one's
+        scales (`bars` at any: each kind-4 frame has its own, §3.4); a `trades` batch holds at most
+        the item bound in parts and in records (C-2.18). Otherwise the window leaves structured."""
+        if self._count == 1:
+            kind = _BODY_KINDS.get(self.family)
+            like = part if part is not None and part.body_kind == kind else None
+        else:
+            like = None if self._like is None else _next_part(self._like, part)
+        if like is not None and like.body_kind == TRADES:
+            self._batch.append(like)
+            self._held += len(like.records)
+        bound = self._bounds[1]
+        if like is None or len(self._batch) > bound or self._held > bound:
+            like, self._batch, self._held = None, [], 0
+        self._like = like
+
+    def _encoded(self, body: dict[str, Any]) -> list[tuple[dict[str, Any], Frame | None]]:
+        """The merged `body` and the CVWB part of each frame it leaves in (#3353): the window's
+        body kind while it kept one, else one structured frame. A part that cannot be built leaves
+        the window structured, never refused."""
+        like = self._like
+        if like is None:
+            return [(body, None)]
+        try:
+            if like.body_kind == BARS:
+                return _bars_parts(body, like, self._meta)
+            if like.body_kind == TRADES:  # kind 3 has no `dropped` field: never lose it silently
+                dropped = body.get("dropped", 0) > 0
+                return [(body, None if dropped else _trades_batch(self._batch, like))]
+            return [(body, _book_delta(body, like) if like.body_kind == BOOK_DELTA else None)]
+        except (ArithmeticError, LookupError, TypeError, ValueError):  # `FrameEncodeError` too
+            return [(body, None)]
 
     def _bound(self) -> None:
         if self.pending_bytes > self._max_bytes:
@@ -805,21 +849,24 @@ class CoalescingQueue:
         return out
 
     def _close_window(self, merge: _Merge) -> None:
-        """Move the pending merge to the frame list as one emission (verbatim if unmerged)."""
+        """Move the pending merge to the frame list as its emissions (verbatim if unmerged)."""
         if self._count == 1 and self._first is not None and not merge.trimmed:
-            emission = self._first
+            out = [self._first]
         elif self._count:
             count, window = (1, 1) if self.family in APPENDED_FAMILIES else (self._sum, self._count)
-            body = merge.result()
-            part = None if self._delta is None else _book_delta(body, self._delta)
-            emission = Emission(body, part, count, self._ts_ms, self._meta, window)
+            out = []
+            for i, (body, part) in enumerate(self._encoded(merge.result())):
+                if i:  # a window cut into several frames (§3.6) counts once, on its first
+                    count, window = 1, 1
+                out.append(Emission(body, part, count, self._ts_ms, self._meta, window))
         else:
             merge.reset()  # only discarded updates: nothing of theirs may leak into the next window
             return
-        self._frames.append(emission)
+        self._frames.extend(out)
         self._frame_bytes += merge.bytes + merge.root_bytes
         merge.reset()
         self._count, self._sum, self._first, self._ts_ms, self._meta = 0, 0, None, None, None
+        self._like, self._batch, self._held = None, [], 0
 
     def clear(self) -> None:
         """Drop the pending window (§8.4 step 1) and accept updates again. What a merge remembers
@@ -827,6 +874,7 @@ class CoalescingQueue:
         the topic's next snapshot, after which `Pacer` builds a new queue."""
         self._frames, self._frame_bytes = [], 0
         self._count, self._sum, self._first, self._ts_ms, self._meta = 0, 0, None, None, None
+        self._like, self._batch, self._held = None, [], 0
         if self._merge is not None:
             self._merge.reset()
         self.refusal = self.error = None
@@ -839,16 +887,51 @@ class CoalescingQueue:
             self._merge.seed(sent, root)
 
 
-def _next_delta(delta: Frame, part: Frame | None) -> Frame | None:
-    """`part` as the window's latest book delta, `estimated` (§3.4 bit0) if an earlier one was;
-    None when it is not a book delta at the window's scales."""
-    if part is None or part.body_kind != BOOK_DELTA:
+def _next_part(like: Frame, part: Frame | None) -> Frame | None:
+    """`part` as the window's latest, `estimated` (§3.4 bit0) if an earlier one was; None when it
+    is not of `like`'s kind, or (`bars` aside) not at its scales."""
+    if part is None or part.body_kind != like.body_kind:
         return None
-    if (part.price_scale, part.qty_scale) != (delta.price_scale, delta.qty_scale):
+    scales = (part.price_scale, part.qty_scale)
+    if part.body_kind != BARS and scales != (like.price_scale, like.qty_scale):
         return None
-    if delta.flags & ~part.flags & FLAG_ESTIMATED:
+    if like.flags & ~part.flags & FLAG_ESTIMATED:
         return replace(part, flags=part.flags | FLAG_ESTIMATED)
     return part
+
+
+def _trades_batch(parts: list[Frame], like: Frame) -> Frame | None:
+    """The window's prints as one kind-3 batch: its parts' records in arrival order, as their
+    producers encoded them, based at the earliest print, with `like`'s scales and `estimated` bit;
+    None when they span more than one u32 offset."""
+    stamped = [(part.ts_base_ms + record[0], record) for part in parts for record in part.records]
+    base = min((ts for ts, _ in stamped), default=like.ts_base_ms)
+    if any(ts - base > _MAX_OFFSET_MS for ts, _ in stamped):
+        return None
+    records = tuple((ts - base, *record[1:]) for ts, record in stamped)
+    return replace(like, records=records, ts_base_ms=base, flags=like.flags & FLAG_ESTIMATED)
+
+
+def _bars_parts(
+    body: dict[str, Any], like: Frame, meta: Meta
+) -> list[tuple[dict[str, Any], Frame | None]]:
+    """The merged bars through the kind-4 encoder of an unmerged frame (`item_frames`), at scales
+    holding every bar, never coarser than `like`'s, `include_delta` as `meta` echoes it; past the
+    u32 span, one frame per kind-4 frame with its items, each flagged `coalesced` (§3.6). Structured
+    for an amended close (no bit in kind 4); the encoder raises where kind 4 cannot carry a value.
+    """
+    items = body["bars"]
+    if any(item.get("amended") for item in items):
+        return [(body, None)]
+    flow = meta is not None and meta.get("include_delta") is True
+    scales = {"price_scale": like.price_scale, "qty_scale": like.qty_scale}
+    out: list[tuple[dict[str, Any], Frame | None]] = []
+    start, flags = 0, like.flags & FLAG_ESTIMATED | FLAG_COALESCED
+    for frame in item_frames(items, include_delta=flow, **scales):
+        stop = start + len(frame.records)
+        out.append(({**body, "bars": items[start:stop]}, replace(frame, flags=flags)))
+        start = stop
+    return out or [(body, None)]
 
 
 def _book_delta(body: Payload, like: Frame) -> Frame | None:

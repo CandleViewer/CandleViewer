@@ -7,10 +7,11 @@ emissions come from the recorded BTCUSDT tape (C-13.5), built by the real builde
 
 Rows: the snapshot against REST (§6.1); the forming flag and one close per bar; scenario 3, with
 `CV_WS_BACKPRESSURE_ENABLED` on (40 updates in one 250 ms window, a close beside the next open) and
-off (every update a frame); a client resync after a lost delta; a generation swap (C14); the
-structured fallback of a binary subscription, of a snapshot and of deltas (C15, C17, C19); the
-scales of each kind-4 frame (C16); a dotted `param`; no `marketdata:read`, at subscribe and
-mid-stream."""
+off (every update a frame); with the flag on, a merged window on a binary subscription as kind 4,
+or structured for an amended close (#3353); a client resync after a lost delta; a generation swap
+(C14); the structured fallback of a binary subscription, of a snapshot and of deltas (C15, C17,
+C19); the scales of each kind-4 frame (C16); a dotted `param`; no `marketdata:read`, at subscribe
+and mid-stream."""
 
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
+from candleviewer.ws.binary import BARS
 from candleviewer.ws_wiring import SnapshotRouter
 from tests.contract.test_market_bars_contract import (
     _NOW,
@@ -363,9 +365,9 @@ def test_contract_bars_40_updates_in_one_window_leave_as_one_coalesced_d_with_th
     """Scenario 3, first half, with `CV_WS_BACKPRESSURE_ENABLED` on (§8.1, §8.2): a bar opens, 40
     trades update it inside one 250 ms window, two more follow in the next. The open leaves at
     once, the 40 as ONE `d` with the bar's latest state, `coalesced` and `coalesced_count` 40, the
-    two as the next window's, which counts its own. A binary subscription gets a merged window
-    structured today (#3353), and C15 has its client accept either encoding: for it, `coalesced`,
-    the bar and `s` are asserted."""
+    two as the next window's, which counts its own. On a binary subscription every one of the three
+    is kind 4, the merged ones included (#3353), with bit1 as `coalesced` and no count, for which
+    kind 4 has no slot (§3.4)."""
     script = _script("forty_updates")
     rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
     with h.connect(rig.w) as c:
@@ -378,6 +380,8 @@ def test_contract_bars_40_updates_in_one_window_leave_as_one_coalesced_d_with_th
     assert [h.structured_of(f)["coalesced"] for f in frames] == [False, True, True]
     if mode == "structured":  # kind 4 has no slot for the count (§3.4)
         assert [f["p"].get("coalesced_count") for f in frames] == [None, 40, 2]
+    else:
+        assert [(f["e"], h.cvwb_part(f).body_kind) for f in frames] == [(c.binary_e, BARS)] * 3
     want = [_bar_state(b) for b in _last_bars(script.windows[1])]
     assert [_item_state(i) for i in h.structured_of(merged)["bars"]] == want  # the 40th's state
     assert merged["meta"] == {"include_delta": True}  # a window carries its last update's echo
@@ -392,8 +396,8 @@ def test_contract_bars_a_close_and_the_next_open_in_one_window_both_arrive_the_c
     """Scenario 3, second half, flag on: a bar closes and the next one opens inside one window.
     The window's `d` carries both, the close with `confirm: true` and the open with `confirm:
     false`, and the close is delivered once, in no later window's frame. A time bar's boundary
-    trade is one emission, a tick bar's two; the bars and `s` are asserted on both encodings
-    (#3353, as above)."""
+    trade is one emission, a tick bar's two; the bars and `s` are asserted on both encodings, and
+    on a binary subscription each frame is kind 4 (#3353, as above)."""
     s = _script(script)
     rig, mine = _Rig({}, backpressure=_ON), _Series(binary=mode == "binary")
     with h.connect(rig.w) as c:
@@ -403,6 +407,7 @@ def test_contract_bars_a_close_and_the_next_open_in_one_window_both_arrive_the_c
         client, store = _ends(rig, s.spec, mine)
     window = h.structured_of(frames[1])["bars"]
     assert [f["s"] for f in frames] == [2, 3, 4]
+    assert [f["e"] for f in frames] == [c.binary_e if mode == "binary" else "j"] * 3
     assert [(i["index"], i["confirm"]) for i in window] == [(0, True), (1, False)]
     closes = [i["index"] for f in frames for i in h.structured_of(f)["bars"] if i["confirm"]]
     assert closes == [0]  # in the window's frame, in none after it
@@ -429,6 +434,31 @@ def test_contract_bars_without_the_flag_every_update_is_a_frame_and_the_series_e
     assert not any(h.structured_of(f)["coalesced"] for f in frames)
     (on_client, on_store), (off_client, off_store) = ends
     assert on_client == on_store == off_client == off_store
+
+
+def test_contract_bars_a_merged_window_is_structured_only_for_an_amended_close_c15_c17() -> None:
+    """§3.4, flag on (#3353): on a binary subscription each window leaves as kind 4 but the one
+    holding an amended close, which kind 4 has no bit for. That one is structured, with
+    `coalesced` and its count; `s` runs on across both encodings and the client applies every
+    frame (C15, C17)."""
+    spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
+    amended = bars[3].model_copy(update={"close": bars[3].open})
+    later = bars[4].model_copy(update={"close": bars[4].high})
+    windows = [
+        [[_up("close", bars[3])]],  # the first update leaves at once
+        [[_up("close", amended, amended=True)], [_up("open", bars[4])]],
+        [[_up("update", bars[4])], [_up("update", later)]],
+    ]
+    rig, mine = _Rig({}, backpressure=_ON), _Series(binary=True)
+    with h.connect(rig.w) as c:
+        c.sub({"ch": CH, "opts": {"encoding": "binary"}})
+        assert mine.apply(c.next_of("snap"))
+        frames = rig.play(c, mine, spec, windows)
+    assert [(f["e"], f["s"]) for f in frames] == [(c.binary_e, 2), ("j", 3), (c.binary_e, 4)]
+    assert [h.structured_of(f)["coalesced"] for f in frames] == [False, True, True]
+    assert (frames[1]["p"]["coalesced_count"], h.cvwb_part(frames[2]).body_kind) == (2, BARS)
+    held = {key: (bar["confirm"], Decimal(bar["c"])) for key, bar in mine.bars.items()}
+    assert held == {(0, 3): (True, amended.close), (0, 4): (False, later.close)}
 
 
 @pytest.mark.parametrize("mode", h.MODES)

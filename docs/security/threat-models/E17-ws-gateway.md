@@ -364,7 +364,9 @@ It is bounded by count, is filled with the snapshot's complete columns when the 
 with one per emitted complete column, and is not counted in
 `pending_bytes`. Heatmap subscriptions are per channel and replay session, so the bound is the 200-subscription
 cap, not the 40-symbol one: up to about 42 MB per connection (200 x 210 KB) and about 336 MB per user (8
-connections), on top of the 8 MiB outbound budget.
+connections), on top of the 8 MiB outbound budget. With the flag on, a binary `trades` subscription's window also
+holds its updates' parts (#3353): up to 20 000 parts and 20 000 records per queue, references to the producers'
+shared frames, not counted in `pending_bytes`.
 
 Wiring requirements (WS-D01, #412): after a `close` event the ladder latches and returns nothing, so the 8 MiB budget
 holds only while the gateway closes the socket promptly. It must feed nothing after the event but the `bye` and the
@@ -382,8 +384,11 @@ window: that re-snapshot falls outside the rebuild budget and has no rate bound,
 `cv_ws_overflow_total{reason="unmergeable"}` is the signal, and each such update is logged with its family and topic.
 
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
-heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
-E17-Q03. Tracked as **RSK-063**.
+heatmaps. Encode-once-send-many keeps CPU flat in client count, except for a merged window with the flag on: each
+binary subscription encodes its own (#3353), about 10 µs per distinct bar measured, for up to 4 096 bars a window.
+Per-user cost is real and unmeasured until E17-Q03 (#568), whose load run, like #571's re-measure of its overhead
+on the flag-on path, is to include a binary `bars` series with many subscribers and a burst of distinct bars.
+Tracked as **RSK-063**.
 
 **RTT probe input (E17-T03, WS-D01, WS-D08).** With the flag on, the classification reads an input the client
 controls: its `pong` to the server's RTT probe (`23-ws-protocol.md` §8.6, §9.1). A client sends `pong`s at will;
@@ -669,7 +674,7 @@ scope on the open tickets named above.
 - **Contingent Low:** WS-D01, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
   E17-T04); re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
   behind `CV_WS_BACKPRESSURE_ENABLED`, which is off by default (#412), so its Low stays contingent until the flag is
-  on, after the gates `23-ws-protocol.md` §8.6 lists (#3353, #413, #571, #410, #568; #2900
+  on, after the gates `23-ws-protocol.md` §8.6 lists (#413, #571, #410, #568; #2900
   removes the flag); with the flag off, the 1 024-frame push bound is the control in force. WS-E02 was Low
   contingent on SR-189, which is implemented (#2318), so it is Low as built.
   **RSK-064** (continuous authorisation) is Mitigating in `32-risk-register.md`.
@@ -720,3 +725,5 @@ scope on the open tickets named above.
 | 2026-10-18 | author (agent; PR for #3403)                      | WS-D17 points at the cooperative-cut note in `Settings._refuse_unfittable_stop_budget` (#3361, #3403); no rating or count changes            |
 | 2026-10-18 | author (agent; PR for #3268 slice B)              | §10: #3268 out of the flag's gates (§8.6); §6: heatmap sent-bucket memory seeded at snapshot, ceiling unchanged; no rating or count changes  |
 | 2026-10-18 | author (agent; PR for #3363)                      | WS-T07: #3363, flag off: a raising connection stops no fan-out; a failed `d` awaits an `upstream_desync` `snap`; no rating or count changes  |
+| 2026-10-18 | author (agent; PR for #3353)                      | §10: #3353 built, out of the flag's gates (`23-ws-protocol.md` §8.6); no rating or count changes                                             |
+| 2026-10-18 | author (agent; PR for #3353 round 1)              | §6: WS-D08 qualified for the merged windows each binary subscription encodes, the trades part list; no rating or count changes               |
