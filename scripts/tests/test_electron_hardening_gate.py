@@ -445,6 +445,37 @@ def test_direct_calls_spelled_with_brackets_or_spaces_pass(tree: Tree) -> None:
     assert tree.violations() == []
 
 
+@pytest.mark.parametrize(
+    ("rel", "js", "sr", "subject"),
+    [
+        (
+            "main/windows/help.js",
+            'void win.loadFile("help.html");',
+            "SR-174",
+            "main window load",
+        ),
+        (
+            "main/windows/help.js",
+            "win.webContents.openDevTools();",
+            "SR-114",
+            "main/windows/help.js",
+        ),
+        (
+            "preload/extra/a.js",
+            "win.webContents.openDevTools();",
+            "SR-114",
+            "preload/extra/a.js",
+        ),
+    ],
+)
+def test_a_module_in_a_sub_directory_is_scanned(
+    tree: Tree, rel: str, js: str, sr: str, subject: str
+) -> None:
+    tree.files[f"desktop/{rel}"] = js
+    vs = tree.violations()
+    assert srs(vs) == {sr} and f"violated by {subject}:" in vs[0].render()
+
+
 def test_autoupdate_true_in_renderer_fails_sr115(tree: Tree) -> None:
     tree.files["web/assets/index-abc.js"] = "var caps={autoUpdate:!0}"
     assert srs(tree.violations()) == {"SR-115"}

@@ -523,8 +523,9 @@ def run_all_checks(
     facts: dict[str, Any],
     require_runtime: bool = False,
 ) -> list[Violation]:
-    main_files = sorted((desktop_dist / "main").glob("*.js"))
-    preload_files = sorted((desktop_dist / "preload").glob("*.js"))
+    # Recursive, so a module in a sub-directory of main/ or preload/ is scanned too.
+    main_files = sorted((desktop_dist / "main").rglob("*.js"))
+    preload_files = sorted((desktop_dist / "preload").rglob("*.js"))
     if not main_files or not preload_files:
         return [
             Violation(
@@ -534,7 +535,7 @@ def run_all_checks(
     vs: list[Violation] = []
     main_js = "\n".join(_read(p) for p in main_files)
     for p in main_files + preload_files:
-        vs += check_dev_affordances(f"{p.parent.name}/{p.name}", _read(p))
+        vs += check_dev_affordances(p.relative_to(desktop_dist).as_posix(), _read(p))
     bundle_files = (
         sorted((web_dist / "assets").glob("*.js")) if web_dist.is_dir() else []
     )
