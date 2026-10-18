@@ -288,6 +288,16 @@ def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch,
         _run(tmp_path, monkeypatch, data, "--dry-run", "--apply")
 
 
+# Security review round 4 of #3103: a full PUT drops a nested live setting the file leaves out.
+@pytest.mark.parametrize("key", ["required_pull_request_reviews", "required_status_checks"])
+def test_main_refuses_to_drop_a_nested_live_setting(tmp_path, monkeypatch, capsys, key) -> None:
+    data = {k: v for k, v in _valid_desired_state().items() if k != "merge_queue"}
+    live = json.loads(json.dumps(abp.compare_view(data)))
+    live[key]["dismissal_restrictions"] = {"users": ["someone"], "teams": []}
+    assert _run(tmp_path, monkeypatch, data, "--apply", live=lambda: live) == (1, [])
+    assert f"live has {key}.dismissal_restrictions" in capsys.readouterr().err
+
+
 def _reviews(**settings: object) -> Callable[[dict], None]:
     return lambda d: d["required_pull_request_reviews"].update(settings)
 

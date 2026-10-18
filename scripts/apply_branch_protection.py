@@ -4,8 +4,9 @@ GitHub repository's `main` branch protection (CONSTITUTION.md C-9.1, C-10.1;
 docs/plan/01-sdlc-and-branching.md §6.1, §7).
 
 A dry run unless given --apply. Refuses a missing or unknown key (`x-` keys too:
-nothing is stripped and sent), a floor crossed, a lockout, and, without
---allow-weaken, any change weaker than the live state.
+nothing is stripped and sent), a floor crossed, a lockout, a live setting the
+file does not declare (a nested one too), and, without --allow-weaken, any
+change weaker than the live state.
 
 This script never runs automatically from a PR-triggered workflow (see the
 break-glass runbook in CONTRIBUTING.md) — it is invoked manually by an admin
@@ -562,6 +563,13 @@ def main(argv: list[str] | None = None) -> int:
             print("apply-branch-protection: merge-queue ruleset diff (live -> desired):")
             print(mq_diff.render())
         refusals = [f"live has {key}, which the file does not declare" for key in diff.removed]
+        refusals += [  # a nested one too: the PUT replaces the whole object
+            f"live has {key}.{sub}, which the file does not declare"
+            for key, schema in SETTINGS.items()
+            if isinstance(schema, dict) and isinstance(live.get(key), dict)
+            for sub in live[key]
+            if sub not in schema
+        ]
         refusals += [
             f"{key} has its own endpoint" for key in CHECK_ONLY_KEYS if key in diff.changed
         ]
