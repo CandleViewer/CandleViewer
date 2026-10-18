@@ -381,18 +381,20 @@ it (login refuses `disabled` only):
   `auth.disabled_user_session_audit_slow` (with the ids; the record may still land), and if it
   then fails, or fails after its request was cancelled while waiting for it,
   `auth.disabled_user_session_audit_failed_late` follows with `error` only and no session, so count
-  those lines. Five losses leave no log line that names the session and says its record is missing
-  (the `WARNING`, logged as soon as `revoke` returns, names it in four of them but cannot say the
+  those lines. Six losses leave no log line that names the session and says its record is missing
+  (the `WARNING`, logged as soon as `revoke` returns, names it in five of them but cannot say the
   record failed): the process dies between the revoke and the write; it shuts down while the write
   is still running (the drain waits 2 seconds, then logs only a count); the request is cancelled
   after the revoking `UPDATE` committed but before `revoke` returned (the bullet above: the count,
   the log and the publish go with the record); the request is cancelled while the revocation is
-  published to the sockets, before the record is handed over; or the request is cancelled while it
-  waits for the write and the write then fails (an `_audit_failed_late` line says so, with no
-  session). Only the reconcile step finds all five, and what each `_audit_failed_late` line lost.
-  To reconcile, after an outage or any restart, list the sessions revoked as `user_disabled` in
-  that window (UTC; `psql` runs inside the `postgres` container, as the user and database it was
-  started with, in a read-only session):
+  published to the sockets, before the record is handed over; the write outlives the 2-second
+  bound and then fails (its `_audit_slow` line names the session but says the record may still
+  land, and the `_audit_failed_late` line that follows names none); or the request is cancelled
+  while it waits for the write and the write then fails (an `_audit_failed_late` line says so,
+  with no session). Only the reconcile step finds all six, and what each `_audit_failed_late`
+  line lost. To reconcile, after an outage or any restart, list the sessions revoked as
+  `user_disabled` in that window (UTC; `psql` runs inside the `postgres` container, as the user
+  and database it was started with, in a read-only session):
 
   ```bash
   docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
@@ -405,9 +407,33 @@ it (login refuses `disabled` only):
   SQL
   ```
 
-  As an Owner, look each id up in
-  `GET $API/admin/audit?action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`:
-  one with no record there is unaudited, unless a disable revoked it (its audit records cover it).
+  As an Owner, look each id up in the two revocation records that can name it as their subject:
+  `GET $API/admin/audit?action=auth.session_revoked&action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`.
+  `auth.session_revoked` with reason `user_disabled` is the disable's own record of that session
+  (B16 writes one for each session a disable revoked, the session its subject since #3402), and
+  `auth.disabled_user_session_revoked` is the backstop's. A session with neither is unaudited,
+  even when a `users.disable` record names its user: that record names the user and counts the
+  sessions (`detail.after.sessions_revoked`) without naming them, so a session that escaped the
+  disable and lost its backstop record has that record only. A disable leaves a session it
+  revoked with neither record when its B16 step failed (the ERROR line `users.disable.step` with
+  `step` `b16_revoke`); when its sweep was cut off after its `UPDATE` committed, so that B16 never
+  got the sessions it revoked (the same line, `step` `session_sweep`); when its commit's outcome
+  is unknown (a second `users.disable`, `failure`, reason `outcome_unknown`); or when the process
+  ended after the commit and before B16 recorded the session, in a crash, a kill or a power loss,
+  which leaves no line, because only a live process writes `users.disable.step`. The
+  `users.disable` records and the line, if there is one, name the user and no session: attach them
+  when you escalate.
+
+  In a window that starts before the release that carries #3402, a session this lookup does not
+  find may still have the disable's record, because an `auth.session_revoked` written before that
+  release names no subject. Look the session up by its user and the time instead:
+  `GET $API/admin/audit?action=auth.session_revoked&actor_user_id=<user_id>&from=<start>&to=<end>`,
+  with the session's `user_id` from the SQL above and the window's bounds in UTC (RFC 3339, such
+  as `2026-10-17T06:00:00Z`; `to` is exclusive, and B16 writes its record just after the
+  revocation, so end the window a little past the last `revoked_at`). Each record gives its
+  `session_id` and `reason`, and its actor is the session's user: a session whose id is the
+  `session_id` of a record with reason `user_disabled` is covered by the disable's own record. A
+  session in neither lookup is unaudited.
 
 - A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
   presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
