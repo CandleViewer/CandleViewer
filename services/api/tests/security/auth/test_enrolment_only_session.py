@@ -136,6 +136,22 @@ def test_the_restriction_follows_the_user_state_on_every_request(stack: Stack) -
     assert stack.client.post("/auth/logout", headers=headers).status_code == 204
 
 
+def test_a_full_session_whose_user_lost_every_method_cannot_enrol_even_near_its_expiry(
+    stack: Stack,
+) -> None:
+    """It proved a second factor its user no longer has, so it was not minted enrolment-only
+    (C-12.4): inside 15 minutes of its expiry too it gets the expired 401, never the enrolment
+    operations, so it cannot enrol another TOTP (#2295 review)."""
+    uid, _ = stack.add_user("member")
+    expires_at = stack.clock.now + ENROLMENT_ONLY_LIFETIME
+    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid), expires_at=expires_at)
+    _lose_every_method(stack, _user(stack, "member"))
+
+    resp = stack.client.post("/auth/mfa/enroll", headers=_headers(stack, minted), json={})
+
+    assert (resp.status_code, resp.json()["code"]) == (401, "unauthenticated")
+
+
 def test_a_password_only_session_stays_restricted_after_its_user_enrols(stack: Stack) -> None:
     """Defence in depth behind revoke-all at confirm: a session minted on the password alone
     never turns full, while one that proved the second factor is served."""
@@ -373,16 +389,16 @@ def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack)
     assert (line["reason"], line["source_ip"]) == (_CODE, "127.0.0.1")
 
 
-def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_must_enrol(
+def test_ws_cross_user_serves_a_full_session_then_refuses_a_password_only_re_auth(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Refused at once (§4.3): the socket is sealed before the refusal's audit write starts, so
-    nothing of the earlier identity waits on a slow writer, whose record still lands."""
+    nothing of the earlier identity waits on a slow writer, whose record still lands. The re-auth
+    presents a session of the same user minted on the password alone: enrolment-only."""
     _enrolling(stack)  # another user needing enrolment changes nothing here
     uid, _ = stack.add_user("member")
-    # A full session inside the 15-minute window: once its user must enrol, it is one.
-    expires_at = stack.clock.now + ENROLMENT_ONLY_LIFETIME
-    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid), expires_at=expires_at)
+    full: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
+    password_only, _ = _mint(stack, _user(stack, "member"))
     release, emit, closes, sealed_first = asyncio.Event(), stack.audit.emit, _closes(), []
 
     async def slow(action: str, **kw: Any) -> None:
@@ -394,9 +410,8 @@ def test_ws_cross_user_serves_a_full_session_then_refuses_its_re_auth_once_it_mu
     monkeypatch.setattr(stack.audit, "emit", slow)
 
     with _socket(stack) as ws:
-        assert _hello_auth(ws, minted.access_token)["t"] == "auth_ok"
-        _lose_every_method(stack, _user(stack, "member"))
-        ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": minted.access_token}})
+        assert _hello_auth(ws, full.access_token)["t"] == "auth_ok"
+        ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": password_only.access_token}})
         bye = _recv_type(ws, "bye")
         code = _closed(ws)
         stack.call(release.set)
