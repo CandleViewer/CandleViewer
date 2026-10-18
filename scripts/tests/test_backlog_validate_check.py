@@ -4,7 +4,6 @@ Runs the real validate.py on a tmp copy of the real twins; the plan docs are onl
 import importlib.util
 import json
 import re
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,7 +22,8 @@ def _prettier_e17(backlog: Path) -> None:
         return line if len(line) <= 100 else m[0]
 
     twin = backlog / "E17.json"
-    twin.write_text(_ARRAY.sub(fold, twin.read_text(encoding="utf-8")) + "\n", encoding="utf-8")
+    text = _ARRAY.sub(fold, twin.read_text(encoding="utf-8")) + "\n"
+    twin.write_text(text, encoding="utf-8", newline="\n")  # LF, per prettier.config.mjs endOfLine
 
 
 def _reindent_e17(backlog: Path) -> None:
@@ -58,6 +58,13 @@ def _cr_e17(backlog: Path) -> None:
     twin.write_bytes(twin.read_bytes().replace(b"\n", b"\r"))
 
 
+def _crcrlf_e17(backlog: Path) -> None:
+    """E17.json with CR CR LF line endings (a CRLF twin written again in Windows text mode), which
+    git commits as they are too: only the CRLF reads as LF, so the stray CR has to stay and fail."""
+    twin = backlog / "E17.json"
+    twin.write_bytes(twin.read_bytes().replace(b"\n", b"\r\r\n"))
+
+
 def _edit_e17(backlog: Path) -> None:
     """A one-string twin edit the AGENTS.md §3a way: load, modify, json.dump(indent=2), in LF."""
     data = json.loads((backlog / "E17.json").read_text(encoding="utf-8"))
@@ -88,8 +95,10 @@ def _validate(backlog: Path, *argv: str) -> int:
 
 @pytest.fixture
 def backlog(tmp_path: Path) -> Path:
+    """The twins as git commits them, in LF: a CRLF checkout's twins would turn into CR CR LF
+    under _crlf()."""
     for twin in [*_BACKLOG.glob("E[0-9][0-9].json"), _BACKLOG / "all-tickets.json"]:
-        shutil.copyfile(twin, tmp_path / twin.name)
+        (tmp_path / twin.name).write_bytes(twin.read_bytes().replace(b"\r\n", b"\n"))
     return tmp_path
 
 
@@ -126,6 +135,7 @@ def test_validate_check_crlf_twins_pass(
         (_reindent_e17, "E17"),
         (_final_newline_e17, "E17"),
         (_cr_e17, "E17"),
+        (_crcrlf_e17, "E17"),
         (_edit_e17, "all-tickets"),
         (_unterminated_all_tickets, "all-tickets"),
         (_double_newline_all_tickets, "all-tickets"),
@@ -139,7 +149,7 @@ def test_validate_check_prettier_or_stale_twin_fails_naming_validate_py(
     crlf: bool,
 ) -> None:
     edit(backlog)
-    if crlf:  # #3454: only CRLF reads as LF; the layout, a lone CR and the final newline stay exact
+    if crlf:  # #3454: only CRLF reads as LF; layout, a stray CR and the final newline stay exact
         _crlf(backlog, "E17", "all-tickets")
     assert _validate(backlog, "--check") == 1
     out = capsys.readouterr().out
