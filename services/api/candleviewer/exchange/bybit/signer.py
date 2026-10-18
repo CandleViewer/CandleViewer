@@ -4,7 +4,8 @@ This module owns the venue's string-to-sign (`docs/plan/24-internal-schemas.md` 
 (REST)"): `timestamp + api_key + recv_window + payload`, where `payload` is the query string for
 `GET` and the raw JSON body for `POST`. It never holds the API secret. It sends the message to M2
 with `KEY_ID_SLOT` where the key goes; M2 computes the lowercase hex HMAC-SHA256 and returns it
-with the key id for the `X-BAPI-API-KEY` header.
+with the key id for the `X-BAPI-API-KEY` header. A private-WS `auth` (§14.3 "Auth (WS)") signs
+`GET/realtime` + `expires` with no slot; the key id is the op's first argument.
 """
 
 from __future__ import annotations
@@ -62,6 +63,14 @@ class BybitSigner:
         )
         signed = await self._credentials.sign(self._credential_id, message, purpose=self._purpose)
         # The key id M2 returns is the X-BAPI-API-KEY header value (the one reviewed reveal).
+        return BybitSignature(api_key=signed.api_key.reveal(), signature=signed.signature)
+
+    async def sign_ws_auth(self, *, expires_ms: int) -> BybitSignature:
+        """Sign one private-WS `auth` op (§14.3 "Auth (WS)"): M2's MAC of `GET/realtime` and
+        `expires`, with no key-id slot, always under the `sign_ws_auth` purpose (#836)."""
+        message = (b"GET/realtime", str(expires_ms).encode())
+        signed = await self._credentials.sign(self._credential_id, message, purpose="sign_ws_auth")
+        # The key id M2 returns is the `auth` op's first argument (the same reviewed reveal).
         return BybitSignature(api_key=signed.api_key.reveal(), signature=signed.signature)
 
     def __repr__(self) -> str:
