@@ -161,8 +161,10 @@ class AdminJobStore:
         work: Callable[[Callable[[float], None]], Awaitable[dict[str, object]]],
         on_done: Callable[[Job], Awaitable[None]],
         job_id: str | None = None,
+        on_settled: Callable[[], None] | None = None,
     ) -> Job:
-        """`key` = (actor, idempotency key, body hash)."""
+        """`key` = (actor, idempotency key, body hash). `on_settled` is called once the job's task
+        is done: after `on_done`, or cancelled, even before it started (E42-T05)."""
         self.ensure_free(kind)
         job = Job(id=job_id or str(uuid.uuid4()), kind=kind)
         self._jobs[job.id] = job
@@ -193,7 +195,11 @@ class AdminJobStore:
                 self._tasks.pop(job.id, None)
             await on_done(job)
 
-        self._tasks[job.id] = spawn(_run(), name=f"admin-job-{kind}")
+        task = spawn(_run(), name=f"admin-job-{kind}")
+        if on_settled is not None:
+            settle = on_settled
+            task.add_done_callback(lambda _task: settle())
+        self._tasks[job.id] = task
         return job
 
     async def stop(self) -> None:
