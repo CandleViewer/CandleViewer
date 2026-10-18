@@ -158,7 +158,7 @@ for _transport in ENROLMENT_REFUSAL_TRANSPORTS:
     for _reason in ENROLMENT_REFUSAL_REASONS:
         auth_enrolment_refused_total.labels(transport=_transport, reason=_reason)
 #: `auth_enrolment_only_sessions_total{role}` (#2295) closed set: the user's highest system role,
-#: else `other` (see `normalise_role`). An Owner's is the one an alert pages on (U34, RR-15).
+#: else `other` (see `normalise_role`). An Owner's is to page (U34, RR-15; no rule yet, #2746).
 ENROLMENT_ONLY_ROLES: tuple[str, ...] = ("owner", "manager", "viewer", "other")
 auth_enrolment_only_sessions_total = Counter(
     "auth_enrolment_only_sessions_total",
