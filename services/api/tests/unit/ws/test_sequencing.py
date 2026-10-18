@@ -13,10 +13,12 @@ from typing import Any, get_args
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.models import BarSpec
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.binary import (
     BOOK_DELTA,
     FLAG_PARTIAL,
@@ -31,7 +33,9 @@ from candleviewer.ws.binary import (
 from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC
 from candleviewer.ws.permissions import Subscription, VersionedSnapshot, handle_sub
 from candleviewer.ws.sequencing import (
+    COUNTED_SNAP_REASONS,
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
+    INCIDENT_REASONS,
     MAX_OUTBOUND_FRAME_BYTES,
     SNAP_REASONS,
     SequencingHub,
@@ -605,6 +609,56 @@ def test_snap_reasons_are_the_schema_enum_in_order() -> None:
     enum = common["cv://ws/v1/common.schema.json"]["$defs"]["snapMeta"]["properties"]["reason"]
     assert list(SNAP_REASONS) == enum["enum"]
     assert list(get_args(SnapReason)) == enum["enum"]
+
+
+_BARS = "bars.BTCUSDT.time.5"
+
+
+def _hub_bars() -> tuple[SequencingHub, Conn, Subscription]:
+    """A live `bars.*` subscription past its `initial` snapshot: the family `history_repair` is
+    for (§7.4). Nothing sends the reason yet, so the tests below call the hub's `resnapshot`
+    where the publisher's re-snapshot will, and select the subscription by identity: which
+    subscriptions that selector takes (live, unpaused, `history` above 0) is the later slice's."""
+    src = Source()
+    src.bodies["bars"] = SnapshotBody(
+        {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
+    )
+    hub, conn = SequencingHub(), Conn(src)
+    hub.register(conn.authz, conn.emitter)
+    _, sub = conn.sub(_BARS)
+    conn.take()
+    return hub, conn, sub
+
+
+def test_history_repair_snap_is_counted_in_cv_ws_resync_total() -> None:
+    """#2787 D2-H1 (§7.4): a `bars` snap sent under the reason carries it and counts once in
+    `cv_ws_resync_total`, as every reason but `initial` does."""
+    hub, conn, sub = _hub_bars()
+    before = _resync_count("history_repair")
+    assert hub.resnapshot(lambda s: s is sub, "history_repair") == 1
+    (snap,) = conn.take()
+    assert (snap["ch"], snap["meta"]["reason"]) == (_BARS, "history_repair")
+    assert _resync_count("history_repair") == before + 1
+
+
+def test_history_repair_is_no_incident() -> None:
+    """#2787 (§7.4): routine, like `generation_swap`. Its `ws resync` line is `info`, not the
+    `warning` of the two incidents, and the reason is not in `INCIDENT_REASONS`."""
+    hub, _, sub = _hub_bars()
+    with capture_logs() as logs:
+        assert hub.resnapshot(lambda s: s is sub, "history_repair") == 1
+    (line,) = [e for e in logs if e["event"] == "ws resync"]
+    assert (line["log_level"], line["reason"]) == ("info", "history_repair")
+    assert "history_repair" not in INCIDENT_REASONS
+
+
+def test_history_repair_keeps_the_resync_series_within_its_catalogue_bound() -> None:
+    """#2787 (§7.4): `cv_ws_resync_total` binds a series for each counted reason at import, and its
+    catalogue bound (`max_series`, its declared cardinality) still holds them all. Nothing in the
+    export enforces the bound at run time, so this is the guard: a 17th counted reason fails."""
+    spec = next(s for s in CATALOGUE if s.name == "cv_ws_resync_total")
+    assert "history_repair" in COUNTED_SNAP_REASONS
+    assert len(COUNTED_SNAP_REASONS) <= spec.max_series
 
 
 # -- Scenario: large snapshots are chunked, not truncated --------------------------------------

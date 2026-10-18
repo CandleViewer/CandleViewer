@@ -214,7 +214,8 @@
                 "reconfigure",
                 "instrument_revision",
                 "replay_seek",
-                "generation_swap"
+                "generation_swap",
+                "history_repair"
               ],
               "description": "The server's closed set. A client MUST NOT validate against it: an unknown value is a routine re-snapshot (§7.4, C18)."
             },

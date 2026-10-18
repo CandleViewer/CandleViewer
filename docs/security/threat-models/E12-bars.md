@@ -347,6 +347,7 @@ below already exist in the ticket text or are requested.
 | `api_request_rejected_total{reason="limit_exceeded"}`              | BR-27..BR-30 | E12-T05                     |
 | `ws_client_disconnect_overflow_total`                              | BR-32        | E17                         |
 | `cv_ws_resync_total{reason="generation_swap"}`                     | BR-31, BR-38 | E17 (23-ws §7.7)            |
+| `cv_ws_resync_total{reason="history_repair"}`                      | BR-38        | E17 (23-ws §7.7)            |
 | `bars_gap_detected_total`                                          | BR-06, BR-35 | E12-T03                     |
 | `exchange_response_invalid_total`                                  | BR-01, BR-02 | E08 / E12-S05               |
 | `bars_row_checksum_mismatch_total`                                 | BR-08        | requested (SR-E12-11)       |

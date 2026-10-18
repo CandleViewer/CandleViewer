@@ -581,7 +581,8 @@
                 "reconfigure",
                 "instrument_revision",
                 "replay_seek",
-                "generation_swap"
+                "generation_swap",
+                "history_repair"
               ]
             },
             "recording_started_at_ms": {
