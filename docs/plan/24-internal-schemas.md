@@ -2452,6 +2452,8 @@ class RuleLimits(BaseModel):
 
 > **Implementation note (E35-T01).** Shipped as `candleviewer.rules.ir` (`services/api/candleviewer/rules/ir/`). Deviations from the listing above: `description`, `editor`, `limits` default when omitted; `created_by/created_at/updated_at` are optional metadata and, with `graph_layout`/`editor`, are excluded from `ir_hash`; `Literal_` accepts `bool|int|Decimal|str`; the committed schema is `rule-ir.json` beside the models, drift-guarded by `scripts/generate_rule_ir_schema.py --check`.
 
+> **Action budget (SR-104, #3232).** `max_fires_per_hour` and `max_fires_per_day` bound how often one scope instance fires; at either limit the evaluator skips the fire. For a rule, a value above its default needs the Owner role and a value above its hard cap is refused, at save. The caps live in `candleviewer.rules.limits`, mirrored by the contract's `x-cv-limit-caps` on `RuleIr`. Alerts reuse `RuleLimits` without either check.
+
 ### 11.3 JSON Schema (shared by both editors)
 
 Both editors validate against this before save; the backend re-validates on `POST /rules`. Abbreviated to the structural core — the full document is generated from the pydantic models at build time and published at `/api/v1/schemas/rule-ir.json` (see §17.3).
@@ -2850,6 +2852,8 @@ flowchart TD
 | New-rule gate       | A newly created or edited rule **cannot be armed directly**. It must run in `simulate` for `min_simulation_fires` (default 5) or `min_simulation_hours` (default 24), whichever comes first, before `armed` is selectable. Overridable only by the owner, with an audited reason. |
 | Feedback-loop guard | Actions do not re-enter the same rule's trigger within `cooldown_ms`; a rule whose own action would re-trigger it is rejected at save time by static analysis                                                                                                                     |
 | Disconnect guard    | While the private WS is disconnected or reconciliation is running, armed rules are **paused** (emulated stops cannot be trusted on stale state); the native SL keeps protecting positions, and the UI shows "rules paused — feed degraded"                                        |
+
+**Per-rule budgets, two layers (SR-104).** The `limits` fields above are the evaluation budget, counted per scope instance: only the Owner may raise `max_fires_per_hour` or `max_fires_per_day` above the default, and no one above the hard cap (§11.2). The order budget of 04 SR-104 is counted per rule, across its scope instances and target accounts, at dispatch, where exceeding it trips the circuit breaker. Per scope instance and target account, a rule dispatches at most `max_fires_per_day × max_actions_per_fire` actions a day, and about `min(max_fires_per_hour, 60 000 / cooldown_ms) × max_actions_per_fire` in one minute.
 
 ### 11.8 Built-in system rules
 

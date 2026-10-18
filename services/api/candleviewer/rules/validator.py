@@ -24,6 +24,7 @@ from candleviewer.rules.ir import (
     TemporalNode,
 )
 from candleviewer.rules.issues import Issue
+from candleviewer.rules.limits import above_cap, cap_message
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 
@@ -102,8 +103,11 @@ def _const_unit(c: Literal_) -> str:
 
 
 class _Validator:
-    def __init__(self, rule: Rule, registry: MetricRegistry, permissions: Collection[str]) -> None:
+    def __init__(
+        self, rule: Rule, registry: MetricRegistry, permissions: Collection[str], limit_caps: bool
+    ) -> None:
         self.rule, self.registry, self.perms = rule, registry, permissions
+        self.limit_caps = limit_caps
         self.out = RuleValidationResult()
         self.metrics: set[str] = set()
 
@@ -217,6 +221,11 @@ class _Validator:
         if est >= 300:
             self.warn("trigger", "high_frequency", f"This rule would evaluate about {est} times a minute.", "performance")  # fmt: skip
 
+    def budget(self) -> None:
+        """SR-104: no role may save an action budget above its hard cap (issue #3232)."""
+        for name in above_cap(self.rule.limits):
+            self.err(f"limits.{name}", "schema_error", cap_message(name), "safety")
+
     def run(self) -> RuleValidationResult:
         r = self.rule
         if r.trigger.type == "on_metric_change" and r.trigger.metric:
@@ -227,16 +236,24 @@ class _Validator:
         self.actions()
         self.out.estimated_evaluations_per_minute = estimate_evaluations_per_minute(r)
         self.guards()
+        if self.limit_caps:
+            self.budget()
         self.out.referenced_variables = sorted(self.metrics)
         self.out.referenced_actions = sorted(set(self.out.referenced_actions))
         return self.out
 
 
 def validate_rule(
-    rule: Rule, registry: MetricRegistry, permissions: Collection[str] = ()
+    rule: Rule,
+    registry: MetricRegistry,
+    permissions: Collection[str] = (),
+    *,
+    limit_caps: bool = False,
 ) -> RuleValidationResult:
-    """Validate one rule in isolation (conflicts between rules are E35-S07)."""
-    return _Validator(rule, registry, permissions).run()
+    """Validate one rule in isolation (conflicts between rules are E35-S07). `limit_caps` holds
+    its action budget to the hard caps of `rules.limits`: the rule paths pass it, and alerts (E40),
+    which share `RuleLimits`, do not."""
+    return _Validator(rule, registry, permissions, limit_caps).run()
 
 
 __all__ = ["RuleValidationResult", "estimate_evaluations_per_minute", "validate_rule"]

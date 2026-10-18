@@ -5741,6 +5741,14 @@ paths:
         saved version reaches an order only when `setRuleMode` arms the rule, and the step-up
         comes at that arm when the rule's scope includes `live` (`rules:arm_live` and a fresh
         one-shot live-enablement step-up bound to that request).
+
+        **Action budget (SR-104; 04 §7.2.2 row 26).** A `limits.max_fires_per_hour` or
+        `limits.max_fires_per_day` above its `RuleLimits` default needs the Owner role: anyone
+        else gets `403 forbidden`, whose `errors` name each such `limits.<field>` with `rule:
+        owner_only_above_default`, and the refusal is audited (`rules.scope_denied`). A value
+        above its hard cap, in `x-cv-limit-caps` on `RuleIr`, is refused for every role with
+        `422 rule_ir_invalid` (issue code `schema_error`, class `safety`). Each value is compared
+        with its default and its cap, never with an earlier version.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: recommended
       parameters:
@@ -5873,7 +5881,8 @@ paths:
         when the rule's scope includes `live` (`rules:arm_live` and a fresh one-shot
         live-enablement step-up bound to that request). Activating a different version of an
         armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
-        the live step-up where the scope includes `live`.
+        the live step-up where the scope includes `live`. Every save is held to the action budget
+        of `createRule`, also a save that matches an existing version.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -5889,7 +5898,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
     delete:
@@ -5967,6 +5976,11 @@ paths:
       tags: [rules]
       operationId: setActiveRuleVersion
       summary: Activate (or roll back to) a specific rule version
+      description: |
+        Activating a version is held to the Owner-only part of the action budget of `createRule`:
+        a version whose `limits.max_fires_per_hour` or `limits.max_fires_per_day` is above its
+        `RuleLimits` default needs the Owner role, and anyone else gets the same audited
+        `403 forbidden`.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -5987,7 +6001,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /rules/validate:
@@ -5998,8 +6012,9 @@ paths:
       description: |
         Static analysis used by both editors on every keystroke-debounce. Checks schema
         conformance, variable existence, type compatibility, action-parameter completeness,
-        unreachable branches, missing guards, and the `require_native_stop` invariant. Returns
-        errors **and** warnings; warnings do not block saving but do block arming.
+        unreachable branches, missing guards, the action-budget hard caps (`x-cv-limit-caps` on
+        `RuleIr`), and the `require_native_stop` invariant. Returns errors **and** warnings;
+        warnings do not block saving but do block arming.
       x-rbac: { permissions: [rules:read], scope: none }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -15443,6 +15458,7 @@ components:
       type: object
       additionalProperties: false
       required: [ir_version, trigger, conditions, actions]
+      x-cv-limit-caps: { max_fires_per_hour: 600, max_fires_per_day: 5000 }
       description: |
         The single executable representation produced by **both** the form editor and the
         node-graph editor (owner decision #11). Round-tripping is lossless because
@@ -15454,6 +15470,11 @@ components:
         (`id`, `name`, `mode`, `scope`, `editor`, `version`) live on `Rule` / `RuleInput`
         and in the `rules` table - they are deliberately not duplicated here, so an IR can
         be validated, hashed and compared without carrying database identity.
+
+        `x-cv-limit-caps` names the hard cap of each capped `limits` field (SR-104); a rule
+        saved above one is refused (`createRule`). The server takes the caps from
+        `candleviewer.rules.limits`, and a contract test keeps this member equal to them. Alerts
+        reuse `RuleLimits` without the caps.
       properties:
         ir_version: { type: integer, enum: [1] }
         trigger: { $ref: "#/components/schemas/RuleTrigger" }

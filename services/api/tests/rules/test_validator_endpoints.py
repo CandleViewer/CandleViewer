@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.rules import make_rules_router
 from candleviewer.rules.compiler import to_form_model, to_graph_model
 from candleviewer.rules.ir import Rule, ir_hash
+from candleviewer.rules.limits import LIMIT_CAPS
 from candleviewer.rules.validator import estimate_evaluations_per_minute, validate_rule
 from candleviewer.rules.vocabulary import default_registry
 
@@ -365,3 +366,17 @@ def test_perf_100_node_compile_and_validate_budget() -> None:
     validate_ms = (time.perf_counter() - t) * 1000
     assert compile_ms < 500, compile_ms
     assert validate_ms < 100, validate_ms
+
+
+def test_validate_and_compile_report_a_limit_above_its_cap() -> None:
+    """#3232: the editors see the action-budget cap before a save refuses it."""
+    hour = "max_fires_per_hour"
+    rule = _rule(limits={hour: LIMIT_CAPS[hour] + 1}, actions=[_notify()])
+    body = _client().post("/rules/validate", json={"ir": _jsonable(rule.model_dump())}).json()
+    assert body["valid"] is False
+    assert [e["path"] for e in body["errors"]] == ["limits.max_fires_per_hour"]
+    model = _jsonable(to_form_model(rule))
+    out = _client().post(f"/rules/{RULE_ID}/compile", json={"editor": "form", "model": model})
+    assert out.json()["blocks_arming"] is True
+    errors = [i["path"] for i in out.json()["issues"] if i["severity"] == "error"]
+    assert errors == ["limits.max_fires_per_hour"]
