@@ -295,7 +295,7 @@ _OTHER_PATH = r"(?=[$~/])(?:" + _PIECE + r"|/)+"
 #: ``$BASH`` (the bash running the line) or ``$SHELL`` (the login shell), also braced or with a
 #: default (#3400): ``"$BASH" -x``, ``${SHELL:-sh} -x``; not ``$SHELLCHECK`` or ``${BASH_ENV}``.
 #: A default ends at a ``$``: one going on through ``${SHELL:-${SHELL:-...`` re-read the line.
-_SHELL_VAR = r"\$(?:(?:BASH|SHELL)(?!\w)|\{(?:BASH|SHELL)(?::?[-=?][^\s}$]*)?\})"
+_SHELL_VAR = r"\$(?:BASH|SHELL|\{(?:BASH|SHELL)(?::?[-=?][^\s}$]*)?\})"
 #: shellcheck's ``-s``/``--shell`` names the dialect it checks, a shell it does not run (#3400):
 #: ``shellcheck -e SC1091 -s bash -x ci.sh``. Matched through that shell name, never ``on``. The
 #: words before the option end at a word holding ``shellcheck`` (but ``.shellcheckrc``), where
@@ -349,7 +349,7 @@ _UNSETOPT = re.compile(
 #: xtrace``). Bash refuses to assign it (readonly), dash exports it (``export
 #: SHELLOPTS=errexit:xtrace``).
 _SHELLOPTS = re.compile(
-    _WORD_START + r"SHELLOPTS[\"']?\s*(?:\+?=|:)\s*[\"']?(?:[\w${}-]*:)*?(?P<on>" + _TRACING + r")"
+    _WORD_START + r"SHELLOPTS\s*(?:\+?=|:)\s*(?:[\w${}-]*:)*?(?P<on>" + _TRACING + r")"
 )
 #: A ``DEBUG`` trap, run before each command (#3400): ``trap 'echo "$BASH_COMMAND"' DEBUG`` prints
 #: each command as ``set -v`` does, so any action counts (the scan cannot tell what it prints).

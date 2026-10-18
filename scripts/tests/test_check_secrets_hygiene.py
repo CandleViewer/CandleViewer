@@ -460,6 +460,15 @@ TRACED = [
     "set -e${X} -x",
     "set ${DEBUG:+-x}",
     "bash ${DEBUG:+-o xtrace} ci.sh",
+    # #3400: fragments no row pinned, so a mutant narrowing each passed every row: a quoted DEBUG,
+    # an expansion as a SHELLOPTS item before xtrace, a `:=`, `:?` or `-` default of $SHELL or
+    # $BASH (bash 5.3 ran the trap, or traced, for each).
+    "trap 'echo T' \"DEBUG\"",
+    "env SHELLOPTS=$B:xtrace bash ci.sh",
+    "env SHELLOPTS=${B}:xtrace bash ci.sh",
+    "${SHELL:=sh} -x ci.sh",
+    "${SHELL:?} -x ci.sh",
+    "${BASH-bash} -x ci.sh",
 ]
 NOT_TRACED = [
     "set -e",
@@ -554,6 +563,10 @@ NOT_TRACED = [
     "bash -c 'set \"-x\"'",
     'sh -c "set \\"-x\\""',
     "trap 'echo $BASH_COMMAND' RETURN",
+    # #3400: words DEBUG or TRAPDEBUG only starts: other zsh functions, a signal bash refuses.
+    "TRAPDEBUGGER() { :; }",
+    "TRAPDEBUG-x() { :; }",
+    "trap 'echo x' EXIT DEBUGGING",
 ]
 VIA = ["run", "script"]
 
