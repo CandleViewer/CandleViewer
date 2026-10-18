@@ -1427,3 +1427,120 @@ def test_pnpm_audit_fixtures_keep_pnpms_own_formatting(name: str) -> None:
     # pnpm writes JSON.stringify(report, null, 2) and a newline; .prettierignore keeps it so.
     raw = (PNPM_FIXTURES / name).read_text(encoding="utf-8")
     assert raw == json.dumps(json.loads(raw), indent=2) + "\n"
+
+
+# --------------------------------------------------------------------------
+# #3540: a codeql entry keyed to a line must stay on the code it accepts. PR
+# scans are diff-informed and never re-report an unchanged line, so an edit
+# above an accepted line (login_service.py 59 -> 60, #2612) left its entry
+# stale until a full scan (the merge queue's) blocked on the result.
+# --------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parents[2]
+_REGISTER = _ROOT / "security" / "accepted-risks.yaml"
+_TOKEN_HASH = 'return hashlib.sha256(token.encode("utf-8")).hexdigest()'
+# `rule:path` of every line-keyed codeql entry -> the code its line must still hold.
+_CODEQL_LINE_PINS = {
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py": _TOKEN_HASH,
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py": _TOKEN_HASH,
+    "py/clear-text-logging-sensitive-data:"
+    "services/api/candleviewer/migrations/versions/0002_rbac_seed.py": (
+        "print(message, file=sys.stdout)"
+    ),
+}
+_MFA_TOKEN_ENTRY = (
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:60"
+)
+
+
+def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> None:
+    stale: list[str] = []
+    keys: set[str] = set()
+    for risk in load_accepted_risks(_REGISTER):
+        parts = risk.finding_id.rsplit(":", 2)
+        if risk.tool != "codeql" or len(parts) != 3 or not parts[2].isdigit():
+            continue
+        rule, path, line = parts
+        keys.add(f"{rule}:{path}")
+        want = _CODEQL_LINE_PINS.get(f"{rule}:{path}")
+        src = _ROOT / path
+        lines = src.read_text(encoding="utf-8").splitlines() if src.is_file() else []
+        n = int(line)
+        held = lines[n - 1].strip() if 0 < n <= len(lines) else "<no such line>"
+        if want is None:
+            stale.append(f"{risk.finding_id}: add the code it accepts to _CODEQL_LINE_PINS")
+        elif want not in held:
+            stale.append(f"{risk.finding_id}: line {n} holds {held!r}, not {want!r}")
+    hint = "re-key each entry to its code's line, and re-triage it if that code changed"
+    assert not stale, f"{hint}: {'; '.join(stale)}"
+    assert keys == set(_CODEQL_LINE_PINS)  # every pin names a live entry
+
+
+def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:
+    """A CodeQL SARIF of these results, each rule scored HIGH (7.5) on its descriptor."""
+    rules = [
+        {
+            "id": rule,
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"security-severity": "7.5"},
+        }
+        for rule in sorted({rule for rule, _, _ in results})
+    ]
+    found = [
+        {
+            "ruleId": rule,
+            "message": {"text": "synthetic result"},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": uri},
+                        "region": {"startLine": line},
+                    }
+                }
+            ],
+        }
+        for rule, uri, line in results
+    ]
+    run = {"tool": {"driver": {"name": "CodeQL", "rules": rules}}, "results": found}
+    return {"version": "2.1.0", "runs": [run]}
+
+
+def test_real_codeql_gate_accepts_only_the_triaged_mfa_token_hash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rule, uri, line = _MFA_TOKEN_ENTRY.rsplit(":", 2)
+    n = int(line)
+    accepted = (rule, uri, n)
+    doc = yaml.safe_load(_REGISTER.read_text(encoding="utf-8"))
+    rest = [e for e in doc["entries"] if e["id"] != _MFA_TOKEN_ENTRY]
+    without = _write_yaml(tmp_path, {"entries": rest})
+
+    def gate(
+        register: Path, results: list[tuple[str, str, int]], run_date: str = "2026-10-18"
+    ) -> tuple[int, str]:
+        report = _write_json(tmp_path, "python.sarif", _codeql_full_scan(results))
+        argv = ["--tool", "codeql", "--report", str(report), "--accepted-risks", str(register)]
+        rc = main([*argv, "--run-date", run_date])
+        out = capsys.readouterr()
+        return rc, out.out + out.err
+
+    rc, out = gate(without, [accepted])
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
+    assert f"{_MFA_TOKEN_ENTRY} (HIGH) has no accepted-risk entry" in out
+    rc, out = gate(_REGISTER, [accepted])
+    assert rc == 0, out
+    assert "security_gate[codeql]: OK" in out
+    assert f"accepted risk: codeql finding {_MFA_TOKEN_ENTRY} (HIGH)" in out
+    # The entry is exact: the same rule a line away, or another HIGH on that line, still blocks.
+    unrelated = [(rule, uri, n + 1), ("py/clear-text-logging-sensitive-data", uri, n)]
+    rc, out = gate(_REGISTER, [accepted, *unrelated])
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
+    for other_rule, other_uri, other_line in unrelated:
+        assert f"{other_rule}:{other_uri}:{other_line} (HIGH) has no accepted-risk entry" in out
+    # And it expires (C-12.3): from its `expires` date the same result blocks again.
+    expires = {r.finding_id: r for r in load_accepted_risks(_REGISTER)}[_MFA_TOKEN_ENTRY].expires
+    rc, out = gate(_REGISTER, [accepted], run_date=expires.isoformat())
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-004)" in out
