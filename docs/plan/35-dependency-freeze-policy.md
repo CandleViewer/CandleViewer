@@ -63,8 +63,8 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
    targets Python 3.12 (`services/api/.python-version`, the mypy/Ruff/Black targets in
    `services/api/pyproject.toml`, the `python:3.12-slim` pin in `infra/images/PINS.md`;
    `AGENTS.md` §5.2 sets 3.12 as the floor; #3314 declined, #3430), so only patch and digest
-   updates flow until a runtime-upgrade ticket and ADR remove the entry. Any new `ignore` entry
-   needs a comment naming the unblocking ticket.
+   updates flow until the runtime-upgrade ticket #3492 and its ADR remove the entry. Any new
+   `ignore` entry needs a comment naming the unblocking ticket.
 
 Non-Dependabot dependency changes (a feature PR adding a package) follow §8.3 as before: the
 author runs `--write` in the same PR and the reviewer applies step 3(b).
