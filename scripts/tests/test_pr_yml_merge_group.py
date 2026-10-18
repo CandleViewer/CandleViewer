@@ -7,8 +7,8 @@ paths-filter `main` and the group's head, so a group's lanes cover the entries a
 PR's own diff stays on the API path); the PR-metadata gates, not applicable on a merge group only,
 while every other lane resolves as before; every pull-request read in pr.yml and the lanes it
 calls, guarded to pull_request or given a merge_group fallback, and every condition or value there
-that reads the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, which
-ignore a queue run."""
+that reads the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, and the
+coverage ratchet whatever it follows, which ignore a queue run."""
 
 from __future__ import annotations
 
@@ -458,12 +458,14 @@ def test_workflow_run_consumers_of_pr_ignore_merge_group_runs() -> None:
     # A queue run's tree may never land (the queue can still drop its PR), so nothing that follows
     # `pr` may write on one: a baseline, a comment, a branch.
     event = re.compile(r"github\.event\.workflow_run\.event (?:!= 'merge_group'|== '\w+')")
-    consumers = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         on = _load(path.name).get(True)
         if isinstance(on, dict) and "pr" in (on.get("workflow_run") or {}).get("workflows", []):
-            consumers.append(path.name)
             for job_id, job in _load(path.name)["jobs"].items():
                 condition = str(job.get("if", ""))
                 assert event.search(condition) and "== 'merge_group'" not in condition, job_id
-    assert "coverage-ratchet.yml" in consumers
+    # The coverage ratchet, the one consumer until #3508 took it off `pr` (it waits for a push run
+    # of `main` that uploads coverage), keeps a gate that ignores a queue run whatever it follows.
+    for job_id, job in _load("coverage-ratchet.yml")["jobs"].items():
+        condition = str(job.get("if", ""))
+        assert event.search(condition) and "== 'merge_group'" not in condition, job_id
