@@ -1,9 +1,10 @@
 """E09-X04 SR-029 automated counterpart of the disable-user drill (in-process, no network).
 
-The `DELETE /users/{userId}` disable cascade is owned by E42-T04 (#965) and does not exist yet,
-so this test drives the same primitives that cascade must call, through the real
-`create_app()` wiring: `SessionService.revoke_all` and the app's own `RevocationHub`. It is a
-regression guard for the propagation path, not the staging drill (which a human still runs).
+It drives the primitives that the disable cascade of `DELETE /users/{userId}` (E42-T04, #965)
+calls, through the real `create_app()` wiring: `SessionService.revoke_all` and the app's own
+`RevocationHub`. It is a regression guard for the propagation path, not the staging drill (which a
+human still runs). The route itself is proven end to end in `test_disable_user_e2e.py`, and on
+Postgres in `tests/integration/admin/test_user_disable_route_pg.py` (E42-T04 S7).
 The socket must end as 23-ws-protocol.md §9.5 says for a disabled user: `bye user_disabled`
 (`4403`, `reconnect: false`), then the close frame `4403`; never the `4401` re-auth close (#2493).
 

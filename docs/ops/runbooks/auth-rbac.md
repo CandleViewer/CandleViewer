@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -294,10 +294,16 @@ docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-
 `DELETE /users/{userId}` (`api/users.py`, E42-T04 #965) disables a user: Owner only, never your own
 account, after a step-up for action class `users` (§2). No position or order source is deployed
 yet, so it answers `409 positions_unknown` until it carries `acknowledge_unknown_positions=true`.
+Any other query parameter answers `422 validation_failed`, and `purge=true` answers `400` until
+E42-T10 serves it; neither changes anything.
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the
-sweep, the scope refresh and the disarm.
+sweep, the scope refresh and the disarm. The disarm lists the user's armed rules again after its
+disarms, so a rule armed meanwhile is disarmed too. A rule its chart refuses (evaluating, acting,
+pending confirmation or spent) stays armed with no grant and no permission to act on (O4, O5); a
+repeat disarms it once it is back in `armed`, which a rule pending confirmation or spent reaches
+only through its confirmation or `RESET_ONCE` (#3226).
 
 What the cascade builds on, and what to read afterwards:
 
@@ -418,8 +424,32 @@ it (login refuses `disabled` only):
   A refused refresh that revokes the row and counts it is not built: it is the follow-up #3331
   (P1), filed with that ruling, next to #3332 (P2), which shields the bookkeeping (above).
 
-Not proven end to end until the SR-029 drill (E09-X04, #2494) runs it. The in-process drill
-`services/api/tests/security/auth/test_disable_user_drill.py` is a test counterpart only.
+**The bootstrap Owner (O5, #3246).** The permission readers and the owner floor count only `active`
+users. The first Owner that `0002_rbac_seed` creates (`docs/plan/21-database-schema.md` §10.2) is
+seeded `invited`, so it holds no permission and is no Owner for the floor until it is `active`, and
+nothing in the app makes it `active`: only redeeming an invite does, and the seed creates none (nor
+does any password match its seeded placeholder hash). **BLOCKED — not implemented**: there is no
+supported way to activate it (#2710). Do not edit `users` by hand: escalate to the repository owner,
+as §3 says, and record it. On testnet, `services/api/scripts/seed_fixture_user.py` seeds an `active`
+Owner and audits it.
+
+What the cascade does not reach (#2710):
+
+- A socket whose session a refresh claimed just before the disable (the row reads `rotated`, and the
+  refresh is then refused) is closed by no step. It stays open, on the access it had, until its
+  access token expires (12 min at most), and nothing logs it.
+- When the commit of a disable fails on the wire, the call answers `503 store_unavailable`, and the
+  `users.disable` record is followed by a `failure` record with reason `outcome_unknown`: the user
+  may be disabled. Repeat the DELETE, which is safe either way: a repeat of a committed disable
+  answers `204`, writes no record and re-runs the sweep, the scope refresh and the disarm. The
+  sockets of the sessions that commit revoked then end only when their access tokens expire (12 min
+  at most), and B16 records none of those sessions.
+
+Proven end to end in process on the deployed app
+(`services/api/tests/security/auth/test_disable_user_e2e.py`) and on Postgres
+(`services/api/tests/integration/admin/test_user_disable_route_pg.py`). The staging drill (E09-X04,
+#2494) has not run; `services/api/tests/security/auth/test_disable_user_drill.py` drives the
+primitives only.
 
 ## 5. Audit-chain verification failure
 
@@ -753,7 +783,9 @@ sign-out in the alert runbook entry (row 7) is the check.
 | Break-glass CLI (SR-023)                                                  | #1778 item AB, #2119 |
 | `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110                |
 | Scheduled audit-chain verifier                                            | #2111                |
-| Disable-user cascade (SR-029)                                             | #965                 |
+| Disable-user drill on staging (SR-029)                                    | #2494, #300          |
+| Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
+| A socket on a session rotated just before a disable outlives it (12 min)  | #2710                |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
