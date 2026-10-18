@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from candleviewer.accounts.health import HealthState
+from candleviewer.accounts.status import plain_decimal
 from tests.unit.accounts._fakes import ACC, ACC_B, T0
 from tests.unit.accounts._runtime_rig import snapshot
 from tests.unit.accounts._status_world import StatusWorld
@@ -84,3 +85,16 @@ def test_the_json_form_serves_plain_digit_amounts_and_the_model_keeps_decimals()
         "1000.50",
     )
     assert status.balance is not None and status.balance.account_mm_rate == Decimal("1E-7")
+
+
+@pytest.mark.parametrize("amount", ["1E+41", "-1E+41", "1E-41", "0E-41", "1E+999999"])
+def test_the_plain_form_refuses_an_amount_whose_exponent_is_out_of_range(amount: str) -> None:
+    """Formatting one would build millions of digits on the loop (C-2.17): it is refused, as the
+    snapshot type refuses it at the boundary."""
+    with pytest.raises(ValueError, match="out of range"):
+        plain_decimal(Decimal(amount))
+
+
+def test_the_plain_form_expands_an_amount_whose_exponent_is_at_the_bound() -> None:
+    assert plain_decimal(Decimal("1E+40")) == "1" + "0" * 40
+    assert plain_decimal(Decimal("-1E-40")) == "-0." + "0" * 39 + "1"

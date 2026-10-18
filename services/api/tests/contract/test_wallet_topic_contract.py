@@ -1,4 +1,4 @@
-"""Contract (E27-T04 W4b, #837): the `wallet` frames the accounts module serves validate against
+"""Contract (E27-T04, #837): the `wallet` frames the accounts module serves validate against
 23-ws-protocol.md §15.4 as `packages/protocol` bundles it, as their provider (C-6.2): a snapshot,
 a health-only delta, a balance delta and a turn to stale, each in its envelope."""
 

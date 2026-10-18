@@ -21,8 +21,13 @@ and `stale_since_ms` are REST `balance_stale` and `balance_stale_since`.
   when a balance sent fresh turns stale, so a client's `stale` does not stay `false` past it.
 - A delta that fails is logged by its error type, never its message, at most once per
   `LOG_INTERVAL_S` (the lines held back are counted on the next), and goes no further: the topic is
-  a view, and neither the evidence calls nor the runtime's loops wait on it or see it fail. A
-  failed send is not forgotten: the turn to stale that it carried is sent again by the next tick.
+  a view, and neither the evidence calls nor the runtime's loops wait on it or see it fail. The line
+  names the path that failed (`health_changed`, `balance_refreshed`, `stale_check`, or `build` for a
+  snapshot) and whether the read model or the hub did. A failed send is not forgotten: the turn to
+  stale that it carried is sent again by the next tick. An item that cannot be built is the
+  exception (an amount out of range, which only a snapshot that bypassed its type holds): it is
+  forgotten, so that it is not built again at every tick, and a snapshot leaves that balance out and
+  serves the others.
 """
 
 from __future__ import annotations
@@ -53,6 +58,10 @@ WALLET: Final = "wallet"
 LOG_INTERVAL_S: Final = 60.0
 
 
+class _HubError(Exception):
+    """The hub's `publish` raised: what it raised is the cause."""
+
+
 class WalletSub(Protocol):
     """The field of a WS `Subscription` read here: its accounts, narrowed to the caller's grants."""
 
@@ -73,7 +82,8 @@ class BodyFactory[B](Protocol):
 
 
 def balance_item(account: UUID, balance: WalletSnapshot, status: AccountStatus) -> dict[str, Any]:
-    """One §15.4 `balances` item: plain digit amounts, and the status's staleness."""
+    """One §15.4 `balances` item: plain digit amounts (`ValueError` for one out of range), and the
+    status's staleness."""
     since = status.balance_stale_since
     item: dict[str, Any] = {"exchange_account_id": str(account), "coin": balance.coin}
     item |= {name: plain_decimal(getattr(balance, name)) for name in AMOUNTS}
@@ -114,7 +124,8 @@ class WalletTopic[B]:
             if status.health is not None:
                 health.append(status.health.ws_entry(account_id))
             if status.balance is not None:
-                balances.append(balance_item(account_id, status.balance, status))
+                with self._contained("build"):  # one that fails is left out, not the snapshot
+                    balances.append(balance_item(account_id, status.balance, status))
         return self._body({"balances": balances, "health": health})
 
     def generation(self, sub: WalletSub) -> int:
@@ -127,15 +138,15 @@ class WalletTopic[B]:
 
     def health_changed(self, account_id: UUID) -> None:
         """The account's monitoring started, or its state moved: its health entry, alone."""
-        with self._contained():
+        with self._contained("health_changed"):
             status = self._status(account_id)
             if status is not None and status.health is not None:
                 entry = status.health.ws_entry(account_id)
-                self._publish(WALLET, {"balances": [], "health": [entry]}, account=account_id)
+                self._to_hub({"balances": [], "health": [entry]}, account_id)
 
     def balance_refreshed(self, account_id: UUID) -> None:
         """The account's wallet snapshot was refreshed: its balance item, alone."""
-        with self._contained():
+        with self._contained("balance_refreshed"):
             status = self._status(account_id)
             if status is not None and status.balance is not None:
                 self._send_balance(account_id, status.balance, status)
@@ -145,7 +156,7 @@ class WalletTopic[B]:
         calls this, so a send that failed is tried again by the next. An account that is no longer
         tracked is forgotten."""
         for account_id in sorted(self._fresh):
-            with self._contained():
+            with self._contained("stale_check"):
                 status = self._status(account_id)
                 if status is None or status.balance is None:
                     self._fresh.discard(account_id)
@@ -158,19 +169,32 @@ class WalletTopic[B]:
     def _send_balance(self, account: UUID, balance: WalletSnapshot, status: AccountStatus) -> None:
         """One balance item. A fresh one is recorded before it goes out, so that a send that fails
         still owes its turn to stale; a stale one is forgotten after, so that a send that fails is
-        owed again (`stale_check`)."""
+        owed again (`stale_check`). An item that cannot be built is forgotten, not rebuilt at every
+        tick."""
+        try:
+            item = balance_item(account, balance, status)
+        except Exception:
+            self._fresh.discard(account)
+            raise
         if not status.balance_stale:
             self._fresh.add(account)
-        item = balance_item(account, balance, status)
-        self._publish(WALLET, {"balances": [item]}, account=account)
+        self._to_hub({"balances": [item]}, account)
         if status.balance_stale:
             self._fresh.discard(account)
 
+    def _to_hub(self, body: Mapping[str, Any], account: UUID) -> None:
+        """One delta to the hub, in `account`'s scope. What the hub raises is a `_HubError`, so that
+        the line `_contained` logs says the hub failed and not the read model."""
+        try:
+            self._publish(WALLET, body, account=account)
+        except Exception as exc:
+            raise _HubError from exc
+
     @contextmanager
-    def _contained(self) -> Iterator[None]:
-        """A delta that fails stays here, logged by its error type (never its message, C-12.6) at
-        most once per `LOG_INTERVAL_S`, with the count of those held back since the last line; a
-        cancellation still propagates."""
+    def _contained(self, path: str) -> Iterator[None]:
+        """A delta or an item that fails stays here, logged by its error type (never its message,
+        C-12.6) with its path and the side that failed, at most once per `LOG_INTERVAL_S`, with the
+        count of those held back since the last line; a cancellation still propagates."""
         try:
             yield
         except Exception as exc:
@@ -179,5 +203,14 @@ class WalletTopic[B]:
                 self._held += 1
                 return
             held, self._held, self._log_from = self._held, 0, now + LOG_INTERVAL_S
+            failed_in, cause = (
+                ("hub", exc.__cause__) if isinstance(exc, _HubError) else ("read_model", exc)
+            )
             log = structlog.get_logger(__name__)
-            log.error("wallet_topic.publish_failed", error=type(exc).__name__, suppressed=held)
+            log.error(
+                "wallet_topic.publish_failed",
+                path=path,
+                failed_in=failed_in,
+                error=type(cause).__name__,
+                suppressed=held,
+            )

@@ -1,4 +1,4 @@
-"""E27-T04 (#837) W4b: the account health runtime publishes on the `wallet` topic. The start of an
+"""E27-T04 (#837): the account health runtime publishes on the `wallet` topic. The start of an
 account's monitoring and each state transition are one health-only delta each, and the ticks in
 between send none (the discrete transition of the issue's accessibility note); a pushed and a
 reconciled refresh are one balance delta each, and a refreshed balance turning stale one more.
