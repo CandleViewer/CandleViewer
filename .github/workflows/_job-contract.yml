@@ -51,7 +51,9 @@ jobs:
 
       - name: OpenAPI structural validity + server-route drift (CI-CON-001)
         working-directory: services/api
-        run: uv run pytest tests/contract -m "not integration" --no-cov
+        # tests/contract's perf budgets run here on purpose (and in py-perf): see ON_PURPOSE in
+        # scripts/tests/test_workflow_pytest_markers.py.
+        run: uv run pytest tests/contract -m "not integration and not fuzz and not harness" --no-cov
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
