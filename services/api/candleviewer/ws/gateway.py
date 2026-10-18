@@ -611,7 +611,9 @@ class _Connection:
         is cancelled and the handler sends `bye internal_error` + `1011` itself. A cancellation
         raised here cancels no task, so it fails closed too, then is re-raised; any other
         `BaseException` passes through. After a check that found nothing due the rest is waited
-        to the millisecond (`CLOSE_REARM_MIN_S`); after one that raised, never under a tick."""
+        to the millisecond (`CLOSE_REARM_MIN_S`). The re-arm after a check that raised, a tick
+        later, is defence in depth: the fail-closed close sets `closing` before anything in it can
+        raise, so no flow reaches it today; were that to change, the timer would not spin."""
         self.close_timer = None
         failed = False
         try:
