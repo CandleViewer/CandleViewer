@@ -24,6 +24,9 @@ Quick facts the procedures rely on:
 
 ## 1. Unlock a locked account (SR-016)
 
+`POST /auth/unlock` is dark until #2300's last slice wires it (2f, held for #1640): it answers `503`
+and checks no password, so what this section says of it holds from then on.
+
 **There is no unlock command, endpoint or CLI for this lock.** `POST /auth/unlock` (#2300) lifts a
 session's idle lock, never an account lock. A lock is `users.locked_until`, set by the shared
 password check after the fifth failure: at login, at a step-up (§2), or at `POST /auth/unlock`,
@@ -73,10 +76,9 @@ step-up the failure that trips the lock has no `auth.account_locked` row of its 
 as `auth.login_failed` or `auth.step_up_failed`), so there this counter is the only record that the
 lock itself was applied. At `POST /auth/unlock` that failure's `auth.unlock_failed` row is followed
 by an `auth.account_locked` row (reason `unlock_failed`), both written before the answer. The
-counter does not name the user, it does
-not move for attempts refused while locked (at login, the `auth.account_locked` rows above) and it
-does not move on a successful login, so it confirms that a lock happened, not that it ended. Read it
-on the metrics listener (default `127.0.0.1:9108`, §6):
+counter does not name the user, it does not move for attempts refused while locked (at login, the
+`auth.account_locked` rows above) and it does not move on a successful login, so it confirms that a
+lock happened, not that it ended. Read it on the metrics listener (default `127.0.0.1:9108`, §6):
 
 ```bash
 curl -s http://127.0.0.1:9108/metrics | grep '^auth_lockouts_total'
@@ -92,10 +94,9 @@ Owner alert for a lock (SR-016, SR-126): the `AuthLockouts` alert is that rule. 
 from a secret file (`infra/alertmanager/alertmanager.yml`). The message holds the alert name,
 component, environment, severity, an occurrence count, the summary "Account lockout occurred" and
 the runbook link (`docs/plan/07-release-and-prr.md#alert-authlockouts`). **It does not name the
-account**: the login rows in step 1 carry only a redacted identifier (first three characters and
-its length; an `unlock_failed` row has the user id), and the lock itself is `users.locked_until`.
-Locks in one burst arrive as one message
-(grouped by alert, component and environment). Two limits:
+account**: the login rows in step 1 carry only a redacted identifier (first three characters and its
+length; an `unlock_failed` row has the user id), and the lock itself is `users.locked_until`. Locks
+in one burst arrive as one message (grouped by alert, component and environment). Two limits:
 
 - **Quiet hours.** A `ticket` notification inside quiet hours (22:00-07:00 UTC by default,
   `CV_ALERT_QUIET_HOURS`) is muted, not queued, and the alert stays active for only 10 minutes after
