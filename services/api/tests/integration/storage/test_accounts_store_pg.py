@@ -13,7 +13,8 @@ import subprocess
 import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -470,6 +471,14 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     assert key is not None and key[0] == {**facts, "type": "HMAC"}  # merged, not replaced
     assert key[1:] == (at, True, ["203.0.113.7/32"], at, "10018", at, "active")
     assert armed == (False,)
+    assert await demo.record_error(kid, code="key_expired", at=at) is True
+    [failed] = [t for t in await demo.targets() if t.key_id == kid]
+    expiry = at + timedelta(days=90)
+    assert await demo.record_pass(kid, replace(verified, expires_at=expiry)) is True
+    [passed] = [t for t in await demo.targets() if t.key_id == kid]  # a pass clears the rule code
+    assert (failed.last_error_code, passed.last_error_code, passed.expires_at) == (
+        "key_expired", None, expiry,
+    )  # fmt: skip
 
 
 async def test_a_disarm_commits_its_code_and_time_and_stays_owed_until_its_record_is_marked(

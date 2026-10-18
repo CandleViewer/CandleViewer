@@ -261,6 +261,10 @@ class SelfCheckTargetRow:
     #: `api_keys.permission_snapshot_at`: the last passing verification (only a pass writes it).
     verified_at: datetime
     account: ExchangeAccountRow
+    #: `api_keys.last_error_code`: a rule code here is a standing failure (decision 3, #836).
+    last_error_code: str | None = None
+    #: `api_keys.expires_at`, for the soonest-expiry gauge (SR-034).
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,7 +304,9 @@ class KeySelfCheckStore(Protocol):
         """Every `active` or `rotating`, unrevoked key of a non-deleted account."""
         ...
 
-    async def record_pass(self, key_id: UUID, verified: VerifiedKey) -> bool: ...
+    async def record_pass(self, key_id: UUID, verified: VerifiedKey) -> bool:
+        """The verified columns; clears `last_error_*`, so no rule code outlives a pass."""
+        ...
 
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
         """`last_error_code` and `last_error_at` only: the verified columns keep their time."""

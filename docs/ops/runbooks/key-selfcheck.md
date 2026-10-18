@@ -49,7 +49,10 @@ key at the exchange. The whitelist is edited in the exchange's web dashboard onl
 
 Recovery: restart cv-api via the launcher. Only a restart clears the latch (a passing hourly
 re-check never does, nothing clears it by hand), and the start-up pass checks the key again before
-the app serves. Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
+the app serves. Fix the key first: its rule stays in `api_keys.last_error_code`, so a start-up check
+with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` true and latches
+again; only a pass clears it (decision 3 on #836).
+Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
 `account.tested` with outcome success for the key. The disarmed account stays disarmed: re-arming
 is an audited admin action that comes with the key routes (#2417, #836); never re-arm in SQL (C-2.9).
 
@@ -88,16 +91,27 @@ model). Treat it as a possible database tamper, as `auth-rbac.md` §5 treats an 
    `revokeApiKey` (#898). Until then the row stays, every borrow of it is refused and the latch
    holds (fail closed); Security decides the next step.
 
-Until slice 2c1 of #836 this shows up only as the stale latch; 2c1 will report a C-2.8 refusal as
-a policy violation (`key_withdraw_permission`, the first symptom above, with the force-disable and
-the critical alert).
+Until slice 2c1b of #836 this shows up only as the stale latch; 2c1b will report a C-2.8 refusal
+as a policy violation (`key_withdraw_permission`, the first symptom above, with the force-disable
+and the critical alert).
+
+A job that stops re-checking latches `stale` as well: the watchdog on the accounts row-gauge loop
+logs `key_selfcheck_stale` (critical) with the ids of the keys past their window, and
+`key_selfcheck_run_missed` (error) once a run has not begun within the interval plus 15 minutes,
+counted in `cv_key_selfcheck_missed_runs_total`; `cv_key_verification_age_seconds` is the oldest
+key's age. The `accounts` check on `/readyz` shows the number of keys checked and the oldest last
+pass, healthy or not, never a key id (the route is anonymous); the debug log `key_selfcheck_ages`
+has each key's age.
 
 `unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
-the key list could not be read (`key_selfcheck_targets_failed`), a key's check passed its deadline
-(`key_selfcheck_unfinished`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
+the key list could not be read at start-up, or once a known key is past its window
+(`key_selfcheck_targets_failed`; a read that fails inside every window latches nothing), a key's
+check passed its deadline or its row is refused (`key_selfcheck_unfinished`,
+`key_selfcheck_env_mismatch`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
 with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)
 or the loop died
-(`key_selfcheck_loop_died`). `/readyz` shows a failing `accounts` check for both. Fix the cause
+(`key_selfcheck_loop_died`, or `key_selfcheck_watchdog_died` after `accounts_row_gauges_loop_died`
+for the watchdog's loop). `/readyz` shows a failing `accounts` check for both. Fix the cause
 (exchange reachability, the host clock, Postgres, the setting), then restart cv-api via the launcher.
 
 ## Dev deploys: the smoke test needs `/readyz` ok

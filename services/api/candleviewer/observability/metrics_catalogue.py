@@ -157,6 +157,9 @@ SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
 #: page (2 s p95) and the default per-call budget (4 s).
 AUDIT_QUERY_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 1.0, 2.0, 4.0)
+#: One stored key's verification (E27-T03): edges at the 3 s import target, the 5 s per-call bound
+#: and the 12 s key deadline.
+KEY_VERIFICATION_BUCKETS: Final = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0)
 #: Statechart transition latency.
 TRANSITION_BUCKETS: Final = (
     0.00005,
@@ -587,6 +590,91 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Risk-based sizing decisions taken on a wallet snapshot older than the reconciliation "
         "period (CV_WALLET_RECONCILE_S); all are refused, sizing never uses one that old.",
         "dashboard; sustained growth = sizing asked for while the wallet feed is dead (KV-T13)",
+        _L,
+        "E27",
+        max_series=1,
+    ),
+    # --- Stored-key self-check (E27-T03, #836): the job and its watchdog, real backend only ---
+    _s(
+        "cv_key_verification_total",
+        "counter",
+        "verifications",
+        ("result", "rule"),
+        "Stored-key self-check verdicts: passed, failed (rule: the first failing rule) or "
+        "inconclusive (rule none).",
+        "failed = page (#836 slice 2c2)",
+        _L,
+        "E27",
+        max_series=13,
+    ),
+    _s(
+        "cv_key_verification_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "One stored key's verification, both signed calls (12 s deadline).",
+        "dashboard",
+        _L,
+        "E27",
+        KEY_VERIFICATION_BUCKETS,
+        max_series=1,
+    ),
+    _s(
+        "cv_key_selfcheck_runs_total",
+        "counter",
+        "runs",
+        ("result",),
+        "Self-check runs: passed, failed (a key failed), inconclusive (a key had no verdict) or "
+        "error (the run could not complete). No egress IP, a check unfinished and a row of another "
+        "environment each latch accounts.key_selfcheck_unavailable; an unreadable key list "
+        "latches only at boot or once a known key is past its window, so it alone can leave the "
+        "gate open.",
+        "dashboard",
+        _L,
+        "E27",
+        max_series=4,
+    ),
+    _s(
+        "cv_keys_failing_policy",
+        "gauge",
+        "keys",
+        ("rule",),
+        "Stored keys whose standing self-check result fails, by rule; every rule set each run.",
+        "> 0 = read-only latched (page, #836 slice 2c2)",
+        _L,
+        "E27",
+        max_series=11,
+    ),
+    _s(
+        "cv_key_verification_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Age of the oldest last pass of a stored key, set each minute by the watchdog; each "
+        "key's age is in its debug log, never a label (SR-E27-18).",
+        "> interval + 15 min = stale latch (page, #836 slice 2c2)",
+        _L,
+        "E27",
+        max_series=1,
+    ),
+    _s(
+        "cv_key_selfcheck_missed_runs_total",
+        "counter",
+        "runs",
+        (),
+        "Self-check runs not begun within the interval plus 15 minutes of the last (SR-E27-18).",
+        "any increase = page (#836 slice 2c2)",
+        _L,
+        "E27",
+        max_series=1,
+    ),
+    _s(
+        "cv_key_soonest_expiry_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Seconds to the soonest expiry of a stored key; +Inf when none expires.",
+        "< 14, 7 and 1 days = ticket (SR-034, #836 slice 2c2)",
         _L,
         "E27",
         max_series=1,

@@ -7,10 +7,11 @@ column or `last_used_at`, and only the targets read filters on `status` (the wri
 single-writer guards in `tests/unit/credentials_m2/test_write_once_surface.py` scan this file).
 A pass merges the verified key-info fields into `permission_snapshot` (`||`), so a field the
 import stored and the check does not read stays, and `ak_snapshot_shape` still checks the
-result. A verdict or an inconclusive check writes `last_error_*` only. More usable keys than one
-pass reads is an error, never a silently shorter list (the job then fails closed). The disarm
-writes its rule code and time in its own conditional update (#836 slice 2d); the record's mark is
-bookkeeping, so it leaves `updated_at`, the accounts' If-Match token, alone.
+result, and clears `last_error_*`. A verdict or an inconclusive check writes `last_error_*` only.
+More usable keys than one pass reads is an error, never a silently shorter list (the job then
+fails closed). The disarm writes its rule code and time in its own conditional update (#836
+slice 2d); the record's mark is bookkeeping, so it leaves `updated_at`, the accounts' If-Match
+token, alone.
 """
 
 from __future__ import annotations
@@ -39,7 +40,8 @@ MAX_TARGETS: Final = 500
 
 _TARGETS = sa.text(
     "SELECT k.id::text AS key_id, k.read_only AS read_only, "
-    "k.permission_snapshot_at AS verified_at, "
+    "k.permission_snapshot_at AS verified_at, k.last_error_code AS last_error_code, "
+    "k.expires_at AS expires_at, "
     "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
     "ea.kind::text AS kind, ea.exchange_uid AS exchange_uid, "
     "ea.parent_account_id::text AS parent_account_id, ea.label AS label, "
@@ -59,7 +61,7 @@ _PASS = sa.text(
     "permission_snapshot = k.permission_snapshot || CAST(:snapshot AS jsonb), "
     "permission_snapshot_at = :at, can_trade = :can_trade, read_only = :read_only, "
     "ip_whitelist = CAST(:ips AS cidr[]), ip_whitelist_verified_at = :at, "
-    "expires_at = :expires_at, updated_at = now() "
+    "expires_at = :expires_at, last_error_code = NULL, last_error_at = NULL, updated_at = now() "
     "FROM exchange_accounts ea WHERE k.id = CAST(:id AS uuid) "
     "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL"
 )
@@ -89,10 +91,11 @@ _AUDITED = sa.text(
 def _target(m: Any) -> SelfCheckTargetRow:
     d = dict(m)
     key, read_only, verified_at = UUID(d.pop("key_id")), d.pop("read_only"), d.pop("verified_at")
+    error, expires = d.pop("last_error_code"), d.pop("expires_at")
     d["id"] = UUID(d["id"])
     parent = d["parent_account_id"]
     d["parent_account_id"] = None if parent is None else UUID(parent)
-    return SelfCheckTargetRow(key, read_only, verified_at, ExchangeAccountRow(**d))
+    return SelfCheckTargetRow(key, read_only, verified_at, ExchangeAccountRow(**d), error, expires)
 
 
 class SqlAlchemyKeySelfCheckStore:

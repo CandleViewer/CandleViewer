@@ -46,6 +46,7 @@ _SAMPLES = ("_bucket", "_count", "_sum")
 #: `cv_ws_coalesced_count` without the `_count` end that a histogram may not have (see below).
 _SUFFIX_EXCEPTIONS = frozenset(
     {
+        "cv_keys_failing_policy",  # named by the E27-T03 ticket's Observability section (#836)
         "disk_used_ratio",
         "cv_maintenance_mode",
         "recorder_disk_pressure_level",
@@ -206,6 +207,9 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_api_keys_rows"].labels("active").set(1)
     r["cv_audit_verify_runs_total"].labels("ok").inc()
     r["cv_http_request_duration_seconds"].labels("/v1/x", "GET", "2xx").observe(0.01)
+    r["cv_key_verification_total"].labels("failed", "key_expired").inc()
+    r["cv_key_selfcheck_runs_total"].labels("failed").inc()
+    r["cv_keys_failing_policy"].labels("key_expired").set(1)
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
@@ -225,6 +229,19 @@ def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
     assert (rows.kind, rows.labels, rows.max_series) == ("gauge", ("kind",), len(AccountKind))
     assert (keys.kind, keys.labels, keys.max_series) == ("gauge", ("state",), len(KeyStatus))
     assert rows.owner_epic == keys.owner_epic == "E27"
+
+
+def test_key_selfcheck_series_are_bounded_by_their_closed_sets() -> None:
+    """E27-T03 (#836): `rule` is the verification `Rule` enum (plus `none`), `result` a closed
+    set; the age, missed-run and expiry series carry no label at all (decision 13)."""
+    from candleviewer.accounts.verification import Rule
+
+    specs = {s.name: (s.labels, s.max_series) for s in registered_specs()}
+    assert specs["cv_key_verification_total"] == (("result", "rule"), len(Rule) + 2)
+    assert specs["cv_keys_failing_policy"] == (("rule",), len(Rule))
+    assert specs["cv_key_selfcheck_runs_total"] == (("result",), 4)
+    single = ("verification_seconds", "verification_age_seconds", "soonest_expiry_seconds")
+    assert {specs[f"cv_key_{n}"] for n in (*single, "selfcheck_missed_runs_total")} == {((), 1)}
 
 
 def test_wallet_sizing_counter_is_live_and_carries_no_label() -> None:

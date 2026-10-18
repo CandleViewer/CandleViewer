@@ -935,7 +935,9 @@ is never read (SR-E27-04). The self-check writes it on every pass and an import 
 `PermissionSnapshot` reads as unknown, never as a non-UTA. `last_error_code`
 holds a fixed code and never text: the failing rule (`key_withdraw_permission`, `key_probe_failed`),
 the contract's `KeyProbeError` name for a call that gave no verdict, or one of the job's own
-(`probe_slow`, `probe_clock_step`, `check_error`, `inconclusive`).
+(`probe_slow`, `probe_clock_step`, `check_error`, `inconclusive`). A pass clears both
+`last_error_*` columns, so a rule code found there after a restart is a standing failure: a check
+with no verdict keeps it in force, and only a pass ends it (decision 3 on #836).
 
 ```sql
 -- Current definition (migration 0019_snapshot_withdraw_transfer, #2240): 0017's rule plus three

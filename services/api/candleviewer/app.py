@@ -1638,7 +1638,7 @@ def create_app(
         )
     # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
     # started `AccountsService` before the app serves (real backend only).
-    wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit))
+    wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
     # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's.
     account_health = wire_account_health(resolved, metrics_facade)

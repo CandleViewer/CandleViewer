@@ -42,6 +42,8 @@ from candleviewer.exchange.bybit.key_verify import CALL_TIMEOUT_S
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.net.read_only_gate import ReadOnlyGate
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.settings import Environment, Settings
 from tests._corpus import rest
 from tests._signing import Call, fake_capability
@@ -86,6 +88,12 @@ def ctx(
         accounts=AccountsService(),
         ingestion=SimpleNamespace(clock_offset_ms=clock),
     )
+
+
+def facade() -> Metrics:
+    metrics = Metrics("demo")
+    register_r0(metrics)
+    return metrics
 
 
 async def judge(
@@ -143,7 +151,7 @@ async def test_any_other_error_is_inconclusive_with_a_probe_error_name_only(
 
 def test_the_fake_backend_wires_no_self_check() -> None:
     fake = ctx()
-    assert wiring.wire_key_selfcheck(cast(AppContext, fake), cast(Any, None)) is None
+    assert wiring.wire_key_selfcheck(cast(AppContext, fake), cast(Any, None), facade()) is None
     assert fake.accounts._selfcheck is None
 
 
@@ -152,9 +160,9 @@ def test_the_real_backend_attaches_a_self_check_bound_to_the_process_environment
         storage_backend="real", environment=Environment.TESTNET, egress_ip="203.0.113.7",
         CV_KEY_SELFCHECK_INTERVAL_S=600.0, recv_window_ms=4000,
     )  # fmt: skip
-    audit = object()
-    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, audit))
-    assert check is not None and real.accounts._selfcheck is check
+    audit, metrics = object(), facade()
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, audit), metrics)
+    assert check is not None and real.accounts._selfcheck is check and check._m is metrics
     store: Any = check._store
     assert (check._env, store._env, check._interval_s) == ("testnet", "testnet", 600.0)
     assert (check._gate, check._audit) == (real.oms_read_only_gate, audit)
@@ -194,9 +202,8 @@ async def test_the_wired_calls_sign_and_send_on_the_process_environment_only(
     venue: respx.MockRouter, env: Environment, host: str
 ) -> None:
     signed: list[Call] = []
-    check = wiring.wire_key_selfcheck(
-        cast(AppContext, ctx(signed, storage_backend="real", environment=env)), cast(Any, None)
-    )
+    real = ctx(signed, storage_backend="real", environment=env)
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None), facade())
     assert check is not None
     calls = check._calls(KEY, "1000001")
     assert (await calls.key_info()).uid == "1000001"
@@ -214,7 +221,7 @@ async def test_after_a_10018_the_next_keys_call_is_inconclusive_at_once_and_neve
     the next key's call is refused at once (`rate_limited`) and a pass costs no wait per key."""
     signed: list[Call] = []
     real = ctx(signed, storage_backend="real")  # demo: its host only
-    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None))
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None), facade())
     assert check is not None
     codes: list[str] = []
     with respx.mock(assert_all_called=False) as router:
@@ -253,7 +260,7 @@ def skewed() -> Iterator[respx.MockRouter]:
 async def verify_skewed(measured: int | None) -> VerificationResult:
     """The wired calls through the key-import pipeline, the guard's offset `measured`."""
     real = ctx(clock=lambda: measured, storage_backend="real", egress_ip=EGRESS)
-    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None))
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None), facade())
     assert check is not None
     calls = check._calls(KEY, ACCOUNT.exchange_uid)
     try:

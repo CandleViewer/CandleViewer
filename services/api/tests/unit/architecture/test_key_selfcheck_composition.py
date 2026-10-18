@@ -148,10 +148,12 @@ async def test_a_stored_key_failing_at_boot_latches_order_entry_and_degrades_rea
         body = _readyz(deployed.app)
     finally:
         await ctx.accounts.stop(1.0)
-    accounts = {"name": "accounts", "ok": False, "detail": "1 stored key(s) fail the self-check"}
-    assert body["status"] == "degraded" and accounts in body["checks"]
+    [accounts] = [check for check in body["checks"] if check["name"] == "accounts"]
+    failing = "1 stored key(s) fail the self-check; 1 key(s) checked, oldest last pass "  # no id
+    assert body["status"] == "degraded" and accounts["detail"].startswith(failing)
     assert deployed.edges.events == [
         ("calls", "testnet"), ("aclose", None), ("audit", "account.tested"),
         ("error", "key_withdraw_permission"), ("disable", ACCOUNT),
         ("audit", "account.disabled_by_policy"), ("mark", ACCOUNT),
     ]  # fmt: skip
+    assert ctx.accounts._selfcheck._m is deployed.app.state.metrics_facade  # the scraped series

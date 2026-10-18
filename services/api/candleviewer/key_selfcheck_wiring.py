@@ -40,6 +40,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.observability.metrics import Metrics
 
 __all__ = [
     "JudgedCalls",
@@ -111,8 +112,11 @@ class JudgedCalls:
         await self._calls.aclose()
 
 
-def wire_key_selfcheck(ctx: AppContext, audit: AuditEmitter) -> KeySelfCheck | None:
-    """Attach the self-check to `ctx.accounts` on the real backend; `None` on the fake one."""
+def wire_key_selfcheck(
+    ctx: AppContext, audit: AuditEmitter, metrics: Metrics
+) -> KeySelfCheck | None:
+    """Attach the self-check to `ctx.accounts` on the real backend; `None` on the fake one. Its
+    series are the catalogue's, registered on `metrics` (`register_r0`) before this runs."""
     settings = ctx.settings
     if settings.storage_backend != "real":
         return None
@@ -138,6 +142,7 @@ def wire_key_selfcheck(ctx: AppContext, audit: AuditEmitter) -> KeySelfCheck | N
         policy=VerificationPolicy(egress_ip=settings.egress_ip, recv_window_ms=window),
         env=env,
         clock=lambda: datetime.now(UTC),
+        metrics=metrics,
         interval_s=settings.selfcheck_interval_s,
     )
     ctx.accounts.attach_key_selfcheck(selfcheck, release=relational.dispose)
