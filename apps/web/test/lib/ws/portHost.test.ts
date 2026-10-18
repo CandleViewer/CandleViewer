@@ -225,7 +225,7 @@ describe("the access token (4.3)", () => {
     const live = t.tab(true);
     expect([silent.of("tokenRequest").length, live.of("tokenRequest").length]).toEqual([1, 0]);
     await t.advance(12_000); // the call is given up on after 10 s, and the connection asks again
-    expect(live.of("tokenRequest")).toHaveLength(1);
+    expect(live.of("tokenRequest").map((m) => m.invalidate)).toEqual([false]); // nothing was refused: no order to carry
     expect(t.gateway.latest.of("auth")).toHaveLength(1);
     const alone = hostHarness();
     const only = alone.tab(false);
@@ -242,6 +242,45 @@ describe("the access token (4.3)", () => {
     a.say({ t: "visibility", hidden: false }); // a is there
     await t.advance(1_000);
     expect([a.of("tokenRequest").length, b.of("tokenRequest").length]).toEqual([2, 1]);
+  });
+
+  it("does not take a tab that answered for a silent one when the time to answer is over", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    await t.advance(400); // a answered the first call
+    const b = t.tab();
+    b.say({ t: "visibility", hidden: true }); // a is the tab that is seen: it is asked first
+    await t.advance(15_000); // past the 10 s the call was given
+    t.gateway.latest.close(1011);
+    await t.advance(1_000);
+    expect([a.of("tokenRequest").length, b.of("tokenRequest").length]).toEqual([2, 0]);
+  });
+
+  describe("the order to hand out another token, after the server refused the last", () => {
+    /** The connection is up on `a`; `b`, which never answers, is the tab seen last: the next call goes to it, with the order. */
+    async function ordered() {
+      const t = hostHarness();
+      const a = t.tab();
+      await t.advance(400);
+      const b = t.tab(false);
+      t.gateway.latest.close(4401);
+      await t.advance(3_000);
+      expect(b.of("tokenRequest").map((m) => m.invalidate)).toEqual([true]);
+      return { t, a, b };
+    }
+
+    it("goes with the next call when the tab it went to stayed silent", async () => {
+      const { t, a } = await ordered();
+      await t.advance(20_000);
+      expect(a.of("tokenRequest").map((m) => m.invalidate)).toEqual([false, true]);
+    });
+
+    it("goes with the next call when the tab it went to left", async () => {
+      const { t, a, b } = await ordered();
+      b.say({ t: "stop" });
+      await t.advance(5_000);
+      expect(a.of("tokenRequest").map((m) => m.invalidate)).toEqual([false, true]);
+    });
   });
 });
 
@@ -273,12 +312,24 @@ describe("what every tab hears at once", () => {
     expect(t.tab().of("system")).toEqual([]);
   });
 
-  it("keeps the latest update of a few kinds, however many the server invents", async () => {
+  it("what a connection that ended for good said is not told to a tab that joins either", async () => {
+    const t = hostHarness();
+    t.tab();
+    await t.advance(400);
+    t.gateway.latest.delta("system", { kind: "notice", message: "one" });
+    t.gateway.latest.close(4403); // forbidden: nothing reconnects, the link reads offline
+    expect(t.tab().of("system")).toEqual([]);
+  });
+
+  it("keeps the latest update of a few kinds, however many the server invents, and counts the kinds it kept no room for", async () => {
     const t = hostHarness();
     t.tab();
     await t.advance(400);
     for (let i = 0; i < 40; i += 1) t.gateway.latest.delta("system", { kind: `invented_${i}` });
     expect(t.tab().of("system").length).toBeLessThanOrEqual(16);
+    expect(t.host.counters.droppedSystemKinds).toBe(25); // `health` and 15 of the 40 are kept
+    t.gateway.latest.delta("system", { kind: "invented_0" }); // one it holds: not a kind more
+    expect(t.host.counters.droppedSystemKinds).toBe(25);
   });
 });
 

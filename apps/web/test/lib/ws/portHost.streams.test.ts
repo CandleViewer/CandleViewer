@@ -8,6 +8,7 @@ import {
   MAX_PANES_PER_TAB,
   MAX_RESYNCS_PER_CONSUMER,
 } from "../../../src/lib/ws/worker/portHost";
+import { tokenOf } from "./support/connectionHarness";
 import { b64, bookDelta } from "./support/cvwb";
 import { BOOK } from "./support/engineHarness";
 import { CONNECT, FakeTab, hostHarness } from "./support/hostHarness";
@@ -334,6 +335,24 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
     expect(conn.of("resync")).toHaveLength(MAX_RESYNCS_PER_CONSUMER + 2);
   });
 
+  it("twenty overflows in a minute ask for the five snapshots the gateway grants, and a real gap is repaired when its window reopens", async () => {
+    const t = hostHarness(undefined, SMALL);
+    const a = t.tab();
+    t.consume(a, "k1", BOOK);
+    await t.advance(400);
+    const conn = t.gateway.latest;
+    for (let round = 0; round < 20; round += 1) {
+      for (let i = 0; i < 5; i += 1) conn.delta(BOOK);
+      await t.advance(100); // the fake gateway answers with a snapshot, and it reads again
+    }
+    expect(conn.of("resync")).toHaveLength(5); // the sixth waits
+    conn.skip(BOOK);
+    conn.delta(BOOK); // a real gap of a stream whose request already waits: one request, not two
+    await t.advance(61_000);
+    expect(conn.of("resync")).toHaveLength(6);
+    expect(statusOf(a, "k1")).toBe("live");
+  });
+
   it("what was queued for a consumer the tab voided is dropped, not sent after it", async () => {
     const { t, tabs, conn } = await watching();
     const [a] = tabs;
@@ -361,6 +380,114 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
   });
 });
 
+describe("what the tabs show decides how the topics run (C8)", () => {
+  const throttles = (conn: { of(t: string): Record<string, unknown>[] }) =>
+    conn.of("ctl").map((f) => [f["ch"], (f["p"] as { throttle_ms: number }).throttle_ms]);
+
+  it("a hidden tab slows its topics to 1 000 ms and restores them; the fastest consumer of a topic decides", async () => {
+    const { t, tabs, conn } = await watching(TRADES, 2);
+    const [a, b] = tabs;
+    a?.say({ t: "visibility", hidden: true });
+    await t.advance(300);
+    expect(throttles(conn)).toEqual([]); // the other tab is looking at it
+    b?.say({ t: "visibility", hidden: true });
+    await t.advance(300);
+    expect(throttles(conn)).toEqual([[TRADES, 1_000]]);
+    a?.say({ t: "visibility", hidden: false });
+    await t.advance(300);
+    expect(throttles(conn)).toEqual([
+      [TRADES, 1_000],
+      [TRADES, 100],
+    ]);
+    expect(conn.of("unsub")).toEqual([]);
+  });
+
+  it("a pane that was never described belongs to its tab: a consumer that arrives in a hidden tab is slowed at once", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    a.say({ t: "visibility", hidden: true });
+    t.consume(a, "k1", TRADES);
+    await t.advance(400);
+    expect(throttles(t.gateway.latest)).toEqual([[TRADES, 1_000]]);
+  });
+
+  it("a collapsed pane lets its topics go, and comes back", async () => {
+    const { t, tabs, conn } = await watching(TRADES);
+    const [a] = tabs;
+    a?.say({ t: "pane", id: "p1", visibility: "collapsed" });
+    await t.advance(300);
+    expect(conn.of("unsub")).toHaveLength(1);
+    a?.say({ t: "pane", id: "p1", visibility: "visible" });
+    await t.advance(300);
+    expect(conn.of("sub")).toHaveLength(2);
+  });
+
+  it("the size of a heatmap's pane is what its bucket is derived from (6.1.1)", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    a.say({ t: "pane", id: "p1", visibility: "visible", cssWidth: 1190, dpr: 1 });
+    t.consume(a, "k1", "heatmap.BTCUSDT");
+    await t.advance(400);
+    expect(t.gateway.latest.of("sub")[0]).toMatchObject({
+      p: { topics: [{ ch: "heatmap.BTCUSDT", opts: { time_bucket_ms: 1_000 } }] },
+    });
+  });
+
+  it("hands the options a consumer names to its subscription", async () => {
+    const t = hostHarness();
+    t.consume(t.tab(), "k1", TRADES, { opts: { throttle_ms: 250 } });
+    await t.advance(400);
+    expect(t.gateway.latest.of("sub")[0]).toMatchObject({
+      p: { topics: [{ ch: TRADES, opts: { throttle_ms: 250 } }] },
+    });
+  });
+
+  it("the focused pane's topics come back first after a reconnect, whichever tab it is in", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    const b = t.tab();
+    t.consume(a, "k1", TRADES, { priority: "other" });
+    t.consume(b, "k2", BOOK, { priority: "other" });
+    b.say({ t: "focus", id: "p1" });
+    a.say({ t: "focus", id: null }); // not the owner: leaves it alone
+    await t.advance(400);
+    t.gateway.latest.close(1011);
+    await t.advance(1_000);
+    expect(
+      t.gateway.latest
+        .of("sub")
+        .flatMap((f) => (f["p"] as { topics: { ch: string }[] }).topics.map((x) => x.ch)),
+    ).toEqual([BOOK, TRADES]);
+    b.say({ t: "focus", id: null }); // the owner lets go
+    t.gateway.latest.close(1011);
+    await t.advance(1_000);
+    expect(t.gateway.conns.at(-1)?.of("sub")[0]).toMatchObject({
+      p: { topics: [{ ch: TRADES }, { ch: BOOK }] }, // now each topic is where its own priority puts it
+    });
+  });
+});
+
+describe("a focus that is gone", () => {
+  it("is cleared when the tab that held it leaves: the topics are ordered by their own priority again", async () => {
+    const t = hostHarness();
+    const a = t.tab();
+    const b = t.tab();
+    t.consume(a, "k1", TRADES, { priority: "other" });
+    t.consume(a, "k2", BOOK, { priority: "focused" });
+    t.consume(b, "k3", "ticker.BTCUSDT", { pane: "pb" });
+    b.say({ t: "focus", id: "pb" });
+    await t.advance(400);
+    b.say({ t: "stop" });
+    await t.advance(300);
+    t.gateway.latest.close(1011);
+    await t.advance(1_000);
+    const order = t.gateway.latest
+      .of("sub")
+      .flatMap((f) => (f["p"] as { topics: { ch: string }[] }).topics.map((x) => x.ch));
+    expect(order).toEqual([BOOK, TRADES]); // not [TRADES, BOOK]: no pane is focused any more
+  });
+});
+
 describe("what a tab may ask", () => {
   it("is refused when it is a name unknown, malformed or past a limit, and counted", async () => {
     const { t, tabs } = await watching();
@@ -375,6 +502,16 @@ describe("what a tab may ask", () => {
       consumers: MAX_CONSUMERS_PER_TAB,
       rejectedMessages: 4,
     });
+  });
+
+  it("a name taken is refused while there is room, and the consumer that holds it is left as it was", async () => {
+    const { t, tabs, conn } = await watching();
+    const tab = tabs[0] ?? new FakeTab(true);
+    t.consume(tab, "k1", TRADES); // k1 reads the book
+    conn.delta(BOOK);
+    await t.advance(8);
+    expect(tab.frames("k1")).toEqual(["snap:1", "d:2"]);
+    expect((await counted(t, tab)).host).toMatchObject({ consumers: 1, rejectedMessages: 1 });
   });
 
   it("describes 64 panes at most: more are refused and counted, as one more consumer is, and one it has may change", async () => {
@@ -402,5 +539,63 @@ describe("what a tab may ask", () => {
     expect([t.gateway.latest.of("sub").length, t.gateway.latest.of("unsub").length]).toEqual([
       1, 0,
     ]);
+  });
+});
+
+describe("diagnostics (D8)", () => {
+  it("are posted when the counters move, at most once a second, and carry no token", async () => {
+    const { t, tabs } = await watching();
+    const [a] = tabs;
+    await t.advance(1_100);
+    const first = a?.last("diag").diag;
+    expect(first).toMatchObject({
+      host: { tabs: 1, consumers: 1 },
+      engine: { streams: 1 },
+      clockSkewMs: 0,
+    });
+    const count = a?.of("diag").length;
+    await t.advance(5_000);
+    expect(a?.of("diag")).toHaveLength(count ?? -1); // nothing moved, nothing is said
+    expect(JSON.stringify(a?.of("diag"))).not.toContain(tokenOf(1));
+  });
+
+  it("are not repeated while frames keep the host flushing and nothing in the counters moved", async () => {
+    const { t, tabs, conn } = await watching();
+    const [a] = tabs;
+    await t.advance(1_100);
+    const count = a?.of("diag").length;
+    for (let i = 0; i < 4; i += 1) {
+      conn.delta(BOOK);
+      await t.advance(1_100);
+    }
+    expect(a?.of("diag")).toHaveLength(count ?? -1);
+  });
+
+  it("post a counter that moved at most once a second: a move inside the second waits for it to end", async () => {
+    const { t, tabs } = await watching();
+    const [a] = tabs;
+    const before = a?.of("diag").length ?? 0;
+    a?.say({ t: "release", id: "nope" }); // refused: a counter moves
+    await t.advance(500);
+    expect(a?.of("diag")).toHaveLength(before);
+    await t.advance(600);
+    expect(a?.of("diag")).toHaveLength(before + 1);
+    expect(a?.last("diag").diag.host.rejectedMessages).toBe(1);
+  });
+
+  it("carry the hint of a bye: the topics that cost the gateway most", async () => {
+    const { t, tabs, conn } = await watching();
+    conn.bye("slow_consumer", 4429, { hint: { most_expensive_topics: [BOOK] } });
+    expect((await counted(t, tabs[0] ?? new FakeTab(true))).slowConsumerHint).toEqual([BOOK]);
+  });
+
+  it("count the tabs again when one leaves", async () => {
+    const { t, tabs } = await watching(BOOK, 2);
+    const [a, b] = tabs;
+    await t.advance(1_100);
+    expect(b?.last("diag").diag.host.tabs).toBe(2);
+    a?.say({ t: "stop" });
+    await t.advance(1_100);
+    expect(b?.last("diag").diag.host.tabs).toBe(1);
   });
 });
