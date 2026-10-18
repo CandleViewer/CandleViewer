@@ -59,9 +59,14 @@ EVENT_CONDITIONS = {
         ["pr.yml:gates:changelog-fragment", "pr.yml:gates:commitlint"],
         "${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}",
     ),
-    # The a11y baseline's PR citation and the coverage comment: nothing later reads either.
-    "_job-a11y.yml:a11y:Baseline changes must cite finding id in PR description": (
-        "github.event_name == 'pull_request'"
+    # The a11y baseline's PR citation, the PR base checkout only that step reads (#3449), and the
+    # coverage comment: nothing else reads any of them.
+    **dict.fromkeys(
+        [
+            "_job-a11y.yml:a11y:Check out the PR base's accessibility baseline",
+            "_job-a11y.yml:a11y:Baseline changes must cite finding id in PR description",
+        ],
+        "github.event_name == 'pull_request'",
     ),
     "_job-coverage.yml:coverage-thresholds:Post PR summary comment": (
         "always() && github.event_name == 'pull_request'"
