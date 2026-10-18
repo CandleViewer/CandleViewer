@@ -305,6 +305,9 @@ disarm lists the user's armed rules again after its disarms, so a rule armed mea
 too. A rule its chart refuses (evaluating, acting, pending confirmation or spent) stays armed with
 no grant and no permission to act on (O4, O5); a repeat disarms it once it is back in `armed`, which
 a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
+A new socket whose `auth` completes around the commit, on a session the user's own refresh rotated,
+can register after the socket step and stream until its access token expires, 12 minutes at most
+(UL1-E2's residual in `docs/security/threat-models/e42-user-lifecycle.md` §6).
 
 What the cascade builds on, and what to read afterwards:
 

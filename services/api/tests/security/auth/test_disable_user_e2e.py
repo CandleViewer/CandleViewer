@@ -10,6 +10,7 @@ armed rule and a frozen grant with a cap. One of the two was minted by a refresh
 and a socket that never re-authed is still on its predecessor; a refresh of a third session of M,
 with a socket, has claimed it and waits to mint (#2911). So two of M's four sockets are on a session
 no id list names (S7). The Owner disables M, once. Postgres: `test_user_disable_route_pg.py`.
+A second world holds a new socket's `auth` of M across the disable (#2739).
 """
 
 from __future__ import annotations
@@ -209,6 +210,15 @@ def _ended(ws: Any) -> tuple[dict[str, Any], int]:
     return bye, close.value.code
 
 
+def _owner_headers(app: Any, run: Any, w: SimpleNamespace, owner: str) -> dict[str, str]:
+    """A new session of the Owner with the `users` step-up made (SR-025): its bearer and CSRF."""
+    mine = run(app.state.app_context.auth.sessions.mint, owner)
+    until = w.clock.now + timedelta(minutes=5)
+    run(w.repo.update_step_up_state, str(mine.session_id), lambda _: ({"users": until}, 0, None))
+    bearer = {"Authorization": f"Bearer {mine.access_token}"}
+    return bearer | csrf_headers(app.state.csrf_codec, mine.session_id)
+
+
 def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: str) -> None:
     """AC1's actions on the deployed app, then what each actor saw, on `w`: `w.repo` is the
     session repository (its mint parks while `w.repo.park` is set) and `w.rules` the rule store
@@ -217,12 +227,9 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
     assert portal is not None  # inside the client's `with`
     run, sessions = portal.call, ctx.auth.sessions
     run(ctx.rules.start, ctx)
-    mine, w.a, w.p, w.c = (run(sessions.mint, u) for u in (owner, m, m, m))
-    until = w.clock.now + timedelta(minutes=5)  # the step-up the Owner made
-    run(w.repo.update_step_up_state, str(mine.session_id), lambda _: ({"users": until}, 0, None))
+    headers = _owner_headers(app, run, w, owner)
+    w.a, w.p, w.c = (run(sessions.mint, m) for _ in range(3))
     w.rule = run(_armed_rule, ctx.rules.manager(), m)
-    headers = {"Authorization": f"Bearer {mine.access_token}"}
-    headers |= csrf_headers(app.state.csrf_codec, mine.session_id)
 
     def rest(minted: Any) -> int:  # M's next REST call on that session
         bearer = {"Authorization": f"Bearer {minted.access_token}"}
@@ -296,8 +303,9 @@ def rule_disarmed(w: SimpleNamespace, owner: uuid.UUID, m: uuid.UUID) -> None:
     assert revoked == {str(w.a.session_id), str(w.b.session_id)}
 
 
-@pytest.fixture(scope="module")
-def disabled() -> Iterator[SimpleNamespace]:
+@contextmanager
+def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
+    """A new `w` over `_Rows`, and the deployed app with only its SQL edges on those rows."""
     w = SimpleNamespace(repo=_Rows(), rules=InMemoryRuleStore(), clock=_Clock())
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):
@@ -309,8 +317,14 @@ def disabled() -> Iterator[SimpleNamespace]:
         mp.setattr(relational, lambda *_: w.repo)  # the S3 store's unit of work
         mp.setattr(appmod, "PostgresRuleStore", lambda _relational: w.rules)
         with deployed(mp, _settings(), w) as (app, client):
-            scenario(app, client, w, str(_OWNER), str(_M))
-            yield w
+            yield w, app, client
+
+
+@pytest.fixture(scope="module")
+def disabled() -> Iterator[SimpleNamespace]:
+    with _world() as (w, app, client):
+        scenario(app, client, w, str(_OWNER), str(_M))
+        yield w
 
 
 @contextmanager
@@ -384,3 +398,41 @@ def test_data_retained(disabled: SimpleNamespace) -> None:
     assert not w.rule_row.deleted and len(w.rule_row.versions) == 1
     assert lifecycle._REVOKE_GRANTS in w.repo.statements
     assert not [s for s in w.repo.statements if re.search(r"\bDELETE\b", str(s), re.I)]
+
+
+def test_an_auth_in_flight_across_the_disable_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2739, SR-029: a new socket of M whose `auth` passed `authenticate` before the disable
+    committed, and registers only after it, gets `bye user_disabled` and 4403, never `auth_ok`.
+    The per-user close ran before it registered and its principal is read after the commit, so
+    what refuses it is the hub's memory of M's revoked session, which only the call site's
+    `publish_revocation` feeds: a no-op there fails this test (the S7 review's Low)."""
+    with _world() as (w, app, client):
+        portal = client.portal
+        assert portal is not None  # inside the client's `with`
+        run, sessions = portal.call, app.state.app_context.auth.sessions
+        headers, s = _owner_headers(app, run, w, str(_OWNER)), run(sessions.mint, str(_M))
+        passed, release = asyncio.Event(), asyncio.Event()
+        authenticate = sessions.authenticate_access_token
+
+        async def in_flight(token: str, **kwargs: Any) -> SessionRecord:  # M's auth waits
+            record: SessionRecord = await authenticate(token, **kwargs)
+            if token == s.access_token:
+                passed.set()
+                await release.wait()
+            return record
+
+        monkeypatch.setattr(sessions, "authenticate_access_token", in_flight)
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            ws.send_json({"t": "hello", "id": "h"})
+            assert _recv(ws)["t"] == "welcome"
+            ws.send_json({"t": "auth", "id": "a", "p": {"access_token": s.access_token}})
+            try:
+                run(functools.partial(asyncio.wait_for, passed.wait(), _GUARD_S))
+                path = f"/users/{_M}?acknowledge_unknown_positions=true"
+                status = client.delete(path, headers=headers).status_code
+            finally:
+                run(release.set)
+            bye, code = _ended(ws)
+    assert status == 204
+    p = bye["p"]
+    assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE

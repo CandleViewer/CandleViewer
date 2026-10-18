@@ -32,6 +32,9 @@
   (§12.2, §13.1) and UL-F8's issue, #3349. A citation marked `0cfb12c2` is to that commit, and a re-read row that
   keeps an anchor-time state says so (`at b37d1c9d`); every other citation keeps its `b37d1c9d` reading, and the
   other E42 merges since the anchor are E42-X02's to re-read (#1220). No rating moves.
+- Updated 2026-10-18 by E42-T04 S7 (#965) for `deleteUser` (#3291) and `setUserAccountAccess` (#3267), served since
+  the anchor: §1.1, its user-management row, both §1.3 rows, AD-D01, L1, L4 and UL-F13, cited at the commit that
+  merges S7; §1.1 also states the route matrix at `c296b5c6`. No rating moves.
 - Path: `docs/security/threat-models/e42-admin.md`, the name the ticket gives. GOV-008
   (`scripts/check_threat_model_ticket_map.py:23-24`) matches it case-insensitively, so the level-2 or level-3
   heading that introduces the control map makes that section list all 35 non-retired E42 keys. The map is §12
@@ -89,14 +92,16 @@ under `openapi_pending` in the composition allowlist. `test_openapi_operations_a
 appears (`services/api/tests/contract/rbac/test_route_matrix.py:82`). Of the 57 operations read at the anchor, 29 are
 served, 2 answer 501 and 26 are contract-only, and the three view-as operations #3164 added are contract-only at
 `0cfb12c2`; §1.3 gives each row's matrix (`m:`) and allowlist (`a:`) line. Since the anchor, `deleteUser` is served
-(E42-T04 S6, #3291); §1.3 records it.
+(E42-T04 S6, #3291), and so is `setUserAccountAccess` (E42-T08, #3267); §1.3 records both. At `c296b5c6`, with the
+other E42 merges since the anchor that E42-X02 re-reads (#1220), the route matrix has 34 of the 60 operations
+served, 1 answering 501 and 25 contract-only, and the baseline is 145.
 
 <!-- prettier-ignore -->
 | Component | Status | Evidence |
 | --- | --- | --- |
 | Audited admin guard, overview, capacity, sub-account tier | merged | E42-T01 (#2874, #2901, #2930, #2946): `admin/http.py:110-174` |
 | Invites, role change, MFA reset, step-up, own sessions | merged (E09) | The served rows of §1.3; the owner-floor lock is shared with the disable store (#2916) |
-| User read, PATCH and DELETE, grants, admin sessions, purge | partial | E42-T04's contract deltas (#2658), disable store (#3062), disable service (#3096), post-commit cascade (#3135) and rule steps (#3246, #3253) merged; `DELETE /users/{userId}` served (E42-T04 S6, #3291) and proven end to end (S7); grant store hardened (E42-T08, #3028) and the grant listing served (#3161); the other routes are owed by E42-T08, E42-T09 and E42-T10 |
+| User read, PATCH and DELETE, grants, admin sessions, purge | partial | E42-T04's contract deltas (#2658), disable store (#3062), disable service (#3096), post-commit cascade (#3135) and rule steps (#3246, #3253) merged; `DELETE /users/{userId}` served (E42-T04 S6, #3291) and proven end to end (S7); grant store hardened (E42-T08, #3028), and the grant listing (#3161) and its replacement (#3267) served; the other routes are owed by E42-T09 and E42-T10 |
 | Audit read side | partial | The router is E09-T02's (#1608); E42-T02 added the contract, the export stub and the verify slot (#2392, #2446, #2917). Query, verify and the stub are served, and since #2433 reads and refusals are recorded within a per-user budget; since #2443 each query page's chain is checked (AD-R07), and since #2444 the export answers 501 as contracted and a Manager's page withholds both hashes; the contract's verify limits are not (AD-F04) |
 | Feature flags | partial | Contract (#2592), `0027` (#2796), registry, catalogue and resolver (#2928), service read path (#2981). No route, no `system` push and no maintenance gate; nothing composed the registry into the app until #3221 (§3.2) |
 | Incidents, backups, health read models | partial | `0028` (#2820) and the read-model and backup-guard contract (#2957); routes not mounted; `GET /admin/health` is mounted without a resolver (501) |
@@ -148,10 +153,10 @@ checks the permission in the route itself. Paths in the control column are under
 | `createUser` | `POST /users` | `users:write` | `users` (:391); contract silent (below) | P1; S out (invite link) | served (m:1472; `api/invites.py:211`) | Step-up row; invites grant `viewer` only (yaml:13199-13200); the link is shown once (yaml:13185) and never logged (`api/invites.py:18`); AD-F10 (the MFA flag must be true-only, C-12.2; #3086) |
 | `getUser` | `GET /users/{userId}` | `users:read` | — | P1, C | contract-only (m:1484, a:337) | Owner-only permission |
 | `updateUser` | `PATCH /users/{userId}` | `users:write` | `users` (:404) | C, P1 | contract-only (m:1498, a:377) | Pre-registered row; own roles or status refused and the last Owner kept, by contract (yaml:1665-1666) |
-| `deleteUser` | `DELETE /users/{userId}` | `users:write` | `users` (:405) | C; P1, P2 on purge | served (m:1513; `api/users.py:466`) | Step-up row: the path guard challenges an un-elevated caller before the handler; then `users:write` and a self-target are refused and audited before any lookup (`admin/user_disable.py:272`), and an undeclared query key is a 422; the disable cascade and the purge are `e42-user-lifecycle.md` L1 and L4 |
+| `deleteUser` | `DELETE /users/{userId}` | `users:write` | `users` (:405) | C; P1, P2 on purge | served (m:1512; `api/users.py:621`) | Step-up row: the path guard challenges an un-elevated caller before the handler; then `users:write` and a self-target are refused and audited before any lookup (`admin/user_disable.py:272`), and an undeclared query key is a 422; the disable cascade and the purge are `e42-user-lifecycle.md` L1 and L4 |
 | `setUserRoles` | `PUT /users/{userId}/roles` | `users:write` | `users` (:394) | C, integrity | served (m:1542; `api/users.py:227`) | `enforce` (`api/users.py:242`); self-target refused and audited (:245-256); owner floor at the endpoint (:311-327) and in the database (`0001`:271-298) |
 | `listUserAccountAccess` | `GET /users/{userId}/account-access` | `users:read` | — | C | served (m:1505; `api/users.py:341`) | Owner-only permission, checked before any lookup, so a missing user gets the same recorded 403 (`test_users_account_access_get.py:201`, :240) |
-| `setUserAccountAccess` | `PUT /users/{userId}/account-access` | `users:write` | `users` (:406) | C, integrity | contract-only (m:1511, a:593) | Pre-registered row; soft revoke (`e42-user-lifecycle.md` L2) |
+| `setUserAccountAccess` | `PUT /users/{userId}/account-access` | `users:write` | `users` (:406) | C, integrity | served (m:1531; `api/users.py:542`) | Step-up row: the path guard challenges an un-elevated caller before the handler; then `users:write` and a self-target are refused and audited before any lookup (`api/users.py:555-567`), and the body is closed, at most 64 KiB and 256 grants (SR-040); soft revoke (`e42-user-lifecycle.md` L2) |
 | `listUserSessions` | `GET /users/{userId}/sessions` | `users:read` | — | P2 | contract-only (m:1548, a:341) | Owner-only permission |
 | `revokeUserSession` | `DELETE /users/{userId}/sessions/{sessionId}` | `users:write` | `users` (yaml:1909); no row yet | C | contract-only (m:1555, a:65) | Inside the tripwire: it cannot be mounted ungated (§3.3) |
 | `listRoles` | `GET /roles` | `users:read` | — | I; C (user counts) | contract-only (m:1191, a:293) | Owner-only permission |
@@ -217,8 +222,9 @@ checks the permission in the route itself. Paths in the control column are under
 | admin re-auth (SCR-149) | no contract | — | a 15-minute window (`14-screens-catalogue.md:2216`, :2704) | S in (password, code) | no contract | Observability only: `reauth_age_s` (`admin/http.py:19-26`), pinned by `test_admin_http.py:288`; D8 open (AD-F06) |
 
 62 rows: the 60 operations (the 57 read at the anchor, of which 29 served, 2 at 501 and 26 contract-only, `deleteUser`
-served since; and the three view-as operations, contract-only), the `system` topic and SCR-149, the one surface with
-no contract. Seventeen operations need a step-up: fourteen have a registry row or a handler gate today, two of them
+and `setUserAccountAccess` served since; and the three view-as operations, contract-only), the `system` topic and
+SCR-149, the one surface with no contract.
+Seventeen operations need a step-up: fourteen have a registry row or a handler gate today, two of them
 (`setFeatureFlag`, `downloadAuditExport`) since #3160 and one (`startViewAs`) since #3164, and three
 (`revokeUserSession`, `deleteBackup`, `issueBackupDownload`) have no row but cannot be mounted ungated (§3.3).
 
