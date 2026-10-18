@@ -2321,6 +2321,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,
         exported=True,
     ),
+    # --- Admin jobs (E42-T05, #966 Q10) -------------------------------------
+    _s(
+        "cv_admin_jobs_lost_on_restart_total",
+        "counter",
+        "jobs",
+        (),
+        "Admin jobs (GET /admin/jobs) the API process held at its last clean stop, counted at the "
+        "next boot; a crash is not counted (#966).",
+        "dashboard only",
+        _L,
+        "E42",
+        max_series=1,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",

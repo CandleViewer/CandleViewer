@@ -17,11 +17,12 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
+from candleviewer.api.recorder_admin import AdminJobStore
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.recorder.retention import PrunePlan, RetentionManager, RunReport, day_key
+from tests.unit.api._job_poll import mount_job_poll
 from tests.unit.recorder._retention_fakes import NOW, T, World, day, manager
 
 OWNER = {"recording:write", "admin:read"}
@@ -113,7 +114,7 @@ class _Env:
                 jobs, self.backend, self.audit, self.res, elevation, clock=lambda: NOW
             )
         )
-        app.include_router(make_recorder_admin_router(jobs, None, self.audit, self.res))
+        mount_job_poll(app, jobs, self.res)  # the poll, on the audited admin router
         self.c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
     async def post(self, body: object, key: str | None = None) -> httpx.Response:

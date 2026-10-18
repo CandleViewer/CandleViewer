@@ -1,8 +1,8 @@
 """`POST /admin/recorder/compact` (E16-T05), `POST /admin/recorder/import` (E16-T10)
-and `GET /admin/jobs/{jobId}`.
+and the job store their jobs are polled from (`GET /admin/jobs/{jobId}`, `api.admin_jobs`).
 
-RBAC is resolved server-side (C-12.4): compaction needs `recording:write`,
-polling needs `admin:read` (22-api-openapi.yaml `x-rbac`). Every compaction
+RBAC is resolved server-side (C-12.4): compaction needs `recording:write`, and the
+poll (`api.admin_jobs`) `admin:read` (22-api-openapi.yaml `x-rbac`). Every compaction
 request — accepted, denied or failed — is audited as `recorder.compact`.
 `Idempotency-Key` (UUID) is required: a replay returns the same job id.
 The compaction itself is an injected coroutine (the storage-side
@@ -39,7 +39,6 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 
 RECORDING_WRITE = "recording:write"
-ADMIN_READ = "admin:read"
 MAX_JOBS = 256
 #: Job.kind enum in 22-api-openapi.yaml has no compaction value; a retention-family job.
 JOB_KIND = "retention_sweep"
@@ -132,6 +131,10 @@ class AdminJobStore:
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
+
+    def held(self) -> int:
+        """Every job the store holds, finished or not: what a restart of the process loses."""
+        return len(self._jobs)
 
     def by_idempotency_key(self, actor: str, key: str) -> tuple[Job, str] | None:
         """`(job, body_hash)` for this actor's key; keys never cross actors."""
@@ -420,19 +423,5 @@ def make_recorder_admin_router(
         except JobConflict:
             return _problem(409, "Conflict", "a compaction job is already running", "job_running")
         return JSONResponse(status_code=202, content={"job_id": job.id})
-
-    @router.get("/jobs/{jobId}")
-    async def get_job(jobId: str, request: Request) -> JSONResponse:
-        if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
-        principal = await principal_resolver.resolve(request)
-        if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
-        if not principal.has(ADMIN_READ):
-            return _problem(403, "Forbidden", f"requires {ADMIN_READ}")
-        job = jobs.get(jobId)
-        if job is None:
-            return _problem(404, "Not found", "unknown job")
-        return JSONResponse(job.view())
 
     return router

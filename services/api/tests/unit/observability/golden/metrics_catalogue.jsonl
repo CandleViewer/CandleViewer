@@ -59,6 +59,7 @@
 ["bybit_rate_remaining", "gauge", ["endpoint_group"], "live", "E04"]
 ["credential_verification_failures_total", "counter", ["reason"], "planned", "E27"]
 ["cv_accounts_rows", "gauge", ["kind"], "live", "E27"]
+["cv_admin_jobs_lost_on_restart_total", "counter", [], "live", "E42"]
 ["cv_alert_autodisarmed_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alert_compile_rejected_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alert_compile_seconds", "histogram", [], "planned", "E40"]

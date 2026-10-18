@@ -80,6 +80,7 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.admin_capacity import make_admin_capacity_router
+from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
@@ -1778,6 +1779,18 @@ def create_app(
                 backlog_rows=current_write_backlog_rows,
             ),
         )
+    )
+    # E42-T05 (#966 Q15): every job's poll, on the audited admin router (AD-F22).
+    app.include_router(
+        make_admin_jobs_router(
+            admin_jobs, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+        )
+    )
+    # E42-T05 (#966 Q10): the jobs a restart loses, saved at a clean stop, counted at the next boot.
+    app.state.admin_jobs_lost = LostJobsCount(
+        Path(resolved.parquet_root).parent,
+        admin_jobs,
+        metrics_facade.get("cv_admin_jobs_lost_on_restart_total").child(),
     )
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)

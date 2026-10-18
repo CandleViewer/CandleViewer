@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from tests.unit.api._job_poll import mount_job_poll
 
 
 class _Audit:
@@ -62,8 +63,9 @@ class _Runner:
 def _client(perms: set[str] | None, runner: _Runner | None = None) -> tuple[Any, _Audit, Any]:
     audit = _Audit()
     run = runner or _Runner()
-    app = FastAPI()
-    app.include_router(make_recorder_admin_router(AdminJobStore(), run, audit, _Resolver(perms)))
+    app, store, res = FastAPI(), AdminJobStore(), _Resolver(perms)
+    app.include_router(make_recorder_admin_router(store, run, audit, res))
+    mount_job_poll(app, store, res)
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     return c, audit, run
 
@@ -139,8 +141,9 @@ async def test_unknown_or_foreign_job_id_is_404_not_leaked() -> None:
 
 
 async def test_fail_closed_without_resolver_session_or_backend() -> None:
-    app = FastAPI()
-    app.include_router(make_recorder_admin_router(AdminJobStore(), None, None, None))
+    app, store = FastAPI(), AdminJobStore()
+    app.include_router(make_recorder_admin_router(store, None, None, None))
+    mount_job_poll(app, store, None)
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     assert (await c.post("/admin/recorder/compact", headers=_hdr())).status_code == 501
     assert (await c.get(f"/admin/jobs/{uuid.uuid4()}")).status_code == 501

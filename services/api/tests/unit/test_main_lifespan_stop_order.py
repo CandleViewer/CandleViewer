@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import structlog
 from fastapi import FastAPI
 
@@ -116,6 +117,24 @@ class _SelfCheck(_Task):
         return None
 
 
+class _LostJobs:
+    """E42-T05: the lost-jobs count, loaded at boot and saved at a clean stop."""
+
+    def __init__(self, stops: _Stops) -> None:
+        self.stops = stops
+
+    async def load(self) -> None:
+        self.stops.started.append("admin_jobs_lost")
+
+    async def save(self) -> None:
+        self.stops.order.append("admin_jobs_lost")
+
+
+class _FailingStart(_AsyncStart):
+    async def start(self) -> None:
+        raise RuntimeError("a boot step failed")
+
+
 def _app(stops: _Stops) -> FastAPI:
     app = FastAPI()
     app.state.app_context = SimpleNamespace(
@@ -207,3 +226,29 @@ async def test_lifespan_logs_at_boot_that_no_audit_verify_job_is_wired() -> None
         async with _lifespan(app):
             pass
     assert {"event": "audit.verify_job_not_wired", "log_level": "warning"} in logs
+
+
+async def test_lifespan_counts_the_lost_jobs_at_boot_and_saves_them_once_the_store_stopped() -> (
+    None
+):
+    """E42-T05 (#966 Q10): the last clean stop's count is added before serving; this stop's is
+    saved right after the job store stops, so it holds every job the restart loses."""
+    stops = _Stops()
+    app = _app(stops)
+    app.state.admin_jobs_lost = _LostJobs(stops)
+    async with _lifespan(app):
+        assert stops.started.count("admin_jobs_lost") == 1
+    assert stops.order.index("admin_jobs") + 1 == stops.order.index("admin_jobs_lost")
+
+
+async def test_a_boot_that_fails_before_the_count_is_loaded_never_saves_over_it() -> None:
+    """E42-T05: the count is bound only once the boot reaches it, so a boot step that raised
+    earlier never writes this process's empty store over the last clean stop's count."""
+    stops = _Stops()
+    app = _app(stops)
+    app.state.admin_jobs_lost = _LostJobs(stops)
+    app.state.feature_flags = _FailingStart("feature_flags", stops)
+    with pytest.raises(RuntimeError, match="boot step"):
+        async with _lifespan(app):
+            pass
+    assert "admin_jobs" in stops.order and "admin_jobs_lost" not in stops.started + stops.order
