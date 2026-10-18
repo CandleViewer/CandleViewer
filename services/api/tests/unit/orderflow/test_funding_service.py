@@ -327,3 +327,15 @@ def test_symbol_label_is_bounded_and_malformed_maps_to_other() -> None:
 
     assert symbol_label("bad/sym") == "other"
     assert symbol_label("BTCUSDT") == symbol_label("BTCUSDT") == "BTCUSDT"
+
+
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_symbol_label_a_symbol_ending_in_a_newline_maps_to_other(
+    tail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3539: `$` also matches before a final newline, so `match` made it a label of its own."""
+    from candleviewer.orderflow import funding_metrics
+
+    monkeypatch.setattr(funding_metrics, "_seen", set())  # the cap cannot refuse; the pattern can
+    assert funding_metrics.symbol_label("BTCUSDT" + tail) == "other"
+    assert funding_metrics.symbol_label("BTCUSDT") == "BTCUSDT"

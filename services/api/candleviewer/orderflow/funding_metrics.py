@@ -19,7 +19,7 @@ def symbol_label(symbol: str) -> str:
     """Bounded `symbol` label: well-formed and within the cap, else `other`."""
     if symbol in _seen:
         return symbol
-    if not _SYMBOL_RE.match(symbol) or len(_seen) >= MAX_SYMBOL_LABELS:
+    if not _SYMBOL_RE.fullmatch(symbol) or len(_seen) >= MAX_SYMBOL_LABELS:
         return OTHER_SYMBOL
     _seen.add(symbol)
     return symbol

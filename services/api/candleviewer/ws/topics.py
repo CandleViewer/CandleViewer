@@ -22,6 +22,10 @@ from typing import Any, Final, Literal
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
 
+# Each pattern below is applied with `fullmatch`. Python's `$` also matches before a final newline,
+# so `match` took `"BTCUSDT\n"`. §13's patterns (`symbol`, `decimal`, `topic`) are ECMA-262
+# patterns, where `$` matches only at the very end of the input, so their `^...$` text stays as the
+# schema has it (#3539).
 #: §13 `common.schema.json#/$defs/symbol`: a USDT linear perpetual (the only product, C-1.3).
 SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")
 #: §6.4 `uuid` ids: the lowercase canonical form only, so each machine has one topic name.
@@ -138,11 +142,13 @@ _CHECKS: Final[dict[str, Callable[[Opt, Any], bool]]] = {
     # `in` hashes `v`, and a list or an object has no hash: the type goes first (#3469). A bool is
     # no member (`True == 1`); a float equal to one stays valid (`50.0 in {50}`, as in JSON Schema).
     "enum": lambda o, v: (_is_int(v) or isinstance(v, float | str)) and v in o.choices,
-    "decimal": lambda o, v: isinstance(v, str) and bool(_DECIMAL_RE.match(v)),
+    "decimal": lambda o, v: isinstance(v, str) and bool(_DECIMAL_RE.fullmatch(v)),
     "uuids": lambda o, v: _items(o, v, _uuid_ok),
-    "symbols": lambda o, v: _items(o, v, lambda s: isinstance(s, str) and bool(SYMBOL_RE.match(s))),
+    "symbols": lambda o, v: _items(
+        o, v, lambda s: isinstance(s, str) and bool(SYMBOL_RE.fullmatch(s))
+    ),
     "strings": lambda o, v: _items(o, v, lambda s: isinstance(s, str) and 0 < len(s) <= 64),
-    "str": lambda o, v: isinstance(v, str) and bool(_PARAM_RE.match(v)),
+    "str": lambda o, v: isinstance(v, str) and bool(_PARAM_RE.fullmatch(v)),
 }
 
 _INT_MS: Final = Opt("int", 0, 60_000)
@@ -533,7 +539,8 @@ def parse_topic(ch: Any, *, instrument_known: Callable[[str], bool] | None = Non
         raise TopicError("unknown_topic", "Topic is not in the catalogue.")
     shape = next((s for s in family.shapes if len(s) == len(rest)), None)
     if shape is None or not all(
-        kind == "entity" or _SEGMENT_RE.match(seg) for kind, seg in zip(shape, rest, strict=True)
+        kind == "entity" or _SEGMENT_RE.fullmatch(seg)
+        for kind, seg in zip(shape, rest, strict=True)
     ):  # an entity may hold `-` (uuid); `_entity` checks it against its own grammar
         raise TopicError("invalid_topic_format", f"Expected {' or '.join(family.patterns)}.")
     values: dict[str, Any] = {}
@@ -578,7 +585,9 @@ def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[s
 
 def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | None) -> Any:
     if kind == "symbol":
-        if not SYMBOL_RE.match(seg) or (instrument_known is not None and not instrument_known(seg)):
+        if not SYMBOL_RE.fullmatch(seg) or (
+            instrument_known is not None and not instrument_known(seg)
+        ):
             raise TopicError("unsupported_symbol", "Not a supported USDT linear perpetual.")
         return seg
     if kind == "depth":
@@ -590,7 +599,7 @@ def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | 
             raise TopicError("invalid_topic_format", "Unknown bar type.")
         return seg
     if kind == "param":
-        if not _PARAM_RE.match(seg):
+        if not _PARAM_RE.fullmatch(seg):
             raise TopicError("invalid_topic_format", "Bar param is malformed.")
         return seg
     if kind == "state":
