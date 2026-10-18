@@ -11,6 +11,7 @@ import hashlib
 import math
 import threading
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,7 +23,7 @@ from prometheus_client import REGISTRY
 from pydantic import ValidationError
 from structlog.testing import capture_logs
 
-from candleviewer.api.audit import _read_capped, make_audit_router
+from candleviewer.api.audit import _budget_actor, _read_capped, make_audit_router
 from candleviewer.api.audit_budget import (
     FLUSH_REASON,
     SUMMARY_REASON,
@@ -496,6 +497,15 @@ def test_verify_response_echoes_the_effective_range_and_hides_the_kind() -> None
     }
 
 
+def test_verify_without_a_body_runs_the_default_range() -> None:
+    """F11-1: the body is optional (`requestBody.required: false`), so a call with no content
+    at all is the same as `{}`: neither bound is given and the service defaults both."""
+    service = _FakeAuditService()
+    r = _verify_app(service, max_span=10).post("/admin/audit/verify")  # no content
+    assert r.status_code == 200
+    assert service.query_service.verify_calls == [{"from_id": None, "to_id": None, "max_span": 10}]
+
+
 def test_query_audit_log_from_alias_matches_openapi_and_reaches_service() -> None:
     """Security re-review of #1608 finding 1: the contract (22-api-openapi.yaml)
     names the lower bound `from`; without `Query(alias="from")` a client's
@@ -661,6 +671,51 @@ def test_rate_and_concurrency_limits_return_429_with_retry_after() -> None:
     assert client.get("/admin/audit").status_code == 200
 
 
+def test_the_query_limit_follows_the_user_across_all_of_its_sessions() -> None:
+    """Contract "Limits": per user, across all of the user's sessions (F1-3, M05). The key is
+    the user id of the session record, never the session id: a second session of the same user
+    shares the limit, and another user has a limit of its own."""
+    me = _manager_with_read()
+    first, second = replace(me, session_id=uuid.uuid4()), replace(me, session_id=uuid.uuid4())
+    other = replace(_manager_with_read(), session_id=uuid.uuid4())
+    resolver, limiter = _FakeResolver(first), AuditQueryLimiter(rate_per_minute=2, clock=_Clock())
+    app = FastAPI()
+    app.include_router(make_audit_router(_FakeAuditService(), resolver, limiter=limiter))
+    client = TestClient(app)
+
+    def status(principal: AuditPrincipal) -> int:
+        resolver._principal = principal
+        return client.get("/admin/audit").status_code
+
+    assert [status(first), status(second)] == [200, 200]  # the user's two calls of the minute
+    assert [status(first), status(second)] == [429, 429]  # over the limit, on either session
+    assert status(other) == 200
+
+
+def test_the_query_429_does_not_say_which_limit_was_hit() -> None:
+    """F1-3 (M06): the rate limit and the concurrency limit answer the same generic problem;
+    only `Retry-After` differs, so the body names neither the limit nor its state."""
+    clock, owner = _Clock(), _owner()
+    limiter = AuditQueryLimiter(rate_per_minute=1, max_concurrent=1, clock=clock)
+    client, _ = _limited(owner, limiter=limiter)
+    assert client.get("/admin/audit").status_code == 200
+    over_rate = client.get("/admin/audit")
+    clock.now += 61
+    held = limiter.acquire(str(owner.user_id))  # the user's one slot is taken
+    over_slots = client.get("/admin/audit")
+    held.release()
+    assert (over_rate.status_code, over_rate.headers["Retry-After"]) == (429, "60")
+    assert (over_slots.status_code, over_slots.headers["Retry-After"]) == (429, "1")
+    generic = {
+        "type": "https://candleviewer.local/errors/rate_limited",
+        "title": "Too many requests",
+        "status": 429,
+        "detail": "audit query limit reached",
+        "code": "rate_limited",
+    }
+    assert over_rate.json() == over_slots.json() == generic
+
+
 def test_lease_released_when_query_raises() -> None:
     lim = AuditQueryLimiter(max_concurrent=1)
     svc = _FakeAuditService()
@@ -740,6 +795,15 @@ def test_the_owner_read_slot_follows_is_owner_only() -> None:
         client, svc = _budgeted(principal)
         assert client.get("/admin/audit").status_code == 200
         assert svc.query_service.query_calls[-1]["owner"] is expected
+
+
+def test_the_record_budget_actor_is_the_owner_only_by_is_owner() -> None:
+    """F5-1 (SR-017): the Owner's cap and tracked entry follow the resolved `is_owner`. The `*`
+    grant gets the raw view without it, but does not count as the Owner for the budget."""
+    owner, wildcard, manager = _real_owner(), _owner(), _manager_with_read()
+    assert _budget_actor(owner) == BudgetActor(str(owner.user_id), "owner", owner.user_id, True)
+    assert wildcard.has("*") and not wildcard.is_owner
+    assert not _budget_actor(wildcard).owner and not _budget_actor(manager).owner
 
 
 def test_raw_follows_the_resolved_view_not_the_owner_flag() -> None:
@@ -1569,6 +1633,72 @@ def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
     expected = 200 if ending == "verified" else 503
     assert _limited_verify(svc).post(_VERIFY, json={}).status_code == expected
     assert not svc.query_service.verify_slot.held
+
+
+# ---- no-store on verify and export (F9-1, #3296) -------------------------------------------
+
+
+def _assert_no_store(responses: list[httpx.Response], statuses: list[int]) -> None:
+    """One answer per way the handler can answer, each `no-store`: no cache keeps a verify
+    result or a refusal."""
+    assert [r.status_code for r in responses] == statuses
+    assert [r.headers.get("cache-control") for r in responses] == ["no-store"] * len(responses)
+
+
+def _verify_as(
+    svc: _FakeAuditService | None, who: AuditPrincipal | None, **kw: Any
+) -> httpx.Response:
+    client = TestClient(_app(svc, _FakeResolver(who)))
+    return client.post(_VERIFY, **({"json": {}} | kw))
+
+
+def test_every_verify_response_is_no_store() -> None:
+    held, beyond, stops, unwritable = (_FakeAuditService() for _ in range(4))
+    assert held.query_service.verify_slot.try_acquire()  # a run in flight: 409
+
+    async def past_head(**_kw: Any) -> VerifyPlan:
+        raise VerifyRangeBeyondHead
+
+    async def timing_out(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise TimeoutError
+
+    beyond.query_service.plan_verify = past_head  # type: ignore[method-assign]  # fault injection
+    stops.query_service.run_verify = timing_out  # type: ignore[method-assign]  # fault injection
+    unwritable.writer_service.fail = True
+    owner = _limited_verify(_FakeAuditService(), rate=1)  # one run an hour
+    responses = [
+        owner.post(_VERIFY, json={}),  # the result
+        owner.post(_VERIFY, json={}),  # over the hourly limit
+        owner.post(_VERIFY, content=b"{not json"),  # a body that does not parse
+        owner.post(_VERIFY, content=b" " * 2000),  # a body over 1 KiB
+        _verify_as(beyond, _owner(), json={"from_id": 99}),  # a range past the head
+        _verify_as(held, _owner()),  # another run in flight
+        _verify_as(stops, _owner()),  # a run that stops
+        _verify_as(unwritable, _owner()),  # a start record that cannot be written
+        _verify_as(_FakeAuditService(), None),  # no verified session
+        _verify_as(_FakeAuditService(), _manager_with_read()),  # not the Owner
+        TestClient(_app(_FakeAuditService(), None)).post(_VERIFY, json={}),  # no resolver wired
+        TestClient(_app(None, _FakeResolver(_owner()))).post(_VERIFY, json={}),  # no audit backend
+    ]
+    _assert_no_store(responses, [200, 429, 422, 422, 404, 409, 503, 503, 401, 403, 501, 503])
+
+
+def test_every_export_response_is_no_store() -> None:
+    unwritable = _FakeAuditService()
+    unwritable.writer_service.fail = True
+
+    def export(svc: _FakeAuditService | None, resolver: _FakeResolver | None) -> httpx.Response:
+        return TestClient(_app(svc, resolver)).post("/admin/audit/export", json=_EXPORT_BODY)
+
+    responses = [
+        export(_FakeAuditService(), _FakeResolver(_real_owner())),  # the stub
+        export(_FakeAuditService(), _FakeResolver(_non_owner_with_export())),  # not the Owner
+        export(_FakeAuditService(), _FakeResolver(None)),  # no verified session
+        export(unwritable, _FakeResolver(_non_owner_with_export())),  # a refusal not recorded
+        export(None, _FakeResolver(_real_owner())),  # no audit backend
+        export(_FakeAuditService(), None),  # no resolver wired
+    ]
+    _assert_no_store(responses, [501, 403, 401, 503, 503, 501])
 
 
 # ---- verify break: the critical system event, best effort (#2392) --------------------------

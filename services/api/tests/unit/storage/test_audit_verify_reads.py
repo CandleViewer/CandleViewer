@@ -87,7 +87,7 @@ async def test_an_entry_over_the_cap_is_named_and_never_returned(n: int) -> None
     """Review of #2464: one entry is capped too. One over the cap only ever comes first in a
     batch, without its renderings, and the read names it: the run stops, never a pass."""
     rel = _Rel(rows=[[7, "p", "e", None, n]])
-    repo = SqlAlchemyAuditRepository(rel, verify_max_entry_bytes=4_096)  # type: ignore[arg-type]
+    repo = SqlAlchemyAuditRepository(rel, verify_max_entry_bytes=4_096)  # type: ignore[arg-type]  # structural fake
     with pytest.raises(AuditEntryTooLarge) as err:
         await repo.fetch_verify_batch(after_id=6, to_id=9, limit=10)
     assert err.value.entry_id == 7 and rel.calls[1][1] == {
@@ -157,7 +157,7 @@ def _assert_no_db_error_in_chain(err: BaseException) -> None:
 )
 async def test_overrun_raises_builtin_timeout_error(on_enter: Any, on_read: Any) -> None:
     rel = _Rel(on_enter=on_enter, on_read=on_read)
-    repo = SqlAlchemyAuditRepository(rel, verify_read_timeout_ms=10)  # type: ignore[arg-type]
+    repo = SqlAlchemyAuditRepository(rel, verify_read_timeout_ms=10)  # type: ignore[arg-type]  # structural fake
     with capture_logs() as logs, pytest.raises(TimeoutError) as err:
         await repo.fetch_anchor_hash(5)
     _assert_no_db_error_in_chain(err.value)

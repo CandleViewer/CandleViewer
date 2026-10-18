@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from candleviewer.settings import Settings
@@ -25,6 +26,9 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
             "audit_inflight_writes",
             "audit_verify_max_span",
             "audit_verify_rate_per_hour",
+            "audit_verify_deadline_s",
+            "audit_verify_statement_timeout_ms",
+            "audit_verify_max_entry_bytes",
         )
         if name not in text
     ]
@@ -39,3 +43,27 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
     assert (s.audit_read_flush_seconds, s.audit_budget_tracked_users) == (300.0, 1024)
     assert (s.audit_inflight_writes, s.audit_verify_max_span) == (64, 1_000_000)
     assert s.audit_verify_rate_per_hour == 30
+    assert (s.audit_verify_deadline_s, s.audit_verify_statement_timeout_ms) == (60.0, 10_000)
+    assert s.audit_verify_max_entry_bytes == 4_194_304  # 4 MiB
+
+
+def _verify_limits() -> str:
+    """The `**Limits.**` paragraph of `verifyAuditChain`, on one line."""
+    text = _SPEC.read_text(encoding="utf-8")
+    section = text.split("operationId: verifyAuditChain", 1)[1].split("x-rbac:", 1)[0]
+    assert "**Limits.**" in section, "the verify section no longer has a Limits paragraph"
+    return " ".join(section.split("**Limits.**", 1)[1].split())
+
+
+def test_verify_limit_defaults_are_the_ones_the_contract_states() -> None:
+    """F14-1: the verify section states a default for each of the three limits, in its own
+    unit, and each is the `Settings` default: a drift on either side fails here."""
+    limits, unit = _verify_limits(), {None: 1, " s": 1, " MiB": 1024 * 1024}
+    for name in (
+        "audit_verify_deadline_s",
+        "audit_verify_statement_timeout_ms",
+        "audit_verify_max_entry_bytes",
+    ):
+        stated = re.search(rf"`{name}`,? \(?default (\d+)( s| MiB)?\)", limits)
+        assert stated, f"the verify section no longer states a default for {name}"
+        assert Settings.model_fields[name].default == int(stated[1]) * unit[stated[2]]
