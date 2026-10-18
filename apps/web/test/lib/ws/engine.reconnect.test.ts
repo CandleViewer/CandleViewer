@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { onWsError } from "../../../src/lib/ws/errorHandler";
 import { backoffDelayWithJitter } from "../../../src/shell/bootstrap/backoff";
 import { connectionHarness, tokenOf } from "./support/connectionHarness";
+import { BOOK, engineHarness, spec } from "./support/engineHarness";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -104,5 +105,53 @@ describe("backoff (9.2, C7)", () => {
     const wait = event?.type === "reconnecting" ? event.nextAttemptAtMs - Date.now() : 0;
     expect(wait).toBeGreaterThanOrEqual(5_000);
     expect(wait).toBeLessThanOrEqual(5_500);
+  });
+});
+
+describe("subscribing again after a reconnect (9.3)", () => {
+  /** Consumed in no order that helps: the private topics last, a pane that is not focused first. */
+  const consumeWorkspace = (t: ReturnType<typeof engineHarness>) => {
+    const priv = (ch: string) => spec(ch, { paneId: "account", priority: "private" });
+    t.engine.consume(spec("bars.BTCUSDT.time.5", { paneId: "p3", priority: "other" }));
+    t.engine.consume(priv("wallet"));
+    t.engine.consume(spec(BOOK, { paneId: "p1" })); // focused
+    t.engine.consume(priv("executions"));
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    t.engine.consume(priv("orders"));
+    t.engine.consume(spec("footprint.BTCUSDT.time.5", { paneId: "p2", priority: "other" }));
+    t.engine.consume(priv("positions"));
+    t.engine.consume(priv("trade_groups")); // private, but not one of the four 9.3 names
+  };
+  const ORDER = [
+    "orders",
+    "positions",
+    "executions",
+    "wallet",
+    "trade_groups",
+    BOOK,
+    "trades.BTCUSDT",
+    "bars.BTCUSDT.time.5",
+    "footprint.BTCUSDT.time.5",
+  ];
+
+  it("Resubscription is prioritised", async () => {
+    const t = engineHarness({ limits: { max_topics_per_request: 3 } });
+    consumeWorkspace(t);
+    await t.start();
+    expect(t.subscribed()).toEqual(ORDER); // system is implicit: it is never subscribed
+    t.gateway.latest.close(1011);
+    t.gateway.refuse(3);
+    await t.advance(30_000); // an outage of 30 s
+    expect(t.gateway.conns.length).toBeGreaterThan(2);
+    const [first, second, third] = t.gateway.latest.of("sub");
+    expect(t.subscribed()).toEqual(ORDER); // private, then the focused pane, then the others
+    expect(
+      [first, second, third].map((f) => (f?.["p"] as { topics: unknown[] }).topics.length),
+    ).toEqual([3, 3, 3]);
+    expect(t.gateway.latest.received.map((f) => f["t"]).slice(0, 3)).toEqual([
+      "hello",
+      "auth",
+      "sub",
+    ]);
   });
 });

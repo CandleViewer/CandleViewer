@@ -57,9 +57,31 @@ export interface FakeConn {
   lateMessage(frame: Json): void;
   /** The client's frames of one type. */
   of(t: string): Json[];
+  /** The subscriptions the server holds for this client, `system` included. */
+  subs(): { ch: string; rs: string | undefined; id: string; seq: number; effective: Json }[];
+  /** One `d` with the next number of a subscription. */
+  delta(ch: string, p?: Json, rs?: string): void;
+  /** A number the client never sees: the next `d` shows a gap. */
+  skip(ch: string, rs?: string): void;
+  /** A `snap` the server sends unasked (7.4). */
+  snap(ch: string, reason: string, rs?: string, extra?: Json): void;
+}
+
+interface Sub {
+  readonly ch: string;
+  readonly rs: string | undefined;
+  readonly id: string;
+  seq: number;
+  /** What the client asked for, explicitly: the effective options are derived from it (a heatmap's throttle follows its bucket until one is asked for). */
+  opts: Json;
+  effective: Json;
+  readonly resyncs: number[];
 }
 
 const SERVER_PING = "s-hb-";
+const FAMILY_THROTTLE: Readonly<Record<string, number>> = { book: 50, trades: 100 };
+const familyOf = (ch: string): string => ch.split(".", 1)[0] ?? ch;
+const keyOf = (ch: string, rs?: string): string => `${ch}#${rs ?? "live"}`;
 const asJson = (v: unknown): Json => (typeof v === "object" && v !== null ? (v as Json) : {});
 
 export function createFakeGateway(options: FakeGatewayOptions = {}) {
@@ -81,6 +103,17 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
   let authsToRefuse = options.refuseAuths ?? 0;
   let serverPings = 0;
   const now = () => Date.now() + skewMs;
+
+  /** What `sub_ok.effective` says: the options after the clamps (5.2), a heatmap's throttle following its bucket (6.1). */
+  function effectiveOf(ch: string, opts: Json): Json {
+    const bucket = familyOf(ch) === "heatmap" ? Number(opts["time_bucket_ms"] ?? 500) : undefined;
+    const asked = Number(opts["throttle_ms"] ?? bucket ?? FAMILY_THROTTLE[familyOf(ch)] ?? 250);
+    return {
+      ...opts,
+      ...(bucket !== undefined && { time_bucket_ms: bucket }),
+      throttle_ms: Math.max(asked, limits.min_throttle_ms),
+    };
+  }
 
   const createSocket: SocketFactory = (url, protocols, events) => {
     const refused = refusals > 0;
@@ -108,6 +141,96 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     const bye = (reason: string, code: number, extra: Json = {}) => {
       send({ t: "bye", p: { code, reason, message: reason, reconnect: true, ...extra } });
       close(code);
+    };
+
+    const subs = new Map<string, Sub>();
+    let subIds = 0;
+    const payloadOf = (ch: string): Json =>
+      ch === "system"
+        ? { kind: "health", health: "healthy", kill_switch: { engaged: false, scope: "global" } }
+        : { price_scale: 1, qty_scale: 1, stale: false };
+    const emitSnap = (sub: Sub, reason: string, extra: Json = {}) =>
+      send({
+        t: "snap",
+        ch: sub.ch,
+        s: (sub.seq += 1),
+        e: "j",
+        p: payloadOf(sub.ch),
+        meta: { reason, source: sub.rs === undefined ? "live" : "replay" },
+        ...(sub.rs !== undefined && { rs: sub.rs }),
+        ...extra,
+      });
+    /** The live subscription of a `ch`, else the first: what `ctl` and `resync`, which name no replay session, reach (#572). */
+    const find = (ch: unknown): Sub | undefined => {
+      const named = [...subs.values()].filter((sub) => sub.ch === ch);
+      return named.find((sub) => sub.rs === undefined) ?? named[0];
+    };
+    const open1 = (ch: string, rs: string | undefined, opts: Json): Sub => {
+      const sub: Sub = {
+        ch,
+        rs,
+        id: `s_${(subIds += 1)}`,
+        seq: 0,
+        opts,
+        effective: effectiveOf(ch, opts),
+        resyncs: [],
+      };
+      subs.set(keyOf(ch, rs), sub);
+      return sub;
+    };
+
+    const onSub = (frame: Json) => {
+      const p = asJson(frame["p"]);
+      const topics = (p["topics"] as Json[]) ?? [];
+      if (topics.length > limits.max_topics_per_request) {
+        problems.push(`a sub of ${topics.length} topics, over max_topics_per_request`);
+        return reply("err", { p: { code: "too_many_topics", message: "too many" } }, frame["id"]);
+      }
+      const rs = typeof p["replay_session_id"] === "string" ? p["replay_session_id"] : undefined;
+      const made: Sub[] = [];
+      const results = topics.map((entry) => {
+        const ch = String(entry["ch"]);
+        if (subs.has(keyOf(ch, rs))) {
+          problems.push(`${ch} subscribed twice`);
+          return { ch, ok: false, error: { code: "duplicate_subscription", message: "twice" } };
+        }
+        const sub = open1(ch, rs, asJson(entry["opts"]));
+        made.push(sub);
+        return {
+          ch,
+          ok: true,
+          sub_id: sub.id,
+          snapshot_pending: true,
+          effective: sub.effective,
+        };
+      });
+      reply("sub_ok", { p: { results } }, frame["id"]);
+      for (const sub of made) emitSnap(sub, "initial");
+    };
+    /** 5.3: one `unsub` ends every subscription of a `ch`, live and replay alike; `system` stays. */
+    const onUnsub = (frame: Json) => {
+      const chs = asJson(frame["p"])["topics"] as string[];
+      const results = chs.map((ch) => {
+        if (ch === "system") return { ch, ok: false };
+        const gone = [...subs.values()].filter((sub) => sub.ch === ch);
+        for (const sub of gone) subs.delete(keyOf(sub.ch, sub.rs));
+        return gone.length > 0 ? { ch, ok: true } : { ch, ok: true, noop: true };
+      });
+      reply("unsub_ok", { p: { results } }, frame["id"]);
+    };
+    const onResync = (frame: Json) => {
+      const sub = find(frame["ch"]);
+      if (sub === undefined)
+        return reply(
+          "err",
+          { ch: frame["ch"], p: { code: "not_subscribed", message: "no" } },
+          frame["id"],
+        );
+      const at = performance.now();
+      sub.resyncs.push(at);
+      if (sub.resyncs.filter((stamp) => at - stamp < 60_000).length > 5)
+        problems.push(`more than 5 resyncs of ${sub.ch} in a minute`);
+      emitSnap(sub, "client_resync");
     };
 
     /** The gateway's own `dispatch`: size, rate limit, order, then the handler. */
@@ -172,10 +295,17 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           },
           options.authOkId ?? frame["id"],
         );
+        if (!subs.has("system#live")) emitSnap(open1("system", undefined, {}), "initial"); // attached at `auth_ok` (6.2)
       } else if (t === "ping") {
         reply("pong", { p: { server_ms: now() } }, frame["id"]);
       } else if (!authenticated && t !== "pong") {
         problems.push(`${t} before auth_ok`);
+      } else if (t === "sub") {
+        onSub(frame);
+      } else if (t === "unsub") {
+        onUnsub(frame);
+      } else if (t === "resync") {
+        onResync(frame);
       }
     };
 
@@ -205,6 +335,27 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       lateClose: (code) => events.close(code),
       lateMessage: (frame) => events.message(JSON.stringify({ ts: now(), ...frame })),
       of: (t) => received.filter((f) => f["t"] === t),
+      subs: () =>
+        [...subs.values()].map(({ ch, rs, id, seq, effective }) => ({
+          ch,
+          rs,
+          id,
+          seq,
+          effective,
+        })),
+      delta(ch, p = {}, rs) {
+        const sub = subs.get(keyOf(ch, rs));
+        if (sub !== undefined)
+          send({ t: "d", ch, s: (sub.seq += 1), e: "j", p, ...(rs !== undefined && { rs }) });
+      },
+      skip(ch, rs) {
+        const sub = subs.get(keyOf(ch, rs));
+        if (sub !== undefined) sub.seq += 1;
+      },
+      snap(ch, reason, rs, extra) {
+        const sub = subs.get(keyOf(ch, rs));
+        if (sub !== undefined) emitSnap(sub, reason, extra);
+      },
     };
     conns.push(conn);
 
