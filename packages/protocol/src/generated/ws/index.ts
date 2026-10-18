@@ -335,7 +335,8 @@ export interface SnapMeta {
     | "reconfigure"
     | "instrument_revision"
     | "replay_seek"
-    | "generation_swap";
+    | "generation_swap"
+    | "history_repair";
   previous_seq?: Seq;
   recording_started_at_ms?: EpochMs;
   history_bars?: number;
@@ -452,7 +453,8 @@ export interface SnapMeta {
     | "reconfigure"
     | "instrument_revision"
     | "replay_seek"
-    | "generation_swap";
+    | "generation_swap"
+    | "history_repair";
   previous_seq?: number | null;
   /**
    * Epoch milliseconds, UTC.

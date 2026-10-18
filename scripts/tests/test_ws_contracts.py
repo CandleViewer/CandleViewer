@@ -267,6 +267,29 @@ def test_snap_meta_names_the_bar_generation_swap_reason(schemas: dict[str, objec
     assert re.findall(r"`(\w+)`", listed.group(1)) == enum
 
 
+def test_snap_meta_names_the_bar_history_repair_reason(schemas: dict[str, object]) -> None:
+    """#2787: a held bars series whose store re-read repaired it is re-snapshotted with
+    `history_repair` (§7.4). It is one member of the closed `snapMeta` enum, listed once; where it
+    sits is not pinned here, because the order is pinned by the agreement tests (§7.4's list and
+    `SNAP_REASONS`), so a later additive reason cannot break this one. That enum is open for
+    clients (C18), the documented premise that makes a new member additive (C-6.3)."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"reason": "history_repair", "previous_seq": 41})
+    for near in ("history_repairs", "history_repaired", "history-repair", "History_repair"):
+        assert not meta.is_valid({"reason": near}), near
+    common = json.loads(json.dumps(schemas))["cv://ws/v1/common.schema.json"]
+    reason = common["$defs"]["snapMeta"]["properties"]["reason"]
+    assert reason["enum"].count("history_repair") == 1
+    assert "MUST NOT validate" in reason["description"]
+    c18 = r"^\| C18 \| Treat an unknown snap `reason` as a routine"
+    assert re.search(c18, MD_TEXT, re.MULTILINE)
+
+
 _RS = "bb000000-0000-4000-8000-000000000001"
 _ENDED = {"ch": "trades.BTCUSDT", "ok": True, "ended": [{"sub_id": "s_01", "rs": _RS}]}
 
