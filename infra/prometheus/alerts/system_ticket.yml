@@ -85,6 +85,24 @@ groups:
         annotations:
           summary: "Account lockout occurred"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authlockouts"
+      - alert: AuthDisabledUserSessionRevoked
+        # #3029 (SR-029, SR-125): a live session of a disabled or deleted user that no disable
+        # revoked, found and revoked on use: the counter moves once per revoked row. A ticket, not
+        # a page: the session is already revoked and the request refused (07-release-and-prr.md
+        # section 9: a page is act now). Alertmanager mutes tickets 22:00-07:00 UTC and never
+        # sends one that fires and resolves inside it, so the rule is held firing for 9 h 30 m,
+        # as the WS any-event tickets are (ws_gateway.yml header, with its two preconditions).
+        # The series has no user label; the log line `auth.disabled_user_session_revoked` names
+        # the session and the user.
+        expr: sum by (env) (increase(auth_disabled_user_sessions_revoked_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "A session outlived its user's disable and was revoked on use"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authdisabledusersessionrevoked"
       - alert: AuthzDeniedSpike
         expr: sum(increase(authz_denied_total[10m])) > 20
         for: 0m

@@ -325,12 +325,54 @@ it (login refuses `disabled` only):
   socket `auth` that presents its token. The request answers `401`, and the sockets already on that
   session end with `bye` `user_disabled` and `4403`; the socket whose first `auth` presented the
   token gets `err` `auth_failed` (`docs/plan/23-ws-protocol.md` §9.5).
-- Each such revocation increments `auth_disabled_user_sessions_revoked_total` (no label; on the
+- Each such revocation increments `auth_disabled_user_sessions_revoked_total` once (no label; on the
   metrics registry: the private listener `127.0.0.1:9108`) and logs a `WARNING`
   `auth.disabled_user_session_revoked` with `session_id`, `user_id` and `user_status` (`None`: the
-  user row is gone). It writes **no audit row**: `auth` may not import `audit`, so the counter and
-  the log line are the whole trail. Any increase means a session outlived a disable (SR-029):
+  user row is gone). Only the call that revoked the row counts and logs: requests that raced on the
+  same session are refused all the same and add nothing, so each stray revocation also moves
+  `auth_session_revocations_total{reason="user_disabled"}` by one (that series counts a disable's
+  own revocations too). The `AuthDisabledUserSessionRevoked` ticket fires on any increase
+  (`docs/plan/07-release-and-prr.md`, section 9). It writes **no audit
+  row** yet: `auth` may not import `audit`, so the counter and the log line are the whole trail
+  until the injected port of #3120 lands. Any increase means a session outlived a disable (SR-029):
   escalate with the log line.
+- One loss the count has. The count, the log and the publish follow the revoking `UPDATE`, so a
+  request cancelled after that `UPDATE` committed but before the repository's `revoke` returned
+  (in the unit of work's commit or exit: a cancel within one local `COMMIT` round trip, such as a
+  client that disconnects or a server that shuts down) leaves the row revoked as `user_disabled`
+  with no count, no `WARNING`, no publish (its sockets end at their token deadline instead of at
+  once) and no `auth_session_revocations_total` increment. The retry finds the row revoked and
+  adds nothing, and nothing the backstop emits shows the loss: the `sessions` row with
+  `revoked_reason = 'user_disabled'` is the only trace, so compare those rows in a window with the
+  counter's increase over it (a disable's own sweep, once #965 is routed, adds rows of its own).
+  Before #3029 the count came first, so a cancel there over-counted instead of losing the signal.
+  Shielding the bookkeeping after the `UPDATE` is not built: it is the follow-up #3332 (P2), filed
+  with the ruling of 2026-10-18 ([comment](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
+- A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
+  presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
+  session by its `cv_refresh` cookie once the token has ended and still checks the user's status
+  (#3214: `require_active` with `allow_locked=True`). A client that only refreshes, as the
+  protocol's client flow does, meets none of these. It refreshes over REST at `expires_at` − 60 s
+  (`docs/plan/23-ws-protocol.md` §4.1, §4.3), and
+  `POST /auth/refresh` refuses a disabled user before the claim (above): nothing is revoked or
+  counted and no new token is minted. The socket ends at its token deadline (12 minutes at most),
+  and its old token is then refused as expired before `require_active` runs. So for this client
+  the counter, the `WARNING`, the publish and the `AuthDisabledUserSessionRevoked` ticket stay
+  silent and the row stays un-revoked until its absolute expiry, 12 hours after the login that
+  started the session chain: a quiet counter does not prove that no disabled user's session is
+  live. The only trace that names the cause is the refusal's audit pair, the write-ahead
+  `auth.session_refreshed` record and the denied one with reason `user_disabled`, read as an Owner
+  (`curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.session_refreshed&outcome=denied"`).
+  If the denied one could not be written, the loss is in
+  `auth_audit_outcome_lost_total{action="auth.session_refreshed"}`, the
+  `auth.session_audit.outcome_lost` log line and the `AuthAuditOutcomeLost` ticket (section 10).
+  The streaming window is an accepted risk, dated 2026-10-17
+  (`docs/security/threat-models/e09-auth-rbac.md`, U45; it is UL1-E2's in `e42-user-lifecycle.md`):
+  a socket has no write path, since orders are REST only, and the disable cascade of #965, once it
+  is routed, closes sockets within 5 s. The live row and the silent counter are accepted too: the
+  main-orchestrator confirmed them on 2026-10-18 ([ruling](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
+  A refused refresh that revokes the row and counts it is not built: it is the follow-up #3331
+  (P1), filed with that ruling, next to #3332 (P2), which shields the bookkeeping (above).
 
 Not proven end to end until the SR-029 drill (E09-X04, #2494) runs it. The in-process drill
 `services/api/tests/security/auth/test_disable_user_drill.py` is a test counterpart only.

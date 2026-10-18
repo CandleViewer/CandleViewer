@@ -2298,8 +2298,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Live sessions of a disabled or deleted user that no disable revoked, found and revoked "
         "on use (SR-029).",
-        "none yet (any increase is a breach signal; WARNING log "
-        "auth.disabled_user_session_revoked; runbook auth-rbac section 4)",
+        "AuthDisabledUserSessionRevoked (any in 15m, ticket); WARNING log "
+        "auth.disabled_user_session_revoked; runbook auth-rbac section 4",
         _L,
         "E09",
         exported=True,

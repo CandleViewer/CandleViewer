@@ -3,15 +3,19 @@ reuse detection, logout, listing, IDOR and unauthenticated access. No DB/network
 
 from __future__ import annotations
 
+import ast
 import os
 import uuid
+import warnings
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import candleviewer
 import candleviewer.api.query_allowlist as allowlist_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.sessions import (
@@ -196,6 +200,80 @@ async def test_a_disabled_users_live_session_is_401_and_revoked_on_use(env: _Env
 
     assert env.repo.sessions[str(m.session_id)].revoked_reason == "user_disabled"
     assert env.revoked == [(str(m.session_id), "user_disabled")]
+
+
+def _route_of(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    """`METHOD /path` from the function's `@router.<method>("/path")`, else its name."""
+    for deco in fn.decorator_list:
+        if (
+            isinstance(deco, ast.Call)
+            and isinstance(deco.func, ast.Attribute)
+            and deco.args
+            and isinstance(deco.args[0], ast.Constant)
+        ):
+            return f"{deco.func.attr.upper()} {deco.args[0].value!s}"
+    return fn.name
+
+
+class _AllowLocked(ast.NodeVisitor):
+    """The routes that pass `allow_locked=True` to anything but `require_active`. With it
+    `_authenticate` and `authenticate_access_token` skip `require_active`, so a stray session is
+    not revoked there. `require_active(..., allow_locked=True)` waives the idle lock and nothing
+    else: its status check still runs, so a route that only calls it does not skip the backstop."""
+
+    def __init__(self) -> None:
+        self.routes: set[str] = set()
+        self._scope: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    def _enter(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._scope.append(node)
+        self.generic_visit(node)
+        self._scope.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _enter
+
+    def visit_Call(self, node: ast.Call) -> None:
+        callee = ast.unparse(node.func).rpartition(".")[2]
+        if callee != "require_active" and any(
+            k.arg == "allow_locked" and isinstance(k.value, ast.Constant) and k.value.value is True
+            for k in node.keywords
+        ):
+            self.routes.add(_route_of(self._scope[-1]) if self._scope else "(module level)")
+        self.generic_visit(node)
+
+
+@pytest.mark.parametrize(
+    ("call", "routes"),
+    [
+        ("_authenticate(request, allow_locked=True)", {"GET /a"}),
+        ("sessions.authenticate_access_token(token, allow_locked=True)", {"GET /a"}),
+        ("sessions.require_active(sid, allow_locked=True)", set()),
+    ],
+)
+def test_the_route_scan_flags_what_skips_the_backstop_and_not_what_only_waives_the_lock(
+    call: str, routes: set[str]
+) -> None:
+    """`require_active(..., allow_locked=True)` waives the idle lock and still checks the user's
+    status (#3214's `GET /auth/session` reads through it), so it is not a skip."""
+    scan = _AllowLocked()
+    scan.visit(ast.parse(f"@router.get('/a')\nasync def a(request):\n    return await {call}\n"))
+
+    assert scan.routes == routes
+
+
+def test_only_logout_and_revoke_my_session_skip_the_backstop() -> None:
+    """U45 (`e09-auth-rbac.md`) and runbook section 4 (`auth-rbac.md`) say every REST route meets
+    `require_active` first, so refuses and revokes a disabled user's live session, except the two
+    that only end the caller's own sessions. A route skips it only by authenticating with
+    `allow_locked=True` (other than through `require_active`, which still checks the user's
+    status): a third one makes both texts wrong."""
+    found = _AllowLocked()
+    for path in sorted(Path(candleviewer.__file__).resolve().parent.rglob("*.py")):
+        with warnings.catch_warnings():  # escape-sequence noise from unrelated modules
+            warnings.simplefilter("ignore", SyntaxWarning)
+            found.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+
+    assert found.routes == {"POST /auth/logout", "DELETE /me/sessions/{sessionId}"}
 
 
 async def test_refresh_without_identity_is_501_and_burns_no_token() -> None:

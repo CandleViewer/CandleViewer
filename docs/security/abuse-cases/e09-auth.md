@@ -195,6 +195,7 @@ lives instead.
 | U42    | Partly executed: AC-LANE-05's registry half, `test_lane_refuses_an_unregistered_action_or_outcome` (`services/api/tests/unit/audit/test_lane_journal_appends.py`). Not executable yet: AC-LANE-06, S3's half of AC-LANE-05 and the rest of its Verify column                                                          |
 | U43    | Partly executed: compaction deletes only segments wholly before the marker, `test_lane_compaction_deletes_only_segments_wholly_before_the_marker` (`services/api/tests/unit/audit/test_lane_journal_appends.py`). Not executable yet: the drain (S2a2, S2b)                                                           |
 | U44    | Not executable yet: the lane has no code (ADR-0037 is proposed; slices S1a to S4b build it). Cases AC-LANE-07 and AC-LANE-08 and the tests in its Verify column, `e09-auth-rbac.md` §3.6.2                                                                                                                            |
+| U45    | Executable in part: a live session of a user disabled with no sweep is refused and its socket closed (`test_disable_user_drill_stray_session_is_refused_and_its_socket_closed_4403`, `tests/security/auth/test_disable_user_drill.py`). The socket-only window is the access-token TTL: not executable                |
 
 ## Observability per case (#2144)
 

@@ -449,18 +449,24 @@ class SessionService:
             raise SessionRevoked(session.revoked_reason or "revoked")
 
         if session.user_status in (UserStatus.DISABLED, None):
-            # A session no disable revoked (SR-029 breach signal): counted and logged here,
-            # and its revocation is counted under `user_disabled` like the disable's own. No
-            # audit row: `auth` may not import `audit` (`forbidden-M18`) and any route reaches
-            # this, so the counter and this log are the trail (runbook auth-rbac section 4).
-            auth_disabled_user_sessions_revoked_total.inc()
-            _log().warning(
-                "auth.disabled_user_session_revoked",
-                session_id=session_id,
-                user_id=str(session.user_id),
-                user_status=session.user_status,
-            )
-            await self.revoke(session_id, reason="user_disabled")
+            # A session no disable revoked (SR-029 breach signal). Counted and logged only when
+            # this call revoked the row (#3029): a request that read it live while another
+            # revoked it is refused all the same, but adds nothing, so the counter and the log
+            # line move once per row, as the revocation counted under `user_disabled` does. Both
+            # come before the publish, which suspends: a request cancelled there leaves the row
+            # revoked, and its retry would find it so and count nothing. No audit row: `auth` may
+            # not import `audit` (`forbidden-M18`) and any route reaches this, so the counter and
+            # this log are the trail (runbook auth-rbac section 4).
+            revoked = await self._revoke_row(session_id, reason="user_disabled")
+            if revoked is not None:
+                auth_disabled_user_sessions_revoked_total.inc()
+                _log().warning(
+                    "auth.disabled_user_session_revoked",
+                    session_id=session_id,
+                    user_id=str(session.user_id),
+                    user_status=session.user_status,
+                )
+            await self._publish_row(revoked, "user_disabled")
             raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now) and not allow_locked:
@@ -617,11 +623,18 @@ class SessionService:
 
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None:
         """Single-session revoke (SCR-112 per-row "revoke", or `LOGOUT`)."""
+        revoked = await self._revoke_row(session_id, reason=reason)
+        await self._publish_row(revoked, reason)
+        return revoked
+
+    async def _revoke_row(self, session_id: str, *, reason: str) -> SessionRecord | None:
+        """The conditional row update and its counters, without the publish. The publish suspends,
+        so a caller with more to count (the backstop's breach signal) counts it first. `None`
+        means the row was already revoked, and whoever revoked it counted it then."""
         revoked = await self._repository.revoke(session_id, reason=reason, now=self._clock())
         if revoked is not None:
             auth_sessions_active.dec()
             auth_session_revocations_total.labels(reason=normalise_reason(reason)).inc()
-        await self._publish_row(revoked, reason)
         return revoked
 
     async def revoke_all(

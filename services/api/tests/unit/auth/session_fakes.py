@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from candleviewer.auth.models import SessionRecord, UserStatus
@@ -158,3 +159,20 @@ class FakeSessionRepository:
             if prev is not None:
                 stack.append(prev)
         return tuple(seen)
+
+
+class YieldingFindRepository(FakeSessionRepository):
+    """Yields after each by-id read, so every request of a burst holds the row as it was before
+    the first of them revoked it (on Postgres the read and the revoke are two statements)."""
+
+    async def find_by_id(self, session_id: str) -> SessionRecord | None:
+        found = await super().find_by_id(session_id)
+        await asyncio.sleep(0)
+        return found
+
+
+class LostRaceRepository(FakeSessionRepository):
+    """Another caller revokes the row first: this call's conditional revoke changes nothing."""
+
+    async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
+        return None
