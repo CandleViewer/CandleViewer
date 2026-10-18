@@ -26,6 +26,7 @@ int per upstream symbol; heatmap snapshots are capped at `HEATMAP_SNAPSHOT_MAX_C
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
 import time
@@ -877,12 +878,15 @@ class SequencingHub:
         as under `ctl`, with one exception: `upstream_desync`, an incident, replaces any but
         `initial` (an attach is no resync) and `backpressure` (the ladder's hold), so a mundane
         reason never hides it. One held for its `backpressure` snapshot (`_held`) is only
-        invalidated: the ladder sends it (#2831)."""
+        invalidated: the ladder sends it (#2831). A build that raises is contained to its
+        subscription, so the fan-out goes on (§10.1, #3262): the flag-on sink handles it as it
+        does a flushed snapshot's, and one the sink lets through (flag off) stays pending with its
+        reason, for the next `flush_pending` (`_snapshot_failed`)."""
         if reason not in SNAP_REASONS:
             raise ValueError(f"unknown snap reason {reason!r}")
         if reason == "backpressure":  # the ladder pends these, so its `drain` knows them all
             raise ValueError("only the overflow ladder pends a backpressure snapshot")
-        hits: list[tuple[Sink, Subscription]] = []
+        hits: list[tuple[ConnectionAuthz, Sink, Subscription]] = []
         for authz, emitter in list(self._conns.values()):
             for sub in list(authz.by_id.values()):
                 if match(sub):
@@ -891,14 +895,19 @@ class SequencingHub:
                     ):
                         sub.pending_reason = reason
                     sub.snapshot_pending = True
-                    hits.append((emitter, sub))
-        for emitter, sub in hits:
+                    hits.append((authz, emitter, sub))
+        for _, emitter, sub in hits:
             emitter.cache.invalidate(sub.ch)
-        return sum(
-            1
-            for emitter, sub in hits
-            if not _held(sub) and emitter.snapshot(sub, sub.pending_reason)
-        )
+        sent = 0
+        for authz, emitter, sub in hits:
+            if _held(sub):
+                continue
+            try:
+                if emitter.snapshot(sub, sub.pending_reason):
+                    sent += 1
+            except Exception as exc:  # contained to `sub`: the fan-out goes on
+                _snapshot_failed(authz, sub, exc)
+        return sent
 
     def flush_pending(self, match: Callable[[Subscription], bool] | None = None) -> int:
         """Retry every pending snapshot (e.g. once the book engine finished its rebuild), or
@@ -939,6 +948,18 @@ def _live_symbol(symbol: str, *, book_only: bool) -> Callable[[Subscription], bo
         return symbol in sub.symbols
 
     return match
+
+
+def _snapshot_failed(authz: ConnectionAuthz, sub: Subscription, exc: Exception) -> None:
+    """A re-snapshot build that raised through its sink (flag off, `TopicEmitter`, which has no
+    close path): `sub` stays pending with its reason, as a build not ready does (§7.1). Logged by
+    family and error class only (C-12.6), at `error` for `orders` and `executions`, else at
+    `warning`; a failing logger changes nothing (a cancellation still propagates)."""
+    with contextlib.suppress(Exception):  # never into the fan-out
+        family = sub.topic.family
+        fields = {"connection_id": authz.connection_id, "family": family.family}
+        log = _log().error if family.never_throttled else _log().warning
+        log("ws snapshot failed", **fields, error=type(exc).__name__)
 
 
 # -- book depth-window deltas (§7.3) -------------------------------------------------------------
