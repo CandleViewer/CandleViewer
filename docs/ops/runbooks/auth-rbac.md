@@ -241,9 +241,12 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    - If confirm answers `503`, the user signs in again. When the error log
      `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
      was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes
-     were never shown, and the sessions the log lists may still be live. They stay enrolment-only
-     and end within 15 minutes of their sign-in. The user has no recovery codes they can read; if
-     they need a set, reset their TOTP again (this section) so the next confirm shows one.
+     were never shown, and the sessions the log lists may still be live. The caller's own
+     (`session_id`) stays enrolment-only and ends within 15 minutes of its sign-in. Any other id in
+     `revoked_session_ids` may be a full session that proved the user's previous factor: it is full
+     again now that a method is confirmed. Revoke it at once by resetting the user's TOTP again
+     (steps 1 to 3; the reset revokes every session of the user). The user has no recovery codes
+     they can read; if they need a set, a reset (this section) makes the next confirm show one.
    - An enrolment-only sign-in by an Owner (`auth_enrolment_only_sessions_total{role="owner"}`
      rising) is expected only after an Owner TOTP reset, a recovery sign-in or a first sign-in.
      Otherwise treat it as U34 in `04-security-program.md` (a stolen password enrolling a TOTP,
