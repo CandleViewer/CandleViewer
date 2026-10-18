@@ -122,6 +122,21 @@ or the loop died
 for the watchdog's loop). `/readyz` shows a failing `accounts` check for both. Fix the cause
 (exchange reachability, the host clock, Postgres, the setting), then restart cv-api via the launcher.
 
+## Key import: a refused key
+
+A key a verdict refuses is stored nowhere, and `createApiKey` answers `422 validation_failed` with
+the rule. The audit log has `api_key.import` (outcome denied, every failing rule in
+`after_state.failures`) and then `security.key_policy_violation` (the first rule, and the account's
+id in `after_state`, since no key is stored), both naming the importing Owner and their address.
+The violation is critical when the key can move funds (a withdraw, transfer, fiat or card right,
+C-2.8) and an error otherwise. Find them as an Owner
+(`GET $API/admin/audit?action=security.key_policy_violation`). Nothing is disarmed and no latch is
+set: the key never reached storage. A critical record is an Owner pasting a key that could move
+funds: ask which key it was, and have the right removed at the exchange or the key deleted there.
+Several in a row, or one the Owner does not recognise, may be a misused session: follow
+`SECURITY.md`, never a public issue. If the audit sink refused the violation record, the API still
+answers `422` and logs `key_import_violation_failed` (error: `account_id`, `rule`, the error type).
+
 ## Key import: a verified key that was not activated
 
 `createApiKey` stores a key only after it passes the check; M2 then activates it (the verified

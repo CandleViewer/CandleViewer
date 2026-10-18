@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from uuid import UUID
 
 import httpx
 import pytest
@@ -34,16 +35,18 @@ from candleviewer.secrets import (
     KekUnavailable,
     mint_candidate_keys,
 )
+from candleviewer.secrets import signing as signing_mod
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import AccountsStoreConflictError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from tests.unit.accounts.test_key_import import World, key_row
+from tests.unit.accounts.test_key_import import ACCT, OWNER, World, key_row
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW
 from tests.unit.credentials_m2._service_fakes import _ctx, _Src, _svc
 from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET, KEK_V1, AuditLog
+from tests.unit.credentials_m2.test_signing import MSG
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "key_verification"
 REPLIES = {KEY_INFO_PATH: "key_info_trade.json", PROBE_PATH: "wallet_balance.json"}
@@ -164,6 +167,61 @@ async def test_a_failed_promotion_is_undone_by_m2_so_a_retry_succeeds() -> None:
     assert first["revoked"] and rig.m2_audit.actions()[-1] == "security.credential_destroyed"
     rig.transition_error = None
     assert (await rig.imports(rig.capability)).key.status == "active"  # the label is free again
+
+
+async def test_a_refused_signing_record_is_audit_unavailable_never_a_withdraw_refusal() -> None:
+    rig = Rig()
+    await rig.boot()
+    rig.m2_audit.fail = True  # M2's write-ahead record of the candidate's first signing
+    with pytest.raises(KeyImportFailed) as failed:
+        await rig.imports(rig.capability)
+    assert (failed.value.code, failed.value.result, rig.m2.rows) == ("audit_unavailable", None, {})
+
+
+def _broken(*_args: Any) -> str:
+    raise ValueError("boom")
+
+
+async def test_no_error_a_candidate_signing_raises_reads_as_a_refused_borrow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The self-check's judging also wraps the import's candidate calls, with its arm for M2's
+    refused borrows (SR-E27-14). `problem_code` has no case for the `WithdrawPermissionError` it
+    raises, so a candidate signing that raised `WithdrawPermissionRejected` would be answered
+    `store_unavailable`, not as the refusal it is (C-2.8)."""
+    rig, errors, held = Rig(), list[Exception](), list[Any]()
+    await rig.boot()
+
+    async def sign(signer: Any, **fault: Any) -> None:
+        signing = {"key_id": signer.key_id, "message": MSG, "purpose": "key_verify"} | fault
+        try:
+            await signer.sign(signing["key_id"], signing["message"], purpose=signing["purpose"])
+        except Exception as error:
+            errors.append(error)
+
+    async def check(signer: Any) -> None:
+        held.append(signer)
+        await sign(signer, key_id=UUID(int=7))  # another candidate's id
+        await sign(signer, purpose="sign_rest")  # another purpose
+        await sign(signer, message="not a message")  # a malformed message
+        rig.m2_audit.fail = True  # the write-ahead record is refused
+        await sign(signer)
+        rig.m2_audit.fail = False
+        with monkeypatch.context() as patched:
+            patched.setattr(signing_mod, "mac_hex", _broken)  # the MAC fails
+            await sign(signer)
+
+    await rig.capability.store_if_verified(
+        "demo", ACCT, "main", Pasted(API_KEY), Pasted(API_SECRET), check,
+        actor_user_id=str(OWNER), actor_role="owner",
+    )  # fmt: skip
+    await sign(held[0])  # the hold has ended
+    reasons = [str(e) if isinstance(e, CredentialUnavailable) else type(e).__name__ for e in errors]
+    assert reasons == [
+        "candidate_unavailable", "candidate_unavailable", "TypeError", "audit_unavailable",
+        "signing_failed", "candidate_unavailable",
+    ]  # fmt: skip
+    assert not any(ExchangeBybitService.key_borrow_refused(error) for error in errors)
 
 
 def _ctx_for(**settings: Any) -> Any:
