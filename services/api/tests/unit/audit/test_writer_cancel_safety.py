@@ -631,9 +631,10 @@ async def test_writer_stop_under_supervisor_timeout_does_not_wait_for_hung_wal_o
     repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
 ) -> None:
     """#2250 round 3: `Supervisor._stop_each` (app.py) bounds each module's stop() with
-    `asyncio.timeout(grace + 1.0)` so that one hung module never keeps a later one
-    (secrets zeroing the KEK) from stopping. With a WAL op hung in its thread the
-    timeout must end stop() on time; the shutdown completes once the thread returns."""
+    `asyncio.timeout(grace + STOP_SLACK_S)` (#2898; the slack is 1 s, the `1.0` below) so
+    that one hung module never keeps a later one (secrets zeroing the KEK) from stopping.
+    With a WAL op hung in its thread the timeout must end stop() on time; the shutdown
+    completes once the thread returns."""
     grace = 0.05
     w = _writer(repo, tmp_path, clock)
     await w.start()
