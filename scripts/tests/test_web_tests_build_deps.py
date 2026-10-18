@@ -23,16 +23,18 @@ pinned steps without touching them, so no scanned job may set one.
 #3471: a selector still picks the app with a changed-since range (`@candleviewer/web[origin/main]`,
 `{./apps/web}[origin/main]`), and a runner's own root or config flag (`--root`, `--config`, `-c`:
 `vitest --root apps/web`, `playwright test -c apps/web/e2e`) counts as a folder the command reads,
-relative to where it runs. That flag does not move where pnpm runs, so a path selector next to it
-still resolves from the command's folder.
+relative to the step's folder, a `cd` folder or a `-C` folder. That flag does not move where pnpm
+runs, so a path selector next to it still resolves from the command's folder.
 
 The scan errs towards a hit, which fails loudly in the build-and-guard pin: a cd in a subshell, a
 pipeline or a command substitution is taken to persist. Out of scope, as a static scan cannot
 resolve them and no workflow uses them: commands in a script file, a composite action or a
 `bash -c` string, `case` arms, folders or filters held in variables (`cd "$DIR"`), runs that
 select the app among other packages (`pnpm -r`, `--filter "./apps/*"`,
-`--filter "...@candleviewer/ui"`), and a root given as a positional argument
-(`vite build apps/web`)."""
+`--filter "...@candleviewer/ui"`), a root given as a positional argument (`vite build apps/web`),
+and a root or config flag of a command that a pnpm filter runs in the selected package's folder
+(`pnpm --filter @candleviewer/desktop exec vitest --root ../web`), which the scan resolves from
+where pnpm runs."""
 
 from __future__ import annotations
 
@@ -294,8 +296,9 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "cd ${{github.workspace }}/apps/web && pnpm build", True),
         (None, 'cd "${GITHUB_WORKSPACE}/apps/web" && pnpm run build', True),
         # #3471: a changed-since range on a selector of the app alone, and a runner's own root or
-        # config resolved against where the command runs. A `-c` after a path selector leaves
-        # where pnpm runs alone. A positional root is out of scope.
+        # config resolved against the step's, a cd or a -C folder. A `-c` after a path selector
+        # leaves where pnpm runs alone. A positional root is out of scope, and so is a root flag
+        # under a filtered exec, which runs in the selected package's folder.
         (None, 'pnpm --filter "@candleviewer/web[origin/main]" run build', True),
         (None, 'pnpm --filter "{./apps/web}[origin/main]" test', True),
         (None, "npx vitest run --root apps/web", True),
@@ -305,6 +308,8 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, 'pnpm --filter "@candleviewer/desktop[origin/main]" test', False),
         (None, "npx vitest run --root apps/desktop", False),
         (None, "npx vite build apps/web", False),
+        (None, "pnpm --filter @candleviewer/desktop exec vitest run --root ../web", False),
+        (None, "pnpm --filter ./apps/desktop exec vitest run -c ../web/vitest.config.mjs", False),
     ],
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
