@@ -365,7 +365,7 @@ jobs:
       # build scripts. Clean as its old job: no pnpm or turbo cache, and no earlier step writes a
       # generated path. Its venv keeps `pnpm generate` on a bare 3.13 + PyYAML (py gates install
       # pytest and pypi-attestations into setup-python's interpreter).
-      - name: gen (E03-T05; tools/ci/check_gen_freshness.py, CI-GEN-001..005)
+      - name: gen (E03-T05; tools/ci/check_gen_freshness.py, CI-GEN-001..006)
         id: gen
         if: ${{ !cancelled() }}
         continue-on-error: true
