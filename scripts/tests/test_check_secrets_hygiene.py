@@ -529,6 +529,20 @@ TRACED = [
     "bash &>log -x ci.sh",
     "bash <>f -x ci.sh",
     "bash <<- EOF -x",
+    # #3400: an empty quoted string ending a word ($'' too), or starting one (each earlier row had
+    # it inside a word, where both rules for it read it, so a mutant dropping either passed); a
+    # quoted trap word (bash 5.3 traced or ran each).
+    "set'' -x",
+    "bash'' -x ci.sh",
+    'bash"" -x ci.sh',
+    "set -eo'' pipefail -x",
+    "set$'' -x",
+    "\"bash\"$'' -x ci.sh",
+    "set ''-x",
+    'set ""-x',
+    "set $''-x",
+    "\"trap\" 'echo T' DEBUG",
+    "tr''ap 'echo T' DEBUG",
 ]
 NOT_TRACED = [
     "set -e",
@@ -654,6 +668,11 @@ NOT_TRACED = [
     'bash >"a b" -x ci.sh',
     'bash --rcfile "my rc" -x ci.sh',
     '"/opt/my tools/bash" -x ci.sh',
+    # #3400: an empty quoted word after another ('''' is one empty word); $trap, a variable (bash
+    # 5.3: no trace, no trap).
+    "set '''' -x",
+    'set """" -x',
+    "$trap 'echo T' DEBUG",
 ]
 VIA = ["run", "script"]
 

@@ -201,13 +201,15 @@ _WORD_START = r"(?<![\w./:-])"
 #: ``set "-x"``, ``set -o 'xtrace'``, ``-"x"``, ``$'-x'``, ``-\x``, ``"bash" -x``, ``"$BASH" -x``.
 #: A quoted string closing on the line gives its text. A quote that does not stays, and starts a
 #: word: a ``run: |`` string may go on to the next line (``bash -c 'set "-x"; make``) or close one
-#: from the line before (``true'; set "-x"``). An escaped character gives itself; an empty ``''``
-#: or ``""`` nothing inside a word (``-''x``), but itself as a whole word (``set "" -x`` sets
-#: ``$1``). An escaped space stays: ``bash\ -x`` is one word. A quoted string's words read as
-#: words, so quoted prose counts as before. One pass, each quote read to its end once (only the
-#: last one of a kind can fail to close): the rules then read the line in linear time as before.
+#: from the line before (``true'; set "-x"``). An escaped character gives itself; an empty ``''``,
+#: ``""``, ``$''`` or ``$""`` nothing before or after another character of its word (``-''x``,
+#: ``set'' -x``, ``bash$'' -x``), but itself as a whole word (``set "" -x`` sets ``$1``; ``''''``
+#: is one empty word). An escaped space stays: ``bash\ -x`` is one word. A quoted string's words
+#: read as words, so quoted prose counts as before. One pass, each quote read to its end once
+#: (only the last one of a kind can fail to close): the rules then read the line in linear time.
 _QUOTING = re.compile(
     r"\\(\S)|\$?'([^']+)'|\$?\"((?:[^\"\\]|\\.)+)\"|\$?(?:''|\"\")(?=[^\s;&|()<>`])"
+    r"|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")"
 )
 
 
@@ -376,15 +378,21 @@ _SHELLOPTS = re.compile(
 #: DEBUG`` (no action). The action is one word with its quotes; a quote is read to its end. The
 #: signal word names DEBUG in any case, with quotes or escapes the shell takes off anywhere in it
 #: (``"DEBUG"``, ``\DEBUG``, ``DE''BUG``, ``$'DEBUG'``); each quote or escape is one character
-#: or a ``$`` and a quote, so a word is read once.
+#: or a ``$`` and a quote, so a word is read once. The ``trap`` word likewise (``"trap"``,
+#: ``tr''ap``, ``\trap``), from the first of its quotes: not after a quote, a ``\`` or a ``$``
+#: (``$trap`` is a variable), so each run of them is read once.
 _TRAP_ACTION = r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|\\.|[^\s'\"\\;&|()`])+"
 _SIGNAL_QUOTING = r"(?:\$?[\"']|\\)*"
 _DEBUG_SIGNAL = (
     r"(?i:" + _SIGNAL_QUOTING + _SIGNAL_QUOTING.join("debug") + _SIGNAL_QUOTING + r")"
     r"(?!" + _IN_WORD + r")"
 )
+_TRAP_WORD = (
+    _WORD_START + r"(?<!['\"\\$])"
+    + _SIGNAL_QUOTING + _SIGNAL_QUOTING.join("trap") + _SIGNAL_QUOTING
+)
 _TRAP_DEBUG = re.compile(
-    _WORD_START + r"trap\s+(?:--\s+)?(?!-|(?:''|\"\")\s)" + _TRAP_ACTION + _words(_DEBUG_SIGNAL)
+    _TRAP_WORD + r"\s+(?:--\s+)?(?!-|(?:''|\"\")\s)" + _TRAP_ACTION + _words(_DEBUG_SIGNAL)
 )
 #: zsh's ``TRAPDEBUG`` function is a ``DEBUG`` trap (zshmisc(1), Trap Functions).
 _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
