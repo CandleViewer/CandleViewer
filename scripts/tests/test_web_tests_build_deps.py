@@ -204,6 +204,16 @@ def test_guard_fails_when_no_file_matches_a_pattern_export(tmp_path: Path, near_
     assert result.returncode == 1 and "tokens.*.css" in result.stderr
 
 
+MISSING = f"CI-BUILD-001: built exports are missing; build the workspace packages first ({BUILD}):"
+
+
+def test_guard_reports_an_unbuilt_pattern_export_as_missing(tmp_path: Path) -> None:
+    # A fresh checkout has no dist/: ENOENT on a pattern's folder is "not built", not an error.
+    result = _guard(_package(tmp_path, PATTERN, []))
+    missing = [f"  {tmp_path / 'dist' / name}" for name in ("theme.css", "tokens.*.css")]
+    assert (result.returncode, result.stderr.splitlines()) == (1, [MISSING, *missing])
+
+
 def test_guard_does_not_accept_a_directory_matching_a_pattern_export(tmp_path: Path) -> None:
     (tmp_path / "dist" / "tokens.dark.css").mkdir(parents=True)
     result = _guard(_package(tmp_path, PATTERN, ["dist/theme.css"]))
@@ -234,14 +244,16 @@ def test_guard_reports_a_manifest_that_is_not_an_object_with_its_code(tmp_path: 
     assert result.returncode == 1 and "CI-BUILD-001" in result.stderr
 
 
+FS_ERROR = "CI-BUILD-001: cannot check built exports, the filesystem returned an error:"
+
+
 def _assert_reported(result: subprocess.CompletedProcess[str], path: Path, errno: str) -> None:
-    """Exit 1 and a CI-BUILD-001 line naming the export and its errno, not a stack trace."""
+    """Exit 1, the CI-BUILD-001 header, then one `<export>: <ERRNO>: ...` line: no stack trace."""
     lines = result.stderr.splitlines()
     assert result.returncode == 1, result.stderr
-    # An uncaught error prints `Error: ...` and `Node.js v...` at column 0 and `    at` frames.
-    assert all(line.startswith(("CI-BUILD-001: ", "  ")) for line in lines), result.stderr
-    assert not any(line.lstrip().startswith("at ") for line in lines), result.stderr
-    assert any(str(path) in line and errno in line for line in lines), result.stderr
+    # Exactly two lines: an uncaught error prints `Error: ...`, `    at` frames and `Node.js v...`.
+    assert lines[:1] == [FS_ERROR] and len(lines) == 2, result.stderr
+    assert lines[1].startswith(f"  {path}: {errno}: "), result.stderr
 
 
 LONG = "x" * 256  # one path segment longer than NAME_MAX (255 bytes)
