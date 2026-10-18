@@ -60,6 +60,10 @@ rules:
       #   executions, positions, position_snapshots}, a `Literal` in code; max_series=5.
       # reason (E42-T03, #837 Q5, cv_order_entry_refusals_total): the closed order-entry
       #   `RefusalReason` set (4 values, checked when a refusal is built); max_series=4.
+      # kind (E42-T05, #966, cv_backup_last_success_age_seconds): the five `BackupKind` values; a
+      #   kind outside them never makes a series (`admin/backups/metrics.KINDS`); max_series=5.
+      # result, also (E42-T05, #966, cv_restore_jobs_total): {refused, succeeded, failed,
+      #   cancelled}, each bound at import (`admin/backups/metrics.RESTORE_RESULTS`); max_series=4.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"

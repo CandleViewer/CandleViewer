@@ -153,7 +153,11 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
-from candleviewer.backups_wiring import build_admin_backups
+from candleviewer.backups_wiring import (
+    build_admin_backups,
+    build_backup_freshness,
+    serve_backup_metrics,
+)
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
@@ -1841,6 +1845,9 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
         )
     )
+    # BK-5: the backup series and the freshness the lifespan loads, also only once catalogued.
+    app.state.backup_metrics = serve_backup_metrics(resolved, ctx.metrics)
+    app.state.backup_freshness = build_backup_freshness(resolved, system_settings=admin_settings)
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
     app.state.retention_manager = retention_manager

@@ -309,6 +309,7 @@ def test_cardinality_check_logs_breached_metrics() -> None:
 def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     """E12-T03: the bars series are `live` via `export_bars_metrics`, not `register_r0`."""
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
+    from candleviewer.admin.backups.metrics import EXPORTED_NAMES as BACKUP_NAMES
     from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
     from candleviewer.admin.lifecycle_metrics import EXPORTED_NAMES as LIFECYCLE_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
@@ -333,6 +334,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= FLAG_NAMES
     assert FLAG_NAMES <= {s.name for s in live_specs() if s.exported}
     others |= AUDIT_NAMES
+    others |= BACKUP_NAMES
     others |= LIFECYCLE_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
