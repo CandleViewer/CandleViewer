@@ -58,6 +58,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/lib/ws/policy/closePolicy.ts",  # 4401: drop the refused token, refresh first
     "apps/web/src/lib/ws/port/messages.ts",  # the port's `token` message: the token into the worker
     "apps/web/src/lib/ws/protocol/frames.ts",  # the `auth` frame: the token's one way onto the wire
+    "apps/web/src/lib/ws/worker/portHost.ts",  # the worker's TokenSource: asks a tab for the token
     "apps/web/src/routes/guards.ts",  # requireAuth -> requireRole -> requireStepUp
     "apps/web/src/routes/manifest.ts",  # each route's access: public, roles, step-up
     "apps/web/src/routes/rbac.ts",  # the roles and the RouteAccess shape the guards read
