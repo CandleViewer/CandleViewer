@@ -202,8 +202,8 @@ async def test_a_disabled_users_live_session_is_401_and_revoked_on_use(env: _Env
     assert env.revoked == [(str(m.session_id), "user_disabled")]
 
 
-def _route_of(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    """`METHOD /path` from the function's `@router.<method>("/path")`, else its name."""
+def _route_of(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+    """`METHOD /path` from the function's `@router.<method>("/path")`; `None` for a helper."""
     for deco in fn.decorator_list:
         if (
             isinstance(deco, ast.Call)
@@ -212,33 +212,56 @@ def _route_of(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
             and isinstance(deco.args[0], ast.Constant)
         ):
             return f"{deco.func.attr.upper()} {deco.args[0].value!s}"
-    return fn.name
+    return None
 
 
-class _AllowLocked(ast.NodeVisitor):
-    """The routes that pass `allow_locked=True` to anything but `require_active`. With it
-    `_authenticate` and `authenticate_access_token` skip `require_active`, so a stray session is
-    not revoked there. `require_active(..., allow_locked=True)` waives the idle lock and nothing
-    else: its status check still runs, so a route that only calls it does not skip the backstop."""
+#: Lookups that find a session and read nothing of its user's status (#3214, #2300).
+_STATUS_BLIND = frozenset({"_identify", "peek_access_token", "peek_refresh"})
+
+
+class _SkipsBackstop(ast.NodeVisitor):
+    """The functions that act for a session without `require_active`, in either of two ways
+    (a route is reported as `METHOD /path`, a helper by its name):
+
+    - they find their session with a lookup that reads no user status, `_identify` (the access
+      token, else the `cv_refresh` cookie) or, in a route, `peek_access_token` or
+      `peek_refresh`, and never call `require_active`. A peek in a helper does not count:
+      helpers peek to name a session in an audit record, bind a CSRF token or tell a fixation
+      attempt, and act for none. `refresh` clears a peeked refresh token, the refresh route's:
+      `SessionService.refresh` refuses a disabled user's token itself (#2911; U45);
+    - they pass `allow_locked=True` to anything but `require_active`: a call that takes it skips
+      `require_active` with it, so a stray session is not revoked there.
+      `require_active(..., allow_locked=True)` waives the idle lock and nothing else: its status
+      check still runs, so a route that only calls it does not skip the backstop."""
 
     def __init__(self) -> None:
         self.routes: set[str] = set()
-        self._scope: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        self._scope: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]] = []
 
     def _enter(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self._scope.append(node)
+        calls: set[str] = set()
+        self._scope.append((node, calls))
         self.generic_visit(node)
         self._scope.pop()
+        route = _route_of(node)
+        blind = calls & (_STATUS_BLIND if route else {"_identify"})
+        if "refresh" in calls:
+            blind -= {"peek_refresh"}
+        if blind and "require_active" not in calls:
+            self.routes.add(route or node.name)
 
     visit_FunctionDef = visit_AsyncFunctionDef = _enter
 
     def visit_Call(self, node: ast.Call) -> None:
         callee = ast.unparse(node.func).rpartition(".")[2]
+        if self._scope:
+            self._scope[-1][1].add(callee)
         if callee != "require_active" and any(
             k.arg == "allow_locked" and isinstance(k.value, ast.Constant) and k.value.value is True
             for k in node.keywords
         ):
-            self.routes.add(_route_of(self._scope[-1]) if self._scope else "(module level)")
+            fn = self._scope[-1][0] if self._scope else None
+            self.routes.add("(module level)" if fn is None else _route_of(fn) or fn.name)
         self.generic_visit(node)
 
 
@@ -255,19 +278,58 @@ def test_the_route_scan_flags_what_skips_the_backstop_and_not_what_only_waives_t
 ) -> None:
     """`require_active(..., allow_locked=True)` waives the idle lock and still checks the user's
     status (#3214's `GET /auth/session` reads through it), so it is not a skip."""
-    scan = _AllowLocked()
+    scan = _SkipsBackstop()
     scan.visit(ast.parse(f"@router.get('/a')\nasync def a(request):\n    return await {call}\n"))
 
     assert scan.routes == routes
 
 
-def test_only_logout_and_revoke_my_session_skip_the_backstop() -> None:
+@pytest.mark.parametrize(
+    ("body", "routes"),
+    [
+        ("return await _identify(request)", {"POST /a"}),
+        ("return await sessions.peek_access_token(token)", {"POST /a"}),
+        ("return await sessions.peek_refresh(cookie)", {"POST /a"}),
+        ("await _identify(request)\n    return await sessions.refresh(raw)", {"POST /a"}),
+        ("await _identify(request)\n    return await sessions.require_active(sid)", set()),
+        ("await sessions.peek_refresh(raw)\n    return await sessions.refresh(raw)", set()),
+    ],
+)
+def test_the_route_scan_flags_a_lookup_that_reads_no_user_status_without_require_active(
+    body: str, routes: set[str]
+) -> None:
+    """#2300's logout finds its session with `_identify`, whose peeks read no user status, so it
+    skips the backstop with no `allow_locked=True` anywhere; `GET /auth/session` follows
+    `_identify` with `require_active` and does not. `refresh` clears only a peeked refresh token."""
+    scan = _SkipsBackstop()
+    scan.visit(ast.parse(f"@router.post('/a')\nasync def a(request):\n    {body}\n"))
+
+    assert scan.routes == routes
+
+
+def test_the_route_scan_counts_a_peek_in_a_route_only_and_names_a_helper_on_identify() -> None:
+    """Helpers peek and act for no session (`session_of` in `api/users.py`,
+    `CsrfMiddleware._resolve`, `_authenticate`'s fixation check); a helper built on `_identify`
+    without `require_active` is reported by its name, so a route calling it is found too."""
+    scan = _SkipsBackstop()
+    scan.visit(
+        ast.parse(
+            "async def peeks(token):\n    return await sessions.peek_access_token(token)\n"
+            "async def identifies(request):\n    return await _identify(request)\n"
+        )
+    )
+
+    assert scan.routes == {"identifies"}
+
+
+def test_only_these_routes_skip_the_backstop() -> None:
     """U45 (`e09-auth-rbac.md`) and runbook section 4 (`auth-rbac.md`) say every REST route meets
-    `require_active` first, so refuses and revokes a disabled user's live session, except the two
-    that only end the caller's own sessions. A route skips it only by authenticating with
-    `allow_locked=True` (other than through `require_active`, which still checks the user's
-    status): a third one makes both texts wrong."""
-    found = _AllowLocked()
+    `require_active` first, so refuses and revokes a disabled user's live session, except the ones
+    that only end the caller's own sessions, and name them: these. A route skips it in either way
+    `_SkipsBackstop` finds, so one more makes both texts wrong. The scan reads each route's own
+    code, whatever it is mounted behind (#2300 moved the logout from `allow_locked=True` to the
+    `_identify` way)."""
+    found = _SkipsBackstop()
     for path in sorted(Path(candleviewer.__file__).resolve().parent.rglob("*.py")):
         with warnings.catch_warnings():  # escape-sequence noise from unrelated modules
             warnings.simplefilter("ignore", SyntaxWarning)

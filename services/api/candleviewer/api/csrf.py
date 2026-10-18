@@ -34,8 +34,13 @@ Then, except for the five pre-session operations (contract "Exempt"):
 is the one bound to the presented refresh token, which the route itself loads.
 After its throttles and reuse detection (a rotated-out token only revokes, never
 mints), the route runs the full check with `verify_refresh_csrf()` before it
-audits or rotates. The middleware never reads a request body, so a body it
-cannot read can never weaken the check.
+audits or rotates. `POST /auth/logout` (exact path) is a partial exception, only
+when the `cv_refresh` cookie identifies it (contract "Idle lock", #2300): the
+cookie is present and no access token inside its lifetime is (no bearer, or one
+past `ACCESS_TOKEN_TTL`). Steps 2-4 still run here; step 5, the binding, is the
+route's, against the cookie's session. A logout identified by its access token
+is bound here, like every other bearer request. The middleware never reads a
+request body, so a body it cannot read can never weaken the check.
 
 A refusal is always `403 csrf_token_invalid` (`detail` never echoes a value),
 `auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
@@ -71,13 +76,15 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict, tokens_equal
 from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.session_service import is_live_session
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, is_live_session
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import spawn
 
 CSRF_ERROR_CODE = "csrf_token_invalid"
 CSRF_PROBLEM_TYPE = f"https://candleviewer.local/errors/{CSRF_ERROR_CODE}"
+#: The refresh-token cookie (contract `refreshCookie`), `Path=/api/v1/auth`.
+REFRESH_COOKIE = "cv_refresh"
 _TITLE = "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})  # contract "Exempt"; TRACE is guarded
 _API_PREFIX = "/api/v1"
@@ -87,6 +94,7 @@ _EXEMPT_PATH = re.compile(
     r"/(?:auth/login|auth/mfa/verify|auth/mfa/recovery|invites/[^/]+|invites/[^/]+/confirm)"
 )
 REFRESH_PATH = "/auth/refresh"
+LOGOUT_PATH = "/auth/logout"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _UNMATCHED = "(unmatched)"
 #: Refusals not bound to a live session, per source IP per window, that are
@@ -454,6 +462,13 @@ class CsrfMiddleware:
             await self._refuse(scope, receive, send, CsrfRefusal.BAD_MAC, None)
             return
         record = await self._resolve(headers)
+        if self._cookie_identified_logout(scope, headers, record):
+            # Contract "Idle lock": no access token inside its lifetime identifies this
+            # logout, so its `cv_refresh` cookie does. The route checks SR-042 Origin and
+            # binds the token to that cookie's session (`verify_refresh_csrf`) before it
+            # audits or revokes anything.
+            await self._app(scope, receive, send)
+            return
         if record is None:
             await self._refuse(scope, receive, send, CsrfRefusal.WRONG_SESSION, None)
             return
@@ -468,6 +483,21 @@ class CsrfMiddleware:
         if sessions is None or token is None:
             return None
         return await sessions.peek_access_token(token)
+
+    def _cookie_identified_logout(
+        self, scope: Scope, headers: Headers, record: SessionRecord | None
+    ) -> bool:
+        """`POST /auth/logout` that the route identifies by `cv_refresh`: the cookie is
+        present and no access token inside its lifetime identifies a session (none, or
+        *record*, its session, is past `ACCESS_TOKEN_TTL`). A bearer this server never
+        issued is not: the route refuses it without reading the cookie, so it stays here."""
+        if scope["method"] != "POST" or route_path(scope["path"]) != LOGOUT_PATH:
+            return False
+        if REFRESH_COOKIE not in _cookies(headers):
+            return False
+        if _bearer(headers) is None:
+            return True
+        return record is not None and self._now() >= record.issued_at + ACCESS_TOKEN_TTL
 
     def _route_template(self, scope: Scope) -> str:
         """Bounded audit/log path: the contract operation the request targets
