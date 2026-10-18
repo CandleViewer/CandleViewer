@@ -32,7 +32,7 @@ from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.conftest import RecordingAuditSink
-from tests.unit.api._fakes import enrolment_recorder
+from tests.unit.api._fakes import WriterLane, enrolment_recorder
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -91,6 +91,7 @@ class _Writer:
 class _Audit:
     def __init__(self) -> None:
         self.writer = _Writer()
+        self.lane = WriterLane(self)  # ADR-0037 with its flag off: each record to the writer
         self.is_active = True
 
 

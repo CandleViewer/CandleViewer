@@ -523,6 +523,7 @@ async def test_unlock_audit_records_precede_the_change_they_describe(
         "auth.session_revoked",
         "revoke",
     ]
+    assert w.audit.lane.actions == []  # ADR-0037 Q1: unlock's records stay on the writer
 
 
 async def test_unlock_never_logs_returns_or_audits_the_password(

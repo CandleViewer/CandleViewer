@@ -32,7 +32,7 @@ from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
-from tests.unit.api._fakes import enrolment_recorder
+from tests.unit.api._fakes import WriterLane, enrolment_recorder
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
@@ -64,6 +64,7 @@ class _Audit:
 
     def __init__(self) -> None:
         self.writer = _Writer()
+        self.lane = WriterLane(self)
 
 
 class _Identity:

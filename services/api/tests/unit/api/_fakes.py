@@ -20,16 +20,20 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import (
     MfaVerifiedResult,
     MfaVerifyRequest,
+    RefreshOutcome,
     SessionRecord,
     UserRecord,
 )
 from candleviewer.auth.session_service import SessionClass, SessionService
+from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 BASE = "https://testserver"
 NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041: the routers require a codec
 HASHER = Hasher(pepper="x02-fixation-unit-pepper")
+#: The user the session-route worlds sign in as.
+USER = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
 FIXATION = "auth.session_fixation_attempt"
 
 
@@ -46,6 +50,20 @@ def enrolment_recorder(writer: Any) -> EnrolmentRefusals:
 
 def sessions(repo: FakeSessionRepository | None = None, *, now: datetime = NOW) -> SessionService:
     return SessionService(repo or FakeSessionRepository(), HASHER, clock=lambda: now)
+
+
+def throttle() -> PerIpLoginThrottle:
+    """A router throttle: 10 per minute, on a clock that never moves."""
+    return PerIpLoginThrottle(max_attempts=10, window_s=60.0, clock=lambda: 0.0)
+
+
+class RacedSessionService(SessionService):
+    """A competing request rotates the presented token between the router's lookup and its
+    `refresh()`: the second call finds the token rotated, revokes the family and raises."""
+
+    async def refresh(self, raw_refresh_token: str, **kw: Any) -> RefreshOutcome:
+        await super().refresh(raw_refresh_token, **kw)
+        return await super().refresh(raw_refresh_token, **kw)
 
 
 class RecordingWriter:
@@ -66,10 +84,23 @@ class RecordingWriter:
         return [e for e in self.events if e["action"] == action]
 
 
+class WriterLane:
+    """`AuditService.lane` with `audit.lane_journal_first` off (ADR-0037): each record goes to the
+    writer of *audit*, read per call; `actions` lists what came this way."""
+
+    def __init__(self, audit: Any) -> None:
+        self._audit, self.actions = audit, list[str]()
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.actions.append(action)
+        await self._audit.writer.emit(action, **kw)
+
+
 class AuditService:
     def __init__(self, *, active: bool = True) -> None:
         self.is_active = active
         self.writer = RecordingWriter()
+        self.lane = WriterLane(self)
 
 
 class Identity:

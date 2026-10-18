@@ -292,7 +292,10 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:
     """C-2.9: each step writes an append-only, hash-chained audit_log row
-    through the real AuditWriter -> SqlAlchemyAuditRepository wiring."""
+    through the real AuditWriter -> SqlAlchemyAuditRepository wiring; with
+    `audit.lane_journal_first` on, the sign-out's through the lane (ADR-0037)."""
+    ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
+    ctx.audit.use_lane_flag(lambda: True)
     user_id, secret = await _seed_owner_with_totp(pg_dsn, "e2e_audited")
     bad = await client.post("/auth/login", json={"identifier": "e2e_audited", "password": "nope"})
     assert bad.status_code == 401
@@ -307,7 +310,8 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     token = ok.json()["tokens"]["access_token"]
     hdrs = {"Authorization": f"Bearer {token}", CSRF_HEADER: ok.cookies[CSRF_COOKIE]}
     assert (await client.post("/auth/logout", headers=hdrs)).status_code == 204
-    await client.app_context.audit.writer.flush(10.0)  # type: ignore[attr-defined]
+    await ctx.audit.lane.flush(10.0)  # the sign-out's rows are the lane's (ADR-0037)
+    await ctx.audit.writer.flush(10.0)
 
     failed = await _audit_rows(pg_dsn, "e2e***%")
     assert [(x["action"], x["outcome"]) for x in failed] == [("auth.login_failed", "failure")]
@@ -350,6 +354,30 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
                 await conn.execute(sa.text("UPDATE audit_log SET reason = 'x'"))
     finally:
         await engine.dispose()
+
+
+async def test_sign_out_in_an_audit_outage_reaches_audit_log_once_after_a_restart(
+    pg_dsn: str, client: httpx.AsyncClient
+) -> None:
+    """ADR-0037 S3: with `audit.lane_journal_first` on and the writer stopped (it refuses every
+    record), a sign-out answers 204 from the lane and the session ends; after a restart of the
+    audit module its rows are in `audit_log` once, and a second restart adds none."""
+    user_id, secret = await _seed_owner_with_totp(pg_dsn, "e2e_outage")
+    ok = await _login_and_verify(client, "e2e_outage", secret)
+    token = ok.json()["tokens"]["access_token"]
+    hdrs = {"Authorization": f"Bearer {token}", CSRF_HEADER: ok.cookies[CSRF_COOKIE]}
+    ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
+    ctx.audit.use_lane_flag(lambda: True)
+    await ctx.audit.writer.stop(5.0)  # the outage: `AuditWriterStopped` for every record
+    assert (await client.post("/auth/logout", headers=hdrs)).status_code == 204
+    assert (await client.get("/auth/session", headers=hdrs)).status_code == 401
+    for _ in range(2):  # a restart, then another
+        await ctx.audit.stop(5.0)
+        await ctx.audit.start(ctx)
+        await ctx.audit.lane.flush(10.0)
+    actions = [x["action"] for x in await _audit_rows(pg_dsn, user_id)]
+    assert actions.count("auth.logout") == actions.count("auth.session_revoked") == 1
+    assert actions.index("auth.logout") < actions.index("auth.session_revoked")
 
 
 async def test_owner_floor_rejects_removing_the_last_owner_role(pg_dsn: str) -> None:

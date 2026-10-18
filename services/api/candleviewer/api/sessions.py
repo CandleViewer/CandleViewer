@@ -62,6 +62,16 @@ user's refusal (#2911) and, on `/auth/logout`, one `auth.session_revoked` per se
 after the one `auth.logout` intent record that names the targets (#2914). The retry half of rule 2
 is the time-boxed exception EX-07 (§16.2).
 
+Journal-first audit lane (ADR-0037, #3009 S3): the rows its Q1 default admits go to
+`AuditService.lane`, the façade with `emit()`'s shape: those outcome records, the `auth.logout`
+intent, revoke-my-session's `auth.session_revoked` and the reuse intent. While the flag
+`audit.lane_journal_first` is on the lane takes them first and the writer is the fallback, so these
+answer 503, or count a record lost, only when both refuse; off, the façade hands each one to the
+writer, today's path, as does a service with no façade (`LaneNotWired`: before `start()`, or once
+`stop()` began), which is logged once. Every other record here (refresh, unlock, the refusal and
+probe rows) stays on the writer. A row joins with `lane=True` on its `_audit` call; a call site
+outside this router that writes through `AuditService.lane` needs the same `LaneNotWired` guard.
+
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
 `last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
 serve a locked session, identified by an access token inside its lifetime or else
@@ -101,6 +111,7 @@ from candleviewer.api.enrolment_guard import _unavailable as _session_unchecked
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.service import LaneNotWired
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
@@ -265,6 +276,12 @@ class AuditServiceLike(Protocol):
 
     @property
     def writer(self) -> AuditEmitter: ...
+
+    @property
+    def lane(self) -> AuditEmitter:
+        """The journal-first façade (ADR-0037) of a started service, for the rows Q1 admits only;
+        `LaneNotWired` while there is none, as `AuditService.lane` raises."""
+        ...
 
 
 Clock = Callable[[], Any]
@@ -519,6 +536,16 @@ def make_session_router(
     def _audit_ready() -> bool:
         return audit_service is not None and audit_service.is_active
 
+    lane_unwired_logged = False
+
+    def _lane_unwired(action: str) -> None:
+        """A lane row goes to the writer, today's path, because the service has no façade
+        (`LaneNotWired`). One warning per router, the app's only one, with the action alone."""
+        nonlocal lane_unwired_logged
+        if not lane_unwired_logged:
+            lane_unwired_logged = True
+            _log().warning("auth.session_audit.lane_unavailable", action=action)
+
     async def _audit(
         action: str,
         *,
@@ -529,11 +556,18 @@ def make_session_router(
         reason: str | None = None,
         session_id: str | uuid.UUID | None = None,
         after_state: dict[str, Any] | None = None,
+        lane: bool = False,
     ) -> None:
         if audit_service is None or not audit_service.is_active:
             raise AuditUnavailableError
+        sink = audit_service.writer
+        if lane:
+            try:
+                sink = audit_service.lane
+            except LaneNotWired:  # stopping, or never started: today's path
+                _lane_unwired(action)
         try:
-            await audit_service.writer.emit(
+            await sink.emit(
                 action,
                 actor_label=str(record.user_id) if record else "(unknown)",
                 actor_user_id=record.user_id if record else None,
@@ -547,9 +581,10 @@ def make_session_router(
                 after_state=after_state,
             )
         except AuditError as exc:
-            # The writer refused the record (WAL full or unwritable, writer stopped, #2251):
-            # the same fail-closed answer as an inactive sink. The log carries the action and
-            # the class name only, which keeps a registry bug (`UnknownAuditAction`) visible.
+            # The writer refused the record (WAL full or unwritable, writer stopped, #2251), or with
+            # `lane` the lane and then the writer did (ADR-0037): the same fail-closed answer as an
+            # inactive sink. The log carries the action and the class name only, which keeps a
+            # registry bug (`UnknownAuditAction`) visible.
             _log().error(
                 "auth.session_audit.writer_refused", action=action, error=type(exc).__name__
             )
@@ -573,10 +608,12 @@ def make_session_router(
     ) -> None:
         """Write one outcome record per session id (04-security-program.md §8.3 rule 1: after the
         side effect). The service has already acted, so a lost record is counted, logged (action,
-        session and error class only) and alerted, and the answer stands. No retry: exception
-        EX-07, §16.2. Each write is bounded by `audit_timeout_s`: the writer never cuts an append
-        short, so the record in flight may still land, and a sink that does not answer is not asked
-        again (one bound, not one per session). The WS fan-out abandons its audit rows after
+        session and error class only) and alerted, and the answer stands. No retry here: each one
+        goes through the lane's façade (ADR-0037), journal-first while its flag is on, and EX-07
+        (§16.2) stands until the lane's exit. Each write, the lane's wait (`APPEND_WAIT_S`, below
+        it) and the fallback together, is bounded by `audit_timeout_s`: the writer never cuts an
+        append short, so the record in flight may still land, and a sink that does not answer is not
+        asked again (one bound, not one per session). The WS fan-out abandons its audit rows after
         `FANOUT_AUDIT_MAX_FAILURES` in a row (`ws/limits.py`, #2824); one timeout is enough here:
         it is one bound per request, the rows not tried are counted, and a refusal returns at once
         and never ends the loop. A request cancelled part-way is the same: the record
@@ -594,6 +631,7 @@ def make_session_router(
                         severity=severity,
                         reason=reason,
                         session_id=sid,
+                        lane=True,
                     )
             except AuditUnavailableError as exc:
                 cause = exc.__cause__
@@ -998,7 +1036,7 @@ def make_session_router(
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
         try:
-            if reuse:
+            if reuse:  # containment: the lane's row (ADR-0037 Q1); a refresh stays fail closed
                 await _audit(
                     "auth.refresh_reuse_detected",
                     record=presented_record,
@@ -1006,6 +1044,7 @@ def make_session_router(
                     outcome=AuditOutcome.DENIED,
                     severity=Severity.CRITICAL,
                     reason="rotation_reuse",
+                    lane=True,
                 )
             elif not presented_record.is_revoked:
                 await _audit("auth.session_refreshed", record=presented_record, ip=ip)
@@ -1349,7 +1388,8 @@ def make_session_router(
             return _unauthorized()  # ending every session needs an access token
         # C-2.9 / 04-security-program.md §8.3 rule 1: one intent record, naming the targets, before
         # anything is revoked (audit down => 503, nothing revoked and nothing left to repeat on a
-        # retry), then one outcome record per session the service did revoke (#2914).
+        # retry), then one outcome record per session the service did revoke (#2914). Both are
+        # the lane's rows (ADR-0037 Q1): "audit down" means the lane and the writer refused.
         reason = "logout_all" if all_sessions else "logout"
         try:
             if all_sessions:
@@ -1368,6 +1408,7 @@ def make_session_router(
                     "session_ids": targets[:LOGOUT_INTENT_SESSION_IDS_MAX],
                     "session_count": len(targets),
                 },
+                lane=True,
             )
         except AuditUnavailableError:
             return _audit_down()
@@ -1428,6 +1469,7 @@ def make_session_router(
                 ip=_source_ip(request),
                 reason="user_revoked",
                 session_id=session_id,
+                lane=True,  # ADR-0037 Q1: revoke-my-session proceeds journal-first
             )
         except AuditUnavailableError:
             return _audit_down()

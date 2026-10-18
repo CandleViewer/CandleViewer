@@ -35,13 +35,11 @@ from candleviewer.audit.redact import redact
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.models import (
     MintedSession,
-    RefreshOutcome,
     SessionRecord,
     SessionView,
     UserStatus,
 )
 from candleviewer.auth.session_service import SessionService
-from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf, csrf_headers
 from tests.unit.api._fakes import (
     BASE,
@@ -54,9 +52,11 @@ from tests.unit.api._fakes import (
     SessionsAuth,
     enrolment_recorder,
 )
+from tests.unit.api._fakes import USER as _USER
+from tests.unit.api._fakes import RacedSessionService as _RacedSessionService
+from tests.unit.api._fakes import throttle as _throttle
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
-_USER = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
 _OTHER = uuid.UUID("00000000-0000-4000-8000-0000000000c2")
 _UNKNOWN_SESSION = uuid.UUID("00000000-0000-4000-8000-0000000000d1")
 _CLIENT_IP = "198.51.100.7"  # documentation range (RFC 5737): the address every request comes from
@@ -108,15 +108,6 @@ class _RefusingWriter(RecordingWriter):
             self.after_accept(action)
 
 
-class _RacedSessionService(SessionService):
-    """A competing request rotates the presented token between the router's lookup and its
-    `refresh()`: the second call finds the token rotated, revokes the family and raises."""
-
-    async def refresh(self, raw_refresh_token: str, **kw: Any) -> RefreshOutcome:
-        await super().refresh(raw_refresh_token, **kw)
-        return await super().refresh(raw_refresh_token, **kw)
-
-
 class _LateSignInService(SessionService):
     """A sign-in lands after the router read the target ids and before `revoke_all`."""
 
@@ -150,10 +141,6 @@ class _LoopClock:
 
     def advance(self, seconds: float) -> None:
         self._skew += seconds
-
-
-def _throttle() -> PerIpLoginThrottle:
-    return PerIpLoginThrottle(max_attempts=10, window_s=60.0, clock=lambda: 0.0)
 
 
 class _World:

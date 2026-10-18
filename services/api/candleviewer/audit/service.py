@@ -45,6 +45,11 @@ def _flag_off() -> bool:
     return False
 
 
+class LaneNotWired(RuntimeError):
+    """`AuditService.lane` while there is no façade: before `start()` wires one, and from the moment
+    `stop()` drops it, while `writer` may still run (ADR-0037, #3009 S3)."""
+
+
 class AuditService:
     """M19 `audit` module lifecycle.
 
@@ -94,7 +99,7 @@ class AuditService:
     def lane(self) -> LaneFacade:
         """The journal-first façade (ADR-0037 decisions 1 and 2), once a real backend runs."""
         if self._facade is None:
-            raise RuntimeError("AuditService.start() has not wired a real backend")
+            raise LaneNotWired("AuditService.start() has not wired a real backend")
         return self._facade
 
     def use_lane_flag(self, journal_first: Callable[[], bool]) -> None:
