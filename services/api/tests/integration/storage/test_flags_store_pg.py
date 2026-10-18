@@ -304,13 +304,15 @@ async def test_writers_of_one_flag_queue_on_the_row_lock(
         first = asyncio.create_task(repo.write(_KEY, first_prepare))
         await asyncio.wait_for(held.wait(), 30)
         second = asyncio.create_task(repo.write(_KEY, second_prepare))
-        async with engine.connect() as probe:
-            for _ in range(400):  # bounded condition wait: the second writer parks on the lock
+        # Bounded condition wait: the second writer parks on the lock. One connection per poll:
+        # pg_stat_activity is a snapshot per transaction, and the connection autobegins one.
+        for _ in range(400):
+            async with engine.connect() as probe:
                 if (await probe.execute(sa.text(_WAITING))).scalar_one() >= 1:
                     break
-                await asyncio.sleep(0.025)
-            else:
-                raise AssertionError("the second writer never queued on the row lock")
+            await asyncio.sleep(0.025)
+        else:
+            raise AssertionError("the second writer never queued on the row lock")
         assert seen == []
         release.set()
         written = await first
