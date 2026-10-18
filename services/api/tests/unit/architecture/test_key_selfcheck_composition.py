@@ -155,5 +155,6 @@ async def test_a_stored_key_failing_at_boot_latches_order_entry_and_degrades_rea
         ("calls", "testnet"), ("aclose", None), ("audit", "account.tested"),
         ("error", "key_withdraw_permission"), ("disable", ACCOUNT),
         ("audit", "account.disabled_by_policy"), ("mark", ACCOUNT),
+        ("audit", "security.key_policy_violation"),
     ]  # fmt: skip
     assert ctx.accounts._selfcheck._m is deployed.app.state.metrics_facade  # the scraped series

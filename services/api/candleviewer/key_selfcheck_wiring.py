@@ -11,7 +11,8 @@ only (C-2.11, US-ACCT-007). Requests carry the exchange's clock once the ingesti
 measured the offset (E08-S07), so a skewed host clock shows in the verdict's offset instead of a
 refusal. Only the real backend gets a self-check: the fake one (dev/CI) stores no key and makes no
 call (C-13.5). Nothing here does I/O: `AccountsService.start()` runs the check, and `stop()`
-releases its Postgres pool.
+releases its Postgres pool. A borrow that M2's C-2.8 re-check refuses (SR-E27-14) becomes
+`WithdrawPermissionError`: the job's `key_withdraw_permission` verdict, never `check_error`.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
+from candleviewer.accounts.errors import WithdrawPermissionError
 from candleviewer.accounts.selfcheck import AuditEmitter, KeySelfCheck
 from candleviewer.accounts.verification import (
     KeyFacts,
@@ -77,6 +79,8 @@ class KeyVerifyingExchange(Protocol):
 
     def key_probe_error(self, error: ExchangeError) -> str: ...
 
+    def key_borrow_refused(self, error: Exception) -> bool: ...
+
 
 @asynccontextmanager
 async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
@@ -92,6 +96,10 @@ async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
         if verdict is not None:
             raise KeyRefused(Refusal(verdict[0]), verdict[1]) from None
         raise VerificationInconclusive(exchange.key_probe_error(error)) from None
+    except Exception as error:  # cancellation propagates
+        if exchange.key_borrow_refused(error):
+            raise WithdrawPermissionError("key_withdraw_permission") from None
+        raise
 
 
 class JudgedCalls:

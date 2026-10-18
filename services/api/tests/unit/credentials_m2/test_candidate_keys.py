@@ -251,6 +251,24 @@ async def test_a_refused_failure_record_is_counted_and_the_error_kept(
     assert (after - before, rig[2].actions()) == (1, ["security.credential_borrowed"])
 
 
+@pytest.mark.parametrize(
+    ("purpose", "result"), [("key_verify", "ok"), ("sign_rest", "error")], ids=["signed", "refused"]
+)
+async def test_each_candidate_signing_is_counted_by_caller_and_result(
+    rig: Rig, purpose: Any, result: str
+) -> None:
+    """As a stored key's borrow counts in `cv_credential_borrow_total{stage,result}`."""
+    series = m.credential_candidate_sign_total.labels(stage="exchange_adapter", result=result)
+    before = series._value.get()
+
+    async def check(signer: CandidateSigner) -> None:
+        with contextlib.suppress(CredentialUnavailable):
+            await signer.sign(signer.key_id, MSG, purpose=purpose)
+
+    await run(mint_candidate_keys(rig[0]), check)
+    assert series._value.get() - before == 1
+
+
 async def test_a_refused_audit_record_refuses_the_signing(rig: Rig) -> None:
     rig[2].fail = True
     with pytest.raises(CredentialUnavailable):

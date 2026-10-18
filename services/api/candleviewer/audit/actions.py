@@ -121,6 +121,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # key failed it (threat model E27-accounts §8.1, SR-E27-09; system actor, write-ahead).
         "account.tested",
         "account.disabled_by_policy",
+        # E27-T03 (#836, decision 12): a key that fails its verification policy, `{rule, key_id}`
+        # (the account's id where no key is stored); critical for a withdraw, transfer, fiat or
+        # card right, any right that moves funds.
+        "security.key_policy_violation",
         "profiles.update",
         "orders.submit",
         "orders.cancel",

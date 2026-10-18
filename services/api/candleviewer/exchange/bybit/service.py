@@ -46,6 +46,7 @@ from candleviewer.exchange.bybit.trades import (
     trade_topic,
 )
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.secrets import WithdrawPermissionRejected
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -170,6 +171,13 @@ class ExchangeBybitService:
     key_refusal = staticmethod(refusal)
     #: E27-T03: the contract's `KeyProbeError` name of any other key-verification failure.
     key_probe_error = staticmethod(probe_error)
+
+    @staticmethod
+    def key_borrow_refused(error: Exception) -> bool:
+        """E27-T03: M2's borrow re-check refused the stored row (C-2.8, SR-E27-14), a verdict
+        about the key: `WithdrawPermissionRejected` or its subclass `SnapshotInvalid`."""
+        return isinstance(error, WithdrawPermissionRejected)
+
     #: E27-T03: the bound on one key-verification call, its budget wait and M2's signing included.
     #: The composition root cuts each call at this value, read here (C-2.2), never imported.
     key_call_timeout_s: float = CALL_TIMEOUT_S

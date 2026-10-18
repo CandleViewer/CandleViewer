@@ -744,7 +744,7 @@ One row per Bybit UID/environment pair. Main account and sub-accounts live in th
 | `deleted_at`                | timestamptz    | yes  | NULL               | Soft delete; blocks new legs, keeps history            |
 | `policy_disarm_code`        | text           | yes  | NULL               | Rule code of the last self-check disarm (0031)         |
 | `policy_disarmed_at`        | timestamptz    | yes  | NULL               | That disarm's time; set with the code                  |
-| `policy_disarm_audited_at`  | timestamptz    | yes  | NULL               | Set once its audit record is written; NULL means owed  |
+| `policy_disarm_audited_at`  | timestamptz    | yes  | NULL               | When its record was written; NULL after a disarm: owed |
 
 ```sql
 CREATE TABLE exchange_accounts (
@@ -795,8 +795,12 @@ force-disable (C-2.8) sets `trading_enabled` false with the failing rule's code 
 text) and the time in one conditional update. The disarm is owed its `account.disabled_by_policy`
 record until `policy_disarm_audited_at` is set after the record is written; every pass, the boot
 pass included, first sends the records still owed (decisions 2 and 5 on #836). The audit sink
-cannot deduplicate a re-send (`AuditWriter.emit` mints its own `record_id`), so a crash between
-record and mark sends it twice, never zero times. No operation arms an account yet (decision 16),
+cannot deduplicate a re-send (`AuditWriter.emit` mints its own `record_id`), so a record can be
+written twice, never zero times, in two windows: a crash between record and mark, and an emit cut
+by its bound once the writer has started the append (the writer keeps it; the job counts it
+refused, so it stays owed). The record carries the disarm's time (`disarmed_at`), however late it
+is sent. A code the CHECK would refuse becomes `key_policy_violation`, so the CHECK never blocks
+a disarm. No operation arms an account yet (decision 16),
 so a disarm never replaces a record still owed. P0 (§12): no comment tag; `cv_app`'s table-level
 DML covers the columns, so no GRANT. The downgrade refuses while a record is owed.
 

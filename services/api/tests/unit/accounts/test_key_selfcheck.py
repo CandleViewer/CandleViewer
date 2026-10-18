@@ -16,6 +16,7 @@ import copy
 import inspect
 import json
 import math
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -39,14 +40,17 @@ from candleviewer.accounts.selfcheck import (
     KeySelfCheck,
     Outcome,
     is_fresh,
+    policy_violation,
 )
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.verification import (
     KeyRefused,
     Refusal,
     Rule,
+    VerificationFailure,
     VerificationInconclusive,
     VerificationPolicy,
+    VerificationResult,
 )
 from candleviewer.api.health import make_health_router
 from candleviewer.app import AppContext, create_app
@@ -59,10 +63,13 @@ from candleviewer.exchange.bybit.key_info import (
     parse_key_info,
     parse_probe,
 )
+from candleviewer.exchange.bybit.service import ExchangeBybitService
+from candleviewer.key_selfcheck_wiring import JudgedCalls
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
+from candleviewer.secrets.errors import SnapshotInvalid, WithdrawPermissionRejected
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
@@ -81,6 +88,7 @@ KEY, ACCT, KEY2, ACCT2 = UUID(int=11), UUID(int=1), UUID(int=12), UUID(int=2)
 HOUR = timedelta(hours=1)
 KEK = "secrets.kek_unavailable"
 TESTED, DISABLED = "account.tested", "account.disabled_by_policy"
+VIOLATION = "security.key_policy_violation"
 RECORD = {"actor_label", "object_kind", "object_id", "env", "after_state"}
 FAILURE = {"outcome", "severity", "reason"}
 #: No audit record names an exchange UID: it is Confidential, and Viewers read the audit log (4b).
@@ -88,15 +96,19 @@ FACTS = {"fetched_at", "readOnly", "permissions", "expiredAt", "uta", "withdraw_
 CODES = {"warnings", "failures"}
 WITHDRAW_FAILURE = [
     ("latch", FAILED), ("audit", TESTED), ("error", KEY), ("disable", ACCT), ("audit", DISABLED),
-    ("mark", ACCT),
+    ("mark", ACCT), ("audit", VIOLATION),
 ]  # fmt: skip
-#: The `account.disabled_by_policy` record of a withdrawal-right disarm, whichever pass sends it.
-DISARM_RECORD = {
-    "actor_label": "system:key-selfcheck", "object_kind": "exchange_account",
-    "object_id": str(ACCT), "env": "demo", "before_state": {"trading_enabled": True},
-    "after_state": {"trading_enabled": False}, "severity": "critical",
-    "reason": "key_withdraw_permission",
-}  # fmt: skip
+
+
+def disarm_record(at: datetime = NOW, rule: str = "key_withdraw_permission") -> dict[str, Any]:
+    """A disarm's `account.disabled_by_policy` record, whichever pass sends it: its stored rule
+    code and time, never the time it is sent."""
+    return {
+        "actor_label": "system:key-selfcheck", "object_kind": "exchange_account",
+        "object_id": str(ACCT), "env": "demo", "before_state": {"trading_enabled": True},
+        "after_state": {"trading_enabled": False, "disarmed_at": at.isoformat()},
+        "severity": "critical", "reason": rule,
+    }  # fmt: skip
 
 
 def load(name: str) -> dict[str, Any]:
@@ -144,11 +156,14 @@ class World:
         held: str | None = None, boot_deadline_s: float = BOOT_DEADLINE_S,
     ) -> None:  # fmt: skip
         self.rows, self.now, self.fail_audit, self.written = list(rows), NOW, False, True
+        self.refused: set[str] = set()  # actions the audit sink refuses
         self.fail: Exception | None = None
         self.close_error: Exception | None = None
         self.disable_error: Exception | None = None
         self.mark_error: Exception | None = None
-        self.hang: set[str] = set()
+        self.hang: set[str] = set()  # steps that hang: a call's name, or an emit's action
+        #: Every call as it begins, an emit by its action, a hung one too: the order of the bounds.
+        self.started: list[str] = []
         self.info = facts() if info is None else info
         self.infos: dict[UUID, object] = {}
         self.seen = probed() if probe is None else probe
@@ -170,8 +185,9 @@ class World:
             boot_deadline_s=boot_deadline_s,
         )  # fmt: skip
 
-    async def _io(self, name: str) -> None:
-        if name in self.hang:
+    async def _io(self, name: str, action: str | None = None) -> None:
+        self.started.append(action or name)
+        if name in self.hang or action in self.hang:
             await asyncio.Event().wait()
 
     async def run(self) -> None:
@@ -198,6 +214,8 @@ class World:
     async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
         await self._io("disable_trading")
         self.events.append(("disable", account_id))
+        if not re.fullmatch(r"[a-z0-9_]{1,40}", code):  # `ea_disarm_code_fmt` refuses the update
+            raise ValueError("ea_disarm_code_fmt")
         armed, self.armed[account_id] = self.armed.get(account_id, False), False
         if armed:  # one conditional update: the disarm and its reason commit together
             self.disarms[account_id] = [code, at, None]
@@ -226,8 +244,8 @@ class World:
         validate_action(action)  # what `AuditWriter.emit` refuses, the double refuses
         inspect.signature(AuditWriter.emit).bind(None, action, **fields)
         AuditEmission(record_id=UUID(int=0), action=action, event_ts=NOW, **fields)
-        await self._io("emit")
-        if self.fail_audit:
+        await self._io("emit", action)
+        if self.fail_audit or action in self.refused:
             raise RuntimeError("audit unavailable")
         self.events.append(("audit", action, fields))
 
@@ -350,7 +368,8 @@ async def test_a_failing_key_force_disables_its_account_and_keeps_its_reason_for
     disabled = w.audit(DISABLED)
     assert set(disabled) == (RECORD | FAILURE | {"before_state"}) - {"outcome"}
     assert (disabled["before_state"], disabled["after_state"], disabled["reason"]) == (
-        {"trading_enabled": True}, {"trading_enabled": False}, "key_withdraw_permission",
+        {"trading_enabled": True}, {"trading_enabled": False, "disarmed_at": NOW.isoformat()},
+        "key_withdraw_permission",
     )  # fmt: skip
     result = w.check.results[KEY].result
     assert w.armed[ACCT] is False and result is not None
@@ -432,7 +451,7 @@ async def test_every_key_of_a_pass_is_judged_and_recorded_on_its_own() -> None:
 async def test_an_unarmed_account_is_not_recorded_as_disabled() -> None:
     w = World(target(armed=False), info=facts(permissions=WITHDRAW))
     await w.run()
-    assert (w.kinds(), w.disarms) == (WITHDRAW_FAILURE[:-2], {})
+    assert (w.kinds(), w.disarms) == (WITHDRAW_FAILURE[:4] + WITHDRAW_FAILURE[-1:], {})
 
 
 async def test_an_account_armed_after_the_key_list_read_is_still_disabled() -> None:
@@ -455,13 +474,12 @@ async def test_a_refused_disable_record_is_sent_on_the_next_pass_and_then_cleare
     await w.run()
     w.fail_audit, w.events = False, []
     await w.run()
-    assert w.kinds() == [
-        ("audit", DISABLED), ("mark", ACCT), ("audit", TESTED), ("error", KEY), ("disable", ACCT),
-    ]  # fmt: skip
-    assert w.audit(DISABLED) == DISARM_RECORD
+    repeat = [*WITHDRAW_FAILURE[1:4], ("audit", VIOLATION)]  # disarmed already: nothing to record
+    assert w.kinds() == [("audit", DISABLED), ("mark", ACCT), *repeat]
+    assert w.audit(DISABLED) == disarm_record()
     w.events = []
     await w.run()
-    assert w.kinds() == [("audit", TESTED), ("error", KEY), ("disable", ACCT)]
+    assert w.kinds() == repeat
 
 
 async def test_the_disarm_commits_its_rule_code_and_time_and_its_record_is_marked_after() -> None:
@@ -469,7 +487,7 @@ async def test_the_disarm_commits_its_rule_code_and_time_and_its_record_is_marke
     w.now = NOW + HOUR
     await w.run()
     assert w.disarms == {ACCT: ["key_withdraw_permission", NOW + HOUR, NOW + HOUR]}
-    assert w.audit(DISABLED) == DISARM_RECORD and w.kinds()[-2:] == WITHDRAW_FAILURE[-2:]
+    assert (w.audit(DISABLED), w.kinds()[4:6]) == (disarm_record(NOW + HOUR), WITHDRAW_FAILURE[4:6])
 
 
 async def test_an_owed_record_is_sent_once_by_the_boot_pass_after_a_restart() -> None:
@@ -481,16 +499,16 @@ async def test_an_owed_record_is_sent_once_by_the_boot_pass_after_a_restart() ->
     booted.disarms = w.disarms  # a new process over the same store: the job's memory is gone
     await within(booted.check.start())  # the boot pass
     await within(booted.check.stop())
-    assert [e[1] for e in booted.of("audit")] == [DISABLED, TESTED]
-    assert booted.audit(DISABLED) == DISARM_RECORD and booted.disarms[ACCT][2] == NOW
+    assert [e[1] for e in booted.of("audit")] == [DISABLED, TESTED, VIOLATION]
+    assert booted.audit(DISABLED) == disarm_record() and booted.disarms[ACCT][2] == NOW
     booted.events = []
     await booted.run()
-    assert [e[1] for e in booted.of("audit")] == [TESTED] and booted.of("mark") == []
+    assert [e[1] for e in booted.of("audit")] == [TESTED, VIOLATION] and booted.of("mark") == []
 
 
 async def test_a_refused_re_send_stays_owed_and_is_logged_critical() -> None:
     w = World(target(armed=False))  # passes now; a disarm of an earlier process is still owed
-    w.disarms[ACCT] = ["key_withdraw_permission", NOW - HOUR, None]
+    w.disarms[ACCT] = ["key_ip_whitelist_mismatch", NOW - HOUR, None]
     w.fail_audit = True
     with capture_logs() as logs:
         await w.run()
@@ -499,7 +517,8 @@ async def test_a_refused_re_send_stays_owed_and_is_logged_critical() -> None:
     assert (w.disarms[ACCT][2], w.of("mark")) == (None, [])
     w.fail_audit = False
     await w.run()
-    assert (w.audit(DISABLED), w.disarms[ACCT][2]) == (DISARM_RECORD, NOW)
+    resent = disarm_record(NOW - HOUR, "key_ip_whitelist_mismatch")  # the stored code and time
+    assert (w.audit(DISABLED), w.disarms[ACCT][2]) == (resent, NOW)
 
 
 async def test_a_sent_record_whose_mark_fails_is_never_sent_twice() -> None:
@@ -508,7 +527,7 @@ async def test_a_sent_record_whose_mark_fails_is_never_sent_twice() -> None:
     await w.run()
     w.mark_error, w.events = None, []
     await w.run()  # only the mark is retried
-    assert [e[1] for e in w.of("audit")] == [TESTED]
+    assert [e[1] for e in w.of("audit")] == [TESTED, VIOLATION]
     assert (w.of("mark"), w.disarms[ACCT][2]) == ([("mark", ACCT)], NOW)
 
 
@@ -525,8 +544,8 @@ async def test_an_unreadable_owed_list_is_logged_and_the_pass_goes_on() -> None:
 @pytest.mark.parametrize(
     ("hang", "error", "audited"),
     [
-        ({"disable_trading"}, None, [TESTED, TESTED, DISABLED]),
-        (set(), RuntimeError("lost"), [TESTED, DISABLED, TESTED]),
+        ({"disable_trading"}, None, [TESTED, VIOLATION, TESTED, DISABLED, VIOLATION]),
+        (set(), RuntimeError("lost"), [TESTED, VIOLATION, DISABLED, TESTED, VIOLATION]),
     ],
     ids=["hangs", "raises-after-applying"],
 )
@@ -735,8 +754,8 @@ async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None
 
 def test_the_overall_deadline_covers_every_bounded_step_of_a_check() -> None:
     check = World(timeout_s=25.0, key_deadline_s=15.0).check
-    # verify(); then the close, five audit or store steps and one step of margin
-    assert check._deadline_s == 15.0 + (1 + 5 + 1) * 25.0
+    # verify(); then the close, six audit or store steps and one step of margin
+    assert check._deadline_s == 15.0 + (1 + 6 + 1) * 25.0
 
 
 async def test_a_check_past_its_deadline_fails_closed() -> None:
@@ -1225,3 +1244,149 @@ async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
     monkeypatch.setattr(w.metrics, "get", get)
     await w.run()
     assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)
+
+
+async def test_a_failure_writes_its_policy_violation_last_after_the_rule_code_and_disarm() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    await w.run()
+    assert w.kinds() == WITHDRAW_FAILURE  # enforcement first (decision 2): the record comes last
+    assert w.audit(VIOLATION) == {
+        "actor_label": "system:key-selfcheck", "env": "demo", "object_kind": "api_key",
+        "object_id": str(KEY), "outcome": "denied", "severity": "critical",
+        "reason": "key_withdraw_permission",
+        "after_state": {"rule": "key_withdraw_permission", "key_id": str(KEY)},
+    }  # fmt: skip
+
+
+async def test_a_violation_of_a_rule_that_moves_no_funds_is_an_error() -> None:
+    w = World(target(), info=facts(ips=["198.51.100.9"]))
+    await w.run()
+    record = w.audit(VIOLATION)
+    assert (record["severity"], record["reason"]) == ("error", "key_ip_whitelist_mismatch")
+
+
+@pytest.mark.parametrize(
+    ("rights", "severity"),
+    [
+        ({"FiatP2P": ["FiatP2POrder"]}, "critical"),
+        ({"FiatBitPay": ["FaitPayOrder"]}, "critical"),
+        ({"FiatConvertBroker": ["FiatConvertBroker"]}, "critical"),
+        ({"BitCard": ["BitCard"]}, "critical"),
+        ({"Wallet": ["AccountTransfer"]}, "critical"),
+        ({"Spot": ["SpotTrade"]}, "error"),
+    ],
+    ids=["fiat-p2p", "fiat-bitpay", "fiat-convert", "card", "transfer", "spot"],
+)
+async def test_a_violation_is_critical_for_every_right_that_moves_funds(
+    rights: dict[str, list[str]], severity: str
+) -> None:
+    w = World(target(), info=facts(permissions={**BASE, **rights}))
+    await w.run()  # decision 12: fiat, card and transfer rights move funds, like a withdraw right
+    assert w.audit(VIOLATION)["severity"] == severity
+
+
+def test_a_violation_with_no_stored_key_names_the_account() -> None:
+    failure = VerificationFailure(Rule.WITHDRAW_PERMISSION, "a withdraw right")
+    refused = VerificationResult(False, failures=(failure,))
+    assert policy_violation(refused, key_id=None, account_id=ACCT) == {
+        "object_kind": "exchange_account", "object_id": str(ACCT), "outcome": "denied",
+        "severity": "critical", "reason": "key_withdraw_permission",
+        "after_state": {"rule": "key_withdraw_permission", "account_id": str(ACCT)},
+    }  # fmt: skip
+
+
+async def test_a_refused_violation_record_withholds_neither_the_rule_code_nor_the_disarm() -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    w.refused = {VIOLATION}
+    with capture_logs() as logs:
+        await w.run()
+    assert w.kinds() == [k for k in WITHDRAW_FAILURE if k != ("audit", VIOLATION)]
+    refused = {"event": "key_selfcheck_record_failed", "key_id": str(KEY), "error": "RuntimeError"}
+    assert {**refused, "log_level": "error"} in logs
+
+
+@pytest.mark.parametrize(
+    ("hang", "started"),
+    [
+        ({"emit"}, [TESTED, "disable_trading", DISABLED, VIOLATION]),
+        ({TESTED}, [TESTED, "disable_trading", DISABLED, "mark_disarm_audited", VIOLATION]),
+        (
+            {VIOLATION},
+            [TESTED, "record_error", "disable_trading", DISABLED, "mark_disarm_audited", VIOLATION],
+        ),
+    ],
+    ids=["every-record", "account-tested", "violation-record"],
+)
+async def test_a_hung_audit_sink_delays_the_force_disable_by_one_bound_at_most(
+    hang: set[str], started: list[str]
+) -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW), timeout_s=0.0)
+    w.hang = hang
+    with capture_logs() as logs:
+        await w.run()
+    # C-2.8: at most the write-ahead record's bound before the disarm; the violation record last
+    assert w.started[w.started.index("aclose") + 1 :] == started
+    assert (w.armed[ACCT], w.disarms[ACCT][:2]) == (False, ["key_withdraw_permission", NOW])
+    cut = {"event": "key_selfcheck_record_failed", "key_id": str(KEY), "error": "TimeoutError"}
+    assert {**cut, "log_level": "error"} in logs  # a cut record is logged, never raised
+    assert sample(w, "cv_key_selfcheck_runs_total", result="failed") == 1.0  # the check completed
+
+
+async def test_a_boot_pass_cut_while_the_violation_record_hangs_leaves_the_disarm_done() -> None:
+    # A zero boot bound under a ten-second step bound: only the boot deadline cuts the hung record.
+    w = World(target(), info=facts(permissions=WITHDRAW), sleep=Ticks(0), boot_deadline_s=0.0)
+    w.hang.add(VIOLATION)
+    with capture_logs() as logs:
+        await within(w.check.start())
+    await within(w.check.stop())
+    assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
+    assert (w.gate.reason_code, w.armed[ACCT]) == (FAILED, False)
+    assert w.disarms[ACCT] == ["key_withdraw_permission", NOW, NOW]  # its record sent and marked
+
+
+async def test_a_verdict_with_several_failures_records_and_disarms_its_first_rule() -> None:
+    w = World(target(), info=facts(permissions={**WITHDRAW, "Spot": ["SpotTrade"]}))
+    await w.run()
+    result, rule = w.check.results[KEY].result, "key_withdraw_permission"
+    assert result is not None
+    assert [f.rule.value for f in result.failures] == [rule, "key_permission_not_allowed"]
+    violation = w.audit(VIOLATION)
+    reasons = (w.audit(TESTED)["reason"], violation["reason"], violation["after_state"]["rule"])
+    assert (reasons, w.disarms[ACCT][0]) == ((rule,) * 3, rule)
+
+
+def test_the_policy_violation_action_is_registered() -> None:
+    assert validate_action(VIOLATION) == VIOLATION
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [WithdrawPermissionRejected("key_withdraw_permission"), SnapshotInvalid("snapshot_invalid")],
+    ids=["fund-right", "malformed-snapshot"],
+)
+async def test_a_borrow_the_c28_recheck_refuses_is_a_withdraw_verdict_not_check_error(
+    refusal: Exception,
+) -> None:
+    w = World(target(), info=refusal)
+    w.check._calls = lambda key, uid: JudgedCalls(ExchangeBybitService(), w.calls(key, uid))
+    await w.run()  # the wiring's judging, as deployed, between M2's refusal and the job
+    assert (w.kinds(), w.check.results[KEY].code) == (WITHDRAW_FAILURE, "key_withdraw_permission")
+    assert (w.armed[ACCT], w.audit(VIOLATION)["severity"]) == (False, "critical")
+
+
+async def test_a_code_the_disarm_check_refuses_is_replaced_and_never_blocks_the_disarm() -> None:
+    w = World(target())
+    with capture_logs() as logs:
+        await within(w.check._disarm(PolicyDisarm(ACCT, "Key-Withdraw-Permission", NOW)))
+    assert (w.armed[ACCT], w.disarms[ACCT][0]) == (False, "key_policy_violation")
+    replaced = {"event": "key_selfcheck_disarm_code_replaced", "account_id": str(ACCT)}
+    assert {**replaced, "log_level": "error"} in logs
+
+
+async def test_a_mark_that_finds_the_disarm_no_longer_owed_is_logged() -> None:
+    w = World(target(armed=False))
+    w.disarms[ACCT] = ["key_withdraw_permission", NOW, None]  # disarmed again after this one
+    with capture_logs() as logs:
+        await within(w.check._settle(PolicyDisarm(ACCT, "key_withdraw_permission", NOW - HOUR)))
+    unchanged = {"event": "key_selfcheck_disable_mark_unchanged", "account_id": str(ACCT)}
+    assert ({**unchanged, "log_level": "error"} in logs, w.disarms[ACCT][2]) == (True, None)

@@ -22,6 +22,9 @@ credential_borrow_seconds = Histogram(
 credential_borrow_total = Counter(
     "cv_credential_borrow_total", "Credential borrows.", labelnames=("stage", "result")
 )
+credential_candidate_sign_total = Counter(
+    "cv_credential_candidate_sign_total", "Candidate-key signings.", labelnames=("stage", "result")
+)
 credential_rewrap_rows_total = Counter("cv_credential_rewrap_rows_total", "DEKs re-wrapped.")
 dek_cache_hits_total = Counter("cv_dek_cache_hits_total", "Unwrapped-DEK cache hits.")
 credential_touch_failures_total = Counter(
