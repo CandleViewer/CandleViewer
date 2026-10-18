@@ -28,6 +28,7 @@ from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody, cv_ws_resync_total
+from candleviewer.ws.topics import FAMILIES
 from tests.unit.ws._seq_support import ACC_A, Book, Clock, Conn, Source
 from tests.unit.ws.test_machines import OID, ON_A, _attach, _payload
 from tests.unit.ws.test_pipeline_outbound import _BOOK, _MARK, _counter
@@ -48,6 +49,8 @@ _BODIES: dict[str, dict[str, Any]] = {
 }
 #: A private family that is not `never_throttled` (only `orders` and `executions` are).
 _POSITIONS = {"ch": "positions", "opts": {"exchange_account_ids": [str(ACC_A)]}}
+#: Every `never_throttled` family, read from the registry so a third one is flagged as added.
+_NEVER_THROTTLED: Final = sorted(f.family for f in FAMILIES.values() if f.never_throttled)
 _HELD: Final[SnapReason] = "upstream_reconnect"  # what a flushed or woken one awaits here
 _Pair = list[tuple[Conn, Subscription]]
 
@@ -377,6 +380,55 @@ def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_ev
         ("ws delta failed", "book", "warning", 0),
         (*snap, 2), (*orders_line, "error", None), (*positions_line, 2),
     ]  # fmt: skip
+
+
+def test_the_log_window_is_fixed_so_a_failure_that_repeats_is_never_starved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The interval runs from the line that opened it, whatever it holds back: a build that fails
+    every 0.7 s (of a 1 s interval) logs at t = 0 and at t = 1.4, with `suppressed` 0, then 1 (the
+    failure at 0.7), and the failure at 2.1 falls in the window the second line opened, to 2.4. A
+    window that each held-back failure pushed out would log once, at t = 0, and never again; one
+    that began where the last ended, not at the line, would end at 2.0 and log again at t = 2.1."""
+    clock = Clock()
+    hub = SequencingHub(clock=clock)
+    (bad, book), _ = _pair(hub)
+    book.snapshot_pending, book.pending_reason = True, _HELD
+    bad.emitter.cache.invalidate(_BOOK)
+    monkeypatch.setattr(bad.emitter.source, "build", _raises)
+    every = 0.7 * sequencing.FAILURE_LOG_INTERVAL_S  # no step on a window's edge: 1.0, 2.0, 2.4
+    lines: list[tuple[float, int]] = []
+    with capture_logs() as logs:
+        for step in range(4):  # t = 0, 0.7, 1.4, 2.1
+            clock.now, seen = step * every, len(logs)
+            hub.flush_pending()
+            failed = [e for e in logs[seen:] if e["event"] == "ws snapshot failed"]
+            lines += [(round(clock.now, 1), e["suppressed"]) for e in failed]
+    assert lines == [(0.0, 0), (round(2 * every, 1), 1)]
+
+
+@pytest.mark.parametrize("family", _NEVER_THROTTLED)
+def test_a_never_throttled_family_logs_every_failure_at_error_and_holds_none_back(
+    family: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`orders` is not the only family the interval spares: each `never_throttled` one, as the
+    registry has it, logs every failure at `error` with no `suppressed`, three in one instant
+    leaving three lines."""
+    hub, source = SequencingHub(clock=Clock()), Source()
+    source.bodies[family] = SnapshotBody({family: []})
+    conn = Conn(source)
+    hub.register(conn.authz, conn.emitter)
+    # A family with other admission options fails `Conn.sub`'s assert here, on purpose: flagged.
+    _, sub = conn.sub({"ch": family, "opts": {"exchange_account_ids": [str(ACC_A)]}})
+    conn.take()
+    sub.snapshot_pending, sub.pending_reason = True, _HELD
+    conn.emitter.cache.invalidate(sub.ch)
+    monkeypatch.setattr(source, "build", _raises)
+    with capture_logs() as logs:
+        for _ in range(3):
+            hub.flush_pending()
+    lines = [(e["event"], e["family"], e["log_level"], "suppressed" in e) for e in logs]
+    assert lines == [("ws snapshot failed", family, "error", False)] * 3
 
 
 def test_the_log_interval_is_a_second_and_the_default_clock_is_the_monotonic_one() -> None:

@@ -23,10 +23,10 @@ from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales
 from candleviewer.ws.binary import (
     BARS,
     BOOK_DELTA,
+    BOOK_SNAPSHOT,
     FLAG_COALESCED,
     FLAG_ESTIMATED,
     FLAG_REPLAY,
-    FOOTPRINT,
     TRADES,
     Frame,
     decode,
@@ -233,10 +233,14 @@ def test_a_merged_window_without_a_part_it_can_carry_leaves_structured(
 
 
 def test_a_kind_with_no_encoder_arm_leaves_structured(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A kind in `_BODY_KINDS` without its own `_encoded` arm leaves structured (#593)."""
-    monkeypatch.setattr("candleviewer.ws.coalescing._BODY_KINDS", {"footprint": FOOTPRINT})
+    """A kind in `_BODY_KINDS` without its own `_encoded` arm leaves structured, and never takes
+    another kind's arm. Book snapshot frames (kind 1) stand in for it: a window is built from
+    deltas, so that kind will never get an arm, unlike footprint and heatmap, which #593 and #605
+    give one."""
+    monkeypatch.setattr("candleviewer.ws.coalescing._BODY_KINDS", {"book": BOOK_SNAPSHOT})
     monkeypatch.setattr("candleviewer.ws.coalescing._book_delta", Mock(side_effect=AssertionError))
-    [emission] = _take("footprint", [_footprint(0), _footprint(60_000)])
+    snapshots: list[Update] = [(b, _VECTORS["book_snapshot"], m) for b, _, m in _WINDOWS["book"]()]
+    [emission] = _take("book", snapshots)
     assert (emission.part, emission.coalesced_count) == (None, 2)
 
 
