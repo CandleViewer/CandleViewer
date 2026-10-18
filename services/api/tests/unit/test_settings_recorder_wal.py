@@ -24,6 +24,28 @@ def test_absolute_dir_inside_the_data_dir_is_accepted(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("parquet_root", "data_dir"),
+    [
+        ("data/parquet", "data"),  # relative: from the working directory
+        ("elsewhere/../data/parquet", "data"),  # a `..` segment is collapsed
+        ("~/data/parquet", "home/data"),  # `~` is the user's home
+    ],
+)
+def test_the_data_dir_is_absolute_without_dot_dot_and_the_wal_anchors_in_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parquet_root: str, data_dir: str
+) -> None:
+    """SEC-BK7b-02: one derivation of the data dir for the WAL and the lost-jobs count."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    settings = Settings(parquet_root=parquet_root)
+    expected = (tmp_path / data_dir).resolve()
+    assert (settings.data_dir, Path(settings.recorder_wal_dir)) == (
+        expected,
+        expected / "recorder-wal",
+    )
+
+
+@pytest.mark.parametrize(
     ("wal", "message"),
     [
         ("relative/wal", "absolute"),
