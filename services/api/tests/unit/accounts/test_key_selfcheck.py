@@ -15,6 +15,7 @@ import asyncio
 import copy
 import inspect
 import json
+import math
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -37,11 +38,13 @@ from candleviewer.accounts.selfcheck import (
     UNAVAILABLE,
     KeySelfCheck,
     Outcome,
+    is_fresh,
 )
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.verification import (
     KeyRefused,
     Refusal,
+    Rule,
     VerificationInconclusive,
     VerificationPolicy,
 )
@@ -58,6 +61,8 @@ from candleviewer.exchange.bybit.key_info import (
 )
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.observability.health import HealthStatus
+from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
@@ -112,12 +117,13 @@ def probed() -> ProbeFacts:
 def target(
     env: str = "demo", armed: bool = True, age: timedelta = HOUR / 2, *, key: UUID = KEY,
     acct: UUID = ACCT, read_only: bool = False, uid: str = "1000001",
+    last_error: str | None = None, expires: datetime | None = None,
 ) -> SelfCheckTargetRow:  # fmt: skip
     account = ExchangeAccountRow(
         acct, "bybit", env, "main", uid, None, "fx", "accent.neutral", True, armed,
         "one_way", "cross", "UNIFIED", "USDT", None, None, 5, None, NOW, NOW, None,
     )  # fmt: skip
-    return SelfCheckTargetRow(key, read_only, NOW - age, account)
+    return SelfCheckTargetRow(key, read_only, NOW - age, account, last_error, expires)
 
 
 def inconclusive() -> VerificationInconclusive:
@@ -155,9 +161,11 @@ class World:
         self.gate.subscribe(lambda _on, code, _text: self.events.append(("latch", code)))
         if held is not None:  # another module's latch, held before the job runs
             self.gate.latch(reason_code=held, reason_text="held")
+        self.metrics = Metrics("demo")
+        register_r0(self.metrics)
         self.check = KeySelfCheck(
             self, self.calls, gate=self.gate, audit=self, env="demo", clock=lambda: self.now,
-            policy=VerificationPolicy(egress_ip=egress), timeout_s=timeout_s,
+            metrics=self.metrics, policy=VerificationPolicy(egress_ip=egress), timeout_s=timeout_s,
             key_deadline_s=key_deadline_s, interval_s=interval_s, sleep=sleep,
             boot_deadline_s=boot_deadline_s,
         )  # fmt: skip
@@ -727,7 +735,8 @@ async def test_a_hanging_write_never_undoes_the_failure_latch(step: str) -> None
 
 def test_the_overall_deadline_covers_every_bounded_step_of_a_check() -> None:
     check = World(timeout_s=25.0, key_deadline_s=15.0).check
-    assert check._deadline_s >= 15.0 + 6 * 25.0  # verify(), the close, five audit or store steps
+    # verify(); then the close, five audit or store steps and one step of margin
+    assert check._deadline_s == 15.0 + (1 + 5 + 1) * 25.0
 
 
 async def test_a_check_past_its_deadline_fails_closed() -> None:
@@ -736,6 +745,7 @@ async def test_a_check_past_its_deadline_fails_closed() -> None:
     w.hang.add("record_pass")
     await w.run()
     assert (w.gate.reason_code, w.of("pass")) == (UNAVAILABLE, [])
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0
 
 
 @pytest.mark.parametrize(
@@ -749,6 +759,7 @@ async def test_what_cannot_be_checked_fails_closed_without_judging_a_key(
     w = World(row, egress=egress)
     await w.run()
     assert (w.events, w.built, w.check.results) == ([("latch", UNAVAILABLE)], [], {})
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0
 
 
 @pytest.mark.parametrize("egress", [EGRESS, None], ids=["egress-ip", "no-egress-ip"])
@@ -788,6 +799,7 @@ async def test_an_unreadable_key_list_fails_closed_once_a_known_key_is_stale(
     w.fail, w.now = RuntimeError("database down"), NOW + elapsed
     await w.run()
     assert w.of("latch") == ([("latch", UNAVAILABLE)] if latched else [])
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0  # latched or not
 
 
 async def test_the_service_boots_the_check_before_serving_and_stops_the_job() -> None:
@@ -821,8 +833,23 @@ async def test_readyz_lists_a_failing_key_as_a_degraded_accounts_check() -> None
     async with serving(w) as svc:
         app.include_router(make_health_router(Settings(), accounts_health=svc.health))
         body = TestClient(app).get("/readyz").json()
-    accounts = {"name": "accounts", "ok": False, "detail": "1 stored key(s) fail the self-check"}
+    detail = "1 stored key(s) fail the self-check; 1 key(s) checked, oldest last pass 1800s ago"
+    accounts = {"name": "accounts", "ok": False, "detail": detail}
     assert (body["status"], body["checks"]) == ("degraded", [accounts])
+
+
+async def test_readyz_shows_the_key_count_and_the_oldest_last_pass_never_a_key_id() -> None:
+    w, app = World(target(), target(key=KEY2, acct=ACCT2, age=HOUR * 2 / 3)), FastAPI()
+    w.infos[KEY2] = inconclusive()  # inside its window: no latch, its last pass stays
+    async with serving(w) as svc:
+        app.include_router(make_health_router(Settings(), accounts_health=svc.health))
+        body = TestClient(app).get("/readyz").json()
+    ages = "2 key(s) checked, oldest last pass 2400s ago"  # an anonymous route (SR-010)
+    detail = f"no accounts store (fake backend): row gauges unset; {ages}"
+    assert (body["status"], body["checks"]) == (
+        "ok",
+        [{"name": "accounts", "ok": True, "detail": detail}],
+    )
 
 
 async def test_failing_counts_a_snapshot_when_the_loop_stores_a_result_mid_count() -> None:
@@ -846,7 +873,7 @@ async def test_failing_counts_a_snapshot_when_the_loop_stores_a_result_mid_count
     assert set(results) == {KEY, KEY2}  # the store did happen during the count
 
 
-async def test_the_app_lists_its_started_accounts_module_on_readyz_ok_with_no_detail() -> None:
+async def test_the_app_lists_its_started_accounts_module_on_readyz_ok() -> None:
     app = create_app(Settings(environment=Environment.DEMO))  # fake backend: no self-check
     ctx = app.state.app_context
     await within(ctx.accounts.start(ctx))
@@ -854,8 +881,11 @@ async def test_the_app_lists_its_started_accounts_module_on_readyz_ok_with_no_de
         body = TestClient(app, client=("127.0.0.1", 50000)).get("/readyz").json()
     finally:
         await within(ctx.accounts.stop(1.0))
-    accounts = {"name": "accounts", "ok": True, "detail": ""}
-    assert (body["status"], body["checks"]) == ("ok", [accounts])
+    detail = "no accounts store (fake backend): row gauges unset"  # no self-check: no key ages
+    assert (body["status"], body["checks"]) == (
+        "ok",
+        [{"name": "accounts", "ok": True, "detail": detail}],
+    )
 
 
 async def test_health_stays_degraded_once_a_failed_key_passes_again() -> None:
@@ -955,3 +985,243 @@ async def test_a_failed_release_is_logged_and_stop_still_completes() -> None:
         await within(svc.stop(1.0))
     failed = {"event": "key_selfcheck_release_failed", "error": "OSError", "log_level": "warning"}
     assert failed in logs
+
+
+def sample(w: World, name: str, **labels: str) -> float | None:
+    return w.metrics.registry.get_sample_value(name, {"env": "demo", **labels})
+
+
+@pytest.mark.parametrize(
+    ("interval_s", "age", "fresh"),
+    [
+        (3600.0, HOUR + timedelta(minutes=15), True),
+        (3600.0, HOUR + timedelta(minutes=15, microseconds=1), False),
+        (600.0, timedelta(minutes=25), True),
+        (600.0, timedelta(minutes=25, microseconds=1), False),
+    ],
+)
+def test_a_key_is_fresh_for_one_interval_plus_fifteen_minutes(
+    interval_s: float, age: timedelta, fresh: bool
+) -> None:
+    assert is_fresh(NOW - age, now=NOW, interval_s=interval_s) is fresh
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "latched"),
+    [(timedelta(minutes=35), False), (timedelta(minutes=35, seconds=1), True)],
+)
+async def test_the_watchdog_latches_stale_once_a_last_pass_is_past_its_window(
+    elapsed: timedelta, latched: bool
+) -> None:
+    w = World(target(), target(key=KEY2, acct=ACCT2, age=HOUR * 2 / 3))
+    w.infos[KEY2] = inconclusive()  # its last pass stays 40 minutes old; KEY passes at NOW
+    await w.run()  # the job runs no more
+    w.now = NOW + elapsed
+    with capture_logs() as logs:
+        w.check.watch()
+        w.check.watch()  # a repeat notifies nobody
+    stale = [log["key_ids"] for log in logs if log["event"] == "key_selfcheck_stale"]
+    assert (w.of("latch"), stale) == (([("latch", STALE)], [[str(KEY2)]]) if latched else ([], []))
+
+
+async def test_the_row_gauge_loop_runs_the_watchdog_while_the_jobs_loop_is_stalled() -> None:
+    w, ticks = World(target(), sleep=Ticks(0)), Ticks(0)  # the job's loop never re-checks
+    svc = AccountsService(sleep=ticks)
+    svc.attach_key_selfcheck(w.check)
+    await within(svc.start(cast(AppContext, object())))  # the boot pass: a pass at NOW
+    w.now = NOW + HOUR + timedelta(minutes=16)
+    await within(ticks.blocked.wait())  # one pass of the row-gauge loop, its watchdog included
+    await within(svc.stop(1.0))
+    assert (w.gate.reason_code, len(w.of("pass"))) == (STALE, 1)
+
+
+async def test_the_watchdog_counts_one_missed_run_per_interval_past_the_grace() -> None:
+    w, counted = World(target()), []
+    await w.run()  # a run begins at NOW
+    with capture_logs() as logs:
+        for elapsed in (75 * 60 - 1, 75 * 60, 75 * 60, 135 * 60):
+            w.now = NOW + timedelta(seconds=elapsed)
+            w.check.watch()
+            counted.append(sample(w, "cv_key_selfcheck_missed_runs_total"))
+        await w.run()  # a run begins at 135 min: the count starts again from it
+        for elapsed in (135 * 60, 210 * 60):
+            w.now = NOW + timedelta(seconds=elapsed)
+            w.check.watch()
+            counted.append(sample(w, "cv_key_selfcheck_missed_runs_total"))
+    assert counted == [0, 1, 1, 2, 2, 3]
+    runs = [e for e in logs if e["event"] == "key_selfcheck_run_missed"]
+    missed = [(e["log_level"], e["missed"]) for e in runs]
+    assert missed == [("error", 1), ("error", 2), ("error", 1)]  # none inside the grace
+
+
+async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:
+    w = World(target())
+    w.now = NOW + HOUR * 3  # no run has begun, so none is missed yet
+    w.check.watch()
+    assert (w.events, sample(w, "cv_key_selfcheck_missed_runs_total")) == ([], 0.0)
+
+
+@pytest.mark.parametrize(
+    ("last_error", "info", "latch", "outcome"),
+    [
+        ("key_withdraw_permission", inconclusive(), FAILED, "failed"),
+        ("key_withdraw_permission", None, None, "passed"),  # only a pass ends it
+        ("rate_limited", inconclusive(), None, "inconclusive"),  # no verdict: no failure
+    ],
+    ids=["no-verdict-keeps-it", "a-pass-ends-it", "not-a-rule"],
+)
+async def test_a_rule_code_in_the_store_is_a_standing_failure_after_a_restart(
+    last_error: str, info: object, latch: str | None, outcome: str
+) -> None:
+    w = World(target(last_error=last_error), info=info)  # a new process: nothing in memory
+    await w.run()
+    check = w.check.results[KEY]
+    assert (w.gate.reason_code, check.outcome, w.check.failing) == (
+        latch,
+        outcome,
+        int(bool(latch)),
+    )
+
+
+async def test_a_failure_survives_a_restart_whose_boot_check_has_no_verdict() -> None:
+    before = World(target(), info=facts(permissions=WITHDRAW))
+    await before.run()
+    [(_, _, rule)] = before.of("error")  # `last_error_code`, as the store keeps it
+    after = World(target(last_error=rule), info=inconclusive())
+    with capture_logs() as logs:
+        await after.run()
+    check = after.check.results[KEY]
+    assert (after.gate.reason_code, check.code, after.of("error")) == (FAILED, rule, [])
+    restored = {"key_id": str(KEY), "rules": [rule], "restored": True, "log_level": "critical"}
+    assert {"event": "key_selfcheck_failed", **restored} in logs
+    assert sample(after, "cv_keys_failing_policy", rule=rule) == 1.0
+
+
+async def test_a_restored_failure_keeps_its_stored_last_pass_and_so_its_age() -> None:
+    w = World(target(last_error="key_withdraw_permission"), info=inconclusive())
+    await w.run()  # a new process: the failure is restored; its last pass is 30 minutes old
+    w.now = NOW + timedelta(minutes=10)
+    w.check.watch()
+    assert (w.check.results[KEY].last_pass_at, w.check.ages()) == (
+        NOW - HOUR / 2,
+        "1 key(s) checked, oldest last pass 2400s ago",
+    )
+    assert sample(w, "cv_key_verification_age_seconds") == 2400.0
+
+
+async def test_a_run_counts_each_verdict_by_result_and_rule() -> None:
+    w = World(target(), target(key=KEY2, acct=ACCT2))
+    w.infos[KEY2] = facts(permissions=WITHDRAW)
+    await w.run()
+    w.info = inconclusive()
+    await w.run()
+    counts = [
+        sample(w, "cv_key_verification_total", result=result, rule=rule)
+        for result, rule in (
+            ("passed", "none"), ("failed", "key_withdraw_permission"), ("inconclusive", "none"),
+        )
+    ]  # fmt: skip
+    assert counts == [1.0, 2.0, 1.0]
+    failing = {rule.value: sample(w, "cv_keys_failing_policy", rule=rule.value) for rule in Rule}
+    assert failing == {rule.value: float(rule is Rule.WITHDRAW_PERMISSION) for rule in Rule}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "fail", "result"),
+    [
+        ({}, None, "passed"),
+        ({"info": facts(permissions=WITHDRAW)}, None, "failed"),
+        ({"info": inconclusive()}, None, "inconclusive"),
+        ({}, RuntimeError("database down"), "error"),
+        ({"egress": None}, None, "error"),
+    ],
+    ids=["passed", "failed", "inconclusive", "key-list", "no-egress-ip"],
+)
+async def test_each_run_is_counted_by_its_result(
+    kwargs: dict[str, Any], fail: Exception | None, result: str
+) -> None:
+    w = World(target(), **kwargs)
+    w.fail = fail
+    await w.run()
+    assert sample(w, "cv_key_selfcheck_runs_total", result=result) == 1.0
+
+
+async def test_each_key_check_is_timed_on_the_injected_monotonic_clock() -> None:
+    w = World(target())
+    w.check._monotonic = iter([100.0, 102.5]).__next__
+    await w.run()
+    histogram = [
+        sample(w, f"cv_key_verification_seconds_{part}", **labels)
+        for part, labels in (("count", {}), ("sum", {}), ("bucket", {"le": "2.0"}))
+    ]
+    assert histogram == [1.0, 2.5, 0.0]
+
+
+@pytest.mark.parametrize(
+    ("expires", "seconds"),
+    [
+        ((NOW + timedelta(days=30), NOW + timedelta(days=7)), 7 * 86400 - 600.0),
+        ((None,) * 2, math.inf),
+    ],
+)
+async def test_the_watchdog_publishes_the_oldest_last_pass_and_the_soonest_expiry(
+    expires: tuple[datetime | None, datetime | None], seconds: float
+) -> None:
+    second = target(key=KEY2, acct=ACCT2, age=HOUR * 2 / 3, expires=expires[1])
+    w = World(target(expires=expires[0]), second)
+    w.infos[KEY2] = inconclusive()  # its last pass stays 40 minutes old
+    await w.run()
+    w.now = NOW + timedelta(minutes=10)
+    with capture_logs() as logs:
+        w.check.watch()
+    expiry = sample(w, "cv_key_soonest_expiry_seconds")
+    assert (sample(w, "cv_key_verification_age_seconds"), expiry) == (3000.0, seconds)
+    ages = {"ages": {str(KEY): 600.0, str(KEY2): 3000.0}, "log_level": "debug"}  # each key's
+    assert {"event": "key_selfcheck_ages", **ages} in logs
+
+
+@pytest.mark.parametrize(("held", "latch"), [(None, UNAVAILABLE), (KEK, KEK)], ids=["job", "kek"])
+async def test_a_dead_watchdog_fails_closed_and_reads_degraded_with_no_accounts_store(
+    held: str | None, latch: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken() -> None:
+        raise KeyError("cv_key_verification_age_seconds")  # a facade missing a series
+
+    w = World(target(), held=held, sleep=Ticks(0))
+    monkeypatch.setattr(w.check, "watch", broken)
+    with capture_logs() as logs:
+        async with serving(w) as svc:
+            assert svc._task is not None
+            await within(asyncio.wait({svc._task}))  # its done-callback runs before this returns
+            status = svc.health().status
+    assert (w.gate.reason_code, status) == (latch, HealthStatus.DEGRADED)
+    assert {"event": "key_selfcheck_watchdog_died", "log_level": "error"} in logs
+
+
+async def test_a_clean_stop_of_the_watchdog_loop_latches_nothing() -> None:
+    w, ticks = World(target(), sleep=Ticks(0)), Ticks(0)
+    svc = AccountsService(sleep=ticks)
+    svc.attach_key_selfcheck(w.check)
+    await within(svc.start(cast(AppContext, object())))  # the boot pass: a pass at NOW
+    await within(ticks.blocked.wait())  # one pass of the row-gauge loop, its watchdog included
+    task = svc._task
+    await within(svc.stop(1.0))  # its done-callback runs before this returns
+    assert task is not None and task.cancelled()  # stopped, not dead: no watchdog died
+    assert (w.gate.reason_code, w.of("latch")) == (None, [])
+
+
+@pytest.mark.parametrize("series", ["cv_key_verification_seconds", "cv_key_verification_total"])
+async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
+    series: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w = World(target(), info=facts(permissions=WITHDRAW))
+    real = w.metrics.get
+
+    def get(name: str) -> BoundedMetric:
+        if name == series:
+            raise KeyError(name)  # a facade missing this series
+        return real(name)
+
+    monkeypatch.setattr(w.metrics, "get", get)
+    await w.run()
+    assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)

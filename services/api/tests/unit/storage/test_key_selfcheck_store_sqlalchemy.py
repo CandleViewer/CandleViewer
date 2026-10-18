@@ -29,7 +29,8 @@ from tests.unit.credentials_m2._write_once import writes_to
 T = datetime(2026, 10, 16, tzinfo=UTC)
 KEY, ACCT = UUID(int=11), UUID(int=1)
 ROW = {
-    "key_id": str(KEY), "read_only": False, "verified_at": T, "id": str(ACCT),
+    "key_id": str(KEY), "read_only": False, "verified_at": T, "last_error_code": "key_expired",
+    "expires_at": T, "id": str(ACCT),
     "exchange": "bybit", "env": "live", "kind": "main", "exchange_uid": "1",
     "parent_account_id": None, "label": "a", "colour_token": "c", "is_enabled": True,
     "trading_enabled": True, "position_mode": "one_way", "margin_mode": "cross",
@@ -72,6 +73,7 @@ async def test_targets_are_read_for_the_bound_environment_only() -> None:
     rel = _Rel([ROW, {**ROW, "key_id": str(UUID(int=12)), "parent_account_id": str(ACCT)}])
     first, second = await _store(rel, "live").targets()
     assert (first.key_id, first.read_only, first.verified_at) == (KEY, False, T)
+    assert (first.last_error_code, first.expires_at) == ("key_expired", T)  # decision 3, SR-034
     assert (first.account.id, first.account.trading_enabled, second.account.parent_account_id) == (
         ACCT, True, ACCT,
     )  # fmt: skip
@@ -133,7 +135,9 @@ def test_statements_write_only_the_verification_columns() -> None:
     assert passed.targets == {
         "permission_snapshot", "permission_snapshot_at", "can_trade", "read_only",
         "ip_whitelist", "ip_whitelist_verified_at", "expires_at", "updated_at",
+        "last_error_code", "last_error_at",
     }  # fmt: skip
+    assert "last_error_code = NULL, last_error_at = NULL" in mod._PASS.text  # a pass clears it
     assert error.targets == {"last_error_code", "last_error_at", "updated_at"}
     [disable] = writes_to(mod._DISABLE.text, "exchange_accounts")
     assert disable.targets == {

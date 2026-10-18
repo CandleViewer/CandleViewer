@@ -112,10 +112,10 @@ def make_health_router(
         # E27-T03: a failing stored key or a latched self-check; E27-T04: an account health loop
         # that ended or keeps failing
         if accounts_health is not None:
-            rep = accounts_health()
+            rep = accounts_health()  # its detail: the key count and oldest last pass, no key id
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
-                checks.append(ReadyCheck(name="accounts", ok=ok, detail="" if ok else rep.detail))
+                checks.append(ReadyCheck(name="accounts", ok=ok, detail=rep.detail))
         degraded = any(not c.ok for c in checks)
         return ReadinessResponse(
             status="degraded" if degraded else "ok",

@@ -19,7 +19,10 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
 `key_selfcheck_wiring` attaches on the real backend. `start()` awaits its bounded boot assertion,
 so it ends before the app serves, `stop()` stops its loop and then releases what it holds (its
 Postgres pool), and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed
-latch or its loop has ended; `/readyz` shows that as a failing `accounts` check.
+latch or its loop has ended; `/readyz` shows that as a failing `accounts` check. The refresh loop
+also runs the job's freshness watchdog (`KeySelfCheck.watch`, SR-E27-18), so a stalled job is caught
+by a task it does not own; if that loop dies the job fails closed and `health()` reads DEGRADED.
+`health()` adds the key count and the oldest last pass for `/readyz`, never a key id (decision 13).
 
 `attach_account_health()` takes the feed of the running per-account health and wallet cache
 (E27-T04, #837), which `create_app` attaches on both backends (`account_health_wiring`). It is what
@@ -67,13 +70,6 @@ _MODULE: Final = "accounts"
 def logger() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
-
-
-def _log_loop_exit(task: asyncio.Task[None]) -> None:
-    """Done-callback (AGENTS.md §5.2): logs, and so retrieves, the error that ended the loop."""
-    error = None if task.cancelled() else task.exception()
-    if error is not None:
-        logger().error("accounts_row_gauges_loop_died", error=type(error).__name__)
 
 
 class AccountHealthFeed(Protocol):
@@ -158,9 +154,9 @@ class AccountsService:
         self._started = True
         if self._selfcheck is not None:
             await self._selfcheck.start()
-        if self._counts is not None and self._task is None:
+        if (self._counts is not None or self._selfcheck is not None) and self._task is None:
             self._task = spawn(self._loop(), name="accounts-row-gauges")
-            self._task.add_done_callback(_log_loop_exit)
+            self._task.add_done_callback(self._loop_exit)
 
     async def stop(self, grace_s: float) -> None:
         """Stop the key self-check's loop and release what it holds (bounded, never raised),
@@ -206,14 +202,28 @@ class AccountsService:
         self._last_ok = self._clock()
         return True
 
+    def _loop_exit(self, task: asyncio.Task[None]) -> None:
+        """Done-callback (AGENTS.md §5.2): logs, and so retrieves, the error that ended the loop.
+        The key watchdog died with it, so the self-check fails closed (SR-E27-18)."""
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            logger().error("accounts_row_gauges_loop_died", error=type(error).__name__)
+            if self._selfcheck is not None:
+                self._selfcheck.watch_ended()
+
     async def _loop(self) -> None:
         while True:
             await self.refresh_once()
+            if self._selfcheck is not None:
+                self._selfcheck.watch()
             await self._sleep(self._interval_s)
 
     def health(self) -> HealthReport:
-        """Synchronous; reports the last refresh age, never touches the store."""
+        """Synchronous; reports the last refresh age, the stored-key count and the oldest last
+        pass, never touches the store."""
         status, detail = self._health()
+        ages = self._selfcheck.ages() if self._selfcheck is not None and self._started else ""
+        detail = f"{detail}; {ages}" if ages else detail
         return HealthReport(module=_MODULE, status=status, detail=detail)
 
     def _health(self) -> tuple[HealthStatus, str]:
@@ -223,10 +233,10 @@ class AccountsService:
             return HealthStatus.DEGRADED, fault
         if self._health_feed is not None and (fault := self._health_feed.fault) is not None:
             return HealthStatus.DEGRADED, fault
+        if self._task is not None and self._task.done():  # before a first success, too
+            return HealthStatus.DEGRADED, "row gauge loop exited"  # the key watchdog's, too
         if self._counts is None:
             return HealthStatus.OK, "no accounts store (fake backend): row gauges unset"
-        if self._task is not None and self._task.done():  # before a first success, too
-            return HealthStatus.DEGRADED, "row gauge loop exited"
         age = None if self._last_ok is None else self._clock() - self._last_ok
         since = "never" if age is None else f"{age:.0f}s ago"
         if self._failures:

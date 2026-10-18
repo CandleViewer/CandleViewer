@@ -33,29 +33,42 @@ a weaker code), so a repeat notifies nobody. Every external await is bounded: a 
 a refused one (any latch due came first). Each key's standing result is kept with its time for
 display (US-ACCT-003 NFR).
 
-Restarts: the latch and the standing results live in memory, so a restart forgets a standing
-failure. The boot check judges the key afresh: one that is inconclusive inside the window latches
-nothing. What was written persists: `last_error_*`, the verified columns and a per-account disarm
-(`trading_enabled` false, with its rule code and time). A boot check does not yet read a rule code
-in `last_error_code` as a standing failure (decision 3 on #836, slice 2c1). A disarm whose record
+Restarts: the latch and the standing results live in memory. A rule code found in
+`last_error_code` for a key the job holds no result for is a standing failure (decision 3 on #836):
+a check with no verdict keeps it in force, logs it critical and latches again, and only a pass,
+whose write clears `last_error_*`, ends it. The code follows its write-ahead `account.tested`, so
+one double fault remains: a failure whose record or code write was refused, then a restart whose
+boot check has no verdict, latches nothing for that key until its last pass leaves the window (at
+most one interval plus 15 minutes). The account stays disarmed only if its disarm committed. The
+disarm waits for that record and that code (at most two bounds, one when only the audit sink
+hangs), so a stop or the boot deadline inside that wait, or a store fault that refuses the disarm
+too, leaves the account armed until the window ends. The verified columns and a committed disarm
+(`trading_enabled` false, with its rule code and time) persist too. A disarm whose record
 is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
 checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
 `record_id`), so a crash between the record and its mark re-sends it once: a duplicate, never a
 loss. A record sent but not yet marked is kept in memory, so a failed mark is retried alone.
 
-Not here yet (#836 slice 2c, SR-E27-18): the freshness check independent of this job (at order
-admission or by a watchdog), its missed-run alert and the age metric. Until then a stalled job
-trips nothing by itself. `key_selfcheck_wiring` builds the job on the real backend.
+Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admission (#837 W3).
+`watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
+minute, so a job that stalls or dies still latches `STALE` once a key's last pass is past its
+window; if that loop dies, `watch_ended()` latches `UNAVAILABLE`. It counts missed runs and
+publishes the oldest key's age and the soonest expiry. `/readyz` is anonymous (SR-010), so it gets
+the key count and the oldest age only (`ages()`, no key id); each key's age goes to the debug log,
+never to a series labelled by key (decision 13 on #836). `key_selfcheck_wiring` builds the job on
+the real backend.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -64,6 +77,7 @@ from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.verification import (
     KeyFacts,
     ProbeFacts,
+    Rule,
     VerificationInconclusive,
     VerificationPolicy,
     VerificationResult,
@@ -76,6 +90,9 @@ from candleviewer.storage.repositories.accounts import (
     SelfCheckTargetRow,
     VerifiedKey,
 )
+
+if TYPE_CHECKING:
+    from candleviewer.observability.metrics import Metrics
 
 #: C-12.2: withdrawal rights and the allowlist are re-checked at least hourly.
 MAX_INTERVAL_S: Final = 3600.0
@@ -114,6 +131,8 @@ _REASON_TEXT: Final = {
 _RANK: Final = {UNAVAILABLE: 0, STALE: 0, FAILED: 1}
 #: `last_error_code` holds a fixed code, never text: a rule, a `KeyProbeError` name or a job code.
 _CODE: Final = re.compile(r"[a-z0-9_]{1,40}")
+#: A verdict's codes: one found in `last_error_code` is a standing failure (decision 3 on #836).
+_RULES: Final = frozenset(rule.value for rule in Rule)
 
 Outcome = Literal["passed", "failed", "inconclusive"]
 Step = Callable[[], Awaitable[object]]
@@ -160,7 +179,8 @@ class KeyCheck:
     outcome: Outcome
     #: The failing rule (a verdict) or the inconclusive code; `None` on a pass.
     code: str | None
-    #: `None` when inconclusive: there was no verdict.
+    #: `None` when this process holds no verdict: an inconclusive check, or a failure restored from
+    #: its stored rule code after a restart (outcome `failed`, decision 3).
     result: VerificationResult | None
     last_pass_at: datetime
     #: The configured egress IP, for copying into the exchange's key whitelist.
@@ -181,6 +201,12 @@ def _facts(result: VerificationResult, now: datetime) -> dict[str, object]:
     }
 
 
+def is_fresh(last_pass_at: datetime, *, now: datetime, interval_s: float) -> bool:
+    """SR-E27-18: a key is green only while its last pass is at most one self-check interval plus
+    `FRESHNESS_GRACE` old; an inconclusive check never moves it."""
+    return now - last_pass_at <= timedelta(seconds=interval_s) + FRESHNESS_GRACE
+
+
 class KeySelfCheck:
     """The boot assertion plus the periodic loop over the environment's stored keys."""
 
@@ -194,11 +220,13 @@ class KeySelfCheck:
         policy: VerificationPolicy,
         env: str,
         clock: Callable[[], datetime],
+        metrics: Metrics,
         interval_s: float = MAX_INTERVAL_S,
         timeout_s: float = READ_TIMEOUT_S,
         key_deadline_s: float = KEY_DEADLINE_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         boot_deadline_s: float = BOOT_DEADLINE_S,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if not interval_s <= MAX_INTERVAL_S:
             raise ValueError("the key self-check runs at least hourly (C-12.2)")
@@ -209,7 +237,12 @@ class KeySelfCheck:
         self._interval_s, self._deadline_s = interval_s, key_deadline_s + CHECK_STEPS * timeout_s
         self._timeout_s, self._key_deadline_s = timeout_s, key_deadline_s
         self._boot_deadline_s = boot_deadline_s
-        self._window = timedelta(seconds=interval_s) + FRESHNESS_GRACE
+        self._m, self._monotonic = metrics, monotonic
+        #: The watchdog's inputs: when the last run began, the runs since counted as missed, and
+        #: the soonest expiry in the last key list read.
+        self._ran_at: datetime | None = None
+        self._missed = 0
+        self._expiry: datetime | None = None
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._booted = False
@@ -235,6 +268,41 @@ class KeySelfCheck:
         if self._task is not None and self._task.done():
             return "the stored-key self-check loop ended"
         return None
+
+    def watch(self) -> None:
+        """The freshness watchdog (SR-E27-18), run each minute by the accounts row-gauge loop:
+        `STALE` once a known key's last pass is past its window, one missed run per interval
+        past `FRESHNESS_GRACE` with no run begun, the oldest key's age and the soonest expiry."""
+        now, checks, interval = self._clock(), tuple(self.results.values()), self._interval_s
+        stale = [c for c in checks if not is_fresh(c.last_pass_at, now=now, interval_s=interval)]
+        if stale and self._latch(STALE):
+            logger().critical("key_selfcheck_stale", key_ids=[str(c.key_id) for c in stale])
+        ages = {str(c.key_id): (now - c.last_pass_at).total_seconds() for c in checks}
+        logger().debug("key_selfcheck_ages", ages=ages)  # per key: kept off the anonymous /readyz
+        self._m.get("cv_key_verification_age_seconds").child().set(max(ages.values(), default=0.0))
+        expiry = math.inf if self._expiry is None else (self._expiry - now).total_seconds()
+        self._m.get("cv_key_soonest_expiry_seconds").child().set(expiry)
+        if self._ran_at is not None:
+            due = (now - self._ran_at - FRESHNESS_GRACE) // timedelta(seconds=interval)
+            if due > self._missed:
+                logger().error("key_selfcheck_run_missed", missed=due)
+                self._m.get("cv_key_selfcheck_missed_runs_total").child().inc(due - self._missed)
+                self._missed = due
+
+    def watch_ended(self) -> None:
+        """The loop that runs `watch()` died: no watchdog vouches for freshness, so this fails
+        closed as the job's own loop does (AGENTS.md §5.2: no silent task)."""
+        logger().error("key_selfcheck_watchdog_died")
+        self._latch(UNAVAILABLE)
+
+    def ages(self) -> str:
+        """For the anonymous `/readyz` (SR-010): how many keys were checked and the oldest last
+        pass, never a key id or a per-key list (key metadata is keys:read, 04 §7.2.2 row 42)."""
+        now, checks = self._clock(), tuple(self.results.values())
+        if not checks:
+            return ""
+        oldest = max((now - c.last_pass_at).total_seconds() for c in checks)
+        return f"{len(checks)} key(s) checked, oldest last pass {oldest:.0f}s ago"
 
     async def start(self) -> None:
         """The boot assertion, awaited so it ends before the app serves, then the loop. The whole
@@ -266,43 +334,52 @@ class KeySelfCheck:
             logger().error("key_selfcheck_loop_died")
             self._latch(UNAVAILABLE)
 
-    def _latch(self, code: str) -> None:
+    def _latch(self, code: str) -> bool:
         """Latch the gate unless it holds an equal or more specific latch already: the published
         reason (and its remediation) is never buried, and a repeat notifies nobody."""
         held = self._gate.latched_reason_code
         if held is not None and (held not in _RANK or _RANK[held] >= _RANK[code]):
-            return
+            return False
         text = f"{_REASON_TEXT[code]} Order entry stays off until a restart passes the check."
         self._gate.latch(reason_code=code, reason_text=text)
+        return True
 
     async def run_once(self) -> None:
         """One pass over every target; only cancellation escapes. A key list that cannot be read
         fails closed at boot, and later once a known key is past its window."""
         async with self._lock:
             booting, self._booted = not self._booted, True
+            self._ran_at, self._missed = self._clock(), 0
             await self._settle_owed()
             try:
                 async with asyncio.timeout(self._timeout_s):
                     targets = await self._store.targets()
             except Exception as exc:  # TimeoutError included; cancellation propagates
                 logger().error("key_selfcheck_targets_failed", error=type(exc).__name__)
-                now = self._clock()
+                now, interval = self._clock(), self._interval_s
                 if booting or any(
-                    now - c.last_pass_at > self._window for c in self.results.values()
+                    not is_fresh(c.last_pass_at, now=now, interval_s=interval)
+                    for c in self.results.values()
                 ):
                     self._latch(UNAVAILABLE)
+                self._ran("error")
                 return
             self.results = {t.key_id: c for t in targets if (c := self.results.get(t.key_id))}
+            self._expiry = min(
+                (t.expires_at for t in targets if t.expires_at is not None), default=None
+            )
             if not targets:
                 logger().warning("key_selfcheck_no_keys", env=self._env)
             elif self._policy.egress_ip is None:
                 logger().critical("key_selfcheck_no_egress_ip", keys=len(targets))
                 self._latch(UNAVAILABLE)
+                self._ran("error")
                 return
+            outcomes: list[Outcome | None] = []
             for target in targets:
                 try:
                     async with asyncio.timeout(self._deadline_s):
-                        await self._check(target, self._clock())
+                        outcomes.append(await self._check(target, self._clock()))
                 except Exception as exc:  # a row the model refuses, or a check past its deadline
                     logger().error(
                         "key_selfcheck_unfinished",
@@ -310,35 +387,65 @@ class KeySelfCheck:
                         error=type(exc).__name__,
                     )
                     self._latch(UNAVAILABLE)
+                    outcomes.append(None)
+            if None in outcomes:
+                self._ran("error")
+            else:
+                self._ran(next((o for o in ("failed", "inconclusive") if o in outcomes), "passed"))
 
-    async def _check(self, target: SelfCheckTargetRow, now: datetime) -> None:
+    def _ran(self, result: str) -> None:
+        """Count the run, and publish each rule's failing keys (every rule, 0 when none)."""
+        self._m.get("cv_key_selfcheck_runs_total").labels(result).inc()
+        codes = [c.code for c in tuple(self.results.values()) if c.outcome == "failed"]
+        for rule in Rule:
+            self._m.get("cv_keys_failing_policy").labels(rule.value).set(codes.count(rule.value))
+
+    async def _check(self, target: SelfCheckTargetRow, now: datetime) -> Outcome | None:
         account = ExchangeAccount.model_validate(target.account, from_attributes=True)
         if account.env.value != self._env:  # the store is env-bound: a refused row (C-2.11)
             logger().error("key_selfcheck_env_mismatch", key_id=str(target.key_id))
             self._latch(UNAVAILABLE)
-            return
+            return None
+        started = self._monotonic()
         verdict = await self._verify(target, account, now)
+        elapsed, rule = self._monotonic() - started, "none"
+        outcome: Outcome
         if isinstance(verdict, str):
+            outcome = "inconclusive"
             await self._inconclusive(target, account.id, verdict, now)
         elif verdict.passed:
+            outcome = "passed"
             await self._passed(target, account.id, verdict, now)
         else:
+            outcome, rule = "failed", verdict.failures[0].rule.value
             await self._failed(target, account.id, verdict, now)
+        # Counted once the verdict is handled: a metrics fault never withholds a record or disarm.
+        self._m.get("cv_key_verification_seconds").child().observe(elapsed)
+        self._m.get("cv_key_verification_total").labels(outcome, rule).inc()
+        return outcome
 
     async def _inconclusive(
         self, target: SelfCheckTargetRow, account_id: UUID, code: str, now: datetime
     ) -> None:
-        """No verdict: nothing is disabled or refreshed, and the standing result stays."""
+        """No verdict: nothing is disabled or refreshed, and the standing result stays. A rule
+        code the store holds is a standing failure for a key with no result (decision 3)."""
         key, last_pass, egress = target.key_id, target.verified_at, self._policy.egress_ip
         logger().warning("key_selfcheck_inconclusive", key_id=str(key), code=code)
-        if now - last_pass > self._window:
-            self._latch(STALE)
         prior = self.results.get(key)
+        if prior is None and target.last_error_code in _RULES:
+            rule = target.last_error_code
+            prior = KeyCheck(key, account_id, now, "failed", rule, None, last_pass, egress)
+            self.results[key] = prior
+            logger().critical("key_selfcheck_failed", key_id=str(key), rules=[rule], restored=True)
+        if prior is not None and prior.outcome == "failed":
+            self._latch(FAILED)  # a failure stays in force, its rule on display, across restarts
+            return
+        if not is_fresh(last_pass, now=now, interval_s=self._interval_s):
+            self._latch(STALE)
         if prior is None or prior.outcome == "inconclusive":
             check = KeyCheck(key, account_id, now, "inconclusive", code, None, last_pass, egress)
             self.results[key] = check
-        if prior is None or prior.outcome != "failed":  # a failure keeps its rule on display
-            await self._write(key, lambda: self._store.record_error(key, code=code, at=now))
+        await self._write(key, lambda: self._store.record_error(key, code=code, at=now))
 
     async def _passed(
         self,
