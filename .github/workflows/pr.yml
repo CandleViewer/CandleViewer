@@ -27,10 +27,10 @@ on:
 permissions:
   contents: read
 
-# A push to a PR branch cancels the branch's last run. A merge group runs in its own group and is
-# never cancelled: the queue would read the cancelled check as a failure (#3433).
+# A push to a PR branch cancels the branch's last run. A merge group build has a group of its own
+# (its head commit) and is never cancelled: the queue would read that as a failure (#3433).
 concurrency:
-  group: pr-${{ github.event.merge_group.head_ref || github.head_ref }}
+  group: pr-${{ github.event.merge_group.head_sha || github.head_ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
