@@ -19,6 +19,7 @@ from typing import Any, get_args
 from uuid import UUID
 
 import certifi
+import httpx
 import pytest
 from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
@@ -416,13 +417,35 @@ async def test_the_handshake_check_takes_the_request_websockets_builds_for_the_s
     assert conn.aborts == 0
 
 
-def test_production_trusts_the_roots_the_signed_rest_client_trusts_and_no_other() -> None:
-    """C-2.7 and C-12.2, defence in depth: the signed `auth` travels under the signed REST
-    client's roots (httpx's default, certifi's bundle), never under the OS store, which may trust
-    a TLS-inspecting gateway's root (`test_key_ws_probe_real_socket.py` dials one)."""
-    tls, certifi_roots = key_ws_probe._TLS, ssl.create_default_context(cafile=certifi.where())
+def roots(tls: ssl.SSLContext) -> set[bytes]:
+    """A context's loaded roots, DER. A set: a handshake on a context re-sorts its store."""
+    return set(tls.get_ca_certs(binary_form=True))
+
+
+def certifi_roots() -> set[bytes]:
+    return roots(ssl.create_default_context(cafile=certifi.where()))
+
+
+def test_production_trusts_certifis_roots_and_no_other() -> None:
+    """C-2.7 and C-12.2, defence in depth: the signed `auth` travels under certifi's bundle only,
+    never under the OS store, which may trust a TLS-inspecting gateway's root
+    (`test_key_ws_probe_real_socket.py` dials one)."""
+    tls = key_ws_probe._TLS
     assert (tls.verify_mode, tls.check_hostname) == (ssl.CERT_REQUIRED, True)
-    assert tls.get_ca_certs() == certifi_roots.get_ca_certs()
+    assert roots(tls) == certifi_roots() != set()
+
+
+def test_production_keeps_certifis_roots_when_ssl_cert_dir_is_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """httpx's default context, the signed REST client's, takes `SSL_CERT_DIR` instead of
+    certifi's bundle when it is set and `SSL_CERT_FILE` is not (a directory's roots load only as
+    a handshake asks, so none show); the probe's, built again under that environment, keeps
+    certifi's. `SSL_CERT_FILE` is on a real socket (`test_key_ws_probe_real_socket.py`)."""
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path))
+    rest_default, probes = httpx.create_ssl_context(), key_ws_probe._probe_tls()
+    assert (roots(rest_default), roots(probes)) == (set(), certifi_roots())
 
 
 async def test_a_handshake_that_reached_another_stream_is_aborted_before_anything_is_signed(

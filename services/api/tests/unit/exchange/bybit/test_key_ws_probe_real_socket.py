@@ -18,6 +18,7 @@ from http import HTTPStatus
 from ipaddress import IPv4Address
 from pathlib import Path
 
+import httpx
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -234,21 +235,25 @@ async def test_a_reply_above_4096_bytes_is_refused_by_the_library_as_a_transport
     assert len(peer.frames) == 1
 
 
-async def test_a_root_only_the_os_store_trusts_never_sees_the_signed_auth(
+async def test_a_root_ssl_cert_file_names_never_sees_the_signed_auth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """C-2.7 and C-12.2, defence in depth: a TLS-inspecting gateway's root in the OS store (here
-    through `SSL_CERT_FILE`, which OpenSSL's default store reads) lets the library's default dial
-    finish its handshake; production's connector trusts certifi's roots only, so its handshake
-    fails before any frame."""
+    """C-2.7 and C-12.2, defence in depth: a TLS-inspecting gateway's root named by
+    `SSL_CERT_FILE` is trusted by OpenSSL's default store, which the library's default dial takes,
+    and by httpx's default context, the signed REST client's. The probe's context, built again
+    under that environment, ignores it and trusts certifi's bundle only, so its handshake fails
+    before any frame."""
     root, served = _issue(tmp_path)
     monkeypatch.setenv("SSL_CERT_FILE", str(root))
+    monkeypatch.setattr(key_ws_probe, "_TLS", key_ws_probe._probe_tls())
     peer = Peer()
     async with asyncio.timeout(_DEADLINE_S), peer.serving(served) as url:
-        async with connect(url):  # the OS store trusts the stream
+        async with connect(url):  # OpenSSL's default store trusts the stream
+            pass
+        async with connect(url, ssl=httpx.create_ssl_context()):  # so does httpx's default
             pass
         assert await probe(url) == FAILED
-    assert (peer.handshakes, peer.frames) == (1, [])
+    assert (peer.handshakes, peer.frames) == (2, [])
 
 
 async def test_a_proxy_the_environment_names_never_carries_the_dial(

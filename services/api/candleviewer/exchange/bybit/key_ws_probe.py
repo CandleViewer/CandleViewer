@@ -5,11 +5,12 @@ stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
 close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
 falls back to another host; production's connector follows no redirect either, so a 3xx is a
-`transport_error` and the signed `auth` reaches no other host (SR-040a); it trusts certifi's
-roots only, the signed REST client's default, and takes no proxy. One 5 s bound covers the
-dial, the signature and the reply; the socket is closed on every path under its own short bound,
-aborted if the peer never finishes the close, and a cancellation propagates. Diagnostic only: it
-enforces nothing (ruling 11 on #836).
+`transport_error` and the signed `auth` reaches no other host (SR-040a). It trusts certifi's
+bundle only, which httpx's default context loads when `SSL_CERT_FILE` and `SSL_CERT_DIR` are
+unset; it ignores both, the OS store and any proxy. One 5 s bound covers the dial, the signature
+and the reply; the socket is closed on every path under its own short bound, aborted if the peer
+never finishes the close, and a cancellation propagates. Diagnostic only: it enforces nothing
+(ruling 11 on #836).
 SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
 probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
 names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
@@ -33,7 +34,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
-import certifi
+import httpx
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -69,9 +70,17 @@ _TRANSPORT: Final = (OSError, WebSocketException)
 # nosemgrep: cv-obs-no-direct-getlogger reason=ws-stdlib-logger owner=@basiltt review=2027-03-25
 _SOCKET_LOG: Final = logging.getLogger(f"{__name__}.socket")
 _SOCKET_LOG.setLevel(logging.INFO)
-#: The roots the signed REST client trusts (httpx's default context, certifi's bundle), never the
-#: OS store, which may trust a TLS-inspecting gateway's root (C-2.7, C-12.2, defence in depth).
-_TLS: Final = ssl.create_default_context(cafile=certifi.where())
+
+
+def _probe_tls() -> ssl.SSLContext:
+    """certifi's bundle only, which httpx's default context, the signed REST client's, loads when
+    `SSL_CERT_FILE` and `SSL_CERT_DIR` are unset; this one ignores both. Never the OS store, which
+    may trust a TLS-inspecting gateway's root (C-2.7, C-12.2, defence in depth)."""
+    return httpx.create_ssl_context(verify=True, trust_env=False)
+
+
+#: Built once, at import: loading the bundle (a few ms) on every dial would hold the event loop.
+_TLS: Final = _probe_tls()
 
 
 class PrivateSocket(Protocol):
