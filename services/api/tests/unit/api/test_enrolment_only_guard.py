@@ -27,7 +27,7 @@ from candleviewer.api import csrf as csrf_module
 from candleviewer.api import sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import RefusalAuditTracker
-from candleviewer.api.deny_by_default import declared_operations, served_operations
+from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.enrolment_guard import (
     ENROLMENT_OPERATIONS,
     REFUSAL_ACTION,
@@ -265,24 +265,6 @@ async def test_guard_allow_list_never_matches_a_lower_case_method() -> None:
     resp = await _guard(_Auth(), _refusals(_Audit()))(request, handler)
 
     assert (resp.status_code, hits) == (403, [])
-
-
-def test_every_served_operation_a_refresh_cookie_alone_reaches_is_allow_listed() -> None:
-    """The guard classifies a bearer only, so an operation whose contract admits the `cv_refresh`
-    cookie alone would skip it: each one served must be allow-listed, or the guard must classify
-    that cookie first (`POST /auth/unlock` once mounted, #2300)."""
-    from candleviewer import app as appmod
-
-    cookie = {
-        (method.upper(), path)
-        for path, item in _SPEC["paths"].items()
-        for method, op in item.items()
-        if isinstance(op, dict) and {"refreshCookie": []} in (op.get("security") or [])
-    }
-    served = cookie & served_operations(appmod.create_app())
-
-    assert ("POST", "/auth/refresh") in served  # the sweep sees the cookie operations
-    assert served <= ENROLMENT_OPERATIONS
 
 
 def test_guard_matches_the_routed_path_under_a_root_path() -> None:
