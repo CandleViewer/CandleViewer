@@ -8,6 +8,7 @@ a bearer pass. No DB, no network (C-13.5).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from typing import Any
@@ -19,6 +20,7 @@ from jsonschema import Draft202012Validator
 from prometheus_client import REGISTRY
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
+from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_contract_subset, load_openapi_spec
 from candleviewer.api.idle_lock import (
@@ -27,6 +29,7 @@ from candleviewer.api.idle_lock import (
     idle_locked_problem,
     not_locked_problem,
     session_revoked_problem,
+    store_unavailable_problem,
     ungated_operations,
     unlock_invalid_problem,
 )
@@ -222,19 +225,48 @@ async def test_revoked_expired_unknown_and_missing_credentials_pass_to_the_route
     assert gate.reached == ["GET /a", "GET /b", "GET /c", "GET /d"]
 
 
-async def test_a_store_failing_under_the_check_passes_the_request_to_the_route(
-    gate: Gate, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """#3300: a `RuntimeError` from the store is the route's to answer (it authenticates the
-    bearer again), never a 500 from the gate."""
-    minted = await gate.mint()
+#: A stopping session store's failure text: never in an answer or a log field of its own.
+_STORE_FAILURE = "session store stopped"
+
+
+def _stop_the_store(gate: Gate, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store raises `RuntimeError` under every `authenticate_access_token` call."""
 
     async def stopped(*_args: Any, **_kwargs: Any) -> Any:
-        raise RuntimeError("session store stopped")
+        raise RuntimeError(_STORE_FAILURE)
 
     monkeypatch.setattr(gate.sessions, "authenticate_access_token", stopped)
-    assert (await gate.send("GET", "/me", minted)).status_code == 200
-    assert gate.reached == ["GET /me"]
+
+
+async def test_a_store_failing_under_the_check_is_503_and_no_route_runs(
+    gate: Gate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail closed (C-12.4): a `RuntimeError` from the store leaves the lock unchecked, so the
+    gate answers `GET /me`'s `503 store_unavailable` itself (#3300) and no route runs, whatever
+    the route would do with the bearer. The failure's text is not echoed."""
+    minted = await gate.mint()
+    _stop_the_store(gate, monkeypatch)
+    r = await gate.send("POST", "/api/v1/trading/kill-switch", minted)
+    assert (r.status_code, r.json()) == (503, json.loads(bytes(store_unavailable_problem().body)))
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert gate.reached == [] and _STORE_FAILURE not in r.text
+
+
+async def test_a_store_failure_under_the_check_is_logged_with_its_class_and_a_traceback(
+    gate: Gate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broad catch must not hide a defect: one error line, `GET /me`'s
+    `auth.me.session_backend_error`, names the class and carries the exception, which the
+    processor chain renders as a traceback and then redacts (#3300)."""
+    minted = await gate.mint()
+    _stop_the_store(gate, monkeypatch)
+    with capture_logs() as logs:
+        await gate.send("GET", "/auth/sessions", minted)
+    (entry,) = logs
+    expected = ("auth.me.session_backend_error", "error", "RuntimeError")
+    assert (entry["event"], entry["log_level"], entry["error"]) == expected
+    assert isinstance(entry["exc_info"], RuntimeError)
+    assert _STORE_FAILURE not in repr({k: v for k, v in entry.items() if k != "exc_info"})
 
 
 async def test_without_a_session_backend_the_gate_passes() -> None:
@@ -269,8 +301,6 @@ def _conforms(value: Any) -> None:
 def test_problems_conform_to_the_contract_and_its_error_registry(
     response: Any, revoked_reason: str | None
 ) -> None:
-    import json
-
     body = json.loads(response.body)
     _conforms(body)
     entry = {e["code"]: e for e in _spec()["x-error-codes"]}[body["code"]]

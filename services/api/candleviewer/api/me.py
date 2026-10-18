@@ -51,7 +51,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api._generated import openapi_models as api
-from candleviewer.api.idle_lock import idle_locked_problem
+from candleviewer.api.idle_lock import idle_locked_problem, store_unavailable_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.generated_permissions import Permission
@@ -135,7 +135,7 @@ def _unauthenticated() -> JSONResponse:
 
 
 def _store_unavailable() -> JSONResponse:
-    return _problem(503, "store_unavailable", "Session store unavailable", "No session backend.")
+    return store_unavailable_problem()  # `IdleLockMiddleware` answers the same (#2300)
 
 
 def _log() -> Any:

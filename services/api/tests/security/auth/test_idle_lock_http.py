@@ -108,10 +108,9 @@ def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
     assert stack.audit.records == []
 
 
-def test_the_kill_switch_cannot_be_driven_from_a_locked_session(stack: Stack) -> None:
-    """AC "Kill switch cannot be driven from a locked session": engage and release are refused
-    before the handler runs, so no transition and no audit row (a stub handler stands in for
-    E39's route and is reachable from a live session)."""
+def _kill_switch_stub(stack: Stack) -> list[Any]:
+    """A stub `POST /trading/kill-switch` handler standing in for E39's route, with no lock
+    check of its own; the list collects the bodies it ran with."""
     calls: list[Any] = []
 
     async def kill_switch(body: dict[str, Any]) -> dict[str, str]:
@@ -121,6 +120,14 @@ def test_the_kill_switch_cannot_be_driven_from_a_locked_session(stack: Stack) ->
     cast(FastAPI, stack.client.app).add_api_route(
         "/trading/kill-switch", kill_switch, methods=["POST"]
     )
+    return calls
+
+
+def test_the_kill_switch_cannot_be_driven_from_a_locked_session(stack: Stack) -> None:
+    """AC "Kill switch cannot be driven from a locked session": engage and release are refused
+    before the handler runs, so no transition and no audit row (a stub handler stands in for
+    E39's route and is reachable from a live session)."""
+    calls = _kill_switch_stub(stack)
     live = _session(stack, "owner-live")
     reached = stack.client.post(
         "/trading/kill-switch", headers=_headers(stack, live), json={"action": "engage"}
@@ -148,29 +155,75 @@ def test_an_expired_access_token_of_a_locked_session_stays_unauthenticated(
 
 #: A stopping session store's failure text: never in an answer.
 _STORE_FAILURE = "session store stopped"
+#: How long the session has been idle when the store fails: past its idle timeout, or not at all.
+_LOCKED_OR_NOT = pytest.mark.parametrize(
+    "idle", [timedelta(seconds=_IDLE_S + 1), timedelta(0)], ids=["locked", "unlocked"]
+)
 
 
-def test_a_store_failing_under_the_gate_leaves_each_route_its_own_answer(
-    stack: Stack, monkeypatch: pytest.MonkeyPatch
+def _fail_the_gates_check(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store raises under the request's first `authenticate_access_token` call, the gate's,
+    and answers every later one, so a route reached after it would find the session."""
+    real = stack.auth.sessions.authenticate_access_token
+    pending = [RuntimeError(_STORE_FAILURE)]
+
+    async def once(*args: Any, **kwargs: Any) -> Any:
+        if pending:
+            raise pending.pop()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(stack.auth.sessions, "authenticate_access_token", once)
+
+
+@_LOCKED_OR_NOT
+@pytest.mark.parametrize("path", ["/me", "/instruments"], ids=["me", "resolver"])
+def test_a_store_failing_under_the_gate_is_503_and_logged_on_a_read(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta, path: str
 ) -> None:
-    """#3300 as deployed: a `RuntimeError` while the gate checks the token is answered by the
-    route, as without the gate, never as a 500 by the gate: the `/me` routes their contracted
-    `503 store_unavailable` with one `auth.me.session_backend_error` line, a resolver-backed read
-    its uniform 401 (no principal). The failure's text is never echoed."""
-    headers = _headers(stack, _session(stack, "stopping"))
+    """Fail closed (C-12.4, #3300): `GET /me` and `GET /instruments` (its principal from the
+    session-backed resolver) check the bearer again, but the gate answers a store failure under
+    its own check first, with `GET /me`'s 503 and one `auth.me.session_backend_error` line."""
+    minted = _session(stack, "reading")
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    with capture_logs() as logs:
+        r = stack.client.get(path, headers=_headers(stack, minted))
+    assert (r.status_code, _code(r)) == (503, "store_unavailable") and _STORE_FAILURE not in r.text
+    errors = [e["event"] for e in logs if e["log_level"] == "error"]
+    assert errors == ["auth.me.session_backend_error"]
 
-    async def stopped(*_args: Any, **_kwargs: Any) -> Any:
-        raise RuntimeError(_STORE_FAILURE)
 
-    monkeypatch.setattr(stack.auth.sessions, "authenticate_access_token", stopped)
-    for path in ("/me", "/me/preferences", "/me/keymap"):
-        with capture_logs() as logs:
-            r = stack.client.get(path, headers=headers)
-        assert (r.status_code, _code(r)) == (503, "store_unavailable"), path
-        errors = [e["event"] for e in logs if e["log_level"] == "error"]
-        assert errors == ["auth.me.session_backend_error"] and _STORE_FAILURE not in r.text
-    r = stack.client.get("/instruments", headers=headers)
-    assert r.status_code == 401 and _STORE_FAILURE not in r.text
+@_LOCKED_OR_NOT
+def test_a_store_failing_under_the_gate_revokes_no_session(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta
+) -> None:
+    """Fail closed (C-12.4): `DELETE /me/sessions/{sessionId}` meets the lock check at the gate
+    first, so a store failure there answers 503 and revokes and audits nothing, locked or not."""
+    uid, _ = stack.add_user("revoking")
+    caller = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=_IDLE_S)
+    sibling = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    r = stack.client.delete(f"/me/sessions/{sibling.session_id}", headers=_headers(stack, caller))
+    assert (r.status_code, _code(r)) == (503, "store_unavailable")
+    assert _live(stack, sibling) and stack.audit.records == []
+
+
+@_LOCKED_OR_NOT
+def test_a_store_failing_under_the_gate_never_runs_the_kill_switch(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta
+) -> None:
+    """AC "Kill switch cannot be driven from a locked session" when the lock cannot be checked:
+    the stub relies on the gate alone, so a store failure there answers 503 and it never runs."""
+    calls = _kill_switch_stub(stack)
+    minted = _session(stack, "owner-stopping")
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    r = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, minted), json={"action": "engage"}
+    )
+    assert (r.status_code, _code(r)) == (503, "store_unavailable")
+    assert calls == [] and stack.audit.records == []
 
 
 def test_sign_out_instead_still_ends_the_locked_session(stack: Stack) -> None:

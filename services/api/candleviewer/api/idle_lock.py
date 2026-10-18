@@ -16,9 +16,9 @@ reads a body. It authenticates the bearer with the routes' own acceptance rule
 rule refuses as idle-locked (`SessionIdleLocked`: access token inside its
 lifetime, session neither revoked nor past its absolute lifetime). Any other
 refusal passes through untouched, so the route answers its own uniform `401`
-(no session oracle), and an expired access token stays `unauthenticated`. So
-does a store that fails under the call (`RuntimeError`): the route, which
-authenticates the bearer itself, answers it as it would without the gate. It
+(no session oracle), and an expired access token stays `unauthenticated`. A
+store failing under the call (`RuntimeError`) leaves the lock unchecked: the gate
+fails closed with `GET /me`'s `503 store_unavailable` and log line (#3300). It
 does not gate the operations allowed while locked, nor the ones the contract does
 not authenticate with a bearer (public ones, and `POST /auth/refresh`, which
 refuses a locked session itself). Those match their exact path; anything else
@@ -31,6 +31,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol
 
+import structlog
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -109,6 +110,11 @@ def not_locked_problem() -> JSONResponse:
     )
 
 
+def store_unavailable_problem() -> JSONResponse:
+    """`503 store_unavailable`: the session store failed under a bearer check (`GET /me`, #3300)."""
+    return problem(503, "store_unavailable", "Session store unavailable", "No session backend.")
+
+
 def session_state(record: SessionRecord, *, now: datetime) -> dict[str, Any]:
     """`SessionState`: the server truth CMP-098 and SCR-005 time against."""
     return {
@@ -145,6 +151,11 @@ def ungated_operations(spec: dict[str, Any]) -> frozenset[tuple[str, str]]:
 def _bearer(headers: Headers) -> str | None:
     scheme, _, value = headers.get("authorization", "").partition(" ")
     return value.strip() or None if scheme.lower() == "bearer" else None
+
+
+def _log() -> Any:
+    """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 class IdleLockMiddleware:
@@ -185,11 +196,12 @@ class IdleLockMiddleware:
             return idle_locked_problem(exc.idle_locked_at)
         except AuthError:
             return None  # unknown, expired, revoked: the route answers its own 401
-        except RuntimeError:
-            # A store failing under the call: the route authenticates the bearer again and answers
-            # as it does without this gate (`/me`: 503 `store_unavailable`, logged; a resolver: no
-            # principal), never a 500 from here (#3300, #3053 item 2).
-            return None
+        except RuntimeError as exc:
+            # Fail closed (C-12.4): a store failing under the call leaves the lock unchecked, so
+            # no route runs. `GET /me`'s answer and log line (#3300, #3053 item 2): the class name
+            # and a traceback, which the redaction filter scans; the message gets no field.
+            _log().error("auth.me.session_backend_error", error=type(exc).__name__, exc_info=exc)
+            return store_unavailable_problem()
         return None
 
 
@@ -201,6 +213,7 @@ __all__ = [
     "problem",
     "session_revoked_problem",
     "session_state",
+    "store_unavailable_problem",
     "ungated_operations",
     "unlock_invalid_problem",
 ]
