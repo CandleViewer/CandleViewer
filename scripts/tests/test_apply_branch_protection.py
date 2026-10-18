@@ -288,6 +288,10 @@ def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch,
         _run(tmp_path, monkeypatch, data, "--dry-run", "--apply")
 
 
+def _reviews(**settings: object) -> Callable[[dict], None]:
+    return lambda d: d["required_pull_request_reviews"].update(settings)
+
+
 @pytest.mark.parametrize(
     "mutation,message_fragment",
     [
@@ -304,6 +308,11 @@ def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch,
             ),
             "no merge_group workflow reports required check 'governance'",
         ),
+        # Security review round 3 of #3103: every agent uses the owner's account, and GitHub never
+        # counts an author's own approval, so a required approval would hold every pull request.
+        (_reviews(required_approving_review_count=2), "required_approving_review_count is 2"),
+        (_reviews(require_code_owner_reviews=True), "require_code_owner_reviews is true"),
+        (_reviews(require_last_push_approval=True), "require_last_push_approval is true"),
     ],
 )
 def test_main_refuses_a_lockout_before_any_api_call(

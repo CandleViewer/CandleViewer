@@ -74,6 +74,14 @@ PROTECTIVE: dict[str, bool] = {
     "required_pull_request_reviews.dismiss_stale_reviews": True,
     "required_pull_request_reviews.require_last_push_approval": True,
 }
+# Review settings that need an approval from someone other than the author or last pusher. Every
+# agent works as the owner's account, so with enforce_admins on no pull request could merge.
+# Relax this in the PR that gives reviewers their own accounts ($deviations, C-4.1).
+APPROVAL_LOCKOUTS = (
+    "required_approving_review_count",
+    "require_code_owner_reviews",
+    "require_last_push_approval",
+)
 
 
 class DesiredStateError(Exception):
@@ -200,11 +208,12 @@ def weakening_changes(live: dict[str, Any], desired: dict[str, Any]) -> list[str
 
 def lockout_reasons(desired: dict[str, Any], workflows_glob: str) -> list[str]:
     """Settings that would stop every merge: a required check no pull_request workflow reports, or
-    that another app than GitHub Actions must report, or a merge queue whose required checks no
-    merge_group workflow reports (#3433)."""
+    that another app than GitHub Actions must report, a merge queue whose required checks no
+    merge_group workflow reports (#3433), or an approval no agent can give (APPROVAL_LOCKOUTS)."""
     events = ["pull_request", "merge_group"] if desired.get("merge_queue") else ["pull_request"]
     checks = desired["required_status_checks"]["checks"]
-    return [
+    reviews = desired["required_pull_request_reviews"]
+    reasons = [
         f"required check '{check['context']}' must come from app {check['app_id']}, but only "
         f"GitHub Actions (app {GITHUB_ACTIONS_APP_ID}) runs .github/workflows"
         for check in checks
@@ -214,6 +223,13 @@ def lockout_reasons(desired: dict[str, Any], workflows_glob: str) -> list[str]:
         for event in events
         for check in checks
         if check["context"] not in load_workflow_job_names(workflows_glob, event)
+    ]
+    return reasons + [
+        f"required_pull_request_reviews.{key} is {json.dumps(reviews[key])}: GitHub never counts "
+        "an author's own approval and every agent uses the owner's account, so with "
+        "enforce_admins on no pull request could merge (see $deviations)"
+        for key in APPROVAL_LOCKOUTS
+        if reviews[key]
     ]
 
 
