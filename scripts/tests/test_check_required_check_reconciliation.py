@@ -220,6 +220,8 @@ ARCH_STEP = (
 INDENTLESS = ARCH_STEP.replace("      - ", "    - ").replace(
     "        run", "      continue-on-error: true\n      run"
 )
+FORM = "plain block-style YAML"
+CI_NAME = "    name: ci-required\n"
 
 
 @pytest.mark.parametrize(
@@ -285,23 +287,91 @@ INDENTLESS = ARCH_STEP.replace("      - ", "    - ").replace(
         ("pr.yml", "          ')\"\n", "$&          true\n", "whose exit is the resolver's"),
         ("pr.yml", "          ')\"\n", "$&\n          true\n", "whose exit is the resolver's"),
         ("pr.yml", "\nconcurrency:\n", "\ndefaults:\n  run:\n    shell: bash {0}$&", "or shell:"),
-        ("pr.yml", "    name: ci-required\n", "$&    defaults: {run: {shell: sh}}\n", "or shell:"),
+        ("pr.yml", "    name: ci-required\n", "$&    defaults: {run: {shell: sh}}\n", FORM),
         ("pr.yml", RESOLVE, "      - shell: sh\n        name: Resolve ci", "or shell:"),
         ("pr.yml", RESOLVE, "      - *step\n$&", "YAML anchor"),
         ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: *off", "YAML anchor"),
+        # Review round 4 of #3103: a trailing comment or quotes leave a literal false in force ...
+        (
+            "pr.yml",
+            "        id: filter\n",
+            "$&        if: ${{ false }} # off\n",
+            "'changed-paths' must",
+        ),
+        (
+            "pr.yml",
+            "the architecture contract)\n",
+            "$&        if: false # off\n",
+            "'architecture' must",
+        ),
+        (
+            "pr.yml",
+            "the architecture contract)\n",
+            "$&        if: 'false'\n",
+            "'architecture' must",
+        ),
+        ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: false # off", "trivy"),
+        # ... and any other spelling of a key, or a value on another line, is refused.
+        ("pr.yml", "    name: architecture\n", '$&    "continue-on-error": true\n', FORM),
+        ("pr.yml", "        id: filter\n", "$&        'continue-on-error': true\n", FORM),
+        ("pr.yml", "    name: architecture\n", "$&    continue-on-error : true\n", FORM),
+        ("pr.yml", "    name: architecture\n", "$&    ? continue-on-error\n    : true\n", FORM),
+        ("pr.yml", ARCH_STEP, '      - {run: "true", continue-on-error: true}\n$&', FORM),
+        ("pr.yml", "the architecture contract)\n", "$&        if: !!str false\n", FORM),
+        ("pr.yml", "the architecture contract)\n", "$&        if: >-\n          false\n", "'archi"),
+        ("pr.yml", RESOLVE, '      - "shell": sh\n        name: Resolve ci', FORM),
+        ("pr.yml", CI_NAME, '$&    "defaults": {run: {shell: sh}}\n', FORM),
+        (
+            "pr.yml",
+            CI_NAME + "    if: always()\n",
+            '    name: "ci-required\n    if: always()\n    "\n',
+            FORM,
+        ),
+        ("_job-security.yml", "name: trivy\n", '$&    "continue-on-error": true\n', FORM),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
     tmp_path, workflow, old, new, expected
 ) -> None:
+    olds, news = (old, new) if isinstance(old, tuple) else ((old,), (new,))
+    errors = _prove(tmp_path, workflow, *zip(olds, news))
+    assert any(expected in e for e in errors), errors
+
+
+def _prove(tmp_path: Path, workflow: str, *edits: tuple[str, str], reindent: str = "") -> list:
+    """The proof's errors once each `(old, new)` edit (`$&` is old), then a two-space indent of
+    every line after the `reindent` marker, are made to a copy of `workflow`."""
     workflows = tmp_path / "workflows"
     shutil.copytree(ROOT / ".github/workflows", workflows)
     text = (workflows / workflow).read_text(encoding="utf-8")
-    assert text.count(old) == 1, old
-    (workflows / workflow).write_text(text.replace(old, new.replace("$&", old)), encoding="utf-8")
+    for old, new in edits:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new.replace("$&", old))
+    if reindent:
+        head, _, tail = text.partition(reindent)
+        text = head + reindent + "".join(f"  {line}" for line in tail.splitlines(True))
+    (workflows / workflow).write_text(text, encoding="utf-8")
     errors, _ = recon.reconcile_repo(
         str(ROOT / ".github/branch-protection.json"),
         str(ROOT / "CONSTITUTION.md"),
         str(workflows / "*.yml"),
     )
+    return errors
+
+
+# Review round 4 of #3103: valid YAML whose shape the proof misread: a called job whose keys sit
+# at 6 spaces.
+@pytest.mark.parametrize(
+    "workflow,edit,reindent,expected",
+    [
+        (
+            "_job-security.yml",
+            ("if: ${{ inputs.image_changed }}", "if: false"),
+            "\n  trivy:\n",
+            "'container-scan'] is stale",
+        ),
+    ],
+)
+def test_a_shape_the_proof_cannot_read_fails_it(tmp_path, workflow, edit, reindent, expected):
+    errors = _prove(tmp_path, workflow, edit, reindent=reindent)
     assert any(expected in e for e in errors), errors

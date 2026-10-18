@@ -80,10 +80,13 @@ FILTER_ENV_RE = re.compile(
     re.M,
 )
 USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
-# A called job that never gates its lane: `if:` the literal false, or continue-on-error that is not
-# the literal false (its failure would not fail the lane).
+# A called job that never gates its lane: `if:` the literal false (quoted, braced or with a comment)
+# or a block scalar (unread), or continue-on-error that is not the literal false (its failure would
+# not fail the lane).
 NEVER_RE = re.compile(
-    r"^    (if:\s*(\$\{\{\s*)?false\s*(\}\})?|continue-on-error:(?!\s*false\s*$).*)\s*$", re.M
+    r"^    (if:\s*(?:[|>].*|([\"']?)(?:\$\{\{\s*)?false\s*(?:\}\})?\2(?:\s+#.*)?\s*$)"
+    r"|continue-on-error:(?!\s*false(?:\s+#.*)?\s*$).*)",
+    re.M,
 )
 # The same at any indentation, `- ` included: a job `ci-required` needs, or one of its steps.
 ANY_NEVER_RE = re.compile(NEVER_RE.pattern.replace("^    ", r"^\s*(?:-\s+)?", 1), re.M)
@@ -148,6 +151,43 @@ def _job_blocks(text: str) -> dict[str, list[str]]:
     return jobs
 
 
+def _form_errors(path: str, text: str) -> list[str]:
+    """Lines outside the YAML this line-based proof reads: plain `key:` and `- ` lines (and a quoted
+    top-level `on`), block scalars, and one-line scalars with no tag, no key inside and no flow
+    mapping but `{}`. A loader reads other spellings of the same keys (`"if": false`, `if : false`,
+    `? if`, `- {if: false}`, `if: !!str false`, a quoted scalar over lines) that the patterns here
+    would not see."""
+    errors: list[str] = []
+    block = -1  # in a block scalar: the column its lines must pass
+    for number, line in enumerate(text.splitlines(), 1):
+        if block >= 0 and (not line.strip() or len(line) - len(line.lstrip(" ")) > block):
+            continue
+        block = -1
+        lead, dashes, rest = re.findall(r"^( *)((?:- +)*)(.*)$", line)[0]
+        if not rest or rest[0] == "#":
+            continue
+        key = re.match(r"[\w.-]+:(?:\s+|$)", rest) or (
+            None if lead or dashes else re.match(r"([\"'])on\1:(?:\s+|$)", rest)
+        )
+        value = rest[key.end() :] if key else rest
+        plain = re.sub(r"(?:^|\s)#.*", "", value).strip()
+        problem = ""
+        if not (key or dashes):
+            problem = "not a plain `key:` or `- ` line"
+        elif value[:1] in ("'", '"'):
+            if not re.fullmatch(r"('(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\")\s*(?:#.*)?", value):
+                problem = "a quoted key, or a quoted scalar over lines"
+        elif re.fullmatch(r"[|>][1-9+-]*", plain):
+            block = len(lead) + (len(dashes) if key else len(dashes.rstrip()) - 1)
+        elif plain[:1] in ("!", "?", ":") or re.search(r":(?:\s|$)", plain):
+            problem = "a tag, or a key not written `key: value`"
+        elif plain[:1] in ("{", "[") and "{" in plain.replace("${{", "") and plain != "{}":
+            problem = "a flow mapping"
+        if problem:
+            errors.append(f"{path}:{number}: {problem}; this proof reads plain block-style YAML")
+    return errors
+
+
 def _check_name(job_id: str, lines: list[str]) -> str | None:
     """A job's check-run name: its literal `name:`, else its id. None when GitHub expands it (an
     expression, or a matrix, which appends its values)."""
@@ -198,20 +238,24 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls that can fail it (not NEVER_RE). `ci-required` must run
-    `if: always()`, with no continue-on-error, defaults or shell: (pr.yml's own defaults too), its
-    steps checkout, setup-node and one `run:` step, with no `if:`, that is the resolver call alone
-    (RESOLVER_RUN_RE) on PROGRAM_RE's program. A lane counts when its applicability is not the
-    literal `false` and reads only FILTER_<NAME> set from the `changed-paths` output <name>, and
-    the table, with no key twice and nothing but lanes, takes its result from the needed job of
-    the lane's own name, or from the `gates` output of that name, which the step of that id backs.
-    Every job `ci-required` needs must fail when its work fails: no ANY_NEVER_RE, on the job or on
-    a step, but continue-on-error on a `gates` step whose outcome is a lane. These files may hold
-    no YAML anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
+    of the reusable workflow it calls that can fail it (keys at 4 spaces, not NEVER_RE).
+    `ci-required` must run `if: always()`, with no continue-on-error, defaults or shell: (pr.yml's
+    own defaults too), its steps checkout, setup-node and one `run:` step, with no `if:`, that is
+    the resolver call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program. A lane counts when its
+    applicability is not the literal `false` and reads only FILTER_<NAME> set from the
+    `changed-paths` output <name>, and the table, with no key twice and nothing but lanes, takes
+    its result from the needed job of the lane's own name, or from the `gates` output of that name,
+    which the step of that id backs. Every job `ci-required` needs must fail when its work fails:
+    no ANY_NEVER_RE, on the job or on a step, but continue-on-error on a `gates` step whose outcome
+    is a lane. These files are plain block-style YAML (`_form_errors`), with no anchor, alias or
+    merge key (ANCHOR_RE). Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     text = _read(path)
     if ANCHOR_RE.search(text):
         return set(), [f"{path}: a YAML anchor, alias or merge key hides content from this proof"]
+    form = _form_errors(path, text)
+    if form:
+        return set(), form
     jobs = _job_blocks(text)
     body = "\n".join(jobs.get(AGGREGATE_CONTEXT, []))
     run = RESOLVER_RUN_RE.search(body)
@@ -271,8 +315,14 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                 called_text = _read(called_path)
                 if ANCHOR_RE.search(called_text):
                     errors.append(f"{called_path}: a YAML anchor, alias or merge key hides content")
+                errors += _form_errors(called_path, called_text)
                 called = _job_blocks(called_text)
-                skip = {job for job, block in called.items() if NEVER_RE.search("\n".join(block))}
+                skip = {
+                    job
+                    for job, block in called.items()
+                    if NEVER_RE.search(job_text := "\n".join(block))
+                    or not re.match(r"(?:[ \t]*(?:#.*)?\n)*    [^\s#]", job_text)
+                }
                 lanes.update(f"{lane}/{job}" for job in set(called) - skip)
         elif source == f"needs.gates.outputs.{lane}" and "gates" in needs and lane in exported:
             lanes.add(lane)
