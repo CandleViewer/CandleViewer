@@ -95,7 +95,9 @@ async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
         verdict = exchange.key_refusal(error)
         if verdict is not None:
             raise KeyRefused(Refusal(verdict[0]), verdict[1]) from None
-        raise VerificationInconclusive(exchange.key_probe_error(error)) from None
+        raise VerificationInconclusive(
+            exchange.key_probe_error(error), error.exchange_ret_code
+        ) from None
     except Exception as error:  # cancellation propagates
         if exchange.key_borrow_refused(error):
             raise WithdrawPermissionError("key_withdraw_permission") from None
