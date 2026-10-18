@@ -3722,6 +3722,8 @@ class Scope(StrEnum):
     GRANTED_ACCOUNTS = "granted_accounts"  # intersected with user_account_access
 ```
 
+**Rule ownership** (the `rules:read` and `rules:write` rows below): the Owner role reaches every rule; anyone else reaches only a rule they own, and only while every account any version of it names is still in their grants ("own + bound accounts"), so grants alone never reach another user's rule, whether it names accounts or none (`04-security-program.md` §7.2.2 rows 24 and 25), and a refused change is audited as a denied `rules.scope_denied`.
+
 | Permission group                                                                                        | owner                           | manager                                                                | viewer                                |
 | ------------------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------- | ------------------------------------- |
 | `marketdata:read`, `instruments:read`                                                                   | ✔                               | ✔                                                                      | ✔                                     |

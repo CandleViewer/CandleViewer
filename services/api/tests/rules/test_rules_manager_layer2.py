@@ -92,13 +92,14 @@ async def test_all_accounts_fanout_is_refused_for_non_owner() -> None:
 
 async def test_list_hides_rules_on_ungranted_accounts() -> None:
     m, _, _ = _mgr()
-    await m.create(_ir(A1, name="mine"), OWNER)
+    await m.create(_ir(A1, name="mine"), MGR_A1)
+    await m.create(_ir(A1, name="owners"), OWNER)  # on a granted account, but not MGR_A1's
     await m.create(_ir(A2, name="theirs"), OWNER)
     await m.create(_ir(A1, A2, name="both"), OWNER)
     names = {r["name"] for r in (await m.list_rules(MGR_A1))["items"]}
     assert names == {"mine"}
     assert (await m.list_rules(NO_GRANTS))["items"] == []
-    assert len((await m.list_rules(OWNER))["items"]) == 3
+    assert len((await m.list_rules(OWNER))["items"]) == 4
 
 
 async def test_arm_of_ungranted_rule_is_refused_and_mode_unchanged() -> None:

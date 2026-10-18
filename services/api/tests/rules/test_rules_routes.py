@@ -35,6 +35,7 @@ class _Env:
         owner: bool = True,
         granted: frozenset[str] = frozenset(),
         mgr: RulesManager | None = None,
+        uid: str = "u1",
     ) -> None:
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.bcs: list[dict[str, Any]] = []
@@ -62,7 +63,7 @@ class _Env:
             if self.anon:
                 return None
             return Actor(
-                "u1",
+                uid,
                 "s1",
                 self.perms,
                 granted_accounts=granted,

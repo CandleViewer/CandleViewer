@@ -125,7 +125,9 @@ def test_granted_accounts_http_cell_agrees_with_the_decision_point(
 
 
 def test_granted_accounts_read_cell_allows_granted_and_hides_foreign(world: World) -> None:
-    mine = world.client.post("/rules", json=_rule_body(GRANTED, "m"), headers=bearer("owner"))
+    mine = world.client.post(
+        "/rules", json=_rule_body(GRANTED, "m"), headers=bearer("manager_with_grant")
+    )
     theirs = world.client.post("/rules", json=_rule_body(FOREIGN, "t"), headers=bearer("owner"))
     assert mine.status_code == theirs.status_code == 201
     got = world.client.get(f"/rules/{mine.json()['id']}", headers=bearer("manager_with_grant"))
@@ -134,6 +136,15 @@ def test_granted_accounts_read_cell_allows_granted_and_hides_foreign(world: Worl
     absent = world.client.get(f"/rules/{uuid.uuid4()}", headers=bearer("manager_with_grant"))
     assert other.status_code == 404 == absent.status_code, "non-granted account: indistinguishable"
     assert other.json() == absent.json() or other.json().get("code") == absent.json().get("code")
+
+
+def test_read_of_the_owners_rule_on_a_granted_account_is_the_unseen_404(world: World) -> None:
+    """#3334, 04 §7.2.2 rows 24 and 25: a grant on the account never reaches another user's rule."""
+    owners = world.client.post("/rules", json=_rule_body(GRANTED, "o"), headers=bearer("owner"))
+    got = world.client.get(f"/rules/{owners.json()['id']}", headers=bearer("manager_with_grant"))
+    absent = world.client.get(f"/rules/{uuid.uuid4()}", headers=bearer("manager_with_grant"))
+    assert got.status_code == absent.status_code == 404
+    assert got.json() == absent.json()
 
 
 # -- granted_accounts write cell: PUT /rules/{ruleId}/active-version (#2574) --------------------
@@ -146,17 +157,19 @@ def _acct(account: uuid.UUID) -> dict[str, Any]:
     return {"level": "account", "account_ids": [str(account)]}
 
 
-def _rule_with_old_version(world: World, scope: dict[str, Any]) -> tuple[str, str]:
-    """Owner-made rule on `scope`, edited once: (rule id, its older, inactive version id)."""
+def _rule_with_old_version(
+    world: World, scope: dict[str, Any], maker: str = "owner"
+) -> tuple[str, str]:
+    """`maker`'s rule on `scope`, edited once: (rule id, its older, inactive version id)."""
     body = _rule_body(GRANTED, "two-versions")
     body["ir"]["scope"] = scope
-    made = world.client.post("/rules", json=body, headers=bearer("owner"))
+    made = world.client.post("/rules", json=body, headers=bearer(maker))
     assert made.status_code == 201, made.text
     rid = str(made.json()["id"])
     body["ir"]["actions"][0]["params"]["template"] = "edited"
-    hdrs = {**bearer("owner"), "If-Match": "1"}
+    hdrs = {**bearer(maker), "If-Match": "1"}
     assert world.client.put(f"/rules/{rid}", json=body, headers=hdrs).status_code == 200
-    items = world.client.get(f"/rules/{rid}/versions", headers=bearer("owner")).json()["items"]
+    items = world.client.get(f"/rules/{rid}/versions", headers=bearer(maker)).json()["items"]
     assert len(items) == 2
     return rid, str(items[-1]["id"])  # newest first: the last item is version 1
 
@@ -207,7 +220,7 @@ def test_active_version_on_an_unseen_rule_is_the_same_404_as_a_missing_rule_or_v
 def test_active_version_on_a_visible_rule_switches_the_version(
     world: World, actor: str, account: uuid.UUID
 ) -> None:
-    rid, old = _rule_with_old_version(world, _acct(account))
+    rid, old = _rule_with_old_version(world, _acct(account), actor)
     resp = _activate(world, actor, rid, old)
     assert resp.status_code == 200, resp.text
     assert resp.json()["active_version_id"] == old == _active_version(world, rid)
@@ -226,12 +239,28 @@ def test_active_version_without_rules_write_is_the_same_403_whether_or_not_the_r
     assert _active_version(world, rid) == active
 
 
-def test_active_version_grant_refusal_on_a_visible_rule_is_audited_as_scope_refused(
-    world: World,
+@pytest.mark.parametrize("actor", ["manager_without_grant", "manager_with_grant"])
+def test_active_version_on_an_accountless_owner_rule_is_the_unseen_404(
+    world: World, actor: str
 ) -> None:
-    """An account-less rule is visible to a manager with no grants, who still may not switch it
-    (`_require_grants`, no vacuous pass): 403 audited as `rule.scope_refused`."""
+    """#3334: a rule naming no account is no one's but its owner's, with a grant or without one
+    (04 §7.2.2 rows 24 and 25): the unseen 404, audited as `rule.scope_refused`."""
     rid, old = _rule_with_old_version(world, {"level": "symbol", "symbols": ["BTCUSDT"]})
+    world.audit.records.clear()
+    resp = _activate(world, actor, rid, old)
+    assert resp.status_code == 404 and resp.json()["code"] == "not_found", resp.text
+    refused = [
+        (r["op"], r["reason"]) for r in world.audit.records if r["action"] == "rule.scope_refused"
+    ]
+    assert refused == [("set_active_version", "rule_not_visible")], refused
+
+
+def test_active_version_by_an_owner_without_grants_is_refused_as_no_grants(world: World) -> None:
+    """#3334: ownership passes and the grant check still refuses (no vacuous pass): a manager's
+    own account-less rule, once they hold no grant, cannot switch version: 403 audited."""
+    scope = {"level": "symbol", "symbols": ["BTCUSDT"]}
+    rid, old = _rule_with_old_version(world, scope, "manager_with_grant")
+    world.rule_store._rows[rid].owner = str(user_id_of("manager_without_grant"))
     world.audit.records.clear()
     resp = _activate(world, "manager_without_grant", rid, old)
     assert resp.status_code == 403 and resp.json()["code"] == "forbidden", resp.text
@@ -241,16 +270,37 @@ def test_active_version_grant_refusal_on_a_visible_rule_is_audited_as_scope_refu
     assert refused == [("set_active_version", "no_grants")], refused
 
 
+def test_update_naming_an_ungranted_account_on_an_unseen_rule_is_the_unseen_404(
+    world: World,
+) -> None:
+    """#3334: the stored rule is looked at before the document it is saved with, so a manager
+    never gets the scope layer's 403 for a rule that is not theirs, only the audited 404."""
+    owners = world.client.post("/rules", json=_rule_body(GRANTED, "o"), headers=bearer("owner"))
+    rid = owners.json()["id"]
+    world.audit.records.clear()
+    world.scope_events.clear()
+    hdrs = {**bearer("manager_with_grant"), "If-Match": "1"}
+    resp = world.client.put(f"/rules/{rid}", json=_rule_body(FOREIGN, "o"), headers=hdrs)
+    assert resp.status_code == 404 and resp.json()["code"] == "not_found", resp.text
+    refused = [r["op"] for r in world.audit.records if r["action"] == "rule.scope_refused"]
+    assert refused == ["update"] and world.scope_events == []
+
+
 # -- SR-051: scope applied at construction -------------------------------------------------------
 
 
 def test_list_with_one_grant_returns_only_that_accounts_rows(world: World) -> None:
-    for acct, name in ((GRANTED, "mine"), (FOREIGN, "theirs")):
-        r = world.client.post("/rules", json=_rule_body(acct, name), headers=bearer("owner"))
+    made = (
+        (GRANTED, "mine", "manager_with_grant"),
+        (FOREIGN, "theirs", "owner"),
+        (GRANTED, "owners", "owner"),
+    )
+    for acct, name, maker in made:
+        r = world.client.post("/rules", json=_rule_body(acct, name), headers=bearer(maker))
         assert r.status_code == 201, r.text
     names = {i["name"] for i in _rules(world, "manager_with_grant")}
-    assert names == {"mine"}, "a manager with one grant must never see another account's rows"
-    assert {i["name"] for i in _rules(world, "owner")} == {"mine", "theirs"}
+    assert names == {"mine"}, "a manager with one grant must never see another user's rows"
+    assert {i["name"] for i in _rules(world, "owner")} == {"mine", "theirs", "owners"}
     assert _rules(world, "manager_without_grant") == []
     assert _rules(world, "viewer") == []
 
@@ -261,7 +311,9 @@ def test_scope_is_part_of_the_query_not_a_post_filter(world: World) -> None:
     rows can never be short-changed by rows a post-filter would drop."""
     for i in range(3):
         world.client.post("/rules", json=_rule_body(FOREIGN, f"f{i}"), headers=bearer("owner"))
-    world.client.post("/rules", json=_rule_body(GRANTED, "m0"), headers=bearer("owner"))
+    world.client.post(
+        "/rules", json=_rule_body(GRANTED, "m0"), headers=bearer("manager_with_grant")
+    )
     page = world.client.get("/rules", params={"limit": 1}, headers=bearer("manager_with_grant"))
     names = [i["name"] for i in page.json()["items"]]
     assert names == ["m0"], "pagination must run over the already-scoped set"
