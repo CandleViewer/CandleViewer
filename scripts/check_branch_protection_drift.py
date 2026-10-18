@@ -11,7 +11,8 @@ reported as a GOV-005 finding; the caller (workflow) opens a
 `priority/p1-high` `security`-labelled issue for each one.
 
 Exit codes: 0 no drift, 1 drift found, 2 internal error (network/auth/file):
-a missing token or a failed API call fails the run.
+a missing token or a failed API call fails the run (with --json, as one
+`check_failed` finding).
 Stdlib only.
 """
 
@@ -56,6 +57,16 @@ def render_findings(diff, as_json: bool) -> str:
     return "GOV-005 branch protection drift detected:\n" + diff.render()
 
 
+def fail_closed(reason: str, as_json: bool) -> int:
+    """Exit 2, and with --json make the reason the one finding: governance-drift.yml puts the
+    output in the issue it opens, which would otherwise not say why the check could not run."""
+    print(f"check-branch-protection-drift: {reason}", file=sys.stderr)
+    if as_json:
+        finding = {"code": "GOV-005", "kind": "check_failed", "message": reason}
+        print(json.dumps([finding], indent=2))
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--desired-state", default=DEFAULT_DESIRED_STATE_PATH)
@@ -71,8 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         desired = load_desired_state(args.desired_state)
         gaps, pending = reconcile_repo(args.desired_state, args.constitution, args.workflows_glob)
     except (DesiredStateError, ReconciliationError) as exc:
-        print(f"check-branch-protection-drift: invalid desired state: {exc}", file=sys.stderr)
-        return 2
+        return fail_closed(f"invalid desired state: {exc}", args.json)
     if pending:
         print(
             f"check-branch-protection-drift: C-9.1 pending: {', '.join(pending)}", file=sys.stderr
@@ -80,18 +90,13 @@ def main(argv: list[str] | None = None) -> int:
 
     token = os.environ.get(args.token_env)
     if not token:
-        print(
-            f"check-branch-protection-drift: token not found in ${args.token_env}",
-            file=sys.stderr,
-        )
-        return 2
+        return fail_closed(f"token not found in ${args.token_env}", args.json)
 
     try:
         live = fetch_live_state(args.repo, token, args.branch)
         mq_live = fetch_merge_queue_ruleset(args.repo, token) if desired.get("merge_queue") else {}
     except ApplyError as exc:
-        print(f"check-branch-protection-drift: {exc}", file=sys.stderr)
-        return 2
+        return fail_closed(str(exc), args.json)
 
     diff = diff_state(live, compare_view(desired))
     mq_diff = diff_merge_queue(mq_live, desired) if desired.get("merge_queue") else None

@@ -55,8 +55,8 @@ def _raise(*_args: object) -> dict:
         (lambda live: live.update(lock_branch=True), None, "t", 1, "changed"),
         (lambda live: live.update(new_setting=True), None, "t", 1, "unexpected_on_live"),
         (lambda live: None, lambda d: d.pop("pending_checks"), "t", 1, "c9_1_not_enforced"),
-        (lambda live: None, None, "", 2, None),  # no token: fail closed
-        (_raise, None, "t", 2, None),  # API error: fail closed
+        (lambda live: None, None, "", 2, "check_failed"),  # no token: fail closed, and say why
+        (_raise, None, "t", 2, "check_failed"),  # API error: fail closed, and say why
     ],
 )
 def test_main_compares_every_setting_and_proves_c91(
@@ -79,6 +79,6 @@ def test_main_compares_every_setting_and_proves_c91(
     argv += ["--constitution", str(root / "CONSTITUTION.md")]
     argv += ["--workflows-glob", str(root / ".github/workflows/*.yml")]
     assert drift.main(argv) == code
-    if code < 2:
-        findings = json.loads(capsys.readouterr().out)
-        assert [f["kind"] for f in findings][:1] == ([kind] if kind else [])
+    # Review round 3 of #3103: on exit 2 as well, governance-drift.yml puts this in its issue.
+    findings = json.loads(capsys.readouterr().out)
+    assert [f["kind"] for f in findings][:1] == ([kind] if kind else [])
