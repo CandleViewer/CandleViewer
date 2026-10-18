@@ -21,10 +21,11 @@ selector with a git range matches the changed files against the task's inputs in
 no future flag): ui's `test:cov` carries the lane's tag and the lane adds that selector.
 
 #3471: every other suite that spreads the preset (`@candleviewer/config/vitest`) lists the same
-runner reads, its `vitest.config.mjs`, the preset and the tsconfig chain. The preset was in ui's
-hash only: the one packages/config task the suites depend on (`^build`) hashes only `src/` and
-`package.json`. The suites are derived from the workspace globs; packages/config's own suite
-imports the preset by a relative path, so the scan leaves it out.
+runner reads, its `vitest.config.mjs`, the preset and the tsconfig chain, and keeps the root's
+`src/**`, `test/**` and `tests/**` (a package list keeps them through `$TURBO_EXTENDS$`). The
+preset was in ui's hash only: the one packages/config task the suites depend on (`^build`) hashes
+only `src/` and `package.json`. The suites are derived from the workspace globs; packages/config's
+own suite imports the preset by a relative path, so the scan leaves it out.
 
 ui's `typecheck` reads the token formats' declarations (its token-build tests import the
 formats), derived from the static imports in the files its tsconfig includes; the tsconfig chain
@@ -233,6 +234,19 @@ def test_vitest_suites_hash_the_runner_config_and_what_it_loads(package: str, ta
     assert len(reads) in (2, 5), reads  # the config, the preset and three tsconfig files, if any
     inputs = _inputs(package, task)
     assert [path for path in reads if not _covered(path, inputs, package)] == []
+
+
+@pytest.mark.parametrize("task", ["test", "test:cov"])
+@pytest.mark.parametrize("package", SUITES)
+def test_vitest_suites_keep_hashing_their_own_sources_and_tests(package: str, task: str) -> None:
+    # A package list without `$TURBO_EXTENDS$` replaces the root's `src/**`, `test/**` and
+    # `tests/**`, and an exclusion drops one: a cached pass would stand in for changed sources.
+    own = [
+        f"{package}/{name}" for name in ("src", "test", "tests") if (ROOT / package / name).is_dir()
+    ]
+    assert own, "an empty list proves nothing"
+    inputs = _inputs(package, task)
+    assert [path for path in own if not _covered(path, inputs, package)] == []
 
 
 def test_ui_build_inputs_cover_what_the_build_reads() -> None:
