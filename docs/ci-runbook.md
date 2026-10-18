@@ -193,7 +193,21 @@ diff` cannot see because they were never tracked. `git add` them in the
   lacks the build and guard steps. Check that the lane's
   `pnpm --filter "@candleviewer/web^..." run build` step ran and succeeded, and that
   every `exports` target in the package's `package.json` is a file its `build`
-  produces (a pattern target must match at least one file).
+  produces (a pattern target must match at least one file). Besides
+  `built exports are missing`, the guard prints these CI-BUILD-001 lines, each one
+  exiting 1 (a usage error exits 2):
+  - `unsupported pattern exports`: an export target has a `*` in a folder segment. The
+    guard supports a `*` in the file name only, so change the export.
+  - `cannot read <dir>/package.json: <reason>` or
+    `<dir>/package.json is not a JSON object`: the manifest is missing, unreadable or
+    not a JSON object; check the package folders the guard step names.
+  - `<dir>/package.json declares no exports to check`: `exports` (or `main`, when there
+    is no `exports`) names no file.
+  - `cannot check built exports, the filesystem returned an error`, then one
+    `<target>: <ERRNO>: ...` line per export: `ENOTDIR`, a parent of the path is a file
+    (for example a stray file named `dist`; delete it and rebuild); `EACCES`, the runner
+    cannot read the build output; `ELOOP`, a symlink loop; `ENAMETOOLONG`, a path
+    segment over 255 bytes. Any other errno fails the same way.
 
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
