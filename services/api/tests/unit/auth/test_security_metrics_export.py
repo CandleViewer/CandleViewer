@@ -23,7 +23,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import (
     AUTH_EXPORTED_NAMES,
     ENROLMENT_ONLY_ROLES,
-    ENROLMENT_OUTCOMES,
+    ENROLMENT_RESULTS,
     LOGIN_FAILURE_METHODS,
     authz_denied_total,
     export_auth_metrics,
@@ -60,7 +60,7 @@ print(json.dumps(series))
 #: #2295 (U34 monitoring): each enrolment counter with its one label and closed value set.
 _ENROLMENT_SERIES = {
     "auth_enrolment_only_sessions_total": ("role", ENROLMENT_ONLY_ROLES),
-    "auth_enrolments_total": ("outcome", ENROLMENT_OUTCOMES),
+    "auth_enrolments_total": ("result", ENROLMENT_RESULTS),
 }
 
 

@@ -167,16 +167,16 @@ auth_enrolment_only_sessions_total = Counter(
 )
 for _role in ENROLMENT_ONLY_ROLES:
     auth_enrolment_only_sessions_total.labels(role=_role)
-#: `auth_enrolments_total{outcome}` (#2295) closed set: a confirmation that activated the method,
+#: `auth_enrolments_total{result}` (#2295) closed set: a confirmation that activated the method,
 #: or one refused for a wrong code or a method that cannot be confirmed (422).
-ENROLMENT_OUTCOMES: tuple[str, ...] = ("completed", "refused")
+ENROLMENT_RESULTS: tuple[str, ...] = ("completed", "refused")
 auth_enrolments_total = Counter(
     "auth_enrolments_total",
-    "TOTP enrolment confirmations (#2295), by outcome: completed or refused.",
-    ["outcome"],
+    "TOTP enrolment confirmations (#2295), by result: completed or refused.",
+    ["result"],
 )
-for _outcome in ENROLMENT_OUTCOMES:
-    auth_enrolments_total.labels(outcome=_outcome)
+for _result in ENROLMENT_RESULTS:
+    auth_enrolments_total.labels(result=_result)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, another user's, or rotated away, presented"

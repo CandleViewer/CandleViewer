@@ -426,7 +426,7 @@ def test_confirm_with_a_wrong_code_writes_only_its_failure_and_changes_nothing(
     headers = _enrolment_only(stack, "alice")
     method_id, seed = _enrol(stack, headers)
     methods = dict(_store(stack).methods)
-    refused = stack.scraped("auth_enrolments_total", outcome="refused")
+    refused = stack.scraped("auth_enrolments_total", result="refused")
     mark = len(stack.audit.records)
 
     resp = _confirm(stack, headers, method_id, _wrong_code(stack, seed))
@@ -436,7 +436,7 @@ def test_confirm_with_a_wrong_code_writes_only_its_failure_and_changes_nothing(
     assert stack.call(_store(stack).find_pending_method, method_id, str(uid)) is not None
     assert (_store(stack).methods, _code_hashes(stack, uid)) == (methods, old_codes)
     assert stack.client.get("/auth/session", headers=headers).status_code == 200
-    assert stack.scraped("auth_enrolments_total", outcome="refused") == refused + 1
+    assert stack.scraped("auth_enrolments_total", result="refused") == refused + 1
     assert _confirm(stack, headers, method_id, stack.code(seed)).status_code == 200
 
 
@@ -500,11 +500,11 @@ def test_a_completed_enrolment_is_counted_and_its_revocations_keep_their_reason(
     _must_enrol(stack, "alice")
     headers = _enrolment_only(stack, "alice")
     method_id, seed = _enrol(stack, headers)
-    completed = stack.scraped("auth_enrolments_total", outcome="completed")
+    completed = stack.scraped("auth_enrolments_total", result="completed")
     revoked = _revocations("mfa_enrolled")
 
     assert _confirm(stack, headers, method_id, stack.code(seed)).status_code == 200
-    assert stack.scraped("auth_enrolments_total", outcome="completed") == completed + 1
+    assert stack.scraped("auth_enrolments_total", result="completed") == completed + 1
     assert _revocations("mfa_enrolled") == revoked + 1  # the caller's own: rotated
 
 
