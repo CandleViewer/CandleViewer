@@ -807,8 +807,8 @@ def test_evaluate_all_judges_packages_sharing_an_artifact_on_their_own_reports(
 
 @pytest.mark.parametrize(
     "names",
-    [["packages/ui", "packages-ui"], ["../ui"], ["/ui"], ["a//ui"], ["Ui/x"], [""]],
-    ids=["collision", "dot-dot", "absolute", "empty-segment", "upper-case", "empty"],
+    [["a-b/c", "a/b-c"], ["../ui"], ["/ui"], ["a//ui"], ["Ui/x"], [""], ["ui"]],
+    ids=["collision", "dot-dot", "absolute", "empty-part", "upper", "empty", "single"],
 )
 def test_load_config_refuses_a_package_without_a_report_directory_of_its_own(
     tmp_path: Path, names: list[str]

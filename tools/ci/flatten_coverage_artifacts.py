@@ -15,7 +15,7 @@ and `_job-py.yml` uploads services/api's `coverage.xml` at its artifact's root.
 `coverage-baselines.json` maps each package name (e.g. `"apps/app-web"`) to
 the artifact it lives in, so this script copies that package's own report to
 `<artifact>/apps-app-web/lcov.info`: packages that share an artifact are never
-judged on one another's report. A report that would serve two packages is refused.
+judged on one another's report, and two packages may not name one upload path.
 
 Package name -> on-disk directory mapping (only needed because
 `apps/app-web` / `apps/app-electron` are the ticket's package names but the
@@ -27,10 +27,11 @@ labels). `services/api`, `packages/chart-engine`, `packages/protocol` and
 
 Artifacts are untrusted input (#3508): reports are read through
 `coverage_gate.read_artifact_bytes` and must parse, and a copy is only ever
-created as a new file in a directory this script creates (one the download
-already holds is refused). A refusal prints CI-COV-004 (a malformed or ambiguous
-report CI-COV-003), writes the same line to `--summary-out` when given (the summary
-the PR comment posts, as the gate does) and exits 1.
+created as a new file in a directory this script creates; one the download already
+holds is refused, so a second run needs a fresh download. A refusal prints CI-COV-004
+(a malformed report, or a baselines error such as two packages naming one upload path,
+CI-COV-003), writes the same line to `--summary-out` when given (the summary the PR
+comment posts, as the gate does) and exits 1.
 """
 
 from __future__ import annotations
@@ -101,7 +102,7 @@ def flatten(report_dir: Path, baselines: Path = BASELINES) -> list[Path]:
     copies written; a package whose lane uploaded no report is skipped
     (coverage_gate.py reports CI-COV-003 or N/A for it). Raises
     ArtifactRefusedError (CI-COV-004) or CoverageGateError (CI-COV-003, also
-    when one report would serve two packages)."""
+    when two packages name one upload path)."""
     _, packages = load_config(baselines)
     owners: dict[Path, str] = {}
     for pkg in packages.values():

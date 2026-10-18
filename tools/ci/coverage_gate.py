@@ -108,16 +108,17 @@ class PackageConfig:
 
 
 REPORT_FILENAMES: dict[str, str] = {"coverage-xml": "coverage.xml", "lcov": "lcov.info"}
-_REPORT_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_WORDS = r"[a-z0-9]+(?:-[a-z0-9]+)*"
+_PACKAGE_NAME = re.compile(rf"{_WORDS}(?:/{_WORDS})+")
 
 
 def report_slug(name: str) -> str:
     """The directory that holds package `name`'s own report: its name with `-` for
-    each `/`, refused unless that is lowercase words joined by single `-`s."""
-    slug = name.replace("/", "-")
-    if not _REPORT_SLUG.fullmatch(slug):
+    each `/`. A name is two or more `/`-separated segments of lowercase words joined
+    by single `-`s: a one-segment slug could be its upload's top-level directory."""
+    if not _PACKAGE_NAME.fullmatch(name):
         raise CoverageGateError(f"{_excerpt(name)} names no report directory")
-    return slug
+    return name.replace("/", "-")
 
 
 def own_report_path(report_dir: Path, pkg: PackageConfig) -> Path:

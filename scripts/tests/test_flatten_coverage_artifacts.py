@@ -171,6 +171,7 @@ def test_main_writes_a_refusal_to_the_summary_the_pr_comment_posts(
 
 
 PR_JOB = Path(__file__).resolve().parents[2] / ".github/workflows/_job-coverage.yml"
+RATCHET_JOB = PR_JOB.with_name("coverage-ratchet.yml")
 
 
 def test_the_pr_job_hands_flatten_the_summary_its_comment_posts() -> None:
@@ -183,6 +184,19 @@ def test_the_pr_job_hands_flatten_the_summary_its_comment_posts() -> None:
     assert "--summary-out coverage-summary.md" in " ".join(flatten_run.split())
     assert "readFileSync('coverage-summary.md'" in comment["with"]["script"]
     assert "always()" in comment["if"]
+
+
+@pytest.mark.parametrize("workflow", [PR_JOB, RATCHET_JOB])
+def test_the_gate_reads_reports_only_after_flatten_succeeded(workflow: Path) -> None:
+    # The gate trusts <artifact>/<package-slug>/ as flatten refuses a download that
+    # already holds one (#3562): a refusal must end the job before the gate step.
+    for job in yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"].values():
+        runs = [step.get("run", "") for step in job["steps"]]
+        (flat,) = [i for i, run in enumerate(runs) if "flatten_coverage" in run]
+        gate = [i for i, run in enumerate(runs) if "coverage_gate.py" in run]
+        assert gate and flat < min(gate)
+        for i in (flat, *gate):
+            assert not {"if", "continue-on-error"} & set(job["steps"][i]), runs[i]
 
 
 # --- Each package is judged on its own report (#3562) ------------------------
@@ -253,9 +267,8 @@ def test_a_report_directory_is_never_made_outside_the_download(
     _upload(report_dir, ".", {"apps/web": 90})  # the report resolves inside ...
     outside.mkdir()
     (outside / "apps").symlink_to(report_dir / "apps")
-    (report_dir / "coverage-unit-frontend").symlink_to(
-        outside
-    )  # ... its artifact outside
+    # ... and its artifact outside
+    (report_dir / "coverage-unit-frontend").symlink_to(outside)
     assert main([str(report_dir)]) == 1
     assert "CI-COV-004" in capsys.readouterr().err
     assert [path.name for path in outside.iterdir()] == ["apps"]

@@ -423,7 +423,8 @@ index alone, removing nothing.
   that lane's upload step; a silently-missing report must never pass.
   Each package is judged only on its own report, which `flatten_coverage_artifacts.py` copies to
   `<artifact>/<package-slug>/` (#3562): another package's report never stands in for a missing
-  one, and a report that would serve two packages fails with this code.
+  one. flatten also reports `coverage-baselines.json` errors with this code: two packages naming
+  one upload path, or a package name that is not two or more lowercase `/`-separated segments.
   In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
   5 days) is missing: the lane died before writing it, or a "Re-run failed
   jobs" came after the green lanes' data expired; then use "Re-run all jobs".
@@ -453,9 +454,10 @@ index alone, removing nothing.
   selects no package on a push to `main`, so every JS package would be N/A), and name it under the
   ratchet's `workflow_run` trigger (`types: [completed]`, `branches: [main]`);
   `scripts/tests/test_coverage_ratchet_yml.py` checks the producer runs on push to `main`.
-  Give the ratchet job's checkout `persist-credentials: false`, and open the bot PR with a GitHub
-  App token (short-lived, as SR-141 prefers), not the default `GITHUB_TOKEN`: a PR opened with
-  `GITHUB_TOKEN` starts no `pull_request` workflows, so its required checks would never run.
+  Give the ratchet job's checkout `persist-credentials: false`, and open the bot PR with a
+  short-lived GitHub App token, not the default `GITHUB_TOKEN`: a PR opened with `GITHUB_TOKEN`
+  starts no `pull_request` workflows, so its required checks would never run. Keep the App's
+  private key in an environment secret with protection rules and required reviewers (SR-141).
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
 
