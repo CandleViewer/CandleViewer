@@ -67,6 +67,16 @@ describe("what a frame costs", () => {
     expect(frameBytes(snap(1))).toBe(2048);
   });
 
+  it("charges a size that is not a number the floor, so the bytes stay a number the bound can trip on", () => {
+    for (const size of [Number.NaN, Number.POSITIVE_INFINITY, undefined as unknown as number]) {
+      const frame = { ...delta(1, undefined, 0), size } as TopicFrame;
+      expect(frameBytes(frame)).toBe(2048);
+      const queue = createFrameQueue({ maxFrames: 100, maxBytes: 100 });
+      expect(queue.push(frame)).toBe("ok"); // a baseline or a lone frame is never refused for its size
+      expect(queue.push({ ...frame, seq: 2 } as TopicFrame)).toBe("overflow"); // 4 096 > 100, not NaN > 100
+    }
+  });
+
   it("counts binary and structured bodies of one frame both", () => {
     const mixed: TopicFrame = {
       kind: "snap",
@@ -97,9 +107,15 @@ describe("a bounded frame queue", () => {
     queue.push(delta(3, 10));
     queue.push(snap(9, 5));
     queue.push(delta(10, 1));
+    expect(queue.bytes).toBe(6); // the 20 bytes of what the snapshot voided are not still counted (asserted before drain zeroes it)
     expect(seqs(queue.drain())).toEqual(["snap:9", "d:10"]);
-    queue.push(snap(11, 7));
-    expect(queue.bytes).toBe(7); // the bytes of what was dropped are not still counted
+  });
+
+  it("a snapshot gives back the bytes of what it voided: at 100 bytes, 60 and a snapshot of 50 and one more still fit", () => {
+    const queue = createFrameQueue({ maxFrames: 100, maxBytes: 100 });
+    expect(queue.push(delta(1, 60))).toBe("ok");
+    expect(queue.push(snap(2, 50))).toBe("ok");
+    expect(queue.push(delta(3, 1))).toBe("ok"); // 51, not 111
   });
 
   it("a reset voids what came before it too, and is itself kept: the consumer must clear its state", () => {

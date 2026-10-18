@@ -37,7 +37,9 @@ export function frameBytes(frame: TopicFrame): number {
     else structured += 1;
   }
   if (structured === 0) return binary;
-  return binary + Math.max(structured * JSON_BODY_COST, frame.size * JSON_HEAP_FACTOR);
+  // a size that is not a number must not make `bytes` NaN, which no bound trips on: such a frame is charged the floor
+  const wire = Number.isFinite(frame.size) ? frame.size : 0;
+  return binary + Math.max(structured * JSON_BODY_COST, wire * JSON_HEAP_FACTOR);
 }
 
 /** `voided`: a delta that came while the queue has no baseline (after an `overflow`, before a `snap` or a `reset`): dropped. */

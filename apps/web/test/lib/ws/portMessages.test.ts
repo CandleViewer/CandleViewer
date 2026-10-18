@@ -175,6 +175,9 @@ describe("a tab's message (client -> worker)", () => {
     ["release with an id over 64 characters", { t: "release", id: "k".repeat(65) }],
     ["resync with an empty id", { t: "resync", id: "" }],
     ["resync with an id over 64 characters", { t: "resync", id: "k".repeat(65) }],
+    ["pane with no id", pane({ id: "" })],
+    ["pane with an id over 64 characters", pane({ id: "p".repeat(65) })],
+    ["pane with an id that is a number", pane({ id: 5 })],
     ["pane of an unknown visibility", pane({ visibility: "hidden" })],
     ["pane with a width and no pixel ratio", pane({ cssWidth: 100 })],
     ["pane with a width that is NaN", pane({ cssWidth: Number.NaN, dpr: 1 })],
@@ -216,6 +219,7 @@ describe("a tab's message (client -> worker)", () => {
     expect(kind({ t: "resync", id: "k".repeat(64) })).toBe("resync");
     expect(kind({ t: "focus", id: "k".repeat(64) })).toBe("focus");
     expect(kind(pane({ cssWidth: 100_000, dpr: 16 }))).toBe("pane");
+    expect(kind(pane({ id: "p".repeat(64) }))).toBe("pane");
     expect(kind(token(granted({ accessToken: "a".repeat(4096) })))).toBe("token");
     const host = "wss://cv.test/";
     expect(isWsUrl(host + "a".repeat(512 - host.length))).toBe(true);

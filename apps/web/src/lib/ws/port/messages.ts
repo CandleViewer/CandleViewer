@@ -6,6 +6,7 @@
 // token crosses in one message, `token`, from the tab to the worker's memory; no other message carries it and
 // none is logged. The value of an option, a fault command and the frames of a `data` message are not checked
 // here: the server refuses an unknown option, the fault channel checks its commands, and the engine made the frames.
+// A message the worker refuses gets no reply (it only counts it): the client times out on a connect or a consume (S5f).
 import type { PaneVisibility, TokenResult, TopicFrame } from "../api";
 import { MAX_TOKEN_LENGTH } from "../core/connection";
 import type { EngineCounters } from "../core/engine";
