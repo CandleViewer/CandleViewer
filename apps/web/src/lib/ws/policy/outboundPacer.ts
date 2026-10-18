@@ -48,6 +48,8 @@ export interface OutboundPacerOptions {
   readonly send: (frame: ClientFrame) => void;
   /** Told of each throw from `send`, with the frame it was sending. */
   readonly onError?: ((error: unknown, frame: ClientFrame) => void) | undefined;
+  /** Told of the `id` of a waiting `ctl` that a newer one merged into: it is never sent, so no reply is due for it. */
+  readonly onSuperseded?: ((id: string) => void) | undefined;
   /** The clock and timers it runs on; defaults to the platform's. */
   readonly timers?: Partial<Timers> | undefined;
 }
@@ -179,6 +181,7 @@ export function createOutboundPacer(options: OutboundPacerOptions): OutboundPace
         ...(prior?.t === "ctl" ? prior.p : {}),
         ...p,
       });
+      if (prior?.t === "ctl") options.onSuperseded?.(prior.id);
     } else if (frame.t === "ping") {
       queue.unshift(frame);
     } else {

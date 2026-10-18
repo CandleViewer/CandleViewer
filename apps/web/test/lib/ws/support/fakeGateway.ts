@@ -38,6 +38,8 @@ export interface FakeGatewayOptions {
   readonly hold?: readonly ("sub_ok" | "unsub_ok" | "ctl_ok")[];
   /** A second refusal does not close the connection (`deny`): a gateway that does not follow 8.5. */
   readonly keepsDenying?: boolean;
+  /** Every `effective` carries more values than options can hold (the registry's limit): a broken or hostile server. */
+  readonly bloatEffective?: boolean;
 }
 
 export interface FakeConn {
@@ -136,6 +138,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     return {
       ...opts,
       ...(bucket !== undefined && { time_bucket_ms: bucket }),
+      ...(options.bloatEffective === true && { junk: Array.from({ length: 2_000 }, (_, i) => i) }),
       throttle_ms: Math.max(asked, limits.min_throttle_ms),
     };
   }
@@ -276,6 +279,34 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       });
       answer("unsub_ok", { p: { results } }, frame["id"]);
     };
+    const onCtl = (frame: Json) => {
+      const sub = find(frame["ch"]);
+      if (sub === undefined)
+        return reply(
+          "err",
+          { ch: frame["ch"], p: { code: "not_subscribed", message: "no" } },
+          frame["id"],
+        );
+      const asked = asJson(frame["p"]);
+      const rebucketed =
+        asked["time_bucket_ms"] !== undefined &&
+        asked["time_bucket_ms"] !== sub.effective["time_bucket_ms"];
+      sub.opts = { ...sub.opts, ...asked };
+      sub.effective = effectiveOf(sub.ch, sub.opts);
+      // as the gateway echoes it (5.4): what this `ctl` changed, and the throttle, not every option
+      const echoed = Object.entries(sub.effective).filter(
+        ([k]) => k in asked || k === "throttle_ms",
+      );
+      answer(
+        "ctl_ok",
+        {
+          ch: sub.ch,
+          p: { effective: Object.fromEntries(echoed), ...(rebucketed && { resnapshot: true }) },
+        },
+        frame["id"],
+      );
+      if (rebucketed) emitSnap(sub, "reconfigure");
+    };
     const onResync = (frame: Json) => {
       const sub = find(frame["ch"]);
       if (sub === undefined)
@@ -373,6 +404,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         onSub(frame);
       } else if (t === "unsub") {
         onUnsub(frame);
+      } else if (t === "ctl") {
+        onCtl(frame);
       } else if (t === "resync") {
         onResync(frame);
       }

@@ -6,7 +6,7 @@ import { assertEngineOrder } from "./support/engineEvents";
 import { BASELINE_DEADLINE_MS, LEDGER_MAX } from "../../../src/lib/ws/core/engine";
 import { INITIAL_WS_STATE, reduce } from "../../../src/lib/ws/state/reducer";
 import { BOOK, engineHarness, RS, spec } from "./support/engineHarness";
-import type { Json } from "./support/fakeGateway";
+import type { FakeGateway, Json } from "./support/fakeGateway";
 
 afterEach(() => vi.useRealTimers());
 
@@ -291,6 +291,21 @@ describe("a frame the gateway refused (8.5)", () => {
     ]);
   });
 
+  it("an unsub that was denied goes again, and its reply still reaches the stream", async () => {
+    const t = engineHarness();
+    t.gateway.withholdSnaps(true);
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    expect(t.got("trades.BTCUSDT")).toEqual([]); // subscribed, and no baseline yet
+    t.gateway.deny(1);
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: false }); // let go: the unsub is denied once
+    await t.advance(300);
+    const conn = t.gateway.latest;
+    expect(conn.of("unsub")).toHaveLength(2);
+    expect(t.got("trades.BTCUSDT")).toEqual(["reset:unsubscribed"]); // the unsub_ok of the second try
+    expect(conn.subs().map((s) => s.ch)).toEqual(["system"]);
+  });
+
   it("a denied sub goes again only for the streams it is still about, not for one let go meanwhile", async () => {
     const t = engineHarness({ hold: ["sub_ok"] });
     await t.start();
@@ -558,6 +573,49 @@ describe("a reply for a subscription that is gone (5.2, 5.3)", () => {
     await t.advance(300);
     expect([again.status, t.got()]).toEqual(["live", ["snap:1"]]);
     expect([again.subId === oldId, again.subId === bookSub(conn)]).toEqual([false, true]);
+  });
+
+  it("a retune confirmed late does not retune the stream that replaced its subscription", async () => {
+    const t = engineHarness({ hold: ["sub_ok", "ctl_ok", "unsub_ok"] });
+    const first = t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    await t.start();
+    const conn = t.gateway.latest;
+    conn.releaseHeld(); // the first sub_ok
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    await t.advance(100); // the ctl is sent, its reply in flight
+    first.release();
+    await t.advance(300);
+    const again = t.engine.consume(spec("trades.BTCUSDT", { paneId: "p2" }));
+    await t.advance(300);
+    conn.releaseHeld(); // the old ctl_ok, then the unsub_ok
+    await t.advance(300);
+    expect(again.effective).toEqual({}); // not the old subscription's 1 000 ms
+    conn.releaseHeld(); // the new sub_ok
+    await t.advance(300);
+    expect([again.status, again.effective]).toEqual(["live", { throttle_ms: 100 }]);
+  });
+
+  it("a stream let go by its pane and wanted again is the same stream, and still ignores the replies of its earlier sub", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const t = engineHarness({ hold: ["sub_ok", "unsub_ok"] });
+    await t.start();
+    t.gateway.failSubs(1); // the first sub is refused, and the err is in flight
+    const handle = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.advance(300);
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: false });
+    await t.advance(300); // let go: the unsub is sent
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(300); // wanted again, behind the unsub_ok
+    const conn = t.gateway.latest;
+    conn.releaseHeld(); // the old sub's err, then the unsub_ok
+    await t.advance(300);
+    expect(handle.status).toBe("pending"); // the err belonged to the sub that was let go
+    conn.releaseHeld();
+    await t.advance(300);
+    expect([handle.status, conn.of("sub")]).toEqual([
+      "live",
+      [expect.anything(), expect.anything()],
+    ]);
   });
 
   it("a stream made again and again keeps the replies of each sub apart", async () => {
@@ -861,6 +919,304 @@ describe("edges of the stream plane", () => {
   });
 });
 
+describe("panes and what they show (8.5, C8)", () => {
+  const PANES = [
+    ["p1", BOOK, 50],
+    ["p2", "trades.BTCUSDT", 100],
+    ["p3", "bars.BTCUSDT.time.1", 250],
+    ["p4", "heatmap.BTCUSDT", 500],
+  ] as const;
+  const workspace = async () => {
+    const t = engineHarness();
+    for (const [paneId, ch] of PANES) t.engine.consume(spec(ch, { paneId }));
+    await t.start();
+    return t;
+  };
+  const setTab = (t: Awaited<ReturnType<typeof workspace>>, tabHidden: boolean) =>
+    PANES.forEach(([paneId]) => t.engine.setPane(paneId, { visibility: "visible", tabHidden }));
+  const throttles = (gateway: FakeGateway) =>
+    gateway.latest.of("ctl").map((f) => [f["ch"], (f["p"] as Json)["throttle_ms"]]);
+  const running = (gateway: FakeGateway) =>
+    gateway.latest.subs().map(({ ch, effective }) => [ch, effective["throttle_ms"]]);
+
+  it("Hidden tab throttles but does not unsubscribe", async () => {
+    const t = await workspace();
+    const conn = t.gateway.latest;
+    const subs = conn.of("sub").length;
+    setTab(t, true);
+    await t.advance(500);
+    expect(throttles(t.gateway)).toEqual(PANES.map(([, ch]) => [ch, 1_000])); // every visual topic, at least 1 000 ms
+    expect(conn.of("unsub")).toEqual([]);
+    setTab(t, false);
+    await t.advance(500);
+    expect(throttles(t.gateway).slice(4)).toEqual(PANES.map(([, ch, natural]) => [ch, natural]));
+    expect(running(t.gateway)).toEqual([
+      ["system", 250],
+      ...PANES.map(([, ch, natural]) => [ch, natural]),
+    ]);
+    expect([conn.of("sub").length, conn.of("resync")]).toEqual([subs, []]); // no re-snapshot
+  });
+
+  it("an off-screen pane goes to 1 000 ms, a collapsed one is let go, and both come back", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    const conn = t.gateway.latest;
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    await t.advance(100);
+    expect(throttles(t.gateway)).toEqual([["trades.BTCUSDT", 1_000]]);
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: false });
+    await t.advance(300);
+    expect(conn.of("unsub").map(topicsOf)).toEqual([["trades.BTCUSDT"]]);
+    t.got("trades.BTCUSDT");
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(500);
+    expect(conn.of("sub")).toHaveLength(2); // subscribed again, and snapshotted
+    expect(t.got("trades.BTCUSDT")).toEqual(["snap:1"]);
+    expect(conn.of("ctl")).toHaveLength(1); // nothing to retune: it is back at its own cadence
+  });
+
+  it("a topic runs at the fastest of its consumers, and a pane that is gone counts no more", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p2" }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    expect(t.gateway.latest.of("ctl")).toEqual([]); // p2 still watches it
+    t.engine.setPane("p2", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    expect(t.gateway.latest.of("ctl")).toHaveLength(1);
+    t.engine.removePane("p2");
+    t.engine.removePane("p1"); // both back to the defaults: visible
+    await t.advance(100);
+    expect(running(t.gateway).at(-1)).toEqual(["trades.BTCUSDT", 100]);
+  });
+
+  it("never retunes a private topic or system", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("orders", { paneId: "p1", priority: "private" }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: true });
+    await t.advance(500);
+    expect([t.gateway.latest.of("ctl"), t.gateway.latest.of("unsub")]).toEqual([[], []]);
+  });
+
+  it("floors a restored throttle at welcome.limits.min_throttle_ms", async () => {
+    const t = engineHarness({ limits: { min_throttle_ms: 200 } });
+    t.engine.consume(spec(BOOK, { opts: { throttle_ms: 20 } })); // asks for faster than the server allows
+    await t.start();
+    expect(t.gateway.latest.subs().at(-1)?.effective["throttle_ms"]).toBe(200);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(100);
+    const asked = t.gateway.latest.of("ctl").map((f) => (f["p"] as Json)["throttle_ms"]);
+    expect(asked).toEqual([1_000, 200]); // back to the server's minimum, not to the 20 that was asked
+  });
+
+  it("a hide and a show before the first ctl_ok still sends the restore", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.consume(spec(BOOK));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100); // the ctl is out, its ctl_ok is not back
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(100);
+    expect(t.gateway.latest.of("ctl").map((f) => (f["p"] as Json)["throttle_ms"])).toEqual([
+      1_000, 50,
+    ]);
+  });
+
+  it("keeps what the registry kept of the server's options, never the frame's: an effective over their limits is not believed", async () => {
+    const t = engineHarness({ bloatEffective: true }); // every effective carries 2 000 values more than options can hold
+    const handle = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    expect(handle.effective).toEqual({}); // the registry ignored it, and flow control did too
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300);
+    expect(throttles(t.gateway)).toEqual([]); // it knows no pace to slow down from
+  });
+
+  it("a ctl the gateway refused is asked for again from what is wanted now", async () => {
+    const t = await workspace();
+    t.gateway.deny(1);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(500);
+    expect(throttles(t.gateway)).toEqual([
+      [BOOK, 1_000],
+      [BOOK, 1_000],
+    ]);
+    expect(t.engine.counters.deniedFrames).toBe(1);
+    expect(running(t.gateway)[1]).toEqual([BOOK, 1_000]);
+  });
+
+  it("a restore the gateway refused is asked for again, from what the server was told last", async () => {
+    const t = await workspace();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(500); // slowed to 1 000 ms, and confirmed
+    t.gateway.deny(1);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(500);
+    expect(throttles(t.gateway).filter(([ch]) => ch === BOOK)).toEqual([
+      [BOOK, 1_000],
+      [BOOK, 50], // refused
+      [BOOK, 50],
+    ]);
+    expect(running(t.gateway)[1]).toEqual([BOOK, 50]);
+  });
+
+  it("a refused ctl is asked for again from what is wanted now, never replayed as it was", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.gateway.deny(1);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true }); // slowed: refused, and the err is in flight
+    await t.advance(100);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false }); // and back before it is heard
+    await t.advance(100);
+    t.gateway.latest.releaseHeld();
+    await t.advance(500);
+    expect(throttles(t.gateway)).toEqual([
+      ["trades.BTCUSDT", 1_000],
+      ["trades.BTCUSDT", 100],
+    ]);
+    expect(running(t.gateway)[1]).toEqual(["trades.BTCUSDT", 100]);
+  });
+
+  it("a lost connection forgets what the server was told: a hidden tab is slowed again on the next", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    t.gateway.latest.close(1011);
+    await t.advance(1_000); // reconnected, and subscribed again at its own pace
+    expect(throttles(t.gateway)).toEqual([["trades.BTCUSDT", 1_000]]);
+  });
+
+  it("a topic's pace is the fastest of its consumers, and changes when one arrives or leaves", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    expect(running(t.gateway)[1]).toEqual(["trades.BTCUSDT", 1_000]);
+    const shown = t.engine.consume(spec("trades.BTCUSDT", { paneId: "p2" })); // a pane that is watched joins
+    await t.advance(100);
+    expect(running(t.gateway)[1]).toEqual(["trades.BTCUSDT", 100]);
+    shown.release(); // and leaves: only the hidden one is left
+    await t.advance(100);
+    expect(running(t.gateway)[1]).toEqual(["trades.BTCUSDT", 1_000]);
+  });
+
+  it("forgets what the server was told of a topic once it is unsubscribed: the next consumer starts clean", async () => {
+    const t = engineHarness();
+    const first = t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100); // slowed: one ctl
+    first.release();
+    await t.advance(300); // unsubscribed
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p2" })); // a pane that is watched
+    await t.advance(300);
+    expect(throttles(t.gateway)).toEqual([["trades.BTCUSDT", 1_000]]); // nothing to retune: it runs at its own pace
+  });
+
+  it("a retune of a ch with a live and a replay stream lands on the live one, the one the gateway takes", async () => {
+    const t = engineHarness();
+    const replay = t.engine.consume(spec("trades.BTCUSDT"), RS); // first in the table
+    const live = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    await t.advance(300);
+    expect([live.effective, replay.effective]).toEqual([
+      { throttle_ms: 1_000 },
+      { throttle_ms: 100 },
+    ]);
+  });
+
+  it("a stream a remounting consumer takes over is still slowed when its tab is hidden", async () => {
+    const t = engineHarness();
+    const first = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    first.release();
+    t.engine.consume(spec("trades.BTCUSDT")); // the same task: taken over, nothing is sent
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300);
+    expect(throttles(t.gateway)).toEqual([["trades.BTCUSDT", 1_000]]);
+  });
+
+  it("a hide, a remount and a show leave the server at the pace of a visible pane", async () => {
+    const t = engineHarness();
+    const first = t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300); // slowed to 1 000 ms
+    first.release();
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.advance(300);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(300);
+    expect(throttles(t.gateway)).toEqual([
+      ["trades.BTCUSDT", 1_000],
+      ["trades.BTCUSDT", 100],
+    ]);
+  });
+
+  it("a topic the server ended is not retuned", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    t.gateway.latest.revoke("trades.BTCUSDT", "permission_revoked");
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300);
+    expect(t.gateway.latest.of("ctl")).toEqual([]); // there is nothing to retune: the gateway would say not_subscribed
+  });
+
+  it("a ctl the pacer merges into a newer one leaves no request waiting for its reply", async () => {
+    const t = engineHarness({ hold: ["ctl_ok"] });
+    t.engine.consume(spec("trades.BTCUSDT"));
+    await t.start();
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+      t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    }
+    await t.advance(300); // six ctls in one task leave as one frame
+    expect(t.gateway.latest.of("ctl")).toHaveLength(1);
+    expect(t.engine.counters.pendingRequests).toBe(1);
+  });
+
+  it("retunes the replay stream that is left when the live one was refused", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined); // invalid_options is a client bug (10.3)
+    const t = engineHarness();
+    t.gateway.failSubs(1); // the live sub is refused whole; the replay's goes through
+    const live = t.engine.consume(spec("trades.BTCUSDT"));
+    const replay = t.engine.consume(spec("trades.BTCUSDT"), RS);
+    await t.start();
+    expect(live.status).toBe("revoked");
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    await t.advance(300);
+    expect(replay.effective).toEqual({ throttle_ms: 1_000 });
+  });
+
+  it("lets go of a live and a replay stream in a frame each, and each reply reaches its own stream", async () => {
+    const t = engineHarness();
+    t.gateway.withholdSnaps(true); // no baseline: the unsub_ok is what ends them
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    t.engine.consume(spec(BOOK, { paneId: "p2" }), RS);
+    await t.start();
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: false });
+    t.engine.setPane("p2", { visibility: "collapsed", tabHidden: false });
+    await t.advance(300);
+    expect(t.gateway.latest.of("unsub").map(topicsOf)).toEqual([["trades.BTCUSDT"], [BOOK]]);
+    expect([t.got("trades.BTCUSDT"), t.got(BOOK, RS)]).toEqual([
+      ["reset:unsubscribed"],
+      ["reset:unsubscribed"],
+    ]);
+  });
+});
+
 describe("a snapshot that does not come (7.1, WS-E06)", () => {
   it("is asked for once more, then the stream reads stale until the snapshot arrives", async () => {
     const t = engineHarness();
@@ -952,5 +1308,17 @@ describe("the rest of what a pane decides", () => {
     t.gateway.latest.close(1011);
     await t.advance(1_000);
     expect(t.subscribed()).toEqual(["orders", "bars.BTCUSDT.time.1", "trades.BTCUSDT", BOOK]);
+  });
+
+  it("retunes a replay stream that has no live twin, and the reply lands on it", async () => {
+    const t = engineHarness();
+    const replay = t.engine.consume(spec(BOOK), RS);
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(100);
+    expect(t.gateway.latest.of("ctl")).toEqual([
+      expect.objectContaining({ ch: BOOK, p: { throttle_ms: 1_000 } }),
+    ]);
+    expect(replay.effective["throttle_ms"]).toBe(1_000);
   });
 });

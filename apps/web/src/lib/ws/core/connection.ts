@@ -48,6 +48,8 @@ export interface ConnectionHooks {
   frame(frame: Inbound, decodeMs: number): void;
   /** A message that could not be trusted (undecodable). */
   malformed(error: WsDecodeError): void;
+  /** A queued `ctl` was merged into a newer one (8.5): its `id` is never sent, so no reply is due for it. */
+  superseded?(id: string): void;
 }
 
 export interface ConnectionOptions {
@@ -186,6 +188,7 @@ export function createConnection(options: ConnectionOptions): Connection {
   const pacer = createOutboundPacer({
     // Cast: the pacer is reset whenever `current` goes (`drop`), so no frame outlives its socket.
     send: (frame) => (current as Conn).socket.send(encodeFrame(frame)),
+    onSuperseded: (id) => hooks.superseded?.(id),
     timers,
   });
 
