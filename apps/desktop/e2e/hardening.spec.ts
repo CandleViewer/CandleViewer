@@ -31,6 +31,16 @@ test.describe("Electron main-window smoke", () => {
     expect(hasCv).toBe(true);
     await app.close();
   });
+
+  test("a bridge call from the shell's own main frame resolves (SR-111, #3608)", async () => {
+    // Unit tests mock the frames the IPC sender check compares by identity; this uses real ones.
+    const app = await launchApp();
+    const window = await app.firstWindow();
+    await window.waitForURL(/^app:\/\/candleviewer\//);
+    const handle = await window.evaluate("window.cv.keychainGetKekHandle()");
+    expect(handle).toMatch(/^kek-handle-/);
+    await app.close();
+  });
 });
 
 test.describe("Electron hardening assertion", () => {
