@@ -108,10 +108,65 @@ def test_the_scan_finds_every_job_that_builds_or_tests_apps_web() -> None:
         (None, "pnpm --filter @candleviewer/web-kit run build", False),
         (None, "pnpm --filter @candleviewer/web run lint", False),
         ("apps/web", "ls dist/latest", False),
+        # #3367: pnpm or npm run in apps/web from elsewhere, `cd` into it (also over lines and in
+        # a subshell), a path selector, --filter-prod, a folder in apps/web or under the workspace
+        # path, and backslash-continued lines.
+        (None, "pnpm -C apps/web run build", True),
+        (None, "pnpm --dir apps/web test", True),
+        (None, "pnpm --dir=./apps/web e2e", True),
+        (None, "npm --prefix apps/web run build", True),
+        (None, "cd apps/web && pnpm run build", True),
+        (None, "cd ./apps/web; npx vitest run", True),
+        (None, 'cd "$GITHUB_WORKSPACE/apps/web"\nnpx playwright test', True),
+        (None, "cd apps\ncd web/e2e && npx playwright test", True),
+        (None, "(cd apps/web && pnpm build)", True),
+        (None, "pnpm --filter ./apps/web run build", True),
+        (None, "pnpm --filter=./apps/web/ test:cov", True),
+        (None, 'pnpm --filter "{./apps/web}" build', True),
+        (None, "pnpm -F {apps/web} test", True),
+        (None, "pnpm --filter-prod @candleviewer/web run build", True),
+        (None, "pnpm --filter-prod=./apps/web build", True),
+        ("apps/web/e2e", "npx playwright test", True),
+        ("${{ github.workspace }}/apps/web", "pnpm run build", True),
+        (None, "pnpm --filter @candleviewer/web \\\n  run build", True),
+        (None, "pnpm \\\n  -C apps/web \\\n  test", True),
+        (None, "cd apps/desktop && pnpm run build", False),
+        ("apps/web", "cd ../desktop && pnpm run e2e", False),
+        (None, "pnpm -C apps/desktop run build", False),
+        (None, "pnpm --filter ./apps/web-kit run build", False),
+        (None, "cd apps/web && pnpm turbo run test", False),
+        ("${{ github.workspace }}/apps/desktop", "pnpm run build", False),
     ],
 )
 def test_the_scan_classifies_apps_web_steps(cwd: str | None, run: str, web: bool) -> None:
     assert _builds_or_tests_web({"run": run}, cwd) is web
+
+
+@pytest.mark.parametrize(("workflow", "job"), sorted(WEB_JOBS))
+def test_no_job_or_workflow_key_weakens_the_web_steps(workflow: str, job: str) -> None:
+    # The {name, run} pin on the build and guard steps cannot see these: a job-level
+    # `continue-on-error` (even `false`, an expression can turn it on) passes the job when the
+    # guard fails, and a default `shell` replaces `bash -e {0}` for every step of the job.
+    assert WEB_JOBS[(workflow, job)].weakeners == ()
+
+
+def test_the_scan_reports_the_keys_that_weaken_every_step(tmp_path: Path) -> None:
+    shell = {"defaults": {"run": {"shell": "bash {0}"}}}
+    job = {"steps": [{"run": "pnpm --filter @candleviewer/web run build"}]}
+    for name, doc in {
+        "plain.yml": {"jobs": {"j": job}},
+        "job-continue.yml": {"jobs": {"j": {"continue-on-error": False, **job}}},
+        "job-shell.yml": {"jobs": {"j": {**shell, **job}}},
+        "workflow-shell.yml": {**shell, "jobs": {"j": job}},
+    }.items():
+        (tmp_path / name).write_text(yaml.safe_dump(doc), encoding="utf-8")
+    found = {workflow: web.weakeners for (workflow, _), web in _web_jobs(tmp_path).items()}
+    assert found == {
+        "plain.yml": (),
+        "job-continue.yml": ("jobs.j.continue-on-error",),
+        "job-shell.yml": ("jobs.j.defaults.run.shell",),
+        "workflow-shell.yml": ("defaults.run.shell",),
+    }
 
 
 def test_the_scan_reads_a_default_working_directory(tmp_path: Path) -> None:
