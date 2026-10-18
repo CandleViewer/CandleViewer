@@ -10,6 +10,8 @@ from __future__ import annotations
 from candleviewer.storage.errors import (
     ERROR_CODES,
     AuditEntryTooLarge,
+    HotReplayReadError,
+    HotReplayReadTimeout,
     IlpRowError,
     InvalidSymbol,
     MissingDesignatedTimestamp,
@@ -50,6 +52,8 @@ def test_error_codes_are_stable_and_unique() -> None:
         UnknownIlpTable: "STORAGE_ILP_UNKNOWN_TABLE",
         StorageRecordInvalid: "STORAGE_RECORD_INVALID",
         AuditEntryTooLarge: "STORAGE_AUDIT_ENTRY_TOO_LARGE",
+        HotReplayReadError: "HOT_REPLAY_READ_ERROR",
+        HotReplayReadTimeout: "HOT_REPLAY_READ_TIMEOUT",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 
