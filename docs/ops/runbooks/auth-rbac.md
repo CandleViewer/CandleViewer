@@ -330,6 +330,10 @@ it (login refuses `disabled` only):
   never calls `require_active`; or it authenticates with `allow_locked=True` other than through
   `require_active`. `test_only_these_routes_skip_the_backstop` scans the code for both:
   `POST /auth/logout` skips it the first way (#2300), `DELETE /me/sessions/{sessionId}` the second.
+  As deployed, `IdleLockMiddleware` (#2300) first authenticates the bearer of every route but the
+  operations allowed while idle-locked with `authenticate_access_token`, which ends in
+  `require_active`, so `DELETE /me/sessions/{sessionId}` meets the backstop there before its own
+  code runs, and only `POST /auth/logout` skips it.
 - Each such revocation increments `auth_disabled_user_sessions_revoked_total` once (no label; on the
   metrics registry: the private listener `127.0.0.1:9108`) and logs a `WARNING`
   `auth.disabled_user_session_revoked` with `session_id`, `user_id` and `user_status` (`None`: the

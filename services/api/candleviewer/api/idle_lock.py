@@ -16,7 +16,9 @@ reads a body. It authenticates the bearer with the routes' own acceptance rule
 rule refuses as idle-locked (`SessionIdleLocked`: access token inside its
 lifetime, session neither revoked nor past its absolute lifetime). Any other
 refusal passes through untouched, so the route answers its own uniform `401`
-(no session oracle), and an expired access token stays `unauthenticated`. It
+(no session oracle), and an expired access token stays `unauthenticated`. So
+does a store that fails under the call (`RuntimeError`): the route, which
+authenticates the bearer itself, answers it as it would without the gate. It
 does not gate the operations allowed while locked, nor the ones the contract does
 not authenticate with a bearer (public ones, and `POST /auth/refresh`, which
 refuses a locked session itself). Those match their exact path; anything else
@@ -183,6 +185,11 @@ class IdleLockMiddleware:
             return idle_locked_problem(exc.idle_locked_at)
         except AuthError:
             return None  # unknown, expired, revoked: the route answers its own 401
+        except RuntimeError:
+            # A store failing under the call: the route authenticates the bearer again and answers
+            # as it does without this gate (`/me`: 503 `store_unavailable`, logged; a resolver: no
+            # principal), never a 500 from here (#3300, #3053 item 2).
+            return None
         return None
 
 

@@ -222,6 +222,21 @@ async def test_revoked_expired_unknown_and_missing_credentials_pass_to_the_route
     assert gate.reached == ["GET /a", "GET /b", "GET /c", "GET /d"]
 
 
+async def test_a_store_failing_under_the_check_passes_the_request_to_the_route(
+    gate: Gate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3300: a `RuntimeError` from the store is the route's to answer (it authenticates the
+    bearer again), never a 500 from the gate."""
+    minted = await gate.mint()
+
+    async def stopped(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("session store stopped")
+
+    monkeypatch.setattr(gate.sessions, "authenticate_access_token", stopped)
+    assert (await gate.send("GET", "/me", minted)).status_code == 200
+    assert gate.reached == ["GET /me"]
+
+
 async def test_without_a_session_backend_the_gate_passes() -> None:
     g = Gate(wired=False)
     try:

@@ -11,7 +11,9 @@ import re
 from datetime import timedelta
 from typing import Any, cast
 
+import pytest
 from fastapi import FastAPI
+from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.idle_lock import ungated_operations
@@ -142,6 +144,33 @@ def test_an_expired_access_token_of_a_locked_session_stays_unauthenticated(
     stack.clock.now += ACCESS_TOKEN_TTL
     r = stack.client.get("/auth/sessions", headers=_headers(stack, minted))
     assert r.status_code == 401 and _code(r) != "session_idle_locked"
+
+
+#: A stopping session store's failure text: never in an answer.
+_STORE_FAILURE = "session store stopped"
+
+
+def test_a_store_failing_under_the_gate_leaves_each_route_its_own_answer(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3300 as deployed: a `RuntimeError` while the gate checks the token is answered by the
+    route, as without the gate, never as a 500 by the gate: the `/me` routes their contracted
+    `503 store_unavailable` with one `auth.me.session_backend_error` line, a resolver-backed read
+    its uniform 401 (no principal). The failure's text is never echoed."""
+    headers = _headers(stack, _session(stack, "stopping"))
+
+    async def stopped(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(_STORE_FAILURE)
+
+    monkeypatch.setattr(stack.auth.sessions, "authenticate_access_token", stopped)
+    for path in ("/me", "/me/preferences", "/me/keymap"):
+        with capture_logs() as logs:
+            r = stack.client.get(path, headers=headers)
+        assert (r.status_code, _code(r)) == (503, "store_unavailable"), path
+        errors = [e["event"] for e in logs if e["log_level"] == "error"]
+        assert errors == ["auth.me.session_backend_error"] and _STORE_FAILURE not in r.text
+    r = stack.client.get("/instruments", headers=headers)
+    assert r.status_code == 401 and _STORE_FAILURE not in r.text
 
 
 def test_sign_out_instead_still_ends_the_locked_session(stack: Stack) -> None:
