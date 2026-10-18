@@ -25,6 +25,7 @@ import inspect
 import re
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Any, Protocol
 
 import structlog
@@ -281,19 +282,37 @@ def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = No
     )
 
 
-async def consume_bound_grant(
+@dataclass(frozen=True)
+class SpentGrant:
+    """The one-shot grant a request used (#2799): the entry `StepUpService.consume_single_use`
+    removed from the session row by its conditional write, kept as it returned it and never read
+    back, so the handler's audit record names `challenge_id`. Read only on access, so
+    `consume_bound_grant`, which discards it, never reads it."""
+
+    grant: StepUpChallenge
+
+    @property
+    def challenge_id(self) -> uuid.UUID:
+        return self.grant.challenge_id
+
+    @property
+    def action_class(self) -> str:
+        return self.grant.action_class
+
+
+async def spend_bound_grant(
     step_up: StepUpService,
     emitter: _Emitter | None,
     session_id: str,
     action_class: str,
     fingerprint: str,
-) -> StepUpChallenge | None:
-    """No-grace gate (#2304): None when the grant bound to `fingerprint` was used, else the
-    challenge issued for this request. A grant bound to another request is left in place and
-    the mismatch is audited first (write-ahead, C-2.9, `AuditRefused` when it cannot be): no
-    emitter means no answer."""
+) -> SpentGrant | StepUpChallenge:
+    """No-grace gate (#2304): the `SpentGrant` this request used when the grant was bound to
+    `fingerprint`, else the challenge issued for this request. A grant bound to another request
+    is left in place and the mismatch is audited first (write-ahead, C-2.9, `AuditRefused` when
+    it cannot be): no emitter means no answer."""
     try:
-        await step_up.consume_single_use(session_id, action_class, fingerprint=fingerprint)
+        grant = await step_up.consume_single_use(session_id, action_class, fingerprint=fingerprint)
     except StepUpMismatch as exc:
         if emitter is None:
             raise RuntimeError("auth.step_up_mismatch: no audit emitter wired") from exc
@@ -317,8 +336,23 @@ async def consume_bound_grant(
     except StepUpRequired:
         pass
     else:
-        return None
+        return SpentGrant(grant)
     return await step_up.record_pending(session_id, action_class, fingerprint=fingerprint)
+
+
+async def consume_bound_grant(
+    step_up: StepUpService,
+    emitter: _Emitter | None,
+    session_id: str,
+    action_class: str,
+    fingerprint: str,
+) -> StepUpChallenge | None:
+    """`spend_bound_grant` for a caller that records no spend: None when the grant bound to
+    `fingerprint` was used, else the challenge issued for this request. It raises as
+    `spend_bound_grant` does, which `api.rules_actor` relies on: the mismatch is audited first,
+    `AuditRefused` when it cannot be, and no emitter means no answer."""
+    spent = await spend_bound_grant(step_up, emitter, session_id, action_class, fingerprint)
+    return None if isinstance(spent, SpentGrant) else spent
 
 
 async def require_elevation_for(
@@ -423,6 +457,42 @@ def step_up_port(
     return demand
 
 
+async def require_bound_elevation(
+    auth: _AuthLike,
+    session_id: object | None,
+    action_class: str,
+    *,
+    fingerprint: str,
+    emitter: _Emitter,
+    text: ChallengeText | None = None,
+) -> JSONResponse | SpentGrant:
+    """The no-grace gate of a handler that names the grant it spends (#2799): the `SpentGrant`
+    this request used, else the problem to return, mapped as `require_elevation_for` maps it,
+    a refusal being the challenge for this request restated by `text`. No session is a 401 and
+    sessions wired without step-up a 503, as in `require_session_elevation`. A grace class
+    binds no request (its step-up opens a window, never a grant): naming one fails closed."""
+    if action_class in ACTION_CLASSES - NO_GRACE_ACTION_CLASSES:
+        raise TypeError(f"{action_class} has a grace window: it binds no request")
+    if session_id is None:
+        return _unauthenticated()
+    if not auth.step_up_is_active:
+        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+    try:
+        spent = await spend_bound_grant(
+            auth.step_up, emitter, str(session_id), action_class, fingerprint
+        )
+    except SessionReadOnly as exc:
+        return readonly_problem(exc)
+    except SessionRevoked:
+        return _unauthenticated()
+    except AuditRefused:  # the mismatch record could not be written ahead: no answer, no challenge
+        return _audit_unavailable()
+    except UnknownActionClass:  # a defect, as in `require_elevation_for`
+        _log().error("auth.step_up_unregistered_class", action_class=action_class)
+        return _problem(500, "internal_error", "Internal error", "unregistered step-up class")
+    return spent if isinstance(spent, SpentGrant) else required_problem(spent, text)
+
+
 #: `is_dangerous` routes (permissions seeded `is_dangerous=true`) -> the
 #: step-up action class that must be elevated. Method + path regex. Paths are
 #: the `22-api-openapi.yaml` contract; entries for routes that later epics
@@ -471,10 +541,10 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # restoreBackup (04 §7.2.2 row 52, #2751), no-grace and irreversible. A no-grace grant is
     # bound to the request its handler validated (#2304), which a path alone cannot name, so a
     # path-gated no-grace class fails closed: the handler gates it after RBAC and validation, with
-    # `require_elevation_for(..., fingerprint=request_fingerprint(...), emitter=...)`. Not mounted
-    # yet: its ticket drops it from the registry test's `_PENDING_HANDLER_GATES` and adds the
-    # handler test. Before it is mounted, the restore's write-ahead audit record must name the
-    # step-up (B16 records no spend: #2799).
+    # `require_bound_elevation(..., fingerprint=request_fingerprint(...), emitter=...)`. Not
+    # mounted yet: its ticket drops it from the registry test's `_PENDING_HANDLER_GATES` and adds
+    # the handler test. The restore's write-ahead audit record must name the `challenge_id` of
+    # the `SpentGrant` that gate returns (B16 records no spend: #2799).
     ("POST", "/admin/backups/{backupId}/restore", "backups"),
     # #2738 (SR-025, 04 §7.2.2 rows 8, 9 and 9a). Not mounted yet: the E16-T08 (#492) PR that
     # mounts them must drop them from the registry test's `_PENDING_HANDLER_GATES` (it fails
@@ -854,9 +924,11 @@ def make_step_up_router(
 
 
 __all__ = [
+    "SpentGrant",
     "StepUpRefused",
     "make_read_only_guard",
     "make_step_up_router",
+    "require_bound_elevation",
     "require_elevation_for",
     "require_session_elevation",
     "step_up_port",
