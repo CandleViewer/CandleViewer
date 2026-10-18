@@ -53,7 +53,7 @@ and close codes, never an internal class. The automated half lives in `services/
 | --------------------------------------------------------------------------- | ---------------------------------------- |
 | A frame violates its §13–§15 schema, or a sequence number is skipped/reused | `priority/p0` (R7 data accuracy)         |
 | An undocumented error code reaches a client                                 | `priority/p0`                            |
-| A server-initiated close without a preceding `bye`                          | `priority/p1`                            |
+| A server-initiated close without a preceding `bye` (S11's exceptions aside) | `priority/p1`                            |
 | Unknown option silently accepted                                            | `priority/p1`                            |
 | Doc and server disagree on an optional field                                | `priority/p2` against whichever is wrong |
 
@@ -298,7 +298,10 @@ used to be strict xfails (#2409, #2410) were flipped by #3102 (#412, S2b) and pa
 
 - **S6 ladder (§8.4 steps 1-2), #2409, and bound, #2410.** With `CV_WS_BACKPRESSURE_ENABLED` on, the gateway runs the ladder (#412):
   `test_s6_coalescable_overflow_gets_backpressure_snap_and_no_close` and `test_s6_coalescable_topic_is_not_cut_below_the_spec_budget`
-  assert both on a flag-on `World`, under both subprotocols. With the flag off (the default until #412 completes; #2900 removes it),
+  assert both on a flag-on `World`, under both subprotocols. Since the pacer routes deltas (#412), the first sends 20 002 prints into
+  one `trades` window, past its 20 000-item bound, and gets `snap reason:backpressure` with the socket open; the second gets all
+  2 000 prints, as 1 and then 1 999 (the ladder's budget-driven drop is `tests/unit/ws/test_pipeline_ladder.py`). With the flag off
+  (the default until the gates that `23-ws-protocol.md` §8.6 lists close; #2900 removes it),
   the gateway still closes `slow_consumer` after 1 024 frames, with no `snap reason:backpressure`; that is pinned by
   `tests/unit/ws/test_backpressure_flag.py::test_router_without_backpressure_keeps_the_1024_frame_close`, not by a row here.
   #2409 (P1) and #2410 therefore stay open until the flag goes, and the owner's `approved` comment on #409 records the deferral

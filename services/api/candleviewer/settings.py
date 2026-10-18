@@ -465,16 +465,17 @@ class Settings(BaseSettings):
     # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket
     # #2900). It swaps the mechanism that bounds a connection's outbound frames and never removes
     # the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no safety invariant
-    # (C-4.14). Until the backpressure wiring lands its only effect is that
-    # `welcome.features.coalescing` mirrors it (`23-ws-protocol.md` §4.2). Rollout precondition:
-    # keep it off until that wiring is complete and the slow-consumer and burst chaos scenarios
-    # pass (`23-ws-protocol.md` §8.4 Rollout; `tests/chaos/ws/SCENARIOS.md`, #410).
+    # (C-4.14). With it on, `create_app` passes a `BackpressureConfig` and every frame goes through
+    # `ws/pipeline.py`; `welcome.features.coalescing` mirrors it (`23-ws-protocol.md` §4.2).
+    # Rollout precondition: keep it off until the slow-consumer and burst chaos scenarios pass and
+    # the open items of `23-ws-protocol.md` §8.6 close (§8.4 Rollout; `tests/chaos/ws/SCENARIOS.md`,
+    # #410).
     ws_backpressure_enabled: bool = False
     # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). The contract
     # values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may be lowered
     # and never raised (a raise needs a security review: E17 threat model §6). M1 may not import
-    # `ws`, so the numbers are spelled out here and a test pins them. Nothing reads them yet: the
-    # backpressure wiring will, and only with the flag on. The floors are typo guards, not sizing:
+    # `ws`, so the numbers are spelled out here and a test pins them. With the flag on, `create_app`
+    # reads them into a `BackpressureConfig`. The floors are typo guards, not sizing:
     # a byte budget under one maximum outbound frame (4 MiB, as in `welcome.limits`) or a frame
     # budget under the 200 allowed subscriptions (256 leaves room for control replies) would close
     # a connection at its first large frame or round of snapshots. At a floor one maximum frame
