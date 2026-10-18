@@ -719,3 +719,4 @@ scope on the open tickets named above.
 | 2026-10-18 | author (agent; PR for #412 inbound limits)        | WS-D05, §4 and §6 (text, limits table): from `auth_ok` a `pong` has its own small budget and size bound (23 §8.5); no rating changes         |
 | 2026-10-18 | author (agent; PR for #3403)                      | WS-D17 points at the cooperative-cut note in `Settings._refuse_unfittable_stop_budget` (#3361, #3403); no rating or count changes            |
 | 2026-10-18 | author (agent; PR for #3268 slice B)              | §10: #3268 out of the flag's gates (§8.6); §6: heatmap sent-bucket memory seeded at snapshot, ceiling unchanged; no rating or count changes  |
+| 2026-10-18 | author (agent; PR for #3363)                      | WS-T07: #3363, flag off: a raising connection stops no fan-out; a failed `d` awaits an `upstream_desync` `snap`; no rating or count changes  |
