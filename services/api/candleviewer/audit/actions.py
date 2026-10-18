@@ -217,6 +217,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.credential_sign_failed",
         # #2266: one per re-wrapped row, committed with the row's compare-and-set (M10 adapter).
         "security.credential_rewrapped",
+        # #2266: a KEK re-wrap run opens with it when an earlier run moved rows and rows are left.
+        "security.kek_rotation_resumed",
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",

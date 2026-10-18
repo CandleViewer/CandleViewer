@@ -46,14 +46,24 @@ _REVOKE = sa.text(
     "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()), status = 'revoked', "
     "updated_at = now() WHERE id = :id"
 )
+#: `_IDS` and `_COUNT` leave out a row either revocation signal fences, as `_REWRAP` does, so a
+#: KEK rotation never lists a row it may not move and can still complete (#2266).
 _IDS = sa.text(
     "SELECT k.id FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
-    "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND ea.env::text = :env "
+    "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND k.status <> 'revoked' "
+    "AND ea.env::text = :env "
     "AND (CAST(:after AS uuid) IS NULL OR k.id > CAST(:after AS uuid)) ORDER BY k.id LIMIT :limit"
 )
 _COUNT = sa.text(
     "SELECT count(*) FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
-    "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND ea.env::text = :env"
+    "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND k.status <> 'revoked' "
+    "AND ea.env::text = :env"
+)
+#: Rows at `:v` created before `(env, :v)` was enrolled, revoked or not: an earlier run's moves.
+_REWRAPPED = sa.text(
+    "SELECT count(*) FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "JOIN kek_versions kv ON kv.env = ea.env AND kv.version = k.kek_version "
+    "WHERE k.kek_version = :v AND ea.env::text = :env AND k.created_at < kv.created_at"
 )
 #: Moves a row of the process's environment unless a revocation signal fences it (`revoked_at`
 #: or status `revoked`); every other status is re-wrapped, or the rotation never completes.
@@ -135,6 +145,9 @@ class SqlAlchemyCredentialStore:
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
         return int((await self._exec(_COUNT, {"v": version, "env": env}))[0]["count"])
+
+    async def count_rewrapped_since_enrolment(self, version: int, env: str) -> int:
+        return int((await self._exec(_REWRAPPED, {"v": version, "env": env}))[0]["count"])
 
     async def rewrap(
         self,

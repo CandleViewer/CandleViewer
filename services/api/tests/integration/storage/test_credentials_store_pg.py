@@ -35,6 +35,7 @@ from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyC
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.unit.credentials_m2._vectors import AuditLog
 
 pytestmark = pytest.mark.integration
 
@@ -67,14 +68,14 @@ def pg_dsn() -> Iterator[str]:
         yield url.replace("postgresql+psycopg2", "postgresql+asyncpg")
 
 
-def _account(dsn: str) -> UUID:
+def _account(dsn: str, env: str = "demo") -> UUID:
     acct = uuid4()
     uid = str(abs(hash(acct)) % 10**12)
     with psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql"), autocommit=True) as c:
         c.execute(
             "INSERT INTO exchange_accounts (id, exchange, env, kind, exchange_uid, label) "
-            "VALUES (%s, 'bybit', 'demo', 'main', %s, %s)",
-            (acct, uid, f"acct-{acct}"),
+            "VALUES (%s, 'bybit', %s::exchange_env, 'main', %s, %s)",
+            (acct, env, uid, f"acct-{acct}"),
         )
     return acct
 
@@ -458,3 +459,69 @@ async def test_a_rewrap_aborted_while_it_waits_for_the_chain_lock_moves_nothing(
         assert _wrap(pg_dsn, key_id) == before and _records(pg_dsn, key_id) == []
     assert await store.rewrap(key_id, **_move(key_id, "v1:moved")) is True
     assert _wrap(pg_dsn, key_id) == (2, "v1:moved") and len(_records(pg_dsn, key_id)) == 1
+
+
+async def _keys(b: CredentialBroker, dsn: str, n: int, tag: str, env: str = "demo") -> list[UUID]:
+    """`n` keys of `env` stored by `b`, each on its own account, sorted by id."""
+    out = []
+    for i in range(n):
+        key, acct = Secret(f"KEY{i:04d}{tag}"), _account(dsn, env)
+        out.append((await b.store(env, acct, f"{tag}{i}", key, Secret("S"), _SNAP)).key_id)
+    return sorted(out)
+
+
+async def test_a_demo_run_moves_and_counts_only_the_demo_rows_of_a_shared_database(
+    pg_dsn: str,
+) -> None:
+    """#2266 item 7 (C-2.11): demo and live rows at one KEK version share the database. A demo run
+    lists, moves and counts demo rows only; every live row, count and record stays as it was."""
+    rel, store = _store(pg_dsn)
+    try:
+        demo = await _keys(CredentialBroker(store, _audit, _kek(110, 8)), pg_dsn, 3, "DEMO")
+        live_broker = CredentialBroker(store, _audit, _kek(140, 8, "live"), env_name="live")
+        live = await _keys(live_broker, pg_dsn, 2, "LIVE", "live")
+        await store.record_kcv("demo", 9, _kek(120, 9).kcv())  # the rotation boot enrols v9
+        await store.record_kcv("live", 9, _kek(141, 9, "live").kcv())  # live's own lineage
+        wraps = {k: _wrap(pg_dsn, k) for k in live}
+        rot = CredentialBroker(store, _audit, _kek(120, 9), prev_kek=_kek(110, 8))
+        rep = await rot.rewrap_all(9, batch=2)
+        assert (rep.rewrapped, rep.remaining, rep.failed) == (3, 0, ())
+        assert [_wrap(pg_dsn, k)[0] for k in demo] == [9, 9, 9]
+        assert {k: _wrap(pg_dsn, k) for k in live} == wraps
+        assert [_records(pg_dsn, k) for k in live] == [[], []]
+        assert await store.ids_at_kek_version(8, 10, "live") == live
+        assert await store.count_at_kek_version(8, "live") == 2
+        assert await store.count_rewrapped_since_enrolment(9, "live") == 0
+        assert await store.count_rewrapped_since_enrolment(9, "demo") == 3
+    finally:
+        await rel.dispose()
+
+
+async def test_a_run_resumes_from_every_row_an_earlier_run_moved_revoked_or_not(
+    pg_dsn: str,
+) -> None:
+    """The resume count is the rows at the new version created before it was enrolled, revoked
+    or not, never a row stored under it since. A status-revoked row is neither listed nor
+    counted, so the run completes with it fenced at the previous version."""
+    rel, store = _store(pg_dsn)
+    try:
+        ids = await _keys(CredentialBroker(store, _audit, _kek(150, 12)), pg_dsn, 4, "RSME")
+        await store.record_kcv("demo", 13, _kek(160, 13).kcv())
+        await _keys(CredentialBroker(store, _audit, _kek(160, 13)), pg_dsn, 1, "NEWK")
+        for k in ids[:2]:  # an earlier run moved two rows
+            assert await store.rewrap(k, **_move(k, "v1:moved", from_version=12, kek_version=13))
+        await store.mark_revoked(ids[0])
+        _sql(pg_dsn, "UPDATE api_keys SET status = 'revoked' WHERE id = %s", ids[2])
+        assert await store.count_rewrapped_since_enrolment(13, "demo") == 2
+        assert await store.ids_at_kek_version(12, 10, "demo") == [ids[3]]
+        assert await store.count_at_kek_version(12, "demo") == 1
+        audit = AuditLog()
+        rot = CredentialBroker(store, audit, _kek(160, 13), prev_kek=_kek(150, 12))
+        rep = await rot.rewrap_all(13)
+        action, fields = audit.records[0]
+        assert action == "security.kek_rotation_resumed"
+        assert (fields["remaining"], fields["already_rewrapped"]) == ("1", "2")
+        assert (rep.resumed, rep.rewrapped, rep.remaining) == (True, 1, 0)
+        assert _wrap(pg_dsn, ids[2])[0] == 12
+    finally:
+        await rel.dispose()
