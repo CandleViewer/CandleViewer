@@ -27,10 +27,11 @@ This script is the single implementation invoked by the ``gen`` step of the
    no diff and is not untracked, and the guard's local manifest records
    whatever the directory holds. The gate restores nothing: such a file stays
    removed from the working tree (the index keeps it), and the report prints
-   one `git rm` command that deletes them all. Every other failed run lists
-   the tracked files it leaves missing, with one `git restore` command that
-   brings them all back. Step 1 fails closed (CI-GEN-004) when git tracks
-   nothing under the outputs, which would leave this step nothing to check.
+   one `git rm` command that deletes them all. Every other run that fails once
+   step 1 has removed files, a traceback or Ctrl-C included, lists the tracked
+   files it leaves missing, with one `git restore` command that brings them
+   all back. Step 1 fails closed (CI-GEN-004) when git tracks nothing under
+   the outputs, which would leave this step nothing to check.
 4. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
    against a committed schema change). This is also the hand-edit guard for
    committed generated files: regenerating overwrites the edit, so it shows
@@ -44,9 +45,12 @@ This script is the single implementation invoked by the ``gen`` step of the
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
 
-Exit codes: 0 clean; 1 on any failure (each check reports a CI-GEN-* code on
+Exit codes: 0 clean; 1 on a failed check (each reports a CI-GEN-* code on
 stderr, CI-GEN-004 when the gate could not run a check: the generator, git or a
 working-tree step failed); 2 only for a command-line usage error (argparse).
+An uncoded exception (pnpm or git not on PATH, Ctrl-C) is not caught: after the
+note of step 3 it ends the run with its traceback and Python's usual exit
+status (1, or the SIGINT status for Ctrl-C).
 
 Stdlib only at import (subprocess/git/node are external processes, not
 imports). Step 6's renderer imports PyYAML when it runs; the ``gen`` step installs
@@ -401,6 +405,11 @@ def main(argv: list[str] | None = None) -> int:
         if exc.code != "CI-GEN-005":  # its own report lists them
             _note_missing(removed)
         return 1
+    except BaseException:
+        # Uncoded (pnpm or git not on PATH, Ctrl-C, an output it cannot read): it keeps
+        # its traceback and exit status, but the note comes first.
+        _note_missing(removed)
+        raise
 
     print("check_gen_freshness: OK — packages/protocol is fresh and deterministic")
     return 0

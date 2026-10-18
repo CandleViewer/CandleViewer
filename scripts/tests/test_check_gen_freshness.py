@@ -879,6 +879,50 @@ def test_a_removal_that_fails_partway_names_every_file_it_removed(
     assert _git(generated_repo, "status", "--porcelain") == ""
 
 
+def _lose_pnpm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pnpm not on PATH: subprocess.run raises FileNotFoundError (no CI-GEN code)."""
+    monkeypatch.setattr(gen_gate, "GENERATE_CMD", ["cv-gen-gate-no-pnpm", "generate"])
+
+
+def _interrupt_the_generator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-C during `pnpm generate`: subprocess.run re-raises the KeyboardInterrupt."""
+    run = gen_gate._run
+
+    def interrupted(cmd, cwd=None, env=None):
+        if cmd == gen_gate.GENERATE_CMD:
+            raise KeyboardInterrupt
+        return run(cmd, cwd=cwd, env=env)
+
+    monkeypatch.setattr(gen_gate, "_run", interrupted)
+
+
+@pytest.mark.parametrize(
+    ("cause", "raised"),
+    [
+        pytest.param(_lose_pnpm, FileNotFoundError, id="pnpm-not-on-path"),
+        pytest.param(_interrupt_the_generator, KeyboardInterrupt, id="ctrl-c"),
+    ],
+)
+def test_an_uncoded_failure_after_the_removal_propagates_after_the_note(
+    generated_repo: Path,
+    cause: Callable[[pytest.MonkeyPatch], None],
+    raised: type[BaseException],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Not a GenGateError: the gate does not swallow it into exit 1, so it keeps its
+    traceback and exit status, but it first prints the note: every removed output and
+    the one restore command."""
+    cause(monkeypatch)
+    with pytest.raises(raised):
+        gen_gate.main([])
+    err = capsys.readouterr().err
+    assert err.startswith("note: 2 tracked generated file(s) missing")
+    assert "".join(f"  - {rel}\n" for rel in sorted(_GENERATED)) in err
+    _paste_restore_command(generated_repo, err)
+    assert _git(generated_repo, "status", "--porcelain") == ""
+
+
 @pytest.mark.parametrize("where", ["outputs-moved", "subdirectory"])
 def test_nothing_tracked_under_the_outputs_fails_closed(
     generated_repo: Path,

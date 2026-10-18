@@ -131,8 +131,9 @@ The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` run
 It first removes the tracked files under the outputs `pnpm generate` writes in full
 (`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
 tree, never the index, then generates. It restores nothing. A CI-GEN-005 report prints one
-`git rm -- <paths>` command for the files it names; any other failed run lists the tracked
-files it leaves missing and prints one `git restore -- <paths>` command that brings them all back.
+`git rm -- <paths>` command for the files it names; any other failed run, a traceback or Ctrl-C
+included, lists the tracked files it leaves missing and prints one `git restore -- <paths>`
+command that brings them all back.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit
