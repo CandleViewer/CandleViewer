@@ -336,8 +336,11 @@ def test_every_audit_action_the_chart_writes_is_registered() -> None:
     assert written <= AUDIT_ACTIONS
 
 
+_CHALLENGE = str(uuid.UUID(int=0x3402))
+
+
 @pytest.mark.parametrize(
-    "extra", [{}, {"challenge_id": str(uuid.UUID(int=0x3402))}], ids=["revoke", "with-a-challenge"]
+    "extra", [{}, {"challenge_id": _CHALLENGE}], ids=["revoke", "with-a-challenge"]
 )
 async def test_the_revoke_record_names_the_revoked_session_as_its_object(
     extra: dict[str, str], b16_audit: RecordingAuditSink
@@ -353,6 +356,50 @@ async def test_the_revoke_record_names_the_revoked_session_as_its_object(
         await chart.stop()
     (revoked,) = [c for c in b16_audit.calls if c["action"] == "auth.session_revoked"]
     assert (revoked["object_kind"], revoked["object_id"]) == ("session", str(row.id))
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [({}, (None, None)), ({"challenge_id": _CHALLENGE}, ("step_up_challenge", _CHALLENGE))],
+    ids=["no-object", "challenge-object"],
+)
+async def test_a_revoke_record_with_no_session_id_names_no_half_set_subject(
+    extra: dict[str, str], expected: tuple[str | None, str | None], b16_audit: RecordingAuditSink
+) -> None:
+    """#3402: `_identity()` allows a chart with no `session_id`. Its revoke record keeps the object
+    its event gives it, none or the challenge, and never the kind `session` with no id: no
+    `subject_id` filter matches that, and it would drop the challenge."""
+    context = {"user_id": str(uuid.uuid4())}
+    event = {"reason": "user_disabled", **extra}
+    await b16_session.audit_session_revoked(None, context, event, None)
+    (record,) = b16_audit.calls
+    assert (record["object_kind"], record["object_id"]) == expected
+
+
+_OTHER_AUDITS = sorted(
+    name
+    for name in b16_session.ACTIONS
+    if name.startswith("audit_") and name != "audit_session_revoked"
+)
+
+
+def test_the_other_b16_audit_actions_include_login_and_the_idle_lock() -> None:
+    """Guards the parametrization below against going empty, which would skip it silently."""
+    assert {"audit_login", "audit_idle_locked"} <= set(_OTHER_AUDITS)
+
+
+@pytest.mark.parametrize("name", _OTHER_AUDITS)
+async def test_no_other_b16_record_names_its_session_as_its_object(
+    name: str, b16_audit: RecordingAuditSink
+) -> None:
+    """#3402: only the revoke record names its session. Every other B16 audit action, login and
+    the idle lock among them, keeps the object it had: none, or the step-up challenge that its
+    event carries."""
+    context = {"session_id": str(uuid.uuid4()), "user_id": str(uuid.uuid4())}
+    for event in ({}, {"challenge_id": _CHALLENGE}):
+        await b16_session.ACTIONS[name](None, context, event, None)
+    objects = [(call["object_kind"], call["object_id"]) for call in b16_audit.calls]
+    assert objects == [(None, None), ("step_up_challenge", _CHALLENGE)]
 
 
 async def _lock_and_unlock(

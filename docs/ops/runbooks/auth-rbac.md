@@ -413,12 +413,27 @@ it (login refuses `disabled` only):
   (B16 writes one for each session a disable revoked, the session its subject since #3402), and
   `auth.disabled_user_session_revoked` is the backstop's. A session with neither is unaudited,
   even when a `users.disable` record names its user: that record names the user and counts the
-  sessions (`after.sessions_revoked`) without naming them, so a session that escaped the disable
-  and lost its backstop record has that record only. A disable leaves such a session too when its
-  B16 step failed (the ERROR line `users.disable.step` with `step` `b16_revoke`) or its commit's
-  outcome is unknown (a second `users.disable`, `failure`, reason `outcome_unknown`); both name
-  only the user, so attach them when you escalate. An `auth.session_revoked` written before #3402
-  names no subject and does not show here.
+  sessions (`detail.after.sessions_revoked`) without naming them, so a session that escaped the
+  disable and lost its backstop record has that record only. A disable leaves a session it
+  revoked with neither record when its B16 step failed (the ERROR line `users.disable.step` with
+  `step` `b16_revoke`); when its sweep was cut off after its `UPDATE` committed, so that B16 never
+  got the sessions it revoked (the same line, `step` `session_sweep`); when its commit's outcome
+  is unknown (a second `users.disable`, `failure`, reason `outcome_unknown`); or when the process
+  ended after the commit and before B16 recorded the session, in a crash, a kill or a power loss,
+  which leaves no line, because only a live process writes `users.disable.step`. The
+  `users.disable` records and the line, if there is one, name the user and no session: attach them
+  when you escalate.
+
+  In a window that starts before the release that carries #3402, a session this lookup does not
+  find may still have the disable's record, because an `auth.session_revoked` written before that
+  release names no subject. Look the session up by its user and the time instead:
+  `GET $API/admin/audit?action=auth.session_revoked&actor_user_id=<user_id>&from=<start>&to=<end>`,
+  with the session's `user_id` from the SQL above and the window's bounds in UTC (RFC 3339, such
+  as `2026-10-17T06:00:00Z`; `to` is exclusive, and B16 writes its record just after the
+  revocation, so end the window a little past the last `revoked_at`). Each record gives its
+  `session_id` and `reason`, and its actor is the session's user: a session whose id is the
+  `session_id` of a record with reason `user_disabled` is covered by the disable's own record. A
+  session in neither lookup is unaudited.
 
 - A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
   presents a token that is still valid, or when it calls `GET /auth/session`, which finds the

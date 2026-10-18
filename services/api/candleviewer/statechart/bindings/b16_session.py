@@ -82,7 +82,8 @@ async def _emit(
     the record's object; a no-grace grant also names the SHA-256 of the
     request it is bound to (never the request itself). A `session_object`
     record names its session as the object instead (#3402), because the
-    audit query's `subject_type`/`subject_id` filter reads only the object."""
+    audit query's `subject_type`/`subject_id` filter reads only the object;
+    one with no session id keeps the object above, never a kind with no id."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -95,7 +96,7 @@ async def _emit(
     if isinstance(bound, str):
         after["bound_request_sha256"] = bound
     kind, obj = ("step_up_challenge", challenge) if isinstance(challenge, str) else (None, None)
-    if session_object:
+    if session_object and sid is not None:
         kind, obj = "session", sid
     await _SINK[0].emit(
         action,
