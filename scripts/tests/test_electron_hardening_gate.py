@@ -133,7 +133,7 @@ class Tree:
         for rel, text in self.files.items():
             p = self.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text, encoding="utf-8")
+            p.write_bytes(text.encode("utf-8", "surrogateescape"))  # "\udcff": 0xFF
         return run_all_checks(
             desktop_dist=self.root / "desktop",
             web_dist=self.root / "web",
@@ -829,7 +829,8 @@ def test_other_packaging_that_could_ship_maps_fails_sr116(
 # Text the old line reader passed that js-yaml 4.3.2, electron-builder's loader, reads
 # otherwise: a comment or plain item running on past a non-LF break, a value left open over
 # the lists, a flow mapping's escaped key, a filter item off its column (js-yaml rejects the
-# flow and less-indented cases). A lone CR is refused though js-yaml breaks on it.
+# flow and less-indented cases), a flow list of a blank YAML does not strip. A lone CR, a
+# BOM and a byte that is not UTF-8 are refused by name though js-yaml reads the same lists.
 QUOTED = GOOD_PACKAGING.replace('"', "'")
 WEB_ITEMS = (
     GOOD_BUILDER + WEB_ENTRY + '    filter:\n      - "**/*"\n      - index.html\n'
@@ -852,6 +853,9 @@ MISREAD = {
     "flow-mapping": (GOOD_PACKAGING + 'mac: {"fil\\x65s": ["**/*"]}\n', "line 'mac: {"),
     "more-indented": (WEB_ITEMS + '        - "!**/*.map"\n', "unreadable line '- \"!"),
     "less-indented": (WEB_ITEMS + '    - "!**/*.map"\n', "unreadable line '- \"!"),
+    "flow-NBSP": (GOOD_PACKAGING + "extraFiles: [\xa0]\n", "cannot read extraFiles"),
+    "BOM": ("\ufeff" + GOOD_PACKAGING, "line 1: it holds U+FEFF"),
+    "not-UTF-8": (GOOD_PACKAGING + "# \udcff\n", "line 10: it holds a byte"),
 }
 
 
@@ -870,8 +874,18 @@ def test_text_js_yaml_reads_otherwise_fails_sr116(
         GOOD_BUILDER + "  - from: a.js.map\n" + MAP_FILTER + GOOD_WEB_RESOURCES,
         GOOD_PACKAGING + "  - from: web/x.js.map\n    to: maps/x.js\n" + MAP_FILTER,
         GOOD_PACKAGING + "extraFiles:\n  - from: a.txt\n    to: a.MAP\n" + MAP_FILTER,
+        GOOD_PACKAGING + "  - from: web/x.js.map\\\n    to: maps/x.js\n" + MAP_FILTER,
+        GOOD_PACKAGING + '  - from: "web/x.js.map. "\n    to: maps/x.js\n' + MAP_FILTER,
+        GOOD_PACKAGING + "  - from: web/x.js.map::$DATA\n    to: x.js\n" + MAP_FILTER,
     ],
-    ids=["files-source", "extraResources-source", "extraFiles-destination"],
+    ids=[
+        "files-source",
+        "extraResources-source",
+        "extraFiles-destination",
+        "trailing-backslash",
+        "trailing-dot-space",
+        "ntfs-stream",
+    ],
 )
 def test_single_file_map_entry_fails_sr116_whatever_its_filter(
     tree: Tree, builder: str
