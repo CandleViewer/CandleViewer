@@ -3,10 +3,11 @@
 The queue builds `main` plus the PR as a merge group and waits for `ci-required` on it, the one
 check protection requires. These tests pin what a merge group's run needs: the trigger; a
 concurrency group per merge group that is never cancelled; the `change` step that hands
-paths-filter the group's base_sha..head_sha (a PR's own diff stays on the API path); the
-PR-metadata gates, not applicable on a merge group while every other lane resolves as before; every
-pull-request read in pr.yml and the lanes it calls, guarded to pull_request or given a merge_group
-fallback; the migrations lane's base; and the `workflow_run` consumers of `pr`, which ignore a
+paths-filter `main` and the group's head, so a group's lanes cover the entries ahead of it too (a
+PR's own diff stays on the API path); the PR-metadata gates, not applicable on a merge group only,
+while every other lane resolves as before; every pull-request read in pr.yml and the lanes it
+calls, guarded to pull_request or given a merge_group fallback, and every condition there that reads
+the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, which ignore a
 queue run."""
 
 from __future__ import annotations
@@ -29,24 +30,62 @@ PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"  # 
 BASE, HEAD = "1" * 40, "2" * 40
 #: The gates that read PR metadata (the title, the body, the PR's own commits).
 PR_ONLY = {"commitlint", "changelog-fragment"}
-#: Pull-request context, empty or null on a merge group.
+#: Pull-request context, empty or null on a merge group, in dot or index form. A whole-event read
+#: counts too: a script could take a PR field from it.
 PR_READ = re.compile(
-    r"github\.event\.pull_request\b|github\.event\.number\b|github\.(?:head|base)_ref\b"
-    r"|\bGITHUB_(?:HEAD|BASE)_REF\b"
+    r"github\.event\.(?:pull_request|number)\b|github\.(?:head|base)_ref\b"
+    r"|github\.event\[\s*['\"](?:pull_request|number)['\"]|github\[\s*['\"](?:head|base)_ref"
+    r"|\bGITHUB_(?:HEAD_REF|BASE_REF|EVENT_PATH)\b|toJSON\(\s*github\.event\s*\)"
 )
-PR_GUARDS = ("github.event_name == 'pull_request'", "needs.changed-paths.outputs.pr == 'true'")
+#: The event in any form: a job or step condition that reads it can skip on a merge group.
+EVENT_READ = re.compile(
+    PR_READ.pattern + r"|github\.(?:event|event_name|actor|triggering_actor|ref|ref_name)\b"
+    r"|\bGITHUB_(?:EVENT_NAME|REF|REF_NAME|ACTOR)\b|\boutputs\.pr\b"
+)
+#: A condition is false on a merge group when one of its top-level `&&` terms is one of these.
+PR_GUARDS = ("github.event_name == 'pull_request'", "needs.changed-paths.outputs.pr != 'false'")
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
-#: Reads that are false on a merge group by construction (no labels, no head branch), so the job
-#: or step they start is skipped in the queue, as on an unlabelled PR from a non-release branch.
-FALSE_ON_A_MERGE_GROUP = {
-    # The opt-in audit query-plan spike (`run-audit-spike` label); not a lane of its own.
-    "_job-integration.yml:audit-query-plan",
-    # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs.
+FREEZE_UPLOAD = (
     "_job-security.yml:read-only-scans:"
-    "Upload freeze-manifest proposal for the reviewer (Dependabot / dependencies PRs)",
-    # release/* heads only. A merge group names no PR head; the nightly matrix covers `main`
-    # (07-release-and-prr.md section 4.1; test_e2e_nightly.py pins the expression).
-    "_job-e2e.yml:e2e-electron",
+    "Upload freeze-manifest proposal for the reviewer (Dependabot / dependencies PRs)"
+)
+#: Every job or step `if:` in pr.yml and the lanes it calls that reads the event, verbatim
+#: (whitespace folded). A merge group can skip a check only through one of these, so a new or
+#: changed one (a PR guard on a real gate, a guard inside an `||`) is reviewed here first.
+EVENT_CONDITIONS = {
+    **dict.fromkeys(
+        ["pr.yml:gates:changelog-fragment", "pr.yml:gates:commitlint"],
+        "${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}",
+    ),
+    # The a11y baseline's PR citation and the coverage comment: nothing later reads either.
+    "_job-a11y.yml:a11y:Baseline changes must cite finding id in PR description": (
+        "github.event_name == 'pull_request'"
+    ),
+    "_job-coverage.yml:coverage-thresholds:Post PR summary comment": (
+        "always() && github.event_name == 'pull_request'"
+    ),
+    # False on a merge group by construction (no labels, no head branch), as on an unlabelled PR
+    # from a non-release branch. The opt-in audit query-plan spike, not a lane of its own:
+    "_job-integration.yml:audit-query-plan": "${{ github.event_name == 'workflow_dispatch' || "
+    "contains(github.event.pull_request.labels.*.name, 'run-audit-spike') }}",
+    # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
+    FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
+    "'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'dependencies')) }}",
+    # release/* heads only; the nightly matrix covers `main` (07-release-and-prr.md section 4.1;
+    # test_e2e_nightly.py pins the expression):
+    "_job-e2e.yml:e2e-electron": (
+        "${{ inputs.electron || startsWith(github.head_ref, 'release/') }}"
+    ),
+}
+#: The unguarded pull-request reads: the three conditions above that are false on a merge group,
+#: each allowed as exactly that read, not as a place where any read may go.
+FALSE_ON_A_MERGE_GROUP = {
+    (where, EVENT_CONDITIONS[where].removeprefix("${{ ").removesuffix(" }}"))
+    for where in (
+        "_job-integration.yml:audit-query-plan",
+        FREEZE_UPLOAD,
+        "_job-e2e.yml:e2e-electron",
+    )
 }
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"
@@ -138,32 +177,37 @@ def _change_step() -> dict[str, Any]:
     return steps[0]
 
 
+MAIN = "refs/heads/main"
+
+
 @pytest.mark.parametrize(
-    ("event", "base", "head", "expected"),
+    ("event", "base_ref", "head", "expected"),
     [
         ("pull_request", "", "", {"pr": "true"}),
-        ("merge_group", BASE, HEAD, {"pr": "false", "base": BASE, "head": HEAD}),
+        ("merge_group", MAIN, HEAD, {"pr": "false", "base": "main", "head": HEAD}),
         ("merge_group", "", HEAD, None),  # never diff against a default
-        ("merge_group", "main", HEAD, None),  # a ref, not the parent commit
+        ("merge_group", "refs/heads/release/v1", HEAD, None),  # the queue is main's only
+        ("merge_group", MAIN, "main", None),  # a ref, not the group's head commit
         ("push", "", "", None),
-        ("workflow_dispatch", BASE, HEAD, None),
+        ("workflow_dispatch", MAIN, HEAD, None),
     ],
-    ids=["pull-request", "merge-group", "no-base", "base-not-a-sha", "push", "dispatch"],
+    ids=["pull-request", "merge-group", "no-base", "not-main", "bad-head", "push", "dispatch"],
 )
 def test_change_step_maps_the_event_to_the_change_under_test(
-    event: str, base: str, head: str, expected: dict[str, str] | None, tmp_path: Path
+    event: str, base_ref: str, head: str, expected: dict[str, str] | None, tmp_path: Path
 ) -> None:
     step = _change_step()
+    # Never the group's base_sha: that is the entry ahead, so the diff would miss its change.
     assert step["env"] == {
         "EVENT": "${{ github.event_name }}",
-        "GROUP_BASE": "${{ github.event.merge_group.base_sha }}",
+        "GROUP_BASE_REF": "${{ github.event.merge_group.base_ref }}",
         "GROUP_HEAD": "${{ github.event.merge_group.head_sha }}",
     }
     _needs("bash")
     output = tmp_path / "github-output"
     output.write_text("", encoding="utf-8")
     env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(output)}
-    env |= {"EVENT": event, "GROUP_BASE": base, "GROUP_HEAD": head}
+    env |= {"EVENT": event, "GROUP_BASE_REF": base_ref, "GROUP_HEAD": head}
     run = ["bash", "-c", step["run"]]
     proc = subprocess.run(run, env=env, capture_output=True, text=True, timeout=30)
     written = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
@@ -173,13 +217,16 @@ def test_change_step_maps_the_event_to_the_change_under_test(
         assert (proc.returncode, written) == (0, expected)
 
 
-def test_paths_filter_diffs_a_merge_group_from_base_sha_to_head_sha() -> None:
+def test_paths_filter_diffs_a_merge_group_against_main_from_their_merge_base() -> None:
     job = JOBS["changed-paths"]
     ids = [step.get("id") for step in job["steps"]]
     assert ids.index("change") < ids.index("filter")
     # The pinned paths-filter lists a PR's files through the API while `base` and `ref` are empty,
-    # as the change step leaves them on a PR. On a merge group they win over its defaults: it
-    # fetches the base commit (depth 1) and diffs the two trees, so the shallow checkout will do.
+    # as the change step leaves them on a PR. On a merge group they win over its defaults (the
+    # group's base_sha and head_sha), and a branch base takes its merge-base path: it fetches
+    # `main` and the head itself and diffs `main...head`, every entry ahead in the queue included.
+    # With grouping HEADGREEN (.github/branch-protection.json) the queue merges a failed entry with
+    # a later one that passed, so the later run must have chosen its lanes for both changes.
     step = job["steps"][ids.index("filter")]
     assert step["uses"] == PATHS_FILTER
     assert {key: step["with"][key] for key in ("base", "ref")} == {
@@ -192,7 +239,8 @@ def test_paths_filter_diffs_a_merge_group_from_base_sha_to_head_sha() -> None:
 def test_pr_metadata_gates_run_on_pull_requests_only() -> None:
     # The PR's run checked its title, body and commits; a queue's squash commit is not its commits.
     steps = {step.get("id"): step for step in JOBS["gates"]["steps"]}
-    pr_only = "${{ !cancelled() && needs.changed-paths.outputs.pr == 'true' }}"
+    # `!= 'false'` fails closed: if changed-paths lost the output, they run.
+    pr_only = "${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}"
     assert {gate: steps[gate]["if"] for gate in PR_ONLY} == dict.fromkeys(PR_ONLY, pr_only)
 
 
@@ -235,6 +283,9 @@ def test_resolver_skips_only_the_pr_metadata_gates_on_a_merge_group(lane: str) -
 def test_resolver_still_requires_the_pr_metadata_gates_on_a_pull_request(gate: str) -> None:
     assert _resolve({f"needs.gates.outputs.{gate}": "skipped"}) == (1, {SKIP % gate})
     assert _resolve({f"needs.gates.outputs.{gate}": "failure"}) == (1, {FAIL % (gate, "failure")})
+    # Fail closed: only `pr` false (a merge group) makes them not applicable, never a lost output.
+    lost = {"needs.changed-paths.outputs.pr": "", f"needs.gates.outputs.{gate}": "skipped"}
+    assert _resolve(lost) == (1, {SKIP % gate})
 
 
 def test_resolver_fails_a_merge_group_run_whose_tree_gate_failed() -> None:
@@ -254,39 +305,93 @@ def _strings(node: object) -> Iterator[str]:
             yield from _strings(value)
 
 
-def _unguarded_reads() -> set[str]:
-    """Where pr.yml or a lane it calls reads pull-request context with neither a pull_request
-    guard on the step or job nor a merge_group fallback in the same expression. Text outside
-    `${{ }}` (a shell read such as $GITHUB_BASE_REF) counts as one expression."""
-    found: set[str] = set()
+def _guards(condition: object) -> bool:
+    """Whether a job or step `if:` is false on a merge group: a PR guard is one of its top-level
+    `&&` terms. A top-level `||`, or a `!` or parentheses around the guard, does not count."""
+    text = str(condition or "").strip()
+    wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.DOTALL)
+    text = wrapped[1] if wrapped else text
+    while (folded := re.sub(r"\([^()]*\)", "_", text)) != text:  # each parenthesised group
+        text = folded
+    terms = {" ".join(term.split()) for term in text.split("&&")}
+    return "||" not in text and bool(terms & set(PR_GUARDS))
+
+
+def _has_fallback(read: str) -> bool:
+    """`a || b` of two context paths, one of them under `github.event.merge_group`."""
+    terms = [term.strip() for term in read.split("||")]
+    group = [term.startswith("github.event.merge_group.") for term in terms]
+    return len(terms) == 2 and all(re.fullmatch(r"[\w.]+", term) for term in terms) and any(group)
+
+
+def _places(name: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """(place, node, its job) for each job and step of workflow `name`."""
+    for job_id, job in _load(name)["jobs"].items():
+        yield f"{name}:{job_id}", job, job
+        for step in job.get("steps") or []:
+            yield f"{name}:{job_id}:{step.get('id') or step.get('name')}", step, job
+
+
+def _unguarded_reads() -> set[tuple[str, str]]:
+    """(place, read) for each pull-request read in pr.yml or a lane it calls with neither a PR
+    guard on its step or job nor a merge_group fallback in the same `a || b`. Text outside
+    `${{ }}` (a shell read, a bare `if:`) is read line by line."""
+    found: set[tuple[str, str]] = set()
 
     def scan(where: str, node: object, guarded: bool) -> None:
         for text in _strings(node):
-            for part in [*EXPRESSION.findall(text), EXPRESSION.sub("", text)]:
-                if PR_READ.search(part) and not guarded and "github.event.merge_group." not in part:
-                    found.add(where)
-
-    def guard(condition: object) -> bool:
-        return any(text in str(condition or "") for text in PR_GUARDS)
+            for part in [*EXPRESSION.findall(text), *EXPRESSION.sub("", text).splitlines()]:
+                if PR_READ.search(part) and not guarded and not _has_fallback(part):
+                    found.add((where, " ".join(part.split())))
 
     for name in dict.fromkeys(_called("pr.yml")):
         doc = _load(name)
         scan(name, {key: value for key, value in doc.items() if key not in ("jobs", True)}, False)
-        for job_id, job in doc["jobs"].items():
-            job_guard = guard(job.get("if"))
-            scan(f"{name}:{job_id}", {k: v for k, v in job.items() if k != "steps"}, job_guard)
-            for step in job.get("steps") or []:
-                where = f"{name}:{job_id}:{step.get('id') or step.get('name')}"
-                scan(where, step, job_guard or guard(step.get("if")))
+        for where, node, job in _places(name):
+            own = {key: value for key, value in node.items() if key != "steps"}
+            scan(where, own, _guards(job.get("if")) or _guards(node.get("if")))
     return found
+
+
+@pytest.mark.parametrize(
+    ("condition", "guarded"),
+    [
+        ("github.event_name == 'pull_request'", True),
+        ("${{ !cancelled() && needs.changed-paths.outputs.pr != 'false' }}", True),
+        ("${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}", False),
+        ("${{ !(github.event_name == 'pull_request') }}", False),
+        ("${{ needs.changed-paths.outputs.pr == 'true' }}", False),  # an empty output runs it
+        (None, False),
+    ],
+)
+def test_a_pr_guard_counts_only_as_a_top_level_and_term(condition: str, guarded: bool) -> None:
+    assert _guards(condition) is guarded
+
+
+@pytest.mark.parametrize(
+    "read",
+    ["github.event['pull_request'].head.sha", 'github["base_ref"]', "$GITHUB_EVENT_PATH"],
+)
+def test_the_scan_finds_pull_request_context_in_any_form(read: str) -> None:
+    assert PR_READ.search(read)
 
 
 def test_every_pull_request_read_is_guarded_or_has_a_merge_group_fallback() -> None:
     # On a merge group these reads are empty: unguarded, one fails, hangs or skips a check that
     # matters for the queued tree. Guard it to pull_request, give it a merge_group fallback in the
-    # same expression, or, if it is false on a merge group by construction, add it to
-    # FALSE_ON_A_MERGE_GROUP with the reason.
+    # same `a || b`, or, if it is false on a merge group by construction, review the exact read
+    # into EVENT_CONDITIONS and FALSE_ON_A_MERGE_GROUP with the reason.
     assert _unguarded_reads() == FALSE_ON_A_MERGE_GROUP
+
+
+def test_every_condition_that_reads_the_event_is_reviewed() -> None:
+    found = {}
+    for name in dict.fromkeys(_called("pr.yml")):
+        for where, node, _job in _places(name):
+            condition = " ".join(str(node.get("if", "")).split())
+            if EVENT_READ.search(condition):
+                found[where] = condition
+    assert found == EVENT_CONDITIONS
 
 
 @pytest.mark.parametrize("base_ref", ["main", "refs/heads/main"], ids=["pr", "merge-group"])
@@ -303,7 +408,8 @@ def test_migration_lockfile_check_compares_both_events_with_origin_main(
     uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
     uv.chmod(0o755)
     env = {"PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}", "BASE_REF": base_ref}
-    proc = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True, text=True)
+    run = ["bash", "-c", step["run"]]
+    proc = subprocess.run(run, env=env, capture_output=True, text=True, timeout=30)
     args = proc.stdout.splitlines()
     assert (proc.returncode, args[args.index("--base-ref") + 1]) == (0, "origin/main")
 
