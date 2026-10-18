@@ -1,7 +1,8 @@
 """`bars.{symbol}.{bar_type}.{param}` deltas from the bar emit path (E12-T06 slice D1b, #399;
 `23-ws-protocol.md` §3.6, §6.1, §7.1, §8.2, §14.3). D2 registers `BarsPublisher` on the
 `EmitRouter` after the series store (a re-snapshot reads the new generation) and calls
-`note_generation` for each bars snapshot it builds.
+`note_generation` for each bars snapshot it builds; the series store will call `history_repair`
+through its repair hook after each re-read that repaired a series (#2787 D2-H1; nothing does yet).
 
 - **Groups.** Each `include_delta` group (§6.1) with a subscriber a frame reaches (live,
   snapshotted, unpaused) is encoded and sent alone (`publish(select=...)`, `meta.include_delta`):
@@ -24,10 +25,20 @@
   mixed mark (`note_generation`) logs `mixed` and no `previous` generation. Residual: a
   series with no baseline (not seen or seeded since start, or evicted) adopts the first
   generation, missing an earlier swap; a refused emission waits for the series' next snapshot.
+- **Repairs** (§7.4 `history_repair`, #2787 D2-H1). `history_repair` re-snapshots, under that
+  reason and with no `d`, each subscription a swap would (live, snapshotted, unpaused) whose
+  `history` holds a bar the re-read added or replaced (`min_history`), so never `history: 0`. A
+  pending one keeps its reason (its `snap`, still to come, holds the repaired series), a paused
+  one snapshots on resume, and one the repair leaves pending is retried as a swap's is. A repair
+  keeps the generation and the baseline. It draws no rebuild budget (§7.5: server-initiated) and
+  has no counter, log line or storm window of its own: `cv_ws_resync_total{reason}` counts each
+  `snap` and `ws resync` logs it; the store runs one read of a series at a time, `retry_after_s`
+  apart.
 
 Drops and fallbacks are counted in `bar_emit_sink_errors_total{reason}` and logged once per
 (series, cause) until it clears. Bounds (C-2.18): at most `max_series` series, least recently
-emitting dropped first. `emit` never awaits and does no I/O; `ws` imports `bars`, not the reverse.
+emitting dropped first. `emit` and `history_repair` never await and do no I/O; `ws` imports
+`bars`, not the reverse.
 """
 
 from __future__ import annotations
@@ -58,6 +69,7 @@ from candleviewer.ws.sequencing import (
     SnapReason,
     b64_budget,
 )
+from candleviewer.ws.topics import BARS_DEFAULTS
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import Subscription
@@ -65,9 +77,11 @@ if TYPE_CHECKING:
 #: Series tracked: twice the process-wide spec cap, so a live series is rarely the one dropped.
 MAX_SERIES: Final = 2 * CAP_GLOBAL
 #: Pending reasons that belong to another flow (the subscribe flow, E17's backpressure hold),
-#: so a swap may not use one: the publisher only ever flushes what its own swap, or a `d` the hub
-#: failed to emit (`upstream_desync`), left pending.
+#: so a swap may not use one: the publisher only ever flushes what its own swap or repair, or a
+#: `d` the hub failed to emit (`upstream_desync`), left pending.
 _FOREIGN_REASONS: Final = frozenset({"initial", "backpressure"})
+#: The repair's own reason (§7.4), never a swap's: a repair keeps the generation.
+_REPAIR: Final[SnapReason] = "history_repair"
 #: A baseline no emission carries (a generation is 0..`MAX_GENERATION`: `check_generation` on
 #: write and on read, `_sendable` on the wire), so the next emission swaps.
 _MIXED: Final = -1
@@ -120,6 +134,20 @@ def _settled(sub: Subscription) -> bool:
     return _live(sub) and not sub.snapshot_pending and not _paused(sub)
 
 
+def _history(sub: Subscription) -> int:
+    """§6.1 `history`, as the snapshot source reads it: the newest bars a `snap` holds."""
+    return int(sub.effective.get("history", BARS_DEFAULTS["history"]))
+
+
+def _topic(symbol: str, spec: BarSpec) -> tuple[WireBarType, str, str] | None:
+    """The series' wire `bar_type`, `param` and `ch`; None when no topic can name it."""
+    try:
+        bar_type, param = to_wire(spec)
+    except BarSpecError:
+        return None
+    return bar_type, param, ".".join(("bars", symbol, bar_type, param))
+
+
 _SELECT: Final[Mapping[bool, Callable[[Subscription], bool]]] = {
     True: _flow,
     False: lambda sub: not _flow(sub),
@@ -155,7 +183,7 @@ class BarsPublisher:
         max_frame_bytes: int = MAX_OUTBOUND_FRAME_BYTES,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        if swap_reason not in SNAP_REASONS or swap_reason in _FOREIGN_REASONS:
+        if swap_reason not in SNAP_REASONS or swap_reason in {*_FOREIGN_REASONS, _REPAIR}:
             raise ValueError(f"{swap_reason!r} is not a swap reason")
         self._hub, self._scales, self._swap, self._max = hub, scales, swap_reason, max_series
         self._frame_bytes, self._clock = max_frame_bytes, clock
@@ -193,17 +221,41 @@ class BarsPublisher:
             if series is not None and self._current(series, emission.generation):
                 self._publish(series, emission.generation, updates)
 
+    def history_repair(self, symbol: str, spec: BarSpec, min_history: int) -> int:
+        """§7.4 `history_repair` (module docstring), once a re-read added or replaced bars the
+        series serves and dropped none. `min_history` counts the newest bars the series serves,
+        the forming bar included (as §6.1 counts `history`), down to the newest bar the read
+        added or replaced: a `snap` with a lower `history` holds none of them, so the repair
+        leaves it alone. Returns the `snap`s sent; never awaits.
+
+        Caller contract (#2787 D2-H1, the heal driver; nothing calls it yet). It must follow EVERY
+        repairing re-read, whoever started it: a subscriber's `ensure` or the heal driver. The
+        store will call it through a synchronous repair hook, invoked right after its fold with no
+        `await` between, which the composition root (`bars_wiring.py` or `app.py`) will wire, as
+        `bars` imports no `ws`. A depth the store fails to count is passed as 1, never skipped.
+        Precision, not correctness: a `min_history` counted before newer bars arrived can only be
+        low, as the changed bar moves further from the newest (barring a reset), so it sends an
+        extra `snap` and never misses one."""
+        if min_history < 1:  # a `history: 0` snapshot is empty, so a repair never changes it
+            raise ValueError(f"min_history {min_history} holds no bar")
+        named = _topic(symbol, spec)
+        if named is None:
+            return 0  # no topic names the series, so nobody holds it
+        ch = named[2]
+        return self._hub.resnapshot(
+            lambda s: s.ch == ch and _settled(s) and _history(s) >= min_history, _REPAIR
+        )
+
     def _series_of(self, symbol: str, spec: BarSpec) -> _Series | None:
         key = (symbol, spec.spec_hash)
         series = self._series.get(key)
         if series is not None:
             self._series.move_to_end(key)
             return series
-        try:
-            bar_type, param = to_wire(spec)
-        except BarSpecError:
+        named = _topic(symbol, spec)
+        if named is None:
             return None  # no topic can name this series
-        ch = ".".join(("bars", symbol, bar_type, param))
+        bar_type, param, ch = named
         head = {"symbol": symbol, "bar_type": bar_type, "param": param}
         env = {"t": "d", "ch": ch, "s": _WIDEST, "ts": _WIDEST, "meta": _META[False], "e": "b64"}
         env["sp"] = SP_ROOM  # a stamped `d` carries one (23 §3.1 Room)
@@ -277,8 +329,10 @@ class BarsPublisher:
         hub's own `upstream_desync` trigger is book-only). The retry runs once the store holds the
         emission, so its `snap` does too. A hub-level match must never accept `initial` (the
         subscribe flow's hold) or `backpressure` (E17's hold), so `__init__` refuses both as
-        `swap_reason` (`_FOREIGN_REASONS`)."""
-        pending = sub.snapshot_pending and sub.pending_reason in (self._swap, "upstream_desync")
+        `swap_reason` (`_FOREIGN_REASONS`). It takes the repair's `history_repair` too: nothing
+        else resends a repair `snap` the store could not build then."""
+        mine = (self._swap, _REPAIR, "upstream_desync")
+        pending = sub.snapshot_pending and sub.pending_reason in mine
         return pending and _live(sub) and not _paused(sub)
 
     def _parts(self, series: _Series, gen: int, bars: list[Bar], flow: bool) -> tuple[Frame, ...]:
