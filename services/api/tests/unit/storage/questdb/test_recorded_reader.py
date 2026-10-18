@@ -8,13 +8,16 @@ import math
 import re
 import threading
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 
 import asyncpg
 import pytest
 
 from candleviewer.domain.sql_names import ts_param
-from candleviewer.storage.errors import HotReplayReadError
+from candleviewer.replay import ReplayRequest, ReplaySource, ReplaySourceUnavailable, ReplayTiers
+from candleviewer.replay.merge import DEFAULT_IO_TIMEOUT_S
+from candleviewer.storage.errors import HotReplayReadError, HotReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
 from candleviewer.storage.questdb import recorded_reader
@@ -38,6 +41,7 @@ from candleviewer.storage.repositories.recorded import (
     RecordedTrade,
     event_from_row,
 )
+from candleviewer.storage.testing import StaticGapReader, StaticManifestCoverage
 
 RNG = TimeRange(start_us=1_000, end_us=2_000)
 NAIVE = datetime(1970, 1, 1) + timedelta(microseconds=1_500)  # PGWire TIMESTAMP shape
@@ -75,9 +79,11 @@ class FailingPgWire(FakePgWire):
         raise self.error
 
 
-def _snapshot_row(update_id: int, *, epoch_id: int | None = None) -> dict[str, object]:
+def _snapshot_row(
+    update_id: int, *, epoch_id: int | None = None, ts: datetime = NAIVE
+) -> dict[str, object]:
     return {
-        "ts": NAIVE,
+        "ts": ts,
         "symbol": "BTCUSDT",
         "depth": 200,
         "epoch_id": epoch_id,
@@ -193,8 +199,15 @@ async def test_a_fetch_that_never_answers_times_out() -> None:
     reader = QuestDbRecordedReader(StuckPgWire(), timeout_s=0.01)
 
     async with asyncio.timeout(5):  # without the reader's own deadline this fails, never hangs
-        with pytest.raises(TimeoutError):
+        with pytest.raises(HotReplayReadTimeout) as caught:
             await reader.read("BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=5)
+
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+def test_every_reader_deadline_is_below_the_merge_deadline() -> None:
+    """A slow tier fails typed in the reader before the merge's own storage deadline fires."""
+    assert recorded_reader.DEFAULT_TIMEOUT_S < DEFAULT_IO_TIMEOUT_S
 
 
 @pytest.mark.parametrize("timeout_s", [0.0, -1.0, math.inf, math.nan])
@@ -287,7 +300,7 @@ class _Records:
 
 
 async def test_lazy_pgwire_hands_the_driver_records_over_without_a_dict_copy() -> None:
-    record: Mapping[str, object] = {"n": 1}
+    record: Mapping[str, object] = MappingProxyType({"n": 1})  # read-only, like a driver Record
     conn = _Records([record])
 
     async def connect(**_: object) -> _Records:
@@ -298,7 +311,9 @@ async def test_lazy_pgwire_hands_the_driver_records_over_without_a_dict_copy() -
     (got,) = await wire.fetch_records("SELECT 1")
 
     assert got is record
-    assert await wire.fetch("SELECT 1") == [{"n": 1}]
+    rows = await wire.fetch("SELECT 1")
+    assert rows == [{"n": 1}] and type(rows[0]) is dict  # `fetch` copies; `fetch_records` does not
+    assert rows[0] is not record
     await wire.close()
 
 
@@ -308,6 +323,8 @@ async def test_lazy_pgwire_hands_the_driver_records_over_without_a_dict_copy() -
         ConnectionError("questdb pg-wire in reconnect backoff"),
         asyncpg.InterfaceError("connection is closed"),
         ConnectionRefusedError(111, "Connect call failed ('10.0.0.5', 8812)"),
+        asyncpg.PostgresError("server error at 10.0.0.5:8812"),
+        asyncpg.InternalClientError("protocol state lost talking to 10.0.0.5:8812"),
     ],
 )
 async def test_driver_failures_become_a_typed_hot_read_error(error: Exception) -> None:
@@ -320,3 +337,150 @@ async def test_driver_failures_become_a_typed_hot_read_error(error: Exception) -
 
     assert caught.value.__cause__ is None and caught.value.__context__ is None
     assert "8812" not in str(caught.value) and "10.0.0.5" not in str(caught.value)
+
+
+def _chain_texts(exc: BaseException | None) -> list[str]:
+    """The text of `exc` and of every exception in its cause and context chain."""
+    texts: list[str] = []
+    while exc is not None:
+        texts.append(str(exc))
+        exc = exc.__cause__ or exc.__context__
+    return texts
+
+
+async def test_a_hot_tier_outage_reaches_the_replay_as_a_typed_unavailable_without_its_text() -> (
+    None
+):
+    """The ripple's typed-failure obligation end to end: `ReplaySource` reports a QuestDB outage
+    as `ReplaySourceUnavailable` with the reader's code, never as `ReplayInternalError`, and no
+    exception in its chain holds the driver's host and port (RP-I02)."""
+    outage = ConnectionRefusedError(111, "Connect call failed ('10.0.0.5', 8812)")
+    reader = QuestDbRecordedReader(FailingPgWire(outage))
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    request = ReplayRequest.model_validate(
+        {
+            "symbols": ("BTCUSDT",),
+            "streams": (StreamKind.TRADES,),
+            "start": epoch + timedelta(microseconds=RNG.start_us),
+            "end": epoch + timedelta(microseconds=RNG.end_us),
+            "source_tier": "questdb",
+        }
+    )
+    tiers = ReplayTiers(
+        hot=reader, cold=reader, coverage=StaticManifestCoverage(), gaps=StaticGapReader()
+    )
+
+    with pytest.raises(ReplaySourceUnavailable) as caught:
+        async with ReplaySource(request, tiers) as source:
+            [item async for item in source]
+
+    assert (caught.value.tier, caught.value.reason) == ("questdb", "HOT_REPLAY_READ_ERROR")
+    assert not [t for t in _chain_texts(caught.value) if "8812" in t or "10.0.0.5" in t]
+
+
+def _snapshots_minutes_apart(count: int) -> list[dict[str, object]]:
+    """`count` snapshots one minute apart, newest first as the anchor query returns them; the
+    newest has update id 100."""
+    return [_snapshot_row(100 - i, ts=NAIVE - timedelta(minutes=i)) for i in range(count)]
+
+
+async def test_the_anchor_cap_reached_at_distinct_instants_is_the_newest_snapshot() -> None:
+    """Production's usual shape: snapshots every <= 60 s fill the 16-row cap over a 1 h lookback
+    at distinct instants. That is no tie: the newest snapshot is the anchor."""
+    rows = _snapshots_minutes_apart(ANCHOR_ROWS)
+
+    found = await QuestDbRecordedReader(FakePgWire(rows)).snapshot_at(
+        "BTCUSDT", 200, 2_000, not_before_us=0
+    )
+
+    assert found is not None and found.seq == 100
+
+
+async def test_a_tie_at_the_newest_instant_within_the_cap_is_resolved_not_refused() -> None:
+    """A full read whose two newest snapshots share an instant, older ones not, is resolved by
+    the key; only a tie spanning all 16 rows is refused."""
+    newest = [_snapshot_row(7, epoch_id=1), _snapshot_row(9, epoch_id=2)]
+    rows = newest + _snapshots_minutes_apart(ANCHOR_ROWS)[2:]  # 14 older, distinct instants
+    assert len(rows) == ANCHOR_ROWS
+
+    found = await QuestDbRecordedReader(FakePgWire(rows)).snapshot_at(
+        "BTCUSDT", 200, 2_000, not_before_us=0
+    )
+
+    assert found is not None and found.seq == 9
+
+
+async def test_the_anchor_is_the_newest_instant_whatever_its_seq() -> None:
+    """The instant decides before `seq`: an older snapshot with a larger sequence never wins."""
+    rows = [_snapshot_row(5, ts=NAIVE), _snapshot_row(50, ts=NAIVE - timedelta(minutes=1))]
+
+    found = await QuestDbRecordedReader(FakePgWire(rows)).snapshot_at(
+        "BTCUSDT", 200, 2_000, not_before_us=0
+    )
+
+    assert found is not None and found.seq == 5
+
+
+async def test_an_anchor_tie_of_equal_seq_is_decided_by_the_tiebreak() -> None:
+    """Two snapshots of one instant and one sequence, from different book epochs, resolve by the
+    key's tiebreak, never by storage order: the winner is stored last here."""
+    a, b = _snapshot_row(7, epoch_id=1), _snapshot_row(7, epoch_id=2)
+    ea = event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, a)
+    eb = event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, b)
+    assert ea.ts_us == eb.ts_us and ea.seq == eb.seq and ea.tiebreak != eb.tiebreak
+    loser, winner = (a, b) if ea.tiebreak < eb.tiebreak else (b, a)
+
+    found = await QuestDbRecordedReader(FakePgWire([loser, winner])).snapshot_at(
+        "BTCUSDT", 200, 2_000, not_before_us=0
+    )
+
+    assert found == event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, winner)
+
+
+async def test_anchor_rows_are_mapped_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-2.17: the anchor's rows map in a worker thread, as a read's do."""
+    threads: list[int] = []
+
+    def tracked(stream: StreamKind, row: Mapping[str, object]) -> RecordedEvent:
+        threads.append(threading.get_ident())
+        return event_from_row(stream, row)
+
+    monkeypatch.setattr(recorded_reader, "event_from_row", tracked)
+
+    await QuestDbRecordedReader(FakePgWire(_snapshots_minutes_apart(3))).snapshot_at(
+        "BTCUSDT", 200, 2_000, not_before_us=0
+    )
+
+    assert threads and threading.get_ident() not in threads
+
+
+@pytest.mark.parametrize("limit", [1, MAX_READ_ROWS])
+def test_the_limit_bounds_are_accepted(limit: int) -> None:
+    assert build_read_recorded(
+        "BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=limit
+    ).sql.endswith(f"LIMIT {limit}")
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, MAX_READ_ROWS + 1])
+async def test_an_unusable_limit_is_refused_through_read_before_any_fetch(limit: int) -> None:
+    wire = FakePgWire()
+
+    with pytest.raises(RecordedQueryRejected):
+        await QuestDbRecordedReader(wire).read(
+            "BTCUSDT", StreamKind.TRADES, RNG, depth=200, limit=limit
+        )
+
+    assert wire.calls == []
+
+
+@pytest.mark.parametrize("symbol", ["", "A" * 33, "btcusdt", "BTCUSDT\n", "BTC USDT"])
+def test_a_symbol_that_is_no_plain_instrument_code_is_refused(symbol: str) -> None:
+    with pytest.raises(RecordedQueryRejected):
+        build_read_recorded(symbol, StreamKind.TRADES, RNG, depth=200, limit=5)
+    with pytest.raises(RecordedQueryRejected):
+        build_snapshot_anchor(symbol, 200, 2_000, 0)
+
+
+def test_the_range_templates_cannot_be_rebound_at_runtime() -> None:
+    with pytest.raises(TypeError):
+        RANGE_SQL[StreamKind.TRADES] = "SELECT * FROM trades"  # type: ignore[index]  # read-only map

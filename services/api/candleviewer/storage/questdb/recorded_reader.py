@@ -3,11 +3,12 @@
 Reads the recorded raw tables (`21-database-schema.md` Sec.4) over PGWire for the replay source.
 Every query is one of a fixed set of literal SQL templates keyed by `StreamKind`, the registered
 dataset id, so no caller text ever reaches SQL: symbol, time bounds and book depth are bind
-parameters (SR-047), and only the validated integer row limit is inlined, because QuestDB's
+parameters (C-12.10), and only the validated integer row limit is inlined, because QuestDB's
 PGWire has no `LIMIT $n` slot (#2168). Each template filters `symbol` by equality, bounds `ts` on
 both sides and orders by the designated timestamp only (the Sec.13.2 query lint). Every fetch is
-time-bounded, and driver failures become one typed `HotReplayReadError` that holds neither a
-cause nor a context (a driver's text may name the server's host and port, RP-I02).
+time-bounded: a deadline becomes `HotReplayReadTimeout` and a driver failure `HotReplayReadError`,
+each holding neither a cause nor a context (a driver's text may name the server's host and port,
+RP-I02).
 
 Rows arrive as the driver's read-only records (`LazyPgWire.fetch_records`), never copied into
 dicts on the event loop, and map through `event_from_row`, the mapping the cold tier shares, in
@@ -20,12 +21,13 @@ import asyncio
 import math
 import re
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Final, Protocol
 
 import asyncpg
 
 from candleviewer.domain.sql_names import assert_bind_count, ts_param
-from candleviewer.storage.errors import HotReplayReadError
+from candleviewer.storage.errors import HotReplayReadError, HotReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.reader import QueryBuilder
 from candleviewer.storage.repositories.recorded import (
@@ -37,34 +39,36 @@ from candleviewer.storage.repositories.recorded import (
 )
 
 #: Replayable stream -> its range query: literal text, the table from this allowlist.
-RANGE_SQL: Final[Mapping[StreamKind, str]] = {
-    StreamKind.TRADES: (
-        "SELECT * FROM trades WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-    StreamKind.ORDERBOOK_DELTA: (
-        "SELECT * FROM orderbook_deltas WHERE symbol = $1 AND ts >= $2 AND ts < $3 AND depth = $4 "
-        "ORDER BY ts"
-    ),
-    StreamKind.ORDERBOOK_SNAPSHOT: (
-        "SELECT * FROM orderbook_snapshots WHERE symbol = $1 AND ts >= $2 AND ts < $3 "
-        "AND depth = $4 ORDER BY ts"
-    ),
-    StreamKind.TICKERS: (
-        "SELECT * FROM tickers WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-    StreamKind.KLINES: (
-        "SELECT * FROM klines WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-    StreamKind.LIQUIDATIONS: (
-        "SELECT * FROM liquidations WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-    StreamKind.OPEN_INTEREST: (
-        "SELECT * FROM open_interest WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-    StreamKind.FUNDING_RATES: (
-        "SELECT * FROM funding_rates WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
-    ),
-}
+RANGE_SQL: Final[Mapping[StreamKind, str]] = MappingProxyType(
+    {
+        StreamKind.TRADES: (
+            "SELECT * FROM trades WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+        StreamKind.ORDERBOOK_DELTA: (
+            "SELECT * FROM orderbook_deltas WHERE symbol = $1 AND ts >= $2 AND ts < $3 "
+            "AND depth = $4 ORDER BY ts"
+        ),
+        StreamKind.ORDERBOOK_SNAPSHOT: (
+            "SELECT * FROM orderbook_snapshots WHERE symbol = $1 AND ts >= $2 AND ts < $3 "
+            "AND depth = $4 ORDER BY ts"
+        ),
+        StreamKind.TICKERS: (
+            "SELECT * FROM tickers WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+        StreamKind.KLINES: (
+            "SELECT * FROM klines WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+        StreamKind.LIQUIDATIONS: (
+            "SELECT * FROM liquidations WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+        StreamKind.OPEN_INTEREST: (
+            "SELECT * FROM open_interest WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+        StreamKind.FUNDING_RATES: (
+            "SELECT * FROM funding_rates WHERE symbol = $1 AND ts >= $2 AND ts < $3 ORDER BY ts"
+        ),
+    }
+)
 #: The anchor lookup reads the newest `ANCHOR_ROWS` snapshots: SQL orders by `ts` only (the
 #: lint), so snapshots sharing the latest instant (one per book epoch) are then ordered by
 #: `order_key`, the order every tier and the replay merge share (24 Sec.13.7).
@@ -80,7 +84,7 @@ DEFAULT_TIMEOUT_S: Final = 20.0
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{1,32}$")
 
 
-#: Driver and connection failures a PGWire fetch can raise (timeouts stay `TimeoutError`).
+#: Driver and connection failures a PGWire fetch can raise (a deadline is typed separately).
 _DRIVER_ERRORS: Final = (
     OSError,
     asyncpg.PostgresError,
@@ -154,14 +158,16 @@ class QuestDbRecordedReader:
         return max(found, key=order_key, default=None)
 
     async def _fetch(self, query: QueryBuilder) -> Sequence[Mapping[str, object]]:
-        """The query's rows, or `HotReplayReadError` naming only the failure's type. It is raised
-        after the handler, so neither its cause nor its context holds the driver's text, which
-        may name the server's host and port (RP-I02). A cancellation passes through."""
+        """The query's rows. A deadline raises `HotReplayReadTimeout` and a driver failure
+        `HotReplayReadError`, naming only the failure's type. Each is raised after the handler,
+        so neither its cause nor its context holds the driver's text, which may name the server's
+        host and port (RP-I02). A cancellation passes through."""
+        failure: HotReplayReadError | HotReplayReadTimeout
         try:
             async with asyncio.timeout(self._timeout_s):
                 return await self._conn.fetch_records(query.sql, *query.params)
         except TimeoutError:
-            raise
+            failure = HotReplayReadTimeout(f"hot replay read exceeded {self._timeout_s}s")
         except _DRIVER_ERRORS as exc:
-            failed = type(exc).__name__
-        raise HotReplayReadError(f"hot replay read failed: {failed}")
+            failure = HotReplayReadError(f"hot replay read failed: {type(exc).__name__}")
+        raise failure

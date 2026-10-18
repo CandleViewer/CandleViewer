@@ -86,32 +86,36 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
         }
         for sink in sinks.values():
             await sink.start()
-        clock = FakeClock()
-        writer = StreamWriter(
-            sinks.__getitem__,
-            FakeStore(),
-            FakeEvents(),
-            WriterConfig(wal_dir=tmp_path / "wal"),
-            clock=clock,
-            wall_clock_us=lambda: 0,
-            disk_gate=OPEN_GATE,
-        )
-        await writer.open()
-        writer.seed(["BTCUSDT"])
-        trades, book_delta, book_snapshot = [trade(1), trade(2)], delta(5), snapshot(4)
-        for ev in trades:
-            await writer.on_trade(ev)
-        await writer.on_book_delta(book_delta)
-        await writer.on_book_snapshot(book_snapshot)
-        await writer.on_ticker(ticker(1))
-        await writer.on_liquidation(liquidation(1))
-        clock.advance(0.2)
-        for stream in STREAMS:
-            await writer.pump(stream)
-        for sink in sinks.values():
-            await sink.stop()
+        # `trade(0)` sits on the window's start (read); `trade(1_000)` on its end (never read).
+        trades, outside = [trade(0), trade(1), trade(2)], trade(1_000)
+        book_delta, book_snapshot = delta(5), snapshot(4)
+        try:
+            clock = FakeClock()
+            writer = StreamWriter(
+                sinks.__getitem__,
+                FakeStore(),
+                FakeEvents(),
+                WriterConfig(wal_dir=tmp_path / "wal"),
+                clock=clock,
+                wall_clock_us=lambda: 0,
+                disk_gate=OPEN_GATE,
+            )
+            await writer.open()
+            writer.seed(["BTCUSDT"])
+            for ev in [*trades, outside]:
+                await writer.on_trade(ev)
+            await writer.on_book_delta(book_delta)
+            await writer.on_book_snapshot(book_snapshot)
+            await writer.on_ticker(ticker(1))
+            await writer.on_liquidation(liquidation(1))
+            clock.advance(0.2)
+            for stream in STREAMS:
+                await writer.pump(stream)
+        finally:
+            for sink in sinks.values():
+                await sink.stop()
         expected_rows = {
-            "trades": 2,
+            "trades": 4,
             "orderbook_deltas": 2,
             "orderbook_snapshots": 1,
             "tickers": 1,
@@ -122,6 +126,7 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
 
         reader = QuestDbRecordedReader(_Records(conn))
         got_trades = await reader.read("BTCUSDT", StreamKind.TRADES, WINDOW, depth=200, limit=100)
+        first_two = await reader.read("BTCUSDT", StreamKind.TRADES, WINDOW, depth=200, limit=2)
         got_deltas = await reader.read(
             "BTCUSDT", StreamKind.ORDERBOOK_DELTA, WINDOW, depth=200, limit=100
         )
@@ -137,7 +142,8 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
             event_from_row(StreamKind.ORDERBOOK_DELTA, r.row) for r in delta_records(book_delta)
         ]
         (snap_row,) = snapshot_records(book_snapshot)
-        assert _by_key(got_trades) == _by_key(want_trades)
+        assert _by_key(got_trades) == _by_key(want_trades)  # the start's row in, the end's out
+        assert sorted(e.ts_us for e in first_two) == [T0, T0 + 1]  # the LIMIT keeps the earliest
         assert _by_key(got_deltas) == _by_key(want_deltas)
         assert other_depth == []
         assert anchor == event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, snap_row.row)
@@ -163,7 +169,7 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
         async with ReplaySource(request, tiers) as source:
             replayed = [item async for item in source]
 
-        assert len(replayed) == sum(expected_rows.values())
+        assert len(replayed) == sum(expected_rows.values()) - 1  # the trade on `end` is outside
         # The merge's order for one symbol (24 Sec.13.7): `seq` compares only inside a sequence
         # domain, and a trade, a ticker and a liquidation share an instant here.
         order = [
