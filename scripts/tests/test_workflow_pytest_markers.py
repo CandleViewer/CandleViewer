@@ -5,8 +5,12 @@ pytest keeps the last `-m`, so a call's own `-m` replaces the addopts `-m` of
 tests in one ~26k-test process, where their wall-clock and RSS budgets measure the whole session.
 Rule, per marker the addopts `-m` deselects: a test carrying only that marker stays deselected,
 unless the call names it outside a `not` (its own lane: `-m harness`, `-m "perf and not flaky"`)
-or `ON_PURPOSE` lists it. A positive selection (`-m integration`) reaches a heavy test only if the
-test carries both markers; that pairing is not modelled (the integration lanes drop `perf`)."""
+or `ON_PURPOSE` lists it. Not modelled: a heavy test that also carries a marker the call selects
+(an integration+perf test under `-m integration`).
+The scan reads each step's `run:` text and fails loudly on the other ways to replace addopts' -m:
+PYTEST_ADDOPTS, a `-qm` cluster, `-c`/`--config-file`, an `addopts` override and `@file` arguments.
+Not read: a shell expansion among the arguments (`"${lane_paths[@]}"`) and a pytest call inside a
+script that a step runs (tools/statechart/run_xstate_contract.sh)."""
 
 from __future__ import annotations
 
@@ -21,14 +25,20 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-OPERATOR = re.compile(r"[();<>|&]+")  # ends a simple command: `a && b`, `a || s=$?`, `a | tee`
+PYTEST = ("pytest", "py.test")
+OPERATOR = re.compile(r"[();<>|&]+")  # a run of shell punctuation that shlex splits off
+SEPARATOR = re.compile(r"[();|&]+")  # ends a simple command: `a && b`, `a || s=$?`, `a | tee`
+REDIRECT = {"<", ">", ">>", ">&", "<&", "&>", "&>>", ">|", "<>", "<<", "<<<"}  # takes one word
 ENV = re.compile(r"[A-Za-z_]\w*=.*")
 # What may stand before `pytest`: `uv run [--flags]`, then `python -m`; anything else fails loudly.
 LAUNCHER = re.compile(r"(?:uv run(?: -\S+)* )?(?:(?:\S*/)?python[\d.]* -m )?")
+# Arguments that swap or drop addopts' -m: `-c FILE`, `--config-file`, `-o addopts=`, `@argsfile`.
+SWAPS_ADDOPTS = re.compile(r"-[A-Za-z]*c|--config-file|@|.*addopts")
 EXPRESSION = (ast.Name, ast.Load, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not)
 # Markers a job runs on purpose without naming them in its `-m`: (workflow, job) -> markers.
 ON_PURPOSE = {
-    # tests/contract/ws/test_ws_s2_s9.py: "the `py-perf` job and the contract job run it".
+    # Every perf test in tests/contract runs here and in py-perf, as before #3478: S7 in
+    # ws/test_ws_s2_s9.py (its note says so) and the parse budget in bybit/test_contract_leakage.py.
     ("_job-contract.yml", "contract"): {"perf"},
 }
 
@@ -73,7 +83,8 @@ def _lets_through(expr: str, deselected: set[str]) -> set[str]:
 
 
 def _marker_expression(args: list[str]) -> str | None:
-    """The `-m` that pytest applies (it keeps the last one), or None when the call sets none."""
+    """The `-m` that pytest applies (it keeps the last one), or None when the call sets none.
+    Raises on an argument that sets or swaps it in a way this reader does not follow."""
     found: str | None = None
     words = iter(args)
     for word in words:
@@ -83,8 +94,10 @@ def _marker_expression(args: list[str]) -> str | None:
                 raise ValueError("-m without an expression")
         elif word.startswith("-m="):
             found = word.removeprefix("-m=")
-        elif word.startswith("-m"):
+        elif re.match(r"-[A-Za-z]*m", word):  # `-mX` and `-qm X`: argparse reads both as -m
             raise ValueError(f"cannot read {word!r}: write -m EXPR or -m=EXPR")
+        elif SWAPS_ADDOPTS.match(word):
+            raise ValueError(f"cannot read {word!r}: it can replace addopts' -m")
     return found
 
 
@@ -99,16 +112,21 @@ def _marker_expressions(run: str) -> Iterator[str]:
     """The `-m` of every pytest call in a step's `run:` that sets one."""
     # YAML has already folded `>` blocks; join the backslash continuations of `|` blocks.
     for line in run.replace("\\\n", " ").splitlines():
-        if "pytest" not in line:
+        if not any(name in line for name in PYTEST):
             continue
         lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         command: list[str] = []
-        for word in [*lexer, ";"]:  # shlex raises ValueError on unbalanced quotes
+        words = iter([*lexer, ";"])  # shlex raises ValueError on unbalanced quotes
+        for word in words:
+            if word in REDIRECT and not OPERATOR.fullmatch(next(words, ";")):
+                continue  # `2>&1 -m x`: pytest still gets the words after the redirection's target
             if not OPERATOR.fullmatch(word):
                 command.append(word)
                 continue
-            at = next((i for i, w in enumerate(command) if Path(w).name == "pytest"), None)
+            if not SEPARATOR.fullmatch(word):  # `>(`, or a redirection without a target
+                raise ValueError(f"cannot read the shell operator {word!r}")
+            at = next((i for i, w in enumerate(command) if Path(w).name in PYTEST), None)
             expr = None if at is None else _marker_expression(command[at + 1 :])
             if at is not None and expr is not None:
                 prefix = [w for w in command[:at] if not ENV.fullmatch(w)]
@@ -122,7 +140,10 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     """(workflow, job, `-m` expression) for every pytest call in a workflow that sets its own."""
     calls: list[tuple[str, str, str]] = []
     for path in sorted(folder.glob("*.y*ml")):
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        text = path.read_text(encoding="utf-8")
+        if "PYTEST_ADDOPTS" in text:  # an env map, a prefix, export or $GITHUB_ENV: it can carry -m
+            raise ValueError(f"{path.name}: cannot read PYTEST_ADDOPTS: it can replace addopts' -m")
+        doc = yaml.safe_load(text) or {}
         for job, spec in (doc.get("jobs") or {}).items():
             for step in spec.get("steps") or []:
                 try:
@@ -148,8 +169,11 @@ KNOWN = {
 }
 
 
-def test_scan_finds_the_addopts_markers_and_the_known_calls() -> None:
+def test_addopts_deselects_the_markers_the_pin_reads() -> None:
     assert DESELECTED and all(f"not {marker}" in ADDOPTS for marker in DESELECTED)
+
+
+def test_scan_finds_the_known_calls() -> None:
     assert KNOWN <= {(workflow, job) for workflow, job, _ in CALLS}
 
 
@@ -174,6 +198,8 @@ def test_on_purpose_entry_is_still_needed(workflow: str, job: str) -> None:
         ("python -m pytest tests -m 'perf and not flaky' -q", ["perf and not flaky"]),
         ("python3.12 -m pytest -m=harness -q", ["harness"]),
         ('cd x && CV=1 uv run python -m pytest -m="a or b" 2>&1 | tee log', ["a or b"]),
+        ('uv run pytest tests 2>&1 -m "not a" >> log', ["not a"]),  # a redirection keeps the call
+        ("py.test < in -m b", ["b"]),
         ('uv run pytest tests \\\n  -m "c and i" \\\n  -k s2', ["c and i"]),
         ('s=0\nuv run pytest -m x "${p[@]}" || s=$?\nexit "$s"', ["x"]),
         (".venv/bin/pytest -m a -m b", ["b"]),
@@ -199,6 +225,15 @@ def test_reader_extracts_the_marker_expression(run: str, expected: list[str]) ->
         ("pytest -m a-b", "cannot read the -m expression"),
         ("pytest -m None", "cannot read the -m expression"),
         ('pytest -m "f(x=1)"', "cannot read the -m expression"),
+        ("uv run pytest -qm perf", "write -m EXPR"),
+        ("pytest -vxm 'not a'", "write -m EXPR"),
+        ("uv run pytest -o addopts= tests", "replace addopts"),
+        ("pytest --override-ini=addopts=-q", "replace addopts"),
+        ("pytest -c other.toml", "replace addopts"),
+        ("pytest --config-file=x.ini", "replace addopts"),
+        ("pytest @args.txt", "replace addopts"),
+        ("pytest tests >(tee log) -m a", "shell operator '>('"),
+        ("pytest tests -m a >", "shell operator '>'"),
     ],
 )
 def test_reader_and_rule_fail_loudly_on_what_they_cannot_read(run: str, error: str) -> None:
@@ -234,4 +269,13 @@ def test_scan_reads_folded_and_literal_blocks_and_names_the_failing_job(tmp_path
     (tmp_path / "c.yml").write_text(bad, encoding="utf-8")
     with pytest.raises(ValueError, match=re.escape("c.yml job c: cannot read '-mx'")):
         _marker_calls(tmp_path)
+
+
+def test_scan_fails_loudly_on_pytest_addopts(tmp_path: Path) -> None:
+    (tmp_path / "e.yml").write_text("env:\n  PYTEST_ADDOPTS: -m 'not x'\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape("e.yml: cannot read PYTEST_ADDOPTS")):
+        _marker_calls(tmp_path)
+
+
+def test_addopts_reader_returns_the_markers_its_expression_deselects() -> None:
     assert _deselected_by('-m "not a and not (b or c)" -q') == {"a", "b", "c"}
