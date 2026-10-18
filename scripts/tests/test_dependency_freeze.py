@@ -233,6 +233,24 @@ def test_dependabot_ignores_majors_on_pinned_runtime_sensitive_packages() -> Non
     assert "xstate-statemachine" in {i["dependency-name"] for i in pip["ignore"]}
 
 
+def test_dependabot_docker_ignores_python_base_image_minor_and_major_only() -> None:
+    # #3314 was declined: the backend runtime is pinned to Python 3.12 (AGENTS.md §5.2,
+    # infra/images/PINS.md), so the `python` base image must not offer 3.13+ every week,
+    # while patch and digest updates of the 3.12 line still arrive (#3430).
+    (docker,) = [u for u in _dependabot_updates() if u["package-ecosystem"] == "docker"]
+    assert docker["directory"] == "/infra/images"
+    (python,) = [i for i in docker.get("ignore", []) if i["dependency-name"] == "python"]
+    assert sorted(python["update-types"]) == [
+        "version-update:semver-major",
+        "version-update:semver-minor",
+    ]
+    assert "versions" not in python
+    for rule in docker["ignore"]:
+        # a rule without update-types ignores every update, digest refreshes included
+        assert rule.get("update-types"), rule
+        assert "version-update:semver-patch" not in rule["update-types"], rule
+
+
 def test_license_scan_proposes_manifest_and_uploads_only_for_dependency_prs() -> None:
     text = (ROOT / ".github/workflows/_job-security.yml").read_text(encoding="utf-8")
     assert "check_freeze_manifest.py --propose freeze-manifest-proposal" in text
