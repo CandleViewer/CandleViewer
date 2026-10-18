@@ -4,11 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      This meta CSP is the *effective* policy for packaged file:// builds:
-      Electron's session.webRequest.onHeadersReceived (apps/desktop/src/main/index.ts)
-      does not fire for file:// navigations, so it never overrides this tag there.
-      It must therefore be scoped exactly like apps/desktop/src/main/csp.ts
-      (backend origin only, not `ws:`/`wss:` wildcards) — keep both in sync.
+      This meta CSP is the fallback to the shell's CSP response header (SR-112).
+      The desktop shell serves this page over its app:// handler
+      (apps/desktop/src/main/appProtocol.ts), which attaches the policy from
+      apps/desktop/src/main/csp.ts to every response. Both policies are enforced,
+      so this tag must be scoped exactly like csp.ts (backend origin only, not
+      `ws:`/`wss:` wildcards) — keep both in sync.
     -->
     <meta
       http-equiv="Content-Security-Policy"
