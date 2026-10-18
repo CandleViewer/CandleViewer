@@ -47,9 +47,8 @@ _SPEC = cast(dict[str, Any], load_openapi_spec())
 _OPERATIONS = frozenset(declared_operations(_SPEC))
 _SESSIONLESS = sessionless_operations(_SPEC)
 _MATRIX = Path(__file__).resolve().parents[2] / "contract" / "rbac" / "matrix.yaml"
-#: Rows where the contract admits an anonymous caller but the matrix still says `public: false`.
-#: Each names its issue, and the set only shrinks. #3419 made the backup download token-addressed
-#: (bearer optional); its unmounted matrix row is settled when E42-T05 mounts it (#3500).
+#: Rows the contract serves anonymously but the matrix marks `public: false`; each names its issue.
+#: #3419 made the backup download token-addressed; its row and enrolment-only bearer wait on #3500.
 _CONTRACT_AHEAD_OF_MATRIX = {"GET /admin/backups/{backupId}/download/{token}": "#3500"}
 _VERDICTS = {
     "enrolling": SessionClass.ENROLMENT_ONLY,
