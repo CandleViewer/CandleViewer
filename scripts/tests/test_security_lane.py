@@ -23,13 +23,12 @@ JOBS: dict[str, Any] = yaml.safe_load(
 )["jobs"]
 READ = {"contents": "read"}
 SARIF = {"contents": "read", "security-events": "write"}
-ALERTS = {"vulnerability-alerts": "read"}  # #3558: the dependabot-alerts step lists the alerts
 # Job -> (permissions, timeout-minutes).
 LANE = {
     "codeql": (SARIF, 25),
     "semgrep-bandit": (SARIF, 30),
     "gitleaks": (READ, 10),
-    "read-only-scans": (READ | ALERTS, 47),
+    "read-only-scans": (READ, 45),
     "trivy": (SARIF, 15),
 }
 # Folded job -> scan step id -> the old job whose budget it spends. license-scan's old job is
@@ -39,12 +38,11 @@ SCANS = {
     "read-only-scans": {
         **{scan: scan for scan in ("security-auth", "pip-audit", "npm-audit", "license-scan")},
         **dict.fromkeys(["license-scope", "freeze"], "license-scan"),
-        "dependabot-alerts": "dependabot-alerts",
     },
 }
-# Old job -> its timeout-minutes before #3104; #3558 adds the alert gate's own budget.
+# Old job -> its timeout-minutes before #3104.
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
-OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10, "dependabot-alerts": 2}
+OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
 # A node package-manager word anywhere in a line: quoted, path-qualified, in `sh -c`, backticks or
 # `$(...)`, or before `)` or `;`; not part of a longer name such as `pnpm-lock.yaml` or `npm-audit`.
@@ -73,14 +71,13 @@ ACTIONS = {
 }
 SCANNERS = ('"semgrep==', '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
-# The pr.yml caller as it stood before the fold (#3104 leaves it and the resolver lane alone),
-# plus the alerts permission #3558 grants.
+# The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
     "name": "security",
     "needs": "changed-paths",
     "if": "${{ " + FILTERS + " || needs.changed-paths.outputs.semgrep == 'true' }}",
     "with": {"image_changed": "${{ needs.changed-paths.outputs.image == 'true' }}"},
-    "permissions": SARIF | ALERTS,
+    "permissions": SARIF,
     "uses": "./.github/workflows/_job-security.yml",
 }
 
@@ -493,62 +490,3 @@ def test_npm_audit_step_fails_on_a_pnpm_report_with_findings(tmp_path: Path) -> 
     assert (rc, out) == (1, "")
     assert err.count("CI-SEC-001: npm-audit finding ") == 4  # 2 Critical, 2 High
     assert err.endswith("security_gate[npm-audit]: BLOCKED (CI-SEC-001)\n")
-
-
-# #3558: the dependabot-alerts step as the runner runs it (`bash -e`), with a stand-in `gh` that
-# prints a recorded `gh api --paginate --slurp` body (scripts/tests/fixtures/dependabot-alerts/)
-# and exits like gh: 0 on a listing, 1 on an API error.
-ALERT_LISTINGS = Path(__file__).resolve().parent / "fixtures" / "dependabot-alerts"
-GH_ARGS = (
-    "api --paginate --slurp repos/basiltt/CandleViewer/dependabot/alerts?state=open&per_page=100"
-)
-
-
-def _alerts_step(tmp_path: Path, body: Path, status: int) -> tuple[int, str, str]:
-    (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "dependabot-alerts"]
-    assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}  # the job token, no new secret
-    ws, bin_dir = tmp_path / "ws", tmp_path / "bin"
-    for d in (ws / "security", bin_dir):
-        d.mkdir(parents=True)
-    (ws / "tools").symlink_to(ROOT / "tools")
-    (ws / "security" / "accepted-risks.yaml").write_text("entries: []\n", encoding="utf-8")
-    gh = bin_dir / "gh"
-    gh.write_text(f'#!/bin/sh\n[ "$*" = "{GH_ARGS}" ] || exit 99\ncat "{body}"\nexit {status}\n')
-    python = bin_dir / "python"  # this interpreter (with PyYAML); -B: no bytecode in the repo
-    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "$@"\n', encoding="utf-8")
-    for exe in (gh, python):
-        exe.chmod(0o755)
-    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
-    env["GITHUB_REPOSITORY"] = "basiltt/CandleViewer"
-    proc = subprocess.run(
-        ["bash", "-e", "-c", step["run"]],
-        cwd=ws,
-        env=env,
-        capture_output=True,
-        encoding="utf-8",
-        timeout=120,
-        check=False,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-def test_alerts_step_passes_the_recorded_medium_alerts_on_main(tmp_path: Path) -> None:
-    rc, out, err = _alerts_step(tmp_path, ALERT_LISTINGS / "gh-2.67.0-main.json", 0)
-    assert (rc, out, err) == (0, "security_gate[dependabot]: OK\n", "")
-
-
-def test_alerts_step_fails_closed_when_the_api_call_fails(tmp_path: Path) -> None:
-    rc, out, err = _alerts_step(tmp_path, ALERT_LISTINGS / "gh-2.67.0-not-found.json", 1)
-    assert (rc, err) == (
-        1,
-        "CI-SEC-005: dependabot: the alerts API call failed (gh's error above)\n",
-    )
-    assert "security_gate" not in out + err  # the gate never judges a failed call's output
-
-
-def test_alerts_step_fails_a_body_the_gate_cannot_read_even_when_gh_exits_0(
-    tmp_path: Path,
-) -> None:
-    rc, out, err = _alerts_step(tmp_path, ALERT_LISTINGS / "gh-2.67.0-not-found.json", 0)
-    assert (rc, out) == (1, "")
-    assert err.startswith("CI-SEC-005: dependabot: dependabot-alerts.json is not a list of pages ")

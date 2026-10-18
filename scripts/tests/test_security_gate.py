@@ -1288,6 +1288,23 @@ def test_no_register_entry_covers_a_critical_finding(tool: str) -> None:
     assert result.messages == [f"{head}, but {CRITICAL_RULE} — d"]
 
 
+def test_an_entry_accepts_findings_up_to_its_own_severity_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #3558: an entry records a decision about one severity. An advisory accepted as a Medium,
+    # then re-scored High, needs a new decision, not that entry.
+    doc = _pnpm_doc(VITEST)
+    doc["advisories"][VITEST]["severity"] = "high"
+    doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 1}
+    report = _write_json(tmp_path, "npm-audit.json", doc)
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "MEDIUM"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
+    assert (rc, out) == (1, "")
+    head = "CI-SEC-001: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) has an accepted-risk entry"
+    assert err.startswith(f"{head} for MEDIUM only, so it needs a new decision — vitest@3.2.7: ")
+
+
 # npm 7+'s `npm audit --json`: nothing in CI or `make security` writes it any more.
 NPM_V7 = {
     "auditReportVersion": 2,

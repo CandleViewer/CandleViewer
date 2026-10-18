@@ -20,12 +20,13 @@
 #                       GHSA-82fw-gwwq-j7x9 on vitest and @vitest/mocker),
 #                       a module that starts reporting it later included.
 #                       No `package` scope: it could not tell a dev path from
-#                       a runtime path of the same module. A dependabot
-#                       finding takes the entry for its GHSA whatever the
-#                       entry's tool (ids are unique), so `tool: dependabot`
-#                       is for an advisory no other scanner reports.
+#                       a runtime path of the same module (#3558).
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
-#                       dependabot, gitleaks, license-scan, trivy
+#                       dependabot, gitleaks, license-scan, trivy. `dependabot`
+#                       records the decision on an open Dependabot alert that
+#                       no scanner here reports. No gate reads such an entry
+#                       until the alert gate (C-9.1 #11, #3558) lands, so only
+#                       check_accepted_risk_expiry.py acts on it, on its date.
 #   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW: the highest severity
 #                       the entry accepts. The tool's own severity counts; a
 #                       finding above the entry's blocks (CI-SEC-001, #3558).

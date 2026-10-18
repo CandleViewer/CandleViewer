@@ -169,6 +169,6 @@ reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `m
 
 #3558: none of the seven has a patched release in its installed major. react-router (which
 ships) and vitest need #1819's majors, uuid needs Storybook 9 or later, esbuild needs tsup 9,
-and sprintf-js has no fix. The `dependabot-alerts` step (C-9.1 #11's alert gate) also reads the
-open Dependabot alerts: vitest on seven manifests, which the vitest entry covers, and tauri 2.1.1
-in the E06-T01 bench harness, accepted to the same date. Each is re-decided at the R1 cut.
+and sprintf-js has no fix. Dependabot also lists vitest on seven manifests, which the vitest
+entry's decision covers, and tauri 2.1.1 in the E06-T01 bench harness, accepted to the same date
+as `tool: dependabot`. Each is re-decided at the R1 cut.

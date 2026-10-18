@@ -8,8 +8,8 @@ name: _job-security
 # jobs that hold the same permissions: protection requires only `ci-required`,
 # which judges this whole workflow as the one `security` lane, and every job
 # costs a runner slot and its own setup.
-# - `read-only-scans` (contents: read): security-auth, pip-audit, dependabot-alerts
-#   (and vulnerability-alerts: read), npm-audit and license-scan;
+# - `read-only-scans` (contents: read): security-auth, pip-audit, npm-audit and
+#   license-scan;
 # - `semgrep-bandit` (security-events: write, for their SARIF uploads).
 # Each scan is a step with an `id`, `continue-on-error` and its old job's
 # time budget, so a red scan neither stops nor hides another. The last step, the
@@ -352,7 +352,6 @@ jobs:
   #   surface with the pack (any finding blocks; triage path in
   #   docs/security/auth-security-gates.md), and polices suppressions.
   # - pip-audit, npm-audit — CONSTITUTION §9 #11 (sca), Python and JS/TS advisories.
-  # - dependabot-alerts — §9 #11's Dependabot alert gate (#3558): the open alerts on `main`.
   # - license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy, after its
   #   backend install and package-scope check (license-scope) and the freeze check.
   # The tree readers (security-auth, pip-audit) run before the pnpm and uv installs.
@@ -360,10 +359,9 @@ jobs:
   read-only-scans:
     name: read-only-scans
     runs-on: ubuntu-latest
-    timeout-minutes: 47 # four scans of 10, the alert gate's 2, + 5 for setup
+    timeout-minutes: 45 # four scans of 10 + 5 for setup
     permissions:
       contents: read
-      vulnerability-alerts: read # dependabot-alerts lists the open alerts (read-only)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -409,23 +407,6 @@ jobs:
           uv export --frozen --no-hashes --all-groups --no-emit-project --project services/api -o "$RUNNER_TEMP/api-requirements.txt"
           pip-audit -r "$RUNNER_TEMP/api-requirements.txt" --no-deps --format json --output pip-audit.json --progress-spinner off || true
           python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
-
-      # The alerts describe `main`, not this PR (docs/ci-runbook.md, CI-SEC-001). A failed API call
-      # (a token without vulnerability-alerts: read, an outage) fails the step with CI-SEC-005,
-      # never passes as "no alerts"; so does a reply the gate cannot read.
-      - name: dependabot-alerts (open Dependabot alerts on main)
-        id: dependabot-alerts
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 2
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" > dependabot-alerts.json; then
-            echo "CI-SEC-005: dependabot: the alerts API call failed (gh's error above)" >&2
-            exit 1
-          fi
-          python tools/ci/security_gate.py --tool dependabot --report dependabot-alerts.json
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() }}

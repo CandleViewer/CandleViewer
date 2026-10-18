@@ -647,13 +647,11 @@ jobs:
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
     # A called reusable workflow may only use permissions its caller job grants.
-    # _job-security.yml uploads SARIF (security-events: write) and reads the
-    # Dependabot alerts (vulnerability-alerts: read); granting them here keeps
-    # the workflow-level default at contents: read for every other lane.
+    # _job-security.yml uploads SARIF (security-events: write); granting it here
+    # keeps the workflow-level default at contents: read for every other lane.
     permissions:
       contents: read
       security-events: write
-      vulnerability-alerts: read
     uses: ./.github/workflows/_job-security.yml
 
   e2e:
