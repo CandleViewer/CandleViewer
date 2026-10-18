@@ -109,3 +109,46 @@ describe("the flag in the configs (E17-T04 S5e)", () => {
     },
   );
 });
+
+/** Every file a build of the whole app emitted, as text: chunks, and the assets a worker is emitted as. */
+async function appFiles(flag: boolean): Promise<{ name: string; text: string }[]> {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("CV_ALLOW_FAULT_INJECTION", flag ? "1" : "");
+  const result = await build({
+    root: ROOT,
+    mode: "production",
+    logLevel: "silent",
+    build: { write: false },
+  });
+  const outputs = (Array.isArray(result) ? result : [result]) as Rollup.RollupOutput[];
+  return outputs
+    .flatMap((o) => o.output)
+    .map((o) => ({
+      name: o.fileName,
+      text: o.type === "chunk" ? o.code : typeof o.source === "string" ? o.source : "",
+    }));
+}
+
+describe("the whole app (E17-T04 S5g)", () => {
+  it(
+    "holds the worker, and no chunk or asset of it has the fault channel",
+    { timeout: 300_000 },
+    async () => {
+      const files = await appFiles(false);
+      // a source map carries the source of wsWorker.ts, which names the channel it does not load: that is no way to reach it
+      const code = files.filter((f) => !f.name.endsWith(".map"));
+      // the worker is in the app, so the absence below proves something
+      const worker = code.filter((f) => /^assets\/wsWorker-.*\.js$/.test(f.name));
+      expect(worker.filter((f) => f.text.includes("cv.v1.json")).length).toBeGreaterThan(0);
+      expect(files.filter((f) => f.text.includes(FAULT_INJECTION_SENTINEL))).toEqual([]); // not even as source
+      expect(code.filter((f) => f.text.includes("installFaultChannel"))).toEqual([]);
+    },
+  );
+
+  it("has it in the worker of an app built with the flag", { timeout: 300_000 }, async () => {
+    const files = await appFiles(true);
+    expect(files.filter((f) => f.text.includes(FAULT_INJECTION_SENTINEL)).length).toBeGreaterThan(
+      0,
+    );
+  });
+});

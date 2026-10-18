@@ -66,6 +66,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/routes/StepUpGate.tsx",  # step-up re-authentication
     "apps/web/src/routes/tree.tsx",  # wires the guards to every route; no session -> /login
     "apps/web/src/shell/bootstrap/bootstrap.ts",  # `/me` -> the session claims the guards read
+    "apps/web/src/shell/startShell.ts",  # gives the client its TokenSource (none until #2712)
 )
 MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")
 MANIFESTS += (".pnpmfile.cjs", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")

@@ -3,70 +3,10 @@
 // really is detached at the sender and structured-cloned at the receiver. The timers are real: a message port delivers on the
 // event loop, which fake timers do not run.
 import { onTestFinished, describe, expect, it, vi } from "vitest";
-import { createWsClient } from "../../../src/lib/ws/client/createWsClient";
-import { portOf } from "../../../src/lib/ws/port/endpoint";
-import type { WorkerMessage } from "../../../src/lib/ws/port/messages";
 import type { TopicFrame, TopicHandle } from "../../../src/lib/ws/api";
-import { createPortHost } from "../../../src/lib/ws/worker/portHost";
-import { tokenOf, URL } from "./support/connectionHarness";
 import { b64, bookSnapshot } from "./support/cvwb";
 import { BOOK } from "./support/engineHarness";
-import { createFakeGateway } from "./support/fakeGateway";
-import { fakePage } from "./support/fakePage";
-
-const WAIT = { timeout: 5_000, interval: 10 };
-
-/** The worker's host over the fake gateway, and tabs that reach it through message channels. */
-function shim() {
-  const gateway = createFakeGateway();
-  const host = createPortHost({ createSocket: gateway.createSocket, random: () => 0.5 });
-  /** What the host posted to a tab, and the size of each buffer it transferred, as it was once the post returned. */
-  const posted: { tab: number; message: WorkerMessage; detached: number[] }[] = [];
-  let tabs = 0;
-  onTestFinished(() => host.dispose());
-
-  function tab() {
-    const index = (tabs += 1);
-    const channel = new MessageChannel();
-    const hostEnd = portOf(channel.port1);
-    host.attach({
-      listen: hostEnd.listen,
-      postMessage(message, transfer) {
-        hostEnd.postMessage(message, transfer);
-        posted.push({
-          tab: index,
-          message: message as WorkerMessage,
-          detached: transfer.map((b) => b.byteLength),
-        });
-      },
-    });
-    const page = fakePage();
-    let issued = 0;
-    const client = createWsClient({
-      wsUrl: URL,
-      tokens: {
-        getToken: async () => ({
-          kind: "ok",
-          accessToken: tokenOf((issued += 1)),
-          expiresAtMs: Date.now() + 600_000,
-        }),
-        invalidate: () => undefined,
-      },
-      shell: "browser",
-      locale: "en-GB",
-      clientVersion: "1.0.0",
-      port: portOf(channel.port2),
-      page: page.page,
-    });
-    onTestFinished(() => {
-      client.stop();
-      channel.port1.close();
-      channel.port2.close();
-    });
-    return { client, page };
-  }
-  return { gateway, tab, posted };
-}
+import { shim, WAIT } from "./support/portShim";
 
 const spec = (ch: string) => ({ ch, paneId: "p1", priority: "focused" }) as const;
 /** What a handle has had to read since the start, kept as it is read. */

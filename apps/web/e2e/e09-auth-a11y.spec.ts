@@ -67,6 +67,11 @@ export const E09_SCREENS: ReadonlyArray<{
 ];
 
 async function stub(page: Page): Promise<void> {
+  // Playwright sees a shared worker's script start and never end, so `networkidle` never comes on a page that starts one (every page
+  // does: the shell starts the WS client). The scans do not depend on the kind of worker: they get the tab's own (the Q8 fallback).
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "SharedWorker", { value: undefined }),
+  );
   const far = new Date(Date.now() + 3_600_000).toISOString();
   await page.route("**/api/v1/me", (r) =>
     r.fulfill(
