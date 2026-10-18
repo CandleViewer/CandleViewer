@@ -43,7 +43,7 @@ if (!gotSingleInstanceLock) {
 
 // The built web app (apps/web/dist), the only directory the app:// handler
 // serves from (SR-174). Resolved once, relative to dist/main. In a packaged
-// build this is <resources>/web/dist, which the installer does not ship yet
+// build this is <resources>/web/dist, where electron-builder.yml copies it
 // (see README "Load path").
 const APP_ROOT_DIR = path.resolve(__dirname, "../../../web/dist");
 
