@@ -18,7 +18,11 @@ import pytest
 import sqlalchemy as sa
 
 from candleviewer.storage.repositories import key_selfcheck_sqlalchemy as mod
-from candleviewer.storage.repositories.accounts import AccountsStoreError, VerifiedKey
+from candleviewer.storage.repositories.accounts import (
+    AccountsStoreError,
+    PolicyDisarm,
+    VerifiedKey,
+)
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from tests.unit.credentials_m2._write_once import writes_to
 
@@ -33,7 +37,8 @@ ROW = {
     "equity_cached_at": None, "max_sub_accounts_hint": 5, "last_reconciled_at": None,
     "created_at": T, "updated_at": T, "deleted_at": None,
 }  # fmt: skip
-STATEMENTS = (mod._TARGETS, mod._PASS, mod._ERROR, mod._DISABLE)
+STATEMENTS = (mod._TARGETS, mod._PASS, mod._ERROR, mod._DISABLE, mod._OWED, mod._AUDITED)
+RULE = "key_withdraw_permission"
 
 
 class _Rel:
@@ -90,20 +95,36 @@ async def test_writes_bind_the_environment_and_report_whether_a_row_changed() ->
     assert await _store(rel).record_pass(KEY, verified) is True
     assert await _store(rel).record_error(KEY, code="10018", at=T) is True
     rel.rowcount = 0
-    assert await _store(rel).disable_trading(ACCT) is False
+    assert await _store(rel).disable_trading(ACCT, code=RULE, at=T) is False
     (_, passed), (_, error), (_, disable) = rel.calls
     assert passed == {
         "id": str(KEY), "snapshot": json.dumps({"uid": "1"}), "at": T, "can_trade": True,
         "read_only": False, "ips": ["203.0.113.7"], "expires_at": None, "env": "demo",
     }  # fmt: skip
     assert error == {"id": str(KEY), "code": "10018", "at": T, "env": "demo"}
-    assert disable == {"id": str(ACCT), "env": "demo"} and rel.commits == 3
+    assert disable == {"id": str(ACCT), "code": RULE, "at": T, "env": "demo"} and rel.commits == 3
+
+
+async def test_owed_disarms_are_read_for_the_bound_environment_and_marked_one_by_one() -> None:
+    rel = _Rel([{"account_id": str(ACCT), "code": RULE, "at": T}])
+    owed = await _store(rel, "live").owed_disarms()
+    assert owed == (PolicyDisarm(ACCT, RULE, T),) and rel.commits == 0
+    later = datetime(2026, 10, 16, 1, tzinfo=UTC)
+    assert await _store(rel, "live").mark_disarm_audited(owed[0], at=later) is True
+    assert rel.calls == [
+        (mod._OWED.text, {"env": "live", "cap": mod.MAX_TARGETS}),
+        (mod._AUDITED.text, {"id": str(ACCT), "disarmed_at": T, "at": later, "env": "live"}),
+    ]
+    assert "WHERE env::text = :env AND policy_disarmed_at IS NOT NULL" in mod._OWED.text
+    assert "AND policy_disarm_audited_at IS NULL ORDER BY id LIMIT :cap" in mod._OWED.text
 
 
 def test_every_write_is_bound_to_the_environment_and_a_live_row() -> None:
     for stmt in (mod._PASS, mod._ERROR):
         assert "ea.env::text = :env AND k.revoked_at IS NULL" in stmt.text
     assert "env::text = :env AND deleted_at IS NULL AND trading_enabled" in mod._DISABLE.text
+    owed_only = "AND policy_disarmed_at = :disarmed_at AND policy_disarm_audited_at IS NULL"
+    assert f"env::text = :env {owed_only}" in mod._AUDITED.text  # that disarm, while it is owed
 
 
 def test_statements_write_only_the_verification_columns() -> None:
@@ -115,10 +136,16 @@ def test_statements_write_only_the_verification_columns() -> None:
     }  # fmt: skip
     assert error.targets == {"last_error_code", "last_error_at", "updated_at"}
     [disable] = writes_to(mod._DISABLE.text, "exchange_accounts")
-    assert disable.targets == {"trading_enabled", "updated_at"}
+    assert disable.targets == {
+        "trading_enabled", "policy_disarm_code", "policy_disarmed_at", "policy_disarm_audited_at",
+        "updated_at",
+    }  # fmt: skip
+    [marked] = writes_to(mod._AUDITED.text, "exchange_accounts")
+    assert marked.targets == {"policy_disarm_audited_at"}  # bookkeeping: `updated_at` stays
     assert [w for stmt in STATEMENTS for w in writes_to(stmt.text, "exchange_accounts")] == [
-        disable
-    ]
+        disable, marked,
+    ]  # fmt: skip
+    assert "policy_disarm_code = :code, policy_disarmed_at = :at" in mod._DISABLE.text
     assert "permission_snapshot || CAST(:snapshot AS jsonb)" in mod._PASS.text
     assert "CAST(:ips AS cidr[])" in mod._PASS.text
 

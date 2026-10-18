@@ -276,13 +276,25 @@ class VerifiedKey:
     at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class PolicyDisarm:
+    """A self-check force-disable as `exchange_accounts` keeps it (21 §3.2.1, #836 slice 2d): the
+    failing rule's code and the disarm's time, owed its `account.disabled_by_policy` record until
+    that is marked written."""
+
+    account_id: UUID
+    code: str
+    at: datetime
+
+
 class KeySelfCheckStore(Protocol):
     """The stored-key self-check's system port (E27-T03), bound to one environment (C-2.11).
 
     The job has no principal, so it takes no scope: `accounts.selfcheck` is its one caller,
     pinned by `tests/unit/architecture/test_key_selfcheck_store_callers.py` (C-12.4). It writes
-    the verification columns of `api_keys` and `exchange_accounts.trading_enabled`, never a
-    ciphertext, identity or status column. Each write returns whether it changed a row."""
+    the verification columns of `api_keys` and, of `exchange_accounts`, `trading_enabled` with the
+    policy-disarm columns, never a ciphertext, identity or status column. Each write returns
+    whether it changed a row."""
 
     async def targets(self) -> tuple[SelfCheckTargetRow, ...]:
         """Every `active` or `rotating`, unrevoked key of a non-deleted account."""
@@ -294,7 +306,17 @@ class KeySelfCheckStore(Protocol):
         """`last_error_code` and `last_error_at` only: the verified columns keep their time."""
         ...
 
-    async def disable_trading(self, account_id: UUID) -> bool:
-        """`trading_enabled` to false where it is true (one conditional update); `False` when
-        the account was not armed, so the caller records only a real disarm."""
+    async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
+        """`trading_enabled` to false where it is true, with the rule's `code` and the time, in
+        one conditional update that leaves the disarm owed its record; `False` when the account
+        was not armed, so the caller records only a real disarm."""
+        ...
+
+    async def owed_disarms(self) -> tuple[PolicyDisarm, ...]:
+        """The disarms whose record is not marked written, of deleted accounts too; a pass reads
+        a bounded number, and any beyond it stay owed for the next."""
+        ...
+
+    async def mark_disarm_audited(self, disarm: PolicyDisarm, *, at: datetime) -> bool:
+        """Mark this disarm's record written; `False` once it is not owed (marked already)."""
         ...

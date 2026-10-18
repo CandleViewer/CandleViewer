@@ -33,6 +33,7 @@ from candleviewer.storage.repositories.accounts import (
     NewExchangeAccount,
     NewKeyRotation,
     OwnerScope,
+    PolicyDisarm,
     RotationStep,
     VerifiedKey,
 )
@@ -454,7 +455,8 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     assert await live.record_pass(kid, verified) is False
     assert await demo.record_pass(kid, verified) is True
     assert await demo.record_error(kid, code="10018", at=at) is True
-    assert [await demo.disable_trading(acct.id) for _ in range(2)] == [True, False]
+    disarms = [await demo.disable_trading(acct.id, code="key_uid_mismatch", at=at) for _ in "ab"]
+    assert disarms == [True, False]
     with _c(pg_dsn) as c:
         key = c.execute(
             "SELECT permission_snapshot, permission_snapshot_at, can_trade, ip_whitelist::text[], "
@@ -468,3 +470,37 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     assert key is not None and key[0] == {**facts, "type": "HMAC"}  # merged, not replaced
     assert key[1:] == (at, True, ["203.0.113.7/32"], at, "10018", at, "active")
     assert armed == (False,)
+
+
+async def test_a_disarm_commits_its_code_and_time_and_stays_owed_until_its_record_is_marked(
+    store: SqlAlchemyAccountsStore, rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """#836 slice 2d: the boot re-send reads what the disarm wrote, on its environment only,
+    a soft-deleted account included, until the record is marked once."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    with _c(pg_dsn) as c:
+        c.execute("UPDATE exchange_accounts SET trading_enabled = true WHERE id = %s", (acct.id,))
+    demo, live = (SqlAlchemyKeySelfCheckStore(rel, env=env) for env in ("demo", "live"))
+    at = datetime(2026, 10, 18, 9, 0, 0, 123456, tzinfo=UTC)
+    later, rule = datetime(2026, 10, 18, 10, tzinfo=UTC), "key_withdraw_permission"
+    assert await live.disable_trading(acct.id, code=rule, at=at) is False
+    assert await demo.disable_trading(acct.id, code=rule, at=at) is True
+    assert await demo.disable_trading(acct.id, code="key_uid_mismatch", at=later) is False
+    owed = PolicyDisarm(acct.id, rule, at)
+    assert owed in await demo.owed_disarms() and owed not in await live.owed_disarms()
+    assert await store.soft_delete_account(owner, acct.id) is True
+    assert owed in await demo.owed_disarms()  # the disarm happened: its record is still owed
+    other = PolicyDisarm(acct.id, rule, later)  # a disarm that is not the stored one
+    assert [await s.mark_disarm_audited(d, at=later) for s, d in ((demo, other), (live, owed))] == [
+        False, False,
+    ]  # fmt: skip
+    assert [await demo.mark_disarm_audited(owed, at=later) for _ in "ab"] == [True, False]
+    assert owed not in await demo.owed_disarms()
+    with _c(pg_dsn) as c:
+        row = c.execute(
+            "SELECT trading_enabled, policy_disarm_code, policy_disarmed_at, "
+            "policy_disarm_audited_at FROM exchange_accounts WHERE id = %s",
+            (acct.id,),
+        ).fetchone()
+    assert row == (False, rule, at, later)

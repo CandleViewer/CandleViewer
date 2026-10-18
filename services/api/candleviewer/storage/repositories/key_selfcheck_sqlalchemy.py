@@ -8,7 +8,9 @@ single-writer guards in `tests/unit/credentials_m2/test_write_once_surface.py` s
 A pass merges the verified key-info fields into `permission_snapshot` (`||`), so a field the
 import stored and the check does not read stays, and `ak_snapshot_shape` still checks the
 result. A verdict or an inconclusive check writes `last_error_*` only. More usable keys than one
-pass reads is an error, never a silently shorter list (the job then fails closed).
+pass reads is an error, never a silently shorter list (the job then fails closed). The disarm
+writes its rule code and time in its own conditional update (#836 slice 2d); the record's mark is
+bookkeeping, so it leaves `updated_at`, the accounts' If-Match token, alone.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import sqlalchemy as sa
 from candleviewer.storage.repositories.accounts import (
     AccountsStoreError,
     ExchangeAccountRow,
+    PolicyDisarm,
     SelfCheckTargetRow,
     VerifiedKey,
 )
@@ -66,8 +69,20 @@ _ERROR = sa.text(
     "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL"
 )
 _DISABLE = sa.text(
-    "UPDATE exchange_accounts SET trading_enabled = false, updated_at = now() "
+    "UPDATE exchange_accounts SET trading_enabled = false, "
+    "policy_disarm_code = :code, policy_disarmed_at = :at, policy_disarm_audited_at = NULL, "
+    "updated_at = now() "
     "WHERE id = CAST(:id AS uuid) AND env::text = :env AND deleted_at IS NULL AND trading_enabled"
+)
+_OWED = sa.text(
+    "SELECT id::text AS account_id, policy_disarm_code AS code, policy_disarmed_at AS at "
+    "FROM exchange_accounts WHERE env::text = :env AND policy_disarmed_at IS NOT NULL "
+    "AND policy_disarm_audited_at IS NULL ORDER BY id LIMIT :cap"
+)
+_AUDITED = sa.text(
+    "UPDATE exchange_accounts SET policy_disarm_audited_at = :at "
+    "WHERE id = CAST(:id AS uuid) AND env::text = :env AND policy_disarmed_at = :disarmed_at "
+    "AND policy_disarm_audited_at IS NULL"
 )
 
 
@@ -115,5 +130,15 @@ class SqlAlchemyKeySelfCheckStore:
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
         return await self._write(_ERROR, id=str(key_id), code=code, at=at)
 
-    async def disable_trading(self, account_id: UUID) -> bool:
-        return await self._write(_DISABLE, id=str(account_id))
+    async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
+        return await self._write(_DISABLE, id=str(account_id), code=code, at=at)
+
+    async def owed_disarms(self) -> tuple[PolicyDisarm, ...]:
+        async with self._relational.unit_of_work() as uow:  # a read: nothing to commit
+            res = await uow.session.execute(_OWED, {"env": self._env, "cap": MAX_TARGETS})
+            return tuple(
+                PolicyDisarm(UUID(m["account_id"]), m["code"], m["at"]) for m in res.mappings()
+            )
+
+    async def mark_disarm_audited(self, disarm: PolicyDisarm, *, at: datetime) -> bool:
+        return await self._write(_AUDITED, id=str(disarm.account_id), disarmed_at=disarm.at, at=at)

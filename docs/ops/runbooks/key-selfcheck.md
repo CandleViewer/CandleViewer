@@ -23,6 +23,12 @@ says `starting in read-only mode (accounts.key_selfcheck_failed)`; the critical 
 could trade, `account.disabled_by_policy`. Order entry is off for **every** account and the key's
 account is disarmed (`trading_enabled` false). The key's status does not change: reads go on.
 
+The disarm's rule code and time commit with it, on the account row (`exchange_accounts`
+`policy_disarm_code`, `policy_disarmed_at`). If the audit sink refuses `account.disabled_by_policy`
+(critical log `key_selfcheck_disable_unaudited`), the record stays owed (`policy_disarm_audited_at`
+empty) and the next pass, or the start-up pass after a restart, sends it. Never write the record
+or that column by hand (C-2.9).
+
 Find the key and the rule as an Owner (`GET $API/admin/audit?action=account.tested`), then fix the
 key at the exchange. The whitelist is edited in the exchange's web dashboard only (ADR-0009).
 

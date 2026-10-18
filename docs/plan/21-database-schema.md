@@ -742,6 +742,9 @@ One row per Bybit UID/environment pair. Main account and sub-accounts live in th
 | `created_by` / `updated_by` | uuid           | yes  | NULL               | FK users                                               |
 | `created_at` / `updated_at` | timestamptz    | no   | `now()`            |                                                        |
 | `deleted_at`                | timestamptz    | yes  | NULL               | Soft delete; blocks new legs, keeps history            |
+| `policy_disarm_code`        | text           | yes  | NULL               | Rule code of the last self-check disarm (0031)         |
+| `policy_disarmed_at`        | timestamptz    | yes  | NULL               | That disarm's time; set with the code                  |
+| `policy_disarm_audited_at`  | timestamptz    | yes  | NULL               | Set once its audit record is written; NULL means owed  |
 
 ```sql
 CREATE TABLE exchange_accounts (
@@ -786,6 +789,28 @@ CREATE INDEX ix_ea_tradeable     ON exchange_accounts (env) WHERE is_enabled AND
 > `fk_user_account_access_exchange_account_id_exchange_accounts` and `COMMENT ON COLUMN` SECRET markers on
 > `api_keys.secret_enc` / `key_id_enc`. C-5.9 classes are in §12 (`key_id_enc`, `secret_enc`, `enc_nonce`,
 > `dek_ref` = S: envelope-encrypted blobs/handles only; no plaintext key column exists).
+
+**Policy disarm (migration `0031_policy_disarm`, #836 slice 2d).** The stored-key self-check's
+force-disable (C-2.8) sets `trading_enabled` false with the failing rule's code (never message
+text) and the time in one conditional update. The disarm is owed its `account.disabled_by_policy`
+record until `policy_disarm_audited_at` is set after the record is written; every pass, the boot
+pass included, first sends the records still owed (decisions 2 and 5 on #836). The audit sink
+cannot deduplicate a re-send (`AuditWriter.emit` mints its own `record_id`), so a crash between
+record and mark sends it twice, never zero times. No operation arms an account yet (decision 16),
+so a disarm never replaces a record still owed. P0 (§12): no comment tag; `cv_app`'s table-level
+DML covers the columns, so no GRANT. The downgrade refuses while a record is owed.
+
+```sql
+ALTER TABLE exchange_accounts
+  ADD COLUMN policy_disarm_code       text,
+  ADD COLUMN policy_disarmed_at       timestamptz,
+  ADD COLUMN policy_disarm_audited_at timestamptz,
+  ADD CONSTRAINT ea_disarm_code_fmt CHECK (policy_disarm_code ~ '^[a-z0-9_]{1,40}$'),
+  ADD CONSTRAINT ea_disarm_shape CHECK (
+    (policy_disarm_code IS NULL) = (policy_disarmed_at IS NULL)
+    AND (policy_disarm_audited_at IS NULL OR policy_disarmed_at IS NOT NULL)
+  );
+```
 
 Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group.
 
@@ -3409,6 +3434,7 @@ NAMING_CONVENTION = {
 | `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 | `0030_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                     |
+| `0031_policy_disarm`          | `exchange_accounts.policy_disarm_code`, `policy_disarmed_at`, `policy_disarm_audited_at` (§3.2.1): the self-check's durable disarm and its owed audit record — **#836 slice 2d**; the downgrade refuses while a record is owed             |
 
 ---
 
@@ -3701,6 +3727,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
+| `exchange_accounts`                                    | `policy_disarm_code` and its times      | P0         | plaintext                                       | A fixed rule code and two times (0031), never text, an IP or a UID; Viewers read the same code in `account.disabled_by_policy`                  |
 | `positions`, `orders`, `executions`, `wallet_balances` | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |
 | `position_snapshots`                                   | monetary columns                        | P1         | plaintext                                       | Financial personal data (the history of `positions`); never sent to third parties                                                               |
 | `order_events`                                         | `payload`, `ret_code`, `ret_msg`        | P1         | jsonb / text, redacted before insert            | Can repeat money values: `redact_exchange_payload()` / `redact_exchange_text()` before insert (§3.3.5); append-only, kept on erase; not logged  |

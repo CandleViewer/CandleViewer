@@ -26,12 +26,19 @@ from candleviewer.exchange.bybit.key_info import ApiKeyFacts, parse_key_info
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.health import HealthStatus
 from candleviewer.settings import Environment, Settings
-from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
+from candleviewer.storage.repositories.accounts import (
+    ExchangeAccountRow,
+    PolicyDisarm,
+    SelfCheckTargetRow,
+)
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "key_verification"
 NOW = datetime(2026, 10, 15, 9, tzinfo=UTC)
 KEY, ACCOUNT, UID = UUID(int=11), UUID(int=1), "1000001"
+_STORE_EDGES = (
+    "targets", "record_error", "disable_trading", "owed_disarms", "mark_disarm_audited",
+)  # fmt: skip
 
 
 class _Edges:
@@ -52,8 +59,15 @@ class _Edges:
         self.events.append(("error", code))
         return True
 
-    async def disable_trading(self, account_id: UUID) -> bool:
+    async def disable_trading(self, account_id: UUID, *, code: str, at: datetime) -> bool:
         self.events.append(("disable", account_id))
+        return True
+
+    async def owed_disarms(self) -> tuple[PolicyDisarm, ...]:
+        return ()  # no disarm of an earlier process is owed its record
+
+    async def mark_disarm_audited(self, disarm: PolicyDisarm, *, at: datetime) -> bool:
+        self.events.append(("mark", disarm.account_id))
         return True
 
     async def emit(self, action: str, **_fields: Any) -> None:
@@ -95,7 +109,7 @@ def deployed() -> Iterator[SimpleNamespace]:
     """The real-backend app with only the edges faked; the row-gauge store (Postgres) is off."""
     edges = _Edges()
     with pytest.MonkeyPatch.context() as mp:
-        for name in ("targets", "record_error", "disable_trading"):
+        for name in _STORE_EDGES:
             mp.setattr(SqlAlchemyKeySelfCheckStore, name, _delegate(edges, name))
         calls = "key_verification_calls"
         mp.setattr(ExchangeBybitService, calls, _delegate(edges, calls))
@@ -139,5 +153,5 @@ async def test_a_stored_key_failing_at_boot_latches_order_entry_and_degrades_rea
     assert deployed.edges.events == [
         ("calls", "testnet"), ("aclose", None), ("audit", "account.tested"),
         ("error", "key_withdraw_permission"), ("disable", ACCOUNT),
-        ("audit", "account.disabled_by_policy"),
+        ("audit", "account.disabled_by_policy"), ("mark", ACCOUNT),
     ]  # fmt: skip

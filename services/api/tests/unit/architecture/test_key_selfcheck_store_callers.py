@@ -22,7 +22,16 @@ import candleviewer
 
 PKG = Path(candleviewer.__file__).resolve().parent
 PORT = "KeySelfCheckStore"
-METHODS = frozenset({"targets", "record_pass", "record_error", "disable_trading"})
+METHODS = frozenset(
+    {
+        "targets",
+        "record_pass",
+        "record_error",
+        "disable_trading",
+        "owed_disarms",
+        "mark_disarm_audited",
+    }
+)
 ALLOWED = frozenset(
     {
         "accounts/selfcheck.py",
