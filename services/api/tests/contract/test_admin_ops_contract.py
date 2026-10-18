@@ -310,6 +310,9 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
     assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
     assert "(`live_enablement`/`killswitch`/`backups`: none, fresh code each time)" in internal
     assert "never embeds `str(exc)` or raw probe output" in internal
-    assert "registers the issue and delete routes in `DANGEROUS_ROUTES`, as restore is" in internal
+    # No-grace grants bind the request their handler validated, so issue and delete register as
+    # handler-gated rows, as restore does (`test_no_path_gated_row_names_a_no_grace_class`).
+    gated = "register the issue and delete routes in `HANDLER_GATED_ROUTES`, as restore is"
+    assert gated in internal and "`DANGEROUS_ROUTES`, as restore is" not in internal
     assert "redact_text`, cut to 200 and 2000 characters" in _doc("21-database-schema.md")
     assert "There is no resolution text because nobody writes one" in _doc("21-database-schema.md")

@@ -299,7 +299,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List backup runs */
+    /**
+     * List backup runs
+     * @description The backup catalogue (the `backups` table, E42-T05), newest first: ordered by `started_at` descending with `id` as the tie-break, behind an opaque keyset cursor bound to the `kind` and `status` filters it was issued for and valid for one hour. `location` is the artefact's path on the backup volume and `error` a stable code; the encryption key alias is never returned. A backup whose artefact was deleted is listed with `deleted_at` set. Until a backup engine records runs in the catalogue the operation answers `501 not_implemented`, never an empty page that would read as "no backups"; a catalogue that cannot be read within its budget is `503 store_unavailable`.
+     */
     get: operations["listBackups"];
     put?: never;
     /**
@@ -312,6 +315,16 @@ export interface paths {
      *     `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. The run is audited as
      *     `backup.run` ahead of the response. While a backup or a restore is running, a new run is
      *     `409 conflict` with rule `backup_or_restore_running` and starts nothing.
+     *     Records (E42-T05): `backup.run` is written with `after_state.stage: requested` before the
+     *     `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing
+     *     starts) and again with `stage: finished` when the run ends, carrying the outcome,
+     *     `size_bytes` and `checksum_sha256`; the catalogue row becomes `ok` only after that record
+     *     is written, so the digest of every single-file artefact is bound in the append-only log,
+     *     and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in
+     *     the `requested` record's `reason` and nowhere else; the row records
+     *     `triggered_by: manual` and the caller. A user may start at most 4 runs in a rolling hour,
+     *     else `429 rate_limited` with `Retry-After`. Until a backup engine is wired the operation
+     *     answers `501 not_implemented`, writes no record and starts nothing.
      */
     post: operations["createBackup"];
     delete?: never;
@@ -329,13 +342,16 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** Get a backup run */
+    /**
+     * Get a backup run
+     * @description One catalogue row (E42-T05) as `listBackups` serves it, a deleted artefact's row included (`deleted_at` set). `501 not_implemented` and `503 store_unavailable` as on `listBackups`.
+     */
     get: operations["getBackup"];
     put?: never;
     post?: never;
     /**
      * Delete a backup artefact
-     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is audited with `outcome: failure`.
+     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is audited with `outcome: failure`. Effect (E42-T05): the artefact is removed from the backup volume and the catalogue row is kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row gains `deleted_at` and records who deleted it, its `status` is unchanged, and a later verify, link or restore of it is `409 conflict` with rule `backup_not_usable`. An unknown backup is `404` before any challenge. After the grant is spent, and in this order, a backup already deleted is `409 conflict` with rule `backup_deleted`; one that is `running`, or that a running verification or restore uses, is `409 conflict` with rule `backup_in_use`; and the last backup of its `kind` that is verified and not deleted (`status` `verified` or `restored` with `verified_at` set, no `deleted_at`) is `409 conflict` with rule `last_usable_backup`, so no kind loses its last verified backup. The challenge's `action_summary` template is `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact cannot be removed after the record is written, a second `backup.deleted` record with `outcome: failure` follows and the answer is `503 store_unavailable`, the row unchanged. Until an artefact remover is wired the operation answers `501 not_implemented` before any challenge.
      */
     delete: operations["deleteBackup"];
     options?: never;
@@ -356,7 +372,7 @@ export interface paths {
     put?: never;
     /**
      * Issue a single-use, five-minute download link for a backup artefact
-     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). Issuing needs a fresh `backups` step-up elevation. `backups` is a no-grace class (`NO_GRACE_ACTION_CLASSES` in `auth/step_up.py` and `statechart/bindings/b16_session.py`, kept equal by `tests/xstate_contract/test_b16.py`), so each link spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error` before the response. The link appears only in this response body: access logs, traces, metrics labels and audit fields record the route template, never the link or its token. It carries a one-time token, never a bearer credential, and fetching it is an authenticated `GET` by the same user (`downloadBackup`). Only a backup with `status` `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is `429 rate_limited` with `Retry-After`.
+     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). Issuing needs a fresh `backups` step-up elevation. `backups` is a no-grace class (`NO_GRACE_ACTION_CLASSES` in `auth/step_up.py` and `statechart/bindings/b16_session.py`, kept equal by `tests/xstate_contract/test_b16.py`), so each link spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error` before the response. The link appears only in this response body: access logs, traces, metrics labels and audit fields record the route template, never the link or its token. It carries a one-time token, never a bearer credential, and fetching it is an authenticated `GET` by the same user (`downloadBackup`). Only a backup with `status` `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is `429 rate_limited` with `Retry-After`. Order (E42-T05): an unknown backup (`404`) and the hourly limit (`429`) are decided before any challenge, and `backup_not_usable` after the grant is spent, as on `restoreBackup`; a backup whose artefact was deleted, that is recorded with `encrypted: false`, or whose artefact is not a single file is not usable. A refusal after the grant is spent is audited as `backup.downloaded` with `stage: issued` and `outcome: failure`; every record names the `challenge_id` of the grant it spent. The challenge's `action_summary` template is `Issue a 5-minute download link for backup '<backupId>' (<kind>)` and `target` is null. The token carries 256 bits from a CSPRNG (43 base64url characters) and is the only credential the fetch needs: `downloadBackup` needs no `Authorization` header, so a browser can save the artefact from a plain link. The `200` is sent with `Cache-Control: no-store`. Until the catalogue and the artefact store are wired the operation answers `501 not_implemented` before any challenge.
      */
     post: operations["issueBackupDownload"];
     delete?: never;
@@ -377,7 +393,7 @@ export interface paths {
     };
     /**
      * Fetch a backup artefact through a link issued by issueBackupDownload
-     * @description Streams the artefact once (E42-T05). The token must have been issued to the calling user for this backup less than 5 minutes ago and not used before; it is consumed before the first byte is sent. Serving it is audited as `backup.downloaded` with `after_state.stage: served` at severity `error`. The token is a credential in the path, so: access logs, traces, metrics labels and audit fields record the route template `/admin/backups/{backupId}/download/{token}`, never the token value; `Problem.detail` never echoes the path; and every response, refusals included, sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The token comes from a CSPRNG with at least 128 bits of entropy, is stored only as a hash, is compared in constant time, and is single-use and short-lived (5 minutes). The calling user's own expired or already used token is `410 gone`; an unknown token or another user's is `404 not_found`, so a token cannot be probed. At most 10 fetches per user per hour, else `429 rate_limited`.
+     * @description Streams the artefact once (E42-T05). The token must have been issued to the calling user for this backup less than 5 minutes ago and not used before; it is consumed before the first byte is sent. Serving it is audited as `backup.downloaded` with `after_state.stage: served` at severity `error`. The token is a credential in the path, so: access logs, traces, metrics labels and audit fields record the route template `/admin/backups/{backupId}/download/{token}`, never the token value; `Problem.detail` never echoes the path; and every response, refusals included, sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The token comes from a CSPRNG with at least 128 bits of entropy, is stored only as a hash, is compared in constant time, and is single-use and short-lived (5 minutes). The calling user's own expired or already used token is `410 gone`; an unknown token or another user's is `404 not_found`, so a token cannot be probed. At most 10 fetches per user per hour, else `429 rate_limited`. Serving (E42-T05): the token is the credential, so the `GET` needs no `Authorization` header and a browser can save the file from a plain link; the fetch acts as the user the link was issued to. A token matches when it was issued for the backup in the path and, when the request does carry a bearer token, to that token's user; any other token, and a malformed one, is `404 not_found` (never `422`) and nothing is spent. A matching token is spent before anything else is checked, so a refused fetch spends it too: the user it was issued to must still hold `backups:read`, else `403 forbidden`, and the artefact is read from the catalogue's `location` only once that path resolves, without following a symbolic link, to a regular file inside the configured backup root; otherwise, or when the backup was deleted or is no longer `ok`, `verified` or `restored` since the link was issued, the answer is `409 conflict` with rule `backup_not_usable`. `Content-Disposition` names the file `cv-backup-<kind>-<backupId>.age`, never the stored path. Every fetch with a matching token counts towards the hourly limit of the user it was issued to, refused ones included. `backup.downloaded` (`stage: served`) is written before the first byte; when it cannot be written the answer is `503 audit_unavailable` and the link stays spent. Until the catalogue and the artefact store are wired the operation answers `501 not_implemented`.
      */
     get: operations["downloadBackup"];
     put?: never;
@@ -423,7 +439,7 @@ export interface paths {
     put?: never;
     /**
      * Verify a backup by restoring it into a scratch namespace
-     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`). A failed re-verify leaves `verified_at` at the last successful verification. Either outcome is audited as `backup.verified`.
+     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`). A failed re-verify leaves `verified_at` at the last successful verification. Either outcome is audited as `backup.verified`. Integrity first (E42-T05): when the backup's kind produces a single-file artefact, the job hashes that file and compares its SHA-256 with `checksum_sha256` and with the digest the run's `backup.run` record bound, before anything is decrypted or restored. A mismatch is `checksum_mismatch`, no bound record is `checksum_unbound`, and an artefact that is missing or whose `location` does not resolve, without following a symbolic link, to a regular file inside the backup root is `artefact_missing`. A directory or repository artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`. `backup.verified` is written with `after_state.stage: requested` before the `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing is scheduled), and with `stage: finished`, the outcome and the `error` code when the job ends, before the row changes. A backup whose `status` is `running`, whose artefact was deleted or that is recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`. One verification runs at a time: while another is running a new one is `409 conflict` with rule `verify_running`, and while a restore is running, with rule `backup_or_restore_running`. A user may start at most 12 verifications in a rolling hour, else `429 rate_limited` with `Retry-After`. Until a verifier is wired the operation answers `501 not_implemented` and schedules nothing.
      */
     post: operations["verifyBackup"];
     delete?: never;
@@ -700,7 +716,7 @@ export interface paths {
     put?: never;
     /**
      * Acknowledge an open incident
-     * @description Moves an `open` incident to `acknowledged` (E42-T05) and records who acknowledged it (`acknowledged_by`, `acknowledged_at`). The `incident.acknowledged` audit entry names the actor and is written ahead of the response; a denied attempt is audited as well. Acknowledging an already acknowledged incident returns it unchanged and writes no second entry. A `resolved` incident is `409 conflict`; an unknown id is `404 not_found`. A reopen or a severity escalation clears the acknowledgement (`listIncidents`).
+     * @description Moves an `open` incident to `acknowledged` (E42-T05) and records who acknowledged it (`acknowledged_by`, `acknowledged_at`). The `incident.acknowledged` audit entry names the actor and is written ahead of the response; a denied attempt is audited as well. Acknowledging an already acknowledged incident returns it unchanged and writes no second entry. A `resolved` incident is `409 conflict`; an unknown id is `404 not_found`. A reopen or a severity escalation clears the acknowledgement (`listIncidents`). An `incident.acknowledged` record that cannot be written leaves the incident `open` and answers `503 audit_unavailable`.
      */
     post: operations["acknowledgeIncident"];
     delete?: never;
@@ -720,7 +736,7 @@ export interface paths {
     };
     /**
      * Poll an asynchronous job (refresh, export, backup, verification, simulation)
-     * @description Uniform polling surface for every `202`-returning endpoint in this API. An unknown or evicted job id is `404 not_found`. `error` carries a stable code, never a message. An `audit_export` job is visible only to the user who requested it (anyone else gets `404 not_found`); its `result` is an `AuditExportResult` once `status` is `succeeded`.
+     * @description Uniform polling surface for every `202`-returning endpoint in this API. An unknown or evicted job id is `404 not_found`. `error` carries a stable code, never a message. An `audit_export` job is visible only to the user who requested it (anyone else gets `404 not_found`); its `result` is an `AuditExportResult` once `status` is `succeeded`. Jobs are held in the memory of the one API process (ADR-0004), so a restart loses every job, finished ones included, while the objects jobs act on persist (a backup run's catalogue row, `getBackup`). Every `404` here carries rule `job_unknown` (E42-T05), whatever the cause, so it never tells a lost or evicted job from one that was never issued or that belongs to another user; a client whose job vanished reads the object it acted on instead. Jobs a restart loses are counted by `cv_admin_jobs_lost_on_restart_total`.
      */
     get: operations["getJob"];
     put?: never;
@@ -5573,6 +5589,11 @@ export interface components {
     };
     Backup: {
       checksum_sha256?: string | null;
+      /**
+       * Format: date-time
+       * @description When the artefact was deleted (`deleteBackup`, E42-T05); the catalogue row is kept. `null` while the artefact exists.
+       */
+      deleted_at?: string | null;
       encrypted?: boolean;
       /** @description Why the run or its latest verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. Stored in `backups.error_message`; `null` when nothing failed. */
       error?: string | null;
@@ -6654,7 +6675,7 @@ export interface components {
         | "archive_import"
         | "retention_purge";
       progress_pct?: number;
-      /** @description Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. */
+      /** @description Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084). */
       result?:
         | components["schemas"]["AuditExportResult"]
         | {
@@ -10129,8 +10150,20 @@ export interface operations {
           };
         };
       };
+      /** @description Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor` (one issued for different `kind` or `status` filters). */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createBackup: {
@@ -10174,6 +10207,10 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getBackup: {
@@ -10196,7 +10233,11 @@ export interface operations {
           "application/json": components["schemas"]["Backup"];
         };
       };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteBackup: {
@@ -10230,6 +10271,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -10256,6 +10298,7 @@ export interface operations {
       /** @description Link issued. */
       200: {
         headers: {
+          "Cache-Control"?: "no-store";
           [name: string]: unknown;
         };
         content: {
@@ -10272,6 +10315,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -10303,6 +10347,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       /** @description The caller's own link expired or was already used (`code: gone`). */
       410: {
         headers: {
@@ -10315,6 +10360,8 @@ export interface operations {
         };
       };
       429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   restoreBackup: {
@@ -10420,6 +10467,10 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getCapacity: {
@@ -10655,6 +10706,9 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getJob: {
@@ -10679,7 +10733,15 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      404: components["responses"]["NotFound"];
+      /** @description No job with this id is visible to the caller (`code: not_found`, rule `job_unknown`): never issued, evicted, lost when the API process restarted, or another user's `audit_export`. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   setLogLevelOverride: {

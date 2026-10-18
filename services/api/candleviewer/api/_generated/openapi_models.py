@@ -4730,6 +4730,12 @@ class Backup(BaseModel):
             description="Why the run or its latest verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. Stored in `backups.error_message`; `null` when nothing failed.\n"
         ),
     ] = None
+    deleted_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="When the artefact was deleted (`deleteBackup`, E42-T05); the catalogue row is kept. `null` while the artefact exists.\n"
+        ),
+    ] = None
 
 
 class AuditExportResult(BaseModel):
@@ -6218,7 +6224,7 @@ class Job(BaseModel):
     result: Annotated[
         AuditExportResult | dict[str, Any] | None,
         Field(
-            description="Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object."
+            description="Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084)."
         ),
     ] = None
     error: str | None = None
