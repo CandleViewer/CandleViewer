@@ -19,8 +19,13 @@
 #                       advisory on every module pnpm reports it for (e.g.
 #                       GHSA-82fw-gwwq-j7x9 on vitest and @vitest/mocker),
 #                       a module that starts reporting it later included.
+#                       No `package` scope: it could not tell a dev path from
+#                       a runtime path of the same module. A dependabot
+#                       finding takes the entry for its GHSA whatever the
+#                       entry's tool (ids are unique), so `tool: dependabot`
+#                       is for an advisory no other scanner reports.
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
-#                       gitleaks, license-scan, trivy
+#                       dependabot, gitleaks, license-scan, trivy
 #   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW (informational only;
 #                       does not override the tool's own reported severity)
 #   reason:    str   — why this is accepted now (not "will fix later")

@@ -353,12 +353,19 @@ index alone, removing nothing.
 ### CI-SEC-* — security scanning (`tools/ci/security_gate.py`)
 
 - **CI-SEC-001** (blocking finding): a CodeQL/Semgrep/Bandit/pip-audit/
-  npm-audit/gitleaks finding has no accepted-risk entry or is Critical, which
+  npm-audit/dependabot/gitleaks finding has no accepted-risk entry or is Critical, which
   no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
   step, §3). Fix the finding: for an npm-audit advisory on a transitive
   package, a `pnpm-workspace.yaml` override to the patched release
   (`docs/plan/35-dependency-freeze-policy.md` §8.4).
+  A `dependabot` finding is an open High or Critical Dependabot alert (the
+  `dependabot-alerts` step, C-9.1 #11's alert gate, #3558). Alerts describe `main`, not the
+  PR, so the PR that fixes one stays red until the alert closes: give that PR a short dated
+  `tool: dependabot` entry and remove it once the alert is closed. An alert takes the
+  register's entry for its GHSA whatever that entry's tool (ids are unique), so one entry
+  covers an advisory that pnpm also reports. Dismissing an alert in GitHub takes it off the
+  list the gate reads, so it is not an exception path: the register is (C-12.3).
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
   comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
@@ -392,10 +399,19 @@ index alone, removing nothing.
   or advisories that disagree with its `metadata.vulnerabilities` counts.
   pnpm still counts an advisory on an `auditConfig` ignore list but leaves it
   out of the report, so remove the ignore: an exception belongs in
-  `security/accepted-risks.yaml`. A report that passes is only as complete as
+  `security/accepted-risks.yaml`. `pnpm audit --audit-level=high --json` does
+  the same to every advisory below High, so the step runs `pnpm audit --json`
+  and the gate applies the threshold. A report that passes is only as complete as
   the registry's answer: pnpm builds it from the advisories the registry's
   audit endpoint returns, so the gate cannot tell a registry that listed none
-  from a tree with none.
+  from a tree with none. The `dependabot-alerts` step is the independent second
+  signal, not a superset: on `main` d61631fa6 it listed vitest and tauri, none of
+  pnpm's transitive advisories.
+  For `dependabot` it is a failed alerts API call (the job token lacks
+  `vulnerability-alerts: read`, or an outage: gh's error is in the step log),
+  an empty or non-JSON reply, a reply that is not a list of pages of alerts (an
+  API error), or an alert that is not open or has no number, known severity,
+  GHSA id, package or manifest.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).
