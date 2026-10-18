@@ -5,7 +5,9 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 `actor_resolver` returns the caller's `Actor` (permissions, granted accounts, owner flag,
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
-manager's synchronous arming check (statecharts record, code enforces - C-2.21).
+manager's synchronous arming check (statecharts record, code enforces - C-2.21). A rule is
+reached through its owner (24 §15.2): each route looks at the stored rule before it weighs the
+scope the request itself names.
 """
 
 from __future__ import annotations
@@ -96,15 +98,6 @@ def make_rules_crud_router(
         except ScopeForbiddenError:
             return _problem(403, "forbidden", "Forbidden", ScopeForbiddenError.message)
         return None
-
-    async def _active_scope(mgr: RulesManager, rule_id: str, actor: Actor) -> Any:
-        """Scope of the version that would run (IDOR-checked by `get`)."""
-        view = await mgr.get(rule_id, actor)
-        vid = view.get("active_version_id")
-        if not isinstance(vid, str):
-            return {}
-        ver = await mgr.version(rule_id, vid)
-        return ver["ir"].get("scope", {})
 
     async def _gate(request: Request, perm: str) -> tuple[Actor, RulesManager] | JSONResponse:
         if actor_resolver is None:
@@ -200,10 +193,12 @@ def make_rules_crud_router(
             return _bad("body needs an 'ir' object")
         if not raw.isdigit():
             return _bad("send the version you edited in If-Match (or expected_version)")
-        denied = await _scope_check(actor, doc.get("scope"), arming=False)
-        if denied is not None:
-            return denied
         try:
+            # The stored rule first (owner, every version's accounts), then the submitted scope.
+            await mgr.require_visible(str(ruleId), actor, "update")
+            denied = await _scope_check(actor, doc.get("scope"), arming=False)
+            if denied is not None:
+                return denied
             out = await mgr.update(str(ruleId), doc, int(raw), actor, str(body.get("note", "")))
         except RuleError as exc:
             return _from_error(exc)
@@ -294,7 +289,7 @@ def make_rules_crud_router(
         try:
             if body["mode"] == "armed":
                 denied = await _scope_check(
-                    actor, await _active_scope(mgr, str(ruleId), actor), arming=True
+                    actor, await mgr.active_scope(str(ruleId), actor, "set_mode"), arming=True
                 )
                 if denied is not None:
                     return denied

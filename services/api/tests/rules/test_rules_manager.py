@@ -208,7 +208,7 @@ async def test_list_is_account_scoped_filterable_and_paginated() -> None:
     acct = {"level": "account", "account_ids": ["00000000-0000-4000-8000-0000000000a2"]}
     await m.create(_ir(name="acct", scope=acct), OWNER)
     names = [r["name"] for r in (await m.list_rules(MGR))["items"]]
-    assert names == ["open"]
+    assert names == []  # neither is MGR's: grants alone reach no one else's rule (#3334)
     assert len((await m.list_rules(OWNER, mode="disabled"))["items"]) == 2
     assert len((await m.list_rules(OWNER, scope="account"))["items"]) == 1
     assert (await m.list_rules(OWNER, limit=1))["next_cursor"] is not None
@@ -340,26 +340,16 @@ async def test_visible_version_hides_an_unseen_rule_before_the_version_lookup() 
 
 
 async def test_visibility_considers_every_version_not_just_latest() -> None:
+    """The owner's grant on an account an older version names is since revoked: hidden."""
     m, _, _ = _mgr()
-    mgr = Actor(
-        "u2", "s2", frozenset({"orders:write"}), frozenset({"00000000-0000-0000-0000-000000000001"})
-    )
-    rid = (
-        await m.create(
-            _ir(scope={"level": "global", "account_ids": ["00000000-0000-0000-0000-000000000002"]}),
-            OWNER,
-        )
-    )["id"]
-    await m.update(
-        rid,
-        _ir(
-            "7", scope={"level": "global", "account_ids": ["00000000-0000-0000-0000-000000000001"]}
-        ),
-        1,
-        OWNER,
-    )
+    a1, a2 = "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"
+    wide = Actor("u2", "s2", frozenset({"orders:write"}), frozenset({a1, a2}))
+    narrow = Actor("u2", "s2", frozenset({"orders:write"}), frozenset({a1}))
+    rid = (await m.create(_ir(scope={"level": "global", "account_ids": [a2]}), wide))["id"]
+    await m.update(rid, _ir("7", scope={"level": "global", "account_ids": [a1]}), 1, wide)
+    assert (await m.get(rid, wide))["id"] == rid
     with pytest.raises(RuleError) as e:
-        await m.get(rid, mgr)
+        await m.get(rid, narrow)
     assert e.value.status == 404
 
 

@@ -294,10 +294,14 @@ class RulesManager:
         return collect_account_ids(ir)
 
     def _visible(self, row: RuleRow, actor: Actor) -> bool:
-        if not row.versions or actor.is_owner:
+        """The Owner role reaches every rule; anyone else only a rule they own, and only while
+        every account any of its versions names is granted to them (24 §15.2, 04 §7.2.2 rows 24
+        and 25). Grants alone never reach another user's rule, and a rule naming no account is no
+        one's but its owner's: an empty set of accounts is not a grant. Every version counts: the
+        active one may differ from the latest (IDOR, C-12.4)."""
+        if actor.is_owner:
             return True
-        # Every version counts: the active one may differ from the latest (IDOR, C-12.4).
-        return all(
+        return row.owner == actor.user_id and all(
             a in actor.granted_accounts for ver in row.versions for a in self._accounts(ver.ir)
         )
 
@@ -410,6 +414,19 @@ class RulesManager:
                 await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
             raise RuleError(404, "not_found", "That rule does not exist.")
         return row
+
+    async def require_visible(self, rule_id: str, actor: Actor, op: str) -> None:
+        """The route's look at the stored rule before it weighs what the request itself names: a
+        missing rule and one the actor cannot reach are the same 404, the second audited as a
+        refusal of `op` (C-2.9)."""
+        await self._visible_row(rule_id, actor, op)
+
+    async def active_scope(self, rule_id: str, actor: Actor, op: str) -> dict[str, Any]:
+        """Scope of the version that would run, for the route's arming pre-check; the stored rule
+        is looked at first, as `require_visible` does."""
+        row = await self._visible_row(rule_id, actor, op)
+        active = next((v for v in row.versions if v.id == row.active_version_id), None)
+        return dict(active.ir.get("scope", {})) if active is not None else {}
 
     def _view(self, row: RuleRow) -> dict[str, Any]:
         active = next((v for v in row.versions if v.id == row.active_version_id), None)

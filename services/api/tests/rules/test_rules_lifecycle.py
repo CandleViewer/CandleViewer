@@ -119,6 +119,7 @@ async def test_arming_an_order_rule_needs_orders_write() -> None:
     acts = [{"node_id": "a1", "type": "cancel_all_orders", "params": {}}]
     rid = str((await m.create(_ir(actions=acts), OWNER))["id"])
     no_perm = Actor("u3", "s3", frozenset(), frozenset())
+    (await m._row(rid)).owner = no_perm.user_id  # their own rule: only `orders:write` is missing
     await m.set_mode(rid, "simulate", OWNER, "s")
     await m.record_simulation(rid, await _active_hash(m, rid), 5, 0.0)
     with pytest.raises(RuleError) as e:

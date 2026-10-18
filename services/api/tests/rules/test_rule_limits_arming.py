@@ -97,10 +97,11 @@ async def _seed(
     scope: dict[str, Any] = ON_A,
     name: str = "form0",
 ) -> str:
-    """A rule saved by the Owner whose active version holds `field` at `value`, simulated on its
-    `ir_hash` and left in `mode`; nothing is audited or broadcast for it."""
+    """The Manager's rule whose active version, saved by the Owner, holds `field` at `value`,
+    simulated on its `ir_hash` and left in `mode`; nothing is audited or broadcast for it."""
     rid = str((await m.create(_ir(name=name, scope=dict(scope)), OWNER))["id"])
     row = await m._row(rid)
+    row.owner = MANAGER.user_id  # theirs: the arming checks decide, not who may see the rule
     version = row.versions[0]
     version.ir["limits"][field] = value
     version.ir_hash = ir_hash(Rule.model_validate(version.ir))
@@ -252,7 +253,7 @@ async def test_rearm_after_a_kill_above_the_cap_is_422_and_stays_killed() -> Non
     assert owners.used == 0 and m.lifecycle.leaf(rid) == "kill_switched"
 
 
-async def test_arming_an_unseen_owner_rule_is_404_before_any_limits_refusal() -> None:
+async def test_arming_a_rule_on_an_ungranted_account_is_404_before_any_limits_refusal() -> None:
     """04 §7.3 / RE-I5: a Manager granted account A cannot arm, or learn of, a rule on B."""
     m, rec = _mgr()
     rid = await _seed(m, rec, HOUR, LIMIT_CAPS[HOUR] + 1, scope=ON_B)

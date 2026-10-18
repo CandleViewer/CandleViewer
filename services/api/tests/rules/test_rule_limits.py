@@ -138,16 +138,18 @@ async def test_update_manager_resaving_the_owners_raised_version_is_refused() ->
     refused rather than answered `created: false`."""
     m, audits = _mgr()
     raised = _limited(HOUR, 2 * LIMIT_DEFAULTS[HOUR])
-    rid = (await m.create(raised, OWNER))["id"]
+    rid = (await m.create(_limited(HOUR, LIMIT_DEFAULTS[HOUR]), MANAGER))["id"]
+    await m.update(rid, raised, 1, OWNER)  # the Owner raises the Manager's rule: version 2
     with pytest.raises(RuleError) as refused:
-        await m.update(rid, raised, 1, MANAGER)
+        await m.update(rid, raised, 2, MANAGER)
     assert refused.value.status == 403
     assert _refusals(audits) == [("update", "limits_owner_only")]
 
 
 async def _two_versions(m: RulesManager) -> tuple[str, str, str]:
-    """A rule whose version 1 is at the default and version 2 at the cap; 1 is active."""
-    rid = (await m.create(_limited(HOUR, LIMIT_DEFAULTS[HOUR]), OWNER))["id"]
+    """The Manager's rule: version 1 at the default, then (saved by the Owner) version 2 at the
+    cap; 1 is active."""
+    rid = (await m.create(_limited(HOUR, LIMIT_DEFAULTS[HOUR]), MANAGER))["id"]
     await m.update(rid, _limited(HOUR, LIMIT_CAPS[HOUR]), 1, OWNER)
     first, raised = (v["id"] for v in reversed(await m.versions(rid)))
     await m.set_active_version(rid, first, "default", OWNER)
@@ -207,7 +209,7 @@ _SAVES: dict[str, Save] = {
 @pytest.mark.parametrize("path", list(_SAVES))
 async def test_save_limits_above_cap_is_422_for_owner_and_manager(path: str, actor: Actor) -> None:
     m, audits = _mgr()
-    rid = (await m.create(_limited(HOUR, 1), OWNER))["id"]
+    rid = (await m.create(_limited(HOUR, 1), actor))["id"]
     audits.clear()
     with pytest.raises(RuleError) as refused:
         await _SAVES[path](m, rid, _limited(HOUR, LIMIT_CAPS[HOUR] + 1), actor)
