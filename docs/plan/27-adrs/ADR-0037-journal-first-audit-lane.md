@@ -115,6 +115,8 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
    record and `auth.session_created`. Refresh and sign-in stay fail closed while the sink refuses, so RR-16
    narrows to them. S1b adds `LANE_ACTIONS`; S2a2, the slice that first emits them, registers
    `audit.lane_started`, `audit.lane_resumed` and `audit.lane_anomaly` and adds them to §15.5's closed list.
+   S2a1 adds `auth.disabled_user_session_revoked` (`reserved`, `success`): the backstop revocation's outcome
+   record, whose EX-08 (#3120) exits with this lane.
 
 4. **Bounds and overflow (C-2.18).** Bytes, frame size and lock waiters are capped, `shared` gets a share of the
    bytes and `reserved` waiters are served first; the values live only in `24-internal-schemas.md` §15.6

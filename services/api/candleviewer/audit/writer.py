@@ -53,6 +53,15 @@ returned and its bookkeeping is done (`_uninterruptible`). `stop()` drains
 these tasks before and after it cancels the flusher. It runs as one owned
 shutdown task shared by every caller: a cancelled caller (a supervisor's
 timeout) returns at once while the shutdown still completes.
+
+Build, commit tokens (#3009, ADR-0037 decisions 2 and 7): `build()` is `emit()`'s
+validating half. It checks the action, redacts the states and builds the `AuditEmission`
+with a new `record_id` and an `event_ts` read from the clock once, and writes nothing, so
+a record can be built while the writer refuses. `ingest()` appends a built record, or its
+JSON form, keeping both, and returns a commit token: the record's ordinal in this writer's
+WAL append order. `committed_through()` is the highest token whose record the flusher has
+inserted into Postgres; it inserts in WAL order, so every token at or below it is there.
+Tokens are process-local and never persisted; a compaction or a flusher restart keeps them.
 """
 
 from __future__ import annotations
@@ -60,6 +69,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -185,6 +195,14 @@ class AuditWriter:
         self._max_insert_attempts = max_insert_attempts
         self._failure: BaseException | None = None
         self._append_failed_at: datetime | None = None
+        #: The WAL position of each append whose record is not yet in Postgres, oldest first:
+        #: entry i holds token `_committed_through + i + 1`. One per frame in the WAL, so the
+        #: WAL's cap bounds it (C-2.18).
+        self._uncommitted: deque[int] = deque()
+        self._committed_through = 0
+        #: Bytes that compactions removed from the front of the WAL file, so `_base + offset`
+        #: is a position no compaction moves.
+        self._base = 0
 
     @property
     def written_total(self) -> int:
@@ -228,6 +246,13 @@ class AuditWriter:
         if failed is None:
             return False
         return timedelta(0) <= self._clock() - failed < APPEND_FAILURE_COOLDOWN
+
+    def committed_through(self) -> int:
+        """The highest commit token (`ingest()`) whose record the flusher has inserted into
+        Postgres, 0 before the first. It inserts in WAL order, so every token at or below
+        this one is in Postgres. It never decreases: a compaction and a flusher restart
+        (`start()` after `stop()` or after a flusher death) keep it."""
+        return self._committed_through
 
     async def start(self) -> None:
         """Start the flusher. It replays WAL backlog from a previous run
@@ -295,6 +320,52 @@ class AuditWriter:
         # `_wal_lock` until its WAL thread returns; wait for it as well.
         await self._drain_wal_ops(grace_s)
 
+    def build(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: str | uuid.UUID | None = None,
+        actor_ip: str | None = None,
+        session_id: str | uuid.UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        object_label: str | None = None,
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        severity: Severity = Severity.INFO,
+        reason: str | None = None,
+        before_state: dict[str, Any] | None = None,
+        after_state: dict[str, Any] | None = None,
+        request_id: str | uuid.UUID | None = None,
+        env: ExchangeEnv | None = None,
+    ) -> AuditEmission:
+        """`emit()`'s validating half (ADR-0037 decision 2): check the action, redact the
+        states and build the record with a new `record_id` and an `event_ts` read from the
+        clock once, here; `ingest()` keeps both. It writes nothing and does not check whether
+        the writer runs, so a record can be built while the writer refuses. Raises
+        `UnknownAuditAction` for an unregistered action and `ValueError` (a pydantic
+        `ValidationError` among them) for a malformed field."""
+        validate_action(action)
+        return AuditEmission(
+            record_id=uuid.uuid4(),
+            action=action,
+            actor_label=actor_label,
+            actor_user_id=_uuid_or_none(actor_user_id),
+            actor_ip=actor_ip,
+            session_id=_uuid_or_none(session_id),
+            object_kind=object_kind,
+            object_id=object_id,
+            object_label=object_label,
+            outcome=outcome,
+            severity=severity,
+            reason=reason,
+            before_state=redact(before_state),
+            after_state=redact(after_state),
+            request_id=_uuid_or_none(request_id),
+            env=env,
+            event_ts=self._clock(),
+        )
+
     async def emit(
         self,
         action: str,
@@ -314,45 +385,53 @@ class AuditWriter:
         request_id: str | uuid.UUID | None = None,
         env: ExchangeEnv | None = None,
     ) -> None:
-        """Durably append one audit entry to the WAL, then return.
+        """Durably append one audit entry to the WAL, then return: `build()`, then `ingest()`.
 
         Raises `AuditWriterStopped` if not running, `UnknownAuditAction` for
         an unregistered action, and `AuditUnavailable` if the record could
-        not be made durable — the caller must then refuse the action.
-        Cancelling the caller never interrupts an append that has started:
+        not be made durable — the caller must then refuse the action. A writer
+        that refuses does so before `build()`: the action is not checked and the
+        clock is not read. Cancelling the caller never interrupts an append that has started:
         that record is still accepted. Cancelled while still queued for
         `_wal_lock`, nothing is appended (see `_shielded`)."""
         self._refuse_unless_accepting()
-        validate_action(action)
-        emission = AuditEmission(
-            record_id=uuid.uuid4(),
-            action=action,
+        emission = self.build(
+            action,
             actor_label=actor_label,
-            actor_user_id=_uuid_or_none(actor_user_id),
+            actor_user_id=actor_user_id,
             actor_ip=actor_ip,
-            session_id=_uuid_or_none(session_id),
+            session_id=session_id,
             object_kind=object_kind,
             object_id=object_id,
             object_label=object_label,
             outcome=outcome,
             severity=severity,
             reason=reason,
-            before_state=redact(before_state),
-            after_state=redact(after_state),
-            request_id=_uuid_or_none(request_id),
+            before_state=before_state,
+            after_state=after_state,
+            request_id=request_id,
             env=env,
-            event_ts=self._clock(),
         )
-        record = json.loads(emission.model_dump_json())
-        await self._shielded("audit-wal-append", self._accept, record)
+        await self.ingest(emission)
 
-    async def ingest(self, record: dict[str, Any]) -> None:
-        """Durably append an already-redacted record in `emit()`'s format from another process
-        (`audit.journal.fold_in`), keeping its `record_id` and `event_ts`. Refuses as `emit()`."""
+    async def ingest(self, record: AuditEmission | dict[str, Any]) -> int:
+        """Durably append an already-redacted record that `build()` made, or one in its JSON
+        form from elsewhere (`audit.journal.fold_in`, the lane's drain), keeping its `record_id`
+        and `event_ts`. It validates the record, a model too, but never redacts it. Refuses as
+        `emit()`; a record that is not a valid `AuditEmission` raises `UnknownAuditAction` or a
+        pydantic `ValidationError`.
+
+        Returns the record's commit token: its ordinal in this writer's WAL append order,
+        from 1, process-local and never reused. `committed_through()` reaches it once the
+        record is in Postgres. A `record_id` ingested before is appended again and gets the
+        next token like any record; its insert is a no-op
+        (`ON CONFLICT (record_id) DO NOTHING`), and that insert commits the token."""
         self._refuse_unless_accepting()
+        if isinstance(record, AuditEmission):  # `model_validate()` returns an instance unchecked
+            record = record.model_dump(warnings=False)
         emission = AuditEmission.model_validate(record)
         validate_action(emission.action)
-        await self._shielded(
+        return await self._shielded(
             "audit-wal-append", self._accept, json.loads(emission.model_dump_json())
         )
 
@@ -364,18 +443,21 @@ class AuditWriter:
         if not self._running:
             raise AuditWriterStopped()
 
-    async def _accept(self, op: _WalOp, record: dict[str, Any]) -> None:
-        """`emit()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
-        fail-closed alarm and the flusher wake-up. Once it holds the lock it
-        runs to the end even if `emit()`'s caller, or the op task itself, was
+    async def _accept(self, op: _WalOp, record: dict[str, Any]) -> int:
+        """`ingest()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
+        fail-closed alarm and the flusher wake-up; returns the commit token. Once it holds the
+        lock it runs to the end even if `ingest()`'s caller, or the op task itself, was
         cancelled; a cancel of the op task is raised after the wake-up."""
         try:
             async with self._wal_lock:
                 op.holding = True
-                await self._append_durably(op, record)
+                end_offset = await self._append_durably(op, record)
                 self._pending += 1
                 # Under the lock, so the flusher cannot mark idle after this.
                 self._idle.clear()
+                # Under the lock too, so tokens follow the WAL's append order.
+                self._uncommitted.append(self._base + end_offset)
+                token = self._committed_through + len(self._uncommitted)
         except (AuditWalFull, OSError) as exc:
             self._refused_total += 1
             self._append_failed_at = self._clock()  # the latch; the next append clears it
@@ -386,6 +468,7 @@ class AuditWriter:
         self._append_failed_at = None
         self._wake.set()
         op.raise_if_cancelled()
+        return token
 
     async def _alarm(self, reason_text: str) -> None:
         """Fire the fail-closed alarm without letting a slow or broken callback hold
@@ -446,17 +529,19 @@ class AuditWriter:
                     grace_s=grace_s,
                 )
 
-    async def _append_durably(self, op: _WalOp, record: dict[str, Any]) -> None:
+    async def _append_durably(self, op: _WalOp, record: dict[str, Any]) -> int:
         """Caller holds `_wal_lock`. On `AuditWalFull`, reclaim the committed
         prefix (only when no flush batch is in flight, whose offsets a
-        compaction would invalidate) and retry once."""
+        compaction would invalidate) and retry once. Returns the frame's end offset."""
         try:
-            await _uninterruptible(op, self._wal.append, record)
+            return await _uninterruptible(op, self._wal.append, record)
         except AuditWalFull:
-            if self._inflight or self._wal.committed_offset() == 0:
+            committed = 0 if self._inflight else self._wal.committed_offset()
+            if committed == 0:
                 raise
             await _uninterruptible(op, self._wal.compact)
-            await _uninterruptible(op, self._wal.append, record)
+            self._base += committed  # `compact()` dropped the committed prefix
+            return await _uninterruptible(op, self._wal.append, record)
 
     async def _supervised(self) -> None:
         try:
@@ -479,13 +564,23 @@ class AuditWriter:
                 batch = await self._shielded("audit-wal-read", self._read_batch)
                 if not batch:
                     break
-                for _end_offset, record in batch:
+                for end_offset, record in batch:
                     # A frame appended before records were normalised is made storable here.
                     await self._write_with_retry(storable(record))
                     self._written_total += 1
+                    self._confirm(end_offset)
                 # One cursor fsync per batch: a crash mid-batch re-inserts the
                 # already-written prefix, which ON CONFLICT (record_id) ignores.
                 await self._shielded("audit-wal-commit", self._commit, batch[-1][0], len(batch))
+
+    def _confirm(self, end_offset: int) -> None:
+        """The record whose frame ends at `end_offset` is in Postgres, and so is every frame
+        before it (the flusher inserts in WAL order): commit their tokens. No compaction runs
+        while a batch is in flight, so `_base` is the one the batch was read under."""
+        position = self._base + end_offset
+        while self._uncommitted and self._uncommitted[0] <= position:
+            self._uncommitted.popleft()
+            self._committed_through += 1
 
     async def _read_batch(self, op: _WalOp) -> list[tuple[int, dict[str, Any]]]:
         """Flusher WAL op: the next uncommitted batch; marks idle when empty."""
@@ -513,6 +608,7 @@ class AuditWriter:
             # (If mark_committed raised, its error propagated before any of this.)
             if not op.cancel_pending:
                 await _uninterruptible(op, self._wal.compact)
+                self._base += end_offset  # `compact()` dropped the committed prefix
         op.raise_if_cancelled()
 
     async def _write_with_retry(self, record: dict[str, Any]) -> None:
