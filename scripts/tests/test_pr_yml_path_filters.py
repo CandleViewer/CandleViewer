@@ -99,10 +99,13 @@ READ_INPUTS = (
 )
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
 FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
+#: Not a path filter: the event's `changed-paths` output, false on a merge group (#3433).
+PR_CONTEXT = frozenset({"pr"})
 #: Lane -> the filters that make it applicable: its `if:` and the resolver read the same (#3182).
 LANE_FILTERS: dict[str, frozenset[str]] = {
     **dict.fromkeys(["changed-paths", "gates", "gen", "spike-containment"], frozenset()),
-    **dict.fromkeys(["commitlint", "changelog-fragment", "licence-header"], frozenset()),
+    **dict.fromkeys(["commitlint", "changelog-fragment"], PR_CONTEXT),
+    "licence-header": frozenset(),
     # #3385: every PR, a docs-only one too, gets the secret scans.
     **dict.fromkeys(["docs-link-check", "secret-scan"], frozenset()),
     "pin-check": frozenset({"infra"}),
@@ -247,7 +250,11 @@ def test_pr_yml_changed_paths_exports_every_filter_of_the_step_id_its_outputs_re
     # Renaming only the step id would leave every `steps.filter.outputs.*` empty: each filtered lane
     # would skip and the resolver would count it as not applicable, so ci-required passes (#3182).
     assert _filter_step()["id"] == "filter"
-    assert set(_jobs()["changed-paths"]["outputs"]) == set(_filters()) == set(FILTER_NAMES)
+    assert (
+        set(_jobs()["changed-paths"]["outputs"]) - PR_CONTEXT
+        == set(_filters())
+        == set(FILTER_NAMES)
+    )
 
 
 def test_pr_yml_security_job_runs_when_only_semgrep_paths_change() -> None:
@@ -508,7 +515,9 @@ def _lane_runs() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
     return lanes
 
 
-@pytest.mark.parametrize("lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters))
+@pytest.mark.parametrize(
+    "lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters - PR_CONTEXT)
+)
 def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
     # A PR that edits only a lane's workflow, a script its steps run or a file a step hands a tool
     # must start that lane, or it merges with the gate built to check that file skipped (#3182).

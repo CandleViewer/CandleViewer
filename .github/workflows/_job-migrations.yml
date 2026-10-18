@@ -71,8 +71,9 @@ jobs:
       - name: Migration lockfile integrity (#1556, rule 9 — forward-only in production)
         working-directory: .
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: uv run --project services/api python tools/ci/verify_migration_lockfile.py --base-ref "origin/$BASE_REF"
+          # A merge group has no base_ref; its target branch is merge_group.base_ref, a full ref (#3433).
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
+        run: uv run --project services/api python tools/ci/verify_migration_lockfile.py --base-ref "origin/${BASE_REF#refs/heads/}"
 
       - name: Bootstrap cv_owner/cv_app/cv_ro roles and privileges (#1556)
         working-directory: .
