@@ -150,6 +150,13 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  POST /admin/keys/kek-rewrap:
+    permissions: ['keys:manage']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (#2266 contract slice, PR A); the #2266 entry-point slice (D2) mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PUT /admin/log-level:
     permissions: ['admin:write']
     scope: none
