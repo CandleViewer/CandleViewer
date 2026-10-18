@@ -122,6 +122,19 @@ or the loop died
 for the watchdog's loop). `/readyz` shows a failing `accounts` check for both. Fix the cause
 (exchange reachability, the host clock, Postgres, the setting), then restart cv-api via the launcher.
 
+## Key import: a verified key that was not activated
+
+`createApiKey` stores a key only after it passes the check; M2 then activates it (the verified
+columns, then the promotion from `pending`). If that fails (a store outage or a lost race), the
+answer is `503 store_unavailable` or `409 conflict`, and the audit log has `api_key.import` with
+outcome success and then failure, both naming the same `key_id` in `after_state`. M2 revoked that
+key (`security.credential_destroyed`): it signs nothing and its label is free. Its sealed
+ciphertext stays in the revoked row (0024 has no `DELETE`), and the key stays valid at the
+exchange: send the import again, or delete the key in the exchange's dashboard. If M2 could not
+revoke it either (`security.credential_destroy_failed`; the answer says the key stays pending),
+the `pending` row signs only its own verification and keeps its label until the revoke route
+exists (#898): import under another label meanwhile, and never revoke it in SQL (C-2.9).
+
 ## Dev deploys: the smoke test needs `/readyz` ok
 
 `tools/ci/deploy_dev.py` (E03-T09) accepts a dev deploy only when both `/healthz` and `/readyz`

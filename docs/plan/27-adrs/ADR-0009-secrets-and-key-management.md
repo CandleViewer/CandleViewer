@@ -215,6 +215,15 @@ error or the bound stores nothing (decision 7, in place of SR-E27-01's `pending`
 refusal, whose ciphertext 0024 would keep). Both paths share one MAC wrapper and one record close. A
 stored key's borrow also re-checks C-2.8 on its row before its audit and any decrypt (SR-E27-14).
 
+Residual (2026-10-18, #836 slice 2b4). After the store, M2 runs the import's activation (the
+verified columns, then the promotion from `pending`) and, if it fails, destroys the key: audited,
+revoked, its label free. 0024 keeps the revoked row's sealed ciphertext (write-once, no `DELETE`),
+so a key that passed the check stays stored, revoked, once per failed attempt, and stays valid at
+the exchange. The import's answer then (`503`, or `409` for a lost race) does not mean that
+nothing was stored: unless the key is imported again, the Owner deletes it at the exchange
+(`docs/ops/runbooks/key-selfcheck.md`). If the destroy fails as well, the row stays `pending`,
+signs only its own `key_verify` and holds its label until the revoke route exists (#898).
+
 ## Amendment 7 (2026-10-18, #3009; ADR-0037 decision 6, accepted on an interim basis on #3009)
 
 Adds one application secret to the key inventory (Design §8; Amendment 4, "Unchanged").

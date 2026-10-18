@@ -6,6 +6,7 @@ replies (their README). Fixed low-entropy key vectors only (`_vectors`). No netw
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ import httpx
 import pytest
 import respx
 from pydantic import SecretStr
+from structlog.testing import capture_logs
 
 from candleviewer import key_import_wiring as wiring
 from candleviewer.accounts.errors import AccountConflictError
@@ -25,6 +27,7 @@ from candleviewer.accounts.verification import VerificationPolicy
 from candleviewer.app import AppContext
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH
 from candleviewer.exchange.bybit.service import ExchangeBybitService
+from candleviewer.observability.logging import reset_logging
 from candleviewer.observability.secret_type import Secret as Pasted
 from candleviewer.secrets import (
     CredentialUnavailable,
@@ -34,6 +37,9 @@ from candleviewer.secrets import (
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import AccountsStoreConflictError
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
 from tests.unit.accounts.test_key_import import World, key_row
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW
 from tests.unit.credentials_m2._service_fakes import _ctx, _Src, _svc
@@ -53,7 +59,8 @@ class Rig(World):
         super().__init__()
         self.sent: list[httpx.Request] = []
         self.skew_ms, self.swap, self.withdraw = skew_ms, swap or {}, withdraw
-        self.m2, self.m2_audit, self.capability = InMemoryCredentialStore(), AuditLog(), None
+        self.m2, self.m2_audit = InMemoryCredentialStore(), AuditLog()
+        self.capability: Any = None  # M2's capability, once `boot` minted it
         self.adapter = ExchangeBybitService(rest_transport=httpx.MockTransport(self.answer))
 
     def answer(self, request: httpx.Request) -> httpx.Response:
@@ -177,8 +184,76 @@ def test_the_real_backend_wires_an_import_bound_to_the_process_environment() -> 
         recv_window_ms=4000,
     )  # fmt: skip
     keys, audit = Refusing(OSError()), Rig()
-    flow: Any = wiring.wire_key_import(cast(AppContext, ctx), keys, audit)
+    flow: Any = cast(Any, wiring.wire_key_import(cast(AppContext, ctx), keys, audit)).flow
     held, policy = flow._candidates, flow._policy
     assert (flow._env, flow._verified._env, held._env, held._window) == ("testnet",) * 3 + (4000,)
     assert (flow._audit, held._keys, held._exchange) == (audit, keys, ctx.exchange_bybit)
     assert (policy.egress_ip, policy.recv_window_ms, held._offset()) == (EGRESS, 4000, 0)
+
+
+async def test_the_drain_releases_the_one_pool_the_real_backends_import_uses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released: list[Any] = []
+
+    async def dispose(pool: Any) -> None:
+        released.append(pool)
+
+    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    ctx = cast(AppContext, _ctx_for(storage_backend="real"))
+    wired: Any = wiring.wire_key_import(ctx, Refusing(OSError()), Rig())
+    assert await wired.drain() == 0  # no import in flight
+    flow = wired.flow
+    assert released == [flow._verified._relational] == [flow._accounts._store._relational]
+
+
+async def test_a_drain_waits_for_an_import_to_write_its_closing_record_then_releases() -> None:
+    world = World()
+    world.gate.clear()
+    world.written = False  # the verified columns change no row: M2 destroys the key
+
+    async def release() -> None:
+        world.events.append(("released",))
+
+    imports = wiring.KeyImports(world.flow, release)
+    imports.run(world.run())
+    await world.entered.wait()
+    drained = asyncio.create_task(imports.drain())
+    reset_logging()
+    with capture_logs() as logs:
+        world.gate.set()
+        assert await drained == 0
+    assert world.kinds()[-3:] == ["destroy", ("audit", "failure"), "released"]
+    assert not imports._running  # tracked to its end, and no longer
+    failed = {"event": "key_import_failed", "error": "KeyImportFailed", "log_level": "error"}
+    assert failed in logs  # once the request is gone, no one else awaits the import
+
+
+async def test_a_drain_leaves_an_import_past_its_bound_running_and_still_releases() -> None:
+    world, released = World(), list[str]()
+    world.gate.clear()  # the import never ends by itself
+
+    async def release() -> None:
+        released.append("pool")
+
+    imports = wiring.KeyImports(world.flow, release, drain_s=0.01)
+    work = imports.run(world.run())
+    await world.entered.wait()
+    reset_logging()
+    with capture_logs() as logs:
+        assert await imports.drain() == 1  # never cancelled
+    assert (released, work.done()) == (["pool"], False)
+    assert {"event": "key_imports_left_running", "imports": 1, "log_level": "warning"} in logs
+    world.gate.set()
+    assert (await work).key.status == "active"
+
+
+async def test_a_release_that_fails_is_logged_and_never_fails_the_shutdown() -> None:
+    async def release() -> None:
+        raise OSError("pool")
+
+    reset_logging()
+    with capture_logs() as logs:
+        assert await wiring.KeyImports(World().flow, release).drain() == 0
+    failed = {"event": "key_import_release_failed", "error": "OSError", "log_level": "warning"}
+    assert failed in logs
