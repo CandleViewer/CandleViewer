@@ -48,7 +48,7 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
-    from candleviewer.secrets import CredentialBorrower, SigningCapability
+    from candleviewer.secrets import CandidateSigner, CredentialBorrower, SigningCapability
 
 
 class _NonClosingTransport(httpx.AsyncBaseTransport):
@@ -197,6 +197,25 @@ class ExchangeBybitService:
             governor=self._verify_governor, clock_offset_ms=clock_offset_ms,
             transport=self._rest_transport,
         )  # fmt: skip
+
+    def candidate_verification_calls(
+        self,
+        env: str,
+        candidate: CandidateSigner,
+        *,
+        uid: str,
+        recv_window_ms: int,
+        clock_offset_ms: Callable[[], int] | None = None,
+    ) -> KeyVerificationCalls:
+        """E27-T03 (SR-E27-01): key info and the probe for a candidate key M2 holds for one import,
+        signed by M2 under `key_verify` and built as a stored key's are (`_signed_calls`), on
+        `env`'s own host only. A candidate of another environment is refused before any client
+        exists, so no host of one environment gets a request signed with another's key (C-2.11)."""
+        if candidate.env != env:
+            raise ValueError("the candidate key belongs to another environment")
+        return self._signed_calls(
+            candidate, env, candidate.key_id, uid, recv_window_ms, clock_offset_ms
+        )
 
     async def start(self, ctx: AppContext) -> None:
         """Start the module. No-op until the owning epic implements it."""

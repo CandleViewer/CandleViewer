@@ -50,6 +50,9 @@ PROBES: dict[str, str] = {
         "await ctx.admin.secrets.rewrap_deks(2, actor_user_id='u', actor_role='owner')"
     ),
     "mint_elsewhere": "from candleviewer.secrets import mint_borrower\nmint_borrower(s, 'x')",
+    "mint_candidates_elsewhere": (
+        "from candleviewer.secrets import mint_candidate_keys\nmint_candidate_keys(s)"
+    ),
     # boundary review: R1 literal-name reflection
     "getattr_closure": "x = getattr(ctx.secrets.health, '__closure__')",
     "getattr_mangled": "x = getattr(borrower, '_CredentialBorrower__borrow')",

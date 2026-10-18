@@ -28,8 +28,8 @@ class BybitSignature:
 
 
 class BybitSigner:
-    """Signs requests for one stored credential (`api_keys.id`) through an M2 signing
-    capability (`SigningCapability`: injectable, #3233).
+    """Signs requests for one credential through an M2 capability: a stored key (`api_keys.id`)
+    through the borrower, or a candidate key M2 holds for one import (#836) through its signer.
 
     Holds the capability, the credential id and the borrow purpose, never key material, so
     `repr` and tracebacks cannot show a key or a secret."""

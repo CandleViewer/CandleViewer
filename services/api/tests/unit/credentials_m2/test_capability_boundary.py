@@ -17,6 +17,7 @@ _PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 
 from tests.unit.credentials_m2._m2_guard import (  # noqa: E402
     MINT_SITES,
+    MINTS,
     m2_violations,
 )
 
@@ -45,8 +46,8 @@ def _import_violations(path: Path, tree: ast.AST) -> list[str]:
             if module == "candleviewer.secrets":
                 bad += sorted(n for n in names if n.startswith("_") or n not in m2.__all__)
                 rel = str(path.relative_to(_PKG))
-                if "mint_borrower" in names and rel not in _MINT_SITES:
-                    bad.append(f"mint_borrower in {rel}")
+                if rel not in _MINT_SITES:
+                    bad += [f"{mint} in {rel}" for mint in sorted(MINTS & names)]
             elif module.startswith("candleviewer.secrets."):
                 bad.append(module)
     return bad
@@ -66,6 +67,7 @@ def test_only_public_m2_surface_imported(path: Path) -> None:
         "from candleviewer.secrets._kek import LoadedKek",
         "from ..secrets import _kek",
         "from candleviewer.secrets import mint_borrower",
+        "from candleviewer.secrets import mint_candidate_keys",
     ],
 )
 def test_import_rule_rejects_private_m2_imports(src: str) -> None:

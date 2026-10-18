@@ -202,6 +202,23 @@ class CredentialBroker:
         *,
         actor: tuple[str, str, str | None] = _SYSTEM,
     ) -> StoredCredential:
+        args = (env_name, account_id, label, api_key, api_secret, permission_snapshot, actor)
+        return await self._seal_new(uuid4(), *args)
+
+    async def _seal_new(
+        self,
+        key_id: UUID,
+        env_name: str,
+        account_id: UUID,
+        label: str,
+        api_key: Secret[str],
+        api_secret: Secret[str],
+        permission_snapshot: Mapping[str, Any],
+        actor: tuple[str, str, str | None],
+    ) -> StoredCredential:
+        """Seal and insert a `pending` row under `key_id`, which M2 mints (#2336): `store()` per
+        call, a candidate's hold when it starts (`candidate.py`, so the hold's signing records and
+        the row share the id). No caller outside M2 chooses a credential id."""
         if env_name != self._env:
             raise CredentialUnavailable("environment_mismatch")
         snapshot = project_snapshot(permission_snapshot)
@@ -210,7 +227,6 @@ class CredentialBroker:
         last4 = api_key.reveal()[-4:]
         if len(api_key.reveal()) < 4 or not last4.isascii() or not last4.isalnum():
             raise CredentialUnavailable("credential_shape_invalid")
-        key_id = uuid4()
         dek = env.new_dek()
         try:
             dek_ref = kek.wrap_dek(dek, credential_id=key_id)

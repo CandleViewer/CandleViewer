@@ -157,7 +157,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # caller-bound borrow capability minted at wiring time for M4, and the `Secret` wrapper.
     # #2339: the capability signs inside M2 (C-2.7); M4 gets the `KEY_ID_SLOT` marker, the
     # `Purpose` values and the `RequestSignature` result (hex MAC + key id, never the secret).
-    # #836: what M4 signs through is a Protocol. No key/DEK type and no broker is exported.
+    # #836: what M4 signs through is a Protocol, and key import's capability verifies a pasted
+    # key inside M2 before it is stored. No key/DEK type and no broker is exported.
     "M2": {
         "Secret",
         "KekCheckResult",
@@ -183,6 +184,9 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "SecretsLifecycleFacade",
         "SecretsMetadataFacade",
         "SigningCapability",  # #836: the Protocol M4's signer takes, so the signer is injectable
+        "CandidateKeys",  # #836: key import's capability, minted once in admin.wiring
+        "CandidateSigner",  # #836: a held candidate's signer, the adapter's view of the pair
+        "mint_candidate_keys",  # #836: that mint, pinned to admin/wiring.py by the M2 guard
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).

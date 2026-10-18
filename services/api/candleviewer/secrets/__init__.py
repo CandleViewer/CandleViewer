@@ -7,11 +7,14 @@ caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wir
 `RequestSignature` (hex MAC + key id), never the secret. `admin` alone may call the offline
 break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols a KEK. `_kek`,
 `_envelope`, `_auth_keyring`, `_source`, `_metrics` and `broker` are internal.
+Key import holds `CandidateKeys` (minted by `admin.wiring` too): M2 verifies a pasted pair through
+its `CandidateSigner`, a `SigningCapability`, and stores it only after the check passes (#836).
 """
 
 from __future__ import annotations
 
 from candleviewer.secrets.broker import Purpose
+from candleviewer.secrets.candidate import CandidateKeys, CandidateSigner
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
     KekSourceNotPermitted,
@@ -31,6 +34,7 @@ from candleviewer.secrets.service import (
     SecretsService,
     SigningCapability,
     mint_borrower,
+    mint_candidate_keys,
     prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
@@ -39,6 +43,8 @@ from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 __all__ = [
     "KEY_ID_SLOT",
     "AuditSink",
+    "CandidateKeys",
+    "CandidateSigner",
     "CredentialBorrower",
     "CredentialStore",
     "CredentialUnavailable",
@@ -61,5 +67,6 @@ __all__ = [
     "WithdrawPermissionRejected",
     "export_secrets_metrics",
     "mint_borrower",
+    "mint_candidate_keys",
     "prove_kek_possession",
 ]
