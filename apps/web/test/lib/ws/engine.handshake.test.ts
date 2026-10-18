@@ -1,5 +1,12 @@
 // E17-T04 S4 (23 3.6, 4.2-4.3, 9.1; C1, C6): the handshake, and what keeps a connection honest (`core/connection.ts`).
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TokenResult } from "../../../src/lib/ws/api";
+import {
+  MAX_INBOUND_CHARS,
+  MAX_TOKEN_LENGTH,
+  MIN_TOKEN_LENGTH,
+  TOKEN_WAIT_MS,
+} from "../../../src/lib/ws/core/connection";
 import { assertEngineOrder } from "./support/engineEvents";
 import { connectionHarness, tokenOf, URL } from "./support/connectionHarness";
 
@@ -54,9 +61,112 @@ describe("handshake (C1)", () => {
     expect(pongs).toHaveLength(40); // no wait: C6 asks for one inside 10 s
     expect(pongs[0]).toMatchObject({ id: "s-hb-1", p: { client_ms: Date.now() } });
   });
+
+  it("pre-auth pings cannot starve the auth frame: a thousand are answered with three pongs", async () => {
+    const t = connectionHarness({ pingsBeforeWelcome: 1_000 }); // before auth_ok a pong is paced like any frame
+    t.connection.start();
+    await t.advance(300); // hello, three pongs 40 ms apart, then auth
+    const conn = t.gateway.latest;
+    expect(conn.of("pong")).toHaveLength(3);
+    expect(conn.of("auth")).toHaveLength(1);
+    expect(t.connection.ready).toBe(true);
+  });
+
+  it("pings that come while auth is pending are capped like the ones before welcome", async () => {
+    const t = connectionHarness();
+    t.connection.start();
+    await t.advance(1); // hello went and welcome came back: auth waits its 40 ms
+    for (let i = 0; i < 50; i += 1) t.gateway.ping(t.gateway.latest);
+    await t.advance(300);
+    expect(t.gateway.latest.of("pong")).toHaveLength(3);
+    expect(t.connection.ready).toBe(true);
+  });
+
+  it("pings every welcome.heartbeat.interval_ms", async () => {
+    const t = connectionHarness({ heartbeat: { interval_ms: 10_000, timeout_ms: 45_000 } });
+    await t.connect();
+    const pings = () => t.gateway.latest.of("ping").length;
+    await t.advance(9_900);
+    expect(pings()).toBe(0);
+    await t.advance(100);
+    expect(pings()).toBe(1);
+    await t.advance(10_000);
+    expect(pings()).toBe(2);
+  });
+});
+
+describe("what welcome says of the heartbeat is bounded", () => {
+  it("a zero interval is one ping a second, not a loop", async () => {
+    const t = connectionHarness({ heartbeat: { interval_ms: 0, timeout_ms: 45_000 } });
+    await t.connect();
+    await t.advance(10_000);
+    expect(t.gateway.latest.of("ping").length).toBeLessThanOrEqual(10);
+    expect(t.gateway.latest.of("ping").length).toBeGreaterThanOrEqual(9);
+  });
+
+  it("an interval and a timeout past 5 minutes are 5 minutes", async () => {
+    const huge = 3_000_000_000; // a timer past 2^31 ms would fire at once
+    const t = connectionHarness({ heartbeat: { interval_ms: huge, timeout_ms: huge } });
+    await t.connect();
+    await t.advance(299_000);
+    expect(t.gateway.latest.of("ping")).toHaveLength(0);
+    await t.advance(1_100);
+    expect(t.gateway.latest.of("ping")).toHaveLength(1);
+    t.gateway.latest.mute();
+    await t.advance(301_000); // silence: the 5-minute timeout, not 2^31 ms and not 0
+    expect(t.gateway.conns[0]?.closedByClient).toEqual({ code: 4000, reason: "heartbeat_timeout" });
+  });
 });
 
 describe("silence and bounds", () => {
+  it("closes after timeout_ms without a word from the server, and not before", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    t.gateway.latest.mute();
+    await t.advance(45_039 - 100); // the last word was auth_ok, at 40 ms: 45 s of silence is 45 040 ms
+    expect(t.gateway.latest.closedByClient).toBeUndefined();
+    await t.advance(1);
+    expect(t.gateway.latest.closedByClient).toEqual({ code: 4000, reason: "heartbeat_timeout" });
+    expect(t.types().at(-1)).toBe("reconnecting");
+  });
+
+  it("any traffic keeps it alive: a quiet link that still answers pings is not closed", async () => {
+    const t = connectionHarness({ heartbeat: { interval_ms: 15_000, timeout_ms: 20_000 } });
+    await t.connect();
+    await t.advance(120_000); // six times the timeout: each ping's pong is the traffic
+    expect(t.gateway.latest.closedByClient).toBeUndefined();
+    expect(t.gateway.conns).toHaveLength(1);
+  });
+
+  it("abandons a handshake that never completes, after 15 s: the gateway waits 10 s for auth", async () => {
+    const t = connectionHarness({ silent: true });
+    t.connection.start();
+    await t.advance(14_999);
+    expect(t.connection.ready).toBe(false);
+    expect(t.gateway.conns[0]?.closedByClient).toBeUndefined();
+    await t.advance(1);
+    expect(t.gateway.conns[0]?.closedByClient).toEqual({ code: 4000, reason: "handshake_timeout" });
+  });
+
+  it("closes on a message over 4 MiB without parsing it, but parses one of exactly that size", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    const parse = vi.spyOn(JSON, "parse");
+    t.gateway.latest.raw(JSON.stringify({ t: "pong" }).padEnd(MAX_INBOUND_CHARS));
+    expect([parse.mock.calls.length, t.connection.counters.malformedFrames]).toEqual([1, 0]);
+    t.gateway.latest.raw(" ".repeat(MAX_INBOUND_CHARS + 1));
+    expect([parse.mock.calls.length, t.connection.counters.malformedFrames]).toEqual([1, 1]);
+    // the server broke the protocol: the socket is closed 1002, and the connection is lost like any other
+    const first = t.gateway.latest;
+    expect(first.closedByClient).toEqual({ code: 1002, reason: "frame_too_big" });
+    expect(t.events.at(-1)).toMatchObject({ type: "reconnecting", attempt: 1 });
+    expect([t.connection.ready, t.hooks.down.mock.calls.length]).toEqual([false, 1]);
+    await t.advance(500); // 9.2: the first retry, on the ordinary backoff
+    expect(t.gateway.conns).toHaveLength(2);
+    await t.advance(100);
+    expect(t.connection.ready).toBe(true);
+  });
+
   it("counts an undecodable message and reports it", async () => {
     const t = connectionHarness();
     await t.connect();
@@ -69,6 +179,86 @@ describe("silence and bounds", () => {
 });
 
 describe("the token", () => {
+  it.each([
+    ["locked", { kind: "locked" }],
+    ["unavailable", { kind: "unavailable" }],
+    [
+      "shorter than the 20 characters auth takes",
+      { kind: "ok", accessToken: "a".repeat(19), expiresAtMs: Date.now() + 1e6 },
+    ],
+    [
+      "over the 8 KiB pre-auth cap",
+      { kind: "ok", accessToken: "a".repeat(MAX_TOKEN_LENGTH + 1), expiresAtMs: Date.now() + 1e6 },
+    ],
+    ["already expired", { kind: "ok", accessToken: tokenOf(9), expiresAtMs: Date.now() - 1 }],
+  ] as const)(
+    "a %s token opens no socket, goes offline, and retries on the backoff, not in a loop",
+    async (_, answer) => {
+      const t = connectionHarness();
+      t.tokens.queue.push(answer);
+      t.connection.start();
+      await t.advance(499);
+      expect([t.gateway.conns.length, t.types(), t.tokens.getToken.mock.calls.length]).toEqual([
+        0,
+        ["offline"],
+        1,
+      ]);
+      await t.advance(1); // 9.2: the first retry waits 500 ms
+      expect([t.tokens.getToken.mock.calls.length, t.gateway.conns.length]).toEqual([2, 1]);
+    },
+  );
+
+  it.each([MIN_TOKEN_LENGTH, MAX_TOKEN_LENGTH])(
+    "a token of exactly %i characters is used",
+    async (length) => {
+      const t = connectionHarness();
+      t.tokens.queue.push({
+        kind: "ok",
+        accessToken: "a".repeat(length),
+        expiresAtMs: Date.now() + 1e6,
+      });
+      await t.connect();
+      expect(t.gateway.latest.of("auth")).toEqual([
+        expect.objectContaining({ p: { access_token: "a".repeat(length) } }),
+      ]);
+    },
+  );
+
+  it("a source that never answers counts as unavailable after TOKEN_WAIT_MS", async () => {
+    const t = connectionHarness();
+    t.tokens.getToken.mockImplementationOnce(() => new Promise(() => {}));
+    t.connection.start();
+    await t.advance(TOKEN_WAIT_MS - 1);
+    expect(t.types()).toEqual([]);
+    await t.advance(1);
+    expect(t.types()).toEqual(["offline"]);
+  });
+
+  it("a source that throws counts as unavailable", async () => {
+    const t = connectionHarness();
+    t.tokens.getToken.mockImplementationOnce(() => {
+      throw new Error("no port");
+    });
+    t.connection.start();
+    await t.advance(0);
+    expect(t.types()).toEqual(["offline"]);
+  });
+
+  it("a source that hangs is awaited once, and not asked again while it is pending", async () => {
+    const t = connectionHarness();
+    let answer: (result: TokenResult) => void = () => undefined;
+    t.tokens.getToken.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    t.connection.start();
+    await t.advance(TOKEN_WAIT_MS + 500); // given up on at 10 s; the retry, 500 ms later, waits for the same call
+    expect([t.types(), t.tokens.getToken.mock.calls.length]).toEqual([["offline"], 1]);
+    answer({ kind: "ok", accessToken: tokenOf(7), expiresAtMs: Date.now() + 1e6 });
+    await t.advance(200);
+    expect(t.gateway.latest.of("auth")).toEqual([
+      expect.objectContaining({ p: { access_token: tokenOf(7) } }),
+    ]);
+    expect(t.tokens.getToken).toHaveBeenCalledTimes(1);
+  });
+
   it("is held only until auth is built: it is in the auth frame and nowhere else", async () => {
     const t = connectionHarness();
     await t.connect();
@@ -143,6 +333,27 @@ describe("what the session settles and what it hands on", () => {
     });
     expect(t.events).toHaveLength(seen);
     expect(t.connection.topicsPerRequest).toBe(50);
+  });
+
+  it("an err that answers another frame does not end the auth that is pending", async () => {
+    const t = connectionHarness();
+    t.connection.start();
+    await t.advance(1); // auth is waiting
+    t.gateway.latest.send({
+      t: "err",
+      id: "c-999",
+      p: { code: "auth_failed", message: "not ours" },
+    });
+    await t.advance(300);
+    expect([t.connection.ready, t.tokens.invalidate.mock.calls.length]).toEqual([true, 0]);
+    expect(t.gateway.latest.closedByClient).toBeUndefined();
+  });
+
+  it("an auth_ok that answers another frame is not the answer to auth", async () => {
+    const t = connectionHarness({ authOkId: "c-999" });
+    await t.connect();
+    expect([t.connection.ready, t.hooks.ready.mock.calls.length]).toEqual([false, 0]);
+    expect(t.types()).toEqual(["connecting", "welcome"]);
   });
 
   it("starts once, stops once, and sends nothing before it is ready", async () => {
