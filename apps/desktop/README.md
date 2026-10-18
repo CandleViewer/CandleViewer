@@ -49,12 +49,19 @@ one delivery point.
 Packaged builds (#3518): `electron-builder.yml` copies `apps/web/dist`, without
 source maps (SR-116), to `<resources>/web/dist`, where the handler reads it
 (`dist/main` inside `app.asar` resolves `../../../web/dist` there). The
-electron-hardening gate fails if a packaging list could ship a `.map` file, or
-unless that entry alone writes into that root; `check_packaging` names the few
+electron-hardening gate fails if a packaging list could ship a `.map` file, if
+anything other than that entry could write into that root, or if the built
+handler stops reading `../../../web/dist`; `check_packaging` names the few
 config forms it does not see. These files sit outside `app.asar`, so ASAR
 integrity does not cover them: the SR-118 startup check (#1231, E43-T02) must,
 by packing them into `app.asar` or by checking them against a hash list kept
-there. Not yet proven: that an installer renders the app; CI builds none. The
+there. What CI runs: the `build` job builds both dists, launches the unpackaged
+`dist/main/index.js` under `xvfb-run` (`collect-hardening-facts.mjs`) and runs
+the gate; `e2e-electron` (nightly and on release cuts) launches that same
+unpackaged build. No job packages an installer and launches it, so that an
+installer renders the app is not yet proven. `release.yml`'s
+`build-sign-installer` runs `build:installer` without building either dist, so
+it fails at the check below until that workflow (E10) builds both first. The
 next step, part of #1231's packaged-artefact checks, is to build the unpacked
 app in the `build` job (`electron-builder --linux dir` with `electronDist` set
 to the Electron that job installs) and launch it with Playwright-Electron
@@ -76,8 +83,9 @@ backend's address, listing `app://candleviewer` in `CV_ALLOWED_ORIGINS`
   (requires `build` to have run first).
 - `pnpm --filter @candleviewer/desktop build:installer` — electron-builder
   packaging (real signing/notarization/auto-update land in E10). Build
-  `apps/web` and this package first: electron-builder only warns when
-  `apps/web/dist` is missing, and that installer opens an empty window.
+  `apps/web` and this package first: it stops if `apps/web/dist/index.html`
+  is missing (`scripts/require-web-dist.mjs`), because electron-builder only
+  warns and that installer would open an empty window.
 
 ## Out of scope (E10)
 
