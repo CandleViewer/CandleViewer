@@ -54,6 +54,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment
     "apps/web/src/lib/auth/",  # the session claims cache
     "apps/web/src/lib/http/csrfFetch.ts",  # CSRF double submit, the session cookie's re-issue
+    "apps/web/src/lib/ws/client/createWsClient.ts",  # the tab asks its TokenSource, posts the token
     "apps/web/src/lib/ws/core/connection.ts",  # the WS `auth` and re-`auth`, the token's lifetime
     "apps/web/src/lib/ws/policy/closePolicy.ts",  # 4401: drop the refused token, refresh first
     "apps/web/src/lib/ws/port/messages.ts",  # the port's `token` message: the token into the worker
