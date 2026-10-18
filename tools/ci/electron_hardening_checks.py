@@ -486,13 +486,17 @@ _LINE = re.compile(r" *(?:-(?:[ \t].*)?|[A-Za-z_][\w-]*:(?:[ \t].*)?)", re.ASCII
 # open or close a quoted scalar or flow sequence, open a flow mapping or start a comment.
 _HEAD = re.compile(r" *(?:-[ \t]+)*(?:-$|[A-Za-z_][\w-]*:(?:[ \t]+|$))?", re.ASCII)
 _TOKEN = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*'|[\"'\[\]{]|[ \t]#")
-# Control characters other than tab and LF (CRLF is read as LF), U+2028 and U+2029:
-# str.splitlines() breaks lines on some that js-yaml reads as text, js-yaml on a lone CR.
-_BREAKS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+# Control characters other than tab and LF (CRLF is read as LF), U+2028, U+2029, BOM:
+# str.splitlines() breaks lines on some that js-yaml reads as text, js-yaml on a lone CR
+# and js-yaml drops a leading BOM (refused here by name, not as an unreadable line).
+_BREAKS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
 # Plain scalars YAML does not read as a string: a boolean, null, number, date or mapping.
 _NOT_STRING = re.compile(
     r"(?i)true|false|yes|no|on|off|null|\.?\d.*|\.inf|\.nan|.*:(\s.*)?"
 )
+# A path that names a .map file as electron-builder reads it ('\' is '/', no trailing
+# separator) and as Windows does (no trailing dot or space; ':' opens an NTFS stream).
+_MAP_FILE = re.compile(r"(?i)\.map[. ]*(?::[^/]*)?$")
 # What electron-builder expands or resolves before it uses a pattern or a path: a ${...}
 # macro, or a '..' segment ('\' separates too).
 _UNSAFE = re.compile(r"\$\{|(?:^|[/\\])\.\.(?:[/\\]|$)")
@@ -578,14 +582,14 @@ def _packaging_lists(lines: list[str]) -> dict[str, list[Any] | str]:
     reason it cannot be read."""
     out: dict[str, list[Any] | str] = {}
     for i, line in enumerate(lines):
-        m = re.fullmatch(r"(files|extraResources|extraFiles):(?:\s(.*))?", line)
+        m = re.fullmatch(r"(files|extraResources|extraFiles):(?:[ \t](.*))?", line)
         if m is None:
             continue
         key, value = m.group(1), _uncomment(m.group(2) or "")
         block = list(itertools.takewhile(lambda ln: ln[0] in " \t-", lines[i + 1 :]))
         if key in out or (value and block):
             out[key] = "declared twice" if key in out else "a value and a block"
-        elif re.fullmatch(r"\[\s*\]", value):
+        elif re.fullmatch(r"\[[ \t]*\]", value):
             out[key] = []
         elif value:
             scalar = _scalar(value)
@@ -645,7 +649,8 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         n = text.count("\n", 0, brk.start()) + 1
         msg = (
             f"cannot read line {n}: it holds U+{ord(brk[0]):04X}; the gate reads lines "
-            "split on LF (or CRLF), so use no other line break or control character but tab"
+            "split on LF (or CRLF): use no BOM, no other line break and no control "
+            "character but tab"
         )
         return [Violation("SR-116", subject, msg)]
     vs: list[Violation] = []
@@ -696,7 +701,8 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
                 vs.append(Violation("SR-116", subject, msg))
         for e in entries:
             names = [v for v in (e.get("from"), e.get("to")) if isinstance(v, str)]
-            if any(posixpath.normpath(v).lower().endswith(".map") for v in names):
+            norm = (posixpath.normpath(v.replace("\\", "/")) for v in names)
+            if any(_MAP_FILE.search(v) for v in norm):
                 msg = (
                     f"{key} entry from {e.get('from')!r} copies a .map file: an entry "
                     "whose from is one file is copied whatever its filter says"
@@ -930,5 +936,11 @@ def run_all_checks(
     vs += check_asset_root(_read(desktop_dist / "main" / "index.js"))
     # Bytes, so a CR reaches check_packaging (read_text would turn it into LF).
     config = builder_config.read_bytes() if builder_config.is_file() else b""
-    vs += check_packaging(config.decode("utf-8"), builder_config.parent, web_dist)
+    try:
+        text = config.decode("utf-8")
+    except UnicodeDecodeError as e:
+        n = config.count(b"\n", 0, e.start) + 1
+        msg = f"cannot read line {n}: it holds a byte that is not UTF-8"
+        return [*vs, Violation("SR-116", "electron-builder.yml", msg)]
+    vs += check_packaging(text, builder_config.parent, web_dist)
     return vs
