@@ -768,7 +768,7 @@ class TopicEmitter:
         budget, key = authz.rebuilds, topic_key(sub.topic, sub.replay_session_id)
         if (scope := budget.take(key, "resync")) is not None:
             budget.log("resync", scope, self.connection_id, sub.ch, client_reason=reason)
-            spent = budget.count_refusal("resync", scope)
+            spent = budget.count_refusal("resync", scope, key)
             if budget.drawn(key, "resync") < budget.limits["topic"]:  # spent by `ctl`/`sub` too
                 message = f"{spent}; no snapshot was taken."
                 err = build_ws_error("resync_rate_limited", id=rid, ch=ch, rs=rs, message=message)

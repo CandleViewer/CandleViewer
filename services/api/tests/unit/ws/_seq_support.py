@@ -55,9 +55,9 @@ def validate(frame: dict[str, Any]) -> None:
         check(f"cv://ws/v1/{frame['ch'].split('.', 1)[0]}.schema.json", frame["p"])
 
 
-def principal(*accounts: uuid.UUID) -> PrincipalSnapshot:
+def principal(*accounts: uuid.UUID, user: uuid.UUID = USER) -> PrincipalSnapshot:
     grants = tuple(AccountGrant(a, True, False, False) for a in accounts)
-    return PrincipalSnapshot(USER, frozenset({"manager"}), PERMS, grants)
+    return PrincipalSnapshot(user, frozenset({"manager"}), PERMS, grants)
 
 
 class Clock:
@@ -151,13 +151,18 @@ class Conn:
         cache: SnapshotCache | None = None,
         clock: Clock | None = None,
         max_frame_bytes: int | None = None,
+        services: SubscriptionServices | None = None,
+        user: uuid.UUID = USER,
     ) -> None:
         self.out: list[dict[str, Any]] = []
         self.clock = clock or Clock()
-        services = SubscriptionServices(upstream=UpstreamRefs(), snapshots=source)
+        if services is None:  # else one process's, shared with the user's other connections
+            services = SubscriptionServices(upstream=UpstreamRefs(), snapshots=source)
         if cache is not None:
             services.snapshot_cache = cache
-        self.authz = ConnectionAuthz(principal(*accounts or (ACC_A,)), services, clock=self.clock)
+        self.authz = ConnectionAuthz(
+            principal(*accounts or (ACC_A,), user=user), services, clock=self.clock
+        )
         kw: dict[str, Any] = {}
         if max_frame_bytes is not None:
             kw["max_frame_bytes"] = max_frame_bytes

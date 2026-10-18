@@ -185,6 +185,7 @@ from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
     Subscription,
+    audit_rebuild_refusal,
     auth_ok_payload,
     handle_ctl,
     handle_unsub,
@@ -1477,9 +1478,11 @@ def make_ws_router(
             held = pending(conn.authz)
             conn.push(handle_ctl(conn.authz, frame, conn.wall_ms()))
             flush(conn, pending(conn.authz) - held)  # `ctl_ok { resnapshot }`, then its snap
+            await audit_rebuild_refusal(conn.authz)  # #3476: after the reply, if one is due
         elif kind == "resync" and conn.authz is not None and conn.emitter is not None:
             if (revoked := conn.emitter.client_resync(conn.authz, frame)) is not None:
                 await registry.audit_revoked(conn.authz, [revoked])  # SR-187: its row
+            await audit_rebuild_refusal(conn.authz)  # #3476: after the reply, if one is due
         else:
             conn.violation(fid)
 
