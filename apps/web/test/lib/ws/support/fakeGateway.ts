@@ -36,6 +36,8 @@ export interface FakeGatewayOptions {
    * `sub` refused (whole, or `client_rate_limited`) its `err`.
    */
   readonly hold?: readonly ("sub_ok" | "unsub_ok" | "ctl_ok")[];
+  /** A second refusal does not close the connection (`deny`): a gateway that does not follow 8.5. */
+  readonly keepsDenying?: boolean;
 }
 
 export interface FakeConn {
@@ -75,6 +77,8 @@ export interface FakeConn {
   snap(ch: string, reason: string, rs?: string, extra?: Json): void;
   /** The held replies go out. */
   releaseHeld(): void;
+  /** `revoked`, and the subscription ends with it (a narrowing that keeps accounts does not end it, 9.5). */
+  revoke(ch: string, reason: string, extra?: Json): void;
 }
 
 interface Sub {
@@ -89,6 +93,12 @@ interface Sub {
 }
 
 const SERVER_PING = "s-hb-";
+/** The reply a request of each type is answered with: a denial is held back with them (`hold`). */
+const REPLY_OF: Readonly<Record<string, "sub_ok" | "unsub_ok" | "ctl_ok" | undefined>> = {
+  sub: "sub_ok",
+  unsub: "unsub_ok",
+  ctl: "ctl_ok",
+};
 const FAMILY_THROTTLE: Readonly<Record<string, number>> = { book: 50, trades: 100 };
 const familyOf = (ch: string): string => ch.split(".", 1)[0] ?? ch;
 const keyOf = (ch: string, rs?: string): string => `${ch}#${rs ?? "live"}`;
@@ -112,7 +122,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
   let refusals = 0;
   let authsToRefuse = options.refuseAuths ?? 0;
   let serverPings = 0;
+  let denials = 0;
   let subsToFail = 0;
+  let snapsWithheld = false;
   let unsubsToFail = 0;
   const refusedTopics = new Set<string>();
   const now = () => Date.now() + skewMs;
@@ -170,17 +182,19 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       ch === "system"
         ? { kind: "health", health: "healthy", kill_switch: { engaged: false, scope: "global" } }
         : { price_scale: 1, qty_scale: 1, stale: false };
-    const emitSnap = (sub: Sub, reason: string, extra: Json = {}) =>
-      send({
-        t: "snap",
-        ch: sub.ch,
-        s: (sub.seq += 1),
-        e: "j",
-        p: payloadOf(sub.ch),
-        meta: { reason, source: sub.rs === undefined ? "live" : "replay" },
-        ...(sub.rs !== undefined && { rs: sub.rs }),
-        ...extra,
-      });
+    const emitSnap = (sub: Sub, reason: string, extra: Json = {}, unasked = false) =>
+      snapsWithheld && !unasked
+        ? undefined
+        : send({
+            t: "snap",
+            ch: sub.ch,
+            s: (sub.seq += 1),
+            e: "j",
+            p: payloadOf(sub.ch),
+            meta: { reason, source: sub.rs === undefined ? "live" : "replay" },
+            ...(sub.rs !== undefined && { rs: sub.rs }),
+            ...extra,
+          });
     /** The live subscription of a `ch`, else the first: what `ctl` and `resync`, which name no replay session, reach (#572). */
     const find = (ch: unknown): Sub | undefined => {
       const named = [...subs.values()].filter((sub) => sub.ch === ch);
@@ -282,6 +296,17 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       const t = String(frame["t"]);
       const exempt = t === "pong" && authenticated;
       const at = performance.now();
+      if (!exempt && denials > 0) {
+        denials -= 1; // refused as the gateway refuses, though the client was within its limits
+        strikes += 1;
+        if (strikes > 1 && options.keepsDenying !== true) {
+          return bye("client_rate_limited", 4429, { retry_after_ms: 1000 });
+        }
+        const refuse = () =>
+          reply("err", { p: { code: "client_rate_limited", message: "rate" } }, frame["id"]);
+        const replyType = REPLY_OF[t];
+        return replyType === undefined ? refuse() : later(replyType, refuse);
+      }
       if (!exempt) {
         while (stamps[0] !== undefined && at - stamps[0] >= 60_000) stamps.shift();
         const lastSecond = stamps.filter((stamp) => at - stamp < 1000).length;
@@ -399,7 +424,17 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       },
       snap(ch, reason, rs, extra) {
         const sub = subs.get(keyOf(ch, rs));
-        if (sub !== undefined) emitSnap(sub, reason, extra);
+        if (sub !== undefined) emitSnap(sub, reason, extra, true);
+      },
+      revoke(ch, reason, extra = {}) {
+        send({ t: "revoked", ch, p: { reason, message: reason, ...extra } });
+        const narrowed =
+          reason === "account_scope_changed" && extra["resubscribe_allowed"] === true;
+        if (narrowed) return;
+        for (const sub of [...subs.values()]) {
+          if (sub.ch === ch && (reason !== "replay_session_ended" || sub.rs !== undefined))
+            subs.delete(keyOf(sub.ch, sub.rs));
+        }
       },
     };
     conns.push(conn);
@@ -436,6 +471,14 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     /** The next `n` connects fail before they open (unreachable). */
     refuse(n = 1) {
       refusals += n;
+    },
+    /** The next `n` frames the client sends are refused `client_rate_limited`, as if it were over its limit. */
+    deny(n: number) {
+      denials = n;
+    },
+    /** The snapshots a `sub`, a `resync` or a retune would bring are not sent; `conn.snap(ch, reason)` still sends one. */
+    withholdSnaps(on: boolean) {
+      snapsWithheld = on;
     },
     /** The next `n` `unsub` frames are refused whole, with an `err` and no `unsub_ok`. */
     failUnsubs(n: number) {

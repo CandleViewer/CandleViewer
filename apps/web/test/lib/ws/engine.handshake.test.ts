@@ -410,4 +410,24 @@ describe("what the session settles and what it hands on", () => {
     t.connection.start();
     expect(t.gateway.latest.closedByClient).toEqual({ code: 1000, reason: "client_stop" });
   });
+
+  it("reconnects even when the socket cannot be closed", async () => {
+    const t = connectionHarness(
+      { silent: true },
+      {
+        createSocket: (url, protocols, events) => {
+          const socket = t.gateway.createSocket(url, protocols, events);
+          return {
+            send: (data) => socket.send(data),
+            close: () => {
+              throw new Error("InvalidStateError");
+            },
+          };
+        },
+      },
+    );
+    t.connection.start();
+    await t.advance(15_000);
+    expect(t.types().at(-1)).toBe("reconnecting");
+  });
 });
