@@ -247,10 +247,15 @@ def test_s4_orders_and_executions_are_never_coalesced_or_throttled(family: str) 
         assert not any("coalesced" in f["p"] or "coalesced_count" in f["p"] for f in frames)
 
 
-def test_s4_coalescable_topics_do_mark_coalesced_deltas() -> None:
+@pytest.mark.parametrize("backpressure", [None, BackpressureConfig()], ids=["flag_off", "flag_on"])
+def test_s4_coalescable_topics_do_mark_coalesced_deltas(
+    backpressure: BackpressureConfig | None,
+) -> None:
     """Control for S4: coalescing exists on market data and is flagged, so its absence on
-    orders/executions above is a real property and not an artefact of the harness."""
-    w = World()
+    orders/executions above is a real property and not an artefact of the harness. With the flag
+    on (#3268) the producer's own count goes through its window: the update leaves at once (the
+    leading edge, D12) with the same frame as with the flag off."""
+    w = World(backpressure=backpressure)
     with connect(w) as c:
         c.sub({"ch": "bars.BTCUSDT.time.1", "opts": {"encoding": "structured"}})
         c.recv()

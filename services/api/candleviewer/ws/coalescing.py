@@ -9,14 +9,16 @@ folds them into its merge at the frame bound rather than overflow. `never_thrott
 (`orders`, `executions`, S4) are never queued; a queue for them cannot be built. `machines` keeps
 its latest payload only (§6.4), whatever `coalesce` says.
 
-Exactly one pending update leaves verbatim, with its binary `part` and its own replay `ts_ms`; two
-or more leave as one merged structured payload with `coalesced_count` and the latest `ts_ms` (the
+Exactly one pending update leaves verbatim, with its binary `part`, its own replay `ts_ms` and its
+producer's own `coalesced_count`; two or more leave as one merged structured payload with the sum
+of their counts (each at least 1; an append batch counts 1) and the latest `ts_ms` (the
 emitter adds the §8.2 disclosure). A merged `book` window is also re-encoded as one CVWB book delta
 (§3.4 kind 2, flagged `coalesced` by the emitter) when every update in it carried one at the same
 scales; any other merged frame is structured, even for a binary subscriber. An update that carries
 nothing new is discarded
 as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
-column for a heatmap bucket already sent complete. An update's envelope `meta` (bars: the
+column for a heatmap bucket already sent complete, by a window or by the snapshot that seeded the
+queue (`seed`). An update's envelope `meta` (bars: the
 `include_delta` echo) leaves with it; a merged window carries its last update's.
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
@@ -40,7 +42,7 @@ from __future__ import annotations
 import copy
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from decimal import Context, Decimal, Inexact
 from typing import Any, Final, Literal
@@ -97,15 +99,17 @@ _CAUSES: Final[Mapping[type[Exception], Refusal]] = {
 @dataclass(frozen=True, slots=True)
 class Emission:
     """One frame's payload. `part` is the producer's CVWB form, kept only for an unmerged update.
-    `coalesced_count` is the number of source updates merged into `body` (always 1 for the append
-    families, which never merge). `ts_ms` is the source event time a replay frame carries; `meta`
-    the envelope `meta` of the last update in it."""
+    `coalesced_count` sums the producers' counts merged into `body`, 1 for a batch of the append
+    families, which never merge. `window_count` is how many updates the queue itself merged into
+    it: 1 for a lone update, a whole frame or an append batch. `ts_ms` is the source event time a
+    replay frame carries; `meta` the envelope `meta` of the last update in it."""
 
     body: dict[str, Any]
     part: Frame | None = None
     coalesced_count: int = 1
     ts_ms: int | None = None
     meta: Meta = None
+    window_count: int = 1
 
 
 def _size(value: Any) -> int:
@@ -185,6 +189,10 @@ class _Merge(ABC):
 
     def emitted(self, body: Payload) -> None:
         """Called with each emitted payload; only a family that remembers what it sent uses it."""
+        return None
+
+    def seed(self, sent: Iterable[int], root: Payload) -> None:
+        """What a snapshot sent (`CoalescingQueue.seed`); only the heatmap's merge keeps it."""
         return None
 
     def reset(self) -> None:
@@ -427,6 +435,14 @@ class _HeatmapMerge(_KeyedMerge):
         while len(self.sent) > SENT_COLUMNS_MEMORY:
             del self.sent[next(iter(self.sent))]
 
+    def seed(self, sent: Iterable[int], root: Payload) -> None:
+        """A snapshot's complete buckets and root fields, kept as if a window had sent them and
+        within the same bounds, on a new merge; root fields past `add`'s bound are not kept."""
+        self.emitted({"columns": [{"t_ms": t_ms, "complete": True} for t_ms in sent]})
+        known = {k: v for k, v in root.items() if k not in self.lists}
+        if len(known) <= self.limit:
+            self.known.update(known)
+
 
 class _FootprintMerge(_Merge):
     """§8.2 `footprint`: per (bar, price) cell the volume fields are increments summed within the
@@ -633,6 +649,8 @@ class CoalescingQueue:
         self._merge = rule(max_keys, max_items) if rule is not None else None
         self._first: Emission | None = None
         self._count = 0
+        #: The producers' counts of the updates merged into the window (`_count` updates).
+        self._sum = 0
         self._ts_ms: int | None = None
         self._meta: Meta = None
         self._frames: list[Emission] = []
@@ -686,20 +704,22 @@ class CoalescingQueue:
         *,
         ts_ms: int | None = None,
         meta: Meta = None,
+        count: int = 1,
     ) -> bool:
         """Queue one source update; False when refused, i.e. the queue is (or was) overflowed.
-        `body` is the structured payload every family needs; `part` is its optional CVWB form."""
+        `body` is the structured payload every family needs; `part` is its optional CVWB form;
+        `count` the producer's own `coalesced_count`, read as 1 below 1 (#3268)."""
         if self.refusal is not None:
             return False
         try:
-            self._offer(body, part, ts_ms, meta)
+            self._offer(body, part, ts_ms, meta, max(count, 1))
         except Exception as exc:  # fail closed: whatever a producer sends is refused, not raised
             self._refuse(exc)
             return False
         return True
 
     def _offer(
-        self, body: Payload | None, part: Frame | None, ts_ms: int | None, meta: Meta
+        self, body: Payload | None, part: Frame | None, ts_ms: int | None, meta: Meta, count: int
     ) -> None:
         if not isinstance(body, Mapping):
             raise TypeError("a payload is a mapping")  # a producer bug
@@ -708,7 +728,7 @@ class CoalescingQueue:
         merge = self._merge
         if merge is None or not (self.merging or self._count):
             if len(self._frames) < self._max_frames:
-                emission = Emission(_own(body), part, 1, ts_ms, meta)
+                emission = Emission(_own(body), part, count, ts_ms, meta)
                 size = _size(emission.body)
                 if merge is not None:
                     merge.validate(emission.body)  # `take` never meets a frame it can't read
@@ -719,15 +739,23 @@ class CoalescingQueue:
             if merge is None:
                 raise _BufferFullError
             self._fold(merge)  # a mergeable family merges rather than overflow
-        self._merge_one(merge, body, part, ts_ms, meta)
+        self._merge_one(merge, body, part, ts_ms, meta, count)
 
     def _fold(self, merge: _Merge) -> None:
         frames, self._frames, self._frame_bytes = self._frames, [], 0
         for frame in frames:
-            self._merge_one(merge, frame.body, frame.part, frame.ts_ms, frame.meta)
+            self._merge_one(
+                merge, frame.body, frame.part, frame.ts_ms, frame.meta, frame.coalesced_count
+            )
 
     def _merge_one(
-        self, merge: _Merge, body: Payload, part: Frame | None, ts_ms: int | None, meta: Meta
+        self,
+        merge: _Merge,
+        body: Payload,
+        part: Frame | None,
+        ts_ms: int | None,
+        meta: Meta,
+        count: int,
     ) -> None:
         if self._count and merge.splits(body):
             if len(self._frames) >= self._max_frames:
@@ -735,11 +763,12 @@ class CoalescingQueue:
             self._close_window(merge)
         if merge.add(body):
             self._count += 1
+            self._sum += count
             self._meta = meta  # the last value in the window wins, as for the root fields
             if ts_ms is not None:
                 self._ts_ms = ts_ms
             if self._count == 1:
-                self._first = Emission(_own(body), part, 1, ts_ms, meta)
+                self._first = Emission(_own(body), part, count, ts_ms, meta)
                 self._delta = part if part is not None and part.body_kind == BOOK_DELTA else None
             elif self._delta is not None:
                 self._delta = _next_delta(self._delta, part)
@@ -759,12 +788,7 @@ class CoalescingQueue:
     def take(self) -> list[Emission]:
         """The frames to emit now (none after a refusal), resetting the pending state. They count
         as delivered (a heatmap remembers the complete buckets it sent): a caller that drops any
-        of them must `clear()` the queue and re-snapshot the topic.
-
-        Note for the #412 coalescing wiring: that memory is filled only from here, so a queue built
-        after a topic's snapshot does not know the complete columns that snapshot carried. The
-        wiring should seed the heatmap's sent-bucket memory from them, or a live update for one of
-        those buckets is sent again."""
+        of them must `clear()` the queue and re-snapshot the topic."""
         if self.refusal is not None:
             return []
         merge = self._merge
@@ -785,27 +809,34 @@ class CoalescingQueue:
         if self._count == 1 and self._first is not None and not merge.trimmed:
             emission = self._first
         elif self._count:
-            count = 1 if self.family in APPENDED_FAMILIES else self._count
+            count, window = (1, 1) if self.family in APPENDED_FAMILIES else (self._sum, self._count)
             body = merge.result()
             part = None if self._delta is None else _book_delta(body, self._delta)
-            emission = Emission(body, part, count, self._ts_ms, self._meta)
+            emission = Emission(body, part, count, self._ts_ms, self._meta, window)
         else:
             merge.reset()  # only discarded updates: nothing of theirs may leak into the next window
             return
         self._frames.append(emission)
         self._frame_bytes += merge.bytes + merge.root_bytes
         merge.reset()
-        self._count, self._first, self._ts_ms, self._meta = 0, None, None, None
+        self._count, self._sum, self._first, self._ts_ms, self._meta = 0, 0, None, None, None
 
     def clear(self) -> None:
         """Drop the pending window (§8.4 step 1) and accept updates again. What a merge remembers
         across windows (the heatmap's sent buckets, keyed by `t_ms`) is kept: it holds only until
         the topic's next snapshot, after which `Pacer` builds a new queue."""
         self._frames, self._frame_bytes = [], 0
-        self._count, self._first, self._ts_ms, self._meta = 0, None, None, None
+        self._count, self._sum, self._first, self._ts_ms, self._meta = 0, 0, None, None, None
         if self._merge is not None:
             self._merge.reset()
         self.refusal = self.error = None
+
+    def seed(self, sent: Iterable[int], root: Payload) -> None:
+        """What the topic's snapshot sent, for a queue made after it (`Pacer.snapshotted`): a
+        heatmap's complete buckets (`t_ms`) and root fields, which its windows then never send
+        again (§8.2). Every other family keeps nothing across windows, so it keeps none of it."""
+        if self._merge is not None:
+            self._merge.seed(sent, root)
 
 
 def _next_delta(delta: Frame, part: Frame | None) -> Frame | None:

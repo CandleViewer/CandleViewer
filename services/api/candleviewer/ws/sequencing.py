@@ -55,6 +55,7 @@ from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
 from candleviewer.ws.rebuild_budget import topic_key
 from candleviewer.ws.topics import (
+    FAMILIES,
     TopicError,
     is_topic_name,
     machine_refusal,
@@ -118,6 +119,8 @@ SNAPSHOT_CACHE_MAX: Final = 4096
 #: §16.1 S5: causal order across private topics for one account event.
 PRIVATE_CAUSAL_ORDER: Final[tuple[str, ...]] = ("executions", "orders", "positions", "trade_groups")
 _CAUSAL_RANK: Final = {fam: i for i, fam in enumerate(PRIVATE_CAUSAL_ORDER)}
+#: S4: the families whose updates never wait in a window, the only ones published without a body.
+_UNPACED: Final = frozenset(f.family for f in FAMILIES.values() if f.never_throttled)
 
 #: §7.2 universal snapshot fields, restricted to what each family's §14 payload schema declares
 #: (`additionalProperties: false`). `source` always travels in `meta.source` (snapMeta); binary
@@ -128,6 +131,10 @@ SNAP_PAYLOAD_FIELDS: Final[Mapping[str, frozenset[str]]] = {
 }
 #: Families whose §14 payload declares `coalesced` / `coalesced_count` (§8).
 COALESCE_FIELDS: Final = frozenset({"book", "bars", "footprint"})
+#: Families whose §14/§15 payload declares them too, set only on a merged frame (a count above 1),
+#: so a frame of one update leaves as it always has (#3268). `machines` merges as well, but its
+#: §15.10 payload declares neither field and allows no other, so it discloses nothing.
+MERGE_DISCLOSED: Final = frozenset({"heatmap", "metrics", "ticker", "positions", "wallet"})
 
 cv_ws_resync_total = Counter(
     "cv_ws_resync_total", "Server-sent re-snapshots by reason.", labelnames=("reason",)
@@ -191,9 +198,11 @@ def new_span_id() -> str:
 class SnapshotBody:
     """State of one topic as built by its owning module. `parts` is the CVWB form (empty when the
     topic has no binary form): one frame for book/trades/bars/footprint, one per column for the
-    heatmap (kind 6 is single-column). `meta` holds the module's own `snapMeta` keys (bars:
-    `spec_hash`, `build_version`, `include_delta`; §6.1 as amended by #2595), merged into every
-    chunk's `meta`. It is kept as a shallow read-only copy, so its values must be immutable."""
+    heatmap (kind 6 is single-column), mirroring `structured["columns"]` column for column, in
+    order, as the window after a snapshot reads its complete buckets there (#3268). `meta` holds
+    the module's own `snapMeta` keys (bars: `spec_hash`, `build_version`, `include_delta`; §6.1
+    as amended by #2595), merged into every chunk's `meta`. It is kept as a shallow read-only
+    copy, so its values must be immutable."""
 
     structured: Mapping[str, Any]
     parts: tuple[Frame, ...] = ()
@@ -230,12 +239,18 @@ class SnapshotSource(Protocol):
 @dataclass(frozen=True, slots=True)
 class Rendered:
     """A finished snapshot, ready for any subscriber: structured payload or b64 parts, and the
-    owner's `meta` that every chunk carries."""
+    owner's `meta` that every chunk carries. A heatmap's also keeps what its structured payload
+    carries, so the window after it starts from that (`TopicEmitter.on_snapshot`, §8.2): the
+    `t_ms` of each complete column and the root fields (`root` is None for any other family). A
+    binary client holds the same columns through the parts, which mirror them, and `estimated`;
+    kind 6 carries no `max_value`."""
 
     payload: Mapping[str, Any] | None
     parts: tuple[str, ...]
     stale: bool
     meta: Mapping[str, Any] = field(default_factory=dict)
+    complete: tuple[int, ...] = ()
+    root: Mapping[str, Any] | None = None
 
 
 def cap_heatmap(body: SnapshotBody) -> SnapshotBody:
@@ -263,13 +278,33 @@ def _flags(body: SnapshotBody, replay: bool) -> int:
     return (FLAG_ESTIMATED if body.estimated else 0) | (FLAG_REPLAY if replay else 0)
 
 
+def _heatmap_held(body: SnapshotBody) -> tuple[tuple[int, ...], dict[str, Any]]:
+    """What a heatmap snapshot's structured payload carries (§8.2): the `t_ms` of each complete
+    column, and the root fields (`structured_payload`). Parts that do not mirror the columns one
+    for one (`SnapshotBody`) seed nothing. Never raises: a column it cannot read is left out."""
+    cols = body.structured.get("columns")
+    columns = cols if isinstance(cols, list) else []
+    if body.parts and len(body.parts) != len(columns):
+        return (), {}
+    complete = tuple(
+        col["t_ms"]
+        for col in columns
+        if isinstance(col, Mapping) and col.get("complete") is True and type(col.get("t_ms")) is int
+    )
+    payload = structured_payload("heatmap", body)
+    return complete, {k: v for k, v in payload.items() if k != "columns"}
+
+
 def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Rendered:
     fam = sub.topic.family.family
+    complete: tuple[int, ...] = ()
+    root: dict[str, Any] | None = None
     if fam == "heatmap":
         body = cap_heatmap(body)
+        complete, root = _heatmap_held(body)
     binary = sub.effective.get("encoding") == "binary" and bool(body.parts)
     if not binary:
-        return Rendered(structured_payload(fam, body), (), body.stale, body.meta)
+        return Rendered(structured_payload(fam, body), (), body.stale, body.meta, complete, root)
     if body.meta:  # `snapshot` sized the budget without the owner's keys, which every chunk carries
         max_part_bytes -= len(_dumps(dict(body.meta)))
     flags = _flags(body, sub.replay_session_id is not None)
@@ -284,7 +319,7 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL), 1)
         for i, f in enumerate(frames)
     )
-    return Rendered(None, out, body.stale, body.meta)
+    return Rendered(None, out, body.stale, body.meta, complete, root)
 
 
 # -- chunking ------------------------------------------------------------------------------------
@@ -529,13 +564,17 @@ class TopicEmitter:
         #: E17-T03: the overflow ladder's hook. A hub `flush_pending` (a source rebuild) hands it
         #: the subscriptions it named, so a `backpressure` snapshot parked as not ready is retried.
         self.on_rebuild: Callable[[list[Subscription]], None] | None = None
+        #: E17-T03: told of each `snap` once its frames are queued, with what it rendered, so the
+        #: pacer's window after it starts from that (`Pacer.snapshotted`, #3268). None: flag off.
+        self.on_snapshot: Callable[[Subscription, Rendered], None] | None = None
 
     # -- snapshots --
 
     def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
         """Emit a (possibly chunked) `snap`; False when the state cannot be built yet, or before
         the subscription's `sub_ok` is queued (#2831): it stays pending and no `d` is emitted
-        until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth)."""
+        until a later flush succeeds. Nothing once it has ended (§8.4 Lanes, defence in depth).
+        Once its frames are queued, `on_snapshot` is told."""
         if self.source is None or not sub.announced or sub.ended:
             return False
         previous = sub.seq
@@ -589,6 +628,8 @@ class TopicEmitter:
                 _log().warning("ws resync", **fields)
             else:
                 _log().info("ws resync", **fields)
+        if self.on_snapshot is not None:
+            self.on_snapshot(sub, rendered)
         return True
 
     def _frames(self, base: dict[str, Any], rendered: Rendered) -> list[dict[str, Any]]:
@@ -651,7 +692,7 @@ class TopicEmitter:
             frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags), weight)}
         else:
             p = dict(body or {})  # a fresh dict per subscription: no shared private buffers
-            if fam in COALESCE_FIELDS:
+            if fam in COALESCE_FIELDS or (coalesced_count > 1 and fam in MERGE_DISCLOSED):
                 p["coalesced"] = coalesced_count > 1
                 if coalesced_count > 1:
                     p["coalesced_count"] = coalesced_count
@@ -764,6 +805,13 @@ def _held(sub: Subscription) -> bool:
     return sub.snapshot_pending and sub.pending_reason == "backpressure"
 
 
+def _refuse_bodyless(ch: str, body: Mapping[str, Any] | None) -> None:
+    """A paced family's update carries its structured body, a CVWB part only beside it: a window
+    merges structured bodies (§8.2, #3268). One without is refused, whatever the flag."""
+    if body is None and (family := ch.split(".", 1)[0]) not in _UNPACED:
+        raise ValueError(f"a {family} publish needs its structured body")
+
+
 def causal_sort(items: Iterable[tuple[str, Any]]) -> list[tuple[str, Any]]:
     """Stable sort of one account event's private frames into executions -> orders -> positions ->
     trade_groups (§16.1 S5); other topics keep their relative order after them."""
@@ -843,7 +891,8 @@ class SequencingHub:
 
     def subscriptions(self, ch: str, replay_session_id: str | None = None) -> list[Subscription]:
         """The live (or one replay session's) subscriptions of `ch`, before `publish`'s scope and
-        state filters: a publisher encodes only the variants they need."""
+        state filters: a publisher encodes only the CVWB variants they need, beside the structured
+        body every paced publish carries (§8.2)."""
         subs = (authz.find(ch, replay_session_id) for authz, _ in self._conns.values())
         return [sub for sub in subs if sub is not None]
 
@@ -867,7 +916,11 @@ class SequencingHub:
         `select`, only the subscriptions it accepts, asked after the scope check: a publisher
         sends one variant per group. `select` must be pure and total: a raise stops the fan-out
         part-way. With `wake` (the source already holds `body`, §6.4), a subscription still
-        pending its `snap` gets that `snap` instead of the `d`: the publish wakes it."""
+        pending its `snap` gets that `snap` instead of the `d`: the publish wakes it. A paced
+        family (any but `orders` and `executions`, S4) needs `body`, a CVWB `part` only beside it:
+        a window merges structured bodies (§8.2), so one without is refused before the fan-out,
+        whatever the flag (`ValueError`, #3268)."""
+        _refuse_bodyless(ch, body)
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
@@ -884,9 +937,14 @@ class SequencingHub:
         return sent
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
-        """One account event spanning several private topics, in §16.1 S5 causal order."""
+        """One account event spanning several private topics, in §16.1 S5 causal order. The
+        whole event is checked first: a paced frame without its body refuses it before any of its
+        frames is published (`ValueError`, #3268)."""
+        ordered = causal_sort(frames)
+        for ch, body in ordered:
+            _refuse_bodyless(ch, body)
         sent = 0
-        for ch, body in causal_sort(frames):
+        for ch, body in ordered:
             sent += self.publish(ch, body, account=account)
         return sent
 

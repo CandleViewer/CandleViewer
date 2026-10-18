@@ -24,8 +24,8 @@ through the attached `Pacer` (§8.1, §8.2), `orders` and `executions` frame by 
 windows the writer's `service` closes on time (its wait cut to the next, `wait_s`); `check` runs
 after every routed update too (O(1)). An update, a window or a snapshot's build (flushed, or the
 hub's re-snapshot, §7.4) that raises is contained to its subscription (D9, §10.1). A paced frame's
-fan-out span runs from its release to the send (D7); a producer's own `coalesced_count` is not
-carried through a window.
+fan-out span runs from its release to the send (D7); a window carries a producer's own
+`coalesced_count` (#3268).
 
 From `attach` the writer's `service` also classifies the connection (§8.3, #412) once per
 `classify_interval_ms`, on a drift-free schedule (a late turn takes one classification, not the
@@ -287,6 +287,7 @@ class ConnectionPipeline:
         pacer.on_arm = self._wake_for
         self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
         emitter.on_rebuild = self._rebuilt
+        emitter.on_snapshot = pacer.snapshotted
         authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
         self._notify, self._classify_at = notify, emitter.clock() + self._interval_s
         self._count_as(pacer.cls)
@@ -467,7 +468,9 @@ class ConnectionPipeline:
         if ladder is None or self.terminal is not None or self.released:
             return False
         try:
-            sent = ladder.pacer.offer(sub, body, part=part, ts_ms=ts_ms, meta=meta)
+            sent = ladder.pacer.offer(
+                sub, body, part=part, ts_ms=ts_ms, meta=meta, count=coalesced_count
+            )
         except Exception as exc:  # contained to `sub`: the fan-out goes on
             self._failed("update", ladder.pacer, sub, exc)
             return False
