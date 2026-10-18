@@ -463,14 +463,18 @@ def test_confirm_reads_the_user_before_anything_is_written_or_changed(
     assert _code_hashes(stack, uid) == old_codes
 
 
-@pytest.mark.parametrize("step", ["revoke_all", "mint"])
+@pytest.mark.parametrize(("step", "proved_after"), [("revoke_all", 200), ("mint", 401)])
 def test_confirm_whose_rotation_fails_keeps_the_enrolment_and_answers_503(
-    stack: Stack, monkeypatch: pytest.MonkeyPatch, step: str
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, step: str, proved_after: int
 ) -> None:
     """Nothing undoes the commit: a failing revoke-all or mint answers a 503 telling the client to
     sign in again (never a 500), an error log names the user and the sessions, and the new TOTP
-    signs in."""
+    signs in. A listed session that proved a factor the user has since lost is refused until the
+    commit, then full unless the revoke-all ran: the runbook has it revoked (section 2 step 4)."""
     uid = _must_enrol(stack, "alice")
+    proved = stack.call(stack.auth.sessions.mint, str(uid))  # proved a factor since revoked
+    full = _auth(stack, proved.access_token)
+    assert stack.client.get("/auth/sessions", headers=full).status_code == 401
     token = _sign_in(stack, "alice").json()["tokens"]["access_token"]
     sid = stack.call(stack.auth.sessions.peek_access_token, token).id
     headers = _auth(stack, token)
@@ -488,8 +492,10 @@ def test_confirm_whose_rotation_fails_keeps_the_enrolment_and_answers_503(
     assert resp.status_code == 503 and "sign in again" in resp.json()["detail"]
     (event,) = [e for e in logs if e["event"] == "auth.enrolment.completed_unrotated"]
     assert (event["log_level"], event["user_id"], event["error"]) == ("error", str(uid), "OSError")
-    assert (event["session_id"], event["revoked_session_ids"]) == (str(sid), [str(sid)])
+    listed = sorted([str(proved.session_id), str(sid)])
+    assert (event["session_id"], sorted(event["revoked_session_ids"])) == (str(sid), listed)
     assert _store(stack).methods[method_id].confirmed_at is not None
+    assert stack.client.get("/auth/sessions", headers=full).status_code == proved_after
     stack.clock.now += timedelta(seconds=30)  # the confirming code is spent
     stack.sign_in("alice", seed)  # asserts 200 for the password and the TOTP step
 
