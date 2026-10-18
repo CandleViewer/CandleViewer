@@ -1,9 +1,9 @@
 """The world the idle-lock route tests run in (#2300 slice 2/2; contract
-`22-api-openapi.yaml` info "Idle lock").
+`22-api-openapi.yaml` info "Idle lock", B16.7).
 
-A real `SessionService` and a real `StepUpService` over in-memory fakes, one fixed clock, a
-recording audit writer that can fail on chosen actions, and the router's own SR-041 codec. No
-DB, no network, no sleeps (C-13.5, C-13.7).
+A real `SessionService` and a real `StepUpService` (so the real B16 chart records the lock and
+the unlock) over in-memory fakes, one fixed clock, recording audit sinks that can fail on chosen
+actions, and the router's own SR-041 codec. No DB, no network, no sleeps (C-13.5, C-13.7).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.conftest import RecordingAuditSink
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -38,6 +39,7 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 _T0 = datetime(2026, 10, 16, 9, 0, 0, tzinfo=UTC)
 _ORIGIN = "https://app.example.test"
 _PW = "unlock-canary-pw-2300"  # test-only literal, never a credential
+_WRONG = "wrong-canary-pw-2300"  # test-only literal, never a credential
 _CODEC = CsrfCodec(b"\x07" * 32)
 #: Cheap Argon2id parameters: verification reads them from the hash, so the tests stay fast.
 _CHEAP_ARGON2 = {"m": 8, "t": 1, "p": 1}
@@ -112,7 +114,7 @@ class _Auth:
 
 
 class World:
-    def __init__(self, b16: RecordingAuditSink) -> None:
+    def __init__(self, b16: RecordingAuditSink, *, throttle_max: int, authority: bool) -> None:
         self.b16 = b16
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
@@ -144,6 +146,10 @@ class World:
                 identity=_Identity(),
                 allowed_origins=frozenset({_ORIGIN}),
                 csrf=_CODEC,
+                unlock_authority=(lambda: self.step_up) if authority else None,
+                unlock_throttle=PerIpLoginThrottle(
+                    max_attempts=throttle_max, window_s=60.0, clock=lambda: 0.0
+                ),
             ),
             prefix="/api/v1",
         )
@@ -167,6 +173,12 @@ class World:
         found = await self.repo.find_by_id(str(minted.session_id))
         assert found is not None
         return found
+
+    def failed_logins(self, user_id: uuid.UUID) -> int:
+        return self.users.users[str(user_id)].failed_login_count
+
+    def chart_state(self, minted: MintedSession) -> frozenset[str]:
+        return self.step_up.chart.state(str(minted.session_id))
 
 
 def _bearer(minted: MintedSession, *, csrf_for: uuid.UUID | None = None) -> dict[str, str]:
@@ -193,8 +205,14 @@ def _cookie(
     return headers
 
 
-async def _open(b16: RecordingAuditSink) -> World:
-    return World(b16)
+async def _unlock(w: World, headers: dict[str, str], password: str = _PW) -> httpx.Response:
+    return await w.client.post("/api/v1/auth/unlock", json={"password": password}, headers=headers)
+
+
+async def _open(
+    b16: RecordingAuditSink, *, throttle_max: int = 100, authority: bool = True
+) -> World:
+    return World(b16, throttle_max=throttle_max, authority=authority)
 
 
 async def _session(w: World, headers: dict[str, str]) -> httpx.Response:

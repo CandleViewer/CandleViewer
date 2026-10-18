@@ -51,6 +51,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("POST", "/admin/recorder/import"): "importTradeArchive: adds archive trades (04 row 51)",
     # #3083: mounted operations the contract sweep flags that nothing step-up gates.
     ("GET", "/auth/session"): "authGetSession: reads the session's own `step_up_expires_at`",
+    # #2300: the lock lift is no elevation. The password alone lifts the idle lock and the contract
+    # says it restores no step-up; 04 §7.2.2 rows 1 and 4a, the authentication rows, demand none.
+    ("POST", "/auth/unlock"): "authUnlock: lifts the idle lock, password only; restores no step-up",
     ("GET", "/me"): "getMe: reads the session's own `elevated_until`",
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
