@@ -533,6 +533,94 @@ def test_malformed_sarif_raises_ci_sec_005_not_treated_as_clean(tmp_path: Path) 
     assert exc_info.value.code == "CI-SEC-005"
 
 
+# #3337: a SARIF with no run, or a run without a named tool.driver, records no scan. Every tool
+# that reaches parse_sarif writes one run per scan, clean or not (fixtures/sarif/README.md).
+SARIF_TOOLS = ("codeql", "semgrep", "bandit", "trivy")
+_RUN = {"tool": {"driver": {"name": "CodeQL"}}, "results": []}
+_UNSCORED = {"ruleId": "x", "message": {"text": "x"}}  # no level and no rule descriptor
+
+
+@pytest.mark.parametrize("tool", SARIF_TOOLS)
+@pytest.mark.parametrize(
+    ("runs", "reason"),
+    [
+        pytest.param([], "has no runs", id="no-runs"),
+        pytest.param(None, "'runs' is not a list", id="runs-null"),
+        pytest.param(_RUN, "'runs' is not a list", id="runs-object"),
+        pytest.param(["x"], "run 0 is not an object", id="run-not-object"),
+        # Was a MEDIUM finding, which the codeql policy does not block.
+        pytest.param([{"results": [_UNSCORED]}], "run 0 has no tool.driver", id="unscored-no-tool"),
+        pytest.param([{"tool": {"name": "x"}}], "run 0 has no tool.driver", id="tool-no-driver"),
+        pytest.param([{"tool": {"driver": "x"}}], "run 0 has no tool.driver", id="driver-str"),
+        pytest.param([{"tool": {"driver": {}}}], "run 0 has no tool.driver", id="driver-no-name"),
+        pytest.param([_RUN, {"results": []}], "run 1 has no tool.driver", id="second-run"),
+    ],
+)
+def test_sarif_without_a_tool_run_raises_ci_sec_005(
+    tmp_path: Path, tool: str, runs: object, reason: str
+) -> None:
+    report = _write_json(tmp_path, f"{tool}.sarif", {"version": "2.1.0", "runs": runs})
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_sarif(report, tool)
+    assert exc_info.value.code == "CI-SEC-005"
+    message = exc_info.value.message
+    assert message.startswith(f"{tool}: {report} ") and reason in message
+
+
+@pytest.mark.parametrize("tool", SARIF_TOOLS)
+def test_sarif_without_runs_key_still_raises_ci_sec_005(tmp_path: Path, tool: str) -> None:
+    report = _write_json(tmp_path, f"{tool}.sarif", {"version": "2.1.0"})
+    with pytest.raises(SecurityGateError) as exc_info:
+        parse_sarif(report, tool)
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == f"{tool}: {report} is not a SARIF document (no 'runs')"
+
+
+def test_main_cli_fails_a_sarif_with_no_runs_instead_of_ok(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    risks = _write_yaml(tmp_path, {"entries": []})
+    report = _write_json(tmp_path, "python.sarif", {"version": "2.1.0", "runs": []})
+    rc = main(["--tool", "codeql", "--report", str(report), "--accepted-risks", str(risks)])
+    out, err = capsys.readouterr()
+    assert (rc, out) == (1, "")
+    assert err.startswith(f"CI-SEC-005: codeql: {report} has no runs")
+
+
+SARIF_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sarif"
+
+
+@pytest.mark.parametrize(
+    ("name", "tool", "found"),
+    [
+        ("codeql-2.27.2-clean.sarif", "codeql", []),
+        ("semgrep-1.178.0-clean.sarif", "semgrep", []),
+        (
+            "semgrep-1.178.0-finding.sarif",
+            "semgrep",
+            [("semgrep.cv-obs-no-print:.semgrep/tests/cv-obs-no-print.py:5", "HIGH")],
+        ),
+        ("bandit-1.9.4-clean.sarif", "bandit", []),
+        ("bandit-1.9.4-finding.sarif", "bandit", [("B307:finding/parse_expr.py:2", "MEDIUM")]),
+        ("trivy-0.70.0-clean.sarif", "trivy", []),
+    ],
+)
+def test_real_scanner_sarif_still_parses(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    tool: str,
+    found: list[tuple[str, str]],
+) -> None:
+    report = SARIF_FIXTURES / name
+    assert [(f.finding_id, f.severity) for f in parse_sarif(report, tool)] == found
+    risks = _write_yaml(tmp_path, {"entries": []})
+    rc = main(["--tool", tool, "--report", str(report), "--accepted-risks", str(risks)])
+    blocked = bool(found)  # each real finding meets its tool's threshold
+    assert rc == int(blocked)
+    assert (f"security_gate[{tool}]: OK" in capsys.readouterr().out) is not blocked
+
+
 def test_missing_accepted_risks_file_raises_ci_sec_005(tmp_path: Path) -> None:
     with pytest.raises(SecurityGateError) as exc_info:
         load_accepted_risks(tmp_path / "does-not-exist.yaml")
