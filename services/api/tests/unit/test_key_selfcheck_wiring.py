@@ -25,6 +25,7 @@ import respx
 from pydantic import SecretStr
 
 from candleviewer import key_selfcheck_wiring as wiring
+from candleviewer.accounts.errors import WithdrawPermissionError
 from candleviewer.accounts.models import AccountKind, ExchangeAccount, ExchangeEnv
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.verification import (
@@ -44,6 +45,11 @@ from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
+from candleviewer.secrets.errors import (
+    CredentialUnavailable,
+    SnapshotInvalid,
+    WithdrawPermissionRejected,
+)
 from candleviewer.settings import Environment, Settings
 from tests._corpus import rest
 from tests._signing import Call, fake_capability
@@ -147,6 +153,28 @@ async def test_any_other_error_is_inconclusive_with_a_probe_error_name_only(
     inconclusive = await judge(error, bound_s=0.0)  # the adapter's bound cuts the hang at once
     assert isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == code
     assert inconclusive.__cause__ is None and inconclusive.__suppress_context__
+
+
+@pytest.mark.parametrize(
+    ("error", "verdict"),
+    [
+        (WithdrawPermissionRejected("key_withdraw_permission"), True),
+        (SnapshotInvalid("snapshot_invalid"), True),
+        (CredentialUnavailable("credential_unavailable"), False),
+    ],
+    ids=["fund-right", "malformed-snapshot", "other-m2-error"],
+)
+async def test_only_a_borrow_the_c28_recheck_refuses_is_a_withdraw_verdict(
+    error: Exception, verdict: bool
+) -> None:
+    """SR-E27-14: M4 classifies M2's refusal (the wiring imports no M2), the wiring re-raises it
+    as M13's `WithdrawPermissionError`; any other M2 error propagates unchanged (no verdict)."""
+    calls = wiring.JudgedCalls(ExchangeBybitService(), cast(Any, Venue(error)))
+    with pytest.raises((WithdrawPermissionError, CredentialUnavailable)) as caught:
+        await calls.key_info()
+    assert (isinstance(caught.value, WithdrawPermissionError), caught.value is error) == (
+        verdict, not verdict,
+    )  # fmt: skip
 
 
 def test_the_fake_backend_wires_no_self_check() -> None:

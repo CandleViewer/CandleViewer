@@ -14,7 +14,11 @@ another environment (C-2.11). Outcomes (threat model `E27-accounts.md` D7, SR-E2
   `account.disabled_by_policy` (the rule; the message stays verbatim on the standing result for
   display). The record follows the conditional update that reports the disarm, and its mark
   follows the record; a refused record is logged critical, stays owed and is re-sent on the next
-  pass. The key's status never changes, so reads continue.
+  pass. The key's status never changes, so reads continue. The record names the disarm's time
+  (`disarmed_at`), however late it is sent. `security.key_policy_violation` (`policy_violation`,
+  decision 12 on #836) comes last, after the code and the disarm with its record, so it never
+  delays the force-disable or withholds the code. A borrow that M2's C-2.8 re-check refuses
+  (SR-E27-14) is a `key_withdraw_permission` failure.
 - inconclusive (no verdict): logged; nothing is disabled or refreshed. Only a verdict replaces a
   key's standing result: a failure stays in force with its rule in `last_error_*` (the ticket's
   chaos rule); otherwise `last_error_*` takes the code. A key whose last pass is older than
@@ -46,8 +50,10 @@ too, leaves the account armed until the window ends. The verified columns and a 
 (`trading_enabled` false, with its rule code and time) persist too. A disarm whose record
 is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
 checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
-`record_id`), so a crash between the record and its mark re-sends it once: a duplicate, never a
-loss. A record sent but not yet marked is kept in memory, so a failed mark is retried alone.
+`record_id`), so it can be written twice, never zero times, in two windows: a crash between the
+record and its mark, and an emit cut by its bound once the writer has started the append (the
+writer keeps that append; the job counts the emit refused, so the record stays owed). A record
+sent but not yet marked is kept in memory, so a failed mark is retried alone.
 
 Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admission (#837 W3).
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
@@ -73,11 +79,13 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.errors import WithdrawPermissionError
 from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.verification import (
     KeyFacts,
     ProbeFacts,
     Rule,
+    VerificationFailure,
     VerificationInconclusive,
     VerificationPolicy,
     VerificationResult,
@@ -104,10 +112,10 @@ FRESHNESS_GRACE: Final = timedelta(minutes=15)
 KEY_DEADLINE_S: Final = 12.0
 #: Bound on every other external await: the key list, a client's close, each audit or write.
 READ_TIMEOUT_S: Final = 10.0
-#: One key's whole check: `verify()`, the close and at most five audit or store steps (the last
-#: marks a disarm's record written), plus one step of margin. The deadline derives from the wired
-#: bounds, so it cuts only an unbounded await.
-CHECK_STEPS: Final = 7
+#: One key's whole check: `verify()`, the close and at most six audit or store steps (the last is
+#: the policy violation's record, after the disarm's record and its mark), plus one step of
+#: margin. The deadline derives from the wired bounds, so it cuts only an unbounded await.
+CHECK_STEPS: Final = 8
 #: The boot assertion as a whole: past it the job fails closed and start-up goes on (#836). It
 #: is fixed, not scaled by the key count, because the API serves nothing, `/healthz` included,
 #: until it ends (the compose healthcheck reports unhealthy after about 100 s). At SCR-126's 3 s
@@ -133,6 +141,19 @@ _RANK: Final = {UNAVAILABLE: 0, STALE: 0, FAILED: 1}
 _CODE: Final = re.compile(r"[a-z0-9_]{1,40}")
 #: A verdict's codes: one found in `last_error_code` is a standing failure (decision 3 on #836).
 _RULES: Final = frozenset(rule.value for rule in Rule)
+POLICY_VIOLATION: Final = "security.key_policy_violation"
+#: A disarm's code when a rule code would not fit `ea_disarm_code_fmt` (`_CODE`), so that CHECK
+#: never refuses a force-disable (C-2.8).
+_DISARM_FALLBACK: Final = "key_policy_violation"
+#: M2's borrow re-check refused the stored row (SR-E27-14): a verdict, never `check_error`.
+_ROW_REFUSED: Final = VerificationResult(
+    False,
+    failures=(
+        VerificationFailure(
+            Rule.WITHDRAW_PERMISSION, "the stored permission record fails the withdrawal check"
+        ),
+    ),
+)
 
 Outcome = Literal["passed", "failed", "inconclusive"]
 Step = Callable[[], Awaitable[object]]
@@ -205,6 +226,29 @@ def is_fresh(last_pass_at: datetime, *, now: datetime, interval_s: float) -> boo
     """SR-E27-18: a key is green only while its last pass is at most one self-check interval plus
     `FRESHNESS_GRACE` old; an inconclusive check never moves it."""
     return now - last_pass_at <= timedelta(seconds=interval_s) + FRESHNESS_GRACE
+
+
+def policy_violation(
+    verdict: VerificationResult, *, key_id: UUID | None, account_id: UUID
+) -> dict[str, object]:
+    """`security.key_policy_violation {rule, key_id}`'s fields for a failing verdict (decision 12
+    on #836): its first rule, and the account standing in for a key that is not stored (a refused
+    import). Critical when the key can move funds (C-2.8): a withdraw or transfer right, or a fiat
+    or card right (`withdraw_enabled`, as `account.tested` shows it). Never key material."""
+    rule = verdict.failures[0].rule
+    if key_id is not None:
+        kind, field, subject = "api_key", "key_id", key_id
+    else:
+        kind, field, subject = "exchange_account", "account_id", account_id
+    funds = rule is Rule.WITHDRAW_PERMISSION or verdict.withdraw_enabled
+    return {
+        "object_kind": kind,
+        "object_id": str(subject),
+        "outcome": "denied",
+        "severity": "critical" if funds else "error",
+        "reason": rule.value,
+        "after_state": {"rule": rule.value, field: str(subject)},
+    }
 
 
 class KeySelfCheck:
@@ -481,7 +525,8 @@ class KeySelfCheck:
         verdict: VerificationResult,
         now: datetime,
     ) -> None:
-        """Latch first; then the verdict's record, and the force-disable whatever it did."""
+        """Latch first; then the verdict's record and its rule code, the force-disable whatever
+        they did, and the policy-violation record last (decision 2 on #836: enforcement first)."""
         key, rule, egress = target.key_id, verdict.failures[0].rule.value, self._policy.egress_ip
         self._latch(FAILED)
         check = KeyCheck(key, account_id, now, "failed", rule, verdict, target.verified_at, egress)
@@ -496,12 +541,27 @@ class KeySelfCheck:
             lambda: self._store.record_error(key, code=rule, at=now),
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
+        await self._violation(key, account_id, verdict)
+
+    async def _violation(self, key: UUID, account_id: UUID, verdict: VerificationResult) -> None:
+        """`security.key_policy_violation`, after the rule code and the disarm: a refused or
+        timed-out record is logged, never raised, so it delays and withholds nothing (decision 12
+        on #836)."""
+        record = policy_violation(verdict, key_id=key, account_id=account_id)
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                await self._audit.emit(POLICY_VIOLATION, actor_label=ACTOR, env=self._env, **record)
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            logger().error("key_selfcheck_record_failed", key_id=str(key), error=type(exc).__name__)
 
     async def _disarm(self, disarm: PolicyDisarm) -> None:
         """The force-disable runs whatever the audit sink does (C-2.8 enforcement first, decision
         2 on #836), its rule code and time in the same conditional update. Its record follows
         once that update reports a disarm. A disable that times out or raises may have applied
         (outcome unknown): if it did, its record is owed in the store and the next pass sends it."""
+        if not _CODE.fullmatch(disarm.code):  # `ea_disarm_code_fmt` would refuse the disarm too
+            logger().error("key_selfcheck_disarm_code_replaced", account_id=str(disarm.account_id))
+            disarm = PolicyDisarm(disarm.account_id, _DISARM_FALLBACK, disarm.at)
         try:
             async with asyncio.timeout(self._timeout_s):
                 disarmed = await self._store.disable_trading(
@@ -538,7 +598,7 @@ class KeySelfCheck:
         if self._unmarked.get(account_id) != disarm.at:
             record = {
                 "before_state": {"trading_enabled": True},
-                "after_state": {"trading_enabled": False},
+                "after_state": {"trading_enabled": False, "disarmed_at": disarm.at.isoformat()},
                 "severity": "critical",
                 "reason": disarm.code,
             }
@@ -555,7 +615,7 @@ class KeySelfCheck:
             self._unmarked[account_id] = disarm.at
         try:
             async with asyncio.timeout(self._timeout_s):
-                await self._store.mark_disarm_audited(disarm, at=self._clock())
+                marked = await self._store.mark_disarm_audited(disarm, at=self._clock())
         except Exception as exc:  # TimeoutError included; cancellation propagates
             logger().error(
                 "key_selfcheck_disable_unmarked",
@@ -563,6 +623,8 @@ class KeySelfCheck:
                 error=type(exc).__name__,
             )
             return
+        if not marked:  # no longer owed as read: a later disarm, or a mismatch that re-sends it
+            logger().error("key_selfcheck_disable_mark_unchanged", account_id=str(account_id))
         del self._unmarked[account_id]
 
     async def _verify(
@@ -586,6 +648,8 @@ class KeySelfCheck:
                 await self._close(target.key_id, calls)
         except VerificationInconclusive as exc:
             return str(exc) if _CODE.fullmatch(str(exc)) else "inconclusive"
+        except WithdrawPermissionError:  # M2's borrow re-check refused the stored row (SR-E27-14)
+            return _ROW_REFUSED
         except TimeoutError:
             return "timeout"
         except Exception as exc:  # a signing or programming error is no verdict either

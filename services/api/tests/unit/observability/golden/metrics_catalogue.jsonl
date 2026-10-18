@@ -80,6 +80,7 @@
 ["cv_audit_verify_runs_total", "counter", ["result"], "live", "E09"]
 ["cv_credential_borrow_seconds", "histogram", [], "live", "E27"]
 ["cv_credential_borrow_total", "counter", ["stage", "result"], "live", "E27"]
+["cv_credential_candidate_sign_total", "counter", ["stage", "result"], "live", "E27"]
 ["cv_credential_outcome_audit_failures_total", "counter", [], "live", "E27"]
 ["cv_credential_rewrap_rows_total", "counter", [], "live", "E27"]
 ["cv_credential_touch_failures_total", "counter", [], "live", "E27"]

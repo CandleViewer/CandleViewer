@@ -557,6 +557,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=8,
         exported=True,
     ),
+    _s(
+        "cv_credential_candidate_sign_total",
+        "counter",
+        "signings",
+        ("stage", "result"),
+        "Candidate-key signings of a key import (E27-T03) by wiring-bound caller module (stage) "
+        "and result.",
+        "error rate rising",
+        _L,
+        "E27",
+        max_series=8,
+        exported=True,
+    ),
     # --- Accounts (M13, #2314 / E27-T01); AccountsService refresh loop, real backend only ----
     # `env` is the facade's process environment, which also scopes the counted rows (20 §7.1).
     _s(

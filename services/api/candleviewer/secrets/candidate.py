@@ -29,6 +29,7 @@ from typing import Any, Final, final
 from uuid import UUID, uuid4
 
 from candleviewer.observability.secret_type import Secret as Pasted
+from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.broker import CredentialBroker, Purpose, _m2_only
 from candleviewer.secrets.errors import CredentialUnavailable, SnapshotInvalid
 from candleviewer.secrets.models import StoredCredential
@@ -164,18 +165,23 @@ async def hold_candidate(
     }
 
     async def sign(kid: UUID, message: SigningMessage, purpose: Purpose) -> RequestSignature:
-        parts = check_message(message)
-        if not live[0] or kid != key_id or purpose != _PURPOSE:
-            raise CredentialUnavailable("candidate_unavailable")
-        record = {**fields, "message_sha256": message_sha256(parts)}
-        await broker._audit(_BORROWED, record)  # write-ahead (C-2.9)
+        parts, result = check_message(message), "error"
         try:
-            if not live[0]:  # the hold ended while the record was written
+            if not live[0] or kid != key_id or purpose != _PURPOSE:
                 raise CredentialUnavailable("candidate_unavailable")
-            return request_signature(*pair, parts)  # the stored key's wrapper, frames cleared
-        except BaseException as exc:
-            await broker._sign_failed(record, exc)  # closes the record as a stored key's does
-            raise
+            record = {**fields, "message_sha256": message_sha256(parts)}
+            await broker._audit(_BORROWED, record)  # write-ahead (C-2.9)
+            try:
+                if not live[0]:  # the hold ended while the record was written
+                    raise CredentialUnavailable("candidate_unavailable")
+                signed = request_signature(*pair, parts)  # the stored key's wrapper, frames cleared
+            except BaseException as exc:
+                await broker._sign_failed(record, exc)  # closes the record as a stored key's does
+                raise
+            result = "ok"
+            return signed
+        finally:  # counted as a stored key's borrow is (`cv_credential_borrow_total`)
+            m.credential_candidate_sign_total.labels(stage=caller, result=result).inc()
 
     try:
         try:

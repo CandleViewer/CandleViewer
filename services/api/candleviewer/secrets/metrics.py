@@ -11,6 +11,7 @@ EXPORTED_NAMES = frozenset(
         "cv_kek_version_state",
         "cv_credential_borrow_seconds",
         "cv_credential_borrow_total",
+        "cv_credential_candidate_sign_total",
         "cv_credential_rewrap_rows_total",
         "cv_dek_cache_hits_total",
         "cv_credential_touch_failures_total",
