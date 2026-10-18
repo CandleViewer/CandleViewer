@@ -59,6 +59,10 @@ datamodel-code-generator.
 
 '''
 
+# Each model package's __init__.py, written only when it is missing. `--check` compares the
+# models and the subset, not these, so a test pins the committed copies to this text (#3392).
+PACKAGE_INIT = '"""Generated model package (E02-T09). Never hand-edit."""\n'
+
 # Matches the generated `class Decimal(RootModel[str]): ...` block emitted for
 # the OpenAPI/JSON-Schema `Decimal` primitive (money/size/price, convention C6).
 _DECIMAL_ROOTMODEL_RE = re.compile(
@@ -70,9 +74,7 @@ def _run_datamodel_codegen(*, input_path: Path, input_file_type: str, output_pat
     output_path.parent.mkdir(parents=True, exist_ok=True)
     init_file = output_path.parent / "__init__.py"
     if not init_file.exists():
-        init_file.write_text(
-            '"""Generated model package (E02-T09). Never hand-edit."""\n', encoding="utf-8"
-        )
+        init_file.write_text(PACKAGE_INIT, encoding="utf-8")
 
     cmd = [
         sys.executable,

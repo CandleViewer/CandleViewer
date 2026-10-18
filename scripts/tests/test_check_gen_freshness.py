@@ -1144,6 +1144,18 @@ def test_fixed_outputs_name_what_each_generator_writes_there() -> None:
     assert "SR-185" in gen_gate.HAND_KEPT[_HAND_KEPT]
 
 
+def test_the_model_package_inits_hold_what_their_generator_writes() -> None:
+    """Step 7 judges names only, and generate_protocol_models.py's --check compares
+    neither __init__.py (it writes one only when it is missing), so this pins their text:
+    package init code is not hand-edited either (C-4.16)."""
+    for out in (_MODELS.REST_OUT, _MODELS.WS_OUT):
+        init = out.parent / "__init__.py"
+        assert init.read_text(encoding="utf-8") == _MODELS.PACKAGE_INIT, (
+            f"{_rel(init)} is not what the generator writes: delete it and run "
+            "`cd services/api && uv run python scripts/generate_protocol_models.py`"
+        )
+
+
 @pytest.mark.parametrize(
     "rel",
     [f"{directory}/hand_written.py" for directory in sorted(_GATED_DIRS)]
