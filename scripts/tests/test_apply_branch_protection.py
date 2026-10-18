@@ -296,8 +296,14 @@ def test_main_refuses_weakening_and_writes_only_when_told(tmp_path, monkeypatch,
             lambda d: d["required_status_checks"].update(checks=[{"context": "lint", "app_id": 1}]),
             "'lint'",
         ),
-        # No workflow listens to merge_group until #3433: a queue would hold every PR.
-        (lambda d: None, "no merge_group workflow reports required check 'ci-required'"),
+        # With the queue on, a required check must also report on merge groups. pr.yml's do since
+        # #3536 (#3433), but governance.yml listens to pull_request only.
+        (
+            lambda d: d["required_status_checks"]["checks"].append(
+                {"context": "governance", "app_id": 15368}
+            ),
+            "no merge_group workflow reports required check 'governance'",
+        ),
     ],
 )
 def test_main_refuses_a_lockout_before_any_api_call(
@@ -320,6 +326,14 @@ def test_lockout_reasons_refuse_a_name_no_pull_request_check_run_carries(context
     data["required_status_checks"]["checks"].append({"context": context, "app_id": 15368})
     reasons = abp.lockout_reasons(data, str(ROOT / ".github/workflows/*.yml"))
     assert len(reasons) == refusals, reasons
+
+
+# Review round 2 of #3103: GitHub waits for the pinned app, and only Actions reports these checks.
+def test_lockout_reasons_refuse_a_check_pinned_to_another_app() -> None:
+    data = {k: v for k, v in _valid_desired_state().items() if k != "merge_queue"}
+    data["required_status_checks"]["checks"] = [{"context": "ci-required", "app_id": 57789}]
+    reasons = abp.lockout_reasons(data, str(ROOT / ".github/workflows/*.yml"))
+    assert len(reasons) == 1 and "app 57789" in reasons[0], reasons
 
 
 def test_main_exits_2_when_a_called_workflow_is_missing(tmp_path, monkeypatch, capsys) -> None:

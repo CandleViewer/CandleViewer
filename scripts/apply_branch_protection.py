@@ -32,6 +32,7 @@ from check_required_check_reconciliation import ReconciliationError, load_workfl
 
 DEFAULT_DESIRED_STATE_PATH = ".github/branch-protection.json"
 API_BASE = "https://api.github.com"
+GITHUB_ACTIONS_APP_ID = 15368
 
 # Every setting the file declares, with its JSON type (a dict holds nested settings). A full PUT
 # replaces the whole object, so a missing key would drop a setting.
@@ -198,13 +199,20 @@ def weakening_changes(live: dict[str, Any], desired: dict[str, Any]) -> list[str
 
 
 def lockout_reasons(desired: dict[str, Any], workflows_glob: str) -> list[str]:
-    """Settings that would stop every merge: a required check no pull_request workflow reports,
-    or a merge queue whose required checks no merge_group workflow reports (#3433)."""
+    """Settings that would stop every merge: a required check no pull_request workflow reports, or
+    that another app than GitHub Actions must report, or a merge queue whose required checks no
+    merge_group workflow reports (#3433)."""
     events = ["pull_request", "merge_group"] if desired.get("merge_queue") else ["pull_request"]
+    checks = desired["required_status_checks"]["checks"]
     return [
+        f"required check '{check['context']}' must come from app {check['app_id']}, but only "
+        f"GitHub Actions (app {GITHUB_ACTIONS_APP_ID}) runs .github/workflows"
+        for check in checks
+        if check["app_id"] != GITHUB_ACTIONS_APP_ID
+    ] + [
         f"no {event} workflow reports required check '{check['context']}'"
         for event in events
-        for check in desired["required_status_checks"]["checks"]
+        for check in checks
         if check["context"] not in load_workflow_job_names(workflows_glob, event)
     ]
 
