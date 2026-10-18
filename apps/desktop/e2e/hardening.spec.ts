@@ -96,13 +96,14 @@ test.describe("SR-112 CSP", () => {
   test("the CSP header matches SR-112 verbatim and lists no Bybit host", async () => {
     const app = await launchApp();
     const electronWindow = await app.firstWindow();
+    await electronWindow.waitForLoadState("domcontentloaded");
 
-    const cspHeader = await electronWindow.evaluate(async () => {
-      const response = await fetch(
-        (globalThis as unknown as { location: { href: string } }).location.href,
-      );
+    // The page is served over app:// (#3410), which the renderer's fetch() cannot read: the
+    // scheme is not granted the Fetch API. Read the same response through the window's session.
+    const cspHeader = await app.evaluate(async ({ session }, url) => {
+      const response = await session.defaultSession.fetch(url);
       return response.headers.get("Content-Security-Policy");
-    });
+    }, electronWindow.url());
 
     expect(cspHeader).not.toBeNull();
     expect(cspHeader).not.toContain("unsafe-eval");

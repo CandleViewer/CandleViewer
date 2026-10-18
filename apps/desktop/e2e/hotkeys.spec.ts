@@ -9,8 +9,8 @@ const MAIN_ENTRY = path.join(__dirname, "../dist/main/index.js");
 
 test.describe("Electron keymap (E49-S07)", () => {
   test("Ctrl+/ opens the cheatsheet; inert destructive press toasts once", async () => {
-    // The packaged file:// bundle uses absolute /assets paths, so load the built web app through
-    // the shell's dev-server hook (CV_DEV_SERVER_URL, loopback only) served by `vite preview`.
+    // Loads the built web app through the shell's dev-server hook (CV_DEV_SERVER_URL, loopback
+    // only) served by `vite preview`; app-protocol.spec.ts covers the default app:// load path.
     const app = await electron.launch({
       args: [MAIN_ENTRY],
       env: {
