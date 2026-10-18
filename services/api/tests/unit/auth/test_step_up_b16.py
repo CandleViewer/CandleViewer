@@ -336,6 +336,25 @@ def test_every_audit_action_the_chart_writes_is_registered() -> None:
     assert written <= AUDIT_ACTIONS
 
 
+@pytest.mark.parametrize(
+    "extra", [{}, {"challenge_id": str(uuid.UUID(int=0x3402))}], ids=["revoke", "with-a-challenge"]
+)
+async def test_the_revoke_record_names_the_revoked_session_as_its_object(
+    extra: dict[str, str], b16_audit: RecordingAuditSink
+) -> None:
+    """#3402: `subject_type=session&subject_id=<id>` reads `object_kind`/`object_id`, so the
+    per-session revoke record (a disable's R5 among them) names its session there, whatever else
+    its event carries: the reconcile step of `docs/ops/runbooks/auth-rbac.md` section 4 finds it
+    by the session alone. A challenge stays the object of the step-up records only."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    try:
+        await chart.record(row, _T0, "REVOKE", reason="user_disabled", **extra)
+    finally:
+        await chart.stop()
+    (revoked,) = [c for c in b16_audit.calls if c["action"] == "auth.session_revoked"]
+    assert (revoked["object_kind"], revoked["object_id"]) == ("session", str(row.id))
+
+
 async def _lock_and_unlock(
     svc: StepUpService, clock: _Clock, sessions: FakeSessionRepository
 ) -> SessionRecord:

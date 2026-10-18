@@ -73,13 +73,16 @@ async def _emit(
     outcome: str = "success",
     severity: str = "info",
     reason: str | None = None,
+    session_object: bool = False,
 ) -> None:
     """Write one audit record for this transition (C-2.9, C-12.8): actor,
     session, before/after elevation state. `replay=True` events (chart
     hydration from the persisted `sessions` row) were audited when they
     first happened and are not re-recorded. A step-up challenge (#2304) is
     the record's object; a no-grace grant also names the SHA-256 of the
-    request it is bound to (never the request itself)."""
+    request it is bound to (never the request itself). A `session_object`
+    record names its session as the object instead (#3402), because the
+    audit query's `subject_type`/`subject_id` filter reads only the object."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -91,13 +94,16 @@ async def _emit(
     challenge, bound = payload.get("challenge_id"), payload.get("request_sha256")
     if isinstance(bound, str):
         after["bound_request_sha256"] = bound
+    kind, obj = ("step_up_challenge", challenge) if isinstance(challenge, str) else (None, None)
+    if session_object:
+        kind, obj = "session", sid
     await _SINK[0].emit(
         action,
         actor_label=uid or "system",
         actor_user_id=uid,
         session_id=sid,
-        object_kind="step_up_challenge" if isinstance(challenge, str) else None,
-        object_id=challenge if isinstance(challenge, str) else None,
+        object_kind=kind,
+        object_id=obj,
         outcome=outcome,
         severity=severity,
         reason=reason,
@@ -207,6 +213,8 @@ async def audit_login(
 async def audit_session_revoked(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
+    """One record per revoked session, the session its object (#3402): the reconcile step of
+    `docs/ops/runbooks/auth-rbac.md` section 4 finds a disable's revocation by the session."""
     reason = _payload(event).get("reason") or context.get("revoke_reason")
     await _emit(
         context,
@@ -214,6 +222,7 @@ async def audit_session_revoked(
         "auth.session_revoked",
         severity="warning",
         reason=None if reason is None else str(reason),
+        session_object=True,
     )
 
 

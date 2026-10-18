@@ -381,18 +381,20 @@ it (login refuses `disabled` only):
   `auth.disabled_user_session_audit_slow` (with the ids; the record may still land), and if it
   then fails, or fails after its request was cancelled while waiting for it,
   `auth.disabled_user_session_audit_failed_late` follows with `error` only and no session, so count
-  those lines. Five losses leave no log line that names the session and says its record is missing
-  (the `WARNING`, logged as soon as `revoke` returns, names it in four of them but cannot say the
+  those lines. Six losses leave no log line that names the session and says its record is missing
+  (the `WARNING`, logged as soon as `revoke` returns, names it in five of them but cannot say the
   record failed): the process dies between the revoke and the write; it shuts down while the write
   is still running (the drain waits 2 seconds, then logs only a count); the request is cancelled
   after the revoking `UPDATE` committed but before `revoke` returned (the bullet above: the count,
   the log and the publish go with the record); the request is cancelled while the revocation is
-  published to the sockets, before the record is handed over; or the request is cancelled while it
-  waits for the write and the write then fails (an `_audit_failed_late` line says so, with no
-  session). Only the reconcile step finds all five, and what each `_audit_failed_late` line lost.
-  To reconcile, after an outage or any restart, list the sessions revoked as `user_disabled` in
-  that window (UTC; `psql` runs inside the `postgres` container, as the user and database it was
-  started with, in a read-only session):
+  published to the sockets, before the record is handed over; the write outlives the 2-second
+  bound and then fails (its `_audit_slow` line names the session but says the record may still
+  land, and the `_audit_failed_late` line that follows names none); or the request is cancelled
+  while it waits for the write and the write then fails (an `_audit_failed_late` line says so,
+  with no session). Only the reconcile step finds all six, and what each `_audit_failed_late`
+  line lost. To reconcile, after an outage or any restart, list the sessions revoked as
+  `user_disabled` in that window (UTC; `psql` runs inside the `postgres` container, as the user
+  and database it was started with, in a read-only session):
 
   ```bash
   docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
@@ -405,9 +407,18 @@ it (login refuses `disabled` only):
   SQL
   ```
 
-  As an Owner, look each id up in
-  `GET $API/admin/audit?action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`:
-  one with no record there is unaudited, unless a disable revoked it (its audit records cover it).
+  As an Owner, look each id up in the two revocation records that can name it as their subject:
+  `GET $API/admin/audit?action=auth.session_revoked&action=auth.disabled_user_session_revoked&subject_type=session&subject_id=<id>`.
+  `auth.session_revoked` with reason `user_disabled` is the disable's own record of that session
+  (B16 writes one for each session a disable revoked, the session its subject since #3402), and
+  `auth.disabled_user_session_revoked` is the backstop's. A session with neither is unaudited,
+  even when a `users.disable` record names its user: that record names the user and counts the
+  sessions (`after.sessions_revoked`) without naming them, so a session that escaped the disable
+  and lost its backstop record has that record only. A disable leaves such a session too when its
+  B16 step failed (the ERROR line `users.disable.step` with `step` `b16_revoke`) or its commit's
+  outcome is unknown (a second `users.disable`, `failure`, reason `outcome_unknown`); both name
+  only the user, so attach them when you escalate. An `auth.session_revoked` written before #3402
+  names no subject and does not show here.
 
 - A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
   presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
