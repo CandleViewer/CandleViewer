@@ -123,7 +123,8 @@ entries:
   # ratify on #2701. They expire when S09 starts, so the re-decision comes before the R1 cut,
   # not on it.
   # The gates block from High only and never read these entries (re-scored High or above, a
-  # finding outgrows its entry and blocks), so check_accepted_risk_expiry.py enforces their dates.
+  # pnpm finding outgrows its entry and blocks; no gate reads the tauri one until the alert
+  # gate lands), so check_accepted_risk_expiry.py enforces their dates.
   - id: "GHSA-wrjc-x8rr-h8h6"
     tool: npm-audit
     severity: MEDIUM
