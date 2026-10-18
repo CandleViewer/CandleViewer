@@ -402,7 +402,8 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
     )
 }
 #: Every option name the registry knows: `sub`'s universal and per-family options, and `ctl`'s own
-#: keys. A `ctl` refusal names its key in `field` only if it is one of these (§5.4, #3370).
+#: keys. A `ctl` or `sub` refusal names an unknown key in `field` only if it is one of these
+#: (§5.4, #3370; §5.1, #3479).
 OPTION_NAMES: Final = (
     frozenset(UNIVERSAL) | CTL_KEYS | {k for f in FAMILIES.values() for k in f.options}
 )
@@ -600,7 +601,8 @@ def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | 
 
 
 def validate_options(family: TopicFamily, opts: Any) -> dict[str, Any]:
-    """Validate `opts` against the family schema: unknown keys are REJECTED (S12)."""
+    """Validate `opts` against the family schema: unknown keys are REJECTED (S12). An unknown key
+    is named only if it is a string that is an option name, else `opts`: never client text."""
     if opts is None:
         opts = {}
     if not isinstance(opts, dict):
@@ -609,10 +611,9 @@ def validate_options(family: TopicFamily, opts: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for name in sorted(opts):
         spec = schema.get(name) if isinstance(name, str) else None
-        if spec is None:
-            raise TopicError(
-                "invalid_options", f"Unknown option '{str(name)[:40]}'.", str(name)[:40]
-            )
+        if spec is None:  # a key the server does not know is never echoed (§5.1, #3479)
+            named = name if isinstance(name, str) and name in OPTION_NAMES else "opts"
+            raise TopicError("invalid_options", "Unknown option.", named)
         out[name] = spec.check(name, opts[name])
     for name in sorted(family.required - set(out)):
         raise TopicError("invalid_options", f"Option '{name}' is required.", name)

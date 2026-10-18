@@ -288,8 +288,8 @@ _OPTION_ROWS = [
 def test_s12_a_typo_of_every_declared_option_is_rejected_not_ignored(
     family: str, option: str
 ) -> None:
-    """Generated from the registry: every declared option, misspelt, is `invalid_options` with the
-    offending key in `field`, and no subscription is created."""
+    """Generated from the registry: every declared option, misspelt, is `invalid_options` with
+    `opts` in `field` (§5.1, #3479), and no subscription is created."""
     shape = FAMILIES[family].shapes[0]
     w = World()
     e = entry(family, shape)
@@ -297,7 +297,7 @@ def test_s12_a_typo_of_every_declared_option_is_rejected_not_ignored(
     with connect(w) as c:
         res = c.sub(e)["p"]["results"][0]
         assert res["ok"] is False
-        assert (res["error"]["code"], res["error"]["field"]) == ("invalid_options", option + "_")
+        assert (res["error"]["code"], res["error"]["field"]) == ("invalid_options", "opts")
         c.send({"t": "ping", "id": "p"})
         assert c.recv()["t"] == "pong"  # and no snapshot followed: nothing was subscribed
 

@@ -228,6 +228,16 @@ def validate_frame(frame: dict[str, Any]) -> None:
         check_schema(_BASE + f"{fam}.schema.json", structured_of(frame), what)
 
 
+def assert_result_fields_bounded(frame: dict[str, Any]) -> None:
+    """#3479: a `sub_ok` result's `error` and `warning` name their `field` within the bound `recv`
+    puts on an `err` (64 characters, the harness's own): a `sub` refusal travels here."""
+    if frame["t"] != "sub_ok":
+        return
+    for result in frame["p"].get("results", []):
+        for key in ("error", "warning"):
+            assert len(result.get(key, {}).get("field", "")) <= 64, frame
+
+
 # -- the world ---------------------------------------------------------------------------------
 
 
@@ -453,6 +463,7 @@ class Client:
             # bound, as the envelope `id`'s (§13.1); §13 sets none for `field` (#572).
             if frame["t"] == "err":
                 assert len(frame["p"].get("field", "")) <= 64, frame
+            assert_result_fields_bounded(frame)
             if validate:
                 validate_frame(frame)
             self.seen.append(frame)

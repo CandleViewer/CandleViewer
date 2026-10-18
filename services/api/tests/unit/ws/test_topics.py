@@ -120,7 +120,7 @@ def test_parse_topic_unknown_instrument_is_unsupported_symbol() -> None:
 def test_validate_options_typo_of_every_declared_option_is_rejected(family: str, opt: str) -> None:
     with pytest.raises(TopicError) as exc:
         validate_options(FAMILIES[family], {opt + "x": 1})
-    assert (exc.value.code, exc.value.field) == ("invalid_options", opt + "x")
+    assert (exc.value.code, exc.value.field) == ("invalid_options", "opts")  # §5.1, #3479
 
 
 @pytest.mark.parametrize(
