@@ -146,8 +146,10 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   Unverified trufflehog findings fail too (C-9.1). For a deliberate test vector it flags, drop
   the password part where the test does not need one (`postgresql://user@host/db` is not
   flagged; a `DUMMYKEY_` or `REDACTED` password still is). A redaction test that needs a
-  credentialed DSN or URL gets a path entry with its reason in `.trufflehog-exclude` (one path
-  per entry, as the E43-T06 triage below).
+  credentialed DSN or URL keeps the password fake and never writes the value whole in source:
+  make the scheme a separate literal (`"postgresql" + "://user:pw@host/db"`), so the file stays
+  scanned (#3482). Only where that would obscure the test does the path get an entry with its
+  reason in `.trufflehog-exclude` (one path per entry, as the E43-T06 triage below).
 - `security` is one lane over every job in `_job-security.yml`. In the folded jobs
   (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
   the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's

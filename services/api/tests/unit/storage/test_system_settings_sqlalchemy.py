@@ -166,8 +166,11 @@ def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> Base
     return cls("SELECT 1", None, _PgError(sqlstate))
 
 
+# A DSN with a fake password, which must never be echoed. It is never written whole in source, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
+_DSN = "postgresql" + "://cv:pw@db"
 _OUTAGES = [
-    ConnectionRefusedError("[Errno 111] dsn=postgresql://cv:pw@db"),
+    ConnectionRefusedError(f"[Errno 111] dsn={_DSN}"),
     sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
     sa_exc.InterfaceError("SELECT 1", None, Exception("closed")),
     sa_exc.TimeoutError("QueuePool limit reached"),

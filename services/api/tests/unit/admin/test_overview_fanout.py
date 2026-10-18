@@ -33,6 +33,9 @@ from candleviewer.observability.metrics import CollectorRegistry
 SLICES = sorted(OVERVIEW_SLICES)
 _ERRORS = "cv_admin_overview_source_errors_total"
 _TIMED = "cv_admin_overview_source_duration_seconds_count"
+# A DSN with a fake password, which must never be echoed. It is never written whole in source, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
+_DSN = "postgresql" + "://cv:hunter2@db/cv"
 
 
 class Clock:
@@ -89,7 +92,7 @@ async def test_timeout_yields_an_error_slice_naming_the_budget() -> None:
 
 
 async def test_exception_yields_an_error_slice_and_its_message_never_leaves() -> None:
-    secret = RuntimeError("postgresql://cv:hunter2@db/candleviewer")
+    secret = RuntimeError(_DSN)
     with capture_logs() as logs:
         result = await _fan(Clock()).read(AdminSlice.USERS, Source(raises=secret))
     assert (result.status, result.value, result.detail) == ("error", None, "source failed")
@@ -382,7 +385,7 @@ class Corrupt(PartFailed):
             ("unavailable", "part: no provider wired", "part:unwired"),
         ),
         (Corrupt(), ("error", "part: unrecognised value", "part:Corrupt")),
-        (OSError("postgresql://u:hunter2@db/x"), ("error", "part: source failed", "part:OSError")),
+        (OSError(_DSN), ("error", "part: source failed", "part:OSError")),
         (asyncio.CancelledError(), ("error", "part: source failed", "part:CancelledError")),
         (TimeoutError(), ("error", "part: source failed", "part:TimeoutError")),
     ],

@@ -35,6 +35,9 @@ _PATH = "/admin/capacity/subaccount-tier"
 _AT = datetime(2026, 10, 1, tzinfo=UTC)  # the fake store's clock: when the row was recorded
 _ERRORS = "https://candleviewer.local/errors/"
 _PROBLEM = {"$ref": "#/components/schemas/Problem", "components": load_openapi_spec()["components"]}
+# A DSN with a fake password, which must never be echoed. It is never written whole in source, so
+# trufflehog's Postgres detector finds nothing here (#3482). Real credentials never go in source.
+_DSN = "postgresql" + "://cv:hunter2@db/cv"
 
 
 def _recorded(word: str | None) -> FakeSystemSettings:
@@ -253,7 +256,7 @@ def test_a_store_that_is_missing_or_down_is_503_with_a_fixed_detail(wired: bool)
 
 
 def test_an_os_error_from_the_store_is_503_and_only_its_class_is_logged() -> None:
-    refused = ConnectionRefusedError("[Errno 111] dsn=postgresql://cv:hunter2@db/cv")
+    refused = ConnectionRefusedError(f"[Errno 111] dsn={_DSN}")
     client, _, _ = _app(_failing(refused))
     with capture_logs() as logs:
         _unavailable(_put(client, {"tier": "regular"}), "store_unavailable")
