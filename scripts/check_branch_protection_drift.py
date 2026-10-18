@@ -2,7 +2,8 @@
 """GOV-005: detect drift between live GitHub branch protection on `main` and
 the desired state in .github/branch-protection.json (CONSTITUTION.md C-9.1;
 docs/plan/01-sdlc-and-branching.md §6.1): every setting the file declares must
-equal the live one, and every setting live reports must be declared. Also
+equal the live one, and every setting live reports must be declared, the
+ruleset rules on the branch (a merge queue) included. Also
 proves that `ci-required` judges every C-9.1 check, or the file lists it in
 `pending_checks` (scripts/check_required_check_reconciliation.py).
 
@@ -27,10 +28,10 @@ from apply_branch_protection import (
     ApplyError,
     DesiredStateError,
     compare_view,
-    diff_merge_queue,
+    diff_rules,
     diff_state,
+    fetch_branch_rules,
     fetch_live_state,
-    fetch_merge_queue_ruleset,
     load_desired_state,
 )
 from check_required_check_reconciliation import ReconciliationError, reconcile_repo
@@ -94,15 +95,15 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         live = fetch_live_state(args.repo, token, args.branch)
-        mq_live = fetch_merge_queue_ruleset(args.repo, token) if desired.get("merge_queue") else {}
+        live_rules = fetch_branch_rules(args.repo, token, args.branch)
     except ApplyError as exc:
         return fail_closed(str(exc), args.json)
 
     diff = diff_state(live, compare_view(desired))
-    mq_diff = diff_merge_queue(mq_live, desired) if desired.get("merge_queue") else None
+    rules = diff_rules(live_rules, desired)
     c91 = [{"code": "GOV-005", "kind": "c9_1_not_enforced", "message": gap} for gap in gaps]
 
-    if diff.is_empty() and (mq_diff is None or mq_diff.is_empty()) and not c91:
+    if diff.is_empty() and rules.is_empty() and not c91:
         if not args.json:
             print("check-branch-protection-drift: no drift")
         else:
@@ -110,18 +111,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.json:
-        findings = json.loads(render_findings(diff, True)) if not diff.is_empty() else []
-        if mq_diff is not None and not mq_diff.is_empty():
-            mq_findings = json.loads(render_findings(mq_diff, True))
-            for f in mq_findings:
-                f["key"] = f"merge_queue.{f['key']}"
-            findings.extend(mq_findings)
-        print(json.dumps(findings + c91, indent=2))
+        findings = json.loads(render_findings(diff, True))
+        rule_findings = json.loads(render_findings(rules, True))
+        for f in rule_findings:
+            f["key"] = f"rules.{f['key']}"
+        print(json.dumps(findings + rule_findings + c91, indent=2))
     else:
         if not diff.is_empty():
             print(render_findings(diff, False))
-        if mq_diff is not None and not mq_diff.is_empty():
-            print("GOV-005 merge-queue ruleset drift detected:\n" + mq_diff.render())
+        if not rules.is_empty():
+            print("GOV-005 drift in the ruleset rules on the branch:\n" + rules.render())
         for finding in c91:
             print(f"GOV-005 C-9.1 check not enforced: {finding['message']}")
     return 1

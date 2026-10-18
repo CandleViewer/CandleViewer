@@ -6,7 +6,8 @@ docs/plan/01-sdlc-and-branching.md §6.1, §7).
 A dry run unless given --apply. Refuses a missing or unknown key (`x-` keys too:
 nothing is stripped and sent), a floor crossed, a lockout, a live setting the
 file does not declare (a nested one too), and, without --allow-weaken, any
-change weaker than the live state.
+change weaker than the live state. It writes no ruleset, and refuses while the
+ruleset rules on the branch (a merge queue) differ from the file.
 
 This script never runs automatically from a PR-triggered workflow (see the
 break-glass runbook in CONTRIBUTING.md) — it is invoked manually by an admin
@@ -57,7 +58,8 @@ SETTINGS: dict[str, Any] = {
     "restrictions": type(None),
 }
 # Top-level keys the scripts read but never send or compare as settings (`merge_queue` is a
-# ruleset, applied on its own). Top-level `$` keys are notes. Any other key is refused.
+# ruleset rule, compared with the branch's rules and never written). Top-level `$` keys are notes.
+# Any other key is refused.
 META_KEYS = frozenset({"branch", "merge_queue", "pending_checks"})
 # Compared with live, never sent: it has its own endpoint, not the protection PUT.
 CHECK_ONLY_KEYS = frozenset({"required_signatures"})
@@ -359,33 +361,18 @@ def apply_state(repo: str, token: str, payload: dict, branch: str = "main") -> N
         raise ApplyError(f"PUT {url} failed: {exc.reason}") from exc
 
 
-# --- Merge queue (repository rulesets API) -----------------------------
+# --- Rules on the branch (repository rulesets) ----------------------------
 #
-# The GitHub merge queue is not part of classic branch protection; it is
-# configured as a repository ruleset (`target: branch`) carrying a
-# `merge_queue` rule whose `parameters` mirror this file's `merge_queue`
-# block. `META_KEYS` keeps `merge_queue` out of the protection PUT body —
-# it is applied and drift-checked separately via the functions below.
-MERGE_QUEUE_RULESET_NAME = "candleviewer-main-merge-queue"
+# A merge queue is a ruleset rule, not branch protection. This script writes no ruleset: it cannot
+# prove that a queue's check_response_timeout_minutes covers ci-required's run time (most lane
+# jobs' timeouts read a repository variable), and a queue that times out fails every merge group.
+# The owner sets the queue in the UI, and the file's `merge_queue` block must match it.
 
 
-def _merge_queue_rule_params(desired: dict, branch: str) -> dict | None:
-    mq = desired.get("merge_queue")
-    if not mq:
-        return None
-    return {
-        "name": MERGE_QUEUE_RULESET_NAME,
-        "target": "branch",
-        "enforcement": "active",
-        "conditions": {"ref_name": {"include": [f"refs/heads/{branch}"], "exclude": []}},
-        "rules": [{"type": "merge_queue", "parameters": dict(mq)}],
-    }
-
-
-def fetch_merge_queue_ruleset(repo: str, token: str) -> dict:
-    """Return the live merge-queue ruleset's rule parameters, or `{}` if no
-    ruleset with `MERGE_QUEUE_RULESET_NAME` exists yet."""
-    url = f"{API_BASE}/repos/{repo}/rulesets?includes_parents=false"
+def fetch_branch_rules(repo: str, token: str, branch: str = "main") -> dict:
+    """Every active ruleset rule on `branch`, as {type: parameters}; a type that more than one
+    ruleset sets gets a ` #<n>` suffix, so none hides another."""
+    url = f"{API_BASE}/repos/{repo}/rules/branches/{branch}?per_page=100"
     request = urllib.request.Request(
         url,
         headers={
@@ -396,99 +383,26 @@ def fetch_merge_queue_ruleset(repo: str, token: str) -> dict:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            summaries = json.loads(response.read())
+            rules = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         raise ApplyError(f"GET {url} failed: {exc.code} {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise ApplyError(f"GET {url} failed: {exc.reason}") from exc
-
-    match = next((r for r in summaries if r.get("name") == MERGE_QUEUE_RULESET_NAME), None)
-    if match is None:
-        return {}
-    detail_url = f"{API_BASE}/repos/{repo}/rulesets/{match['id']}"
-    detail_request = urllib.request.Request(
-        detail_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urllib.request.urlopen(detail_request, timeout=30) as response:  # noqa: S310
-            detail = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        raise ApplyError(f"GET {detail_url} failed: {exc.code} {exc.reason}") from exc
-    except urllib.error.URLError as exc:
-        raise ApplyError(f"GET {detail_url} failed: {exc.reason}") from exc
-
-    for rule in detail.get("rules", []):
-        if rule.get("type") == "merge_queue":
-            return dict(rule.get("parameters", {}))
-    return {}
+    if not isinstance(rules, list) or len(rules) >= 100:
+        raise ApplyError(f"GET {url}: not a list of fewer than 100 rules")
+    view: dict = {}
+    for rule in rules:
+        kind = str(rule.get("type"))
+        count = sum(key.split(" #")[0] == kind for key in view)
+        view[f"{kind} #{count + 1}" if count else kind] = rule.get("parameters") or {}
+    return view
 
 
-def diff_merge_queue(live_params: dict, desired: dict) -> Diff:
-    """Diff the live merge-queue rule parameters against `desired["merge_queue"]`."""
-    return diff_state(live_params, dict(desired.get("merge_queue") or {}))
-
-
-def _fetch_merge_queue_ruleset_id(repo: str, token: str) -> int | None:
-    url = f"{API_BASE}/repos/{repo}/rulesets?includes_parents=false"
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            summaries = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        raise ApplyError(f"GET {url} failed: {exc.code} {exc.reason}") from exc
-    except urllib.error.URLError as exc:
-        raise ApplyError(f"GET {url} failed: {exc.reason}") from exc
-    match = next((r for r in summaries if r.get("name") == MERGE_QUEUE_RULESET_NAME), None)
-    return match["id"] if match else None
-
-
-def apply_merge_queue_ruleset(repo: str, token: str, desired: dict, branch: str = "main") -> None:
-    """Idempotently create-or-update the merge-queue ruleset: POST to create
-    it the first time, PUT to update it on subsequent applies (a bare POST
-    on every run would fail with a duplicate-name conflict)."""
-    body_dict = _merge_queue_rule_params(desired, branch)
-    if body_dict is None:
-        return
-    existing_id = _fetch_merge_queue_ruleset_id(repo, token)
-    if existing_id is None:
-        url = f"{API_BASE}/repos/{repo}/rulesets"
-        method = "POST"
-    else:
-        url = f"{API_BASE}/repos/{repo}/rulesets/{existing_id}"
-        method = "PUT"
-    body = json.dumps(body_dict).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            response.read()
-    except urllib.error.HTTPError as exc:
-        raise ApplyError(
-            f"{method} {url} (merge queue ruleset) failed: {exc.code} {exc.reason}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise ApplyError(f"{method} {url} (merge queue ruleset) failed: {exc.reason}") from exc
+def diff_rules(live_rules: dict, desired: dict) -> Diff:
+    """The rules on the branch (`fetch_branch_rules`) against the file's: its `merge_queue`
+    block, or none."""
+    declared = {"merge_queue": desired["merge_queue"]} if desired.get("merge_queue") else {}
+    return diff_state(live_rules, declared)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -547,22 +461,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         live = fetch_live_state(args.repo, token, args.branch)
         diff = diff_state(live, payload)
+        rules = diff_rules(fetch_branch_rules(args.repo, token, args.branch), desired)
 
-        mq_diff = Diff(added={}, removed={}, changed={})
-        if desired.get("merge_queue"):
-            mq_live = fetch_merge_queue_ruleset(args.repo, token)
-            mq_diff = diff_merge_queue(mq_live, desired)
-
-        if diff.is_empty() and mq_diff.is_empty():
+        if diff.is_empty() and rules.is_empty():
             print("apply-branch-protection: no changes — live state matches desired state")
             return 0
         if not diff.is_empty():
             print("apply-branch-protection: protection diff (live -> desired):")
             print(diff.render())
-        if not mq_diff.is_empty():
-            print("apply-branch-protection: merge-queue ruleset diff (live -> desired):")
-            print(mq_diff.render())
+        if not rules.is_empty():
+            print("apply-branch-protection: rules on the branch (live -> file):")
+            print(rules.render())
         refusals = [f"live has {key}, which the file does not declare" for key in diff.removed]
+        if not rules.is_empty():
+            refusals.append(
+                "the branch's rules differ from the file, and this script writes no ruleset: set "
+                "the merge queue in the UI, then declare it in merge_queue"
+            )
         refusals += [  # a nested one too: the PUT replaces the whole object
             f"live has {key}.{sub}, which the file does not declare"
             for key, schema in SETTINGS.items()
@@ -582,10 +497,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.apply:
             print("apply-branch-protection: dry run, not applying (pass --apply)")
             return 0
-        if not diff.is_empty():
-            apply_state(args.repo, token, to_api_payload(desired), args.branch)
-        if not mq_diff.is_empty():
-            apply_merge_queue_ruleset(args.repo, token, desired, args.branch)
+        apply_state(args.repo, token, to_api_payload(desired), args.branch)
         print("apply-branch-protection: applied")
         return 0
     except ApplyError as exc:

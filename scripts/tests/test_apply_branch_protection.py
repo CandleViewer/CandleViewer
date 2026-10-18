@@ -199,40 +199,21 @@ def test_normalise_then_diff_detects_real_drift() -> None:
     assert diff.changed["required_pull_request_reviews"][0]["require_code_owner_reviews"] is True
 
 
-# --- Merge queue (finding: merge_queue never applied or drift-checked) ----
+# --- Rules on the branch: a merge queue is compared with the file, never written ----
 
 
-def test_merge_queue_rule_params_shapes_ruleset_body() -> None:
+def test_diff_rules_no_drift_when_matching() -> None:
     desired = _valid_desired_state()
-    body = abp._merge_queue_rule_params(desired, "main")
-    assert body is not None
-    assert body["target"] == "branch"
-    assert body["conditions"]["ref_name"]["include"] == ["refs/heads/main"]
-    rule = body["rules"][0]
-    assert rule["type"] == "merge_queue"
-    assert rule["parameters"] == desired["merge_queue"]
+    assert abp.diff_rules({"merge_queue": dict(desired["merge_queue"])}, desired).is_empty()
+    assert abp.diff_rules({}, {k: v for k, v in desired.items() if k != "merge_queue"}).is_empty()
 
 
-def test_merge_queue_rule_params_none_when_not_configured() -> None:
+def test_diff_rules_detects_a_changed_missing_or_undeclared_rule() -> None:
     desired = _valid_desired_state()
-    del desired["merge_queue"]
-    assert abp._merge_queue_rule_params(desired, "main") is None
-
-
-def test_diff_merge_queue_no_drift_when_matching() -> None:
-    desired = _valid_desired_state()
-    live_params = dict(desired["merge_queue"])
-    diff = abp.diff_merge_queue(live_params, desired)
-    assert diff.is_empty()
-
-
-def test_diff_merge_queue_detects_drift() -> None:
-    desired = _valid_desired_state()
-    live_params = dict(desired["merge_queue"])
-    live_params["merge_method"] = "MERGE"
-    diff = abp.diff_merge_queue(live_params, desired)
-    assert not diff.is_empty()
-    assert diff.changed["merge_method"] == ("MERGE", "SQUASH")
+    diff = abp.diff_rules({"merge_queue": {"merge_method": "MERGE"}, "deletion": {}}, desired)
+    assert diff.changed["merge_queue"] == ({"merge_method": "MERGE"}, {"merge_method": "SQUASH"})
+    assert diff.removed == {"deletion": {}}
+    assert abp.diff_rules({}, desired).added == {"merge_queue": {"merge_method": "SQUASH"}}
 
 
 # --- Refusals (#3103): never write a weaker or a lockout configuration ------
@@ -265,10 +246,12 @@ def _run(
     data: dict,
     *flags: str,
     live: Callable[[], dict] = _stronger_live,
+    rules: Callable[[], dict] = dict,
 ) -> tuple:
     writes: list = []
     monkeypatch.setenv("CV_TEST_TOKEN", "not-a-real-token")
     monkeypatch.setattr(abp, "fetch_live_state", lambda *a: live())
+    monkeypatch.setattr(abp, "fetch_branch_rules", lambda *a: rules())
     monkeypatch.setattr(abp, "apply_state", lambda *a: writes.append(a))
     path = tmp_path / "desired.json"
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -296,6 +279,33 @@ def test_main_refuses_to_drop_a_nested_live_setting(tmp_path, monkeypatch, capsy
     live[key]["dismissal_restrictions"] = {"users": ["someone"], "teams": []}
     assert _run(tmp_path, monkeypatch, data, "--apply", live=lambda: live) == (1, [])
     assert f"live has {key}.dismissal_restrictions" in capsys.readouterr().err
+
+
+# Security review round 5 of #3103: a merge queue is a ruleset, which this script never writes (it
+# cannot prove a queue's timeout covers ci-required's run time), so it refuses while the rules on
+# main differ from the file, and so never applies protection against a queue it does not know.
+@pytest.mark.parametrize(
+    "declared,live_rules,code",
+    [
+        (None, {"merge_queue": {"merge_method": "SQUASH"}}, 1),  # a queue the file does not declare
+        ({"merge_method": "SQUASH"}, {}, 1),  # a queue only the file declares: never written
+        ({"merge_method": "SQUASH"}, {"merge_queue": {"merge_method": "MERGE"}}, 1),
+        (None, {"deletion": {}}, 1),  # any other rule on main
+        ({"merge_method": "SQUASH"}, {"merge_queue": {"merge_method": "SQUASH"}}, 0),
+    ],
+)
+def test_main_refuses_while_the_rules_on_main_differ_from_the_file(
+    tmp_path, monkeypatch, capsys, declared, live_rules, code
+) -> None:
+    data = {k: v for k, v in _valid_desired_state().items() if k != "merge_queue"}
+    data.update({"merge_queue": declared} if declared else {})
+    live = json.loads(json.dumps(abp.compare_view(data)))
+    live["required_linear_history"] = False  # a protection change the file would write
+    stubs = {"live": lambda: live, "rules": lambda: live_rules}
+    result = _run(tmp_path, monkeypatch, data, "--apply", **stubs)
+    assert result[0] == code and len(result[1]) == 1 - code  # the protection PUT only when clean
+    err = capsys.readouterr().err
+    assert ("writes no ruleset" in err) is (code == 1), err
 
 
 def _reviews(**settings: object) -> Callable[[dict], None]:
