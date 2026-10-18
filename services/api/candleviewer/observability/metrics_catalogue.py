@@ -890,6 +890,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_series_read_waits_total",
+        "counter",
+        "reads",
+        (),
+        "WS series store tail reads that found every read slot taken and waited for one.",
+        "sustained = more series hydrating at once than the read bound; a read that waits past"
+        " the store timeout also counts as a timed-out read in bars_series_hydrate_failed_total",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_rows_returned_total",
         "counter",
         "bars",

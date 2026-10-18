@@ -29,6 +29,16 @@ a WS snapshot source reads `latest` and `version`.
   `ensure` reads a series that is not `hydrated`, or is `gapped`, again, but never sooner than
   `retry_after_s` after the last read; nothing else starts a read. Without a reader, a series
   keeps only what the store has seen live.
+- **Read bound (C-2.18, #2787 D2-G1):** a read takes one of `MAX_CONCURRENT_TAIL_READS` slots,
+  shared by every store on the event loop, and gives it back however it ends. The wait for a
+  slot is part of the read and counts toward `timeout_s`: a read that cannot start in time fails
+  like a slow one (`bars_series_hydrate_failed_total`; an `ensure` at least `retry_after_s`
+  later reads it again), and
+  the wait never adds to the time a read can take. One read per series waits at most, so at
+  most `MAX_SERIES` do, and `timeout_s` sheds them. A series waiting for a slot is a read in
+  flight: its other `ensure` calls share it, and the closes seen meanwhile are kept for its
+  fold. A read that finds every slot taken counts `bars_series_read_waits_total`, whether or
+  not it then gets one.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. A hold collected
   unreleased is released as of its collection: its finalizer only queues it, and the next
   `ensure` applies the queue before its sweep. An unheld series is kept `release_grace_s` (the
@@ -77,10 +87,11 @@ import structlog
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
-from candleviewer.bars.limits import QUERY_TIMEOUT_S
+from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import (
     bars_series_gaps_total,
     bars_series_hydrate_failed_total,
+    bars_series_read_waits_total,
     bars_series_resets_total,
     bars_spec_cap_rejected_total,
 )
@@ -103,6 +114,30 @@ RELEASE_GRACE_S: Final = GRACE_US / 1_000_000
 TailRead = Callable[[str, BarSpec, int], Awaitable[BarTail]]
 #: A close as emitted, with its generation.
 Close = tuple[BarUpdate, int]
+
+
+class _ReadSlots:
+    """The process-wide bound on concurrent tail reads: `size` slots, shared by every store.
+
+    A `Semaphore` binds to the loop where it first has to wait, so it is made on the running
+    loop, when first needed, and made again if that loop changes (a test's, a restarted app's):
+    none is made at import or used on another loop. The backend runs one loop, so the bound holds;
+    two loops reading at once would keep replacing each other's semaphore, and it would hold on
+    neither."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+        self._held: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+    def get(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        held = self._held
+        if held is None or held[0] is not loop:
+            held = self._held = (loop, asyncio.Semaphore(self._size))
+        return held[1]
+
+
+_READ_SLOTS: Final = _ReadSlots(MAX_CONCURRENT_TAIL_READS)
 
 
 class Latest(NamedTuple):
@@ -414,7 +449,8 @@ class SeriesStore:
 
     async def _hydrate(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """One read, its fresh `ready` set however it ends. Its replay starts from the ring (the
-        closes seen just before it) and takes every close seen during it, in emission order."""
+        closes seen just before it) and takes every close seen during it, in emission order,
+        the wait for a read slot included, which counts toward `timeout_s`."""
         if self._tail is None:
             return
         ready = s.ready = asyncio.Event()
@@ -422,8 +458,12 @@ class SeriesStore:
         s.replay, s.attempted = deque(ring, maxlen=MAX_HISTORY), False
         before = s.generation
         try:
-            async with asyncio.timeout(self._timeout_s):
-                tail = await self._tail(symbol, spec, MAX_HISTORY)
+            async with asyncio.timeout(self._timeout_s):  # the wait for a slot counts toward it
+                slots = _READ_SLOTS.get()
+                if slots.locked():  # every slot is taken, or reads are queued for one: it waits
+                    bars_series_read_waits_total.inc()
+                async with slots:  # given back however the read ends
+                    tail = await self._tail(symbol, spec, MAX_HISTORY)
         except Exception as exc:  # broad on purpose: any read failure leaves the series as it was
             s.attempted = True
             bars_series_hydrate_failed_total.labels(reason=degrade_reason(exc)).inc()
