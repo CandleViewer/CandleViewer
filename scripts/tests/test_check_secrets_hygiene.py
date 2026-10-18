@@ -235,6 +235,7 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
     ("shebang", "traced"),
     [("#!/bin/bash -x", 1), ("#!/bin/sh -ex", 1), ("#!/usr/bin/env -S bash -x", 1)]
     + [("#!/usr/bin/env -S bash -o xtrace", 1), ("#!/usr/bin/env -S bash +o xtrace", 0)]
+    + [("#!/usr/bin/env -S zsh --xtrace", 1), ("#!/opt/my-xtool/bin/bash", 0)]
     + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)],
 )
 def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
@@ -339,6 +340,21 @@ TRACED = [
     "dash -x ci.sh",
     "ksh -x ci.sh",
     "zsh -x ci.sh",
+    # #3294: a capital in the tracing group, +o before it, --xtrace past an option's argument.
+    "set -Eeuxo pipefail",
+    "set +o nounset -x",
+    "bash --rcfile x.rc --xtrace ci.sh",
+    # #3294: a second command word traces after one that does not.
+    'sh -c "sh -x ci.sh"',
+    # #3294: shells the base rule (bash -x anywhere) caught, kept by name or path: rbash, and a path
+    # from $VAR or ~user, with an empty segment, `-`, `.` or a $NAME segment.
+    "rbash -x ci.sh",
+    "$HOME/bin/bash -x ci.sh",
+    "~runner/bin/bash -x ci.sh",
+    "//bin/bash -x ci.sh",
+    "/opt/my-tools/bash -x ci.sh",
+    "/usr/local/bash-5.2/bin/bash -x ci.sh",
+    "/opt/$TOOL/bin/bash -x ci.sh",
 ]
 NOT_TRACED = [
     "set -e",
@@ -362,8 +378,12 @@ NOT_TRACED = [
     "grep -x pattern file",
     "xargs -x echo",
     "mybash -x ci.sh",
+    "x-bash -x ci.sh",
+    "foo.bash -x ci.sh",
     "zap.sh -x",
     "tools/sh -x ci.sh",
+    "./bash -x ci.sh",
+    "bin/bash -x ci.sh",
     "du -sh -x /var",
     "# set -o xtrace; bash -x ci.sh",
 ]
@@ -411,14 +431,24 @@ def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None
         "set -" + "o" * 20000 + "2",
         "/a" * 5000 + "/sh -e",
         "(" * 10000,
+        # #3294: an -o argument that is itself a command word, so each one starts a rule.
+        "sh " + "-o sh " * 16000,
+        "set " + "-o set " * 14000,
+        "bash " + "-o bash " * 12000,
+        # A shell's path: all slashes, and a `$` before each `/` (a rule start after each `$`).
+        "/" * 96000 + "sh -e",
+        "/a$" * 32000,
     ],
-    ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"],
+    ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
+    + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
-    start = time.perf_counter()
+    # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
+    # to it. Each line takes milliseconds; a quadratic rule took seconds (about 20 s at 96k).
+    start = time.process_time()
     h._sr146_hits(line)
     h._SHEBANG_X.match(f"#!/bin/sh {line}")
-    assert time.perf_counter() - start < 1.0
+    assert time.process_time() - start < 1.0
 
 
 def test_inventory_flags_prod_credentials_and_unprotected() -> None:
