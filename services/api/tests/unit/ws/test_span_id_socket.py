@@ -2,8 +2,9 @@
 (flag off, and `CV_WS_BACKPRESSURE_ENABLED` on): a string on MessagePack too, left out of
 `cv_ws_frame_bytes{json|msgpack}` (20 section 12.1) by exactly what the real encoders write for
 it, the writer's debug span record, a client's `sp` ignored, and `CV_TELEMETRY_ENABLED` choosing
-the id source. A fake clock times the span: the hub takes the deltas at 1.0 s and the writer sends
-them at 1.25 s.
+the id source. A fake clock times the span: the hub takes each delta at `t` and the writer sends it
+at `t` + 0.25 s, one delta at a time, so flag on each comes past the book window and the pacer lets
+it out at once (D12) and its span starts at that release (D7, #3269).
 """
 
 from __future__ import annotations
@@ -64,7 +65,8 @@ async def _session(
 ) -> tuple[_Wire, str]:
     """`hello`, `auth`, a binary `book` subscription (its `snap` is `s` 1) and `deltas` deltas,
     with span ids on unless `span_ids` is off; returns the wire and the connection id once the
-    socket has closed."""
+    socket has closed. Delta k is taken at 1.0 + 0.25k s and sent 250 ms later: flag on, that is
+    past the book window, so none of them waits in the pacer (#3329)."""
     rig = _Rig(BackpressureConfig() if flag else None)
     rig.registry.services.span_ids = new_span_id if span_ids else None
     sock = _Wire(encoding)
@@ -74,8 +76,8 @@ async def _session(
         rig.clock.now = 1.0
         for _ in range(deltas):
             assert rig.sequencing.publish(_BOOK, BODY, part=PART) == 1
-        rig.clock.now = 1.25
-        await sock.next(deltas)
+            rig.clock.now += 0.25
+            await sock.next()
         sock.inbound.put_nowait({"type": "websocket.disconnect", "code": 1000})
         await handler
     return sock, conn.connection_id
