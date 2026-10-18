@@ -16,6 +16,7 @@ import {
   type SubscriptionPriority,
 } from "../../../shell/bootstrap/subscriptionOrder";
 import { createConnection, type Connection, type SocketFactory } from "./connection";
+import { createFlowControl, type PaneState } from "./flowControl";
 import { createResyncGuard } from "./resyncGuard";
 import { topicKey } from "./sequencer";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./subscriptions";
 
 export type { EngineSocket, SocketEvents, SocketFactory } from "./connection";
+export type { PaneState } from "./flowControl";
 
 export interface EngineSink {
   /** The reducer's input, in order: `reduce(state, event)`. */
@@ -80,6 +82,13 @@ export interface WsEngine {
   stop(): void;
   /** `rs` selects a replay stream of the `ch` (23 11). `system` is implicit and shared. */
   consume(spec: ConsumerSpec, rs?: string | undefined): StreamHandle;
+  /**
+   * What a pane shows decides how fast its topics run: a hidden tab or an off-screen pane is slowed
+   * to 1 000 ms, a collapsed one is let go (C8), a heatmap's bucket follows its size (6.1.1).
+   * `paneId` is the one of the consumers' specs.
+   */
+  setPane(paneId: string, state: PaneState): void;
+  removePane(paneId: string): void;
   /** The focused pane's topics come back first after a reconnect (9.3); `null` leaves it to each spec's `priority`. */
   focusPane(paneId: string | null): void;
   /** `bye.hint.most_expensive_topics` of the last close (8.4): kept, never acted on. */
@@ -205,6 +214,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       down,
       frame: onFrame,
       malformed: (error) => registry.onDecodeError(error),
+      superseded: (id) => void ledger.delete(id),
     },
   });
 
@@ -245,6 +255,24 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       }
     }
   }
+
+  function* allConsumers() {
+    for (const s of streams.values()) for (const { spec } of s.consumers) yield { spec, rs: s.rs };
+  }
+
+  /** `ctl` names a `ch`, not a replay session: the gateway takes the live subscription, else the first (#572), so that is the stream its reply is for. */
+  function sendCtl(ch: string, payload: F.CtlPayload): void {
+    const held = [...streams.values()].filter((s) => s.ch === ch && s.held);
+    const target = held.find((s) => s.rs === undefined) ?? held[0];
+    const gens = target === undefined ? NO_GENS : gensOf([target]);
+    submit(F.ctl(connection.nextId(), ch, payload), target?.rs, gens);
+  }
+  const flow = createFlowControl({
+    consumers: allConsumers,
+    ctl: sendCtl,
+    changed: scheduleSync,
+    minThrottleMs: () => connection.minThrottleMs,
+  });
 
   const host: RegistryHost = {
     subscribe(spec, rs) {
@@ -361,7 +389,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   }
 
   /** Wanted on the server: has a consumer, and was not ended by it (a revoked stream is replaced by a new consume). */
-  const wanted = (s: Stream): boolean => s.consumers.size > 0 && s.handle?.status !== "revoked";
+  const wanted = (s: Stream): boolean =>
+    s.consumers.size > 0 && s.handle?.status !== "revoked" && !flow.isReleased(s.ch);
 
   function topicEntry(s: Stream): F.SubPayload["topics"][number] {
     const opts = s.spec.opts;
@@ -403,7 +432,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const run of runsOf(drops)) {
       for (const chunk of chunkTopics(run.items, perFrame)) {
         const topics = mapNonEmpty(chunk, (s) => s.ch);
-        for (const ch of topics) unsubbing.add(ch);
+        for (const ch of topics) {
+          unsubbing.add(ch);
+          flow.unsubscribed(ch); // the server holds nothing of it from here: what it was told is void
+        }
         submit(F.unsub(connection.nextId(), topics), run.rs, gensOf(chunk));
       }
     }
@@ -474,6 +506,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         return;
       case "sub_ok":
         return onSubOk(frame);
+      case "ctl_ok":
+        return onCtlOk(frame);
       case "unsub_ok":
         return onUnsubOk(frame);
       case "revoked":
@@ -503,8 +537,19 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         stream.held = false;
         continue;
       }
+      // Flow control keeps the registry's copy of the options, which is bounded: never the frame's own.
+      flow.confirmed(result.ch, stream.handle?.effective ?? {});
       arm(result.ch, request.rs);
     }
+  }
+
+  function onCtlOk(frame: ControlOf<"ctl_ok">): void {
+    const request = take(frame.id);
+    if (request === undefined || frame.ch === undefined) return;
+    const stream = streamOf(request, frame.ch);
+    if (stream === undefined) return;
+    registry.onCtlOk(frame, scopeOf(request));
+    flow.confirmed(frame.ch, stream.handle?.effective ?? {});
   }
 
   function onUnsubOk(frame: ControlOf<"unsub_ok">): void {
@@ -522,6 +567,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const s of streams.values()) {
       if (s.ch === frame.ch && s.handle?.status === "revoked") s.held = false; // the server dropped it
     }
+    const { ch } = frame;
+    if (ch !== undefined && ![...streams.values()].some((s) => s.ch === ch && s.held)) {
+      flow.unsubscribed(ch);
+    }
     scheduleSync();
   }
 
@@ -531,7 +580,9 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     if (request === undefined) return;
     if (frame.p.code === "client_rate_limited") {
       // 8.5: the gateway dropped the frame unhandled and answered with its id. Send it again, once: a second refusal of it is final (the gateway closes 4429 at the second, and one that does not must not be fed for ever).
+      // A `ctl` is asked for again from what is wanted now, not replayed: a newer one may have overtaken it.
       own.deniedFrames += 1;
+      if (request.frame.t === "ctl") return flow.denied(request.frame.ch);
       if (!request.resent) return resubmit(request);
     }
     if (request.frame.t === "sub") {
@@ -579,6 +630,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   /** The connection is gone: every stream is pending again (9.3: no session resumption) and subscribes afresh on the next one. */
   function down(): void {
     registry.onDisconnect();
+    flow.reset();
     for (const key of [...deadlines.keys()]) disarm(key);
     for (const s of streams.values()) {
       s.held = false;
@@ -597,6 +649,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       registry.dispose(); // what it still held, and the resyncs that wait for their budget, are not coming back
     },
 
+    setPane: (paneId, state) => flow.setPane(paneId, state),
+    removePane: (paneId) => flow.removePane(paneId),
     focusPane(paneId) {
       focusedPane = paneId;
     },
@@ -608,6 +662,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       const consumer: Consumer = { spec };
       stream?.consumers.add(consumer);
       if (stream !== undefined) stream.handle ??= handle;
+      flow.evaluate();
       return {
         ch: handle.ch,
         rs: handle.rs,
@@ -626,6 +681,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         release() {
           stream?.consumers.delete(consumer);
           handle.release();
+          if (![...allConsumers()].some((c) => c.spec.ch === spec.ch)) flow.forget(spec.ch);
+          flow.evaluate();
           scheduleSync();
         },
       };

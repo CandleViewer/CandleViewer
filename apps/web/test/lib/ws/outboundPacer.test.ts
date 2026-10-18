@@ -243,6 +243,21 @@ describe("ctl coalescing", () => {
     expect(sent.flatMap(validateClientFrame)).toEqual([]);
   });
 
+  it("names the id of each ctl a newer one merged into, so no reply is awaited for it", async () => {
+    const dropped: string[] = [];
+    const merging = createOutboundPacer({
+      send: (frame) => void sent.push(frame),
+      onSuperseded: (id) => void dropped.push(id),
+    });
+    merging.enqueue(F.ctl("c-1", BOOK, { throttle_ms: 100 }));
+    merging.enqueue(F.ctl("c-2", "trades.BTCUSDT", { throttle_ms: 100 }));
+    merging.enqueue(F.ctl("c-3", BOOK, { depth: 200 }));
+    merging.enqueue(F.ctl("c-4", BOOK, { throttle_ms: 50 }));
+    await advance(500);
+    expect(dropped).toEqual(["c-1", "c-3"]);
+    expect(sent.map((f) => f.id)).toEqual(["c-4", "c-2"]); // only the newest id of each ch is sent
+  });
+
   it("keeps an earlier value when a later ctl carries it as undefined or NaN", async () => {
     pacer.enqueue(F.ctl(nextId(), BOOK, { throttle_ms: 100, depth: 50 }));
     pacer.enqueue(junk({ throttle_ms: undefined, coalesce: true }));
