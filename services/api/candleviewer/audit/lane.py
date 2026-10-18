@@ -1,4 +1,5 @@
-"""The journal-first audit lane's boot and drain (ADR-0037 decisions 7 and 8; #3009 slice S2a2).
+"""The journal-first audit lane's boot and drain (ADR-0037 decisions 7 and 8; #3009 slice S2a2),
+its directory lock and its façade (decisions 1, 2 and 9; slice S2b-2a).
 
 `docs/plan/24-internal-schemas.md` §15.6 owns the scan, the hand-over, the rows and the
 confirmation (C-16.5); this module runs them and restates none. A boot creates a new lane with
@@ -12,10 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
+import fcntl
 import json
+import os
 import uuid
 from collections import deque
 from collections.abc import Callable
+from io import FileIO
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -23,8 +29,8 @@ from pydantic import ValidationError
 
 from candleviewer.audit import lane_journal as lj
 from candleviewer.audit import writer as aw
-from candleviewer.audit.actions import UnknownAuditAction
-from candleviewer.audit.models import AuditEmission, Severity
+from candleviewer.audit.actions import LANE_ACTIONS, UnknownAuditAction
+from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.observability.context import spawn
 
 Unit = lj.Handover | lj.Run
@@ -62,8 +68,14 @@ class AuditLane:
 
     async def start(self) -> lj.LaneScan:
         """Boot: the scan; unless it holds, `audit.lane_started` when frame 1 is due and
-        `audit.lane_resumed` with the head its frame follows, past any cap; then the drain."""
-        result = await self.journal.open(self._new_lane)
+        `audit.lane_resumed` with the head its frame follows, past any cap; then the drain. A
+        failed `open()` (a file longer than any the lane writes, a symlinked file) holds the lane,
+        then raises: the caller boots on, and every append is refused with `held` (S2b-2a)."""
+        try:
+            result = await self.journal.open(self._new_lane)
+        except (lj.LaneError, OSError):
+            self.journal.hold()
+            raise
         journal, self._lane = self.journal, result.lane
         self._units.extend(result.units)
         new = lj.LaneMarker(journal.lane, (1, 0), 1, lj.ZERO_MAC, True)
@@ -240,6 +252,145 @@ class AuditLane:
             _log().critical("audit lane drain died", error=type(error).__name__)
             if self.journal.refusal is None:  # `_io()` has stopped it already: one log line
                 self.journal.stop(error)
+
+
+#: Decision 9: held exclusively by the one running cv-api; S2c's release command takes it too.
+LOCK_FILE = "lane.lock"
+
+
+class LaneBootRefused(lj.LaneError):
+    """Decision 9 refuses boot: the lane directory is not anchored, or `lane.lock` is held."""
+
+
+class LaneLockUnavailable(lj.LaneError):
+    """`lane.lock` cannot be taken for another reason (`EACCES`, …): the lane holds (READY-21)."""
+
+
+def lane_dir(audit_wal_path: str) -> Path:
+    """`<dir of CV_AUDIT_WAL_PATH>/lane/` (decision 9), as cv-api resolves the WAL path."""
+    return Path(audit_wal_path).parent / "lane"
+
+
+def lock_lane(audit_wal_path: str) -> FileIO:
+    """Take `lane.lock` exclusively without waiting; closing the file drops it. The WAL path must
+    be absolute and free of `..`, and neither the audit directory, `lane/` nor the lock may be a
+    symlink (the `anchored_journal_dir` rule; the lock by `O_NOFOLLOW`); `lane/` is made `0700`."""
+    raw, directory = Path(audit_wal_path), lane_dir(audit_wal_path)
+    if not raw.is_absolute() or ".." in raw.parts:
+        raise LaneBootRefused("CV_AUDIT_WAL_PATH must be absolute and free of '..'")
+    for path in (raw.parent, directory):
+        if path.is_symlink():
+            raise LaneBootRefused(f"audit lane path {path.name!r} must not be a symlink")
+    try:
+        if lj._mkdir(directory):
+            lj.LaneFiles(directory).sync_dir(raw.parent)
+        fd = lj._open(directory / LOCK_FILE, os.O_RDONLY | os.O_CREAT)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException:
+            os.close(fd)
+            raise
+    except BlockingIOError as exc:
+        raise LaneBootRefused("lane.lock is held by another process") from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise LaneBootRefused("audit lane path must not be a symlink") from exc
+        _log().critical("audit lane lock unavailable; the lane holds", error=type(exc).__name__)
+        raise LaneLockUnavailable(type(exc).__name__) from exc
+    return FileIO(fd, "r")
+
+
+async def boot_lane(
+    audit_wal_path: str, keys: tuple[bytes, bytes | None], writer: aw.AuditWriter, held: bool
+) -> AuditLane:
+    """The lane at boot, after the writer and the break-glass fold-in. Without `lane.lock`
+    (`held`) it holds unopened; a failed `start()` leaves it held or stopped (S2a2b). Either way
+    it refuses every append, the façade falls back, and boot goes on."""
+    journal = lj.LaneJournal(lj.LaneFiles(lane_dir(audit_wal_path)), lj.LaneKeys(*keys))
+    lane = AuditLane(journal, writer)
+    if held:
+        journal.hold()
+    else:
+        with contextlib.suppress(lj.LaneError, OSError):
+            await lane.start()
+    return lane
+
+
+class LaneFacade:
+    """`AuditService.lane` (decisions 1, 2 and 12): `emit()`'s keywords and `deadline_s`, the
+    caller's deadline, shared by the lane's wait and the fallback. `build()` validates and redacts
+    once. With `journal_first` on, a record `LANE_ACTIONS` admits goes to the lane first; a refusal
+    or no answer within `wait_s` hands the same record to `ingest()`, which takes all else. One
+    rule: `audit.lane_*` comes from the lane only, a `LaneNotAdmitted` never reaches the sink, and
+    a lane that cannot boot holds, so an action fails closed (C-2.9) only if `ingest()` refuses too:
+    the caller gets what it raises, or `AuditUnavailable` past the deadline."""
+
+    def __init__(
+        self,
+        writer: aw.AuditWriter,
+        lane: AuditLane | None,
+        journal_first: Callable[[], bool],
+        *,
+        wait_s: float = lj.APPEND_WAIT_S,
+    ) -> None:
+        self._writer, self._lane, self._journal_first = writer, lane, journal_first
+        self._wait_s = wait_s
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: str | uuid.UUID | None = None,
+        actor_ip: str | None = None,
+        session_id: str | uuid.UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        object_label: str | None = None,
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        severity: Severity = Severity.INFO,
+        reason: str | None = None,
+        before_state: dict[str, Any] | None = None,
+        after_state: dict[str, Any] | None = None,
+        request_id: str | uuid.UUID | None = None,
+        env: ExchangeEnv | None = None,
+        deadline_s: float | None = None,
+    ) -> None:
+        if action.startswith("audit.lane_"):
+            raise lj.LaneNotAdmitted("audit.lane_* records come from the audit lane only")
+        record = self._writer.build(
+            action, actor_label=actor_label, actor_user_id=actor_user_id, actor_ip=actor_ip,
+            session_id=session_id, object_kind=object_kind, object_id=object_id,
+            object_label=object_label, outcome=outcome, severity=severity, reason=reason,
+            before_state=before_state, after_state=after_state, request_id=request_id, env=env,
+        )  # fmt: skip
+        try:
+            async with asyncio.timeout(deadline_s):
+                if not await self._journaled(record):
+                    await self._writer.ingest(record)
+        except TimeoutError:
+            raise aw.AuditUnavailable("the audit record missed its caller's deadline") from None
+
+    async def _journaled(self, record: AuditEmission) -> bool:
+        """Decision 1: True once the lane holds the record; False sends it to `ingest()`."""
+        row = LANE_ACTIONS.get(record.action)
+        if self._lane is None or row is None or record.outcome not in row[1]:
+            return False
+        if not self._journal_first():  # a cached read: never the caller's deadline (READY-21)
+            return False
+        try:
+            async with asyncio.timeout(self._wait_s):
+                await self._lane.append(record)
+        except (lj.LaneRefused, TimeoutError) as exc:
+            refusal = exc.reason if isinstance(exc, lj.LaneRefused) else "timeout"
+            _log().warning("audit.lane.fallback", reason=refusal, action=record.action)
+            return False
+        return True
+
+    async def flush(self, timeout_s: float) -> None:
+        """§15.6 Ingest step 3, for a test that reads rows after a lane write; no lane, no wait."""
+        if self._lane is not None:
+            await self._lane.flush(timeout_s)
 
 
 def _log() -> Any:

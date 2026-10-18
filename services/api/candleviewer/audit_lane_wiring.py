@@ -3,11 +3,10 @@
 `audit` neither imports `secrets` nor reads a secret file (C-3.2), so the composition root reads
 the lane key, as it reads the CSRF key (`app.build_csrf_codec`), from the file that
 `CV_AUDIT_LANE_KEY_FILE` names, and hands the bytes to `AuditService`. The file rules are
-`24-internal-schemas.md` §15.6's; the refusals are ADR-0037's S2b row, except the two that need
+`24-internal-schemas.md` §15.6's; the refusals are ADR-0037's S2b-1 row, except the two that need
 the lane's own directory (an unanchored one, `lane.lock` held), which the code opening the lane
-owns. Nothing calls `load_lane_keys` yet: the slice that wires the lane into `AuditService` runs
-it at boot, so no boot changes here. The `kid` is safe to log; the key never is, so no message,
-log line or `repr` here carries it.
+owns. `AuditService.start()` runs `lane_key_loader` once at boot, off the loop (S2b-2a). The `kid`
+is safe to log; the key never is, so no message, log line or `repr` here carries it.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import hmac
 import os
 import re
 import stat
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -81,6 +80,17 @@ def load_lane_keys(
     return material
 
 
+def lane_key_loader(settings: Settings) -> Callable[[], tuple[bytes, bytes | None] | None]:
+    """`load_lane_keys` for `AuditService.start()`, which may not import this module: the keys as
+    bytes, or None."""
+
+    def load() -> tuple[bytes, bytes | None] | None:
+        material = load_lane_keys(settings)
+        return None if material is None else (material.current, material.previous)
+
+    return load
+
+
 def refuse_environment_key(environ: Mapping[str, str]) -> None:
     for name in environ:
         if name.upper() in ENVIRONMENT_FORMS:
@@ -123,6 +133,7 @@ def read_key_file(variable: str, value: str) -> bytes:
 
 
 def _open_rule(exc: OSError) -> str:
+    """The refusal's rule for an `OSError` from the key file's open, `fstat` or read."""
     if exc.errno == errno.ENOENT:
         return "names no file"
     if exc.errno == errno.ELOOP:

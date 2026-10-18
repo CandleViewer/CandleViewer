@@ -3,14 +3,18 @@
 Wires `AuditWriter` (the WAL-backed single-writer append path) and
 `AuditQueryService` (read/verify/export) when an `AuditRepository` is
 injected; without one (fake backend, CI/dev default) it stays the no-op
-scaffold so `create_app()`/tests keep working without a database.
+scaffold so `create_app()`/tests keep working without a database. With a lane key loader it
+also runs the journal-first audit lane and its façade, `lane` (ADR-0037, #3009).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from candleviewer.audit.journal import fold_in, hold_run_lock, journal_dir
+from candleviewer.audit.lane import AuditLane, LaneFacade, LaneLockUnavailable, boot_lane, lock_lane
+from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
@@ -20,6 +24,14 @@ if TYPE_CHECKING:
     from candleviewer.audit.query import AuditQueryService
     from candleviewer.audit.repository import AuditRepository
     from candleviewer.audit.writer import AuditWriter
+
+#: The composition root's lane key loader (ADR-0037 decision 6): the current and the previous key,
+#: or None while no real backend is wired. `start()` runs it once, off the loop.
+LaneKeyLoader = Callable[[], tuple[bytes, bytes | None] | None]
+
+
+def _flag_off() -> bool:
+    return False
 
 
 class AuditService:
@@ -32,13 +44,22 @@ class AuditService:
     being unwired is an expected, non-fatal state on the fake backend.
     """
 
-    def __init__(self, repository: AuditRepository | None = None) -> None:
+    def __init__(
+        self, repository: AuditRepository | None = None, *, lane_keys: LaneKeyLoader | None = None
+    ) -> None:
         self._started = False
         self._repository = repository
         self._writer: AuditWriter | None = None
         self._query: AuditQueryService | None = None
         #: E09-S11: the break-glass run lock, held shared while a real writer may run.
         self._run_lock: FileIO | None = None
+        #: ADR-0037: no lane without a key loader (unit tests) or a real backend.
+        self._lane_keys = lane_keys
+        self._journal_first: Callable[[], bool] = _flag_off
+        self.lane_lock_failures = 0  # READY-21: a `lane.lock` that held the lane (S4a's metric)
+        self._lane: AuditLane | None = None
+        self._lane_lock: FileIO | None = None
+        self._facade: LaneFacade | None = None
 
     @property
     def is_active(self) -> bool:
@@ -56,6 +77,18 @@ class AuditService:
             raise RuntimeError("AuditService.start() has not wired a real backend")
         return self._query
 
+    @property
+    def lane(self) -> LaneFacade:
+        """The journal-first façade (ADR-0037 decisions 1 and 2), once a real backend runs."""
+        if self._facade is None:
+            raise RuntimeError("AuditService.start() has not wired a real backend")
+        return self._facade
+
+    def use_lane_flag(self, journal_first: Callable[[], bool]) -> None:
+        """Decision 12: the composition root's cached read of `audit.lane_journal_first`, with no
+        principal (`audit` may not import `admin`); unwired (unit tests), it reads off."""
+        self._journal_first = journal_first
+
     async def start(self, ctx: AppContext) -> None:
         """Start the module. Wires `AuditWriter`/`AuditQueryService` only when
         a concrete `AuditRepository` was injected by the composition root
@@ -65,13 +98,28 @@ class AuditService:
 
         E09-S11 (#2119): with a real backend it first takes the break-glass run lock shared,
         held until `stop()`, and refuses to boot (`RunLockHeld`) while the offline CLI holds
-        it; once the writer runs it folds in the CLI's journaled records (`fold_in`)."""
+        it; once the writer runs it folds in the CLI's journaled records (`fold_in`).
+
+        ADR-0037 (#3009): it first runs the lane key loader off the loop; its refusals refuse boot,
+        the environment form on every backend. With keys and a real backend it takes `lane.lock`
+        before the writer, which an unanchored directory or another holder refuses (any other lock
+        error holds the lane), and boots the lane after the fold-in (`boot_lane`)."""
         if self._writer is not None:
             # Two writers on one WAL file would truncate each other's in-flight frames.
             raise RuntimeError("AuditService.start(): a writer is already running; stop() first")
+        keys = None if self._lane_keys is None else await run_in_thread(self._lane_keys)
         if self._repository is not None:
             lock_dir = journal_dir(ctx.settings.audit_wal_path)
             self._run_lock = hold_run_lock(lock_dir, exclusive=False)
+            if keys is not None:
+                try:
+                    self._lane_lock = lock_lane(ctx.settings.audit_wal_path)
+                except LaneLockUnavailable:
+                    self.lane_lock_failures += 1
+                except BaseException:
+                    self._run_lock.close()
+                    self._run_lock = None
+                    raise
             from candleviewer.audit.query import AuditQueryService
             from candleviewer.audit.writer import AuditWriter
 
@@ -83,9 +131,18 @@ class AuditService:
         self._started = True
         if self._writer is not None:
             await fold_in(self._writer, journal_dir(ctx.settings.audit_wal_path))
+            if keys is not None:
+                held = self._lane_lock is None
+                self._lane = await boot_lane(ctx.settings.audit_wal_path, keys, self._writer, held)
+            self._facade = LaneFacade(self._writer, self._lane, lambda: self._journal_first())
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds. No-op scaffold."""
+        """Stop the module within `grace_s` seconds: the lane first (its drain hands records to
+        the writer), then the writer, then the locks."""
+        self._facade = None
+        if self._lane is not None:
+            await self._lane.close()
+            self._lane = None
         if self._writer is not None:
             await self._writer.stop(grace_s)
             self._writer = None
@@ -93,6 +150,9 @@ class AuditService:
             self._query.close()
         self._query = None
         self._started = False
+        if self._lane_lock is not None:  # after the writer: a second cv-api may boot from here on
+            self._lane_lock.close()
+            self._lane_lock = None
         if self._run_lock is not None:  # after the writer: the CLI may run from here on
             self._run_lock.close()
             self._run_lock = None

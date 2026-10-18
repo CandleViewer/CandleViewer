@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import ValidationError
 
 import candleviewer.app as app_mod
+from candleviewer.audit.service import AuditService
+from candleviewer.audit_lane_wiring import LaneKeyRefused
 from candleviewer.settings import Environment, Settings
 
 
@@ -75,3 +79,29 @@ def test_the_verify_entry_cap_is_a_bounded_setting(value: int) -> None:
     assert Settings().audit_verify_max_entry_bytes == 4 * 1024 * 1024
     with pytest.raises(ValidationError):
         Settings(audit_verify_max_entry_bytes=value)  # below 64 KiB, or above the 8 MiB budget
+
+
+@pytest.mark.parametrize("backend", ["fake", "real"])
+async def test_the_audit_module_runs_the_lane_key_loader_first_on_either_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: Literal["fake", "real"]
+) -> None:
+    """ADR-0037 decision 6: `start()` runs S2b-1's loader before anything else, so the environment
+    form refuses boot on either backend and no lock or writer is taken."""
+    monkeypatch.setenv("CV_AUDIT_LANE_KEY_HEX", "")
+    settings = Settings(storage_backend=backend, audit_wal_path=str(tmp_path / "a.wal"))
+    svc = app_mod._build_audit(settings)
+    with pytest.raises(LaneKeyRefused, match=r"^CV_AUDIT_LANE_KEY_HEX is refused"):
+        await svc.start(cast(Any, SimpleNamespace(settings=settings)))
+    assert not svc.is_active and not (tmp_path / "breakglass").exists()
+
+
+def test_create_app_hands_the_audit_module_the_lane_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0037 decision 12: the composition root hands over the flag runtime's cached read."""
+    reads: list[Callable[[], bool]] = []
+    monkeypatch.setattr(AuditService, "use_lane_flag", lambda _svc, read: reads.append(read))
+    app = app_mod.create_app(
+        Settings(metrics_enabled=False, bars_state_root=str(tmp_path / "bars"))
+    )
+    assert reads == [app.state.feature_flags.lane_flag]

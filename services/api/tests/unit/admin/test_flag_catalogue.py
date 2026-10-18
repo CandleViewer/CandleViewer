@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from candleviewer.admin.flags import default_registry
+from candleviewer.admin.flags.registry import Category
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
 #: 10.7 as `(key, kind, default, is_killswitch, visibility)`. `engine.fallback_lightweight_charts`
@@ -28,6 +29,7 @@ _SECTION_10_7 = {
     ("killswitch.order_entry", _B, False, True, _ALL),
     ("maintenance.mode", _B, False, True, _ALL),
     ("maintenance.keep_recorder", _B, True, False, _OWN),
+    ("audit.lane_journal_first", _B, False, False, _OWN),
 }
 
 
@@ -46,6 +48,17 @@ def test_every_flag_fails_closed_to_its_default_but_two_engaged_switches() -> No
     assert fail_closed == {k: s.default for k, s in r.items()} | engaged
     assert all(s.overridable != (s.is_killswitch or s.requires_evidence) for s in r.values())
     assert [k for k, s in r.items() if s.requires_evidence] == ["trading.live_enabled"]
+
+
+def test_the_audit_lane_flag_is_adr_0037_decision_12s() -> None:
+    """A rollout flag, off while the store cannot be read, owned and with its removal ticket."""
+    spec = default_registry()["audit.lane_journal_first"]
+    assert (spec.gates, spec.restrictive, spec.overridable) == (
+        Category.FEATURE_ROLLOUT,
+        False,
+        True,
+    )
+    assert "owner @basiltt" in spec.description and spec.description.endswith("removal #3009")
 
 
 _ROLES = ("owner", "manager", "viewer")

@@ -21,6 +21,8 @@ _OPS, _KILL = Category.OPERATIONS, Category.KILL_SWITCH
 _ALL, _OWNER = Visibility.ALL_ROLES, Visibility.OWNER_ONLY
 
 MAINTENANCE_KEEP_RECORDER = "maintenance.keep_recorder"
+#: ADR-0037 decision 12: the composition root reads it for `AuditService` with no principal.
+AUDIT_LANE_JOURNAL_FIRST = "audit.lane_journal_first"
 
 FLAGS: tuple[FlagSpec, ...] = (
     FlagSpec(
@@ -84,6 +86,16 @@ FLAGS: tuple[FlagSpec, ...] = (
         _OPS,
         True,
         _OWNER,
+    ),
+    FlagSpec(
+        AUDIT_LANE_JOURNAL_FIRST,
+        _B,
+        "Lane audit records go to the journal-first audit lane before the sink (ADR-0037); "
+        "owner @basiltt, removal #3009",
+        _ROLLOUT,
+        False,
+        _OWNER,
+        restrictive=False,
     ),
 )
 

@@ -147,6 +147,9 @@ def _write_partition(cold_root: Path) -> Path:
 
 
 def _settings(dsn: str, tmp: Path) -> Settings:
+    key = tmp.resolve() / "lane.key"  # ADR-0037: the lane key, outside the audit directory
+    key.write_text(os.urandom(32).hex(), encoding="ascii")
+    key.chmod(0o400)
     return Settings(
         environment=Environment.TESTNET,
         storage_backend="real",
@@ -155,7 +158,8 @@ def _settings(dsn: str, tmp: Path) -> Settings:
         auth_recovery_hmac_key_hex=SecretStr("44" * 32),
         auth_csrf_key_hex=SecretStr("55" * 32),
         auth_pepper=SecretStr("drill-pepper"),
-        audit_wal_path=str(tmp / "restored-audit.wal"),
+        audit_wal_path=str(tmp.resolve() / "app" / "restored-audit.wal"),
+        CV_AUDIT_LANE_KEY_FILE=str(key),
     )
 
 
@@ -168,6 +172,7 @@ async def _start_app_and_verify(dsn: str, tmp: Path) -> tuple[float, int, bool, 
     ctx = app.state.app_context
     await ctx.audit.start(ctx)
     try:
+        await ctx.audit.lane.flush(10.0)  # the lane's two boot rows are in the chain (ADR-0037)
         transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
         async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
             status = (await c.get("/readyz")).status_code
@@ -276,4 +281,4 @@ async def test_sr093_restore_drill_pg_and_parquet_restored_app_ready(
     assert pg_rows == _AUDIT_ROWS
     assert restored_sha == part_sha
     assert readyz == 200
-    assert verified and checked == _AUDIT_ROWS
+    assert verified and checked == _AUDIT_ROWS + 2  # and `audit.lane_started`, `_resumed`

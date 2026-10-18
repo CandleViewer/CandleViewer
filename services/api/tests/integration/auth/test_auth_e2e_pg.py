@@ -89,7 +89,16 @@ async def _seed_owner_with_totp(dsn: str, username: str) -> tuple[str, bytes]:
 
 
 @pytest.fixture
-async def client(pg_dsn: str, tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+def lane_key(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """ADR-0037: the audit lane key file, outside the audit directory (`tmp_path`)."""
+    key = tmp_path_factory.mktemp("lane-key").resolve() / "key"
+    key.write_text(os.urandom(32).hex(), encoding="ascii")
+    key.chmod(0o400)
+    return str(key)
+
+
+@pytest.fixture
+async def client(pg_dsn: str, tmp_path: Path, lane_key: str) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(
         environment=Environment.TESTNET,
         storage_backend="real",
@@ -99,6 +108,7 @@ async def client(pg_dsn: str, tmp_path: Path) -> AsyncIterator[httpx.AsyncClient
         auth_csrf_key_hex=SecretStr("33" * 32),
         auth_pepper=SecretStr(_PEPPER),
         audit_wal_path=str(tmp_path / "audit.wal"),
+        CV_AUDIT_LANE_KEY_FILE=lane_key,
     )
     app = create_app(settings, auth_clock=lambda: _NOW)
     ctx = app.state.app_context
