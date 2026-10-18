@@ -25,6 +25,7 @@ from candleviewer.recorder.writer import (
     trade_records,
 )
 from candleviewer.replay import ReplayRequest, ReplaySource, ReplayTiers
+from candleviewer.replay.merge import SEQUENCE_DOMAIN, STREAM_ORDINAL
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.recorded_reader import QuestDbRecordedReader
@@ -163,7 +164,13 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
             replayed = [item async for item in source]
 
         assert len(replayed) == sum(expected_rows.values())
-        order = [(e.ts_us, e.seq) for e in replayed if isinstance(e, RecordedEvent)]
+        # The merge's order for one symbol (24 Sec.13.7): `seq` compares only inside a sequence
+        # domain, and a trade, a ticker and a liquidation share an instant here.
+        order = [
+            (e.ts_us, SEQUENCE_DOMAIN[e.stream], e.seq, STREAM_ORDINAL[e.stream], e.tiebreak)
+            for e in replayed
+            if isinstance(e, RecordedEvent)
+        ]
         assert order == sorted(order)
     finally:
         await conn.close()
