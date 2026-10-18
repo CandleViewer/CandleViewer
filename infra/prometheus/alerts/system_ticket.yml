@@ -213,3 +213,16 @@ groups:
         annotations:
           summary: "A grant change was not pushed to the user's live sockets in time"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-usergrantspushfailed"
+      - alert: UserDisableFailed
+        # #965 R7: a disable failed in its store (`result` `error`, no refusal): no step ran, though
+        # a commit that raised may have landed. Held as the two above; their guard covers it too.
+        expr: >-
+          sum by (env) (increase(cv_user_lifecycle_total{action="disable",result="error"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: user_lifecycle
+        annotations:
+          summary: "A user disable failed in its store; none of its steps ran"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-userdisablefailed"

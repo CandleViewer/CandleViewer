@@ -13,6 +13,8 @@ from typing import Any
 import yaml
 
 PROM = Path(__file__).resolve().parents[1] / "prometheus"
+# #965 R7: a disable whose store raised (`result` `error`; a refusal is another result).
+_ERRORED = 'cv_user_lifecycle_total{action="disable",env="live",result="error"}'
 
 # alert -> (series, firing values, healthy values, eval_time, extra labels)
 SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
@@ -151,6 +153,7 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {"env": "live"},
     ),
+    "UserDisableFailed": (_ERRORED, "0+0x10 1+0x10", "0+0x20", "15m", {"env": "live"}),
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
@@ -174,7 +177,12 @@ def _steps(step: str, outcome: str) -> str:
 # One failure at 6 min, held and resolved as _ONE_STRAY is; a flat count is an old failure.
 _RISE, _FLAT = "0+0x5 1+0x700", "3+0x700"
 _SWEEP_FAILED = {_steps("session_sweep", "failed"): _RISE}
-_PUSH_TIMEOUT = {_steps("grants_push", "timeout"): _RISE}
+# A step that passed, an old failure and a failed grants push (the next ticket's).
+_NO_STEP_FAILED = {
+    _steps("session_sweep", "ok"): _RISE,
+    _steps("rule_disarm", "failed"): _FLAT,
+    _steps("grants_push", "failed"): _RISE,
+}
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: no
@@ -200,29 +208,19 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("30m", False, {_STRAY: "3+0x700"}),
     ),
     # #965 R7: a failed cascade step fires on the first evaluation after it and is held past the
-    # mute. A step that passed, an old failure and a failed grants push (the ticket below) never
-    # fire it.
+    # mute; nothing else fires it.
     "UserLifecycleStepFailed": (
         ("6m", True, _SWEEP_FAILED),
         ("9h49m", True, _SWEEP_FAILED),
         ("9h52m", False, _SWEEP_FAILED),
-        (
-            "6m",
-            False,
-            {
-                _steps("session_sweep", "ok"): _RISE,
-                _steps("rule_disarm", "failed"): _FLAT,
-                _steps("grants_push", "failed"): _RISE,
-            },
-        ),
+        ("6m", False, _NO_STEP_FAILED),
     ),
-    # #2648 R7: a push that timed out or failed fires it, held the same way. A push that ended
+    # #2648 R7: a push that timed out or failed fires it; its hold is the ticket above's (the same
+    # `for` and `keep_firing_for`, pinned in test_user_lifecycle_alert_rules.py). A push that ended
     # `pushed` and a failed cascade step (the ticket above) never fire it.
     "UserGrantsPushFailed": (
-        ("6m", True, _PUSH_TIMEOUT),
+        ("6m", True, {_steps("grants_push", "timeout"): _RISE}),
         ("6m", True, {_steps("grants_push", "failed"): _RISE}),
-        ("9h49m", True, _PUSH_TIMEOUT),
-        ("9h52m", False, _PUSH_TIMEOUT),
         ("6m", False, {_steps("grants_push", "pushed"): _RISE, **_SWEEP_FAILED}),
     ),
 }

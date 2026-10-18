@@ -473,18 +473,12 @@ def test_user_lifecycle_series_are_bound_at_import_and_served_with_env() -> None
         text = generate_latest(m.registry).decode()
     finally:
         collector.close()
-    for action, results in lm.ACTION_RESULTS.items():
-        for result in results:
-            assert (
-                f'cv_user_lifecycle_total{{action="{action}",env="demo",result="{result}"}} '
-                in text
-            )
-    for step, outcomes in lm.STEP_OUTCOMES.items():
-        for outcome in outcomes:
-            series = (
-                f'cv_user_lifecycle_steps_total{{env="demo",outcome="{outcome}",step="{step}"}}'
-            )
-            assert f"{series} " in text
+    for k, values in lm.ACTION_RESULTS.items():
+        for v in values:
+            assert f'cv_user_lifecycle_total{{action="{k}",env="demo",result="{v}"}} ' in text
+    for k, values in lm.STEP_OUTCOMES.items():
+        for v in values:
+            assert f'cv_user_lifecycle_steps_total{{env="demo",outcome="{v}",step="{k}"}} ' in text
     app = create_app(Settings(environment=Environment.DEMO))
     scraped = generate_latest(app.state.app_context.metrics).decode()
     assert all(f"# HELP {name} " in scraped for name in lm.EXPORTED_NAMES)

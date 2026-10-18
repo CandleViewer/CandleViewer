@@ -20,18 +20,18 @@ ACTION_RESULTS: Final[Mapping[str, tuple[str, ...]]] = {
         *("last_owner", "audit_unavailable", "error"),
     ),
 }
-#: `step` -> its `outcome`s. The cascade's steps after the commit (`user_disable.STEPS`): every
-#: run passed, one failed, or none ran. The closing record of a change that did not commit is
-#: written in one attempt, so it passed or failed and is never skipped. Then the grants push:
-#: done, still running when the request stopped waiting, or failed.
+#: `step` -> the `outcome`s it can count, no more (a value no call reaches is a series at 0 for
+#: good). Each step after the commit (`user_disable.STEPS`) runs on every call and passes or fails
+#: (cut off too); B16 and the invite revoke may have nothing to do. The closing record of a change
+#: that did not commit is one attempt. The grants push: done, still running when the request
+#: stopped waiting, or failed.
 STEP_OUTCOMES: Final[Mapping[str, tuple[str, ...]]] = {
-    **dict.fromkeys(
-        (
-            *("socket_close", "session_sweep", "b16_revoke", "scope_refresh", "rule_disarm"),
-            "invite_revoke",
-        ),
-        ("ok", "failed", "skipped"),
-    ),
+    "socket_close": ("ok", "failed"),  # S7: every call closes every socket of the user
+    "session_sweep": ("ok", "failed"),
+    "b16_revoke": ("ok", "failed", "skipped"),  # skipped: no session revoked or swept
+    "scope_refresh": ("ok", "failed"),
+    "rule_disarm": ("ok", "failed"),
+    "invite_revoke": ("ok", "failed", "skipped"),  # skipped: the user was not invited
     "closing_record": ("ok", "failed"),
     "grants_push": ("pushed", "timeout", "failed"),
 }

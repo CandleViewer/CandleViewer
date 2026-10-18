@@ -22,7 +22,6 @@ from candleviewer.admin import errors
 from candleviewer.admin.lifecycle_metrics import (
     ACTION_RESULTS,
     STEP_OUTCOMES,
-    export_user_lifecycle_metrics,
     user_lifecycle_steps_total,
     user_lifecycle_total,
 )
@@ -37,7 +36,6 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
-from candleviewer.observability.metrics import CollectorRegistry, generate_latest
 from candleviewer.rules.manager import RuleError
 from candleviewer.rules.scope_state import SnapshotScopeState
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
@@ -780,6 +778,10 @@ def _audit_down() -> _World:  # a fresh list each call: `emit` pops the failures
     return _World(fail={"users.disable": [AuditUnavailable("wal")]})
 
 
+def _store_error() -> _World:  # the store raises at its deferred check: no refusal
+    return _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001"))
+
+
 #: (result, world, actor, error): one call per result of the closed set, in its order.
 _RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
     ("disabled", _World, _OWNER, None),
@@ -790,12 +792,7 @@ _RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
     ("positions_unknown", lambda: _World(positions=None), _OWNER, errors.PositionsUnknownError),
     ("last_owner", lambda: _World(_Rel(roles=("owner",), owners=1)), _OWNER, errors.LastOwnerError),
     ("audit_unavailable", _audit_down, _OWNER, _AUDIT_DOWN),
-    (
-        "error",
-        lambda: _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001")),
-        _OWNER,
-        IntegrityError,
-    ),
+    ("error", _store_error, _OWNER, IntegrityError),
 ]
 
 
@@ -819,8 +816,8 @@ async def test_each_call_is_counted_once_under_its_result(
 
 
 async def test_log_and_metrics_per_step() -> None:
-    """#965: one line and one count per step, correlated by `request_id`, the call counted, and
-    the series served with `env`."""
+    """#965: one line and one count per step, correlated by `request_id`, and the call counted
+    (served with `env`: `test_user_lifecycle_series_are_bound_at_import_and_served_with_env`)."""
     ok, disabled = {s: _steps(s, "ok") for s in _STEPS}, _calls("disabled")
     with bind_context(request_id=str(_RID)), capture_logs() as logs:
         assert await _World(_Rel(status="invited")).disable() == DisableResult(changed=True)
@@ -828,13 +825,6 @@ async def test_log_and_metrics_per_step() -> None:
     assert lines == [(s, "ok", str(_RID)) for s in _STEPS]
     assert [_steps(s, "ok") - ok[s] for s in _STEPS] == [1] * len(_STEPS)
     assert _calls("disabled") == disabled + 1
-    registry = CollectorRegistry()
-    collector = export_user_lifecycle_metrics(registry, env="demo")
-    try:
-        text = generate_latest(registry).decode()
-    finally:
-        collector.close()
-    assert 'cv_user_lifecycle_total{action="disable",env="demo",result="disabled"} ' in text
 
 
 async def test_post_commit_failure_alerts() -> None:
@@ -878,9 +868,16 @@ async def test_cancelled_steps_are_counted_failed() -> None:
 _CLOSINGS = [([TimeoutError()], "ok"), ([TimeoutError(), AuditUnavailable("down")], "failed")]
 
 
-def test_the_closing_record_counts_only_its_two_outcomes() -> None:
-    """`_close` writes the record in one attempt, so it is `ok` or `failed`, never `skipped`: the
-    cases below are every outcome its series declares."""
+async def test_every_declared_step_outcome_is_reachable() -> None:
+    """#965 R7: some call counts each outcome declared for a cascade step, so none is a series at
+    0 for good (a step cut off is failed; only B16 and the invite revoke can have nothing to do).
+    `_CLOSINGS` reach the closing record's two; `test_account_access_service` the push's three."""
+    pairs = {(step, o) for step in _STEPS for o in STEP_OUTCOMES[step]}
+    before = {pair: _steps(*pair) for pair in pairs}
+    await _World(_Rel(status="invited")).disable()  # every step ok
+    await _World(_Rel(status="invited"), publish=_hang, deadline_s=0).disable()  # all cut off
+    await _World(_Rel(sessions=())).disable()  # no session to record, no invite to revoke
+    assert {pair for pair in pairs if _steps(*pair) > before[pair]} == pairs
     assert [outcome for _, outcome in _CLOSINGS] == list(STEP_OUTCOMES["closing_record"])
 
 

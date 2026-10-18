@@ -1,8 +1,8 @@
-"""#965 R7 and #2648 R7: the `UserLifecycleStepFailed` and `UserGrantsPushFailed` tickets and the
-`absent()` guard of their series. Promtool (`infra/prometheus/tests/system_alerts.test.yml`, run by
-CI) proves when each fires and how long it is held; these pins tie the rules to the closed sets of
-`admin/lifecycle_metrics.py` and to the route, runbook, drill row and catalogue. No PromQL runs.
-"""
+"""#965 R7 and #2648 R7: the `UserLifecycleStepFailed`, `UserGrantsPushFailed` and
+`UserDisableFailed` tickets and the `absent()` guard of their series. Promtool (CI runs
+`infra/prometheus/tests/system_alerts.test.yml`) proves when each fires and how long it is held;
+these pins tie the rules to the closed sets of `admin/lifecycle_metrics.py` and to the route,
+runbook, drill row and catalogue. No PromQL runs."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
-from candleviewer.admin.lifecycle_metrics import STEP_OUTCOMES
+from candleviewer.admin.lifecycle_metrics import ACTION_RESULTS, EXPORTED_NAMES, STEP_OUTCOMES
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from tests.unit.observability.test_auth_backstop_alert_rules import (
     _quiet_hours_minutes,
@@ -33,7 +33,11 @@ ADMITS = {
     "UserLifecycleStepFailed": {(step, "failed") for step in STEP_OUTCOMES if step != _PUSH},
     "UserGrantsPushFailed": {(_PUSH, "failed"), (_PUSH, "timeout")},
 }
-LOG_LINE = {"UserLifecycleStepFailed": "users.disable.step", "UserGrantsPushFailed": "access push"}
+_CALLS, _FAILED = "cv_user_lifecycle_total", "UserDisableFailed"  # reads the calls' `error`
+TICKETS = (*ADMITS, _FAILED)
+LOG_LINE = dict(
+    zip(TICKETS, ("users.disable.step", "access push", "disable store unavailable"), strict=True)
+)
 _SELECTOR = re.compile(rf"sum by \(env\) \(increase\({_SERIES}\{{(.*)\}}\[15m\]\)\) > 0")
 _MATCHER = re.compile(r'(step|outcome)(=~|!=|=)"([^"]*)"')
 #: The runbook's read for a night event once a Prometheus restart has dropped the hold (element 7).
@@ -79,21 +83,21 @@ def test_the_runbooks_night_event_read_admits_what_the_ticket_reads(name: str) -
     assert _pairs(night.replace("\\|", "|")) == ADMITS[name]
 
 
-@pytest.mark.parametrize("name", ADMITS)
+@pytest.mark.parametrize("name", TICKETS)
 def test_the_ticket_fires_at_once_is_held_past_the_mute_and_routes_as_a_ticket(name: str) -> None:
     """The committed change stands and fails closed (O5; the deny-all load), so a ticket of its
     own component; Alertmanager never sends one that fires and resolves inside the quiet-hours
-    mute, so each is held past it, as the WS any-event tickets are."""
-    rule = _rule(name)
+    mute, so each is held past it as the WS any-event tickets are, by the step ticket's hold."""
+    rule, proven = _rule(name), _rule("UserLifecycleStepFailed")  # promtool runs its hold cases
     hold = re.fullmatch(r"(\d+)h(\d+)m", rule["keep_firing_for"])
-    assert rule["for"] == "0m"
+    assert (rule["for"], rule["keep_firing_for"]) == ("0m", proven["keep_firing_for"])
     assert hold and int(hold[1]) * 60 + int(hold[2]) > _quiet_hours_minutes() >= 9 * 60
     assert rule["labels"] == {"severity": "ticket", "component": "user_lifecycle"}
     route = _route_for({**rule["labels"], "alertname": name, "env": "live"})
     assert route["receiver"] == "ticket" and route["mute_time_intervals"] == ["quiet_hours"]
 
 
-@pytest.mark.parametrize("name", ADMITS)
+@pytest.mark.parametrize("name", TICKETS)
 def test_the_ticket_links_a_runbook_entry_that_says_it_is_held_and_names_the_log_line(
     name: str,
 ) -> None:
@@ -105,10 +109,19 @@ def test_the_ticket_links_a_runbook_entry_that_says_it_is_held_and_names_the_log
     assert "Ticket" in section and "keep_firing_for" in section and LOG_LINE[name] in section
 
 
+def test_the_disable_ticket_reads_the_error_result_alone() -> None:
+    """A store failure, never a refusal; it may have committed with no step run (element 7 too)."""
+    read = f'increase({_CALLS}{{action="disable",result="error"}}[15m])'
+    assert "error" in ACTION_RESULTS["disable"]
+    assert _rule(_FAILED)["expr"] == f"sum by (env) ({read}) > 0"
+    assert read.replace("[15m]", "[10h]") in _runbook_section(_rule(_FAILED))
+
+
 def test_the_series_has_an_absent_guard_that_is_a_ticket() -> None:
     """Every value is bound at import, so the guard stays quiet on a healthy idle system and
-    fires only when the series is unscraped."""
+    fires only when the series is unscraped; one collector serves both, so it guards the calls."""
     guard = _rule(_GUARD)
+    assert EXPORTED_NAMES == {_SERIES, _CALLS}
     assert (guard["expr"], guard["for"]) == (f"absent({_SERIES})", "15m")
     assert guard["labels"]["severity"] == "ticket"
 
@@ -116,13 +129,15 @@ def test_the_series_has_an_absent_guard_that_is_a_ticket() -> None:
 def test_promtool_has_a_firing_and_a_silent_case_for_each_ticket() -> None:
     doc = yaml.safe_load(_PROMTOOL.read_text(encoding="utf-8"))
     checks: list[dict[str, Any]] = [c for t in doc["tests"] for c in t["alert_rule_test"]]
-    seen = {(c["alertname"], bool(c["exp_alerts"])) for c in checks if c["alertname"] in ADMITS}
-    assert seen == {(name, fires) for name in ADMITS for fires in (True, False)}
+    seen = {(c["alertname"], bool(c["exp_alerts"])) for c in checks if c["alertname"] in TICKETS}
+    assert seen == {(name, fires) for name in TICKETS for fires in (True, False)}
+    held = {(c["eval_time"], bool(c["exp_alerts"])) for c in checks if c["alertname"] == TICKETS[0]}
+    assert {("9h49m", True), ("9h52m", False)} <= held  # the hold all three share
 
 
 def test_the_drill_matrix_and_the_catalogue_name_each_ticket() -> None:
     matrix = _MATRIX.read_text(encoding="utf-8")
-    (spec,) = [s for s in CATALOGUE if s.name == _SERIES]
-    for name in ADMITS:
+    alert = {s.name: s.alert for s in CATALOGUE}
+    for name in TICKETS:
         assert re.search(rf"^\| {name} \| ticket \| 0m \|", matrix, re.M), name
-        assert name in spec.alert, name
+        assert name in alert[_CALLS if name == _FAILED else _SERIES], name

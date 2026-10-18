@@ -31,9 +31,9 @@ rules:
       #   max_series=13.
       # filter_class (E42-T02): the audit query's 10 shape classes; max_series=10.
       # operation (E15-T01): the 11 /workspaces router operations; max_series=11.
-      # outcome (E42-T04, #965, cv_user_lifecycle_steps_total): a cascade step's {ok, failed,
-      #   skipped}, the closing record's {ok, failed} or the grants push's {pushed, timeout,
-      #   failed}; with `step`, max_series=23 (`admin/lifecycle_metrics.STEP_OUTCOMES`).
+      # outcome (E42-T04, #965, cv_user_lifecycle_steps_total): {ok, failed} for each cascade
+      #   step and the closing record, `skipped` too for b16_revoke and invite_revoke, or the
+      #   grants push's {pushed, timeout, failed}; with `step`, max_series=19 (`STEP_OUTCOMES`).
       # resource (E15-T01): {workspace, layout}; max_series=2.
       # route (#2421): the matched route TEMPLATE (`scope["route"].path`), never the raw path,
       #   plus `unmatched`; bounded by the app's route table; max_series=1000 as a backstop.
@@ -41,7 +41,7 @@ rules:
       #   id_unavailable, idempotency_key_reuse}; max_series=4.
       # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
       # step (E42-T04, #965, cv_user_lifecycle_steps_total): the seven disable cascade steps,
-      #   closing record included, and grants_push (#2648); with `outcome`, max_series=23.
+      #   closing record included, and grants_push (#2648); with `outcome`, max_series=19.
       # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
       # flag (E42-T03): only feature-flag registry keys, a closed code-reviewed set (about 16);
       #   unknown keys are refused before any series is touched; max_series=32.
