@@ -17,7 +17,8 @@ scheduled run and that night's report). A red night comments on the one tracker 
 repository variable `CV_E2E_NIGHTLY_TRACKER_ISSUE` names, as `xstate-nightly.yml` does, and opens a
 P1 while it is unset; a value that is not an issue number files nothing and fails the job. The e2e
 and a11y lanes' checkouts keep no git credential (ADR-0013 rule 6) while `pnpm install` runs
-dependency lifecycle scripts."""
+dependency lifecycle scripts, and no step fetches: the a11y lane checks out the PR base's baseline
+file instead, so it works whether the repository is public or private."""
 
 from __future__ import annotations
 
@@ -56,11 +57,34 @@ FAKE_GH = """import json, os, sys
 with open(os.environ["GH_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
 """
+#: A stand-in `python` for the a11y baseline step: logs its arguments and the base file's text.
+FAKE_PYTHON = """import json, os, sys
+with open(sys.argv[4], encoding="utf-8") as base:
+    text = base.read()
+with open(os.environ["PY_LOG"], "w", encoding="utf-8") as log:
+    json.dump([sys.argv[1:], text], log)
+"""
+#: A stand-in `git` that fails, so a step that runs git at all fails under `bash -e`.
+FAKE_GIT = "import sys\nsys.exit(97)\n"
 A11Y_LANE = "_job-a11y.yml"
-#: A command that reaches the repository's remote, or GitHub, from a lane's step.
-REMOTE = re.compile(r"\bgit\s+(?:fetch|pull|push|clone|ls-remote|submodule)\b|\bgh\s")
-#: The one such step in the e2e and a11y lanes: it fetches the PR's base commit, anonymously.
-BASE_FETCH = "Baseline changes must cite finding id in PR description"
+#: A command that reaches the repository's remote, or GitHub, from a lane's step. git's global
+#: options (`-C dir`, `-c key=value`, `--no-pager`) may come before the subcommand.
+REMOTE = re.compile(
+    r"\bgit(?:\s+(?:-[cC]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+"
+    r"(?:fetch|pull|push|clone|ls-remote|submodule)\b|\bgh\s"
+)
+#: The a11y step that compares the PR's baseline file with its base's copy.
+BASELINE = "Baseline changes must cite finding id in PR description"
+#: The checkout just before it, of that copy: PR-only, sparse, and keeping no credential (#3449).
+BASE_CHECKOUT_STEP = "Check out the PR base's accessibility baseline"
+BASE_PATH = ".a11y-base"
+BASE_CHECKOUT = {
+    "ref": "${{ github.event.pull_request.base.sha }}",
+    "path": BASE_PATH,
+    "sparse-checkout": "tools/a11y",
+    "persist-credentials": False,
+}
+PR_EVENT_IF = "github.event_name == 'pull_request'"
 
 
 @functools.cache
@@ -166,31 +190,40 @@ def test_e2e_nightly_report_runs_only_the_gh_cli_for_a_red_scheduled_run() -> No
     assert 'gh issue comment "$TRACKER_ISSUE"' in step["run"]
 
 
-def _report(tmp_path: Path, tracker: str) -> tuple[int, str, list[list[str]]]:
-    """Run the report step's script as the runner does, with the variable's value in TRACKER_ISSUE
-    (empty when it is unset) and a fake `gh` first on PATH: the exit code, output and gh calls."""
+def _bash(tmp_path: Path, run: str, env: dict[str, str], fakes: dict[str, str]) -> tuple[int, str]:
+    """Run a step's script as the runner does (`bash -e`) in tmp_path, with stand-in commands
+    first on PATH and HOME in tmp_path (no stored gh auth, no network): exit code and output."""
     if not shutil.which("bash"):  # CI must run these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
-    bin_dir, log = tmp_path / "bin", tmp_path / "gh.log"
+    bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "gh").write_text(f"#!{sys.executable}\n{FAKE_GH}", encoding="utf-8")
-    (bin_dir / "gh").chmod(0o755)
-    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path)}
-    env |= {"GH_LOG": str(log), "TRACKER_ISSUE": tracker, "RESULT": "failure"}
-    env |= {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "owner/repo"}
-    env |= {"GITHUB_RUN_ID": "7", "GITHUB_SHA": "0" * 40}
-    (step,) = _load(NIGHTLY)["jobs"]["report"]["steps"]
+    for name, source in fakes.items():
+        (bin_dir / name).write_text(f"#!{sys.executable}\n{source}", encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    base = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path)}
     proc = subprocess.run(
-        ["bash", "-e", "-c", step["run"]],
+        ["bash", "-e", "-c", run],
         cwd=tmp_path,
-        env=env,
+        env=base | env,
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def _report(tmp_path: Path, tracker: str) -> tuple[int, str, list[list[str]]]:
+    """Run the report step's script with the variable's value in TRACKER_ISSUE (empty when it is
+    unset) and a fake `gh`: the exit code, output and gh calls."""
+    log = tmp_path / "gh.log"
+    env = {"GH_LOG": str(log), "TRACKER_ISSUE": tracker, "RESULT": "failure"}
+    env |= {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "owner/repo"}
+    env |= {"GITHUB_RUN_ID": "7", "GITHUB_SHA": "0" * 40}
+    (step,) = _load(NIGHTLY)["jobs"]["report"]["steps"]
+    rc, out = _bash(tmp_path, step["run"], env, {"gh": FAKE_GH})
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-    return proc.returncode, proc.stdout + proc.stderr, [json.loads(line) for line in lines]
+    return rc, out, [json.loads(line) for line in lines]
 
 
 def test_e2e_nightly_report_opens_a_p1_while_no_tracker_issue_is_named(tmp_path: Path) -> None:
@@ -215,7 +248,8 @@ def test_e2e_nightly_report_comments_on_the_named_tracker_issue(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "value", ["0", "012", "-3", "12a", "#12", " 12", "12 ", "1.5", "owner/repo#12"]
+    "value",
+    ["0", "012", "-3", "12a", "#12", " 12", "12 ", "1.5", "owner/repo#12", "7\n::warning::cv-mark"],
 )
 def test_e2e_nightly_report_fails_closed_when_the_tracker_is_not_an_issue_number(
     tmp_path: Path, value: str
@@ -225,6 +259,8 @@ def test_e2e_nightly_report_fails_closed_when_the_tracker_is_not_an_issue_number
     rc, out, calls = _report(tmp_path, value)
     assert (rc, calls) == (1, [])
     assert f"::error title=e2e-nightly-report::{TRACKER_VAR} " in out
+    # Never echoed, so a stored value cannot add a workflow command (the last case) to the log.
+    assert value.strip() not in out and "cv-mark" not in out
 
 
 def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
@@ -239,12 +275,50 @@ def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
                     checkouts.append((name, job_name, step.get("with")))
                 if REMOTE.search(step.get("run", "")):
                     remote.append(step["name"])
-    lanes = {(LANE_FILE, job) for job in EVERY_CALL | {"e2e-electron"}} | {(A11Y_LANE, "a11y")}
+    lanes = [(LANE_FILE, job) for job in EVERY_CALL | {"e2e-electron"}]
+    lanes += [(A11Y_LANE, "a11y")] * 2  # its own tree, then the PR base's baseline file
     assert sorted((name, job) for name, job, _ in checkouts) == sorted(lanes)
-    assert [c for c in checkouts if c[2] != {"persist-credentials": False}] == []
-    # No later step needs a credential: the one that reaches the remote fetches the PR's base
-    # commit, which an anonymous fetch reads on this public repository; nothing pushes.
-    assert remote == [BASE_FETCH]
+    kept = [c for c in checkouts if c[2] not in ({"persist-credentials": False}, BASE_CHECKOUT)]
+    assert kept == []
+    # No later step needs a credential: none fetches, pushes or calls GitHub, so neither a token
+    # nor the repository's visibility matters to them.
+    assert remote == []
+
+
+def test_a11y_lane_checks_out_the_pr_base_baseline_and_keeps_no_credential() -> None:
+    # #3449: actions/checkout reads the base's copy with the job's token and keeps none (cone
+    # mode: root files and tools/a11y/ only), so the baseline step after it needs no git fetch.
+    steps = _load(A11Y_LANE)["jobs"]["a11y"]["steps"]
+    names = [step.get("name") for step in steps]
+    at = names.index(BASE_CHECKOUT_STEP)
+    assert names[at + 1] == BASELINE
+    assert str(steps[at]["uses"]).startswith("actions/checkout@")
+    assert steps[at]["with"] == BASE_CHECKOUT
+    assert steps[at]["if"] == steps[at + 1]["if"] == PR_EVENT_IF
+
+
+@pytest.mark.parametrize("on_base", [True, False], ids=["on-base", "first-introduction"])
+def test_a11y_baseline_step_compares_with_the_base_copy_and_runs_no_git(
+    tmp_path: Path, on_base: bool
+) -> None:
+    # The step compares with the base checkout's copy, or with an empty baseline where the base has
+    # none yet, then removes that checkout before `pnpm install`. The stand-in git fails if called.
+    base_text = '{"entries": [{"id": "on-base"}]}\n'
+    if on_base:
+        copy = tmp_path / BASE_PATH / "tools" / "a11y" / "axe-baseline.json"
+        copy.parent.mkdir(parents=True)
+        copy.write_text(base_text, encoding="utf-8")
+    temp, log = tmp_path / "runner-temp", tmp_path / "python.log"
+    temp.mkdir()
+    env = {"RUNNER_TEMP": str(temp), "PR_BODY": "A11Y-0001", "PY_LOG": str(log)}
+    (step,) = [s for s in _load(A11Y_LANE)["jobs"]["a11y"]["steps"] if s.get("name") == BASELINE]
+    rc, out = _bash(tmp_path, step["run"], env, {"python": FAKE_PYTHON, "git": FAKE_GIT})
+    assert rc == 0, out
+    argv, base = json.loads(log.read_text(encoding="utf-8"))
+    files = [f"{temp}/base-baseline.json", "tools/a11y/axe-baseline.json", f"{temp}/pr-body.txt"]
+    assert argv == ["-m", "tools.a11y.gates", "baseline-pr", *files]
+    assert base == (base_text if on_base else '{"entries": []}\n')
+    assert not (tmp_path / BASE_PATH).exists()
 
 
 def test_release_checklist_needs_a_green_e2e_nightly_on_the_tip_it_cuts() -> None:
