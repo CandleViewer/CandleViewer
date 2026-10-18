@@ -10,6 +10,7 @@ _reconciliation-report.md + all-tickets.json.
 Usage:
     python validate.py            # validate + report only (no writes to E*.json)
     python validate.py --fix      # resolve refs, re-sprint, level-load, rewrite files
+    python validate.py --check    # CI: write nothing; fail if a twin is not what validate.py writes
 """
 from __future__ import annotations
 
@@ -234,7 +235,17 @@ def is_fe_story(t):
 # --------------------------------------------------------------------------
 # Load
 # --------------------------------------------------------------------------
-def load():
+# validate.py is the twins' formatter (#3362; prettier skips them): an E<nn>.json is exactly what
+# json.dump(data, fh, ensure_ascii=False, indent=2) writes (AGENTS.md §3a).
+TWIN_FORMAT = ("TWIN-FORMAT %s: not byte-identical to what validate.py writes; validate.py is the "
+               "formatter of the backlog twins, never prettier or a hand edit: %s")
+
+
+def twin_text(data):
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def load(fix=False):
     files = sorted(
         f for f in os.listdir(BACKLOG)
         if re.match(r"^E\d{2}\.json$", f)
@@ -243,14 +254,18 @@ def load():
     for fn in files:
         path = os.path.join(BACKLOG, fn)
         try:
-            with io.open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
+            with io.open(path, encoding="utf-8", newline="") as fh:
+                raw = fh.read()
+            data = json.loads(raw)
         except json.JSONDecodeError as e:
             err("INVALID-JSON %s: %s" % (fn, e))
             continue
         if not isinstance(data, list):
             err("NOT-A-LIST %s: top level must be a JSON array" % fn)
             continue
+        if raw != twin_text(data) and not fix:  # --fix rewrites it in the twin layout
+            err(TWIN_FORMAT % (fn, "re-save it via Python json.dump(data, fh, "
+                                   "ensure_ascii=False, indent=2), then run validate.py"))
         by_file[fn] = data
         for t in data:
             t["_file"] = fn
@@ -1016,9 +1031,8 @@ def write_files(by_file):
         for t in data:
             c = {k: v for k, v in t.items() if not k.startswith("_")}
             clean.append(c)
-        with io.open(os.path.join(BACKLOG, fn), "w", encoding="utf-8") as fh:
-            json.dump(clean, fh, indent=1, ensure_ascii=False)
-            fh.write("\n")
+        with io.open(os.path.join(BACKLOG, fn), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(twin_text(clean))
 
 
 def sort_key(t):
@@ -1026,13 +1040,21 @@ def sort_key(t):
     return (n, epic_of(t["key"]), 0 if t.get("kind") == "Epic" else 1, t["key"])
 
 
-def write_all_tickets(tickets):
+def write_all_tickets(tickets, check=False):
     out = [{k: v for k, v in t.items() if not k.startswith("_")}
            for t in sorted(tickets, key=sort_key)]
+    text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
     p = os.path.join(BACKLOG, "all-tickets.json")
-    with io.open(p, "w", encoding="utf-8") as fh:
-        json.dump(out, fh, indent=1, ensure_ascii=False)
-        fh.write("\n")
+    if check:
+        old = None
+        if os.path.exists(p):
+            with io.open(p, encoding="utf-8", newline="") as fh:
+                old = fh.read()
+        if old != text:
+            err(TWIN_FORMAT % ("all-tickets.json", "run validate.py and commit what it writes"))
+        return "not written (--check)", len(out)
+    with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
     return p, len(out)
 
 
@@ -1305,20 +1327,23 @@ def write_report(tickets, eng, other, train_rows, resolutions, doc_stats):
     write_e50_section(A, tickets, eng)
 
     p = os.path.join(BACKLOG, "_reconciliation-report.md")
-    with io.open(p, "w", encoding="utf-8") as fh:
+    with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(L) + "\n")
     return p
 
 
 # --------------------------------------------------------------------------
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fix", action="store_true",
-                    help="rewrite E*.json with resolved refs and level-loaded sprints")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--fix", action="store_true",
+                      help="rewrite E*.json with resolved refs and level-loaded sprints")
+    mode.add_argument("--check", action="store_true",
+                      help="write nothing; fail if a twin is not what validate.py writes")
     ap.add_argument("--quiet", action="store_true")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
-    tickets, by_file, files = load()
+    tickets, by_file, files = load(a.fix)
     check_schema(tickets)
     index = check_unique(tickets)
     check_epic_coverage(tickets, files)
@@ -1360,8 +1385,10 @@ def main():
 
     if a.fix:
         write_files(by_file)
-    rp = write_report(tickets, eng, other, train_rows, resolutions, doc_stats)
-    ap_, n = write_all_tickets(tickets)
+    rp = "not written (--check)"
+    if not a.check:
+        rp = write_report(tickets, eng, other, train_rows, resolutions, doc_stats)
+    ap_, n = write_all_tickets(tickets, a.check)
 
     if not a.quiet:
         print("tickets=%d files=%d moves=%d refs_rewritten=%d errors=%d warnings=%d"

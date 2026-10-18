@@ -69,7 +69,9 @@ jobs:
         run: python scripts/check_issue_forms.py
 
       - name: Backlog validation (semantic/report tool)
-        run: python docs/plan/backlog/_tools/validate.py
+        # --check writes nothing and fails on any backlog twin that is not byte-identical to
+        # what validate.py writes; validate.py is the twins' formatter, not prettier (#3362).
+        run: python docs/plan/backlog/_tools/validate.py --check
 
       - name: Backlog schema validation (GOV-004)
         run: python scripts/validate-backlog.py --quiet
