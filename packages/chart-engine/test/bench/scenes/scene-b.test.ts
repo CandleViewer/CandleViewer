@@ -26,7 +26,8 @@ interface Ext {
 }
 
 // Scoped to this file only: 100k-bar fixture generation is slow under v8 coverage
-// instrumentation (vitest 3). The perf budgets asserted below are unchanged.
+// instrumentation (vitest 3). Wall-clock budgets are not asserted here (this project runs under
+// coverage); they live in scene-b.perf.test.ts. #3554
 vi.setConfig({ testTimeout: 60_000 });
 
 describe("EDT", () => {
@@ -78,7 +79,7 @@ describe("shelf packer / atlas", () => {
       }
     }
   });
-  it("generates the frozen glyph set incl. triangles and caches by key", async () => {
+  it("generates the frozen glyph set incl. triangles and caches by key (warm-load budget: scene-b.perf.test.ts)", async () => {
     const store = new MemoryAtlasStore();
     const cold = await loadAtlas(store, "Inter", 500);
     expect(cold.cacheHit).toBe(false);
@@ -86,7 +87,6 @@ describe("shelf packer / atlas", () => {
     expect(cold.atlas.glyphs["×"]).toBeDefined();
     const warm = await loadAtlas(store, "Inter", 500);
     expect(warm.cacheHit).toBe(true);
-    expect(warm.ms).toBeLessThanOrEqual(5);
     expect(atlasCacheKey("Inter", 500)).not.toBe(atlasCacheKey("Inter", 700));
   });
 });
@@ -152,19 +152,22 @@ describe("footprint LOD (E06-D01 LOD_PROFILE_M0)", () => {
     }
     expect(changes).toBe(3);
   });
-  it("shedding text withholds numbers only: cell count unchanged", () => {
+  it("shedding text withholds numbers only: cell count unchanged (timing: scene-b.perf.test.ts)", () => {
     const scene = new SceneB();
     scene.init(generateM0Fixture({ seed: 1, barCount: 200 }));
     scene.step(0, { tMs: 0, kind: "none" });
     const l0 = scene.extendedStats() as unknown as Ext;
-    const l0Frame = scene.stats().frameTimeMs;
+    const l0DrawCalls = scene.stats().drawCalls;
+    expect(l0.lod).toBe("L0");
+    expect(l0.glyphCount).toBeGreaterThan(0);
     scene.setCellHeight(7);
     scene.step(16, { tMs: 16, kind: "none" });
     const l2 = scene.extendedStats() as unknown as Ext;
     expect(l2.lod).toBe("L2");
     expect(l2.glyphCount).toBe(0);
     expect(l2.visibleCells).toBe(l0.visibleCells);
-    expect(scene.stats().frameTimeMs).toBeLessThan(l0Frame);
+    // The work is counted, not timed: the shed frame no longer issues the text draw call.
+    expect(scene.stats().drawCalls).toBeLessThan(l0DrawCalls);
   });
 });
 
