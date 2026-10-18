@@ -783,13 +783,13 @@ def make_auth_router(
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, other method, lost race
-            auth_enrolments_total.labels(outcome="refused").inc()
+            auth_enrolments_total.labels(result="refused").inc()
             await _audit(
                 audit_service, "auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED
             )
             detail = "invalid or expired enrolment code"
             return _problem(422, _INVALID, detail, code="validation_failed")
-        auth_enrolments_total.labels(outcome="completed").inc()
+        auth_enrolments_total.labels(result="completed").inc()
         try:
             await sessions.revoke_all(uid, reason=ENROLLED_REASON)
             minted = await sessions.mint(
