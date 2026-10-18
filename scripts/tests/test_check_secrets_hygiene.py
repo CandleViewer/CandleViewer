@@ -482,6 +482,12 @@ TRACED = [
     "true'; set \"-x\"",
     "bash -c 'set \"-x\"; make",
     "bash -c \"set '-x'; make",
+    # #3400: a quote closing an earlier line's string, then a string an inner shell runs: both
+    # levels of quotes after it come off only while the first pass reads a quote that does not
+    # close as no string (a mutant reading it to the line's end passed every row above; bash 5.3
+    # traced both in a `run: |` block).
+    "true'; bash -c \"set \\\"-x\\\"\"",
+    "true'; sh -c \"set \\\\-x\"",
     # #3400: a quoted word in a string an inner shell runs, whose quotes come off in a second pass;
     # in a double-quoted string \\, \" and \$ give the character first (bash 5.3 traced each).
     "bash -c 'set \"-x\"'",
@@ -492,6 +498,29 @@ TRACED = [
     "trap 'echo T' \\DEBUG",
     "trap 'echo T' DE''BUG",
     "trap 'echo T' $'DEBUG'",
+    # #3400: fragments no row pinned, so a mutant narrowing each passed every row (bash 5.3 traced
+    # each; zsh's per zshoptions(1)): $"..."; an empty "" or $'' in a word; a `-` or `=` value
+    # without a colon, letters before its x, ${X} in a group before x, or before o and its
+    # argument; a bare $BASH; a <& redirect; a SHELLOPTS item with a `-`; a DEBUG trap ending at
+    # `;`, with a double-quoted or escaped action; zsh's unsetopt noverbose and set +o noxtrace
+    # after ${X}; SHELLOPTS+= (zsh appends: a bash started with it exported traces).
+    'set $"-x"',
+    'set -""x',
+    "set -$''x",
+    "set -e${O-x}",
+    "set -e${O:=x}",
+    "set -e${DEBUG:+ux}",
+    "set -e${X}x",
+    "set -e${X}o pipefail -x",
+    "$BASH -x ci.sh",
+    "bash <&- -x ci.sh",
+    "env SHELLOPTS=interactive-comments:xtrace bash ci.sh",
+    "trap 'echo T' DEBUG; make",
+    'trap "echo \\"T\\"" DEBUG',
+    "trap echo\\ T DEBUG",
+    "unsetopt noverbose",
+    "set +${X}o noxtrace",
+    "SHELLOPTS+=:xtrace",
 ]
 NOT_TRACED = [
     "set -e",
@@ -575,6 +604,12 @@ NOT_TRACED = [
     "set -e${O:?x}",
     "set -e$FLAGS",
     "/opt/a:b/bin/bash -x ci.sh",
+    # #3400: bounds no row pinned, so a mutant widening each passed every row: a name going on
+    # past xtrace (bash: invalid option name), an empty "" trap action, a \" in a double-quoted
+    # word, which stays in it (bash 5.3: no trace for each).
+    "set -o xtrace2",
+    'trap "" DEBUG',
+    'set "\\"-x"',
     # #3400: the rest of the forms listed beside _SET_X as not reported, though they trace (bash
     # 5.3 traced each but mksh, which POSIX sh(1)'s -x covers): an option argument from an
     # expansion, a shell through another variable or one the rules do not name, a quoted word
@@ -636,10 +671,13 @@ def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None
     assert _sr146_in(tmp_path, line, via) == []
 
 
-@pytest.mark.parametrize("value", ["xtrace", '"braceexpand:xtrace"'])
-def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
-    # #3400: a job's or a step's env reaches the bash that runs each `run:` script.
-    env = f"jobs:\n  a:\n    env:\n      SHELLOPTS: {value}\n"
+@pytest.mark.parametrize(
+    "entry", ["SHELLOPTS: xtrace", 'SHELLOPTS: "braceexpand:xtrace"', "SHELLOPTS : xtrace"]
+)
+def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
+    # #3400: a job's or a step's env reaches the bash that runs each `run:` script (YAML also
+    # takes a space before the key's colon).
+    env = f"jobs:\n  a:\n    env:\n      {entry}\n"
     _write(tmp_path, WF, env + "    steps:\n      - run: make\n")
     assert h.check_workflows(tmp_path) == ["w.yml:4: 'set -x' tracing (SR-146)"]
 
