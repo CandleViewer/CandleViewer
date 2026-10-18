@@ -8,45 +8,21 @@ drives the auth stack. Each refusal must leave a trail: the audit record and the
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
-import candleviewer.app as appmod
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
-from candleviewer.ws import gateway
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import make_user
 
-from ._stack import T0, Stack, open_stack
+from ._stack import T0, Stack
 
 _CODE = "mfa_enrollment_required"
 _INERT_DIGEST = "unused"  # stored-hash placeholder: these users never sign in with a password
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-
-
-@pytest.fixture
-def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
-    """`_stack.py`, with the gateway's monotonic and wall clocks on the stack's fake instant."""
-    live: list[Stack] = []
-    monkeypatch.setattr(
-        appmod,
-        "make_ws_router",
-        functools.partial(
-            gateway.make_ws_router,
-            clock=lambda: (live[0].clock.now - T0).total_seconds(),
-            wall_ms=lambda: (live[0].clock.now - _EPOCH) // timedelta(milliseconds=1),
-            tick_s=0.005,
-        ),
-    )
-    with open_stack(monkeypatch) as s:
-        live.append(s)
-        yield s
 
 
 def _mint(stack: Stack, user: UserRecord, **kw: Any) -> tuple[MintedSession, dict[str, str]]:
