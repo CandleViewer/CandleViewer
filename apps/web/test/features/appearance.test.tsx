@@ -47,7 +47,8 @@ describe("SCR-116 appearance screen", () => {
     document.documentElement.style.setProperty("--color-buy-default", "#112233");
     document.documentElement.setAttribute("data-theme", "light");
     await waitFor(() => expect(setTheme).toHaveBeenCalledTimes(2));
-    document.documentElement.setAttribute("data-high-contrast", "true");
+    // High contrast reaches the root as a theme of the runtime, not as an attribute of its own.
+    document.documentElement.setAttribute("data-theme", "high-contrast");
     await waitFor(() => expect(setTheme).toHaveBeenCalledTimes(3));
     unregister();
     document.documentElement.setAttribute("data-theme", "dark");

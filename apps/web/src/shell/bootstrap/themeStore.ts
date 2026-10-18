@@ -33,8 +33,10 @@ function reportThemeAnalytics(event: ThemeAnalyticsEvent): void {
 export const APP_THEME_OPTIONS: ThemeStoreOptions = { onAnalytics: reportThemeAnalytics };
 
 /**
- * For values that come from the server: not written to local storage (the server owns them, and a
- * local copy would outlive a change made elsewhere) and not reported as a choice the user made.
+ * For values that come from the server: applying them neither writes local storage nor reports a
+ * choice the user made. They are not kept out of storage for good: the runtime writes its whole
+ * current state the next time the user changes any setting (so a user who confirms a hydrated value is
+ * not reverted by a reload), and from then on the hydrated values are persisted local ones too.
  */
 export const HYDRATE: ApplyOptions = { persist: false, track: false };
 

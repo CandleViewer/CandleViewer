@@ -1,6 +1,12 @@
 /// <reference types="vite/client" />
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+// Token values per theme, then the runtime styles that key off the root attributes (export names only:
+// the packages' build output is not importable by path). Order matters: theme.css overrides the tokens.
+import "@candleviewer/ui/tokens.dark.css";
+import "@candleviewer/ui/tokens.light.css";
+import "@candleviewer/ui/tokens.high-contrast.css";
+import "@candleviewer/ui/theme.css";
 import { startShell } from "./shell/startShell";
 
 const container = document.getElementById("root");

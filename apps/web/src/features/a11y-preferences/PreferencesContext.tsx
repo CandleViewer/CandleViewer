@@ -8,6 +8,12 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { applyAppearance } from "../../shell/bootstrap/preferencesApply";
+import { getShellState } from "../../shell/bootstrap/store";
+import {
+  increasedContrastThemeSettings,
+  reducedMotionThemeSettings,
+} from "../../shell/bootstrap/themeFromSettings";
 import {
   DEFAULT_PREFERENCES,
   resolveFlags,
@@ -49,6 +55,9 @@ export interface PreferencesProviderProps {
 export function PreferencesProvider(props: PreferencesProviderProps): JSX.Element {
   const { children, onEngineFlags, onChanged } = props;
   const [prefs, setPrefs] = useState<A11yPreferences>(DEFAULT_PREFERENCES);
+  // True once `prefs` mirrors the server (the load or a save answered). Until then they are only the
+  // defaults, which must not be fed to the theme runtime: they would reset a persisted local choice.
+  const [settled, setSettled] = useState(false);
   const [media, setMedia] = useState<SystemMedia>(readMedia);
   const [saveError, setSaveError] = useState<string | null>(null);
   const pending = useRef<Partial<A11yPreferences> | null>(null);
@@ -57,7 +66,10 @@ export function PreferencesProvider(props: PreferencesProviderProps): JSX.Elemen
     let live = true;
     loadPreferences().then(
       (p) => {
-        if (live) setPrefs(p);
+        if (live) {
+          setPrefs(p);
+          setSettled(true);
+        }
       },
       () => undefined,
     );
@@ -85,13 +97,30 @@ export function PreferencesProvider(props: PreferencesProviderProps): JSX.Elemen
     onEngineFlags?.(flags);
   }, [flags, onEngineFlags]);
 
+  // Reduced motion and increased contrast belong to the theme runtime, which owns the root attributes.
+  // Each has a twin in the appearance the bootstrap loaded, so each is fed together with its twin, and
+  // one at a time: a change of one must not re-send the other, which the user may have overridden in
+  // this session (05-accessibility-standard.md §3.2), nor anything else (the theme, say).
+  const motionPref = prefs.reduced_motion;
+  const contrastPref = prefs.increased_contrast;
+  useEffect(() => {
+    if (!settled) return;
+    applyAppearance(
+      reducedMotionThemeSettings(motionPref, getShellState().preferences?.appearance),
+    );
+  }, [settled, motionPref]);
+  useEffect(() => {
+    if (!settled) return;
+    applyAppearance(
+      increasedContrastThemeSettings(contrastPref, getShellState().preferences?.appearance),
+    );
+  }, [settled, contrastPref]);
+
   useEffect(() => {
     const r = document.documentElement;
-    r.dataset["reducedMotion"] = String(reducedMotion);
-    r.dataset["contrast"] = increasedContrast ? "more" : "normal";
     r.dataset["focusRing"] = prefs.thick_focus_ring ? "thick" : "normal";
     r.dataset["keyboardOnly"] = String(prefs.keyboard_only);
-  }, [reducedMotion, increasedContrast, prefs.thick_focus_ring, prefs.keyboard_only]);
+  }, [prefs.thick_focus_ring, prefs.keyboard_only]);
 
   const update = useCallback(
     async (patch: Partial<A11yPreferences>): Promise<void> => {
@@ -100,6 +129,7 @@ export function PreferencesProvider(props: PreferencesProviderProps): JSX.Elemen
       setPrefs({ ...before, ...patch }); // applies immediately (next frame)
       try {
         setPrefs(await savePreferences(patch));
+        setSettled(true);
         setSaveError(null);
         pending.current = null;
         for (const [k, v] of Object.entries(patch)) onChanged?.(k, v);

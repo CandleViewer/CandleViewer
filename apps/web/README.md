@@ -6,6 +6,11 @@ env badge and global shortcuts are **E10**.
 
 - `src/routes/` — route components (`PlaceholderRoute` only, for now).
 - `src/features/<feature>/` — feature-sliced modules (empty).
+- `src/shell/bootstrap/` — the one `/me` + preferences + keymap fetch. `themeFromSettings.ts` maps the
+  server's `appearance` and `accessibility` settings onto the `@candleviewer/ui` theme runtime, which is
+  the only writer of `data-theme`, `data-density`, `data-motion` and `data-text-scale` (#3139); the
+  app entry (`src/main.tsx`) imports the token CSS and `theme.css` from the package's exports, so build
+  `@candleviewer/ui` first (`pnpm --filter @candleviewer/ui build`).
 - `src/lib/{ws,state,auth}/` — WS client, Zustand/Jotai state, auth helpers
   (empty; see each directory's `README.md` for ownership).
 - `e2e/` — Playwright web smoke + `@axe-core/playwright` a11y spec.

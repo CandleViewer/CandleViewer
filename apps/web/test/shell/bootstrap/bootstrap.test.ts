@@ -183,6 +183,17 @@ describe("runBootstrap: theme runtime (#3139)", () => {
     expect(root.getAttribute("data-density")).toBe("comfortable");
   });
 
+  it("feeds the accessibility settings too: reduced motion on and increased contrast on reach the root", async () => {
+    const fetchImpl = respondWith(
+      Promise.resolve(
+        jsonResponse({ accessibility: { reduced_motion: "on", increased_contrast: "on" } }),
+      ),
+    );
+    await runBootstrap({ fetchImpl });
+    expect(root.getAttribute("data-motion")).toBe("reduce");
+    expect(root.getAttribute("data-theme")).toBe("high-contrast");
+  });
+
   it("No clobber: the persisted values stay on the root until the server values arrive", async () => {
     persistLocalOverride();
     let answer!: (response: Response) => void;
