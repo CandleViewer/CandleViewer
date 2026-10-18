@@ -106,12 +106,14 @@ def test_an_owner_snapshot_lists_each_monitored_account_asked_for_and_each_balan
     world.monitor.track(_ACC_C)
     world.wallets.track(_ACC_C)  # monitored, never connected, no wallet snapshot yet
     conn = world.conn(owner())
-    conn.sub(ACC_B, _ACC_D, _ACC_C, ACC)  # D is not monitored
+    with capture_logs() as logs:
+        conn.sub(ACC_B, _ACC_D, _ACC_C, ACC)  # D is not monitored
     [(_, body)] = conn.take()
     view = world.monitor.view(_ACC_C)
     assert view is not None and body["health"][0] == view.ws_entry(_ACC_C)
     assert _ids(body["health"]) == [str(_ACC_C), str(ACC), str(ACC_B)]
     assert _ids(body["balances"]) == [str(ACC), str(ACC_B)]
+    assert logs == []  # no wallet snapshot is not a failure: a guard that is gone would log it
 
 
 def test_a_snapshot_lists_its_accounts_in_account_order_not_the_order_of_the_scope() -> None:
@@ -170,6 +172,8 @@ def test_a_transition_is_one_health_only_delta_and_reaches_only_its_accounts_sco
     on_a, on_b = world.conn(manager(ACC)), world.conn(manager(ACC_B))
     on_a.sub(ACC)
     on_b.sub(ACC_B)
+    world.topic.balance_refreshed(ACC)  # each is out fresh and owes a turn to stale, to its scope
+    world.topic.balance_refreshed(ACC_B)
     on_a.take()
     on_b.take()
     world.clock.advance(1)
@@ -179,6 +183,12 @@ def test_a_transition_is_one_health_only_delta_and_reaches_only_its_accounts_sco
     assert moved is not None and view is not None and view.state is HealthState.DEGRADED
     assert on_a.take() == [("d", {"balances": [], "health": [view.ws_entry(ACC)]})]
     assert on_b.take() == []
+    world.monitor.ws_dropped(ACC_B)  # and the other way round: B's entry, not under A's account
+    world.topic.health_changed(ACC_B)
+    view_b = world.monitor.view(ACC_B)
+    assert view_b is not None and view_b.state is HealthState.DEGRADED
+    assert on_b.take() == [("d", {"balances": [], "health": [view_b.ws_entry(ACC_B)]})]
+    assert on_a.take() == []
 
 
 def test_a_refresh_is_one_balance_delta_with_plain_decimals_and_no_health() -> None:
