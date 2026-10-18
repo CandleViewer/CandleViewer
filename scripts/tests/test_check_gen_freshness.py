@@ -780,7 +780,28 @@ def test_orphan_is_left_removed_from_the_working_tree_and_kept_in_the_index(
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
     assert _git(generated_repo, "status", "--porcelain") == f" D {rel}\n"
-    assert "`git rm <path>`" in err and "`git restore -- <path>`" in err
+    assert f"\n  git rm -- {rel}\n" in err and "`git restore -- <path>`" in err
+
+
+def test_orphans_get_one_git_rm_command_and_the_gate_then_passes(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CI-GEN-005 prints one copy-pasteable `git rm` line that quotes every orphan; once
+    it is pasted, only their deletion is staged and the gate passes."""
+    spaced = f"{_GENERATED_DIR}/rest/hand written.ts"
+    (generated_repo / spaced).write_text(_HEADER, encoding="utf-8")
+    _git(generated_repo, "add", spaced)
+    _git(generated_repo, "commit", "-qm", "an orphan with a space in its name")
+    rel = f"{_GENERATED_DIR}/orphan.ts"
+    _commit_orphan(generated_repo, rel)
+    assert gen_gate.main([]) == 1
+    lines = capsys.readouterr().err.splitlines()
+    (command,) = [line for line in lines if line.startswith("  git rm -- ")]
+    assert shlex.split(command) == ["git", "rm", "--", rel, spaced]
+    _git(generated_repo, *shlex.split(command)[1:])
+    assert gen_gate.main([]) == 0
+    status = _git(generated_repo, "status", "--porcelain", "-z")
+    assert status == f"D  {rel}\0D  {spaced}\0"
 
 
 def test_nondeterminism_is_reported_before_an_orphan(

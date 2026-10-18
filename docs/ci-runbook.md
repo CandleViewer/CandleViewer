@@ -130,7 +130,8 @@ here, or the check fails the `governance` lane.
 The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
 It first removes the tracked files under the outputs `pnpm generate` writes in full
 (`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
-tree, never the index, then generates. It restores nothing: a failed run lists the tracked
+tree, never the index, then generates. It restores nothing. A CI-GEN-005 report prints one
+`git rm -- <paths>` command for the files it names; any other failed run lists the tracked
 files it leaves missing and prints one `git restore -- <paths>` command that brings them all back.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
@@ -150,9 +151,9 @@ diff` cannot see because they were never tracked. `git add` them in the
   not UTF-8, or git tracks nothing under the outputs (run it from the repository root).
 - **CI-GEN-005** (committed file no generator writes): the named tracked files
   did not come back when the gate removed them and regenerated. A GENERATED
-  header does not make a hand-written file generated (C-4.16). Delete each one
-  (`git rm <path>`), or add the generator that writes it to the `generate`
-  script in `packages/protocol/package.json`.
+  header does not make a hand-written file generated (C-4.16). Delete them with the one
+  `git rm -- <paths>` command the report prints, or add the generator that writes each one
+  to the `generate` script in `packages/protocol/package.json`.
 
 ### CI-CON-* — contract conformance
 

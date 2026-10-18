@@ -26,11 +26,11 @@ This script is the single implementation invoked by the ``gen`` step of the
    GENERATED header it passed every other check: it is tracked, so it shows
    no diff and is not untracked, and the guard's local manifest records
    whatever the directory holds. The gate restores nothing: such a file stays
-   removed from the working tree (the index keeps it), and every other failed
-   run lists the tracked files it leaves missing, with one `git restore`
-   command that brings them all back. Step 1 fails closed (CI-GEN-004) when
-   git tracks nothing under the outputs, which would leave this step nothing
-   to check.
+   removed from the working tree (the index keeps it), and the report prints
+   one `git rm` command that deletes them all. Every other failed run lists
+   the tracked files it leaves missing, with one `git restore` command that
+   brings them all back. Step 1 fails closed (CI-GEN-004) when git tracks
+   nothing under the outputs, which would leave this step nothing to check.
 4. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
    against a committed schema change). This is also the hand-edit guard for
    committed generated files: regenerating overwrites the edit, so it shows
@@ -91,7 +91,7 @@ GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
 # stay out: packages/protocol/generated/ (ws_constants.py, written only by `make gen`),
 # and packages/fixtures/golden/cvwb and tests/fuzz/ws-frames (written by
 # services/api/scripts/generate_cvwb_vectors.py). A committed file no generator writes
-# can still pass there; that gap is tracked by a follow-up.
+# can still pass there; #3392 tracks that gap.
 GENERATE_OUTPUTS: tuple[Path, ...] = (
     GENERATED_ROOT / "src" / "generated",
     CVWB_LAYOUT_TWIN,
@@ -263,9 +263,11 @@ def check_orphans(removed: list[str]) -> None:
             "write them back. A hand-written file must not pose as generated (C-4.16), "
             "GENERATED header or not.\n"
             + _bullets(orphans)
-            + "Delete each one (`git rm <path>`), or add the generator that writes it. "
-            "The gate leaves them removed from the working tree; the index keeps them "
-            "(`git restore -- <path>` brings one back).",
+            + "Delete them all with:\n"
+            + f"  git rm -- {shlex.join(orphans)}\n"
+            + "or add the generator that writes each one. The gate leaves them removed "
+            "from the working tree; the index keeps them (`git restore -- <path>` "
+            "brings one back).",
         )
 
 
