@@ -488,6 +488,10 @@ TRACED = [
     'sh -c "set \\"-x\\""',
     'sh -c "set \\\\-x"',
     "bash -c \"set \\$'-x'\"",
+    # #3400: a DEBUG signal word with quotes or escapes anywhere in it (bash 5.3 ran each trap).
+    "trap 'echo T' \\DEBUG",
+    "trap 'echo T' DE''BUG",
+    "trap 'echo T' $'DEBUG'",
 ]
 NOT_TRACED = [
     "set -e",
@@ -706,6 +710,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         '"$A"' * 19000,
         # #3400: escapes a double-quoted string takes off, then a second pass over what is left.
         '"\\\\\\"' * 24000,
+        # #3400: a signal word's quotes and escapes, read once before each letter of DEBUG.
+        "trap x " + "\\'$\"" * 24000,
+        "trap x " + "d'e'b'u' " * 10000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -717,7 +724,8 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
     + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
     + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
-    + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes"],
+    + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes", "signal-quoting"]
+    + ["signal-letters"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time

@@ -372,9 +372,16 @@ _SHELLOPTS = re.compile(
 #: A ``DEBUG`` trap, run before each command (#3400): ``trap 'echo "$BASH_COMMAND"' DEBUG`` prints
 #: each command as ``set -v`` does, so any action counts (the scan cannot tell what it prints).
 #: Not ``trap - DEBUG`` or ``trap DEBUG`` (a reset), ``trap -p DEBUG`` (a listing) or ``trap ''
-#: DEBUG`` (no action). The action is one word with its quotes; a quote is read to its end.
+#: DEBUG`` (no action). The action is one word with its quotes; a quote is read to its end. The
+#: signal word names DEBUG in any case, with quotes or escapes the shell takes off anywhere in it
+#: (``"DEBUG"``, ``\DEBUG``, ``DE''BUG``, ``$'DEBUG'``); each quote or escape is one character
+#: or a ``$`` and a quote, so a word is read once.
 _TRAP_ACTION = r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|\\.|[^\s'\"\\;&|()`])+"
-_DEBUG_SIGNAL = r"[\"']?(?i:debug)[\"']?(?!" + _IN_WORD + r")"
+_SIGNAL_QUOTING = r"(?:\$?[\"']|\\)*"
+_DEBUG_SIGNAL = (
+    r"(?i:" + _SIGNAL_QUOTING + _SIGNAL_QUOTING.join("debug") + _SIGNAL_QUOTING + r")"
+    r"(?!" + _IN_WORD + r")"
+)
 _TRAP_DEBUG = re.compile(
     _WORD_START + r"trap\s+(?:--\s+)?(?!-|(?:''|\"\")\s)" + _TRAP_ACTION + _words(_DEBUG_SIGNAL)
 )
