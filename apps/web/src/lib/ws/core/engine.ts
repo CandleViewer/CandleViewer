@@ -1,13 +1,13 @@
-// E17-T04 S4 (23 5, 7.5, 9.3; C2): the engine. It composes the connection, the stream core (S2)
-// and the reducer's events (S1b): the registry's `subscribe`/`unsubscribe`/`resync` become `sub`,
-// `unsub` and `resync` frames, the data of each stream goes to its registry record, and after a
-// reconnect every stream subscribes again in the 9.3 order. Worker-agnostic: everything
-// platform-shaped is injected.
+// E17-T04 S4 (23 5, 7.5, 9.3, 11; C2, C5): the engine. It composes the connection, the stream
+// core (S2) and the reducer's events (S1b): the registry's `subscribe`/`unsubscribe`/`resync` become
+// `sub`, `unsub` and `resync` frames, every reply is correlated to the stream its request was for
+// (`to`), and after a reconnect every stream subscribes again in the 9.3 order. Worker-agnostic:
+// everything platform-shaped is injected.
 import type { ConsumerSpec, TokenSource, TopicFrame } from "../api";
 import type { Timers } from "../policy/timers";
 import { platformTimers } from "../policy/timers";
 import { chunkTopics, type NonEmpty } from "../policy/outboundPacer";
-import type { Inbound } from "../protocol/codec";
+import type { ControlOf, Inbound } from "../protocol/codec";
 import * as F from "../protocol/frames";
 import type { EngineEvent } from "../state/types";
 import { ReachabilityTracker } from "../../../shell/bootstrap/reachability";
@@ -18,7 +18,12 @@ import {
 import { createConnection, type Connection, type SocketFactory } from "./connection";
 import { createResyncGuard } from "./resyncGuard";
 import { topicKey } from "./sequencer";
-import { createSubscriptionRegistry, type RegistryHost, type StreamHandle } from "./subscriptions";
+import {
+  createSubscriptionRegistry,
+  type RegistryHost,
+  type RequestScope,
+  type StreamHandle,
+} from "./subscriptions";
 
 export type { EngineSocket, SocketEvents, SocketFactory } from "./connection";
 
@@ -60,6 +65,8 @@ export interface EngineCounters {
   forcedSnapshots: number;
   /** Inbound frames that could not be trusted: undecodable, or over the 4 MiB cap. */
   malformedFrames: number;
+  /** Requests whose reply is still due (bounded: the oldest is forgotten past `LEDGER_MAX`). */
+  pendingRequests: number;
   /** Subscriptions kept: wanted ones, and ones the server still holds after their last consumer left. */
   streams: number;
 }
@@ -78,6 +85,8 @@ export interface WsEngine {
 }
 
 const SYSTEM = "system";
+/** Requests whose reply or error is still due, bounded (C-2.18): the oldest is forgotten first. */
+export const LEDGER_MAX = 512;
 /** 9.3: after the implicit `system`, these private families come first, in this order. */
 const PRIVATE_FIRST: readonly string[] = ["orders", "positions", "executions", "wallet"];
 const PRIORITY_RANK: Readonly<Record<SubscriptionPriority, number>> = {
@@ -101,7 +110,29 @@ interface Stream {
   handle: StreamHandle | undefined;
   /** A `sub` went out on this connection and no `unsub` since: the server has it. */
   held: boolean;
+  /**
+   * Which server subscription this is: it advances at every `sub` and `unsub` the engine sends for it
+   * (0 before the first), and a new stream that takes over a held subscription keeps it. A reply is
+   * for the subscription its request was sent for (`Request.gens`), and a reply for one that has
+   * been let go or sent again since is an old one's: the reply scope (`rs`) alone cannot tell.
+   */
+  gen: number;
 }
+
+/**
+ * A request whose reply or error is due: the stream its reply is for (`to`), the generation of
+ * each stream it is about (`ch` to `Stream.gen`, when it was sent), and the frame, to send it
+ * again if the gateway refused it.
+ */
+interface Request {
+  readonly rs: string | undefined;
+  readonly frame: F.ClientFrame;
+  readonly gens: ReadonlyMap<string, number>;
+}
+
+const NO_GENS: ReadonlyMap<string, number> = new Map();
+const gensOf = (list: readonly Stream[]): ReadonlyMap<string, number> =>
+  new Map(list.map((s) => [s.ch, s.gen]));
 
 const familyOf = (ch: string): string => ch.split(".", 1)[0] ?? ch;
 const privateRank = (ch: string): number => {
@@ -129,7 +160,12 @@ export function createWsEngine(options: EngineOptions): WsEngine {
   const { sink } = options;
   const timers: Timers = { ...platformTimers, ...options.timers };
   const streams = new Map<string, Stream>();
+  const ledger = new Map<string, Request>();
+  /** `ch` -> `unsub` requests whose `unsub_ok` is due (9.3: a new `sub` of it waits, and its old frames are dropped). */
+  const unsubbing = new Set<string>();
   const own = { resyncsSent: 0 };
+  let generation = 0;
+  const nextGeneration = (): number => (generation += 1);
   let syncQueued = false;
 
   const connection: Connection = createConnection({
@@ -152,12 +188,49 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     },
   });
 
+  /** Sends a request whose reply is due: `rs` is the stream the reply is for (`to`), `gens` the subscriptions it is about, and the frame is kept in case the gateway refuses it. */
+  function submit(
+    frame: F.ClientFrame,
+    rs: string | undefined,
+    gens: ReadonlyMap<string, number> = NO_GENS,
+  ): void {
+    if (ledger.size >= LEDGER_MAX) {
+      const oldest = ledger.keys().next();
+      if (!oldest.done) ledger.delete(oldest.value);
+    }
+    ledger.set(frame.id, { rs, frame, gens });
+    connection.send(frame);
+  }
+
+  /** The request a reply or an error answers, forgotten once read. */
+  function take(id: string | undefined): Request | undefined {
+    const request = id === undefined ? undefined : ledger.get(id);
+    if (id !== undefined) ledger.delete(id);
+    return request;
+  }
+  const scopeOf = (request: Request): RequestScope => ({ rs: request.rs });
+
+  /** The stream a request is about, unless a `sub` or an `unsub` went out for it since (`Stream.gen`): then the reply is an old subscription's, and applies to nothing. */
+  function streamOf(request: Request, ch: string): Stream | undefined {
+    const stream = streams.get(topicKey(ch, request.rs));
+    return stream !== undefined && stream.gen === request.gens.get(ch) ? stream : undefined;
+  }
+
+  /** A snapshot of a stream is the baseline a `resync` of it asked for (no frame answers one by id), so no denial of that resync can matter any more: its request is forgotten. */
+  function forgetResyncs(ch: string, rs: string | undefined): void {
+    for (const [id, request] of ledger) {
+      if (request.frame.t === "resync" && request.frame.ch === ch && request.rs === rs) {
+        ledger.delete(id);
+      }
+    }
+  }
+
   const host: RegistryHost = {
     subscribe(spec, rs) {
       if (spec.ch === SYSTEM) return; // implicit: the server attaches it at `auth_ok` (6.2)
       const key = topicKey(spec.ch, rs);
       // A subscription the server still holds (its last consumer left a moment ago) is not subscribed
-      // again: the new stream takes it over.
+      // again: the new stream takes it over, and with it the replies still due for it and what its `sub_ok` said.
       const prior = streams.get(key);
       const kept = prior?.held === true ? prior : undefined;
       streams.set(key, {
@@ -168,19 +241,37 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         consumers: new Set(),
         handle: undefined,
         held: kept !== undefined,
+        gen: kept?.gen ?? 0,
       });
+      if (kept !== undefined) inherit(kept);
       scheduleSync();
     },
     unsubscribe: () => scheduleSync(),
-    resync(ch, rs, payload) {
+    // `sub_id` pins the subscription the envelope's `ch` and `rs` name (7.5): a bare `ch` would be the live stream's.
+    resync(ch, rs, payload, subId) {
       if (!connection.ready) return;
       own.resyncsSent += 1;
-      connection.send(F.resync(connection.nextId(), ch, payload, rs));
+      const pin = subId === undefined ? {} : { sub_id: subId };
+      submit(F.resync(connection.nextId(), ch, { ...payload, ...pin }, rs), rs);
     },
     deliver(ch, rs, frame) {
+      if (frame.kind === "snap") forgetResyncs(ch, rs);
       sink.deliver(ch, rs, frame);
     },
   };
+  /** The registry's record of a stream that takes a held subscription over is a new one: it knows nothing of the `sub_ok` that made the subscription, so it is handed what the old record learned. */
+  function inherit(old: Stream): void {
+    const subId = old.handle?.subId;
+    const effective = old.handle?.effective;
+    const result = {
+      ch: old.ch,
+      ok: true,
+      ...(subId !== undefined && { sub_id: subId }),
+      ...(effective !== undefined && { effective }),
+    };
+    registry.onSubOk({ t: "sub_ok", p: { results: [result] } }, { rs: old.rs });
+  }
+
   const guard = createResyncGuard({
     now: timers.now,
     setTimer: timers.setTimeout,
@@ -235,29 +326,41 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const s of streams.values()) byCh.set(s.ch, [...(byCh.get(s.ch) ?? []), s]);
     const drops: Stream[] = [];
     const adds: Stream[] = [];
-    for (const group of byCh.values()) {
+    for (const [ch, group] of byCh) {
       if (!group.some(wanted)) {
         const held = group.filter((s) => s.held);
         if (held[0] !== undefined) drops.push(held[0]);
         for (const s of held) {
           s.held = false;
+          s.gen = nextGeneration(); // what the server held goes with the `unsub`
         }
       }
       for (const s of group.filter(wanted)) {
-        if (!s.held) adds.push(s);
+        if (!s.held && !unsubbing.has(ch)) adds.push(s);
       }
     }
     const perFrame = connection.topicsPerRequest;
-    for (const chunk of chunkTopics(drops, perFrame)) {
-      const topics = mapNonEmpty(chunk, (s) => s.ch);
-      connection.send(F.unsub(connection.nextId(), topics));
+    // An `unsub` names no replay session, but its reply is applied to the stream of each `ch` it names (`Request.rs`): a frame lists the topics of one `rs`.
+    for (const run of runsOf(drops)) {
+      for (const chunk of chunkTopics(run.items, perFrame)) {
+        const topics = mapNonEmpty(chunk, (s) => s.ch);
+        for (const ch of topics) unsubbing.add(ch);
+        submit(F.unsub(connection.nextId(), topics), run.rs, gensOf(chunk));
+      }
     }
     for (const run of runsOf(restoreOrder(adds))) {
       for (const chunk of chunkTopics(run.items, perFrame)) {
-        for (const s of chunk) s.held = true;
+        for (const s of chunk) {
+          s.held = true;
+          s.gen = nextGeneration();
+        }
         const topics = mapNonEmpty(chunk, topicEntry);
         const replay = run.rs === undefined ? {} : { replay_session_id: run.rs };
-        connection.send(F.sub(connection.nextId(), { topics, snapshot: true, ...replay }));
+        submit(
+          F.sub(connection.nextId(), { topics, snapshot: true, ...replay }),
+          run.rs,
+          gensOf(chunk),
+        );
       }
     }
   }
@@ -266,9 +369,74 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     switch (frame.t) {
       case "snap":
       case "d":
-        registry.onData(frame, decodeMs);
+        // The frames of a subscription whose `unsub_ok` is still due belong to the old one.
+        if (!unsubbing.has(frame.ch)) registry.onData(frame, decodeMs);
         return;
+      case "sub_ok":
+        return onSubOk(frame);
+      case "unsub_ok":
+        return onUnsubOk(frame);
+      case "err":
+        return onErr(frame);
     }
+  }
+
+  /**
+   * A reply is applied to the stream of its request, and only while that stream is still the
+   * subscription the request was sent for (`streamOf`): a reply to no request of ours, one
+   * forgotten, or one for a subscription let go or sent again since applies to nothing.
+   */
+  function onSubOk(frame: ControlOf<"sub_ok">): void {
+    const request = take(frame.id);
+    if (request === undefined) return;
+    const current = frame.p.results.flatMap((result) => {
+      const stream = streamOf(request, result.ch);
+      return stream === undefined ? [] : [{ result, stream }];
+    });
+    const results = current.map(({ result }) => result);
+    registry.onSubOk({ ...frame, p: { ...frame.p, results } }, scopeOf(request));
+    // A refused topic is not held; the registry ended its stream, and an ended stream is not wanted, so it is not asked for again.
+    for (const { result, stream } of current) {
+      if (!result.ok) stream.held = false;
+    }
+  }
+
+  function onUnsubOk(frame: ControlOf<"unsub_ok">): void {
+    const request = take(frame.id);
+    if (request !== undefined) {
+      const results = frame.p.results.filter(({ ch }) => streamOf(request, ch) !== undefined);
+      registry.onUnsubOk({ ...frame, p: { ...frame.p, results } }, scopeOf(request));
+    }
+    for (const { ch } of frame.p.results) unsubbing.delete(ch); // whatever it answers, nothing waits for it any more
+    scheduleSync(); // what waited behind it can go
+  }
+
+  /** The `err` that answers a request settles it (the connection has mapped it already, and settled any `auth`). */
+  function onErr(frame: ControlOf<"err">): void {
+    const request = take(frame.id);
+    if (request === undefined) return;
+    if (request.frame.t === "sub") {
+      refuseSub(request, request.frame, frame.p);
+    } else if (request.frame.t === "unsub") {
+      // An `unsub` the gateway refused (a client bug) has no `unsub_ok` to wait for: what waited behind it goes.
+      for (const ch of request.frame.p.topics) unsubbing.delete(ch);
+      scheduleSync();
+    }
+  }
+
+  /** A `sub` the gateway answered with an `err` subscribed nothing: each of its topics is refused, as a `sub_ok` would say. */
+  function refuseSub(
+    request: Request,
+    sub: Extract<F.ClientFrame, { t: "sub" }>,
+    error: ControlOf<"err">["p"],
+  ): void {
+    const current = sub.p.topics.flatMap(({ ch }) => {
+      const stream = streamOf(request, ch);
+      return stream === undefined ? [] : [{ ch, stream }];
+    });
+    const results = current.map(({ ch }) => ({ ch, ok: false, error }));
+    registry.onSubOk({ t: "sub_ok", p: { results } }, { rs: request.rs });
+    for (const { stream } of current) stream.held = false;
   }
 
   /** The connection is gone: every stream is pending again (9.3: no session resumption) and subscribes afresh on the next one. */
@@ -278,6 +446,8 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       s.held = false;
       if (s.consumers.size === 0) streams.delete(s.key);
     }
+    unsubbing.clear();
+    ledger.clear();
   }
 
   return {
@@ -333,6 +503,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         reconnects,
         malformedFrames,
         ...own,
+        pendingRequests: ledger.size,
         streams: streams.size,
       };
     },
