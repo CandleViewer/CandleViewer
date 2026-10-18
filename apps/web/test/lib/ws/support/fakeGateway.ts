@@ -20,6 +20,12 @@ export interface FakeGatewayOptions {
   readonly silent?: boolean;
   /** The first `n` `auth` frames are refused with `auth_failed` (4.3). */
   readonly refuseAuths?: number;
+  /** What a refused `auth` is answered with, when it is not `auth_failed`: an error that does not blame the token. */
+  readonly authRefusal?: string;
+  /** `auth_ok` echoes this id instead of the `auth` frame's: an answer that is not for it. */
+  readonly authOkId?: string;
+  /** This many server `ping`s arrive before `welcome`: a server that pings in a flood. */
+  readonly pingsBeforeWelcome?: number;
   /** `welcome` leaves out `clock_skew_ms` (it is optional, 4.2). */
   readonly omitSkew?: boolean;
 }
@@ -124,6 +130,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       }
       if (received.length === 1 && t !== "hello") problems.push(`first frame is ${t}, not hello`);
       if (t === "hello") {
+        for (let i = 0; i < (options.pingsBeforeWelcome ?? 0); i += 1) {
+          send({ t: "ping", id: `${SERVER_PING}pre-${i}`, p: { server_ms: now() } });
+        }
         reply(
           "welcome",
           {
@@ -144,7 +153,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         );
       } else if (t === "auth" && authsToRefuse > 0) {
         authsToRefuse -= 1;
-        reply("err", { p: { code: "auth_failed", message: "refused" } }, frame["id"]);
+        const code = options.authRefusal ?? "auth_failed";
+        reply("err", { p: { code, message: "refused" } }, frame["id"]);
       } else if (t === "auth") {
         authenticated = true;
         reply(
@@ -160,7 +170,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
               kill_switch: { engaged: false, scope: "global" },
             },
           },
-          frame["id"],
+          options.authOkId ?? frame["id"],
         );
       } else if (t === "ping") {
         reply("pong", { p: { server_ms: now() } }, frame["id"]);

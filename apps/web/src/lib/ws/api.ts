@@ -86,6 +86,10 @@ export type TokenResult =
  * the token only to send `auth`, and never stores or logs it or puts it in a URL (4.3).
  */
 export interface TokenSource {
+  /**
+   * The holder coalesces concurrent calls: the WS client keeps one in flight at a time, but a call it stopped waiting for
+   * (10 s) may still be pending when the next connection asks, and a refresh token is single-use.
+   */
   getToken(): Promise<TokenResult>;
   /** The server rejected the token (4401): the next `getToken` must not hand out the same one. */
   invalidate(): void;

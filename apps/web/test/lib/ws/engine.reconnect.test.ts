@@ -1,0 +1,108 @@
+// E17-T04 S4 (23 4.4, 9.2; C7): what the connection does when the socket ends.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { onWsError } from "../../../src/lib/ws/errorHandler";
+import { backoffDelayWithJitter } from "../../../src/shell/bootstrap/backoff";
+import { connectionHarness, tokenOf } from "./support/connectionHarness";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+/** A seeded LCG: the same samples on every run. */
+const seeded = (seed: number) => () =>
+  (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+/** The waits between the sockets the client created: every connect is refused at once, so each is a reconnect delay. */
+const gaps = (conns: readonly { at: number }[]) =>
+  conns.slice(1).map((conn, i) => conn.at - (conns[i]?.at ?? 0));
+
+describe("backoff (9.2, C7)", () => {
+  it("Backoff is jittered and respects fatal codes", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    t.gateway.latest.close(1011); // the server fails: the first row of the table
+    expect(t.events.at(-1)).toEqual({
+      type: "reconnecting",
+      attempt: 1,
+      nextAttemptAtMs: Date.now() + 500,
+    });
+    await t.advance(499);
+    expect(t.gateway.conns).toHaveLength(1);
+    await t.advance(1);
+    expect(t.gateway.conns).toHaveLength(2);
+    // 4403: no reconnect, a fatal state, and `forbidden` reaches the error mapping
+    await t.advance(100);
+    const errors: string[] = [];
+    const off = onWsError((code) => errors.push(code));
+    t.gateway.latest.send({ t: "err", p: { code: "forbidden", message: "disabled" } });
+    t.gateway.latest.bye("user_disabled", 4403, { reconnect: false });
+    off();
+    expect(errors).toEqual(["forbidden"]);
+    expect(t.events.at(-1)).toEqual({ type: "offline", cause: "fatal", closeCode: 4403 });
+    await t.advance(600_000);
+    expect(t.gateway.conns).toHaveLength(2);
+  });
+
+  it.each([1002, 1009, 4400, 4403])("never reconnects on %i", async (code) => {
+    const t = connectionHarness();
+    await t.connect();
+    t.gateway.latest.close(code);
+    await t.advance(600_000);
+    expect([t.gateway.conns.length, t.events.at(-1)]).toEqual([
+      1,
+      { type: "offline", cause: "fatal", closeCode: code },
+    ]);
+  });
+
+  it("waits the rows of the table with full jitter while connects keep failing", async () => {
+    const t = connectionHarness(undefined, { random: seeded(7) });
+    t.gateway.refuse(7);
+    t.connection.start();
+    await t.advance(300_000);
+    const random = seeded(7);
+    const expected = Array.from({ length: 7 }, (_, i) => backoffDelayWithJitter(i + 1, random));
+    expect(gaps(t.gateway.conns)).toEqual(expected);
+    expect(new Set(expected).size).toBeGreaterThan(5);
+    expect(t.connection.counters.reconnects).toBe(7);
+  });
+
+  it("starts the table again at auth_ok, not at open", async () => {
+    const t = connectionHarness();
+    t.gateway.refuse(2);
+    await t.connect();
+    await t.advance(1_600); // 500 ms, then 1 000 ms: the third socket opens and authenticates
+    expect(t.connection.ready).toBe(true);
+    t.gateway.latest.close(1011);
+    expect(t.events.at(-1)).toMatchObject({ type: "reconnecting", attempt: 1 });
+  });
+
+  it("open-then-4401 keeps the attempt count rising, and the token is renewed before each socket", async () => {
+    const t = connectionHarness();
+    t.connection.start();
+    for (const wait of [0, 500, 1_000]) {
+      await t.advance(wait); // the socket opens and `hello` goes; `auth` still waits its 40 ms
+      t.gateway.latest.bye("auth_timeout", 4401);
+    }
+    expect(
+      t.events
+        .filter((e) => e.type === "reconnecting")
+        .map((e) => e.type === "reconnecting" && e.attempt),
+    ).toEqual([1, 2, 3]);
+    expect(t.tokens.invalidate).toHaveBeenCalledTimes(3);
+    expect(t.tokens.invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      t.tokens.getToken.mock.invocationCallOrder[1] ?? 0,
+    );
+    await t.advance(2_100);
+    expect(t.gateway.latest.of("auth")[0]).toMatchObject({ p: { access_token: tokenOf(4) } });
+  });
+
+  it("takes bye.retry_after_ms as a floor under the table", async () => {
+    const t = connectionHarness();
+    await t.connect();
+    t.gateway.latest.bye("server_shedding_load", 1013, { retry_after_ms: 5_000 });
+    const event = t.events.at(-1);
+    const wait = event?.type === "reconnecting" ? event.nextAttemptAtMs - Date.now() : 0;
+    expect(wait).toBeGreaterThanOrEqual(5_000);
+    expect(wait).toBeLessThanOrEqual(5_500);
+  });
+});
