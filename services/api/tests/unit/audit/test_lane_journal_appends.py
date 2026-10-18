@@ -186,7 +186,7 @@ async def test_lane_refuses_an_unregistered_action_or_outcome(tmp_path: Path, re
 
 
 async def test_lane_refuses_audit_lane_started_after_frame_1(tmp_path: Path) -> None:
-    """n7: only the lane writes `audit.lane_started`, as a new lane's frame 1."""
+    """Only the lane writes `audit.lane_started`, as a new lane's frame 1."""
     lane, _ = await boot(tmp_path)
     await lane.append(STARTED)
     with pytest.raises(lj.LaneNotAdmitted):
@@ -196,8 +196,19 @@ async def test_lane_refuses_audit_lane_started_after_frame_1(tmp_path: Path) -> 
     assert outline(on_disk(tmp_path)) == [1]
 
 
+async def test_lane_admits_one_frame_1_among_concurrent_appends(tmp_path: Path) -> None:
+    """Frame 1's admission is checked again under the lane lock, so two racing appends of
+    `audit.lane_started` give one frame 1 and one `LaneNotAdmitted`."""
+    lane, _ = await boot(tmp_path)
+    results = await asyncio.gather(*(lane.append(STARTED) for _ in "ab"), return_exceptions=True)
+    await lane.close()
+
+    assert results[0] == 1 and isinstance(results[1], lj.LaneNotAdmitted)
+    assert outline(on_disk(tmp_path)) == [1]
+
+
 async def test_lane_open_a_second_time_raises(tmp_path: Path) -> None:
-    """Fable L6: `open()` runs once, so nothing after the marker is counted twice."""
+    """`open()` runs once, so nothing after the marker is counted twice."""
     lane, _ = await boot(tmp_path)
     with pytest.raises(lj.LaneError):
         await lane.open()
@@ -238,7 +249,7 @@ async def test_lane_rotates_at_the_segment_size_and_refuses_too_large(tmp_path: 
 
 async def test_lane_every_boot_opens_a_segment_within_the_segment_cap(tmp_path: Path) -> None:
     """Row 16 and R2: three boots, three segments of one frame; the fourth boot's append is
-    refused `full` and writes nothing until compaction frees segments: a boot loop stops there."""
+    refused `full` and writes nothing until compaction frees segments (unlike a boot row)."""
     for record in (STARTED, rec(1), rec(2)):
         lane, _ = await boot(tmp_path, max_segments=3)
         await lane.append(record)
@@ -369,7 +380,7 @@ async def test_lane_failed_append_refuses_io_error_or_stops_the_lane(
     tmp_path: Path, fail: dict[str, int], reason: str, after: list[object]
 ) -> None:
     """Failures while running: after `io_error` the next append takes the same `seq`; a failed
-    truncate, fsync or unlink stops the lane, and every later append is refused (M1, m6)."""
+    truncate, fsync or unlink stops the lane, and every later append is refused."""
     records = [STARTED, rec(1)]
     lane, _ = await boot(tmp_path, Disk(tmp_path, fail))
     with pytest.raises(lj.LaneRefused) as refused:
@@ -422,7 +433,7 @@ async def test_lane_cancelled_during_an_fsync_keeps_the_lock_until_it_returns(
 
 
 async def test_lane_closing_refuses_appends_at_once_while_the_lock_is_held(tmp_path: Path) -> None:
-    """A refusal comes before the lane lock (m1), so a stalled fsync never delays the fallback."""
+    """A refusal comes before the lane lock, so a stalled fsync never delays the fallback."""
     disk = Disk(tmp_path)
     lane, _ = await boot(tmp_path, disk)
     await lane.append(STARTED)
@@ -441,10 +452,32 @@ async def test_lane_closing_refuses_appends_at_once_while_the_lock_is_held(tmp_p
     assert not queued and stopped.value.reason == "stopped"
 
 
+async def test_lane_append_queued_for_the_lock_is_refused_once_the_lane_closed(
+    tmp_path: Path,
+) -> None:
+    """A refusal that comes while an append waits for the lane lock still reaches it: the frame is
+    checked again under the lock, so `close()` leaves no frame after the one in flight."""
+    disk = Disk(tmp_path)
+    lane, _ = await boot(tmp_path, disk)
+    await lane.append(STARTED)
+    disk.park = True
+    holder = asyncio.create_task(lane.append(rec(1)))
+    await parked(disk)
+    queued = asyncio.create_task(lane.append(rec(2)))
+    assert await stays_pending(queued)
+    closing = asyncio.create_task(lane.close())
+    disk.release.set()
+    await asyncio.wait_for(asyncio.gather(holder, closing), WAIT_S)
+    with pytest.raises(lj.LaneRefused) as refused:
+        await queued
+
+    assert refused.value.reason == "stopped" and outline(on_disk(tmp_path)) == [1, 2]
+
+
 async def test_lane_rotations_a_failed_publish_and_close_leave_no_descriptor_open(
     tmp_path: Path,
 ) -> None:
-    """m3: a rotation closes the old segment, a failed publication its `.new`, and `close()` the
+    """A rotation closes the old segment, a failed publication its `.new`, and `close()` the
     segment the appends went to."""
     before, disk = fds(), Disk(tmp_path)
     lane, _ = await boot(tmp_path, disk, segment_max_bytes=1)  # one frame per segment
@@ -453,6 +486,7 @@ async def test_lane_rotations_a_failed_publish_and_close_leave_no_descriptor_ope
     disk.fail["fsync"] = disk.calls["fsync"] + 1  # the next `.new`'s
     with pytest.raises(lj.LaneRefused):
         await lane.append(rec(3))
+    await lane.quarantine(RUN)  # its directory's descriptor too
     await lane.close()
 
     assert fds() == before
@@ -504,7 +538,7 @@ async def test_lane_close_waits_for_an_abandoned_op_and_its_failure_is_logged(
 
 
 async def test_lane_failed_drain_operation_leaves_a_held_lane_held(tmp_path: Path) -> None:
-    """`_stop` (m4): a hold stays a hold, here when a quarantine copy's fsync fails."""
+    """`stop()`: a hold stays a hold, here when a quarantine copy's fsync fails."""
     start = lj.LaneMarker(LANE, (1, 0), 1, lj.ZERO_MAC, True)
     (tmp_path / "confirmed").write_bytes(lj.encode_marker(OTHER_KEYS, start))  # row 1
     lane, _ = await boot(tmp_path, Disk(tmp_path, {"fsync": 1}))
@@ -521,13 +555,14 @@ async def test_lane_failed_drain_operation_leaves_a_held_lane_held(tmp_path: Pat
         ("confirm", (lj.LaneMarker(LANE, (1, F1), 2, lj.ZERO_MAC, True),)),
         ("compact", ()),
         ("quarantine", (RUN,)),
+        ("rescan", (lj.LaneMarker(LANE, (1, F1), 2, lj.ZERO_MAC, True),)),
     ],
-    ids="confirm compact quarantine".split(),
+    ids="confirm compact quarantine rescan".split(),
 )
 async def test_lane_drain_operation_after_close_raises(
     tmp_path: Path, operation: str, args: tuple[object, ...]
 ) -> None:
-    """Fable L1: `confirm()`, `compact()` and the quarantine copy end with `close()`."""
+    """`confirm()`, `compact()`, the quarantine copy and the running scan end with `close()`."""
     lane, _ = await boot(tmp_path)
     await lane.append(STARTED)
     await lane.close()
@@ -538,7 +573,7 @@ async def test_lane_drain_operation_after_close_raises(
 
 
 async def test_lane_quarantine_through_a_linked_directory_stops_the_lane(tmp_path: Path) -> None:
-    """Fable L2: `quarantine/` is opened without following a link, so a planted one fails the
+    """`quarantine/` is opened without following a link, so a planted one fails the
     copy, which stops the lane, and nothing reaches the link's target."""
     lane, _ = await boot(tmp_path / "lane")
     (tmp_path / "target").mkdir()
@@ -609,40 +644,83 @@ async def test_lane_compaction_deletes_only_segments_wholly_before_the_marker(
     assert segments(tmp_path) == [5, 7]
 
 
+@pytest.mark.parametrize("data", ["frames", "junk"])
 async def test_lane_compaction_after_a_marker_ahead_boot_waits_for_a_confirmation(
-    tmp_path: Path,
+    tmp_path: Path, data: str
 ) -> None:
-    """Fable L4: a marker the scan read as ahead (row 2) is not trusted, so compaction deletes
+    """A marker the scan read as ahead (row 2) is not trusted, so compaction deletes
     nothing until the drain confirms a unit of this boot's scan."""
     lane, _ = await boot(tmp_path, segment_max_bytes=SEG)
     for record in (STARTED, *map(rec, range(1, 6))):
         await lane.append(record)  # seg-1 [1, 2], seg-3 [3, 4], seg-5 [5, 6]
     await lane.close()
+    for seg in segments(tmp_path) if data == "junk" else ():
+        (tmp_path / lj.segment_name(seg)).write_bytes(b"junk\n")  # one run, nothing authentic
     ahead = lj.LaneMarker(LANE, (99, 0), 7, lj.ZERO_MAC, True)  # verifiable, past every segment
     (tmp_path / "confirmed").write_bytes(lj.encode_marker(KEYS, ahead))
     lane, result = await boot(tmp_path)
     unlinked = [await lane.compact()]
-    await lane.confirm(marker_at(result.units[4]))  # frame 4, the end of seg-3
+    await lane.confirm(
+        marker_at(result.units[4 if data == "frames" else 0])
+    )  # seg-3's end, the run's
     unlinked.append(await lane.compact())
     await lane.close()
 
-    assert outline(result)[0] == ("marker_lost", 1, 0) and unlinked == [0, 2]
+    run = {"frames": ("marker_lost", 1, 0), "junk": ("segment_corrupt", 7, None)}[data]
+    assert outline(result)[0] == run and unlinked == [0, 2]
 
 
 async def test_lane_confirm_refuses_a_marker_of_another_lane_or_past_its_units(
     tmp_path: Path,
 ) -> None:
-    """n8: the drain confirms only what the lane counted, and a refused marker is not written."""
+    """The drain confirms only the end of a unit the lane counted, and a refused marker is not
+    written."""
     lane, _ = await boot(tmp_path)
     await lane.append(STARTED)
     good = marker_at(on_disk(tmp_path).units[0])
-    for marker in (replace(good, lane=OTHER), replace(good, pos=(1, F1 + 1))):
+    for marker in (replace(good, lane=OTHER), *(replace(good, pos=(1, at)) for at in (1, F1 + 1))):
         with pytest.raises(lj.LaneError):
             await lane.confirm(marker)
     await lane.close()
 
     start = lj.LaneMarker(LANE, (1, 0), 1, lj.ZERO_MAC, True)
     assert lj.decode_marker(KEYS, (tmp_path / "confirmed").read_bytes()) == start
+
+
+async def test_lane_a_marker_ahead_boot_keeps_its_marker_when_frame_1_is_due(
+    tmp_path: Path,
+) -> None:
+    """Row 2 with `next_seq` 1 and no authentic frame: frame 1 does not rewrite `confirmed` as a
+    new lane's, so a reboot before the drain moved the marker reports the run again."""
+    ahead = lj.LaneMarker(LANE, (5, 0), 1, lj.ZERO_MAC, False)
+    (tmp_path / "confirmed").write_bytes(lj.encode_marker(KEYS, ahead))
+    lane, result = await boot(tmp_path)
+    assert await lane.append(STARTED) == 1
+    await lane.close()
+    lane, again = await boot(tmp_path)
+    await lane.close()
+
+    assert lj.decode_marker(KEYS, (tmp_path / "confirmed").read_bytes()) == ahead
+    assert outline(result) == [("marker_lost", 1, None)]
+    assert outline(again) == [("marker_lost", 1, 0), 1]
+
+
+async def test_lane_close_during_the_boot_keeps_the_lane_stopped(tmp_path: Path) -> None:
+    """`close()` while `open()` still boots: the boot ends, but the lane stays refused `stopped`,
+    so no append opens a segment after `close()` returned."""
+    disk = Disk(tmp_path / "lane")
+    disk.park = True  # the boot's first fsync, the new directory's
+    lane = lj.LaneJournal(disk, KEYS)
+    opening = asyncio.create_task(lane.open(lambda: LANE))
+    await parked(disk)
+    closing = asyncio.create_task(lane.close())
+    assert await stays_pending(closing)
+    disk.release.set()
+    await asyncio.wait_for(asyncio.gather(opening, closing), WAIT_S)
+    with pytest.raises(lj.LaneRefused) as refused:
+        await lane.append(STARTED)
+
+    assert refused.value.reason == "stopped" and segments(tmp_path / "lane") == []
 
 
 async def test_lane_appends_log_and_raise_no_record_or_key(tmp_path: Path) -> None:
@@ -679,7 +757,7 @@ def check(result: lj.LaneScan, lane: lj.LaneJournal, acked: dict[int, Rec], star
 
 async def steps_run(path: Path, steps: list[tuple[str, int]]) -> None:
     disk, acked = Disk(path, fast=True), dict[int, Rec]()
-    # Segments of a few frames (m2): a boot that reused one would append after a torn tail.
+    # Segments of a few frames: a boot that reused one would append after a torn tail.
     lane, result = await boot(path, disk, new=uuid.uuid4(), segment_max_bytes=1200)
     start, done = 1, 0  # the marker's `next_seq`; how many of this boot's units it has passed
     for op, arg in [*steps, ("x", 0)]:

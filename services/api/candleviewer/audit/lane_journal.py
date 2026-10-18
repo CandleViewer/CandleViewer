@@ -581,13 +581,14 @@ LANE_MAX_SEGMENTS = 1024
 _READ_MAX = SEGMENT_MAX_BYTES + MAX_FRAME_BYTES  # longer than any file the lane writes
 _STRAY = re.compile(r"confirmed\.tmp|seg-[0-9]{20}\.lane\.new")
 LANE_MAX_BYTES, SHARED_MAX_BYTES = 32 << 20, 16 << 20  # S1c: the byte quotas
+_BOOT_ROWS = ("audit.lane_started", "audit.lane_resumed")  # Limits: no cap refuses them
 LANE_WAITERS: Mapping[LaneClass, int] = MappingProxyType({"reserved": 192, "shared": 64})
 DRAIN_BATCH, CONFIRM_POLL_S, RETRY_S = 200, 0.05, (0.5, 30.0)  # S2a2: the drain's (`audit/lane.py`)
 
 
 class LaneNotAdmitted(LaneError):
     """No `LANE_ACTIONS` row admits the record, or frame 1 is not `audit.lane_started`, or a later
-    frame is: only the lane writes it, as a new lane's frame 1 (n7)."""
+    frame is: only the lane writes it, as a new lane's frame 1."""
 
 
 def _segments(names: Iterable[str]) -> list[int]:
@@ -655,13 +656,13 @@ class LaneFiles:
         found = {name: self.read(name) for name in ("confirmed", "released") if name in names}
         return names, found.get("confirmed"), found.get("released")
 
-    def publish(self, seq: int, frame: bytes, max_segments: int) -> int:
+    def publish(self, seq: int, frame: bytes, max_segments: int, boot: bool) -> tuple[int, bool]:
         """fsync point 1, a new segment (R1): `.new`, its fsync, the link to the segment's name,
-        which must not exist, the unlink, the directory's fsync; returns the descriptor. Past
-        `max_segments` (R2), or when `.new` cannot be opened or written, nothing is published."""
+        which must not exist, the unlink, the directory's fsync; returns the descriptor and True
+        past `max_segments` (R2), only a boot row's (Limits). A `.new` that fails publishes none."""
         path = self.dir / segment_name(seq)
         new = path.with_name(f"{path.name}.new")
-        if len(_segments(os.listdir(self.dir))) >= max_segments:
+        if (over := len(_segments(os.listdir(self.dir))) >= max_segments) and not boot:
             raise LaneRefused("full")
         if os.path.lexists(path):  # only damage takes the name; the link guards a race too
             raise FileExistsError(errno.EEXIST, "an audit lane segment name is taken", path.name)
@@ -682,7 +683,7 @@ class LaneFiles:
         except BaseException:
             os.close(fd)
             raise
-        return fd
+        return fd, over
 
     def append(self, fd: int, frame: bytes, end: int) -> None:
         """fsync point 1: a failed write is cut back to `end` and fsynced (`io_error`)."""
@@ -728,7 +729,7 @@ class LaneFiles:
 
     def quarantine(self, name: str, data: bytes) -> None:
         """fsync point 4; a crash's partial copy is replaced. `quarantine/` is opened without
-        following a link, and the copy is made through its descriptor (Fable L2)."""
+        following a link, and the copy is made through its descriptor."""
         made = _mkdir(self.dir / "quarantine")
         dir_fd = _open(self.dir / "quarantine", os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -845,7 +846,7 @@ class LaneJournal:
         self._lane_max, self._shared_max = lane_max_bytes, shared_max_bytes
         self._bytes = self._shared = 0  # after the marker, a run's bytes too (reading 2)
         self._units: deque[tuple[Pos, int, bool]] = deque()  # (end, bytes, shared) of each
-        self._end: Pos = (1, 0)  # the furthest unit end counted; no marker passes it (n8)
+        self._end: Pos = (1, 0)  # the furthest unit end counted; no marker passes it
         self._opened = self._closed = False  # `open()` runs once; `close()` ends the drain's ops
         self.lane, self._next_seq, self._prev = uuid.UUID(int=0), 1, ZERO_MAC
         self.refusal: LaneReason | None = "stopped"  # until `open()`
@@ -853,12 +854,15 @@ class LaneJournal:
         self.boot_marker: LaneMarker | None = None  # the verifiable marker the boot found
         self._fd, self._active, self._size = -1, 0, 0  # the segment the appends go to
         self._lock = _LaneLock(waiters)
+        self.boot_overshoot_frames = 0  # Limits: boot rows past a cap (S4a's metric)
+        self._resumed = False  # this boot's `audit.lane_resumed` is written
         self._ops: set[asyncio.Task[Any]] = set()
 
     async def open(self, new_lane: Callable[[], uuid.UUID] = uuid.uuid4) -> LaneScan:
-        """Boot: remove a crash's strays, scan, and take the lane's state from the scan."""
+        """Boot: remove a crash's strays, scan, and take the lane's state from the scan. It runs
+        once, so nothing is counted twice: after a failure a retry needs a new `LaneJournal`."""
         if self._opened:
-            raise LaneError("the audit lane is already open")  # Fable L6: never counted twice
+            raise LaneError("the audit lane is already open")
         self._opened = True
         return await self._run(lambda op: self._open(op, new_lane))
 
@@ -871,9 +875,9 @@ class LaneJournal:
             self._prev, self._pos = state.prev, found.pos if isinstance(found, LaneMarker) else None
             self.boot_marker = found if isinstance(found, LaneMarker) else None
             if any(isinstance(unit, Run) and unit.marker_ahead for unit in result.units):
-                self._pos = None  # row 2: no compaction until the first `confirm()` (Fable L4)
+                self._pos = None  # row 2: no compaction until the first `confirm()`
             held = result.held or (result.lane is None and bool(segments))
-            self.refusal = "held" if held else None
+            self.refusal = "held" if held else ("stopped" if self._closed else None)
             for unit in result.units:
                 shared = isinstance(unit, Handover) and unit.frame.cls == "shared"
                 self._count(
@@ -903,7 +907,10 @@ class LaneJournal:
     async def append(self, rec: dict[str, object]) -> int:
         """Append one record (an `AuditEmission` as JSON); its `seq` once the frame is durable.
         `LaneNotAdmitted`, `LaneRefused` (§15.6's reasons) and the `TypeError` of a record that is
-        not JSON (callers pass dicts the codec built) write nothing."""
+        not JSON (callers pass dicts the codec built) write nothing. A refused lane answers with its
+        refusal first, so a held lane whose frame 1 is due still says `held` (§15.6 Hold)."""
+        if self.refusal is not None:
+            raise LaneRefused(self.refusal)
         cls = _admit(rec, first=self.fresh)
         self._frame(cls, rec)  # refused at once
         return await self._run(lambda op: self._append(op, cls, rec))
@@ -914,32 +921,43 @@ class LaneJournal:
         seq, prev = self._next_seq, self._prev
         frame = encode_frame(self._keys, lane=self.lane, seq=seq, prev=prev, cls=cls, rec=rec)
         size = len(frame)
-        if self._bytes + size > self._lane_max or (
-            cls == "shared" and self._shared + size > self._shared_max
+        if not self._exempt(rec) and (
+            self._bytes + size > self._lane_max
+            or (cls == "shared" and self._shared + size > self._shared_max)
         ):
             raise LaneRefused("full")
         return frame
 
+    def _exempt(self, rec: dict[str, object]) -> bool:
+        """Limits: a boot's own rows (frame 1, its first `audit.lane_resumed`) pass the caps."""
+        return rec.get("action") in _BOOT_ROWS and not self._resumed
+
     async def _append(self, op: _Op, cls: LaneClass, rec: dict[str, object]) -> int:
         async with self._held(op, cls, capped=True):
-            frame, seq = self._frame(cls, rec), self._next_seq
+            _admit(rec, first=self.fresh)  # again under the lock: one frame 1 among racing appends
+            frame, seq, boot = self._frame(cls, rec), self._next_seq, self._exempt(rec)
+            past = boot and self._bytes + len(frame) > self._lane_max  # counted (Limits)
             try:
-                if self._pos is None and seq == 1:  # a new lane: its marker, then frame 1
-                    start = LaneMarker(self.lane, (1, 0), 1, ZERO_MAC, True)
+                if self._pos is None and seq == 1 and self.boot_marker is None:  # a new lane
+                    start = LaneMarker(self.lane, (1, 0), 1, ZERO_MAC, True)  # its marker first
                     await _in_thread(op, self._files.mark, encode_marker(self._keys, start))
                     self._pos = start.pos
                 if self._fd < 0 or self._size + len(frame) > self._segment_max:
-                    fd = await _in_thread(op, self._files.publish, seq, frame, self._max_segments)
+                    publish, cap = self._files.publish, self._max_segments
+                    fd, over = await _in_thread(op, publish, seq, frame, cap, boot)
+                    past = past or over
                     self._close()
                     self._fd, self._active, self._size = fd, seq, 0
                 else:
                     await _in_thread(op, self._files.append, self._fd, frame, self._size)
             except OSError as exc:  # R1's taken name among them
-                self._stop(exc)
+                self.stop(exc)
                 raise LaneRefused("stopped") from None
             self._size += len(frame)
             self._next_seq, self._prev = seq + 1, frame[-65:-1].decode("ascii")
             self._count((self._active, self._size), len(frame), cls == "shared")
+            self.boot_overshoot_frames += past
+            self._resumed = self._resumed or rec["action"] == "audit.lane_resumed"
             _log().info(
                 "audit.lane.appended", seq=seq, cls=cls, action=rec["action"], mac=self._prev[:16]
             )
@@ -947,10 +965,12 @@ class LaneJournal:
 
     async def confirm(self, marker: LaneMarker) -> None:
         """fsync point 2: the drain moves the marker once a unit's records are committed. A marker
-        of another lane, or past the furthest unit the lane counted, is refused (n8)."""
-        self._drain()
-        if marker.lane != self.lane or marker.pos > self._end:
-            raise LaneError("the audit lane refused a marker of another lane or past its units")
+        of another lane, or anywhere but the current marker or a unit end the lane counted, is
+        refused, so the marker never moves back or into a unit."""
+        self._require_open()
+        ends = (end for end, _, _ in self._units)
+        if marker.lane != self.lane or (marker.pos != self._pos and marker.pos not in ends):
+            raise LaneError("the audit lane refused a marker of another lane or off its units")
         body = encode_marker(self._keys, marker)
         await self._run(lambda op: self._io(op, self._files.mark, body))
         self._pos = marker.pos
@@ -961,8 +981,8 @@ class LaneJournal:
 
     async def compact(self) -> int:
         """fsync point 3 (decision 7); how many segments it unlinked, none until a marker is
-        trusted (Fable L4)."""
-        self._drain()
+        trusted."""
+        self._require_open()
         if self._pos is None:
             return 0
         pos, active = self._pos, self._active
@@ -970,16 +990,34 @@ class LaneJournal:
 
     async def quarantine(self, run: Run) -> None:
         """fsync point 4: a run's bytes; a run without bytes has no copy."""
-        self._drain()
+        self._require_open()
         if (name := run.quarantined) is not None:
             await self._run(lambda op: self._io(op, self._files.quarantine, name, run.data))
 
     async def rescan(self, origin: LaneMarker) -> LaneScan:
         """The drain's running scan (§15.6 Scan) from `origin`, the end of the last unit it took:
-        a frame boundary it scanned, so nothing before it is parsed again."""
-        self._drain()
-        body, files, keys = encode_marker(self._keys, origin), self._files, self._keys
-        return await self._run(lambda op: self._io(op, _running_scan, files, keys, body))
+        a frame boundary it scanned, so nothing before it is parsed again. A run open at the end of
+        the newest segment seals it (row 16), and bytes past the appends count (reading 2)."""
+        self._require_open()
+        body = encode_marker(self._keys, origin)
+        return await self._run(lambda op: self._rescan(op, body))
+
+    async def _rescan(self, op: _Op, body: bytes) -> LaneScan:
+        async with self._held(op):  # a failed read ends the drain, whose death stops the lane
+            result = await _in_thread(op, _running_scan, self._files, self._keys, body)
+            for unit in result.units:
+                if unit.end > self._end:  # bytes the appender did not write
+                    self._count(
+                        unit.end, len(unit.data if isinstance(unit, Run) else unit.raw), False
+                    )
+            if result.sealed:
+                self._close()  # the next append starts a new segment
+        return result
+
+    def hold(self) -> None:
+        """A hold the running scan met (row 12): every later append is refused `held`."""
+        self.refusal = "held"
+        _log().critical("audit lane held until a restart")
 
     async def close(self) -> None:
         """Refuse every later append (`stopped`) and drain operation (`LaneError`), wait for the
@@ -995,8 +1033,8 @@ class LaneJournal:
             os.close(self._fd)
             self._fd = -1
 
-    def _drain(self) -> None:
-        """Fable L1: the drain's operations end with `close()`."""
+    def _require_open(self) -> None:
+        """The drain's operations end with `close()`."""
         if self._closed:
             raise LaneError("the audit lane is closed")
 
@@ -1006,8 +1044,9 @@ class LaneJournal:
         self._shared += size if shared else 0
         self._end = max(self._end, end)
 
-    def _stop(self, exc: BaseException) -> None:
-        """Failures while running: no append until a restart; a hold stays a hold."""
+    def stop(self, exc: BaseException) -> None:
+        """Failures while running, a dead drain among them: no append until a restart; a hold
+        stays a hold."""
         self.refusal = self.refusal or "stopped"
         _log().critical("audit lane stopped until a restart", error=type(exc).__name__)
 
@@ -1033,7 +1072,7 @@ class LaneJournal:
             try:
                 return await _in_thread(op, fn, *args)
             except OSError as exc:
-                self._stop(exc)
+                self.stop(exc)
                 raise
 
     async def _run[T](self, body: Callable[[_Op], Coroutine[Any, Any, T]]) -> T:
