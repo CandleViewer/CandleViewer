@@ -14,7 +14,7 @@ concern, does that.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -43,6 +43,41 @@ configure_logging(
 def logger() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+class _Teardown:
+    """Runs the lifespan teardown's steps one by one, each isolated (#3403): a step that raises
+    never keeps a later one, or `Supervisor.stop_all` and with it `secrets.stop()` zeroing the
+    KEK (C-2.7, C-12.2), from running. A failed step is logged with its name and exception type.
+    An `Exception` goes no further. Anything else, a cancellation, `KeyboardInterrupt` or
+    `SystemExit` included, is never swallowed: the first one is held and re-raised, unchanged,
+    once `stop_all` has run, as `Supervisor.start_all` re-raises only after its stops.
+
+    No step gets a new time bound. The two that can run long, `BarsRuntime` and the metrics
+    listener's drain, are #2878's to bound together with the stop budget (see
+    `Settings._refuse_unfittable_stop_budget`); one bound on every step here would cut the WS
+    grace and the bars drain short."""
+
+    def __init__(self) -> None:
+        self._held: BaseException | None = None
+
+    async def run[T](self, step: str, stop: Callable[[], Awaitable[T]]) -> T | None:
+        """Await one step. A failure is logged and returns None; the first one that is not an
+        `Exception` is held as well."""
+        try:
+            return await stop()
+        except BaseException as exc:  # an `Exception` ends here; anything else is held as well
+            logger().exception(
+                "lifespan: teardown step failed", step=step, exc_type=type(exc).__name__
+            )
+            if self._held is None and not isinstance(exc, Exception):
+                self._held = exc
+            return None
+
+    def raise_held(self) -> None:
+        """Re-raise the first held exception, if any: call it once `stop_all` has run."""
+        if self._held is not None:
+            raise self._held
 
 
 @asynccontextmanager
@@ -100,18 +135,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if kline_refresh is not None:  # #2060: initial load, then periodic (rules are editable)
         await kline_refresh.load_now()
         kline_refresh.start()
-    alert_tasks = [
-        t
-        for t in (
-            getattr(app.state, "alert_purge_task", None),
-            getattr(app.state, "alert_gauge_task", None),
-            getattr(app.state, "drawings_purge_task", None),
-            getattr(app.state, "workspaces_purge_task", None),
-            getattr(app.state, "incidents_purge_task", None),  # E42-T05
+    alert_tasks = [  # with its `app.state` name: a failed stop is logged under it (#3403)
+        (name, t)
+        for name in (
+            "alert_purge_task",
+            "alert_gauge_task",
+            "drawings_purge_task",
+            "workspaces_purge_task",
+            "incidents_purge_task",  # E42-T05
         )
-        if t is not None
+        if (t := getattr(app.state, name, None)) is not None
     ]
-    for t in alert_tasks:
+    for _, t in alert_tasks:
         t.start()
     audit_flush = getattr(app.state, "audit_budget_flush", None)
     if audit_flush is not None:
@@ -145,63 +180,72 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # §9.4: the client gateway stops FIRST. Under `candleviewer.server` the notice, grace and
-        # bye already ran before uvicorn's shutdown (#2546); this call then stops the sweeper.
-        if ws_runtime is not None:
-            await ws_runtime.stop()
-        user_disable = getattr(app.state, "user_disable", None)
-        if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
-            await user_disable.drain()  # each ends by its own deadline
-        if feature_flags is not None:  # its maintenance poll, before the audit writer stops
-            await feature_flags.stop()
-        if metrics_runtime is not None:
-            await metrics_runtime.stop()
-        if health_registry is not None:
-            await health_registry.stop()
-        if disk_budget is not None:  # before the PG engines its repository uses
-            await disk_budget.stop()
-        health_pg = getattr(app.state, "health_pg", None)
-        if health_pg is not None:
-            await health_pg.dispose()
-        kline_pg = getattr(app.state, "kline_boundary_pg", None)
-        if kline_pg is not None:
-            await kline_pg.dispose()
-        if overrides is not None:
-            await overrides.stop()
-        if kline_refresh is not None:
-            await kline_refresh.stop()
-        if rule_prune is not None:
-            await rule_prune.stop()
-        if funding_task is not None:
-            await funding_task.stop()
-        for t in alert_tasks:
-            await t.stop()
-        if scrub_task is not None:
-            await scrub_task.stop()
-        if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
-            await audit_verify.stop()
-        admin_jobs = getattr(app.state, "admin_jobs", None)
-        if admin_jobs is not None:
-            await admin_jobs.stop()  # E16-T05: tracked compaction tasks never outlive the app
-        if bars_runtime is not None:
-            await bars_runtime.stop()  # set before writer; both before storage stops
-        await ctx.mesh_self_check.stop()
-        access = getattr(app.state, "account_access_service", None)
-        if access is not None:
-            # #2648: wait (bounded) for grant pushes before audit stops: they write WS audit rows
-            await access.drain()
-        csrf_audits = getattr(app.state, "csrf_refusal_audits", None)
-        if csrf_audits is not None:
-            # #2090: let in-flight CSRF-refusal audits land (bounded) before audit stops.
-            left = await csrf_audits.drain()
-            if left:
-                logger().warning("shutdown with %d CSRF-refusal audit(s) still in flight", left)
-        if audit_flush is not None:
-            # Budgeted audit counts are written (bounded) before the audit module stops.
-            await audit_flush.stop()
-        if account_health is not None:  # its hook calls drain before `stop_all` stops the modules
-            await account_health.stop()
-        await supervisor.stop_all()
+        # #3403: each step below is isolated (`_Teardown.run`), so whatever one raises, the later
+        # ones still run; `stop_all`, and with it the KEK zeroing, runs in a `finally`, so not
+        # even an error outside a step's isolation can skip it.
+        teardown = _Teardown()
+        try:
+            # §9.4: the client gateway stops FIRST. Under `candleviewer.server` the notice, grace
+            # and bye already ran before uvicorn's shutdown (#2546); this call then stops the
+            # sweeper.
+            if ws_runtime is not None:
+                await teardown.run("ws_runtime", ws_runtime.stop)
+            user_disable = getattr(app.state, "user_disable", None)
+            if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
+                await teardown.run("user_disable", user_disable.drain)  # each ends by its deadline
+            if feature_flags is not None:  # its maintenance poll, before the audit writer stops
+                await teardown.run("feature_flags", feature_flags.stop)
+            if metrics_runtime is not None:
+                await teardown.run("metrics_runtime", metrics_runtime.stop)
+            if health_registry is not None:
+                await teardown.run("health_registry", health_registry.stop)
+            if disk_budget is not None:  # before the PG engines its repository uses
+                await teardown.run("disk_budget", disk_budget.stop)
+            health_pg = getattr(app.state, "health_pg", None)
+            if health_pg is not None:
+                await teardown.run("health_pg", health_pg.dispose)
+            kline_pg = getattr(app.state, "kline_boundary_pg", None)
+            if kline_pg is not None:
+                await teardown.run("kline_boundary_pg", kline_pg.dispose)
+            if overrides is not None:
+                await teardown.run("log_level_overrides", overrides.stop)
+            if kline_refresh is not None:
+                await teardown.run("kline_boundary_refresh", kline_refresh.stop)
+            if rule_prune is not None:
+                await teardown.run("rule_prune_task", rule_prune.stop)
+            if funding_task is not None:
+                await teardown.run("funding_refresh_task", funding_task.stop)
+            for name, t in alert_tasks:
+                await teardown.run(name, t.stop)
+            if scrub_task is not None:
+                await teardown.run("scrub_task", scrub_task.stop)
+            if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
+                await teardown.run("audit_verify_job", audit_verify.stop)
+            admin_jobs = getattr(app.state, "admin_jobs", None)
+            if admin_jobs is not None:  # E16-T05: tracked compaction tasks never outlive the app
+                await teardown.run("admin_jobs", admin_jobs.stop)
+            if bars_runtime is not None:  # set before writer; both before storage stops
+                await teardown.run("bars_runtime", bars_runtime.stop)
+            await teardown.run("mesh_self_check", ctx.mesh_self_check.stop)
+            access = getattr(app.state, "account_access_service", None)
+            if access is not None:
+                # #2648: wait (bounded) for grant pushes before audit stops: they write WS
+                # audit rows
+                await teardown.run("account_access_service", access.drain)
+            csrf_audits = getattr(app.state, "csrf_refusal_audits", None)
+            if csrf_audits is not None:
+                # #2090: let in-flight CSRF-refusal audits land (bounded) before audit stops.
+                left = await teardown.run("csrf_refusal_audits", csrf_audits.drain)
+                if left:
+                    logger().warning("shutdown with %d CSRF-refusal audit(s) still in flight", left)
+            if audit_flush is not None:
+                # Budgeted audit counts are written (bounded) before the audit module stops.
+                await teardown.run("audit_budget_flush", audit_flush.stop)
+            if account_health is not None:  # its hook calls drain before `stop_all` stops modules
+                await teardown.run("account_health", account_health.stop)
+        finally:
+            await teardown.run("supervisor.stop_all", supervisor.stop_all)
+        teardown.raise_held()
 
 
 app = create_app()
