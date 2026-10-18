@@ -57,7 +57,7 @@ def test_operation_declares_exactly_its_statuses_rbac_and_idempotency() -> None:
     assert set(SPEC["paths"][_PATH]) == {"post"}
     assert set(_OP["responses"]) == {"200", "401", "403", "409", "422", "503"}
     assert _OP["x-rbac"] == {"permissions": ["keys:manage"], "scope": "none"}
-    assert _OP["x-idempotency"] == "optional"  # a re-run resumes, so no key is needed
+    assert _OP["x-idempotency"] == "ignored"  # a stored answer would replay a stale count
     assert _OP["parameters"] == [{"$ref": "#/components/parameters/CsrfToken"}]
     assert _OP["requestBody"]["required"] is True
     assert _BODY["schema"] == {"$ref": "#/components/schemas/KekRewrapRequest"}
@@ -104,11 +104,45 @@ def test_description_names_each_refusal_with_its_registered_status() -> None:
         (403, "kek_unavailable"),
         (409, "kek_rotation_not_staged"),
         (409, "kek_rotation_in_progress"),
+        (503, "audit_unavailable"),
         (503, "store_unavailable"),
     ):
         assert f"`{status} {code}`" in _DESC and registered[code] == status, code
     audited = "Each of these refusals is audited as `security.kek_rotation_refused`"
     assert f"{audited}, latches nothing and moves no row." in _DESC
+    unrecorded = "A refusal whose record cannot be written is answered `503 audit_unavailable`"
+    assert f"{unrecorded} instead, and nothing is latched or moved either." in _DESC
+
+
+def test_a_failed_run_tells_an_audit_outage_from_a_store_outage() -> None:
+    """C-2.9: an audit outage is answered as one, never folded into `store_unavailable`."""
+    assert (
+        "A run that fails part-way is answered `503 audit_unavailable` when a write-ahead record "
+        "(the opening, a failed-row or the terminal record) cannot be written, and "
+        "`503 store_unavailable` when the credential store fails; each moved row's record shares "
+        "its compare-and-set transaction, so a failure there is a store failure. Either way the "
+        "rows moved so far stay moved, the latch stays, and calling again resumes." in _DESC
+    )
+
+
+def test_idempotency_key_is_not_used_so_a_repeat_resumes() -> None:
+    assert _OP["x-idempotency"] == "ignored"
+    assert (
+        "`Idempotency-Key` is not used: every call reads the rows afresh, so a repeat resumes the "
+        "run and never replays an earlier answer." in _DESC
+    )
+
+
+def test_only_the_retryable_conflict_carries_retry_after() -> None:
+    conflict = _OP["responses"]["409"]
+    assert conflict["headers"] == {"Retry-After": {"$ref": "#/components/headers/RetryAfter"}}
+    examples = conflict["content"]["application/problem+json"]["examples"]
+    assert examples["inProgress"]["value"]["retry_after_seconds"] >= 1
+    assert "retry_after_seconds" not in examples["notStaged"]["value"]
+    assert (
+        "Only `kek_rotation_in_progress` carries `Retry-After` and `retry_after_seconds`: a "
+        "restart, not a wait, clears `kek_rotation_not_staged`." in text(conflict["description"])
+    )
 
 
 @pytest.mark.parametrize(
@@ -116,6 +150,10 @@ def test_description_names_each_refusal_with_its_registered_status() -> None:
     [
         "Only that environment's rows are read or changed; every other environment's rows and "
         "KEK lineage are untouched.",
+        "A row that is revoked (`revoked_at` set or status `revoked`) is never re-wrapped, and a "
+        "revocation that lands while the run is under way fences every row the run has not yet "
+        "moved. A fenced row stays at the previous version, is not counted in `remaining`, and "
+        "becomes unreadable once that version is destroyed.",
         "Before the first row, the call latches order entry read-only (gate reason "
         "`secrets.kek_rotation`), and only the restart that ends the rotation clears the latch.",
         "cancels and stop-loss amendments keep signing (C-2.6)",
@@ -127,6 +165,31 @@ def test_description_names_each_refusal_with_its_registered_status() -> None:
 )
 def test_description_states_the_ruled_rule(rule: str) -> None:
     assert rule in _DESC
+
+
+def test_revoked_rows_neither_move_nor_hold_back_completion() -> None:
+    """Ruling item 2 (the round-5 fence): nothing revoked is re-wrapped to reach `complete`, so
+    destroying the previous KEK still makes every revoked credential unreadable."""
+    scope = (
+        "every API key of `environment` that is not revoked and whose data-encryption key (DEK) "
+        "is wrapped under the previous KEK version (`to_version - 1`) is re-wrapped under "
+        "`to_version`."
+    )
+    terminal = (
+        "a terminal `security.kek_rotated` when no unrevoked row is left at the previous version "
+        "and no row failed, else `security.kek_rotation_incomplete`."
+    )
+    assert scope in _DESC and terminal in _DESC
+    counts = {
+        "remaining": "Unrevoked rows of the environment still at `from_version` after this run, "
+        "failed rows included.",
+        "complete": "True when the run ended with `security.kek_rotated`: no unrevoked row is "
+        "left at `from_version` and no row failed.",
+    }
+    for name, rule in counts.items():
+        schema = _SCHEMAS["KekRewrapResult"]["properties"][name]["description"]
+        generated = api.KekRewrapResult.model_fields[name].description or ""
+        assert rule in text(schema) and rule in text(generated), name
 
 
 def test_request_confirms_the_boot_and_forbids_any_other_member() -> None:

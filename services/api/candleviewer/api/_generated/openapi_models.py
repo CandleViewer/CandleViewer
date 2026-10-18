@@ -5851,7 +5851,7 @@ class KekRewrapResult(BaseModel):
     remaining: Annotated[
         int,
         Field(
-            description="Rows of the environment still at `from_version` after this run, failed rows included.",
+            description="Unrevoked rows of the environment still at `from_version` after this run, failed rows included.\n",
             ge=0,
         ),
     ]
@@ -5865,7 +5865,7 @@ class KekRewrapResult(BaseModel):
     complete: Annotated[
         bool,
         Field(
-            description="True when the run ended with `security.kek_rotated`: nothing is left at `from_version` and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
+            description="True when the run ended with `security.kek_rotated`: no unrevoked row is left at `from_version` and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
         ),
     ]
 
