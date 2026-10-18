@@ -99,6 +99,11 @@ INCIDENT_REASONS: Final = frozenset({"upstream_desync", "backpressure"})
 #: The `meta` keys `TopicEmitter.snapshot` sets. An owning module's `SnapshotBody.meta` may not
 #: name one: that is a programming error, refused when the body is built.
 SERVER_META_KEYS: Final = frozenset({"reason", "previous_seq", "source"})
+#: What a `d`'s `meta` may not name: those, and `stale`, which only a snapshot carries and a `d`
+#: never sets or clears (§7.2). A `d` that names it is refused: a raise to the publisher with the
+#: backpressure flag off; with it on, the pipeline contains it (the update is dropped and the
+#: subscriber re-snapshotted). An owner's `stale` on a body is dropped (`SnapshotBody`).
+DELTA_REFUSED_META_KEYS: Final = SERVER_META_KEYS | {"stale"}
 #: An owner's `meta` is at most this much JSON, so it can never carry a chunk past its limit.
 OWNER_META_MAX_BYTES: Final = 1024
 #: §13.6 `resync.reason` (client side).
@@ -204,8 +209,10 @@ class SnapshotBody:
     heatmap (kind 6 is single-column), mirroring `structured["columns"]` column for column, in
     order, as the window after a snapshot reads its complete buckets there (#3268). `meta` holds
     the module's own `snapMeta` keys (bars: `spec_hash`, `build_version`, `include_delta`; §6.1
-    as amended by #2595), merged into every chunk's `meta`. It is kept as a shallow read-only
-    copy, so its values must be immutable."""
+    as amended by #2595), merged into every chunk's `meta`, and `stale: true` while the `stale`
+    flag is set (§7.2, #3202): the flag is that key's only source, so a binary and a structured
+    snapshot carry it alike. It is kept as a shallow read-only copy, so its values must be
+    immutable."""
 
     structured: Mapping[str, Any]
     parts: tuple[Frame, ...] = ()
@@ -216,12 +223,18 @@ class SnapshotBody:
     meta: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        meta = MappingProxyType(dict(self.meta))  # a read-only copy: the guard holds for good
-        clash = SERVER_META_KEYS.intersection(meta)
+        # `stale` is the flag's alone: an owner's own key is dropped, not refused, because `replace`
+        # re-feeds the frozen `meta`, which holds the key the flag set. It is set again only while
+        # the flag is, so the wire agrees with the gauge (§7.2). The guards see the owner's keys
+        # alone, so a stale body has the same bound as a healthy one.
+        owner = {k: v for k, v in self.meta.items() if k != "stale"}
+        clash = SERVER_META_KEYS.intersection(owner)
         if clash:
             raise ValueError(f"snapshot meta keys {sorted(clash)} are set by the server")
-        if len(_dumps(dict(meta))) > OWNER_META_MAX_BYTES:
+        if len(_dumps(owner)) > OWNER_META_MAX_BYTES:
             raise ValueError(f"snapshot meta is over {OWNER_META_MAX_BYTES} bytes")
+        flagged = {**owner, "stale": True} if self.stale else owner
+        meta = MappingProxyType(flagged)  # a read-only copy: the guard holds for good
         object.__setattr__(self, "meta", meta)
 
 
@@ -672,8 +685,9 @@ class TopicEmitter:
         release, not at its source update), and a stamped binary delta is also encoded with that
         weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
         rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key the
-        server owns. Suppressed too once the subscription has ended, as a `snap` is."""
-        if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
+        server owns, or `stale` (§7.2). Suppressed too once the subscription has ended, as a
+        `snap` is."""
+        if meta and DELTA_REFUSED_META_KEYS.intersection(meta):  # a programming error, as on a snap
             raise ValueError("delta meta may not name a server-owned key")
         if sub.snapshot_pending or sub.effective.get("paused") is True or sub.ended:
             return False
@@ -957,7 +971,7 @@ class SequencingHub:
                 ):
                     sent += 1
             except Exception as exc:  # contained to `sub`: the others still get this `d`
-                if meta and SERVER_META_KEYS.intersection(meta):
+                if meta and DELTA_REFUSED_META_KEYS.intersection(meta):
                     raise  # the caller's own error, refused before any `s` was taken
                 self._delta_failed(authz, sub, exc)
                 if wake:  # the source holds `body`: its `snap` goes out now, as a woken one does

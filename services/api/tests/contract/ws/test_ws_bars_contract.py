@@ -10,8 +10,9 @@ Rows: the snapshot against REST (§6.1); the forming flag and one close per bar;
 off (every update a frame); with the flag on, a merged window on a binary subscription as kind 4,
 or structured for an amended close (#3353); a client resync after a lost delta; a generation swap
 (C14); the structured fallback of a binary subscription, of a snapshot and of deltas (C15, C17,
-C19); the scales of each kind-4 frame (C16); a dotted `param`; no `marketdata:read`, at subscribe
-and mid-stream."""
+C19); the scales of each kind-4 frame (C16); a dotted `param`; `meta.stale` on a quarantined
+series' snapshots, whole and in chunks (§7.2, C21); no `marketdata:read`, at subscribe and
+mid-stream."""
 
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.binary import BARS
+from candleviewer.ws.sequencing import TopicEmitter
 from candleviewer.ws_wiring import SnapshotRouter
 from tests.contract.test_market_bars_contract import (
     _NOW,
@@ -122,13 +124,17 @@ class _Rig:
     ) -> None:
         self.w, self.paced = h.World(backpressure=backpressure), backpressure is not None
         self.scales: tuple[int, int] | None = (1, 3)
+        self.quarantined: set[tuple[str, str]] = set()  # (symbol, spec_hash) of a failed builder
         self.reader = BarReader(_Storage(rows), _no_rebuild, now_us=lambda: _NOW)
         self.store = SeriesStore(self.reader.read_tail, release_grace_s=0.0, clock=lambda: 0.0)
         publisher = BarsPublisher(self.w.hub, lambda _s: self.scales, swap_reason="generation_swap")
         self.router = EmitRouter([self.store, publisher])
         self.leases = _Bars()
         source = BarsSnapshotSource(
-            self.store, lambda _s: self.scales, seed=publisher.note_generation
+            self.store,
+            lambda _s: self.scales,
+            seed=publisher.note_generation,
+            stale=lambda symbol, spec_hash: (symbol, spec_hash) in self.quarantined,
         )
         services = self.w.registry.services
         services.bars, services.series = self.leases, self.store
@@ -176,18 +182,20 @@ class _Rig:
 
 
 class _Series:
-    """A reference `bars` client (§7.1, §8.2; C2, C5, C14, C15, C17, C19): a `snap` replaces the
-    whole series, a `d` upserts by `(generation, index)` (a closed bar only yields to an amended
-    close), a gap in `s` discards the series for a `resync`, and a binary subscription ignores
-    what kind 4 cannot carry whichever encoding a frame came in."""
+    """A reference `bars` client (§7.1, §8.2; C2, C5, C14, C15, C17, C19, C21): a `snap` replaces
+    the whole series, a `d` upserts by `(generation, index)` (a closed bar only yields to an
+    amended close), a gap in `s` discards the series for a `resync`, and a binary subscription
+    ignores what kind 4 cannot carry whichever encoding a frame came in. It is `stale` (the
+    badge) from a `snap` with `meta.stale: true` until the next `snap`, which a `d` neither sets
+    nor clears."""
 
     def __init__(self, *, binary: bool) -> None:
-        self.binary, self.last = binary, 0
+        self.binary, self.last, self.stale = binary, 0, False
         self.bars: dict[tuple[int, int], dict[str, Any]] = {}
 
     def apply(self, frame: dict[str, Any]) -> bool:
         if frame["t"] == "snap":
-            self.bars = {}
+            self.bars, self.stale = {}, frame.get("meta", {}).get("stale") is True
         elif frame["s"] != self.last + 1:
             self.bars = {}
             return False
@@ -518,6 +526,72 @@ def test_contract_bars_a_generation_change_is_a_swap_snapshot_never_a_delta(mode
             assert mine.apply(c.next_of("d")) and mine.bars[generation, bar.index]["confirm"]
         c.send({"t": "ping", "id": "p"})
         assert c.recv()["t"] == "pong"  # and none followed the last one either
+
+
+@pytest.mark.parametrize("quarantined", [True, False], ids=["quarantined", "healthy"])
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_meta_stale_rides_the_snapshots_of_a_quarantined_series_and_no_d_c21(
+    mode: str, backpressure: BackpressureConfig | None, quarantined: bool
+) -> None:
+    """§6.1, §7.2, §16.4 (C21): the first `snap` of a series whose builder is quarantined, and a
+    `client_resync` one, carry `meta.stale: true`, in either encoding and on either wire, with
+    `CV_WS_BACKPRESSURE_ENABLED` on or off, and the reference client holds the badge from the
+    first until the last. A healthy series' snapshots carry no key (never `false`), no `d` does,
+    and none of the payloads has a `stale` (a binary `p` has no field)."""
+    spec, bars = _SERIES[_MINUTE], _closed(*_MINUTE)
+    rig = _Rig({"1m": _STORE["1m"][:3]}, backpressure=backpressure)
+    mine = _Series(binary=mode == "binary")
+    if quarantined:
+        rig.quarantined.add(("BTCUSDT", spec.spec_hash))
+    with h.connect(rig.w) as c:
+        c.sub({"ch": CH, "opts": {"encoding": mode}})
+        first = c.next_of("snap")
+        assert mine.apply(first)
+        windows = [[[_up("open", bars[3])]], [[_up("update", bars[3])]]]
+        deltas = rig.play(c, mine, spec, windows)
+        assert mine.stale is quarantined  # a `d` neither sets nor clears it (C21)
+        c.send(
+            {"t": "resync", "id": "r", "ch": CH, "p": {"reason": "manual", "last_seq": mine.last}}
+        )
+        resync = c.next_of("snap")
+        assert mine.apply(resync) and mine.stale is quarantined
+    assert (first["meta"]["reason"], resync["meta"]["reason"]) == ("initial", "client_resync")
+    assert [f["meta"].get("stale") for f in (first, resync)] == [True if quarantined else None] * 2
+    assert len(deltas) == 2 and not any("stale" in d.get("meta", {}) for d in deltas)
+    assert not any("stale" in h.structured_of(f) for f in (first, resync, *deltas))
+
+
+def _cut_snapshots_at(monkeypatch: pytest.MonkeyPatch, limit: int) -> None:
+    """The gateway builds each connection's emitter with the default 4 MiB cap (§3.6): from here
+    on it builds them with `limit`, so a series of a few hundred bars is cut into chunks."""
+    init = TopicEmitter.__init__
+
+    def small(self: TopicEmitter, *args: Any, **kw: Any) -> None:
+        init(self, *args, **{**kw, "max_frame_bytes": limit})
+
+    monkeypatch.setattr(TopicEmitter, "__init__", small)
+
+
+@pytest.mark.parametrize("backpressure", [None, _ON], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("mode", h.MODES)
+def test_contract_bars_every_chunk_of_a_quarantined_series_snapshot_carries_meta_stale_c21(
+    mode: str, backpressure: BackpressureConfig | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§3.6, §7.2: a snapshot cut into chunks repeats `meta.stale: true` in each, so a client
+    reading them one by one has it with the first, with `CV_WS_BACKPRESSURE_ENABLED` on or off.
+    The 500 bars of the long one-minute series are cut at 20 kB; every chunk is validated on
+    receipt, and none of them is missing."""
+    rig = _Rig({"1m": _long_minute()}, backpressure=backpressure)
+    rig.quarantined.add(("BTCUSDT", _SERIES[_MINUTE].spec_hash))
+    _cut_snapshots_at(monkeypatch, 20_000)
+    with h.connect(rig.w) as c:
+        c.sub({"ch": CH, "opts": {"encoding": mode, "history": 500}})
+        chunks = [c.next_of("snap")]
+        while chunks[-1]["s"] is None:  # only the last chunk carries `s` (§3.6)
+            chunks.append(c.next_of("snap"))
+    assert len(chunks) > 1 and all(f["meta"]["stale"] is True for f in chunks)
+    assert sum(len(h.structured_of(f)["bars"]) for f in chunks) == 500
 
 
 def test_contract_bars_structured_fallback_on_a_binary_sub_keeps_s_contiguous_c15_c17() -> None:

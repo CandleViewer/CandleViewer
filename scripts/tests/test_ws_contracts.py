@@ -348,13 +348,16 @@ def test_bars_payload_refuses_a_stale_field_so_the_carrier_is_the_meta(
 
 def test_doc_names_meta_stale_and_its_two_causes_where_it_said_the_wire_had_none() -> None:
     """#3202: §7.7 no longer says `BarsBatch` has no `stale` field yet, §14.3 says where the flag
-    is instead, §7.2 names its two causes and `meta.stale`, §16.1 gives the client C21, and §12
-    shows one `meta.stale` frame, which the gate validates."""
+    is instead, §7.2 names its two causes and `meta.stale` and says when it is sent (only when
+    true, as the snapshot was built, never on a `d`), §16.1 gives the client C21, and §12 shows
+    one `meta.stale` frame, which the gate validates."""
     assert "has no `stale` field yet" not in MD_TEXT
     batch = MD_TEXT.split("### 14.3 `BarsBatch`")[1].split("\n### 14.4 ")[0]
     assert "`BarsBatch` has no `stale` field" in batch and "`meta.stale`" in batch
     snapshot = MD_TEXT.split("### 7.2 Snapshot frame")[1].split("\n### 7.3 ")[0]
     assert "freshness SLO" in snapshot and "quarantined" in snapshot and "`meta.stale`" in snapshot
+    for said in ("only when true", "describes the snapshot as built", "never carries `meta.stale`"):
+        assert said in snapshot, said
     assert len(re.findall(r"^\| C21 \| Show the staleness badge", MD_TEXT, re.MULTILINE)) == 1
     frames = [frame for _, frame in val.parse_examples(MD_TEXT)]
     assert any(f.get("meta", {}).get("stale") is True for f in frames), "§12: no meta.stale frame"
