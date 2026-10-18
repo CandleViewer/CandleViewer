@@ -442,7 +442,8 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
 #: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh
 #: -x 80``: a session named sh, 80 columns wide), ``set`` as another tool's word (``gh secret set
-#: -v all X``: gh's ``--visibility``), a quoted string's words (``echo "use bash" -x``), a shell
+#: -v all X``: gh's ``--visibility``) or as a name after a ``$`` (``$set -x``: an expansion, empty
+#: when unset, so bash runs ``-x``), a quoted string's words (``echo "use bash" -x``), a shell
 #: name after a ``+``, ``=`` or ``@`` in a word that is no path (``a+bash -x``, ``x=bash -x``; a
 #: path naming no shell is read whole: ``/opt/x+bash -x``), an rcfile named ``--xtrace``
 #: (``bash --rcfile --xtrace ci.sh``: ``_LONG_XTRACE`` reads any ``--xtrace``), and a test's

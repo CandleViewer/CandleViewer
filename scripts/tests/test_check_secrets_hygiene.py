@@ -548,6 +548,7 @@ TRACED = [
     # (main read the '', "" and \ forms as a word after a quote; bash 5.3 traced each, names unset).
     "$X''set -x",
     "$XY''set -x",
+    "$pre_1''set -x",
     '$X""set -x',
     "$X\\set -x",
     "$X'set' -x",
@@ -707,10 +708,11 @@ NOT_TRACED = [
     "$(echo set) -x",
 ]
 #: #3400: listed beside _SET_X as reported though not tracing (the scan's safe side; bash 5.3 traced
-#: none of those it ran: tmux and gh were not run), pinned so that the list stays true.
+#: none of those it ran, names unset: tmux and gh were not run), pinned so that the list stays true.
 REPORTED_NOT_TRACING = [
     "tmux new -s sh -x 80",
     "gh secret set -v all X",
+    "$set -x",
     'echo "use bash" -x',
     "a+bash -x ci.sh",
     "x=bash -x ci.sh",
@@ -773,11 +775,13 @@ def test_command_going_on_to_the_next_line_is_not_read_whole(tmp_path: Path, run
     assert h.check_workflows(tmp_path) == []
 
 
-def test_hash_in_a_string_from_the_line_before_is_read_as_a_comment(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via", VIA)
+def test_hash_in_a_string_from_the_line_before_is_read_as_a_comment(
+    tmp_path: Path, via: str
+) -> None:
     # #3400: listed beside _SET_X as not reported, though bash 5.3 traced it: the `#` is inside
     # the string `X='` opened, not a comment. Pinned until the scan tracks such quotes (#3583).
-    _write(tmp_path, WF, _runs("|\n          X='\n          #'; set -x"))
-    assert h.check_workflows(tmp_path) == []
+    assert _sr146_in(tmp_path, "X='\n          #'; set -x", via) == []
 
 
 @pytest.mark.parametrize(
