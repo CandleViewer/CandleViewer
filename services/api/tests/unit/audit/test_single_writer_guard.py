@@ -1,11 +1,12 @@
 """Single-writer guard for `audit_log` (design §5, "Ordering assumption").
 
-`verify` walks the chain in id order. Chain order equals id order only because the one
-writer path, `SqlAlchemyAuditRepository.insert`, takes `pg_advisory_xact_lock` *before* its
-INSERT, so `nextval` runs under the lock. An INSERT that bypasses it takes the lock only
-inside the BEFORE trigger, after `nextval`: two concurrent bypassing INSERTs can chain out
-of id order, and `verify` would then report a break that is not one. So no code under
-`candleviewer/` (migrations aside) may write to `audit_log` except that repository.
+`verify` walks the chain in id order. Chain order equals id order only because every writer
+path goes through `insert_audit_row_locked` (`SqlAlchemyAuditRepository.insert`, and since
+#2266 a record written in another change's transaction), which takes `pg_advisory_xact_lock`
+*before* its INSERT, so `nextval` runs under the lock. An INSERT that bypasses it takes the
+lock only inside the BEFORE trigger, after `nextval`: two concurrent bypassing INSERTs can
+chain out of id order, and `verify` would then report a break that is not one. So no code
+under `candleviewer/` (migrations aside) may write to `audit_log` except that repository.
 
 The scan reads the parsed code (`ast`), not raw text: string constants arrive with adjacent
 literals merged and escapes decoded, and SQL comments are dropped before matching. It flags
@@ -145,8 +146,9 @@ async def test_the_writer_takes_the_chain_lock_before_its_insert() -> None:
     class _Relational:
         @asynccontextmanager
         async def unit_of_work(self) -> AsyncIterator[Any]:
-            async def execute(stmt: Any, _params: Any = None) -> None:
+            async def execute(stmt: Any, _params: Any = None) -> Any:
                 statements.append(" ".join(str(stmt).split()))
+                return SimpleNamespace(rowcount=1)
 
             async def commit() -> None:
                 statements.append("COMMIT")

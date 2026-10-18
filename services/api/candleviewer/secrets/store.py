@@ -31,9 +31,19 @@ class CredentialStore(Protocol):
 
     async def count_at_kek_version(self, version: int, env: str) -> int: ...
     async def rewrap(
-        self, key_id: UUID, *, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
-        """Compare-and-set on `kek_version`; True iff this call moved the row."""
+        """Compare-and-set on `kek_version` of a row of `env` that neither revocation signal
+        (`revoked_at`, status `revoked`) fences. True iff this call moved the row, and then the
+        `audit` record `(action, fields)` committed in the same transaction (C-2.9, #2266);
+        a failure of either rolls back both."""
         ...
 
     async def touch_last_used(self, key_id: UUID) -> None: ...
@@ -60,6 +70,8 @@ class InMemoryCredentialStore:
         self.rows: dict[UUID, dict[str, Any]] = {}
         self.kcvs: dict[tuple[str, int], bytes] = {}
         self.retired: set[tuple[str, int]] = set()
+        #: `(action, fields)` of each record `rewrap` committed with a moved row.
+        self.rewrap_audit: list[tuple[str, dict[str, str]]] = []
 
     async def insert(self, record: dict[str, Any]) -> None:
         self.rows[record["id"]] = dict(record)
@@ -90,12 +102,22 @@ class InMemoryCredentialStore:
         return len(await self.ids_at_kek_version(version, len(self.rows) + 1, env))
 
     async def rewrap(
-        self, key_id: UUID, *, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
         row = self.rows.get(key_id)
-        if row is None or row["kek_version"] != from_version:
+        if row is None or row["env"] != env or row["kek_version"] != from_version:
+            return False
+        if row["revoked"] or row.get("status") == "revoked":
             return False
         row["dek_ref"], row["kek_version"] = dek_ref, kek_version
+        self.rewrap_audit.append((audit[0], dict(audit[1])))
         return True
 
     async def touch_last_used(self, key_id: UUID) -> None:

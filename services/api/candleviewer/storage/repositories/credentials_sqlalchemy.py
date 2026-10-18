@@ -3,20 +3,26 @@
 Lives in M10 so M2 never imports a driver; structurally satisfies
 `secrets.store.CredentialStore` / `secrets.store.KcvStore` without importing M2 (C-3.2).
 Moves only ciphertext, nonces and wrapped-DEK refs; never logs a row. Static SQL only.
+A re-wrap's audit record is built by a function the composition root injects
+(`admin.wiring.secrets_audit_row`): M10 depends on M1 only, so it never imports `audit` (§3).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
 
+from candleviewer.storage.repositories.audit_sqlalchemy import insert_audit_row_locked
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+
+#: `(action, fields)` -> one `audit_log` record in the WAL's format.
+AuditRowBuilder = Callable[[str, dict[str, str]], dict[str, Any]]
 
 _INSERT = sa.text(
     "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
@@ -48,9 +54,13 @@ _COUNT = sa.text(
     "SELECT count(*) FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
     "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND ea.env::text = :env"
 )
+#: Moves a row of the process's environment unless a revocation signal fences it (`revoked_at`
+#: or status `revoked`); every other status is re-wrapped, or the rotation never completes.
 _REWRAP = sa.text(
     "UPDATE api_keys SET dek_ref = :dek_ref, kek_version = :to_v, updated_at = now() "
-    "WHERE id = :id AND kek_version = :from_v AND revoked_at IS NULL"
+    "WHERE id = :id AND kek_version = :from_v AND revoked_at IS NULL AND status <> 'revoked' "
+    "AND EXISTS (SELECT 1 FROM exchange_accounts ea "
+    "WHERE ea.id = api_keys.exchange_account_id AND ea.env::text = :env)"
 )
 _TOUCH = sa.text("UPDATE api_keys SET last_used_at = now() WHERE id = :id")
 # `kek_versions` is keyed (env, version) since 0026 (#2338); `kv_kcv_unique` stays global.
@@ -79,8 +89,15 @@ def _decode(value: object) -> object:
 
 
 class SqlAlchemyCredentialStore:
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        audit_row: AuditRowBuilder | None = None,
+    ) -> None:
         self._rel = relational
+        #: Builds the record `rewrap` writes with its compare-and-set; without one it refuses.
+        self._audit_row = audit_row
 
     async def _exec(self, stmt: sa.TextClause, params: dict[str, Any]) -> Any:
         async with self._rel.unit_of_work() as uow:
@@ -119,10 +136,32 @@ class SqlAlchemyCredentialStore:
         return int((await self._exec(_COUNT, {"v": version, "env": env}))[0]["count"])
 
     async def rewrap(
-        self, key_id: UUID, *, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: UUID,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
-        params = {"id": key_id, "from_v": from_version, "to_v": kek_version, "dek_ref": dek_ref}
-        return int(await self._exec(_REWRAP, params)) == 1
+        """The UPDATE, then, only if it moved the row, the chain lock and the record's INSERT
+        (row lock first, chain lock last), then COMMIT: one transaction, so an error or a
+        cancellation before the commit rolls back both (C-2.9, #2266)."""
+        if self._audit_row is None:
+            raise RuntimeError("re-wrap refused: no audit row builder is wired")
+        params = {
+            "id": key_id, "env": env, "from_v": from_version, "to_v": kek_version,
+            "dek_ref": dek_ref,
+        }  # fmt: skip
+        async with self._rel.unit_of_work() as uow:
+            moved: Any = await uow.session.execute(_REWRAP, params)
+            if int(moved.rowcount) != 1:
+                return False
+            if not await insert_audit_row_locked(uow.session, self._audit_row(*audit)):
+                raise RuntimeError("re-wrap audit record not written")
+            await uow.commit()
+            return True
 
     async def touch_last_used(self, key_id: UUID) -> None:
         await self._exec(_TOUCH, {"id": key_id})

@@ -25,6 +25,7 @@ from psycopg import sql
 from psycopg.abc import Params
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.admin.wiring import secrets_audit_row
 from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets._kek import LoadedKek
@@ -214,7 +215,7 @@ async def _audit(action: str, fields: dict[str, str]) -> None:
 def _store(dsn: str) -> tuple[SqlAlchemyRelationalRepository, SqlAlchemyCredentialStore]:
     """The M10 adapter, connected as the runtime role."""
     rel = SqlAlchemyRelationalRepository(_as(dsn, "cv_app", "postgresql+asyncpg"))
-    return rel, SqlAlchemyCredentialStore(rel)
+    return rel, SqlAlchemyCredentialStore(rel, audit_row=secrets_audit_row("demo"))
 
 
 def _broker(store: SqlAlchemyCredentialStore, kek_: LoadedKek | None = None) -> CredentialBroker:
@@ -319,8 +320,10 @@ async def test_m10_rewrap_touch_and_revoke_still_succeed(pg: str) -> None:
         before = _sealed(pg, key_id)
         dek = kek(KEK_V1, 1).unwrap_dek(before["dek_ref"], credential_id=key_id)
         ref = kek(KEK_V2, 2).wrap_dek(dek, credential_id=key_id)
-        assert await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2)
-        assert not await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2)
+        audit = ("security.credential_rewrapped", {"key_id": str(key_id)})
+        cas: dict[str, Any] = {"env": "demo", "audit": audit}
+        assert await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2, **cas)
+        assert not await store.rewrap(key_id, from_version=1, dek_ref=ref, kek_version=2, **cas)
         rewrapped = _broker(store, kek(KEK_V2, 2))
         assert await _api_key(rewrapped, key_id) == _NEW_KEY  # awaits its last_used_at write
         await rewrapped.destroy(key_id)  # mark_revoked

@@ -12,12 +12,15 @@ The type aliases let `app` annotate its fields without a direct import edge.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
+from candleviewer.audit.actions import validate_action
 from candleviewer.audit.lane_journal import key_id
-from candleviewer.audit.models import Severity
+from candleviewer.audit.models import AuditEmission, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
@@ -69,6 +72,7 @@ __all__ = [
     "build_audit_verify_job",
     "build_secrets_service",
     "export_secrets_metrics",
+    "secrets_audit_row",
     "secrets_audit_sink",
     "system_event_redactor",
 ]
@@ -77,26 +81,57 @@ AuditHandle = AuditService
 AuditVerifyRunner = VerifyRunner
 
 
+def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
+    """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
+    are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
+    return {
+        "actor_label": f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
+        "actor_user_id": fields.get("actor_user_id"),
+        "object_kind": "api_key" if "key_id" in fields else "kek",
+        "object_id": fields.get("key_id"),
+        "severity": (
+            Severity.ERROR
+            if action in ("security.kek_load_failed", "security.kek_rotation_failed")
+            else Severity.INFO
+        ),
+        "after_state": dict(fields),
+    }
+
+
 def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], Awaitable[None]]:
-    """M2 audit port -> durable `AuditWriter.emit` (write-ahead). Fields are ids only; the
-    actor comes from the wiring-bound caller identity, never from the borrower."""
+    """M2 audit port -> durable `AuditWriter.emit` (write-ahead)."""
 
     async def sink(action: str, fields: dict[str, str]) -> None:
-        await audit.writer.emit(
-            action,
-            actor_label=f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
-            actor_user_id=fields.get("actor_user_id"),
-            object_kind="api_key" if "key_id" in fields else "kek",
-            object_id=fields.get("key_id"),
-            severity=(
-                Severity.ERROR
-                if action in ("security.kek_load_failed", "security.kek_rotation_failed")
-                else Severity.INFO
-            ),
-            after_state=dict(fields),
-        )
+        await audit.writer.emit(action, **_secrets_audit_columns(action, fields))
 
     return sink
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def secrets_audit_row(
+    env: str, clock: Callable[[], datetime] = _utc_now
+) -> Callable[[str, dict[str, str]], dict[str, Any]]:
+    """M2 `(action, fields)` -> one `audit_log` record in the WAL's format, which the M10
+    credential store inserts in the transaction of the change it records (#2266: a re-wrap's
+    `security.credential_rewrapped`). The columns `secrets_audit_sink` writes, and what
+    `AuditWriter.emit` does to a record: the action validated, the state redacted, a fresh
+    `record_id` and the clock's `event_ts`; plus the process environment `env`. M2 passes only
+    `(action, fields)`: neither M2 nor M10 imports `audit` (CONSTITUTION §3)."""
+    process_env = ExchangeEnv(env)
+
+    def build(action: str, fields: dict[str, str]) -> dict[str, Any]:
+        columns = _secrets_audit_columns(validate_action(action), fields)
+        columns["after_state"] = redact(columns["after_state"])
+        emission = AuditEmission(
+            record_id=uuid.uuid4(), action=action, env=process_env, event_ts=clock(), **columns
+        )
+        record: dict[str, Any] = json.loads(emission.model_dump_json())
+        return record
+
+    return build
 
 
 def build_secrets_service(

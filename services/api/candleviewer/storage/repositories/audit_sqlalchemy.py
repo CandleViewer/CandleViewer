@@ -20,6 +20,7 @@ from typing import Any
 import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, JSONB, TIMESTAMP, UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
 from candleviewer.settings import Settings
@@ -259,6 +260,48 @@ def _json_or_null(value: dict[str, Any] | None) -> str | None:
     return None if value is None else json.dumps(value, sort_keys=True)
 
 
+async def insert_audit_row_locked(session: AsyncSession, record: dict[str, Any]) -> bool:
+    """Append `record` (the WAL's format) to `audit_log` in the caller's transaction: the chain
+    advisory lock, then the INSERT. The WAL path (`insert` below) and every in-transaction
+    record, such as a re-wrap's (#2266), go through here. The rules for such a transaction:
+
+    - Take the chain lock explicitly, right before the INSERT. `audit_chain()` takes it too, but
+      only after the bigserial default has drawn `id`: an insert waiting there can commit with an
+      id below a row that committed first and hash that later row as its predecessor, while
+      verify walks the chain by id.
+    - Take row locks first and the chain lock last. The WAL path holds only the chain lock, so
+      no deadlock cycle forms.
+    - Never raise the isolation level above READ COMMITTED: the trigger reads the chain head
+      after taking the lock, and a snapshot taken earlier would miss a row committed meanwhile.
+
+    True iff a row was written: `ON CONFLICT (record_id) DO NOTHING` keeps WAL replay idempotent.
+    """
+    await session.execute(_ADVISORY_LOCK_SQL)
+    result: Any = await session.execute(
+        _INSERT_SQL,
+        {
+            "record_id": record["record_id"],
+            "actor_user_id": record.get("actor_user_id"),
+            "actor_label": record["actor_label"],
+            "actor_ip": record.get("actor_ip"),
+            "session_id": record.get("session_id"),
+            "action": record["action"],
+            "object_kind": record.get("object_kind"),
+            "object_id": record.get("object_id"),
+            "object_label": record.get("object_label"),
+            "outcome": record["outcome"],
+            "severity": record["severity"],
+            "reason": record.get("reason"),
+            "before_state": _json_or_null(record.get("before_state")),
+            "after_state": _json_or_null(record.get("after_state")),
+            "request_id": record.get("request_id"),
+            "env": record.get("env"),
+            "event_ts": datetime.fromisoformat(record["event_ts"]),
+        },
+    )
+    return int(result.rowcount) == 1
+
+
 def _page_statement(
     *,
     restrict_to_actor: str | None,
@@ -369,29 +412,7 @@ class SqlAlchemyAuditRepository:
 
     async def insert(self, record: dict[str, Any]) -> None:
         async with self._relational.unit_of_work() as uow:
-            await uow.session.execute(_ADVISORY_LOCK_SQL)
-            await uow.session.execute(
-                _INSERT_SQL,
-                {
-                    "record_id": record["record_id"],
-                    "actor_user_id": record.get("actor_user_id"),
-                    "actor_label": record["actor_label"],
-                    "actor_ip": record.get("actor_ip"),
-                    "session_id": record.get("session_id"),
-                    "action": record["action"],
-                    "object_kind": record.get("object_kind"),
-                    "object_id": record.get("object_id"),
-                    "object_label": record.get("object_label"),
-                    "outcome": record["outcome"],
-                    "severity": record["severity"],
-                    "reason": record.get("reason"),
-                    "before_state": _json_or_null(record.get("before_state")),
-                    "after_state": _json_or_null(record.get("after_state")),
-                    "request_id": record.get("request_id"),
-                    "env": record.get("env"),
-                    "event_ts": datetime.fromisoformat(record["event_ts"]),
-                },
-            )
+            await insert_audit_row_locked(uow.session, record)
             await uow.commit()
 
     async def query_page(

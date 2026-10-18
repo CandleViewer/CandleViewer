@@ -50,6 +50,7 @@ from candleviewer.admin.wiring import (
     build_audit_verify_job,
     build_secrets_service,
     export_secrets_metrics,
+    secrets_audit_row,
     system_event_redactor,
 )
 from candleviewer.admin_wiring import (
@@ -667,7 +668,8 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     if settings.storage_backend != "real":
         return build_secrets_service(audit=audit)
     store = SqlAlchemyCredentialStore(
-        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets"),
+        audit_row=secrets_audit_row(settings.environment.value),  # #2266: a re-wrap's records
     )
     return build_secrets_service(store, store, audit)
 
