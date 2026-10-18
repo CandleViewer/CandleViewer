@@ -30,7 +30,7 @@ workspace globs; packages/config's own suite imports the preset by a relative pa
 leaves it out.
 
 ui's `typecheck` reads the token formats' declarations (its token-build tests import the
-formats), derived from the static imports in the files its tsconfig includes; the tsconfig chain
+formats), derived from the relative imports in the files its tsconfig includes; the tsconfig chain
 reaches its hash through `^typecheck`. The typecheck lane's `...[origin/main]` filter selected no
 package for a change only there, so ui's typecheck carries a tag and the lane adds its selector."""
 
@@ -65,8 +65,13 @@ CONFIG_IMPORT = re.compile(r"""from ["'](@candleviewer/config/[^"']+)["']""")
 STATIC_IMPORT = re.compile(
     r"""^\s*(?:import|export)\b[^"';]*["'](\.\.?/[^"']+)["']""", re.MULTILINE
 )
-#: What tsc reads for a `.js` or `.mjs` specifier: the TypeScript source, else its declarations.
-DECLARATIONS = {".js": (".ts", ".tsx", ".d.ts"), ".mjs": (".mts", ".d.mts")}
+#: An `import()` of a relative module, as an expression or a type: tsc reads that file too.
+DYNAMIC_IMPORT = re.compile(r"""\bimport\(\s*["'](\.\.?/[^"']+)["']""")
+#: What tsc reads for a `.js`, `.mjs` or `.json` specifier: the TypeScript source, else its
+#: declarations, or the JSON file itself (resolveJsonModule).
+DECLARATIONS = {".js": (".ts", ".tsx", ".d.ts"), ".mjs": (".mts", ".d.mts"), ".json": (".json",)}
+#: What it tries for any other specifier: Bundler resolution takes one without an extension.
+BARE = (".ts", ".tsx", ".d.ts", "/index.ts", "/index.tsx", "/index.d.ts")
 TS = {".ts", ".tsx"}  # what tsc includes without allowJs
 
 
@@ -262,16 +267,18 @@ def test_ui_build_inputs_cover_what_the_build_reads() -> None:
 
 def _typecheck_reads() -> set[str]:
     """The files outside packages/ui that its typecheck reads: what each relative module that a
-    TypeScript file its tsconfig includes imports statically resolves to."""
+    TypeScript file its tsconfig includes imports, statically or with `import()`, resolves to."""
     include = json.loads((ROOT / UI / "tsconfig.json").read_text(encoding="utf-8"))["include"]
     tops = sorted({ROOT / UI / entry.split("/")[0] for entry in include})
     files = [file for top in tops for file in ([top] if top.is_file() else sorted(top.rglob("*")))]
     reads: set[str] = set()
     for source in [file.relative_to(ROOT).as_posix() for file in files if file.suffix in TS]:
-        for specifier in STATIC_IMPORT.findall((ROOT / source).read_text(encoding="utf-8")):
+        text = (ROOT / source).read_text(encoding="utf-8")
+        for specifier in STATIC_IMPORT.findall(text) + DYNAMIC_IMPORT.findall(text):
             target = posixpath.normpath(posixpath.join(posixpath.dirname(source), specifier))
             stem, suffix = posixpath.splitext(target)
-            candidates = [stem + ext for ext in DECLARATIONS.get(suffix, ())]
+            ends = DECLARATIONS.get(suffix)
+            candidates = [stem + end for end in ends] if ends else [target + end for end in BARE]
             found = [path for path in candidates if (ROOT / path).is_file()]
             if found and not PurePosixPath(target).is_relative_to(UI):
                 reads.add(found[0])
