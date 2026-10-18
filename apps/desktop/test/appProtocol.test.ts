@@ -40,6 +40,10 @@ describe("APP_SCHEME_PRIVILEGES", () => {
     expect(APP_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true });
   });
 
+  it("is frozen, so no later write can widen it", () => {
+    expect(Object.isFrozen(APP_SCHEME_PRIVILEGES)).toBe(true);
+  });
+
   it("the entry URL is the root of the one fixed app origin", () => {
     expect(APP_ENTRY_URL).toBe("app://candleviewer/");
   });

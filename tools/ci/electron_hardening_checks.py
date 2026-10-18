@@ -35,7 +35,8 @@ SR110_REQUIRED: dict[str, bool] = {
 ABSENT_MEANS_DEFAULT = frozenset({"nodeIntegrationInWorker"})
 
 # SR-174: the closed privilege set of the shell's app:// scheme (APP_SCHEME_PRIVILEGES in
-# apps/desktop/src/main/appProtocol.ts). Widening it is a deliberate change made here, in review.
+# apps/desktop/src/main/appProtocol.ts, declared once with Object.freeze). Widening it is a
+# deliberate change made here, in review.
 APP_SCHEME_PRIVILEGES: dict[str, bool] = {"standard": True, "secure": True}
 
 # SR-112: directives whose value must match verbatim (connect-src handled separately).
@@ -141,10 +142,10 @@ def check_declared_prefs(shell_port_js: str) -> list[Violation]:
     return vs
 
 
-def _call_args(js: str, callee: str) -> list[str]:
-    """The argument text of every `callee(...)` call, by balanced parentheses."""
+def _call_args(js: str, name: str) -> list[str]:
+    """The argument text of every `x.name(...)` or `x["name"](...)` call, by balanced parens."""
     found: list[str] = []
-    for m in re.finditer(re.escape(callee) + r"\s*\(", js):
+    for m in re.finditer(r"\b" + re.escape(name) + r"(?:[\"'`]\s*\])?\s*\(", js):
         depth, i = 1, m.end()
         while i < len(js) and depth:
             depth += {"(": 1, ")": -1}.get(js[i], 0)
@@ -153,26 +154,43 @@ def _call_args(js: str, callee: str) -> list[str]:
     return found
 
 
+# An assignment operator (`=`, `+=`, `||=`, ...), not a comparison (`==`, `<=`) or an arrow.
+_ASSIGN = r"\s*(?:\*\*|\?\?|\|\||&&|<<|>>>?|[-+*/%&|^])?=(?![=>])"
+
+
 def check_app_scheme(main_js: str) -> list[Violation]:
     """SR-112 + SR-174: the web app is served over the scoped app:// handler, under the CSP.
 
-    No privileged scheme may bypass the CSP, the app scheme keeps its closed privilege set and is
-    the only scheme registered (one call, passing the constant itself, not a copy or a spread),
-    and no window loads from a file: URL (a file: page is outside the handler's asset root).
-    These are text heuristics over the compiled main process: the file: check sees `loadFile(`,
-    a `file:` literal or `pathToFileURL` inside `loadURL(`, not a URL built elsewhere and passed
-    in a variable. The unit tests in apps/desktop/test/index.test.ts pin the real call arguments.
+    No privileged scheme may bypass the CSP. The app scheme keeps its closed privilege set,
+    declared once with Object.freeze and never written to, and is the only scheme registered
+    (one call, passing the constant itself, not a copy or a spread). No window loads from a
+    file: URL (a file: page is outside the handler's asset root).
+    These are text heuristics over the compiled main process, comments included, so a comment
+    that names a checked call or `loadFile` turns the gate red. The file: check sees any
+    `loadFile` and a quoted `file:` literal or `pathToFileURL` anywhere in a `loadURL`
+    argument; it does not see a file: URL built elsewhere and passed in a variable, or a
+    literal split across strings. The unit tests in apps/desktop/test pin the real call
+    arguments and that the constant is frozen.
     """
     vs: list[Violation] = []
     if re.search(r"\bbypassCSP\s*:\s*(?:true|!0)", main_js):
         vs.append(
             Violation(
                 "SR-112",
-                "main registerSchemesAsPrivileged",
+                "main privileged scheme",
                 "a privileged scheme sets bypassCSP; every app page must stay under the CSP",
             )
         )
-    m = re.search(r"APP_SCHEME_PRIVILEGES\s*=\s*\{(.*?)\}", main_js, re.DOTALL)
+    decls = [
+        m.end() for m in re.finditer(r"\bAPP_SCHEME_PRIVILEGES" + _ASSIGN, main_js)
+    ]
+    m = (
+        re.match(
+            r"\s*Object\.freeze\(\s*\{(.*?)\}\s*\)", main_js[decls[0] :], re.DOTALL
+        )
+        if len(decls) == 1
+        else None
+    )
     pair = r"([A-Za-z]+)\s*:\s*(true|false|!0|!1)"
     declared = (
         {key: value in {"true", "!0"} for key, value in re.findall(pair, m.group(1))}
@@ -184,11 +202,23 @@ def check_app_scheme(main_js: str) -> list[Violation]:
             Violation(
                 "SR-174",
                 "main appProtocol",
-                f"app scheme privileges are {declared!r}; allowed set is {APP_SCHEME_PRIVILEGES!r}",
+                f"declare APP_SCHEME_PRIVILEGES once, as Object.freeze of the allowed set "
+                f"{APP_SCHEME_PRIVILEGES!r}; found {len(decls)} declaration(s), "
+                f"privileges {declared!r}",
+            )
+        )
+    member = r"\s*(?:\.\s*[\w$]+|\[[^\]]*\])"
+    if re.search(r"\bAPP_SCHEME_PRIVILEGES" + member + _ASSIGN, main_js):
+        vs.append(
+            Violation(
+                "SR-174",
+                "main appProtocol",
+                "code writes to APP_SCHEME_PRIVILEGES; the set is fixed where it is declared",
             )
         )
     calls = [
-        re.sub(r"\s+", "", a)
+        # Whitespace and trailing commas are formatting, so a reflowed call still matches.
+        re.sub(r",(?=[\]}])", "", re.sub(r"\s+", "", a))
         for a in _call_args(main_js, "registerSchemesAsPrivileged")
     ]
     if calls != ["[{scheme:APP_SCHEME,privileges:APP_SCHEME_PRIVILEGES}]"]:
@@ -200,9 +230,9 @@ def check_app_scheme(main_js: str) -> list[Violation]:
                 f"found {len(calls)} call(s)",
             )
         )
-    loads = _call_args(main_js, ".loadURL")
-    if ".loadFile(" in re.sub(r"\s+", "", main_js) or any(
-        re.match(r"\s*[\"'`]file:", a, re.IGNORECASE) or "pathToFileURL" in a
+    loads = _call_args(main_js, "loadURL")
+    if re.search(r"\bloadFile\b", main_js) or any(
+        re.search(r"[\"'`]file:", a, re.IGNORECASE) or "pathToFileURL" in a
         for a in loads
     ):
         vs.append(
