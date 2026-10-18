@@ -12,7 +12,8 @@ Storybook decorator in `.storybook/`, and outside the package `tools/contrast/` 
 `tools/style-dictionary/` (the token formats, which `ui#build` imports too, and the package.json
 that makes Node load them as ES modules). A `$TURBO_ROOT$/` glob is anchored at the checkout root.
 The reads are derived from the sources: every `./` or `../` string literal in the tests and the
-build scripts, the preset import and the tsconfig `extends` chain, so a new read needs an input.
+build scripts and, in turn, in each module those literals name (a tools/ module a test imports
+reads files too), the preset import and the tsconfig `extends` chain, so a new read needs an input.
 
 `--filter=@candleviewer/ui...[origin/main]` maps each changed file to the package that holds it, so
 a change only under tools/ selected no package and unit-frontend skipped the ui tests. A `tag:`
@@ -99,18 +100,23 @@ def _on_disk(path: str) -> str | None:
 
 
 def _literal_reads(folder: str) -> set[str]:
-    """The files and folders that the `./` and `../` literals in the sources under `folder` name."""
+    """The files and folders that the `./` and `../` literals name in the sources under `folder`,
+    then in each source file they name, and so on."""
+    queue = [path.relative_to(ROOT).as_posix() for path in sorted((ROOT / folder).rglob("*"))]
+    scanned: set[str] = set()
     reads: set[str] = set()
-    for source in sorted((ROOT / folder).rglob("*")):
-        if source.suffix not in SOURCES:
+    while queue:
+        source = queue.pop()
+        if source in scanned or PurePosixPath(source).suffix not in SOURCES:
             continue
-        base = source.parent.relative_to(ROOT).as_posix()
-        for literal in LITERAL.findall(source.read_text(encoding="utf-8")):
-            found = _on_disk(posixpath.normpath(posixpath.join(base, literal)))
+        scanned.add(source)
+        for literal in LITERAL.findall((ROOT / source).read_text(encoding="utf-8")):
+            found = _on_disk(posixpath.normpath(posixpath.join(posixpath.dirname(source), literal)))
             if found is None or PurePosixPath(UI).is_relative_to(found):  # the package or above
                 continue
             if not any(PurePosixPath(found).is_relative_to(f"{UI}/{out}") for out in OUTPUTS):
                 reads.add(found)
+                queue.append(found)
     return reads
 
 
@@ -160,6 +166,7 @@ def test_ui_test_inputs_cover_every_path_the_tests_name(task: str) -> None:
         f"{UI}/contrast/data-ink-matrix.json",
         f"{UI}/.storybook/withThemeRuntime.tsx",
         "tools/contrast/encodings.json",
+        "tools/contrast/pairs.mjs",  # no test names it: data-ink-lib.mjs imports it
         "tools/style-dictionary/formats/json-flat.js",
     } <= reads
     inputs = _ui_inputs(task)
