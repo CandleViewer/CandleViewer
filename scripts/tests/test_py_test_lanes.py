@@ -52,6 +52,28 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(step.get("run", "") for step in job["steps"])
 
 
+def _marker_expressions(job: dict[str, Any]) -> list[str | None]:
+    """The -m expression of each pytest call in the job's steps; None for a call with no -m, which
+    runs the pyproject addopts selection (it keeps `flaky` tests)."""
+    found: list[str | None] = []
+    for step in job["steps"]:
+        for line in step.get("run", "").replace("\\\n", " ").splitlines():
+            words = shlex.split(line, comments=True) if "pytest" in line else []
+            if "pytest" in words:
+                args = words[words.index("pytest") + 1 :]
+                found.append(args[args.index("-m") + 1] if "-m" in args else None)
+    return found
+
+
+def _leaves_flaky_out(expression: str) -> bool:
+    """True when `not flaky` is an operand of the expression's outermost `and`: pytest then
+    deselects every `flaky` test, whatever its other marks."""
+    top = " ".join(expression.split())
+    while (flat := re.sub(r"\([^()]*\)", "group", top)) != top:  # drop parenthesised groups
+        top = flat
+    return " or " not in top and "not flaky" in top.split(" and ")
+
+
 def _fake_api(tmp_path: Path, files: list[str]) -> Path:
     api = tmp_path / "api"
     for relative in files:
@@ -110,6 +132,16 @@ def test_each_lane_runs_the_ci_selection_on_its_own_paths_with_coverage() -> Non
     assert upload["with"]["path"] == "services/api/" + DATA_FILE_TEMPLATE.format(
         lane="${{ matrix.lane }}"
     )
+
+
+def test_no_py_job_runs_a_test_quarantined_as_flaky() -> None:
+    """C-9.3 (#3091): a test quarantined with the `flaky` marker runs in no job of this required
+    workflow, so a known-flaky test cannot turn the `py` check red."""
+    calls = {name: _marker_expressions(job) for name, job in _jobs().items()}
+    assert calls["py-tests"] and calls["py-perf"], calls  # the lane step and the perf budgets
+    for name, expressions in calls.items():
+        for expression in expressions:
+            assert expression is not None and _leaves_flaky_out(expression), (name, expression)
 
 
 def test_py_job_combines_every_lane_and_keeps_the_floor_and_the_gate_artifact() -> None:
@@ -193,6 +225,22 @@ def test_a_new_test_directory_runs_in_the_rest_lane(tmp_path: Path) -> None:
 def test_collects_rejects_options_other_than_ignore() -> None:
     with pytest.raises(LaneManifestError, match="unexpected pytest option"):
         collects(["tests", "-k", "x"], "tests/test_a.py")
+
+
+@pytest.mark.parametrize(
+    ("expression", "leaves_out"),
+    [
+        ("perf and not flaky", True),
+        ("not (chaos or harness) and not flaky", True),
+        ("not exchange_smoke and not perf", False),
+        ("perf or chaos and not flaky", False),  # `and` binds first: a flaky perf test still runs
+        ("not (flaky and perf)", False),
+    ],
+)
+def test_leaves_flaky_out_needs_not_flaky_under_the_outermost_and(
+    expression: str, leaves_out: bool
+) -> None:
+    assert _leaves_flaky_out(expression) is leaves_out
 
 
 @pytest.mark.parametrize(

@@ -172,11 +172,12 @@ jobs:
         # of the code, so it turns the addopts --cov-fail-under off and writes no report: `py`
         # applies the floor to the combined data and writes the reports. A red run keeps its data,
         # so a failing test does not also turn the coverage gate into a missing-artifact failure.
+        # `not flaky`: a test quarantined per C-9.3 runs in no lane, as in py-perf (#3091).
         run: |
           lane_args=$(python ../../tools/ci/py_test_lanes.py pytest-args "$LANE")
           read -ra lane_paths <<< "$lane_args"
           status=0
-          uv run pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz and not harness and not perf" \
+          uv run pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz and not harness and not perf and not flaky" \
             --durations=10 --cov --cov-report= --cov-fail-under=0 "${lane_paths[@]}" || status=$?
           if [ -f .coverage ]; then mv .coverage "py-lane-$LANE.coverage"; fi
           exit "$status"
