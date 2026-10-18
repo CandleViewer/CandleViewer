@@ -383,13 +383,19 @@ def fetch_branch_rules(repo: str, token: str, branch: str = "main") -> dict:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            rules = json.loads(response.read())
+            body = response.read()
     except urllib.error.HTTPError as exc:
         raise ApplyError(f"GET {url} failed: {exc.code} {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise ApplyError(f"GET {url} failed: {exc.reason}") from exc
+    try:
+        rules = json.loads(body)
+    except ValueError as exc:
+        raise ApplyError(f"GET {url}: the answer is not JSON") from exc
     if not isinstance(rules, list) or len(rules) >= 100:
         raise ApplyError(f"GET {url}: not a list of fewer than 100 rules")
+    if not all(isinstance(rule, dict) for rule in rules):
+        raise ApplyError(f"GET {url}: a rule that is not an object")
     view: dict = {}
     for rule in rules:
         kind = str(rule.get("type"))

@@ -229,14 +229,15 @@ class _Resp(io.BytesIO):
 
 
 def _fetch_rules(monkeypatch: pytest.MonkeyPatch, answer: object) -> tuple[dict, list]:
-    """fetch_branch_rules against a fake urlopen that returns `answer` as JSON, or raises it."""
+    """fetch_branch_rules against a fake urlopen that returns `answer` (as JSON unless it is
+    bytes), or raises it."""
     seen: list = []
 
     def fake(request: urllib.request.Request, timeout: float) -> _Resp:
         seen.append(request)
         if isinstance(answer, Exception):
             raise answer
-        return _Resp(json.dumps(answer).encode())
+        return _Resp(answer if isinstance(answer, bytes) else json.dumps(answer).encode())
 
     monkeypatch.setattr(abp.urllib.request, "urlopen", fake)
     return abp.fetch_branch_rules("o/r", "not-a-real-token"), seen
@@ -258,6 +259,7 @@ def test_fetch_branch_rules_reads_every_rule_with_one_get(monkeypatch) -> None:
     url = "https://api.github.com/repos/o/r/rules/branches/main?per_page=100"
     assert [(r.get_method(), r.full_url) for r in seen] == [("GET", url)]
     assert _fetch_rules(monkeypatch, [])[0] == {}
+    assert len(_fetch_rules(monkeypatch, [{"type": "deletion"}] * 99)[0]) == 99  # the bound
 
 
 @pytest.mark.parametrize(
@@ -265,6 +267,8 @@ def test_fetch_branch_rules_reads_every_rule_with_one_get(monkeypatch) -> None:
     [
         ({"type": "merge_queue"}, "not a list of fewer than 100 rules"),
         ([{"type": "deletion"}] * 100, "not a list of fewer than 100 rules"),
+        (b"<html>", "the answer is not JSON"),
+        ([{"type": "deletion"}, "deletion"], "a rule that is not an object"),
         (urllib.error.HTTPError("u", 403, "Forbidden", None, None), "failed: 403 Forbidden"),
         (urllib.error.URLError("no route"), "failed: no route"),
     ],
