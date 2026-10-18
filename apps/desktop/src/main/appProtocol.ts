@@ -147,11 +147,12 @@ export async function resolveAppRequest(
   }
   // The web app routes with React Router's browser router (history API), so a missing path
   // without an extension is a client route (for example /login) and gets index.html. A missing
-  // asset (with an extension) stays a 404.
-  if (path.extname(file) !== "") {
+  // asset (with an extension) and anything under /api (the backend's prefix) stay a 404.
+  const base = path.resolve(root);
+  if (path.extname(file) !== "" || path.relative(base, file).split(path.sep)[0] === "api") {
     return notFound;
   }
-  const index = path.join(path.resolve(root), "index.html");
+  const index = path.join(base, "index.html");
   const indexBody = await read(index);
   return indexBody === null ? notFound : ok(index, indexBody);
 }

@@ -26,8 +26,8 @@ if any flag drifts.
 Without `CV_DEV_SERVER_URL`, the main window loads `app://candleviewer/`. A
 privileged custom scheme (`src/main/appProtocol.ts`) serves `apps/web/dist`
 read-only: one fixed host, the path decoded once and confined to the dist
-root (SR-174), extension-less routes fall back to `index.html` for the
-history-API router, and every response carries the shell's CSP header from
+root (SR-174), an extension-less route outside `/api` gets `index.html` for
+the history-API router, and every response carries the shell's CSP header from
 `csp.ts` (SR-112). The scheme is `standard` and `secure` only and never
 bypasses the CSP; `test/index.test.ts` pins that registration.
 

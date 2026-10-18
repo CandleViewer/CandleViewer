@@ -118,22 +118,25 @@ describe("resolveAppRequest", () => {
     expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
   });
 
-  it("falls back to index.html for a client route (no extension), as the browser router needs", async () => {
-    const read = memoryReader(DIST);
-    const res = await resolveAppRequest("app://candleviewer/terminal/last", ROOT, read, CSP);
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
-    expect(new TextDecoder().decode(res.body as Uint8Array)).toContain("id=root");
-    expect(read).toHaveBeenLastCalledWith(path.join(ROOT, "index.html"));
-  });
+  // /apiary: only the whole first segment "api" is the backend's prefix, not any path starting so.
+  it.each(["app://candleviewer/terminal/last", "app://candleviewer/apiary"])(
+    "falls back to index.html for the client route %s (no extension), as the browser router needs",
+    async (url) => {
+      const read = memoryReader(DIST);
+      const res = await resolveAppRequest(url, ROOT, read, CSP);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
+      expect(new TextDecoder().decode(res.body as Uint8Array)).toContain("id=root");
+      expect(read).toHaveBeenLastCalledWith(path.join(ROOT, "index.html"));
+    },
+  );
 
-  it("answers 404 for a missing asset (with an extension), with the CSP and no echoed path", async () => {
-    const res = await resolveAppRequest(
-      "app://candleviewer/assets/missing-secret-name.js",
-      ROOT,
-      memoryReader(DIST),
-      CSP,
-    );
+  it.each([
+    "app://candleviewer/assets/missing-secret-name.js", // a missing asset (with an extension)
+    "app://candleviewer/api/v1/me", // the backend's prefix is never a client route
+    "app://candleviewer/api",
+  ])("answers 404 for %s, with the CSP and no echoed path", async (url) => {
+    const res = await resolveAppRequest(url, ROOT, memoryReader(DIST), CSP);
     expect(res.status).toBe(404);
     expect(res.headers["content-security-policy"]).toBe(CSP);
     expect(res.body).toBe("Not found");
