@@ -231,6 +231,7 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
     outputs:
+      secret-scan: ${{ steps.secret-scan.outcome }}
       spike-containment: ${{ steps.spike-containment.outcome }}
       changelog-fragment: ${{ steps.changelog-fragment.outcome }}
       licence-header: ${{ steps.licence-header.outcome }}
@@ -251,6 +252,77 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
+      # #3385: every PR gets the secret scans, whatever paths it touches (SR-142, SR-146; C-9.1
+      # secrets-scan: trufflehog on the diff, any finding fails). First gate: no PR script has
+      # touched the checkout or its history yet. gitleaks and trufflehog read the PR's commits
+      # (commitlint's range) offline, from images pinned by digest; then the credential-hygiene
+      # gate and the SR-146 scan of what the scanners printed. The `security` lane's gitleaks job
+      # still scans the whole tree and history on code PRs. Cost: no new job; two image pulls
+      # (about 73 MB compressed) and seconds of scanning in this one.
+      - name: secret-scan (#3385; gitleaks + trufflehog over the PR's commits, credential hygiene)
+        id: secret-scan
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          TRUFFLEHOG_IMAGE: trufflesecurity/trufflehog:3.97.9@sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db
+        run: |
+          set -euo pipefail
+          fail() { echo "CI-SEC-005: $* - scanner infrastructure failure, never a clean scan" >&2; exit 1; }
+          range="$BASE_SHA..$HEAD_SHA"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "no PR commit range ('$range')"
+          count=$(git rev-list --count "$range") || fail "the checkout lacks the PR's commits ($range)"
+          { docker pull --quiet "$GITLEAKS_IMAGE" && docker pull --quiet "$TRUFFLEHOG_IMAGE"; } || fail "image pull"
+          # security_gate.py's PyYAML, in its own venv as `gen` keeps its own.
+          { python -m venv "$RUNNER_TEMP/secret-scan-venv" && export PATH="$RUNNER_TEMP/secret-scan-venv/bin:$PATH" &&
+            python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML; } || fail "PyYAML install"
+          # Both scanners report a range git cannot read as clean, so the gitleaks image's own git
+          # must count the PR's commits through the same read-only mount first.
+          run=(docker run --rm --network none -v "$PWD:/repo:ro")
+          seen=$("${run[@]}" --entrypoint git "$GITLEAKS_IMAGE" -C /repo rev-list --count "$range") || seen=
+          [ "$seen" = "$count" ] || fail "the gitleaks image reads '$seen' of the PR's $count commit(s)"
+          echo "Scanning the PR's $count commit(s): $range"
+          out="$RUNNER_TEMP/secret-scan"
+          mkdir -p "$out"
+          status=0 found=0
+          # gitleaks: 0 clean, 3 findings (security_gate.py names each below, redacted), else failed.
+          code=0
+          "${run[@]}" -v "$out:/out" "$GITLEAKS_IMAGE" git /repo --log-opts="$range" \
+            --config=/repo/.gitleaks.toml --redact --no-banner --no-color --exit-code=3 \
+            --report-format=json --report-path=/out/gitleaks.json 2>&1 | tee "$out/gitleaks.log" || code=$?
+          case "$code" in
+            0) ;;
+            3)
+              echo "CI-SEC-001: gitleaks found a secret-shaped string in the PR's commits; rotate it first (IR-02)" >&2
+              status=1 found=1
+              ;;
+            *) echo "CI-SEC-005: gitleaks exited $code - scanner infrastructure failure" >&2; status=1 ;;
+          esac
+          # trufflehog: 0 clean, 183 findings (annotated at file:line, never the value), else failed;
+          # unverified findings count too. The image's entrypoint re-splits its last argument
+          # through bash, so that argument is a constant.
+          code=0
+          "${run[@]}" "$TRUFFLEHOG_IMAGE" git file:///repo --since-commit="$BASE_SHA" \
+            --branch="$HEAD_SHA" --no-update --no-verification --github-actions --fail-on-scan-errors \
+            --exclude-paths=/repo/.trufflehog-exclude --fail 2>&1 | tee "$out/trufflehog.log" || code=$?
+          case "$code" in
+            0) ;;
+            183)
+              echo "CI-SEC-001: trufflehog found a secret-shaped string in the PR's commits (annotated above); rotate it first (IR-02)" >&2
+              status=1 found=1
+              ;;
+            *) echo "CI-SEC-005: trufflehog exited $code - scanner infrastructure failure" >&2; status=1 ;;
+          esac
+          python tools/ci/security_gate.py --tool gitleaks --report "$out/gitleaks.json" || status=1
+          python scripts/check_secrets_hygiene.py all || status=1
+          python scripts/check_secrets_hygiene.py logs "$out" || status=1
+          if [ "$found" = 1 ]; then
+            echo "::error title=Committed secret blocks merge::Rotate first per SECURITY.md / runbook IR-02 (docs/ci-runbook.md)."
+          fi
+          exit "$status"
       - name: spike-containment (E06-X02, CI-SPIKE-001/002)
         id: spike-containment
         if: ${{ !cancelled() }}
@@ -477,7 +549,8 @@ jobs:
     needs: changed-paths
     # Security scanning applies to any code/infra change, not just one lane, and to a change that
     # touches only the Semgrep rules, fixtures or ignore file the scan reads (#2915). The
-    # `ci-required` resolver below restates this condition: change both together.
+    # `ci-required` resolver below restates this condition: change both together. Every PR, a
+    # docs-only one too, also gets the secret scans: the `gates` job's secret-scan step (#3385).
     if: ${{ needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true' }}
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
@@ -566,6 +639,7 @@ jobs:
           FILTER_SEMGREP: ${{ needs.changed-paths.outputs.semgrep }}
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
           RESULT_GATES: ${{ needs.gates.result }}
+          RESULT_SECRET_SCAN: ${{ needs.gates.outputs.secret-scan }}
           RESULT_PIN_CHECK: ${{ needs.gates.outputs.pin-check }}
           RESULT_SPIKE_CONTAINMENT: ${{ needs.gates.outputs.spike-containment }}
           RESULT_COMMITLINT: ${{ needs.gates.outputs.commitlint }}
@@ -596,6 +670,7 @@ jobs:
             const lanes = {
               "changed-paths": { applicable: true, result: process.env.RESULT_CHANGED_PATHS },
               gates: { applicable: true, result: process.env.RESULT_GATES },
+              "secret-scan": { applicable: true, result: process.env.RESULT_SECRET_SCAN },
               "pin-check": { applicable: isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK },
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
               commitlint: { applicable: true, result: process.env.RESULT_COMMITLINT },
