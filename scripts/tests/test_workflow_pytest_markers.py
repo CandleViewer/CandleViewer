@@ -7,13 +7,16 @@ Rule, per marker the addopts `-m` deselects: a test carrying only that marker st
 unless the call names it outside a `not` (its own lane: `-m harness`, `-m "perf and not flaky"`)
 or `ON_PURPOSE` lists it. Not modelled: a heavy test that also carries a marker the call selects
 (an integration+perf test under `-m integration`).
+#3091 (C-9.3): QUARANTINE is stricter, as a quarantined test keeps its lane markers: no mix of the
+markers a call names may select it, and naming it is not a lane (ON_PURPOSE can exempt). addopts
+deselects it too, so a call without its own -m, and a local run, keep it out as well.
 The scan reads each step's `run:` as bash does (a comment starts only at a word that begins with
-`#`), and the command lines quoted in it (`bash -c "..."`). It fails loudly on the other ways to
-set or replace addopts' -m: a pytest command word in a string other than a `run:`, `name:` or
-`id:` (an env, matrix or action input), a `$` in a pytest call that `EXPANSIONS` does not list,
-PYTEST_ADDOPTS, UV_ENV_FILE, `--env-file`, `pytest.main`, a `-qm` cluster, `-c`/`--config-file`,
-an `addopts` override and `@file`.
-Not read: pytest run by a script that a step runs (tools/statechart/run_xstate_contract.sh)."""
+`#`), the command lines quoted in it (`bash -c "..."`) and the SCRIPTS a step runs. It fails
+loudly on the other ways to set or replace addopts' -m: a pytest command word in a string other
+than a `run:`, `name:` or `id:` (an env, matrix or action input), a `$` in a pytest call that
+`EXPANSIONS` does not list, PYTEST_ADDOPTS, UV_ENV_FILE, `--env-file`, `pytest.main`, a `-qm`
+cluster, `-c`/`--config-file`, an `addopts` override and `@file`.
+Not read: pytest that any other script runs."""
 
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import re
 import shlex
 import tomllib
 from collections.abc import Iterator
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -58,6 +62,9 @@ EXPANSIONS = {
     # on any other option, and test_py_test_lanes runs it on every lane.
     ("_job-py.yml", "py-tests"): frozenset({"${lane_paths[@]}"}),
 }
+QUARANTINE = "flaky"  # C-9.3 quarantines a test by adding it on top of the test's lane markers
+# Shell scripts a workflow step runs, read like a `run:` (#3091): the blocking xstate-contract gate.
+SCRIPTS = ("tools/statechart/run_xstate_contract.sh",)
 
 
 def _parse(expr: str) -> ast.expr:
@@ -95,9 +102,17 @@ def _named(tree: ast.expr, negated: bool = False) -> set[str]:
 
 
 def _lets_through(expr: str, deselected: set[str]) -> set[str]:
-    """The deselected markers whose tests this `-m` runs without naming them (the #3478 defect)."""
+    """The deselected markers whose tests this `-m` runs without naming them (the #3478 defect).
+    A lane marker is tried alone; QUARANTINE with every mix of the names, and naming it is not a
+    lane."""
     tree = _parse(expr)
-    return {marker for marker in deselected - _named(tree) if _selects(tree, {marker})}
+    names = sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)})
+    through: set[str] = set()
+    for marker in deselected - (_named(tree) - {QUARANTINE}):
+        sizes = range(len(names) + 1) if marker == QUARANTINE else range(1)
+        if any(_selects(tree, {marker, *mix}) for n in sizes for mix in combinations(names, n)):
+            through.add(marker)
+    return through
 
 
 def _marker_expression(args: list[str]) -> str | None:
@@ -214,11 +229,23 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     return calls
 
 
+def _script_calls(root: Path = ROOT) -> list[tuple[str, str, str]]:
+    """(script, "script", `-m` expression) for every pytest call in SCRIPTS that sets its own."""
+    calls: list[tuple[str, str, str]] = []
+    for script in SCRIPTS:
+        try:
+            found = list(_marker_expressions((root / script).read_text(encoding="utf-8")))
+        except ValueError as err:
+            raise ValueError(f"{script}: {err}") from err
+        calls += [(script, "script", expr) for expr in found]
+    return calls
+
+
 PYPROJECT = tomllib.loads((ROOT / "services/api/pyproject.toml").read_text(encoding="utf-8"))
 ADDOPTS: str = PYPROJECT["tool"]["pytest"]["ini_options"]["addopts"]
 DESELECTED = _deselected_by(ADDOPTS)
 try:
-    CALLS, SCAN_ERROR = _marker_calls(), ""
+    CALLS, SCAN_ERROR = _marker_calls() + _script_calls(), ""
 except ValueError as err:  # an unreadable call fails a test below, not the lane's collection
     CALLS, SCAN_ERROR = [], str(err)
 # An empty scan proves nothing: these jobs set their own -m today.
@@ -229,11 +256,17 @@ KNOWN = {
     ("_job-py.yml", "py-perf"),
     ("_job-contract.yml", "contract"),
     ("fuzz-nightly.yml", "python"),
+    (SCRIPTS[0], "script"),
 }
 
 
 def test_addopts_deselects_the_markers_the_pin_reads() -> None:
     assert DESELECTED and all(f"not {marker}" in ADDOPTS for marker in DESELECTED)
+
+
+def test_addopts_keeps_quarantined_tests_out() -> None:
+    """#3091 (C-9.3): a call without its own -m (pr.yml's golden-upcaster run) inherits it."""
+    assert QUARANTINE in DESELECTED, f"add `and not {QUARANTINE}` to the addopts -m"
 
 
 def test_scan_reads_every_workflow() -> None:
@@ -334,6 +367,32 @@ def test_reader_and_rule_fail_loudly_on_what_they_cannot_read(run: str, error: s
 )
 def test_rule_flags_what_a_call_lets_through(expr: str, through: set[str]) -> None:
     assert _lets_through(expr, {"a", "b"}) == through
+
+
+@pytest.mark.parametrize(
+    ("expr", "through"),
+    [
+        ("integration", {QUARANTINE}),  # a quarantined integration test keeps `integration`
+        ("chaos and integration", {QUARANTINE}),
+        ("not (flaky and perf)", {QUARANTINE}),
+        ("perf or chaos and not flaky", {QUARANTINE}),  # `and` binds first: a flaky perf test runs
+        ("flaky", {QUARANTINE}),  # naming it is not a lane
+        ("integration and not perf and not flaky", set()),
+        ("(perf or chaos) and not flaky", set()),
+        ("not (chaos or flaky) and not perf", set()),
+    ],
+)
+def test_rule_keeps_a_quarantined_test_out_whatever_else_it_carries(
+    expr: str, through: set[str]
+) -> None:
+    assert _lets_through(expr, {QUARANTINE}) == through
+
+
+def test_script_error_names_the_script(tmp_path: Path) -> None:
+    (tmp_path / SCRIPTS[0]).parent.mkdir(parents=True)
+    (tmp_path / SCRIPTS[0]).write_text("uv run pytest -mx\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(f"{SCRIPTS[0]}: cannot read '-mx'")):
+        _script_calls(tmp_path)
 
 
 def test_scan_reads_folded_and_literal_blocks(tmp_path: Path) -> None:

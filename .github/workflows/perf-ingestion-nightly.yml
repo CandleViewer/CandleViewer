@@ -50,7 +50,7 @@ jobs:
         id: pack_tests
         if: always() && steps.sync.outcome == 'success'
         working-directory: services/api
-        run: uv run pytest tests/unit/bench -m harness -q -p no:randomly --no-cov
+        run: uv run pytest tests/unit/bench -m "harness and not flaky" -q -p no:randomly --no-cov
       - name: E08-Q04 perf pack (six scenarios, smoke profile) + regression gate
         id: pack
         if: always() && steps.sync.outcome == 'success'
@@ -86,7 +86,7 @@ jobs:
     # environment); dispatch-only until that runner is registered.
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
     runs-on: [self-hosted, bench]
-    timeout-minutes: 1740  # 24 h soak + 1 h aggregate + latency 30 m + rest/burst; report must run
+    timeout-minutes: 1740 # 24 h soak + 1 h aggregate + latency 30 m + rest/burst; report must run
     env:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner

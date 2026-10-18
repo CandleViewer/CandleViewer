@@ -38,11 +38,12 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/migrations/test_0003_audit_log.py",
 )
 
-# `addopts` in pyproject.toml deselects these by default (nightly or wall-clock-budget lanes). A
-# bare `-m e09_regression` replaces that default expression, so the marker is withheld from them
-# instead of leaving every QA run to repeat "and not perf and not fuzz and not harness".
+# `addopts` in pyproject.toml deselects these by default (nightly or wall-clock-budget lanes, and
+# `flaky`: a test quarantined per C-9.3 runs in no lane, #3091). A bare `-m e09_regression`
+# replaces that default expression, so the marker is withheld from them instead of leaving every
+# QA run to repeat "and not perf and not fuzz and not harness and not flaky".
 # `tests/qa/test_e09_regression_pack.py` fails when this set and that expression differ.
-NIGHTLY_ONLY_MARKERS: Final = frozenset({"fuzz", "harness", "perf"})
+NIGHTLY_ONLY_MARKERS: Final = frozenset({"flaky", "fuzz", "harness", "perf"})
 
 
 def is_pack_path(relative: str) -> bool:
