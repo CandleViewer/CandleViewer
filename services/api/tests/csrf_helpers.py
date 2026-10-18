@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
+from candleviewer.auth.errors import SessionNotFound
 
 #: The one session every fake test bearer resolves to (see `FakeBearerSessions`).
 TEST_SID = uuid.UUID("00000000-0000-4000-8000-00000000c5ef")
@@ -38,7 +39,9 @@ def arm_csrf(client: Any, codec: CsrfCodec, session_id: str | uuid.UUID | None =
 class FakeBearerSessions:
     """`peek_access_token` for apps authenticated by a fake principal resolver:
     any of *bearers* resolves to `TEST_SID`; anything else resolves to nothing,
-    so the guard refuses it (no session, no CSRF authority)."""
+    so the guard refuses it (no session, no CSRF authority). The idle-lock gate
+    (#2300) authenticates with `authenticate_access_token`: a test bearer is a
+    live, unlocked session and anything else is unknown."""
 
     def __init__(self, *bearers: str) -> None:
         self._bearers = frozenset(bearers)
@@ -47,6 +50,12 @@ class FakeBearerSessions:
         if token in self._bearers:
             return SimpleNamespace(id=TEST_SID, user_id=TEST_SID)
         return None
+
+    async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
+        found = await self.peek_access_token(token)
+        if found is None:
+            raise SessionNotFound("not a test bearer")
+        return found
 
 
 def wire_fake_sessions(app: Any, *bearers: str) -> None:

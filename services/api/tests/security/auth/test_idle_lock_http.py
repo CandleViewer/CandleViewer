@@ -1,15 +1,22 @@
 """The idle lock end to end (#2300; contract info "Idle lock"; Gherkin of the ticket).
 
 The real `create_app()` over the in-memory auth stack of `_stack.py`, so the CSRF guard, the
-read-only guard, the routes and an audit writer that refuses unregistered actions all run as
-deployed. No network, no sleeps (C-13.5, C-13.7).
+idle-lock gate, the read-only guard, the routes and an audit writer that refuses unregistered
+actions all run as deployed. No network, no sleeps (C-13.5, C-13.7).
 """
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
+import pytest
+from fastapi import FastAPI
+from structlog.testing import capture_logs
+
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.models import MintedSession
@@ -19,6 +26,22 @@ from tests.csrf_helpers import csrf_headers
 from ._stack import ORIGIN, Stack
 
 _IDLE_S = 300  # locks while the 12 min access token still lives
+_HTTP = ("get", "put", "post", "patch", "delete")
+#: The state-changing operations the ticket names explicitly (contract test scope).
+_NAMED = {
+    ("POST", "/orders"),
+    ("PATCH", "/orders/{orderId}"),
+    ("DELETE", "/orders/{orderId}"),
+    ("POST", "/orders/cancel-all"),
+    ("POST", "/trade-groups"),
+    ("POST", "/trade-groups/{tradeGroupId}/cancel"),
+    ("POST", "/positions/close-all"),
+    ("POST", "/positions/{positionId}/close"),
+    ("POST", "/trading/kill-switch"),
+    ("POST", "/settings/arm"),
+    ("POST", "/session/environment"),
+    ("POST", "/auth/step-up"),
+}
 
 
 def _session(stack: Stack, username: str) -> MintedSession:
@@ -37,11 +60,188 @@ def _lock(stack: Stack) -> None:
     stack.clock.now += timedelta(seconds=_IDLE_S + 1)
 
 
+def _fill(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "00000000-0000-4000-8000-0000000000ff", path)
+
+
 def _code(response: Any) -> Any:
     try:
         return response.json().get("code")
     except ValueError:
         return None
+
+
+def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
+    stack: Stack,
+) -> None:
+    """AC "Locked session is recognisable", over the whole contract: every operation answers
+    `401 session_idle_locked`, not `unauthenticated`, and nothing runs or is audited."""
+    spec = load_openapi_spec()
+    ungated = ungated_operations(spec)
+    paths = spec["paths"]
+    assert isinstance(paths, dict)
+    gated = sorted(
+        (method.upper(), path)
+        for path, item in paths.items()
+        for method in _HTTP
+        if isinstance(item.get(method), dict) and (method.upper(), path) not in ungated
+    )
+    assert _NAMED <= set(gated)
+    minted = _session(stack, "locked")
+    _lock(stack)
+    headers = _headers(stack, minted)
+    answers = {
+        (method, path): (r.status_code, _code(r))
+        for method, path in gated
+        for r in [
+            stack.client.request(
+                method,
+                _fill(path),
+                headers=headers,
+                json={} if method in ("POST", "PUT", "PATCH") else None,
+            )
+        ]
+    }
+    assert set(answers.values()) == {(401, "session_idle_locked")}, {
+        op: a for op, a in answers.items() if a != (401, "session_idle_locked")
+    }
+    assert stack.audit.records == []
+
+
+def _kill_switch_stub(stack: Stack) -> list[Any]:
+    """A stub `POST /trading/kill-switch` handler standing in for E39's route, with no lock
+    check of its own; the list collects the bodies it ran with."""
+    calls: list[Any] = []
+
+    async def kill_switch(body: dict[str, Any]) -> dict[str, str]:
+        calls.append(body)
+        return {"state": "engaged"}
+
+    cast(FastAPI, stack.client.app).add_api_route(
+        "/trading/kill-switch", kill_switch, methods=["POST"]
+    )
+    return calls
+
+
+def test_the_kill_switch_cannot_be_driven_from_a_locked_session(stack: Stack) -> None:
+    """AC "Kill switch cannot be driven from a locked session": engage and release are refused
+    before the handler runs, so no transition and no audit row (a stub handler stands in for
+    E39's route and is reachable from a live session)."""
+    calls = _kill_switch_stub(stack)
+    live = _session(stack, "owner-live")
+    reached = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, live), json={"action": "engage"}
+    )
+    assert reached.status_code == 200 and len(calls) == 1
+    locked = _session(stack, "owner-locked")
+    _lock(stack)
+    for action in ("engage", "release"):
+        r = stack.client.post(
+            "/trading/kill-switch", headers=_headers(stack, locked), json={"action": action}
+        )
+        assert (r.status_code, _code(r)) == (401, "session_idle_locked")
+        assert "idle_locked_at" in r.json()
+    assert len(calls) == 1 and stack.audit.records == []
+
+
+def test_an_expired_access_token_of_a_locked_session_stays_unauthenticated(
+    stack: Stack,
+) -> None:
+    minted = _session(stack, "stale")
+    stack.clock.now += ACCESS_TOKEN_TTL
+    r = stack.client.get("/auth/sessions", headers=_headers(stack, minted))
+    assert r.status_code == 401 and _code(r) != "session_idle_locked"
+
+
+#: A stopping session store's failure text: never in an answer.
+_STORE_FAILURE = "session store stopped"
+#: How long the session has been idle when the store fails: past its idle timeout, or not at all.
+_LOCKED_OR_NOT = pytest.mark.parametrize(
+    "idle", [timedelta(seconds=_IDLE_S + 1), timedelta(0)], ids=["locked", "unlocked"]
+)
+
+
+def _fail_the_gates_check(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, error: type[Exception] = RuntimeError
+) -> None:
+    """The store raises *error* under the request's first `authenticate_access_token` call, the
+    gate's, and answers every later one, so a route reached after it would find the session."""
+    real = stack.auth.sessions.authenticate_access_token
+    pending = [error(_STORE_FAILURE)]
+
+    async def once(*args: Any, **kwargs: Any) -> Any:
+        if pending:
+            raise pending.pop()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(stack.auth.sessions, "authenticate_access_token", once)
+
+
+@_LOCKED_OR_NOT
+@pytest.mark.parametrize("path", ["/me", "/instruments"], ids=["me", "resolver"])
+def test_a_store_failing_under_the_gate_is_503_and_logged_on_a_read(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta, path: str
+) -> None:
+    """Fail closed (C-12.4, #3300): `GET /me` and `GET /instruments` (its principal from the
+    session-backed resolver) check the bearer again, but the gate answers a store failure under
+    its own check first, with `GET /me`'s 503 and one `auth.me.session_backend_error` line."""
+    minted = _session(stack, "reading")
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    with capture_logs() as logs:
+        r = stack.client.get(path, headers=_headers(stack, minted))
+    assert (r.status_code, _code(r)) == (503, "store_unavailable") and _STORE_FAILURE not in r.text
+    errors = [e["event"] for e in logs if e["log_level"] == "error"]
+    assert errors == ["auth.me.session_backend_error"]
+
+
+@_LOCKED_OR_NOT
+def test_a_store_failing_under_the_gate_revokes_no_session(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta
+) -> None:
+    """Fail closed (C-12.4): `DELETE /me/sessions/{sessionId}` meets the lock check at the gate
+    first, so a store failure there answers 503 and revokes and audits nothing, locked or not."""
+    uid, _ = stack.add_user("revoking")
+    caller = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=_IDLE_S)
+    sibling = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    r = stack.client.delete(f"/me/sessions/{sibling.session_id}", headers=_headers(stack, caller))
+    assert (r.status_code, _code(r)) == (503, "store_unavailable")
+    assert _live(stack, sibling) and stack.audit.records == []
+
+
+@_LOCKED_OR_NOT
+def test_a_store_failing_under_the_gate_never_runs_the_kill_switch(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, idle: timedelta
+) -> None:
+    """AC "Kill switch cannot be driven from a locked session" when the lock cannot be checked:
+    the stub relies on the gate alone, so a store failure there answers 503 and it never runs."""
+    calls = _kill_switch_stub(stack)
+    minted = _session(stack, "owner-stopping")
+    stack.clock.now += idle
+    _fail_the_gates_check(stack, monkeypatch)
+    r = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, minted), json={"action": "engage"}
+    )
+    assert (r.status_code, _code(r)) == (503, "store_unavailable")
+    assert calls == [] and stack.audit.records == []
+
+
+def test_a_store_error_other_than_a_runtime_error_is_500_and_never_runs_the_kill_switch(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate catches `RuntimeError` only, as `GET /me` does (#3300): a Postgres outage's
+    `OSError` under its check reaches the boundary handler, `500 internal_error`, and the stub
+    still never runs (fail closed)."""
+    calls = _kill_switch_stub(stack)
+    minted = _session(stack, "owner-outage")
+    _fail_the_gates_check(stack, monkeypatch, OSError)
+    r = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, minted), json={"action": "engage"}
+    )
+    assert (r.status_code, _code(r)) == (500, "internal_error") and _STORE_FAILURE not in r.text
+    assert calls == [] and stack.audit.records == []
 
 
 def test_sign_out_instead_still_ends_the_locked_session(stack: Stack) -> None:

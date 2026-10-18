@@ -54,8 +54,9 @@ is the time-boxed exception EX-07 (§16.2).
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
 `last_seen_at`. `GET /auth/session` and `POST /auth/logout` serve a locked session,
 identified by an access token inside its lifetime or else the current `cv_refresh`
-cookie (a cookie-identified logout gets the SR-042 Origin and SR-041 checks here),
-and a locked or cookie-identified logout ends only its own session.
+cookie (a cookie-identified logout gets the SR-042 Origin and SR-041 checks here);
+every other operation of a locked session is refused by `api.idle_lock`, and a
+locked or cookie-identified logout ends only its own session.
 """
 
 from __future__ import annotations

@@ -330,16 +330,23 @@ it (login refuses `disabled` only):
   successor either: the mint reads the status under a lock on the user row, and the disable's own
   lock queues behind it.
 - A session that survives is revoked on its next strict-path use, with reason `user_disabled`: the
-  first REST request that authenticates it (every route but those named below, which accept it so
-  the user can still sign out) or the first socket `auth` that presents its token. The request
+  first REST request that authenticates it (every route but `POST /auth/logout`, which accepts it
+  so the user can still sign out) or the first socket `auth` that presents its token. The request
   answers `401`, and the sockets already on that session end with `bye` `user_disabled` and
   `4403`; the socket whose first `auth` presented the token gets `err` `auth_failed`
-  (`docs/plan/23-ws-protocol.md` §9.5). A route skips the backstop in one of two ways: it finds
+  (`docs/plan/23-ws-protocol.md` §9.5). A handler skips the backstop in one of two ways: it finds
   its session with `_identify` (`api/sessions.py`: an access token inside its lifetime, else the
   `cv_refresh` cookie), whose `peek_access_token` and `peek_refresh` read no user status, and
   never calls `require_active`; or it authenticates with `allow_locked=True` other than through
   `require_active`. `test_only_these_routes_skip_the_backstop` scans the code for both:
   `POST /auth/logout` skips it the first way (#2300), `DELETE /me/sessions/{sessionId}` the second.
+  As deployed, `IdleLockMiddleware` (#2300) first authenticates the bearer of every route but the
+  operations allowed while idle-locked with `authenticate_access_token`, which ends in
+  `require_active`, so `DELETE /me/sessions/{sessionId}` meets the backstop there before its own
+  code runs, and only `POST /auth/logout` skips it. A `RuntimeError` from the session store under
+  that call is answered `503 store_unavailable`; any other store error (the deployed SQLAlchemy
+  repository raises `DBAPIError`, `OSError` or `TimeoutError` on a Postgres outage) reaches the
+  boundary handler as `500 internal_error`. Either way no route runs (fail closed).
 - Each such revocation increments `auth_disabled_user_sessions_revoked_total` once (no label; on the
   metrics registry: the private listener `127.0.0.1:9108`) and logs a `WARNING`
   `auth.disabled_user_session_revoked` with `session_id`, `user_id` and `user_status` (`None`: the
