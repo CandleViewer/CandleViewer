@@ -5,8 +5,9 @@ Subcommands (all offline, deterministic, exit 1 on violation):
 * ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
   and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
-* ``workflows`` - no ``set -x`` / environment dump in workflows or the repository shell scripts
-  their steps run, directly or through other scripts (``workflow_scripts``; SR-146)
+* ``workflows`` - no command tracing (``set -x``, ``set -v``, a ``DEBUG`` trap) / environment dump
+  in workflows or the repository shell scripts their steps run, directly or through other scripts
+  (``workflow_scripts``; SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
 
@@ -207,21 +208,26 @@ def _option_name(name: str) -> str:
 
 
 _XTRACE = _option_name("xtrace")
-#: zsh's inverted name: ``no`` before a name flips it (zshoptions(1)), so ``unsetopt noxtrace``
+#: The options that echo commands: ``xtrace``, and ``verbose`` (#3400), which echoes each line as
+#: the shell reads it: an ``eval`` string with its values in it (bash 5.3: ``X=s; eval "echo $X"``
+#: prints ``echo s``), a step's script with its ``${{ secrets.* }}`` in it.
+_TRACING = r"(?:" + _XTRACE + r"|" + _option_name("verbose") + r")"
+#: zsh's inverted names: ``no`` before a name flips it (zshoptions(1)), so ``unsetopt noxtrace``
 #: and ``set +o noxtrace`` turn tracing on.
-_NO_XTRACE = _option_name("noxtrace")
+_NO_TRACING = r"(?:" + _option_name("noxtrace") + r"|" + _option_name("noverbose") + r")"
 
 
 def _turning_on(sets: str, unsets: str) -> str:
     """An option word turning tracing on, ``sets`` and ``unsets`` being the signs that set and
-    unset an option: ``x`` in a ``sets`` group (``-x``, ``-ex``, ``-Eeuxo``), ``-o xtrace``
-    (``-eo xtrace``) or ``+o noxtrace``."""
-    return sets + r"[a-zA-Z]*(?:x|o\s+" + _XTRACE + r")|" + unsets + r"[a-zA-Z]*o\s+" + _NO_XTRACE
+    unset an option: ``x`` or ``v`` in a ``sets`` group (``-x``, ``-ex``, ``-Eeuvo``), ``-o
+    xtrace`` (``-eo verbose``) or ``+o noxtrace``."""
+    setting = sets + r"[a-zA-Z]*(?:[xv]|o\s+" + _TRACING + r")"
+    return setting + r"|" + unsets + r"[a-zA-Z]*o\s+" + _NO_TRACING
 
 
 #: The tracing option word of ``set`` and a shell: ``_turning_on`` with ``-`` setting, or
-#: ``--xtrace``; ``+x`` and ``+o xtrace`` turn tracing off.
-_TRACE_WORD = r"(?:" + _turning_on("-", r"\+") + r"|--" + _XTRACE + r")"
+#: ``--xtrace``, ``--verbose``; ``+x`` and ``+o xtrace`` turn tracing off.
+_TRACE_WORD = r"(?:" + _turning_on("-", r"\+") + r"|--" + _TRACING + r")"
 #: The option words before it: ``--norc``, ``-o name``, ``-eO name``, ``-e``, ``+u``. Any other
 #: word ends them: ``set -- -x`` and ``set - -x`` (positional parameters), ``bash x.sh -x``. The
 #: lookahead ends them at the tracing word.
@@ -253,13 +259,13 @@ _SHELLCHECK_DIALECT = (
     r"\s+(?:-s|--shell)[\s=]\s*" + _IN_WORD + r"*"
 )
 #: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, rbash,
-#: dash, ksh or zsh (all read ``-x`` and ``-o xtrace``), by name or from a ``_SHELL_DIR``.
+#: dash, ksh or zsh (all read ``-x``, ``-v`` and ``-o xtrace``), by name or from a ``_SHELL_DIR``.
 _SHELL_ON = r"(?:r?ba|da|k|z)?sh\s+" + _OPTION_WORDS + _TRACE_ON
 _SHELL_TRACE = re.compile(
     _WORD_START + r"(?:" + _SHELL_DIR + r")?(?:" + _SHELLCHECK_DIALECT + r"|" + _SHELL_ON + r")"
 )
 #: The long spelling anywhere on a line, also past an option's argument (``bash --rcfile x
-#: --xtrace``). Always ``on``.
+#: --xtrace``). Always ``on``. Not ``--verbose``, which many tools take.
 _LONG_XTRACE = re.compile(r"(?P<on>--" + _XTRACE + r")")
 
 
@@ -275,31 +281,55 @@ def _words(on: str) -> str:
 _SHOPT_FLAGS = r"(?:\s+-[a-zA-Z-]*)*?\s+-[a-zA-Z-]*"
 _SHOPT = re.compile(
     _WORD_START + r"shopt(?=" + _SHOPT_FLAGS + r"s)(?=" + _SHOPT_FLAGS + r"o)"
-    r"(?:\s+-[a-zA-Z-]*)*" + _words(_XTRACE)
+    r"(?:\s+-[a-zA-Z-]*)*" + _words(_TRACING)
 )
 #: zsh's ``setopt`` and ``unsetopt`` (#3400; zshbuiltins(1)): ``setopt xtrace``, ``setopt -x``,
 #: ``unsetopt noxtrace``, ``unsetopt +o xtrace``: ``unsetopt`` flips each sign and each name
 #: (``bin_setopt`` in zsh's Src/options.c).
-_SETOPT = re.compile(_WORD_START + r"setopt" + _words(_turning_on("-", r"\+") + r"|" + _XTRACE))
+_SETOPT = re.compile(_WORD_START + r"setopt" + _words(_turning_on("-", r"\+") + r"|" + _TRACING))
 _UNSETOPT = re.compile(
-    _WORD_START + r"unsetopt" + _words(_turning_on(r"\+", "-") + r"|" + _NO_XTRACE)
+    _WORD_START + r"unsetopt" + _words(_turning_on(r"\+", "-") + r"|" + _NO_TRACING)
 )
-#: ``SHELLOPTS`` listing xtrace (#3400): bash turns on each option it lists when it starts (``env
-#: SHELLOPTS=xtrace bash x.sh``; a job's or a step's ``env:``, ``SHELLOPTS: xtrace``). Bash
-#: refuses to assign it (readonly), dash exports it (``export SHELLOPTS=errexit:xtrace``).
+#: ``SHELLOPTS`` listing xtrace or verbose (#3400): bash turns on each option it lists when it
+#: starts (``env SHELLOPTS=xtrace bash x.sh``; a job's or a step's ``env:``, ``SHELLOPTS:
+#: xtrace``). Bash refuses to assign it (readonly), dash exports it (``export
+#: SHELLOPTS=errexit:xtrace``).
 _SHELLOPTS = re.compile(
-    _WORD_START + r"SHELLOPTS[\"']?\s*(?:\+?=|:)\s*[\"']?(?:[\w${}-]*:)*?(?P<on>" + _XTRACE + r")"
+    _WORD_START + r"SHELLOPTS[\"']?\s*(?:\+?=|:)\s*[\"']?(?:[\w${}-]*:)*?(?P<on>" + _TRACING + r")"
 )
+#: A ``DEBUG`` trap, run before each command (#3400): ``trap 'echo "$BASH_COMMAND"' DEBUG`` prints
+#: each command as ``set -v`` does, so any action counts (the scan cannot tell what it prints).
+#: Not ``trap - DEBUG`` or ``trap DEBUG`` (a reset), ``trap -p DEBUG`` (a listing) or ``trap ''
+#: DEBUG`` (no action). The action is one word with its quotes; a quote is read to its end.
+_TRAP_ACTION = r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|\\.|[^\s'\"\\;&|()`])+"
+_DEBUG_SIGNAL = r"[\"']?(?i:debug)[\"']?(?!" + _IN_WORD + r")"
+_TRAP_DEBUG = re.compile(
+    _WORD_START + r"trap\s+(?:--\s+)?(?!-|(?:''|\"\")\s)" + _TRAP_ACTION + _words(_DEBUG_SIGNAL)
+)
+#: zsh's ``TRAPDEBUG`` function is a ``DEBUG`` trap (zshmisc(1), Trap Functions).
+_TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: The rules reported as ``'set -x' tracing``: a match with an ``on`` group. Not reported:
 #: - quoted option words: ``set "-x"``, ``bash "-x"``, ``set -o "xtrace"``
 #: - options built by expansion: ``set -e${DEBUG:+x}``, ``SHELLOPTS=$OPTS``
 #: - a shell named through a variable (``"$BASH" -x``, ``$SHELL -x``) or quoted (``"bash" -x``)
 #: - a long option's argument before it: ``bash --rcfile x.rc -x``
 #: - a shell path segment with another character: ``/opt/bash@5/bin/bash -x``
-#: - a ``DEBUG`` trap, ``set -v``
+#: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
+#:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
 #: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh
-#: -x 80``: a session named sh, 80 columns wide).
-_SET_X = (_SET_TRACE, _SHELL_TRACE, _LONG_XTRACE, _SHOPT, _SETOPT, _UNSETOPT, _SHELLOPTS)
+#: -x 80``: a session named sh, 80 columns wide), ``set`` as another tool's word (``gh secret set
+#: -v all X``: gh's ``--visibility``).
+_SET_X = (
+    _SET_TRACE,
+    _SHELL_TRACE,
+    _LONG_XTRACE,
+    _SHOPT,
+    _SETOPT,
+    _UNSETOPT,
+    _SHELLOPTS,
+    _TRAP_DEBUG,
+    _TRAPDEBUG,
+)
 _ENV_DUMP = re.compile(
     r"(^|[;&|]\s*|^\s*-?\s*(run:\s*)?)(printenv|env|export\s+-p|set)\s*(\||$|>)"
 )

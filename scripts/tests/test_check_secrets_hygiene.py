@@ -239,7 +239,9 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
     + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)]
     # #3400: a longer option name; the allow marker (`env -S` reads a `#` word as a comment).
     + [("#!/usr/bin/env -S zsh --xtrace-not", 0)]
-    + [("#!/usr/bin/env -S bash -x # secrets-hygiene: allow", 0)],
+    + [("#!/usr/bin/env -S bash -x # secrets-hygiene: allow", 0)]
+    # #3400: verbose, which echoes each line read.
+    + [("#!/bin/bash -v", 1), ("#!/usr/bin/env -S bash --verbose", 1)],
 )
 def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
     _write(tmp_path, WF, _runs("./tools/x.sh"))
@@ -385,6 +387,20 @@ TRACED = [
     "SHELLOPTS=xtrace",
     "env SHELLOPTS=braceexpand:xtrace bash ci.sh",
     'export SHELLOPTS="$SHELLOPTS:xtrace"',
+    # #3400: verbose echoes each line as the shell reads it: an eval string with its values in it
+    # (bash 5.3: X=s; eval "echo $X" prints echo s), a step's script with its secrets in it.
+    "set -v",
+    "set -euvo pipefail",
+    "set -o verbose",
+    "bash -v ci.sh",
+    "bash --verbose ci.sh",
+    "shopt -so verbose",
+    "setopt VERBOSE",
+    "env SHELLOPTS=verbose bash ci.sh",
+    # #3400: a DEBUG trap runs before each command, whatever it prints; zsh's TRAPDEBUG too.
+    "trap 'echo \"+ $BASH_COMMAND\"' DEBUG",
+    "trap -- 'echo $BASH_COMMAND' INT debug",
+    "TRAPDEBUG() { print -r -- $ZSH_DEBUG_CMD; }",
 ]
 NOT_TRACED = [
     "set -e",
@@ -439,6 +455,16 @@ NOT_TRACED = [
     "unsetopt -o xtrace",
     "SHELLOPTS=braceexpand:errexit",
     'echo "$SHELLOPTS"',
+    # #3400: another tool's --verbose and set -o vi; a DEBUG trap reset, listed or given no
+    # action; other traps, which run once, on their event.
+    "pytest --verbose",
+    "set -o vi",
+    "trap - DEBUG",
+    "trap DEBUG",
+    "trap -p DEBUG",
+    "trap '' DEBUG",
+    "trap 'rm -f x.tmp' EXIT",
+    "trap 'echo \"failed: $BASH_COMMAND\"' ERR",
 ]
 VIA = ["run", "script"]
 
@@ -516,12 +542,18 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         "unsetopt " * 11000,
         "SHELLOPTS=" * 9600,
         "SHELLOPTS=" + "a:" * 45000,
+        # #3400: trap words, all taken by one match (a DEBUG required after them re-read the
+        # rest of the line at each trap: about 15 s at 98k); quotes and escapes in its action.
+        "trap x " * 14000,
+        "trap '" * 20000,
+        'trap "' + "\\\\" * 45000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
     + ["shellcheck-words", "shellcheck-options", "shellcheck-mid-word", "shellcheck-paths"]
     + ["name-separators", "dashes", "shopt-flags", "shopt-long-flag", "shopt-names"]
-    + ["setopt-o-words", "unsetopt-words", "shellopts-assignments", "shellopts-items"],
+    + ["setopt-o-words", "unsetopt-words", "shellopts-assignments", "shellopts-items"]
+    + ["trap-words", "trap-quotes", "trap-escapes"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
