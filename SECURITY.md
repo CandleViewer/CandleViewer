@@ -205,10 +205,9 @@ noted in `CHANGELOG.md` under _Security_.
 
 ## 6. Security review and testing
 
-- The `security-review` label is applied automatically when a PR touches `services/api/secrets/`,
-  `auth/`, `audit/`, `exchange/`, `oms/`, `risk/`, `admin/`, `infra/`, CI workflows, dependency manifests,
-  frontend auth/session code, or any path matching `*key*`/`*secret*`/`*token*`/`*crypt*`. Such PRs
-  require approval from `@CandleViewer/security` (Constitution C-10.2).
+- The `security-review` label is applied automatically when a PR touches a security path that
+  Constitution C-10.2 lists (the `security-review-label` job of `pr.yml`). Such PRs require approval
+  from `@CandleViewer/security`.
 - Every epic carries a **STRIDE threat model** before its first implementation ticket leaves Ready.
 - Nightly DAST (OWASP ZAP baseline) and a chaos suite covering disconnects, exchange 5xx, rate-limit
   saturation, clock drift, partial fills, SL-attachment failure and process kill.
