@@ -85,7 +85,8 @@ backend's address, listing `app://candleviewer` in `CV_ALLOWED_ORIGINS`
   packaging (real signing/notarization/auto-update land in E10). Build
   `apps/web` and this package first: it stops if `apps/web/dist/index.html`
   is missing (`scripts/require-web-dist.mjs`), because electron-builder only
-  warns and that installer would open an empty window.
+  warns and that installer would open an empty window. Package only through
+  this script: `electron-builder` run on its own skips that check.
 
 ## Out of scope (E10)
 
