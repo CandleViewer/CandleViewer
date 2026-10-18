@@ -3,16 +3,17 @@
 `pr.yml`'s `e2e` filter leaves out on purpose, such as a root dependency manifest
 (docs/ci-runbook.md section 2), got no e2e signal until a later PR started the lane.
 
-`e2e-nightly.yml` calls `_job-e2e.yml` on `main` every night: the four `e2e-web` shards,
-`e2e-staging` and `a11y-axe`. A red scheduled run opens an issue from a job that holds
-`issues: write` and nothing else, and runs no checkout and no action. `e2e-electron` runs when its
-caller sets `_job-e2e.yml`'s `electron` input or on a `release/*` head: `pr.yml` keeps the default,
-and the nightly sets it only on a manual run until the job is green (#3366)."""
+`e2e-nightly.yml` calls `_job-e2e.yml` on `main` every night and runs all of it: the four
+`e2e-web` shards, `e2e-staging`, `a11y-axe` and `e2e-electron`. `e2e-electron` runs when its caller
+sets `_job-e2e.yml`'s `electron` input, as the nightly does (the suite is green since #3393), or on
+a `release/*` head: `pr.yml` keeps the default. A red scheduled run opens an issue from a job that
+holds `issues: write` and nothing else, and runs no checkout and no action."""
 
 from __future__ import annotations
 
 import functools
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ LANE = f"./.github/workflows/{LANE_FILE}"
 CRON = "53 2 * * *"
 #: The lane's jobs that run on every call: the matrix the ticket's "Done when" names.
 EVERY_CALL = {"e2e-web", "e2e-staging", "a11y-axe"}
+#: Context a scheduled run leaves empty; only e2e-electron's `if:` may read it ("not release/*").
+PR_ONLY = ("github.head_ref", "github.base_ref", "github.event.pull_request", "github.event.number")
 ELECTRON_IF = "${{ inputs.electron || startsWith(github.head_ref, 'release/') }}"
 REPORT_IF = "${{ always() && github.event_name == 'schedule' && needs.e2e.result != 'success' }}"
 
@@ -42,30 +45,47 @@ def _triggers(name: str) -> dict[str, Any]:
     return on
 
 
+def _strings(node: object) -> Iterator[str]:
+    """Every string value in a parsed workflow node (not its keys, not its comments)."""
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _strings(value)
+
+
 def test_e2e_nightly_runs_on_its_schedule_and_on_demand_only() -> None:
     on = _triggers(NIGHTLY)
     assert set(on) == {"schedule", "workflow_dispatch"}
     assert on["schedule"] == [{"cron": CRON}]
-    # A manual run may add e2e-electron (the proof before the flip); the schedule never does.
-    inputs = on["workflow_dispatch"]["inputs"]
-    assert set(inputs) == {"electron"}
-    assert (inputs["electron"]["type"], inputs["electron"]["default"]) == ("boolean", False)
+    # A manual run is the scheduled run on demand: no inputs, so none can trim the matrix.
+    assert on["workflow_dispatch"] == {}
     assert _load(NIGHTLY)["concurrency"] == {"group": "e2e-nightly", "cancel-in-progress": False}
 
 
-def test_e2e_nightly_runs_the_e2e_lane_matrix_every_night() -> None:
+def test_e2e_nightly_runs_the_whole_e2e_lane_every_night() -> None:
     jobs = _load(NIGHTLY)["jobs"]
     assert [name for name, job in jobs.items() if "uses" in job] == ["e2e"]
-    # No `if:`, secrets or permissions of its own: it runs every night, on `contents: read`.
-    assert jobs["e2e"] == {
-        "name": "e2e-nightly",
-        "uses": LANE,
-        "with": {"electron": "${{ inputs.electron == true }}"},
-    }
+    # No `if:`, secrets or permissions of its own: it runs every night, on `contents: read`. It
+    # asks for e2e-electron, which pr.yml runs on release/* heads only (C-9.2's full matrix).
+    assert jobs["e2e"] == {"name": "e2e-nightly", "uses": LANE, "with": {"electron": True}}
     lane = _load(LANE_FILE)["jobs"]
     assert set(lane) == EVERY_CALL | {"e2e-electron"}
     assert [name for name in sorted(EVERY_CALL) if "if" in lane[name]] == []
+    assert lane["e2e-electron"]["if"] == ELECTRON_IF
     assert lane["e2e-web"]["strategy"]["matrix"] == {"shard": [1, 2, 3, 4]}
+
+
+def test_e2e_lane_reads_no_pull_request_context_a_schedule_leaves_empty() -> None:
+    # The nightly calls the lane on a schedule event, where these are empty: a job that needed one
+    # would break only at night. e2e-electron's `if:` reads the head ref as "not a release head".
+    lane = _load(LANE_FILE)["jobs"]
+    assert [text for text in _strings(lane) if any(name in text for name in PR_ONLY)] == [
+        ELECTRON_IF
+    ]
 
 
 def test_e2e_electron_runs_when_its_caller_asks_or_on_a_release_head() -> None:
