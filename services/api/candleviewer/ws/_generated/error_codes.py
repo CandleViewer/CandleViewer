@@ -31,6 +31,7 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "forbidden"
     CSRF_TOKEN_INVALID = "csrf_token_invalid"
     ACCOUNT_SCOPE_DENIED = "account_scope_denied"
+    KEK_UNAVAILABLE = "kek_unavailable"
     TRADING_DISABLED = "trading_disabled"
     RISK_LIMIT_BREACHED = "risk_limit_breached"
     VIEW_AS_READ_ONLY = "view_as_read_only"
@@ -118,6 +119,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
+    ErrorCode.KEK_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The credential key is unavailable; operations that need it are refused"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded"),
     ErrorCode.VIEW_AS_READ_ONLY: ErrorMeta(("rest", "ws",), "any", False, None, None, "Session is viewing as another user, read-only; end view-as to make changes"),

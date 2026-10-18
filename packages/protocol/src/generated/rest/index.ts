@@ -5352,9 +5352,10 @@ export interface components {
       state?: "overlapping" | "completed" | "failed";
       verification?: components["schemas"]["KeyVerification"];
     };
+    /** @description The `201` of `createApiKey`: the key is stored only if every check passes, so both members are always present and `verification` is the full `KeyVerification` with `passed: true`. A key that fails a check is a `422`, never this body. */
     ApiKeyWithVerification: {
-      key?: components["schemas"]["ApiKey"];
-      verification?: components["schemas"]["KeyVerification"];
+      key: components["schemas"]["ApiKey"];
+      verification: components["schemas"]["KeyVerificationPassed"];
     };
     /** @description #2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them. */
     Argon2Params: {
@@ -6150,6 +6151,8 @@ export interface components {
       }[];
       risk_caps?: components["schemas"]["RiskCaps"];
     };
+    /** @description The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP whitelist may hold; `null` while none is configured. It comes from configuration, never from a request header. It is the address the Owner adds to the key's whitelist at the exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or `keys:read`, and never written to an audit record or used as a metric label. */
+    EgressIp: null | string;
     /**
      * @description Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`.
      * @enum {string}
@@ -6705,11 +6708,13 @@ export interface components {
     };
     KeyVerification: {
       clock_offset_ms?: number;
+      egress_ip?: components["schemas"]["EgressIp"];
+      /** @description At most 20 entries, each an address, a range or `*`: any other entry is left out of the display. */
       ip_whitelist?: string[];
       /** @description True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range). */
       ip_whitelist_matches_egress?: boolean;
       passed: boolean;
-      /** @description As reported. Every right must be on the `createApiKey` allow-list (step 2). */
+      /** @description As reported. Every right must be on the `createApiKey` allow-list (step 2). A group or right whose name is not a plain identifier is left out of the display, though the right is still refused. */
       permissions?: {
         [key: string]: string[];
       };
@@ -6722,6 +6727,11 @@ export interface components {
       warnings?: components["schemas"]["KeyVerificationWarning"][];
       /** @description Must be false; a true value causes rejection. */
       withdraw_enabled: boolean;
+    };
+    /** @description A `KeyVerification` of a key that passed every check: the one verification a stored key has, and the only one a `201` carries (`ApiKeyWithVerification`). A failed check is never shown in it. */
+    KeyVerificationPassed: components["schemas"]["KeyVerification"] & {
+      /** @constant */
+      passed?: true;
     };
     /**
      * @description Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days (`createApiKey` step 6). `clock_skew`: the probe measured a `clock_offset_ms` whose absolute value is above 500 ms, the exchange clock guard's warning threshold (`24-internal-schemas.md` §14.2 item 9).
@@ -9382,7 +9392,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
