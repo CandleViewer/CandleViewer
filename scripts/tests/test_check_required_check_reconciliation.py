@@ -237,13 +237,23 @@ MIGRATIONS = "    uses: ./.github/workflows/_job-migrations.yml\n"
 REMOTE = CONTRACT.replace("./", "o/r/").replace(".yml", ".yml@" + "0" * 40)
 ARCH_RUN = "the architecture contract)\n"
 ARCH_NAME = "    name: architecture\n"
+# The C-9.1 checks credited by the name of the lane that runs them: workflow, a job, the check.
+NAMED_LANES = [
+    ("_job-contract.yml", "contract", "contract"),
+    ("_job-integration.yml", "integration", "integration"),
+    ("_job-a11y.yml", "a11y", "a11y"),
+    ("_job-engine-bench.yml", "engine-bench-stub", "engine-bench"),
+    ("_job-migrations.yml", "migrations", "migrations"),
+]
+SPARE = "\n  spare:\n    if: false\n    runs-on: x\n    steps:\n      - run: echo$&"
+FILTER_STEP = "one step `filter`, which uses dorny/paths-filter pinned"
 
 
 @pytest.mark.parametrize(
     "workflow,old,new,expected",
     [
         ("pr.yml", "      - contract\n", "", "§9 check 'contract' is missing"),
-        ("pr.yml", "result: process.env.RESULT_SECURITY", "result: process.env.X", "'sast'"),
+        ("pr.yml", "result: process.env.RESULT_SECURITY,", "result: process.env.X,", "'sast'"),
         (
             "pr.yml",
             "applicable: isTrue(process.env.FILTER_E2E), result: process.env.RESULT_E2E",
@@ -407,6 +417,17 @@ ARCH_NAME = "    name: architecture\n"
         # ... and a lane credited by name calls a workflow of this repository the proof reads.
         ("pr.yml", CONTRACT, REMOTE, "lane 'contract' calls"),
         ("pr.yml", MIGRATIONS, MIGRATIONS.replace("./", '"./').replace("\n", '"\n'), "calls"),
+        # Review round 6: a lane's own name counts only while every job it calls can fail it,
+        # one of several included (integration's other job, a spare job beside engine-bench's).
+        *[
+            (workflow, f"\n  {job}:\n", f"$&    {never}\n", f"§9 check '{check}' is missing")
+            for workflow, job, check in NAMED_LANES
+            for never in ("if: false", "continue-on-error: true")
+        ],
+        ("_job-engine-bench.yml", "\n  engine-bench-stub:\n", SPARE, "'engine-bench' is missing"),
+        # ... and the step whose outputs decide which lanes apply is the pinned paths filter.
+        ("pr.yml", "dorny/paths-filter@", "other/paths-filter@", FILTER_STEP),
+        ("pr.yml", "filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d", "filter@v4", FILTER_STEP),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
@@ -459,6 +480,8 @@ def _prove(tmp_path: Path, workflow: str, *edits: tuple[str, str], reindent: str
             "\n  trivy:\n",
             "'container-scan'] is stale",
         ),
+        # Round 6: jobs at 4 spaces, valid YAML, where the proof reads no job of the lane.
+        ("_job-contract.yml", ("\njobs:\n", "$&"), "\njobs:\n", "§9 check 'contract' is missing"),
     ],
 )
 def test_a_shape_the_proof_cannot_read_fails_it(tmp_path, workflow, edit, reindent, expected):

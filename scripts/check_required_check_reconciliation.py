@@ -74,6 +74,8 @@ PROGRAM_RE = re.compile(
     re.S,
 )
 STEP_ACTION_RE = re.compile(r"actions/(checkout|setup-node)@[0-9a-f]{40}")
+# The action of the `changed-paths` step `filter`, whose outputs say which lanes apply.
+FILTER_ACTION_RE = re.compile(r"dorny/paths-filter@[0-9a-f]{40}")
 # A FILTER_<NAME> variable of the resolver step, set from the `changed-paths` output <name>.
 FILTER_ENV_RE = re.compile(
     r"^\s+FILTER_(\w+):\s*\$\{\{\s*needs\.changed-paths\.outputs\.([\w-]+)\s*\}\}\s*(?:#.*)?$",
@@ -283,12 +285,14 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
     of the reusable workflow it calls, which must be a ./.github/workflows/ file, that can fail it
-    (keys at 4 spaces, not NEVER_RE, and a readable `needs:` that names no job that cannot).
+    (keys at 4 spaces, not NEVER_RE, and a readable `needs:` that names no job that cannot); a lane
+    that calls one keeps its own name only while it has a job and every job can.
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
     call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
     or RESULT_ name. A lane counts when its applicability is not the literal `false` and reads
-    only FILTER_<NAME> set from the `changed-paths` output <name> (set once, from OUTPUT_STEPS),
+    only FILTER_<NAME> set from the `changed-paths` output <name> (set once, from OUTPUT_STEPS,
+    whose `filter` step is FILTER_ACTION_RE),
     and the table, with no key twice and nothing but lanes, takes its result from the needed job of
     the lane's own name, or from the `gates` output of that name, which the step of that id backs.
     Every job `ci-required` needs must fail when its work fails: no ANY_NEVER_RE, on the job or on
@@ -362,6 +366,17 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
         f"`if:`, but it sets {m[1]!r}"
         for m in re.finditer(r"^\s*(?:-\s+)?(if:.*)", paths_job, re.M)
     ]
+    paths_steps = re.split(r"^      - ", paths_job.split("\n    steps:\n", 1)[-1], flags=re.M)
+    filter_uses = [
+        " ".join(re.findall(r"^(?:        )?uses:[ \t]*(\S*)", step, re.M))
+        for step in paths_steps[1:]
+        if re.search(r"^(?:        )?id:[ \t]*filter[ \t]*(?:#.*)?$", step, re.M)
+    ]
+    if len(filter_uses) != 1 or not FILTER_ACTION_RE.fullmatch(filter_uses[0]):
+        errors.append(
+            f"{path}: job 'changed-paths' must have one step `filter`, which uses "
+            "dorny/paths-filter pinned to a commit"
+        )
     gates = "\n".join(jobs.get("gates", []))
     step_ids = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", gates, re.M))
     outputs = re.findall(
@@ -413,6 +428,10 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
                 while more := {job for job, need in deps.items() if need and need & skip} - skip:
                     skip |= more
                 lanes.update(f"{lane}/{job}" for job in set(called) - skip)
+                # `needs.<lane>.result` folds every called job, and one skipped or failing under
+                # continue-on-error passes it: the lane's own name needs each job able to fail it.
+                if skip or not called:
+                    lanes.discard(lane)
         elif source == f"needs.gates.outputs.{lane}" and "gates" in needs and lane in exported:
             lanes.add(lane)
             outcomes.add(lane)
