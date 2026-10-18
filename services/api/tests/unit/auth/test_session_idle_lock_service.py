@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from prometheus_client import REGISTRY
 
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
@@ -126,6 +127,55 @@ async def test_a_wrong_password_counts_even_when_its_record_cannot_be_written() 
     assert outcomes[-1] is UnlockOutcome.REVOKED
     row = await repo.find_by_id(sid)
     assert row is not None and row.revoked_reason == "unlock_attempts_exceeded"
+
+
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+async def test_the_revoking_wrong_password_counts_the_revocation_as_revoke_does() -> None:
+    """The fifth wrong password revokes through the repository, not `revoke()`, so it counts
+    what `revoke()` counts: `auth_session_revocations_total{reason}` up, `auth_sessions_active`
+    down (the runbook lists the reason for that counter)."""
+    svc, _repo, clock = _svc()
+    sid = await _locked(svc, clock)
+    revocations = _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded")
+    active = _sample("auth_sessions_active")
+    for _ in range(MAX_UNLOCK_ATTEMPTS - 1):
+        with pytest.raises(UnlockPasswordInvalid):
+            await svc.unlock(sid, password=_PW, check=_check(False))
+    with pytest.raises(SessionRevoked):
+        await svc.unlock(sid, password=_PW, check=_check(False))
+    counted = _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded")
+    assert counted == revocations + 1
+    assert _sample("auth_sessions_active") == active - 1
+
+
+async def test_a_session_revoked_meanwhile_is_not_counted_again_by_the_revoking_password() -> None:
+    """Another request ended the session while the fifth password was checked, and its
+    `revoke()` counted it: the repository reports no change, so this call counts nothing."""
+    svc, _repo, clock = _svc()
+    sid = await _locked(svc, clock)
+    checks = 0
+
+    async def check(_password: str) -> bool:
+        nonlocal checks
+        checks += 1
+        if checks == MAX_UNLOCK_ATTEMPTS:
+            await svc.revoke(sid, reason="logout")
+        return False
+
+    unlock = _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded")
+    logout = _sample("auth_session_revocations_total", reason="logout")
+    active = _sample("auth_sessions_active")
+    for _ in range(MAX_UNLOCK_ATTEMPTS - 1):
+        with pytest.raises(UnlockPasswordInvalid):
+            await svc.unlock(sid, password=_PW, check=check)
+    with pytest.raises(SessionRevoked):
+        await svc.unlock(sid, password=_PW, check=check)
+    assert _sample("auth_session_revocations_total", reason="unlock_attempts_exceeded") == unlock
+    assert _sample("auth_session_revocations_total", reason="logout") == logout + 1
+    assert _sample("auth_sessions_active") == active - 1  # `revoke()`'s, once
 
 
 async def test_a_wrong_password_below_the_cap_is_refused_and_recorded_as_failed() -> None:
