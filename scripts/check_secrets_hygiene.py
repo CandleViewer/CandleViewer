@@ -278,8 +278,9 @@ _IN_WORD = r"[^\s;&|()`]"
 #: ``--emulate`` (zsh(1) INVOCATION: "followed (in a separate word) by an emulation mode").
 _LONG_ARG = r"--(?:rcfile|init-file|emulate)\s+" + _IN_WORD + r"+"
 #: A redirection, which the shell takes out of the words it passes (#3400): ``2>&1``, ``>log``,
-#: ``> log``, ``&>>log``, ``{fd}>log``, ``</dev/null``, ``<<EOF``, ``<<<""``. Not a process
-#: substitution: ``bash <(make) -x`` runs a file, ``-x`` its ``$1``.
+#: ``> log``, ``>>log``, ``>|log``, ``&>log``, ``&>>log``, ``{fd}>log``, ``</dev/null``, ``<>f``,
+#: ``<<EOF``, ``<<- EOF``, ``<<<""``. Not a process substitution: ``bash <(make) -x`` runs a
+#: file, ``-x`` its ``$1``.
 _REDIRECT = r"(?:\d+|\{\w+\})?(?:&>>?|>[>|&]?|<(?:<[<-]?|[>&])?)\s*[^\s;&|()<>`]+"
 #: The option words before it: ``--norc``, ``--rcfile x.rc``, ``-o name``, ``-eO name``, ``-e``,
 #: ``+u``, ``-e${X}``, and redirections. Any other word ends them: ``set -- -x`` and ``set - -x``
@@ -394,6 +395,14 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
 #:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``; or from an escape in ``$'...'``, whose quotes
 #:   the scan takes off but not its escapes: ``set $'\x2dx'``
+#: - an expansion whose value the scan cannot read, as a word before the tracing word or at its
+#:   start (it may hold ``--`` or a script's name, which end the options: ``set $X -x``, ``bash
+#:   ${X} -x ci.sh``, ``bash ${X}-x``), or in a command, option or signal word: ``s${X}et -x``,
+#:   ``--verb${X}ose``, ``DEB${X}UG``
+#: - a quoted word with a space in it, whose words the scan reads apart, as in quoted prose: a
+#:   redirection's file or an option's argument then ends the option words (``bash >"a b" -x``,
+#:   ``bash --rcfile "my rc" -x``), and a shell's path ends at the space (``"/opt/my tools/bash"
+#:   -x``)
 #: - a command as an expansion's ``-`` default: ``${X:-set -x}`` (no rule starts a word after a
 #:   ``-``, as in ``x-set``)
 #: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does

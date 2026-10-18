@@ -521,6 +521,14 @@ TRACED = [
     "unsetopt noverbose",
     "set +${X}o noxtrace",
     "SHELLOPTS+=:xtrace",
+    # #3400: redirect operators no row used, so a mutant narrowing each passed every row (bash 5.3
+    # traced each).
+    "bash >>log -x ci.sh",
+    "bash 2>>err -x ci.sh",
+    "bash >|log -x ci.sh",
+    "bash &>log -x ci.sh",
+    "bash <>f -x ci.sh",
+    "bash <<- EOF -x",
 ]
 NOT_TRACED = [
     "set -e",
@@ -636,6 +644,16 @@ NOT_TRACED = [
     "set $'\\x2dx'",
     "${X:-set -x}",
     "BASH_ENV=tools/env.sh bash ci.sh",
+    # #3400: listed beside _SET_X as not reported, though they trace (bash 5.3): an expansion
+    # before the tracing word or in a command or signal word, a quoted word with a space in it
+    # before the tracing word.
+    "set $X -x",
+    "bash ${X} -x ci.sh",
+    "s${X}et -x",
+    "trap 'echo T' DEB${X}UG",
+    'bash >"a b" -x ci.sh',
+    'bash --rcfile "my rc" -x ci.sh',
+    '"/opt/my tools/bash" -x ci.sh',
 ]
 VIA = ["run", "script"]
 
