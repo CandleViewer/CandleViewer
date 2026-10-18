@@ -53,13 +53,16 @@ protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHE
  * Returns the origin of `url` for audit logging, or "invalid-url" if it does
  * not parse. Never returns the full URL: query strings can carry tokens
  * (C-12.6) so only the origin is safe to persist. Node's URL reports origin
- * "null" for non-special schemes (app:, file:), so those log scheme and host,
- * still without the path or query.
+ * "null" for non-special schemes, so those log scheme and host (app:) or the
+ * scheme alone when there is no host (file:, data:), never the path or query.
  */
 export function safeOriginOf(url: string): string {
   try {
     const parsed = new URL(url);
-    return parsed.origin === "null" ? `${parsed.protocol}//${parsed.host}` : parsed.origin;
+    if (parsed.origin !== "null") {
+      return parsed.origin;
+    }
+    return parsed.host === "" ? parsed.protocol : `${parsed.protocol}//${parsed.host}`;
   } catch {
     return "invalid-url";
   }
@@ -210,7 +213,8 @@ function installCspHeader(csp: string): void {
 function installAppProtocol(csp: string): void {
   const read = createDistReader(APP_ROOT_DIR);
   protocol.handle(APP_SCHEME, async (request) => {
-    const response = await resolveAppRequest(request.url, APP_ROOT_DIR, read, csp);
+    const { url, method } = request;
+    const response = await resolveAppRequest(url, APP_ROOT_DIR, read, csp, method);
     return new Response(response.body, { status: response.status, headers: response.headers });
   });
 }

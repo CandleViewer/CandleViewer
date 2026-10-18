@@ -107,8 +107,9 @@ describe("safeOriginOf", () => {
     expect(safeOriginOf("app://candleviewer/login?token=secret")).toBe("app://candleviewer");
   });
 
-  it("logs only the scheme for a file: URL, never the local path", () => {
-    expect(safeOriginOf("file:///home/user/secrets.txt")).toBe("file://");
+  it("logs only the scheme for a URL without a host, never the path", () => {
+    expect(safeOriginOf("file:///home/user/secrets.txt")).toBe("file:");
+    expect(safeOriginOf("data:text/html,<p>secret</p>")).toBe("data:");
   });
 
   it("returns a fixed placeholder for an unparseable URL instead of throwing", () => {
@@ -134,7 +135,7 @@ describe("app:// wiring (#3410)", () => {
     expect(win.loadFile).not.toHaveBeenCalled();
   });
 
-  it("the app:// handler answers with the shell's CSP header and refuses other hosts", async () => {
+  it("the app:// handler adds the CSP, refuses other hosts and non-GET methods", async () => {
     await vi.waitFor(() => expect(protocol.handle).toHaveBeenCalled());
     const [scheme, handler] = vi.mocked(protocol.handle).mock.calls[0] ?? [];
     expect(scheme).toBe("app");
@@ -144,6 +145,8 @@ describe("app:// wiring (#3410)", () => {
     const response = await handler(new Request("app://evil.test/index.html"));
     expect(response.status).toBe(404);
     expect(response.headers.get("content-security-policy")).toBe(buildCsp());
+    const post = await handler(new Request("app://candleviewer/", { method: "POST" }));
+    expect(post.status).toBe(405);
   });
 
   it("the response hook leaves app:// responses to the handler and adds the CSP to others", async () => {

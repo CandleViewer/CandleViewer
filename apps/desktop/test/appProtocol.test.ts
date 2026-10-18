@@ -67,52 +67,31 @@ describe("isAppUrl", () => {
 });
 
 describe("resolveDistPath (path mapping)", () => {
-  it("maps the origin root to index.html and asset paths into the dist root", () => {
-    expect(resolveDistPath("app://candleviewer/", ROOT)).toBe(path.join(ROOT, "index.html"));
-    expect(resolveDistPath("app://candleviewer", ROOT)).toBe(path.join(ROOT, "index.html"));
-    expect(resolveDistPath("app://candleviewer/assets/index-abc.js?v=2", ROOT)).toBe(
-      path.join(ROOT, "assets", "index-abc.js"),
-    );
+  it.each([
+    ["app://candleviewer/", "index.html"],
+    ["app://candleviewer", "index.html"],
+    ["app://candleviewer/assets/index-abc.js?v=2", "assets/index-abc.js"],
+    // The URL parser resolves dot segments, raw or encoded, before the handler sees the path.
+    ["app://candleviewer/../../etc/passwd", "etc/passwd"],
+    ["app://candleviewer/%2e%2e/%2e%2e/etc/passwd", "etc/passwd"],
+    // Decoded once: a double-encoded traversal stays a literal name inside the root.
+    ["app://candleviewer/%252e%252e%252fsecret", "%2e%2e%2fsecret"],
+  ])("maps %s inside the root", (url, relative) => {
+    expect(resolveDistPath(url, ROOT)).toBe(path.join(ROOT, ...relative.split("/")));
   });
 
-  it("refuses a URL on another host or scheme", () => {
-    expect(resolveDistPath("app://evil.test/index.html", ROOT)).toBeNull();
-    expect(resolveDistPath("https://candleviewer/index.html", ROOT)).toBeNull();
-  });
-
-  it("refuses encoded traversal that would leave the root", () => {
-    for (const url of [
-      "app://candleviewer/..%2f..%2fetc%2fpasswd",
-      "app://candleviewer/assets/..%2F..%2F..%2Fsecret.txt",
-      "app://candleviewer/%2e%2e%2f%2e%2e%2fsecret.txt",
-    ]) {
-      expect(resolveDistPath(url, ROOT), url).toBeNull();
-    }
-  });
-
-  it("keeps dot segments inside the root (the URL parser resolves them first)", () => {
-    expect(resolveDistPath("app://candleviewer/../../etc/passwd", ROOT)).toBe(
-      path.join(ROOT, "etc", "passwd"),
-    );
-    expect(resolveDistPath("app://candleviewer/%2e%2e/%2e%2e/etc/passwd", ROOT)).toBe(
-      path.join(ROOT, "etc", "passwd"),
-    );
-  });
-
-  it("refuses backslashes, raw or encoded, on every platform", () => {
-    expect(resolveDistPath("app://candleviewer/..\\..\\secret.txt", ROOT)).toBeNull();
-    expect(resolveDistPath("app://candleviewer/..%5c..%5csecret.txt", ROOT)).toBeNull();
-  });
-
-  it("refuses an encoded NUL and malformed percent-encoding", () => {
-    expect(resolveDistPath("app://candleviewer/index.html%00.png", ROOT)).toBeNull();
-    expect(resolveDistPath("app://candleviewer/%E0%A4%A", ROOT)).toBeNull();
-  });
-
-  it("decodes once: a double-encoded traversal stays a literal name inside the root", () => {
-    expect(resolveDistPath("app://candleviewer/%252e%252e%252fsecret", ROOT)).toBe(
-      path.join(ROOT, "%2e%2e%2fsecret"),
-    );
+  it.each([
+    "app://evil.test/index.html", // another host
+    "https://candleviewer/index.html", // another scheme
+    "app://candleviewer/..%2f..%2fetc%2fpasswd", // encoded traversal out of the root
+    "app://candleviewer/assets/..%2F..%2F..%2Fsecret.txt",
+    "app://candleviewer/%2e%2e%2f%2e%2e%2fsecret.txt",
+    "app://candleviewer/..\\..\\secret.txt", // backslashes, raw or encoded, on every platform
+    "app://candleviewer/..%5c..%5csecret.txt",
+    "app://candleviewer/index.html%00.png", // encoded NUL
+    "app://candleviewer/%E0%A4%A", // malformed percent-encoding
+  ])("refuses %s", (url) => {
+    expect(resolveDistPath(url, ROOT)).toBeNull();
   });
 });
 
@@ -165,23 +144,26 @@ describe("resolveAppRequest", () => {
     expect(res.status).toBe(404);
   });
 
-  it("answers 404 for another host and never reads a file for it", async () => {
-    const read = memoryReader(DIST);
-    const res = await resolveAppRequest("app://evil.test/index.html", ROOT, read, CSP);
-    expect(res.status).toBe(404);
-    expect(res.headers["content-security-policy"]).toBe(CSP);
-    expect(read).not.toHaveBeenCalled();
-  });
+  it.each(["app://evil.test/index.html", "app://candleviewer/..%2f..%2fetc%2fpasswd"])(
+    "answers 404 for %s, with the CSP, and never reads a file for it",
+    async (url) => {
+      const read = memoryReader(DIST);
+      const res = await resolveAppRequest(url, ROOT, read, CSP);
+      expect(res.status).toBe(404);
+      expect(res.headers["content-security-policy"]).toBe(CSP);
+      expect(read).not.toHaveBeenCalled();
+    },
+  );
 
-  it("answers 404 for a traversal attempt and never reads outside the root", async () => {
+  it("serves GET and HEAD only: another method gets 405 with the CSP and reads nothing", async () => {
     const read = memoryReader(DIST);
-    const res = await resolveAppRequest(
-      "app://candleviewer/..%2f..%2fetc%2fpasswd",
-      ROOT,
-      read,
-      CSP,
-    );
-    expect(res.status).toBe(404);
+    expect((await resolveAppRequest(APP_ENTRY_URL, ROOT, read, CSP, "HEAD")).status).toBe(200);
+    read.mockClear();
+    for (const method of ["POST", "PUT", "DELETE", "OPTIONS"]) {
+      const res = await resolveAppRequest(APP_ENTRY_URL, ROOT, read, CSP, method);
+      expect(res, method).toMatchObject({ status: 405, body: "Not allowed" });
+      expect(res.headers).toMatchObject({ "content-security-policy": CSP, allow: "GET, HEAD" });
+    }
     expect(read).not.toHaveBeenCalled();
   });
 });

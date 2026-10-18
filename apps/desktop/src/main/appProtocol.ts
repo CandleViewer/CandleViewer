@@ -51,7 +51,7 @@ export function contentTypeFor(filePath: string): string {
 
 /** One handler response as plain data, so the mapping is testable without Electron. */
 export interface AppResponse {
-  readonly status: 200 | 404;
+  readonly status: 200 | 404 | 405;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Uint8Array | string;
 }
@@ -115,27 +115,28 @@ export function resolveDistPath(url: string, root: string): string | null {
 
 /**
  * Builds the response for one `app://` request: a read-only static-file server over `root`
- * (SR-174) that attaches `csp` to every response, errors included (SR-112). Error bodies are
- * fixed text and never echo the requested path.
+ * (SR-174) that attaches `csp` to every response, errors included (SR-112). Only GET and HEAD
+ * are served; any other method gets 405. Error bodies are fixed text and never echo the path.
  */
 export async function resolveAppRequest(
   url: string,
   root: string,
   read: DistReader,
   csp: string,
+  method = "GET",
 ): Promise<AppResponse> {
   const baseHeaders = { "content-security-policy": csp, "x-content-type-options": "nosniff" };
+  const textHeaders = { ...baseHeaders, "content-type": "text/plain; charset=utf-8" };
   const ok = (file: string, body: Uint8Array): AppResponse => ({
     status: 200,
     headers: { ...baseHeaders, "content-type": contentTypeFor(file) },
     body,
   });
-  const notFound: AppResponse = {
-    status: 404,
-    headers: { ...baseHeaders, "content-type": "text/plain; charset=utf-8" },
-    body: "Not found",
-  };
+  const notFound: AppResponse = { status: 404, headers: textHeaders, body: "Not found" };
 
+  if (method !== "GET" && method !== "HEAD") {
+    return { status: 405, headers: { ...textHeaders, allow: "GET, HEAD" }, body: "Not allowed" };
+  }
   const file = resolveDistPath(url, root);
   if (file === null) {
     return notFound;
