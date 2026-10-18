@@ -25,9 +25,9 @@ from candleviewer import main
 from candleviewer.app import _SUPERVISOR_ORDER
 from candleviewer.main import _lifespan
 
-#: Every step the teardown runs before `stop_all`, in that order, by the name its failure is
-#: logged under: the `app.state` attribute, or the lifespan's own name for the metrics runtime
-#: and the mesh self-check.
+#: Every step the teardown runs before `stop_all`, in that order, by its `app.state` attribute,
+#: or the lifespan's own name for the metrics runtime and the mesh self-check. A failure is logged
+#: under that name, except for the five tasks in `_ALERT_TASKS`.
 _STEPS = (
     "ws_runtime",
     "user_disable",
@@ -58,6 +58,20 @@ _STEPS = (
 )
 #: The steps whose `start()` the lifespan awaits.
 _ASYNC_START = ("feature_flags", "bars_runtime")
+#: The five tasks the lifespan starts and stops as one list: a failed stop is logged under the
+#: task's class name, so each fake is a class of its own, named like the real one.
+_ALERT_TASKS = {
+    "alert_purge_task": "AlertDeliveriesPurgeTask",
+    "alert_gauge_task": "AlertGaugeTask",
+    "drawings_purge_task": "DrawingsPurgeTask",
+    "workspaces_purge_task": "WorkspacesPurgeTask",
+    "incidents_purge_task": "IncidentsPurgeTask",
+}
+
+
+def _logged_as(step: str) -> str:
+    """The name a failure of `step` is logged under."""
+    return _ALERT_TASKS.get(step, step)
 
 
 class _Step:
@@ -97,6 +111,18 @@ class _AsyncStart(_Step):
         return None
 
 
+def _step_class(name: str) -> type[_Step]:
+    """The fake's class: one of its own, named like the real one, for an alert task."""
+    if name not in _ALERT_TASKS:
+        return _AsyncStart if name in _ASYNC_START else _SyncStart
+
+    class _AlertTask(_SyncStart):
+        pass
+
+    _AlertTask.__name__ = _ALERT_TASKS[name]
+    return _AlertTask
+
+
 class _Module:
     """A supervised module: its stop records `module:<name>`."""
 
@@ -112,9 +138,7 @@ class _Module:
 
 def _app(ran: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[FastAPI, dict[str, _Step]]:
     """The app with every teardown step and every supervised module faked; returns the steps."""
-    steps: dict[str, _Step] = {
-        name: (_AsyncStart if name in _ASYNC_START else _SyncStart)(name, ran) for name in _STEPS
-    }
+    steps = {name: _step_class(name)(name, ran) for name in _STEPS}
     app = FastAPI()
     app.state.app_context = SimpleNamespace(
         settings=SimpleNamespace(
@@ -172,7 +196,7 @@ async def test_lifespan_teardown_after_a_raising_step_still_runs_every_later_ste
     with capture_logs() as logs:
         await _run(app)
     assert ran == unfailed
-    assert _failed_steps(logs) == [(step, "RuntimeError", "error", True)]
+    assert _failed_steps(logs) == [(_logged_as(step), "RuntimeError", "error", True)]
 
 
 class _Fatal(BaseException):

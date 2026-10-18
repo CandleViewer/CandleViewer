@@ -135,18 +135,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if kline_refresh is not None:  # #2060: initial load, then periodic (rules are editable)
         await kline_refresh.load_now()
         kline_refresh.start()
-    alert_tasks = [  # with its `app.state` name: a failed stop is logged under it (#3403)
-        (name, t)
-        for name in (
-            "alert_purge_task",
-            "alert_gauge_task",
-            "drawings_purge_task",
-            "workspaces_purge_task",
-            "incidents_purge_task",  # E42-T05
+    alert_tasks = [
+        t
+        for t in (
+            getattr(app.state, "alert_purge_task", None),
+            getattr(app.state, "alert_gauge_task", None),
+            getattr(app.state, "drawings_purge_task", None),
+            getattr(app.state, "workspaces_purge_task", None),
+            getattr(app.state, "incidents_purge_task", None),  # E42-T05
         )
-        if (t := getattr(app.state, name, None)) is not None
+        if t is not None
     ]
-    for _, t in alert_tasks:
+    for t in alert_tasks:
         t.start()
     audit_flush = getattr(app.state, "audit_budget_flush", None)
     if audit_flush is not None:
@@ -215,8 +215,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("rule_prune_task", rule_prune.stop)
             if funding_task is not None:
                 await teardown.run("funding_refresh_task", funding_task.stop)
-            for name, t in alert_tasks:
-                await teardown.run(name, t.stop)
+            for t in alert_tasks:  # each is its own class, so its class name names the step
+                await teardown.run(type(t).__name__, t.stop)
             if scrub_task is not None:
                 await teardown.run("scrub_task", scrub_task.stop)
             if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
