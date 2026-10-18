@@ -5,22 +5,30 @@ attached to a `Conn` and registered on a hub; router tests the real `/ws` router
 
 from __future__ import annotations
 
+import copy
 import json
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.backpressure_config import BackpressureConfig
+from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame
 from candleviewer.ws.coalescing import CoalescingQueue
 from candleviewer.ws.metrics import cv_ws_malformed_updates_total
 from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
 from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, SequencingHub, SnapshotBody
+from tests.contract.ws._harness import SCHEMAS, validate_frame
+from tests.contract.ws._support import SAMPLES
 from tests.unit.ws._seq_support import ACC_A, USER, Book, Conn, Source
 from tests.unit.ws.test_pacing import _COLUMN, _bid, _private
 from tests.unit.ws.test_pacing import _conn as _paced
@@ -844,3 +852,334 @@ def test_pending_total_is_maintained_incrementally(ops: list[tuple[str, int, int
     for step, i, n in ops:
         _step(step, conn, pacer, subs[i], n)
         assert pacer.pending_bytes == sum(lane.queue.pending_bytes for lane in pacer.lanes.values())
+
+
+# -- #3268: disclosure, a producer's count, the heatmap's memory, a body per publish -------------
+
+_IDS = tuple(f"00000000-0000-4000-8000-0000000000a{n}" for n in "123")  # §15.2 `id`, a uuid
+#: §8.2 per merged family: its list field, the merge key and three values of it.
+_KEYS: dict[str, tuple[str, str, tuple[Any, ...]]] = {
+    "heatmap": ("columns", "t_ms", (500, 1000, 1500)),
+    "metrics": ("series", "metric", ("cvd", "delta", "vwap")),
+    "ticker": ("tickers", "symbol", ("BTCUSDT", "ETHUSDT", "SOLUSDT")),
+    "positions": ("positions", "id", _IDS),
+    "wallet": ("balances", "coin", ("USDT", "BTC", "ETH")),
+}
+_HEATMAP, _HEAD = "heatmap.BTCUSDT", {"symbol": "BTCUSDT", "time_bucket_ms": 500}
+
+
+def _keyed(family: str, n: int) -> dict[str, Any]:
+    """`family`'s sample delta (`SAMPLES`) under its `n`th merge key: updates of different `n`
+    merge into one frame that holds each."""
+    body = copy.deepcopy(SAMPLES[family][1])
+    field, key, values = _KEYS[family]
+    body[field][0][key] = values[n]
+    return body
+
+
+@pytest.mark.parametrize("family", list(_KEYS))
+def test_a_merged_window_discloses_its_count(family: str) -> None:
+    """§8.2 (#3268), flag on: two updates with distinct keys in a window that has emitted leave as
+    one frame with `coalesced: true` and `coalesced_count` 2, valid against the family's schema.
+    The leading-edge frame before it, one update, carries neither field, as with the flag off."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    if family in ("positions", "wallet"):  # `wallet` is read with `accounts:read`
+        perms = conn.authz.principal.permissions | {Permission.ACCOUNTS_READ}
+        conn.authz.principal = replace(conn.authz.principal, permissions=perms)
+        sub = _private(conn, family)
+    else:
+        source = conn.emitter.source
+        assert isinstance(source, Source)
+        source.bodies[family] = SnapshotBody(SAMPLES[family][0])
+        sub = _structured(conn, f"{family}.BTCUSDT")
+    _queued(pipe)
+    for n in range(3):  # the first leaves at once; the other two share the window it opened
+        hub.publish(sub.ch, _keyed(family, n), account=ACC_A)
+    [lead] = _queued(pipe)
+    conn.clock.now = 0.5
+    pipe.service(0.5)
+    [merged] = _queued(pipe)
+    for frame in (lead, merged):
+        validate_frame(frame)
+    field, key, values = _KEYS[family]
+    assert not {"coalesced", "coalesced_count"} & set(lead["p"])
+    assert [item[key] for item in merged["p"][field]] == list(values[1:])
+    assert (merged["p"]["coalesced"], merged["p"]["coalesced_count"]) == (True, 2)
+
+
+def _conflation() -> dict[tuple[str, str], float]:
+    """#571's two conflation series, as one scrape collects them: each sample but the buckets and
+    `_created`, by its name and its one label value ("" for none)."""
+    return {
+        (s.name, next(iter(s.labels.values()), "")): s.value
+        for family in REGISTRY.collect()
+        if family.name in ("cv_ws_conflated", "cv_ws_coalesced_updates")
+        for s in family.samples
+        if not s.name.endswith(("_bucket", "_created"))
+    }
+
+
+def _conflated_since(before: dict[tuple[str, str], float]) -> dict[tuple[str, str], float]:
+    """What moved in those two series since `before`, sample by sample."""
+    return {k: v - before.get(k, 0.0) for k, v in _conflation().items() if v != before.get(k, 0.0)}
+
+
+#: One window of two updates that the queue merged: 1 conflated, one observation of 2.
+_WINDOW_OF_2 = {
+    ("cv_ws_conflated_total", "book"): 1,
+    ("cv_ws_coalesced_updates_count", ""): 1,
+    ("cv_ws_coalesced_updates_sum", ""): 2,
+}
+
+
+@pytest.mark.parametrize(
+    ("coalesce", "lagging", "counts", "frames", "merged"),
+    [
+        (True, False, (4, 3), [7], True),
+        (False, False, (4, 3), [4, 3], False),
+        (False, True, (4, 3), [7], True),
+        (True, False, (0, -3), [2], True),
+    ],
+    ids=["merged", "whole", "folded", "below_one"],
+)
+def test_a_window_carries_its_producers_counts(
+    coalesce: bool, lagging: bool, counts: tuple[int, int], frames: list[int], merged: bool
+) -> None:
+    """#3268: a producer's own `coalesced_count` goes through its window. A lone update keeps its
+    own, leading edge or not; a merged window carries the sum of its updates' counts, a count
+    below 1 read as 1; whole frames (`coalesce: false`) keep their own, and frames folded when a
+    `lagging` class forces coalescing (§8.3) sum again. #571's conflation series count the
+    queue's own merge (`Emission.window_count`), never a producer's count: a window of two
+    updates conflates 1 whatever their counts, and a lone update of count 5 conflates nothing."""
+    conn, pacer = _paced()
+    book = _subscribed(conn, _BOOK, coalesce=coalesce)
+    before = _conflation()
+    pacer.offer(book, _bid("90"), count=5)
+    [lead] = conn.take()
+    for price, count in zip(("91", "92"), counts, strict=True):
+        pacer.offer(book, _bid(price), count=count)
+    if lagging:
+        pacer.classify(30.0, [book])
+    pacer.tick(101.0)
+    assert [f["p"]["coalesced_count"] for f in conn.take()] == frames
+    assert (lead["p"]["coalesced"], lead["p"]["coalesced_count"]) == (True, 5)
+    assert _conflated_since(before) == (_WINDOW_OF_2 if merged else {})
+
+
+def _heat(t_ms: int, *, complete: bool) -> tuple[dict[str, Any], Frame]:
+    """A heatmap column and its kind-6 twin, as a snapshot's parts mirror its columns (a kind-6
+    body has no `complete` bit, §3.4)."""
+    col = {"t_ms": t_ms, "price_min": "1", "price_step": "1", "bids": [1.0], "asks": [1.0]}
+    return col | {"complete": complete}, Frame(HEATMAP_COLUMN, ((1, 1),), prefix=(t_ms, 1, 1))
+
+
+@pytest.mark.parametrize("encoding", ["structured", "binary"])
+@pytest.mark.parametrize("reason", ["initial", "client_resync", "backpressure"])
+def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(reason: str, encoding: str) -> None:
+    """§8.2 "Completed heatmap buckets" (#3268), flag on: the merging window after a snapshot,
+    whatever its reason, remembers the buckets that snapshot sent complete and the root fields its
+    payload carries (`estimated` included), in either encoding. An update that only repeats them
+    is discarded, and one that also touches an open bucket sends the open one only."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    source = conn.emitter.source
+    assert isinstance(source, Source)
+    (done, done_part), (live, live_part) = _heat(1000, complete=True), _heat(1500, complete=False)
+    body = {**_HEAD, "columns": [done, live]}
+    source.bodies["heatmap"] = SnapshotBody(body, (done_part, live_part), estimated=True)
+    _, sub = conn.sub({"ch": _HEATMAP, "opts": {"encoding": encoding}})
+    if reason == "client_resync":
+        frame = {"t": "resync", "id": "r", "ch": _HEATMAP, "p": {"reason": "manual"}}
+        assert conn.emitter.client_resync(conn.authz, frame) is None
+    elif reason == "backpressure":
+        _pacer(pipe).drop(sub)
+        pipe.service(0.0)
+    assert [f["meta"]["reason"] for f in _queued(pipe)][-1] == reason
+    head = {**_HEAD, "estimated": True}  # as the snapshot's payload carried it
+    hub.publish(_HEATMAP, {**head, "columns": [{**done, "bids": [2.0]}]})
+    assert _queued(pipe) == []  # nothing in it is new to the client
+    hub.publish(_HEATMAP, {**head, "columns": [{**done, "bids": [2.0]}, {**live, "bids": [3.0]}]})
+    [delta] = _queued(pipe)
+    assert [col["t_ms"] for col in delta["p"]["columns"]] == [1500]
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag_off", "flag_on"])
+def test_a_throttled_publish_without_a_body_is_refused_before_the_fanout(flag: bool) -> None:
+    """§8.2 (#3268): a window merges structured bodies, so a paced family's update carries one, a
+    CVWB `part` beside it. A `book` publish with a part alone is a producer bug, refused before the
+    fan-out whatever the flag: neither a binary nor a structured connection queues anything, and
+    no counter moves. `orders` never enters a window, so a publish of it is not refused here."""
+    hub = SequencingHub()
+    queued: list[Callable[[], list[dict[str, Any]]]] = []
+    pacers: list[Pacer] = []
+    for encoding in ("binary", "structured"):
+        if flag:
+            pipe, _, conn = _routed(hub)
+            queued.append(partial(_queued, pipe))
+            pacers.append(_pacer(pipe))
+        else:
+            conn = _paced()[0]
+            hub.register(conn.authz, conn.emitter)
+            queued.append(conn.take)
+        conn.sub({"ch": _BOOK, "opts": {"encoding": encoding}})
+    assert [len(take()) for take in queued] == [1, 1]  # each its snapshot
+    malformed = _counter(cv_ws_malformed_updates_total, topic="book")
+    part = Frame(BOOK_DELTA, ((0, 1000, 1500),), price_scale=1, qty_scale=3)
+    with pytest.raises(ValueError, match="body"):
+        hub.publish(_BOOK, None, part=part)
+    assert hub.publish("orders", None, account=ACC_A) == 0  # refused nowhere: nobody reads it
+    assert [take() for take in queued] == [[], []]
+    assert all(not p.lanes and not p.resnapshot_required for p in pacers)
+    assert _counter(cv_ws_malformed_updates_total, topic="book") == malformed
+
+
+_ODD = ["column", {"complete": True}, {**_COLUMN, "t_ms": "1000"}, {**_COLUMN, "t_ms": True}]
+
+
+@pytest.mark.parametrize(
+    ("columns", "sent"),
+    [(None, [1, 500, 1000]), ([*_ODD, {**_COLUMN, "t_ms": 500}], [1, 1000])],
+    ids=["none", "odd"],
+)
+def test_a_heatmap_snapshot_is_read_for_its_buckets_without_raising(
+    columns: list[Any] | None, sent: list[int]
+) -> None:
+    """#3268: the buckets a window remembers are read from the snapshot body without raising,
+    as it is rendered with the flag off too. No `columns`, or a column that is not an object or
+    has no integer `t_ms`, leaves that bucket out, so a live update sends it."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    source = conn.emitter.source
+    assert isinstance(source, Source)
+    source.bodies["heatmap"] = SnapshotBody(
+        _HEAD if columns is None else {**_HEAD, "columns": columns}
+    )
+    _structured(conn, _HEATMAP)
+    assert [f["t"] for f in _queued(pipe)] == ["snap"]
+    live = [{**_COLUMN, "t_ms": t_ms, "bids": [1]} for t_ms in (1, 500, 1000)]
+    hub.publish(_HEATMAP, {**_HEAD, "columns": live})
+    [delta] = _queued(pipe)
+    assert [col["t_ms"] for col in delta["p"]["columns"]] == sent
+
+
+def test_a_heatmap_seed_keeps_its_root_fields_within_the_bound_only() -> None:
+    """#3268, C-2.18: a seed's root fields count against the bound `add` holds them to. Up to it
+    they are kept, so an update that repeats them and a seeded bucket is discarded; past it none
+    is, so the queue still takes that update rather than refuse it as `full`."""
+    update = {**_HEAD, "columns": [{**_COLUMN, "t_ms": 1000}]}
+    within, past = CoalescingQueue("heatmap", max_keys=2), CoalescingQueue("heatmap", max_keys=2)
+    within.seed([1000], _HEAD)
+    past.seed([1000], {**_HEAD, "depth": 50})
+    assert within.offer(update) and not within.pending
+    assert past.offer(update) and past.pending
+
+
+def test_a_dropped_window_takes_its_counts_with_it() -> None:
+    """#3268: a window dropped at §8.4 step 1 (`clear`) leaves no count behind: the next window
+    sums its own updates' counts only."""
+    queue = CoalescingQueue("book")
+    queue.offer(_bid("90"), count=4)
+    queue.clear()
+    for price, count in (("91", 3), ("92", 2)):
+        queue.offer(_bid(price), count=count)
+    assert [e.coalesced_count for e in queue.take()] == [5]
+
+
+def test_a_merged_machines_window_discloses_nothing() -> None:
+    """§15.10 (#3268), flag on: a `machines` window merges (§6.4), but its payload declares
+    neither `coalesced` nor `coalesced_count` and allows no other field, so its merged frame
+    carries neither and stays valid."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    source = conn.emitter.source
+    assert isinstance(source, Source)
+    source.bodies["machines"] = SnapshotBody(SAMPLES["machines"][0])
+    _, sub = conn.sub({"ch": "machines.kill_switch.state", "opts": {}})
+    _queued(pipe)
+    for at in (1, 2, 3):  # the first leaves at once; the other two share the window it opened
+        hub.publish(sub.ch, {**SAMPLES["machines"][1], "updated_at_ms": at})
+    _queued(pipe)
+    conn.clock.now = 0.5
+    pipe.service(0.5)
+    [merged] = _queued(pipe)
+    validate_frame(merged)
+    assert merged["p"]["updated_at_ms"] == 3
+    assert not {"coalesced", "coalesced_count"} & set(merged["p"])
+
+
+def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() -> None:
+    """§8.2 (#3268): the emitter discloses a merge on exactly the families whose payload schema
+    declares `coalesced` (§14, §15), never on another (`machines`, §15.10)."""
+    from candleviewer.ws.sequencing import COALESCE_FIELDS, MERGE_DISCLOSED  # local: added by #3268
+
+    declared = {
+        sid.rsplit("/", 1)[1].removesuffix(".schema.json")
+        for sid, schema in SCHEMAS.items()
+        if "coalesced" in schema.get("properties", {})
+    }
+    assert COALESCE_FIELDS | MERGE_DISCLOSED == declared
+
+
+def test_a_count_above_1_is_disclosed_with_the_flag_off_too() -> None:
+    """§8.6's exception (#3268): the emitter is shared by both paths, so a producer's count above
+    1 on one of the five families is disclosed whatever the flag; a count of 1 leaves the frame
+    as it was."""
+    conn, _ = _paced()
+    hub = SequencingHub()
+    hub.register(conn.authz, conn.emitter)
+    source = conn.emitter.source
+    assert isinstance(source, Source)
+    source.bodies["ticker"] = SnapshotBody(SAMPLES["ticker"][0])
+    sub = _subscribed(conn, "ticker.BTCUSDT")
+    for count in (1, 3):
+        hub.publish(sub.ch, SAMPLES["ticker"][1], coalesced_count=count)
+    one, three = (frame["p"] for frame in conn.take())
+    assert one == SAMPLES["ticker"][1]
+    assert (three["coalesced"], three["coalesced_count"]) == (True, 3)
+
+
+def test_a_lone_update_with_a_producer_count_leaves_its_topic_intact() -> None:
+    """#3268 and #3409: a lone `trades` update published with `coalesced_count` 3 leaves through
+    the flag-on pipeline as one `d`, with its topic intact: nothing marked for a re-snapshot and
+    no `ws update failed` logged. Neither conflation series moves: they count the queue's own
+    merges (`Emission.window_count`), and a lone update merges nothing."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    _structured(conn, _TRADES)
+    _queued(pipe)
+    before = _conflation()
+    with capture_logs() as logs:
+        hub.publish(_TRADES, {"symbol": "BTCUSDT", "trades": [_print(0)]}, coalesced_count=3)
+    assert [f["t"] for f in _queued(pipe)] == ["d"]
+    assert _pacer(pipe).resnapshot_required == {}
+    assert [e for e in logs if e["event"] == "ws update failed"] == []
+    assert _conflated_since(before) == {}
+
+
+def test_a_heatmap_snapshot_whose_parts_do_not_mirror_its_columns_seeds_nothing() -> None:
+    """#3268: a heatmap's parts mirror its columns (`SnapshotBody`; #2197 inherits the rule). A
+    snapshot whose part count differs from its column count seeds nothing, so a later column of
+    its complete bucket is sent."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    source = conn.emitter.source
+    assert isinstance(source, Source)
+    (done, done_part), (live, _) = _heat(1000, complete=True), _heat(1500, complete=False)
+    source.bodies["heatmap"] = SnapshotBody({**_HEAD, "columns": [done, live]}, (done_part,))
+    _structured(conn, _HEATMAP)
+    _queued(pipe)
+    hub.publish(_HEATMAP, {**_HEAD, "columns": [{**done, "bids": [2.0]}]})
+    [delta] = _queued(pipe)
+    assert [col["t_ms"] for col in delta["p"]["columns"]] == [1000]
+
+
+def test_an_account_event_with_a_bodyless_paced_frame_publishes_none_of_it() -> None:
+    """#3268: `publish_private` checks a whole account event first, so a `positions` frame
+    without its body refuses the event before its `orders` frame, first in causal order (§16.1
+    S5), is published."""
+    hub = SequencingHub()
+    pipe, _ = _private_rig(hub)
+    with pytest.raises(ValueError, match="body"):
+        hub.publish_private(ACC_A, [("positions", None), ("orders", {"orders": []})])
+    assert _queued(pipe) == []

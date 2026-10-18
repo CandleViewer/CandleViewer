@@ -193,10 +193,9 @@ def test_a_merged_window_counts_n_less_one_under_its_family_and_observes_n(
     ch: str, updates: list[dict[str, Any]], n: int
 ) -> None:
     """The first update after a quiet window leaves at once, alone: nothing to count. The rest
-    merge and leave as one frame when the window closes, which a book frame discloses as
-    `coalesced_count` n and a heatmap frame cannot (its payload has no such field, 23 section
-    8.2): n - 1 under the window's own family, and one observation of n, in each bucket from the
-    first edge at or above n."""
+    merge and leave as one frame when the window closes, which discloses `coalesced_count` n
+    (23 section 8.2, #3268): n - 1 under the window's own family, and one observation of n, in
+    each bucket from the first edge at or above n."""
     conn, pacer = _paced()
     sub = _subscribed(conn, ch)
     before, buckets = _read(), _buckets(COALESCED)
@@ -204,7 +203,7 @@ def test_a_merged_window_counts_n_less_one_under_its_family_and_observes_n(
         pacer.offer(sub, update)
     pacer.tick(101.0)
     [_, window] = conn.take()
-    assert window["p"].get("coalesced_count") == (n if ch == _BOOK else None)
+    assert window["p"]["coalesced_count"] == n
     assert _moved(before) == pytest.approx(
         {
             (CONFLATED, ch.split(".", 1)[0]): n - 1,
@@ -409,8 +408,9 @@ async def test_a_session_moves_the_series_only_with_the_flag_on(flag: bool, enco
     """The real `/ws` router on a fake clock: `auth_ok`, a book `sub`, three deltas published at
     once with a producer's own `coalesced_count` 7, the writer's turn at 1.0 (the window closes;
     the first classification sends the probe), its `pong` at 1.25, the teardown. Flag on: the
-    connection counts as `healthy` while open, not after; the pacer carries no producer count, so
-    the window is the second and third update, 1 conflated; an RTT of 0.25 s; one depth sample of
+    connection counts as `healthy` while open, not after; the pacer carries the producer's count
+    (#3268), so the first update leaves with 7 and the window of the second and third with 14, yet
+    the series count the queue's own merge, 1 conflated; an RTT of 0.25 s; one depth sample of
     each kind. Flag off: the frames say 7 and nothing moves. No label value is ever added."""
     rig, sock = _Rig(BackpressureConfig() if flag else None), _Wire(encoding)
     sock.answer = False  # the probe's `pong` is fed below, 250 ms late
@@ -422,7 +422,7 @@ async def test_a_session_moves_the_series_only_with_the_flag_on(flag: bool, enco
         for price in ("101", "102", "103"):
             rig.sequencing.publish(_BOOK, _bid(price), coalesced_count=7)
         frames = await _at(rig, sock, 1.0)
-        assert [f["p"].get("coalesced_count", 1) for f in frames] == ([1, 2] if flag else [7] * 3)
+        assert [f["p"].get("coalesced_count", 1) for f in frames] == ([7, 14] if flag else [7] * 3)
         assert len(sock.pings) == flag
         if flag:
             await _at(rig, sock, 1.25, {"t": "pong", "id": sock.pings[0]["id"]})

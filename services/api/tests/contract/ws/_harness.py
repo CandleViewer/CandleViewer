@@ -286,12 +286,13 @@ def publish(
     coalesced_count: int = 1,
 ) -> int:
     """One owning-module event for `ch` through the real `SequencingHub`, on the app loop. Like
-    `account` for account-scoped families, `user` defaults to the world's user for SELF ones."""
+    `account` for account-scoped families, `user` defaults to the world's user for SELF ones. In
+    `binary` mode the CVWB part goes beside the structured body, as a producer sends it (#3268)."""
     from candleviewer.auth.generated_permissions import Scope
     from candleviewer.ws.topics import FAMILIES
 
     part = BIN_DELTA.get(family) if mode == "binary" and FAMILIES[family].binary else None
-    body = None if part is not None else delta_body(family)
+    body = delta_body(family)
     acc = account if FAMILIES[family].private else None
     if FAMILIES[family].account_scoped and acc is None:
         acc = ACC_A

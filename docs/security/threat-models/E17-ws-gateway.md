@@ -360,7 +360,8 @@ security review in the same PR.
 
 Memory outside the outbound budget (WS-D01, #2552): each `heatmap` subscription remembers up to 2 000
 complete buckets it sent (`SENT_COLUMNS_MEMORY`), about 150 to 210 KB measured (the review estimated 168 KB).
-It is bounded by count, fills only as complete columns are emitted (one per time bucket), and is not counted in
+It is bounded by count, is filled with the snapshot's complete columns when the snapshot is queued (#3268), then
+with one per emitted complete column, and is not counted in
 `pending_bytes`. Heatmap subscriptions are per channel and replay session, so the bound is the 200-subscription
 cap, not the 40-symbol one: up to about 42 MB per connection (200 x 210 KB) and about 336 MB per user (8
 connections), on top of the 8 MiB outbound budget.
@@ -668,7 +669,7 @@ scope on the open tickets named above.
 - **Contingent Low:** WS-D01, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
   E17-T04); re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
   behind `CV_WS_BACKPRESSURE_ENABLED`, which is off by default (#412), so its Low stays contingent until the flag is
-  on, after the gates `23-ws-protocol.md` §8.6 lists (#3268, #3353, #413, #571, #410, #568; #2900
+  on, after the gates `23-ws-protocol.md` §8.6 lists (#3353, #413, #571, #410, #568; #2900
   removes the flag); with the flag off, the 1 024-frame push bound is the control in force. WS-E02 was Low
   contingent on SR-189, which is implemented (#2318), so it is Low as built.
   **RSK-064** (continuous authorisation) is Mitigating in `32-risk-register.md`.
@@ -717,3 +718,4 @@ scope on the open tickets named above.
 | 2026-10-18 | author (agent; PR for #3100)                      | WS-D01: #3100 built, out of the §10 flag gates; expiry and heartbeat closes on a timer the connection owns; no rating or count changes       |
 | 2026-10-18 | author (agent; PR for #412 inbound limits)        | WS-D05, §4 and §6 (text, limits table): from `auth_ok` a `pong` has its own small budget and size bound (23 §8.5); no rating changes         |
 | 2026-10-18 | author (agent; PR for #3403)                      | WS-D17 points at the cooperative-cut note in `Settings._refuse_unfittable_stop_budget` (#3361, #3403); no rating or count changes            |
+| 2026-10-18 | author (agent; PR for #3268 slice B)              | §10: #3268 out of the flag's gates (§8.6); §6: heatmap sent-bucket memory seeded at snapshot, ceiling unchanged; no rating or count changes  |

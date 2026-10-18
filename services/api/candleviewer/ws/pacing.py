@@ -27,7 +27,8 @@ worsens at once and improves only after two consecutive better samples. `Pacer.a
 hold `heatmap` and `profile` to at most one frame a second. A queue depth that is not finite reads
 as a full queue, never as a healthy one (#2552). With the flag on the pipeline's writer turn runs
 the classification and sends the probe (`ws/pipeline.py`, #412). E17-T06: a merged window that
-leaves as one frame of n updates adds n - 1 to `cv_ws_conflated_total{topic}` and observes n in
+leaves as one frame of n updates (its `window_count`; a producer's own `coalesced_count` is not
+counted, #3268) adds n - 1 to `cv_ws_conflated_total{topic}` and observes n in
 `cv_ws_coalesced_updates`; each probe sample, answered or retired, is one `cv_ws_rtt_seconds`.
 
 Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's monotonic
@@ -57,7 +58,7 @@ from candleviewer.ws.metrics import (
     cv_ws_rtt_seconds,
 )
 from candleviewer.ws.permissions import Subscription
-from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, TopicEmitter
+from candleviewer.ws.sequencing import PRIVATE_CAUSAL_ORDER, Rendered, TopicEmitter
 
 CLASSIFY_INTERVAL_S: Final = 1.0
 LAGGING_QUEUE_PCT: Final = 25.0
@@ -100,6 +101,7 @@ _MULTIPLIER: Final = {
 #: E17-T06: every child bound now, so each series exists at 0 from the process start. A merged
 #: window's updates count under its family: only a family with a §8.2 merge rule that is not an
 #: append family can merge (`coalescing.MERGED_FAMILIES`); any other window leaves whole, count 1.
+#: The count is the queue's own merge (`Emission.window_count`), never a producer's (#3268).
 CONFLATED: Final = {f: cv_ws_conflated_total.labels(topic=f) for f in sorted(MERGED_FAMILIES)}
 #: E17-T06: open connections per class; `ConnectionPipeline` moves its connection between them.
 CLASS_COUNTS: Final = {c: cv_ws_connection_class.labels(state=c.value) for c in ConnectionClass}
@@ -286,10 +288,12 @@ class Pacer:
         part: Frame | None = None,
         ts_ms: int | None = None,
         meta: Mapping[str, Any] | None = None,
+        count: int = 1,
     ) -> bool:
         """Route one source update of `sub`; True when it was emitted or queued. A throttled
         topic needs the structured `body` (malformed without it); the CVWB `part` is optional.
-        `meta` rides on the envelope: a window carries its last update's."""
+        `meta` rides on the envelope: a window carries its last update's. `count` is the
+        producer's own `coalesced_count`, which the window carries (#3268)."""
         if sub.topic.family.never_throttled:
             return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms, meta=meta)
         if _held(sub):
@@ -297,15 +301,11 @@ class Pacer:
             if lane is not None and lane.queue.pending:
                 self._restart(lane)  # stale: the pending `snap` carries this state
             return False
-        lane = self.lanes.get(sub.sub_id)
-        if lane is None:
-            lane = self.lanes[sub.sub_id] = _Lane(sub, _queue(sub), sub.seq)
-            if (rank := _CAUSAL.get(sub.topic.family.family)) is not None:
-                self._ranked[rank] = lane
-        elif lane.seq != sub.seq:
+        lane = self._lane(sub)
+        if lane.seq != sub.seq:
             self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
-        if not lane.queue.offer(body, part, ts_ms=ts_ms, meta=meta):
+        if not lane.queue.offer(body, part, ts_ms=ts_ms, meta=meta, count=count):
             self._refused(lane)
             return False
         self._account(lane)
@@ -378,6 +378,15 @@ class Pacer:
         self._pending += size - lane.bytes
         lane.bytes = size
 
+    def _lane(self, sub: Subscription) -> _Lane:
+        """`sub`'s lane, made at its first use: an update, or a snapshot that seeds it."""
+        lane = self.lanes.get(sub.sub_id)
+        if lane is None:
+            lane = self.lanes[sub.sub_id] = _Lane(sub, _queue(sub), sub.seq)
+            if (rank := _CAUSAL.get(sub.topic.family.family)) is not None:
+                self._ranked[rank] = lane
+        return lane
+
     def _restart(self, lane: _Lane) -> None:
         """A snapshot went out or is pending: a new queue, since the old one's memory across
         windows (the heatmap's sent buckets, keyed by `t_ms` only) predates it (§8.2)."""
@@ -398,7 +407,7 @@ class Pacer:
         sent = 0
         try:
             for emission in emissions:
-                count = emission.coalesced_count
+                count, window = emission.coalesced_count, emission.window_count
                 if self.emitter.delta(
                     lane.sub,
                     emission.body,
@@ -408,9 +417,9 @@ class Pacer:
                     meta=emission.meta,
                 ):
                     sent += 1
-                    if count > 1:  # E17-T06: `count` updates left as one frame
-                        CONFLATED[lane.queue.family].inc(count - 1)
-                        COALESCED_UPDATES.observe(count)
+                    if window > 1:  # E17-T06: the queue merged `window` updates into one frame
+                        CONFLATED[lane.queue.family].inc(window - 1)
+                        COALESCED_UPDATES.observe(window)
         except Exception as exc:
             self.drop(lane.sub)  # part of the window is lost: recover through a snapshot
             if self.on_error is None:
@@ -457,6 +466,17 @@ class Pacer:
         lane = self.lanes.get(sub.sub_id)
         if lane is not None and _held(sub) and lane.queue.pending_bytes:
             self._restart(lane)
+
+    def snapshotted(self, sub: Subscription, rendered: Rendered) -> None:
+        """`TopicEmitter.on_snapshot`: a `snap` of `sub` was queued. A heatmap's window restarts at
+        its `seq`, remembering the complete buckets and root fields it sent (`Rendered`), so no
+        later column of those buckets is sent again (§8.2, #3268). Any other window restarts at
+        its next update (`offer`), as nothing of it outlives a window."""
+        if rendered.root is None:
+            return
+        lane = self._lane(sub)
+        self._restart(lane)
+        lane.queue.seed(rendered.complete, rendered.root)
 
     def forget(self, sub_id: str) -> None:
         """The subscription ended: nothing of it may be emitted or re-snapshotted."""
