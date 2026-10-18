@@ -190,9 +190,9 @@ export function createMainWindow(): BrowserWindow {
 
 function installCspHeader(csp: string): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    // app:// responses already carry this same header from the app protocol
-    // handler; leave them unchanged so a page never gets the header twice.
-    if (isAppUrl(details.url)) {
+    // The app:// handler answers every app: request (any host) with this
+    // header already; leave those unchanged: one CSP source, never two.
+    if (details.url.startsWith(`${APP_SCHEME}:`)) {
       callback({});
       return;
     }

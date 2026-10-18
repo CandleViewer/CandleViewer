@@ -161,7 +161,8 @@ describe("app:// wiring (#3410)", () => {
 
     const appCallback = vi.fn();
     listener(details("app://candleviewer/"), appCallback);
-    expect(appCallback).toHaveBeenCalledWith({});
+    listener(details("app://other.test/missing.js"), appCallback); // the handler's 404, any host
+    expect(appCallback.mock.calls).toEqual([[{}], [{}]]);
 
     const devCallback = vi.fn();
     listener(details("http://127.0.0.1:5173/"), devCallback);
