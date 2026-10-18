@@ -135,7 +135,9 @@ _CHECKS: Final[dict[str, Callable[[Opt, Any], bool]]] = {
     "int": lambda o, v: _is_int(v) and _in_range(o, v),
     "number": lambda o, v: (_is_int(v) or isinstance(v, float)) and _in_range(o, v),
     "bool": lambda o, v: isinstance(v, bool),
-    "enum": lambda o, v: not isinstance(v, bool) and v in o.choices,
+    # `in` hashes `v`, and a list or an object has no hash: the type goes first (#3469). A bool is
+    # no member (`True == 1`); a float equal to one stays valid (`50.0 in {50}`, as in JSON Schema).
+    "enum": lambda o, v: (_is_int(v) or isinstance(v, float | str)) and v in o.choices,
     "decimal": lambda o, v: isinstance(v, str) and bool(_DECIMAL_RE.match(v)),
     "uuids": lambda o, v: _items(o, v, _uuid_ok),
     "symbols": lambda o, v: _items(o, v, lambda s: isinstance(s, str) and bool(SYMBOL_RE.match(s))),
