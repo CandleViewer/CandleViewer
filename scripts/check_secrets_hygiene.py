@@ -190,7 +190,29 @@ def check_dev_env(root: Path) -> list[str]:
     return errors
 
 
-_SET_X = re.compile(r"(^|[\s;&|])set\s+-[a-zA-Z]*x[a-zA-Z]*(\s|$)|--xtrace|bash\s+-x\b")
+#: SR-146 tracing (#3294): the shell prints each command it runs with its values expanded. A
+#: command word follows no word character, ``.``, ``/`` or ``-`` (so not in ``reset``, ``mybash``,
+#: ``ssh``, ``zap.sh``, ``tools/sh`` or ``du -sh``), but may follow a quote or a bracket:
+#: ``bash -c "set -x; ..."``, ``eval 'set -x'``, ``(set -x)``. Quoted prose counts too.
+_WORD_START = r"(?<![\w./-])"
+#: Option words before the tracing one: ``--norc``, ``-o name``, ``-eO name``, ``-e``, ``+u``. Any
+#: other word ends them: ``set -- -x`` and ``set - -x`` (positional parameters), ``bash x.sh -x``.
+_OPTION_WORDS = r"(?:--\w+\s+|[-+][a-zA-Z]*[oO]\s+\w+\s+|[-+][a-zA-Z]+\s+)*"
+#: The tracing option word: ``x`` in a ``-`` group (``-x``, ``-ex``, ``-euxo``) or ``-o xtrace``
+#: (``-eo xtrace``); ``+x`` and ``+o xtrace`` turn tracing off.
+_TRACE_WORD = r"-[a-zA-Z]*(?:x|o\s+xtrace)"
+#: ``set`` turning tracing on: ``set -x``, ``set -e -x``, ``set -o errexit -o xtrace``.
+_SET_TRACE = re.compile(_WORD_START + r"set\s+" + _OPTION_WORDS + _TRACE_WORD)
+#: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, dash, ksh or
+#: zsh (all read ``-x`` and ``-o xtrace``), by name or absolute path (``/bin/sh``). A relative path
+#: (``tools/sh``) is a repository file, which ``workflow_scripts`` follows if it is a shell script.
+_SHELL_TRACE = re.compile(
+    _WORD_START + r"(?:(?:/[\w.-]+)*/)?(?:ba|da|k|z)?sh\s+" + _OPTION_WORDS + _TRACE_WORD
+)
+#: The long spelling (``zsh --xtrace``), anywhere on a line.
+_LONG_XTRACE = re.compile(r"--xtrace")
+#: The rules reported as ``'set -x' tracing``.
+_SET_X = (_SET_TRACE, _SHELL_TRACE, _LONG_XTRACE)
 _ENV_DUMP = re.compile(
     r"(^|[;&|]\s*|^\s*-?\s*(run:\s*)?)(printenv|env|export\s+-p|set)\s*(\||$|>)"
 )
@@ -212,8 +234,9 @@ _INVOKES = re.compile(
     r"(?:(?:/(?:usr/)?bin/)?(bash|sh|source|\.)\s+(?:" + _OPTS + r")*)?[\"']?([\w.][\w./-]*)"
 )
 _SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
-#: A shebang whose options trace (``#!/bin/sh -ex``): line 1 of a scanned script.
-_SHEBANG_X = re.compile(r"#!.*\s-[a-zA-Z]*x[a-zA-Z]*(\s|$)")
+#: A shebang whose options trace (``#!/bin/sh -ex``, ``#!/usr/bin/env -S bash -o xtrace``): line 1
+#: of a scanned script.
+_SHEBANG_X = re.compile(r"#!.*\s" + _TRACE_WORD)
 #: Suffixes never sourced as shell: ``source|.`` follows any other repository file.
 _NOT_SHELL = re.compile(
     r"\.(?:md|markdown|txt|rst|py|json|ya?ml|toml|[cm]?js|tsx?|css|html|xml|csv|lock|cfg|ini|sql)"
@@ -227,7 +250,7 @@ def _sr146_hits(text: str) -> list[tuple[int, str]]:
         if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
             continue
         body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
-        if _SET_X.search(body):
+        if any(rule.search(body) for rule in _SET_X):
             hits.append((n, "'set -x' tracing"))
         if _ENV_DUMP.search(body):
             hits.append((n, "environment dump"))

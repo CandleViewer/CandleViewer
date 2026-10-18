@@ -278,5 +278,5 @@ def test_the_script_is_the_single_tracked_definition_of_the_contract_run() -> No
     assert [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")] == (
         SCRIPT_COMMANDS
     )
-    # SR-146: no tracing (check_secrets_hygiene.py scans workflow files, not this script).
+    # SR-146: no tracing. Defence in depth: check_secrets_hygiene.py scans it too (#3274, #3294).
     assert not [ln for ln in lines if re.search(r"\bset\s+-[a-zA-Z]*x|xtrace|\bbash\s+-x\b", ln)]

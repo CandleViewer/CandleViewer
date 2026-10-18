@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,7 @@ def test_run_script_without_suffix_is_followed_by_its_shebang(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("shebang", "traced"),
     [("#!/bin/bash -x", 1), ("#!/bin/sh -ex", 1), ("#!/usr/bin/env -S bash -x", 1)]
+    + [("#!/usr/bin/env -S bash -o xtrace", 1), ("#!/usr/bin/env -S bash +o xtrace", 0)]
     + [("#!/usr/bin/env bash", 0), ("#!/bin/bash -e", 0), ("#!/bin/bash -euo pipefail", 0)],
 )
 def test_run_script_shebang_x_flag_traces(tmp_path: Path, shebang: str, traced: int) -> None:
@@ -293,6 +295,130 @@ def test_run_script_symlink_loop_fails_closed(tmp_path: Path, script: str) -> No
     assert h.check_workflows(tmp_path) == [
         f"{script}: unreadable script (SR-146 scan); run by w.yml"
     ]
+
+
+# #3294: the forms of SR-146 tracing, on a workflow `run:` line and in a script a workflow runs
+# (one shared rule). A row per form, and per rule or alternative, so that dropping one fails.
+TRACED = [
+    # Caught before #3294.
+    "set -x",
+    "set -euxo pipefail",
+    "bash -x ci.sh",
+    "/bin/bash -x ci.sh",
+    "/usr/local/bin/bash -x ci.sh",
+    "/usr/bin/env bash -x ci.sh",
+    "zsh --xtrace ci.sh",
+    # #3294: `set` with x in a later group or as -o xtrace, and after a quote or bracket.
+    "set -x; make test",
+    "set -e -x",
+    "set -eu -xo pipefail",
+    "set +e -x",
+    "set -o xtrace",
+    "set -eo xtrace",
+    "set -o errexit -o xtrace",
+    "if true; then set -x; fi",
+    "for f in a b; do set -x; done",
+    "(set -x; make test)",
+    "{ set -x; make test; }",
+    "out=`set -x; make test`",
+    'bash -c "set -x; make test"',
+    "sh -c 'set -x'",
+    'eval "set -x"',
+    "${CV_DEBUG:+set -x}",
+    # #3294: a shell started tracing, past its other options.
+    "bash -ex ci.sh",
+    "bash -xe ci.sh",
+    "bash -e -x ci.sh",
+    "bash -o xtrace ci.sh",
+    "bash -o pipefail -x ci.sh",
+    "bash -O extglob -x ci.sh",
+    "bash --noprofile --norc -x ci.sh",
+    "sh -x ci.sh",
+    "sh -cx 'make test'",
+    'bash -xc "make test"',
+    "dash -x ci.sh",
+    "ksh -x ci.sh",
+    "zsh -x ci.sh",
+]
+NOT_TRACED = [
+    "set -e",
+    "set -euo pipefail",
+    "set -o pipefail",
+    "set +x",
+    "set +o xtrace",
+    "set -e +x",
+    "set -- -x",
+    "set - -x",
+    "reset -x",
+    "bash ci.sh -x",
+    "bash +x ci.sh",
+    "bash +o xtrace ci.sh",
+    "sh -c 'echo -x'",
+    'echo "-x"',
+    "ssh -x host uptime",
+    "shellcheck -x ci.sh",
+    "tar -xzf a.tgz",
+    "unzip -o a.zip -x '*.md'",
+    "grep -x pattern file",
+    "xargs -x echo",
+    "mybash -x ci.sh",
+    "zap.sh -x",
+    "tools/sh -x ci.sh",
+    "du -sh -x /var",
+    "# set -o xtrace; bash -x ci.sh",
+]
+VIA = ["run", "script"]
+
+
+def _sr146_in(tmp_path: Path, line: str, via: str) -> list[str]:
+    """``line`` in a workflow's `run:` block, or as line 1 of a script a workflow step runs."""
+    if via == "run":
+        _write(tmp_path, WF, _runs(f"|\n          {line}"))
+    else:
+        _write(tmp_path, WF, _runs("bash tools/x.sh"))
+        _write(tmp_path, "tools/x.sh", f"{line}\n")
+    return h.check_workflows(tmp_path)
+
+
+@pytest.mark.parametrize("via", VIA)
+@pytest.mark.parametrize("line", TRACED)
+def test_tracing_form_is_flagged(tmp_path: Path, line: str, via: str) -> None:
+    hit = "w.yml:5: 'set -x' tracing (SR-146)"
+    if via == "script":
+        hit = "tools/x.sh:1: 'set -x' tracing (SR-146); run by w.yml"
+    assert _sr146_in(tmp_path, line, via) == [hit]
+
+
+@pytest.mark.parametrize("via", VIA)
+@pytest.mark.parametrize("line", TRACED)
+def test_tracing_form_with_the_allow_marker_passes(tmp_path: Path, line: str, via: str) -> None:
+    assert _sr146_in(tmp_path, f"{line}  # secrets-hygiene: allow", via) == []
+
+
+@pytest.mark.parametrize("via", VIA)
+@pytest.mark.parametrize("line", NOT_TRACED)
+def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None:
+    assert _sr146_in(tmp_path, line, via) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "set " + "-e " * 3000,
+        "bash " + "-o a " * 2500,
+        "set -o" + " " * 10000 + "y",
+        "set -" + "x" * 20000 + "2",
+        "set -" + "o" * 20000 + "2",
+        "/a" * 5000 + "/sh -e",
+        "(" * 10000,
+    ],
+    ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"],
+)
+def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
+    start = time.perf_counter()
+    h._sr146_hits(line)
+    h._SHEBANG_X.match(f"#!/bin/sh {line}")
+    assert time.perf_counter() - start < 1.0
 
 
 def test_inventory_flags_prod_credentials_and_unprotected() -> None:
