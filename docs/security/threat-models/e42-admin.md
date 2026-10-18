@@ -1198,7 +1198,8 @@ sink-refusal residual, from #2914).
 | AD-D07 | A flag change can stop ingestion or recording, an operational choice shown on SCR-145 | Low | Owner/PO | 2027-03-25 (GA cut) |
 
 The annex's fourteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
-(#2318; #2272, via #2690), so it is Low, and #3413 tracks its race at registration. Twelve were read at the anchor; S7
+(#2318; #2272, via #2690), so it is Low, and #3413 closes its race at registration, leaving the registry's cap
+(annex §6). Twelve were read at the anchor; S7
 adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701. AD-S05 stays Medium until
 D8 and #3085, and is not accepted. AD-R05,
 AD-E07, AD-I05 and AD-E04 are High until #3084 and #3085 land, but no restore or view-as route can mount before then

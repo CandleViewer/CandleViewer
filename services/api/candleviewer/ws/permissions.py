@@ -131,10 +131,15 @@ _ABANDONED_USERS_LOGGED: Final = 10
 #: SR-186 (#2174): the one `ws.subscribe.granted` record of a `sub` frame lists the `ch` and
 #: account ids of at most this many of its new private subscriptions; its `count` holds them all.
 MAX_GRANTS_LISTED: Final = 10
-#: #3413: seconds a disabled user is remembered, one access-token lifetime (ADR-0020,
-#: `auth.session_service.ACCESS_TOKEN_TTL`, which the composition root passes). By then every
-#: token issued before the disable has expired, so no `auth` with one can pass.
-DISABLED_MEMORY_S: Final = 720.0
+#: #3413: an access token's lifetime in seconds, ADR-0020's 12 minutes: `auth.session_service.
+#: ACCESS_TOKEN_TTL`, which the composition root passes (a test pins the equality). A token expires
+#: at its issue instant plus at most this, so `issued_before_disable` can date a token, which the
+#: gateway knows only by its expiry, no later than that expiry less this.
+ACCESS_TOKEN_TTL_S: Final = 720.0
+#: Seconds a disabled user is remembered: one access-token lifetime, the least that works. By then
+#: every token issued before the disable has expired, so no `auth` with one can pass. A registry
+#: refuses a span below its own `access_token_ttl_s`.
+DISABLED_MEMORY_S: Final = ACCESS_TOKEN_TTL_S
 #: At most this many disabled users are remembered (C-2.18); the oldest is forgotten first. A
 #: live entry goes early only once 1024 other users are disabled within one `DISABLED_MEMORY_S`.
 MAX_DISABLED_USERS: Final = 1024
@@ -915,11 +920,19 @@ class ConnectionRegistry:
     `sub`/`unsub`/`ctl` through this module and unregisters on close.
 
     #3413 (SR-029, UL1-E2): `user_disabled` also remembers the user with the disable instant for
-    `disabled_memory_s`, one access-token lifetime, so the gateway refuses a socket that
-    registers after the per-user close on a token issued at or before it (`issued_before_disable`).
-    The memory is bounded (C-2.18) as `RevocationHub`'s is: entries expire on `monotonic`, and past
-    `max_disabled` the oldest is forgotten first, which reopens that window for that user only and
-    is logged (throttled).
+    `disabled_memory_s`, so the gateway refuses a socket that registers after the per-user close
+    on a token issued at or before it (`issued_before_disable`). The memory is bounded (C-2.18) as
+    `RevocationHub`'s is: entries expire on `monotonic`, and past `max_disabled` the oldest is
+    forgotten first, which reopens that window for that user only and is logged (throttled).
+
+    Two spans, kept apart. `access_token_ttl_s` is how long a token lives: the gateway knows a
+    token only by its expiry, and expiry less this is how that token is dated. It must not be
+    shorter than the tokens' real lifetime, or a token issued before a disable is dated after it
+    and let in, and not longer, or a token issued after the disable is refused. `disabled_memory_s`
+    is how long a disable is remembered, and must be at least `access_token_ttl_s`, or a disable
+    is forgotten while a token issued before it is still live. The constructor refuses a shorter
+    memory (fail closed); a longer one only keeps an entry longer. The composition root passes
+    both from `ACCESS_TOKEN_TTL`.
     """
 
     def __init__(
@@ -929,11 +942,21 @@ class ConnectionRegistry:
         services: SubscriptionServices | None = None,
         *,
         disabled_memory_s: float = DISABLED_MEMORY_S,
+        access_token_ttl_s: float = ACCESS_TOKEN_TTL_S,
         max_disabled: int = MAX_DISABLED_USERS,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        if not (math.isfinite(disabled_memory_s) and disabled_memory_s > 0) or max_disabled < 1:
-            raise ValueError("disabled_memory_s must be finite and > 0, and max_disabled >= 1")
+        spans = (disabled_memory_s, access_token_ttl_s)
+        if not all(math.isfinite(s) and s > 0 for s in spans) or max_disabled < 1:
+            raise ValueError(
+                "disabled_memory_s and access_token_ttl_s must be finite and > 0, "
+                "and max_disabled >= 1"
+            )
+        if disabled_memory_s < access_token_ttl_s:
+            raise ValueError(
+                "disabled_memory_s must be at least access_token_ttl_s: a shorter memory forgets "
+                "a disable while a token issued before it is still live"
+            )
         self._resolve = resolve
         self._clock_ms = clock_ms
         self.services = services if services is not None else SubscriptionServices()
@@ -946,6 +969,9 @@ class ConnectionRegistry:
         self._versions = itertools.count(1)
         self._changed_at = 0
         self._disabled_memory_s = disabled_memory_s
+        self._access_token_ttl_s = access_token_ttl_s
+        # Rounded up: float error must never leave it below the real lifetime (a token let in).
+        self._token_ttl_ms = math.ceil(access_token_ttl_s * 1000)
         self._max_disabled = max_disabled
         self._monotonic = monotonic
         #: user id -> (monotonic expiry, disable instant in wall ms), oldest first. Every entry
@@ -959,8 +985,13 @@ class ConnectionRegistry:
 
     @property
     def disabled_memory_s(self) -> float:
-        """Seconds a disabled user is remembered."""
+        """Seconds a disabled user is remembered: at least `access_token_ttl_s`."""
         return self._disabled_memory_s
+
+    @property
+    def access_token_ttl_s(self) -> float:
+        """Seconds an access token lives, by which a token's expiry is dated."""
+        return self._access_token_ttl_s
 
     @property
     def max_disabled(self) -> int:
@@ -997,14 +1028,15 @@ class ConnectionRegistry:
         """Whether `user_id` was disabled, within the last `disabled_memory_s`, at or after the
         instant its access token was issued. The token expires at `token_expires_ms`, which is
         its issue instant plus `ACCESS_TOKEN_TTL` capped by the session's absolute expiry
-        (`access_token_expires_at`), so one lifetime before it is never later than the issue:
-        every token issued at or before the disable is refused, and one issued after it (a user
-        re-enabled who signed in again) is not. Both instants are UTC wall-clock ms: the disable
-        is read from `clock_ms`, the token's from the session service's clock."""
+        (`access_token_expires_at`), so the expiry less `access_token_ttl_s` is never later than
+        the issue: every token issued at or before the disable is refused, and one issued after
+        it (a user re-enabled who signed in again) is not. Both instants are UTC wall-clock ms:
+        the disable is read from `clock_ms`, the token's from the session service's clock. The
+        keyless testnet's `CV_TEST_CLOCK` (#2086) offsets that clock and not this one, as it
+        leaves the gateway's deadlines alone: there the comparison is skewed by the offset."""
         self._prune_disabled(self._monotonic())
         entry = self._disabled.get(user_id)
-        lifetime_ms = int(self._disabled_memory_s * 1000)
-        return entry is not None and token_expires_ms - lifetime_ms <= entry[1]
+        return entry is not None and token_expires_ms - self._token_ttl_ms <= entry[1]
 
     def register(
         self, authz: ConnectionAuthz, send: Any, close: Any = None, closer: Closer | None = None

@@ -22,6 +22,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   presented session as soon as `authenticate` returns, so a session revoked
   while the `auth` is in flight gets no `auth_ok`: the hub closes the socket,
   or remembers the revocation and the gateway closes it the same way (#2739).
+  A user disabled meanwhile is refused too, on a session no revocation names (one a refresh
+  rotated): the registry remembers the disable for one access-token lifetime, and a registration
+  on a token issued at or before it gets `bye user_disabled` + `4403`, never `auth_ok` (#3413).
   The identity ends at the token's expiry as `authenticate` reports it (the
   first refusal on time grounds); an already-expired token is refused like
   any failed `auth`. Revocation is pushed through the `RevocationHub`; the
