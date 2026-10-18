@@ -469,6 +469,14 @@ TRACED = [
     "${SHELL:=sh} -x ci.sh",
     "${SHELL:?} -x ci.sh",
     "${BASH-bash} -x ci.sh",
+    # #3400: a shell's name after ${NAME}, also from a quoted "$NAME" (bash 5.3 traced each with
+    # the variables empty; origin/main reported them, reading the quotes as word starts), also
+    # inside a word, which a rule reads again after the `}` when it is no path.
+    "${X}bash -x ci.sh",
+    "${A}${B}sh -x ci.sh",
+    '"$X"bash -x ci.sh',
+    '"$X"set -x',
+    "ba${X}sh -x ci.sh",
 ]
 NOT_TRACED = [
     "set -e",
@@ -567,6 +575,11 @@ NOT_TRACED = [
     "TRAPDEBUGGER() { :; }",
     "TRAPDEBUG-x() { :; }",
     "trap 'echo x' EXIT DEBUGGING",
+    # #3400: $Xbash and '$X'bash name a command $Xbash, not a shell after $X (bash 5.3: not
+    # found). Not reported though it traces: an expansion inside a shell's name before no name.
+    "$Xbash -x ci.sh",
+    "'$X'bash -x ci.sh",
+    "b${X}ash -x ci.sh",
 ]
 VIA = ["run", "script"]
 
@@ -676,6 +689,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
         "set -" + "${A}" * 20000,
         "set -e${A:+" + "a" * 90000,
         "set " + "${A:+-e} " * 12000,
+        # #3400: ${NAME} pieces before a shell's name, and quoted names braced as quotes come off.
+        "${A}" * 19000 + "sh",
+        '"$A"' * 19000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -687,7 +703,7 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, value: str) -> None:
     + ["empty-quotes", "quoted-shells", "rcfile-words", "redirect-words", "redirect-ops"]
     + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
-    + ["value-words"],
+    + ["value-words", "shell-prefixes", "quoted-names"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time

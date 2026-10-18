@@ -209,9 +209,20 @@ _QUOTING = re.compile(
 )
 
 
+#: A name in a double-quoted string, braced as its quotes come off so that it stays that name:
+#: ``"$X"bash`` reads as ``${X}bash`` (a shell after an expansion), not ``$Xbash`` (another name).
+_QUOTED_NAME = re.compile(r"\$(\w+)")
+
+
+def _unquote(m: re.Match[str]) -> str:
+    if m[3] is not None:
+        return _QUOTED_NAME.sub(r"${\1}", m[3])
+    return m[1] or m[2] or ""
+
+
 def _unquoted(line: str) -> str:
     """``line`` with its words' quotes and escapes taken off (``_QUOTING``)."""
-    return _QUOTING.sub(r"\1\2\3", line)
+    return _QUOTING.sub(_unquote, line)
 
 
 def _option_name(name: str) -> str:
@@ -306,9 +317,10 @@ _SHELLCHECK_DIALECT = (
 )
 #: A shell started with tracing on (``sh -x x.sh``, ``env bash -xc "..."``): sh, bash, rbash,
 #: dash, ksh or zsh (all read ``-x``, ``-v`` and ``-o xtrace``), by name, from a ``_SHELL_DIR`` or
-#: as ``_SHELL_VAR``.
+#: as ``_SHELL_VAR``. A name may follow ``${NAME}``, which may be empty (``${X}bash -x``), so it
+#: is read before ``_OTHER_PATH`` takes the word; ``$Xbash`` names another variable.
 _SHELL_ON = (
-    r"(?:(?:" + _SHELL_DIR + r")?(?:r?ba|da|k|z)?sh|" + _SHELL_VAR + r")\s+"
+    r"(?:(?:" + _SHELL_DIR + r")?(?:\$\{\w+\})*(?:r?ba|da|k|z)?sh|" + _SHELL_VAR + r")\s+"
     + _OPTION_WORDS
     + _TRACE_ON
 )
@@ -367,7 +379,8 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
 #:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``
-#: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``
+#: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
+#:   with an expansion inside its name that no name follows: ``b${X}ash -x`` (but ``ba${X}sh``)
 #: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
 #:   ``mksh -x``, ``yash -x``
 #: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
