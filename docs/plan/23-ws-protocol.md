@@ -3882,14 +3882,22 @@ a resolved event stops the notice within a minute. Order entry keys on the `reas
 `severity` `critical`: this notice does not disable order entry, while a read-only code (below)
 does. This uses the existing schema; no schema change.
 
-**Read-only / degraded notice (E27-T02).** When the server's process read-only gate changes —
-the mesh binding self-check or the credential key (KEK) being unavailable — every authenticated
-connection whose principal holds a role (§15.9) receives a `system` frame of `kind: "notice"` using only the fields above:
+**Read-only / degraded notice (E27-T02, E27-T03).** When the server's process read-only gate
+changes — the mesh binding self-check, the credential key (KEK) being unavailable or the
+stored-key self-check — every authenticated connection whose principal holds a role (§15.9)
+receives a `system` frame of `kind: "notice"` using only the fields above:
 `severity` (`critical` while trading is disabled, `info` when it is re-enabled), a role-neutral
 `message`, and `reason` carrying the machine code. The code set is **open**; current values are
 `secrets.kek_unavailable`, `net.public_binding_detected`, `net.off_mesh_binding_detected`,
-`net.binding_check_failed`, `net.self_check_timed_out` and `net.binding_safe`. The clear-state
-message is "Read-only mode cleared." It does not claim trading is enabled, because the kill switch,
+`net.binding_check_failed`, `net.self_check_timed_out`, `net.binding_safe`,
+`accounts.key_selfcheck_failed`, `accounts.key_verification_stale` and
+`accounts.key_selfcheck_unavailable`. The last three are the stored-key self-check's:
+`accounts.key_selfcheck_failed`: a stored key failed the key gate (`createApiKey`, steps 1 to 7);
+`accounts.key_verification_stale`: a stored key has no passing check inside the check interval
+plus 15 minutes (SR-E27-18); `accounts.key_selfcheck_unavailable`: the stored keys could not be
+checked. They latch until a restart whose start-up check passes, and the notice and its message
+name no key and no account. The clear-state message is "Read-only mode cleared." It does not
+claim trading is enabled, because the kill switch,
 risk lockouts or a session downgrade may still block it. While the
 gate is closed, the same notice is pushed right after `auth_ok` on a **first** authentication, so
 a client connecting after the transition still disables order entry (CMP-092). It is not repeated

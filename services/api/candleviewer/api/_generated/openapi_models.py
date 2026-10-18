@@ -6025,11 +6025,26 @@ class ApiKeyRotation(BaseModel):
 
 
 class KeyTestResult(BaseModel):
-    passed: bool | None = None
+    passed: Annotated[
+        bool | None,
+        Field(
+            description="True only when the verification passed, the REST probe succeeded and, with `include_ws`, the private WS `auth` succeeded.\n"
+        ),
+    ] = None
     checked_at: AwareDatetime | None = None
     rest: Rest | None = None
-    websocket: Websocket | None = None
-    verification: KeyVerification | None = None
+    websocket: Annotated[
+        Websocket | None,
+        Field(
+            description="Omitted when `include_ws` is false: that half did not run, and no `ok: true` is sent for it.\n"
+        ),
+    ] = None
+    verification: Annotated[
+        KeyVerification | KeyVerificationNotRead | None,
+        Field(
+            description="The verification as far as the pipeline got. Omitted when the REST half reached no verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window` or a rate limit): an earlier check's standing result is never shown in its place, because an outage must not read as a pass (SR-E27-18). A key the exchange refused before its rights were read is `KeyVerificationNotRead`.\n"
+        ),
+    ] = None
 
 
 class OrderWithEvents(Order):
