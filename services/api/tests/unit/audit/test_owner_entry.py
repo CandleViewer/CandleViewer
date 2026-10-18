@@ -179,6 +179,12 @@ async def test_owner_states_of_a_row_over_the_render_caps_are_withheld(
     _assert_detail_shape(entry.detail)
 
 
+def _detail(chain: dict[str, Any]) -> dict[str, Any]:
+    """One row's `detail` from its chain renderings, under the default page budget."""
+    budget = query_mod._StructureBudget(query_mod.DEFAULT_PAGE_STRUCTURE_BUDGET)
+    return query_mod._owner_detail({"chain": chain}, budget)
+
+
 @pytest.mark.parametrize(
     "rendering",
     ['{"qty": ', "[1, 2]", '"text"', "7", "1" * 5000],
@@ -189,15 +195,13 @@ def test_a_rendering_that_is_not_an_object_is_withheld_never_raised_or_echoed(
 ) -> None:
     """Defensive: a jsonb rendering always parses, but a state that cannot be returned as
     an object is withheld rather than failing the page or returning its text."""
-    detail = query_mod._owner_detail(
-        {"chain": {"before_state": rendering, "after_state": '{"qty": "2"}'}}
-    )
+    detail = _detail({"before_state": rendering, "after_state": '{"qty": "2"}'})
     assert detail == {"before": None, "after": {"qty": "2"}, "elided": ["before"]}
     _assert_detail_shape(detail)
 
 
 def test_a_jsonb_null_rendering_is_a_null_state_not_withheld() -> None:
-    detail = query_mod._owner_detail({"chain": {"before_state": "null", "after_state": None}})
+    detail = _detail({"before_state": "null", "after_state": None})
     assert detail == {"before": None, "after": None}
 
 
@@ -215,7 +219,7 @@ def _nested(depth: int) -> str:
     ids=["at_the_limit", "past_the_limit", "many_brackets_but_shallow"],
 )
 def test_a_state_is_withheld_only_when_nested_past_the_limit(state: str, returned: bool) -> None:
-    detail = query_mod._owner_detail({"chain": {"before_state": state, "after_state": None}})
+    detail = _detail({"before_state": state, "after_state": None})
     withheld = {**_NULLS, "elided": ["before"]}
     assert detail == ({"before": json.loads(state), "after": None} if returned else withheld)
     _assert_detail_shape(detail)
@@ -239,9 +243,9 @@ async def test_owner_states_are_parsed_on_the_hasher_thread(
     threads: list[str] = []
     real = query_mod._parse_state
 
-    def spy(rendering: str) -> dict[str, Any] | None:
+    def spy(rendering: str, budget: Any) -> dict[str, Any] | None:
         threads.append(threading.current_thread().name)
-        return real(rendering)
+        return real(rendering, budget)
 
     monkeypatch.setattr(query_mod, "_parse_state", spy)
     assert (await _page(repo)).items[0].detail["after"] == {"qty": "2"}

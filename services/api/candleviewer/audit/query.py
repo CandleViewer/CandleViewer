@@ -17,11 +17,12 @@ import asyncio
 import functools
 import hashlib
 import json
+import math
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NoReturn
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.errors import AuditError
@@ -70,6 +71,35 @@ _STATES = (("before", "before_state"), ("after", "after_state"))
 #: Deepest container nesting of a state the Owner's page returns. The response serializer
 #: refuses about 255 levels, so a deeper state is withheld instead of failing the page.
 STATE_MAX_DEPTH = 128
+#: Longest number literal a state the Owner's page returns may hold, in characters (digits,
+#: sign, `.`, `e`/`E`). Converting a number costs more the longer its literal, so a state
+#: holding a longer one is withheld, whatever the page's structure budget.
+NUMBER_MAX_CHARS = 64
+#: The structure one Owner page serves of its states (`audit_page_structure_budget`), in
+#: tokens: each `{`, `[` and `,` of their renderings. The page is serialized on the event
+#: loop at a cost per value, and this bounds the number of values (C-2.17).
+DEFAULT_PAGE_STRUCTURE_BUDGET = 50_000
+
+
+class _StructureBudget:
+    """What is left of a page's structure budget, spent in page order. A state costs the
+    `{`, `[` and `,` of its rendering: each member or item of it follows one of them, so
+    the cost bounds the number of values the response serializes for it, whatever their
+    shape. From the first state that does not fit, none does, so the states served never
+    cost more than the budget and the ones withheld are the rest of the page."""
+
+    __slots__ = ("_left",)
+
+    def __init__(self, tokens: int) -> None:
+        self._left = tokens
+
+    def spend(self, tokens: int) -> bool:
+        """Whether a state costing `tokens` is served; once one is not, no later one is."""
+        if tokens > self._left:
+            self._left = -1
+            return False
+        self._left -= tokens
+        return True
 
 
 def _canonical_field(value: object) -> str:
@@ -211,31 +241,78 @@ def _nesting_within(value: dict[str, Any], limit: int) -> bool:
     return True
 
 
-def _parse_state(rendering: str) -> dict[str, Any] | None:
-    """A state's rendering as an object, or `None` when it cannot be returned: it does not
-    parse (defensive: a jsonb rendering always does), it is not an object, or it nests
-    deeper than `STATE_MAX_DEPTH`. Never raises for the rendering, never yields its text."""
+class _NumberRefused(ValueError):
+    """A number a returned state may not hold: a literal over `NUMBER_MAX_CHARS`
+    characters, refused unconverted, or one that is not finite (`1e999`, `NaN`)."""
+
+
+def _capped_int(literal: str) -> int:
+    """`parse_int` of a state's parse: the scanner hands over each integer literal's text
+    before converting it, so one over `NUMBER_MAX_CHARS` is never converted."""
+    if len(literal) > NUMBER_MAX_CHARS:
+        raise _NumberRefused
+    return int(literal)
+
+
+def _capped_float(literal: str) -> float:
+    """`parse_float` of a state's parse, as `_capped_int`; a literal past the float range
+    (`1e999`) converts to an infinity, which no JSON number is, so it is refused too."""
+    if len(literal) > NUMBER_MAX_CHARS:
+        raise _NumberRefused
+    value = float(literal)
+    if not math.isfinite(value):
+        raise _NumberRefused
+    return value
+
+
+def _refused_constant(_name: str) -> NoReturn:
+    """`parse_constant` of a state's parse: `NaN`, `Infinity` and `-Infinity` are no JSON
+    numbers."""
+    raise _NumberRefused
+
+
+def _parse_state(rendering: str, budget: _StructureBudget) -> dict[str, Any] | None:
+    """A state's rendering as an object, or `None` when it cannot be returned: the page's
+    structure budget has no room left for it, it holds a number literal over
+    `NUMBER_MAX_CHARS` characters or a number that is not finite, it does not parse
+    (defensive: a jsonb rendering always does), it is not an object, or it nests deeper
+    than `STATE_MAX_DEPTH`. Never raises for the rendering, never yields its text. The
+    numbers are checked by the parse itself, which hands each literal's text to
+    `_capped_int` / `_capped_float` (and `NaN` / `Infinity` to `_refused_constant`) before
+    converting it: no pass of its own, and a run of digits inside a string is no literal."""
+    # Counted once, before any parse, for both bounds: brackets and commas are the state's
+    # cost, and as a container opens with one bracket, the brackets alone bound its depth.
+    # A state withheld below for another reason has still spent its cost: this errs toward
+    # withholding.
+    brackets = rendering.count("{") + rendering.count("[")
+    if not budget.spend(brackets + rendering.count(",")):
+        return None
     try:
-        value = json.loads(rendering)
-    except (ValueError, RecursionError):
+        value = json.loads(
+            rendering,
+            parse_int=_capped_int,
+            parse_float=_capped_float,
+            parse_constant=_refused_constant,
+        )
+    except (ValueError, RecursionError):  # `_NumberRefused` is a `ValueError`
         return None
     if not isinstance(value, dict):
         return None
-    # A container opens with one bracket, so the bracket count bounds the depth: only a
-    # state with more brackets than the limit is walked.
-    brackets = rendering.count("{") + rendering.count("[")
+    # Only a state with more brackets than the limit is walked.
     if brackets > STATE_MAX_DEPTH and not _nesting_within(value, STATE_MAX_DEPTH):
         return None
     return value
 
 
-def _owner_detail(row: dict[str, Any]) -> dict[str, Any]:
+def _owner_detail(row: dict[str, Any], budget: _StructureBudget) -> dict[str, Any]:
     """The Owner's `detail`, built from the page's capped chain renderings (`row["chain"]`),
     as the page select fetches no state. With the form fetched in full, a null rendering is
     a null state and any other is parsed, so a state shown is the one the chain check hashed.
     Without it (over the render caps), only whether each state is null is known, and a
-    non-null one is withheld. A withheld state is null and listed in `elided`; a stored
-    null never is, and `elided` is absent when nothing was withheld."""
+    non-null one is withheld; so is a state past the page's structure `budget` or holding
+    a number literal over `NUMBER_MAX_CHARS` characters or a number that is not finite. A
+    withheld state is null and listed in `elided`; a stored null never is, and `elided` is
+    absent when nothing was withheld."""
     chain = row["chain"]
     detail: dict[str, Any] = {}
     elided: list[str] = []
@@ -245,7 +322,7 @@ def _owner_detail(row: dict[str, Any]) -> dict[str, Any]:
         elif chain[column] in (None, "null"):  # SQL NULL, or a jsonb `null`
             value, withheld = None, False
         else:
-            value = _parse_state(chain[column])
+            value = _parse_state(chain[column], budget)
             withheld = value is None
         detail[key] = value
         if withheld:
@@ -255,12 +332,16 @@ def _owner_detail(row: dict[str, Any]) -> dict[str, Any]:
     return detail
 
 
-def _check_page(rows: list[dict[str, Any]], raw: bool) -> tuple[bool, list[dict[str, Any] | None]]:
+def _check_page(
+    rows: list[dict[str, Any]], raw: bool, structure_budget: int
+) -> tuple[bool, list[dict[str, Any] | None]]:
     """The hasher-thread part of a page read: the chain check and, for the Owner's raw view
-    only, each row's `detail`, since parsing the renderings is CPU work too. Any other view
-    builds no detail (`None` per row)."""
+    only, each row's `detail`, since parsing the renderings is CPU work too, as is spending
+    the page's `structure_budget` on them in page order. Any other view builds no detail
+    (`None` per row)."""
     verified = _page_chain_verified(rows)
-    return verified, [_owner_detail(row) if raw else None for row in rows]
+    budget = _StructureBudget(structure_budget)
+    return verified, [_owner_detail(row, budget) if raw else None for row in rows]
 
 
 def _entry(row: dict[str, Any], detail: dict[str, Any] | None) -> AuditEntry:
@@ -299,8 +380,9 @@ class AuditQueryService:
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
     anyway). A page's chain check and verify's batches run on `hasher`, a
     bounded executor of its own; `close()` shuts it down. `clock` stamps
-    `checked_at`; `sleep` times a run's deadline. `verify_slot` is verify's single-flight,
-    shared with the scheduled verify job."""
+    `checked_at`; `sleep` times a run's deadline. The Owner's page serves at most
+    `structure_budget` of its states' structure (`_StructureBudget`). `verify_slot` is
+    verify's single-flight, shared with the scheduled verify job."""
 
     def __init__(
         self,
@@ -309,11 +391,13 @@ class AuditQueryService:
         *,
         clock: Callable[[], datetime] = _utc_now,
         sleep: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep,
+        structure_budget: int = DEFAULT_PAGE_STRUCTURE_BUDGET,
     ) -> None:
         self._repository = repository
         self._hasher = hasher if hasher is not None else ChainHasher()
         self._clock = clock
         self._sleep = sleep
+        self._structure_budget = structure_budget
         self.verify_slot = VerifySlot()
 
     def close(self) -> None:
@@ -393,9 +477,11 @@ class AuditQueryService:
 
         has_more = len(rows) > limit
         rows = rows[:limit]
-        # On the full rows, before any projection, and off the event loop, as is parsing the
-        # Owner's states. A refusal (`ChainHasherBusy`) or cancellation serves nothing.
-        chain_verified, details = await self._hasher.run(functools.partial(_check_page, rows, raw))
+        # On the full rows, before any projection, and off the event loop, as are parsing the
+        # Owner's states and spending the page's structure budget on them. A refusal
+        # (`ChainHasherBusy`) or cancellation serves nothing.
+        check = functools.partial(_check_page, rows, raw, self._structure_budget)
+        chain_verified, details = await self._hasher.run(check)
         items = [_entry(row, detail) for row, detail in zip(rows, details, strict=True)]
         last = items[-1] if has_more and items else None
         next_cursor = None if last is None else encode_cursor(AuditCursor(last.ts, last.id))

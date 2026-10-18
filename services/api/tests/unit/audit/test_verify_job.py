@@ -408,7 +408,10 @@ def test_the_two_settings_reach_the_job_not_the_defaults(monkeypatch: pytest.Mon
 
 async def test_the_wired_job_waits_on_the_query_services_own_slot(tmp_path: Path) -> None:
     audit, metrics = AuditService(FakeAuditRepository()), _metrics()
-    ctx: Any = SimpleNamespace(settings=SimpleNamespace(audit_wal_path=str(tmp_path / "a")))
+    settings = SimpleNamespace(
+        audit_wal_path=str(tmp_path / "a"), audit_page_structure_budget=50_000
+    )
+    ctx: Any = SimpleNamespace(settings=settings)
     await audit.start(ctx)
     try:
         job = build_audit_verify_job(

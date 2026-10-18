@@ -77,7 +77,9 @@ class AuditService:
 
             self._writer = AuditWriter(self._repository, ctx.settings.audit_wal_path)
             await self._writer.start()
-            self._query = AuditQueryService(self._repository)
+            self._query = AuditQueryService(
+                self._repository, structure_budget=ctx.settings.audit_page_structure_budget
+            )
         self._started = True
         if self._writer is not None:
             await fold_in(self._writer, journal_dir(ctx.settings.audit_wal_path))
