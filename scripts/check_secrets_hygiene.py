@@ -211,8 +211,9 @@ _WORD_START = r"(?<![\w./:-])"
 #: quoted prose counts as before. One pass, each quote read to its end once (only the last one of
 #: a kind can fail to close): the rules then read the line in linear time.
 _QUOTING = re.compile(
-    r"\\(\S)|\$?'([^']+)'|\$?\"((?:[^\"\\]|\\.)+)\"|\$?(?:''|\"\")(?=[^\s;&|()<>`])"
-    r"|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")|\$(\w+)(?=\$?['\"]|\\)"
+    r"\\(?P<esc>\S)|\$?'(?P<sq>[^']+)'|\$?\"(?P<dq>(?:[^\"\\]|\\.)+)\""
+    r"|\$?(?:''|\"\")(?=[^\s;&|()<>`])|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")"
+    r"|\$(?P<name>\w+)(?=\$?['\"]|\\)"
 )
 
 
@@ -226,11 +227,12 @@ _QUOTED_NAME = re.compile(r"\$(\w+)")
 
 
 def _unquote(m: re.Match[str]) -> str:
-    if m[3] is not None:
-        return _QUOTED_NAME.sub(r"${\1}", _QUOTED_ESCAPE.sub(r"\1", m[3]))
-    if m[4] is not None:
-        return "${" + m[4] + "}"
-    return m[1] or m[2] or ""
+    """A ``_QUOTING`` match as the shell reads it: its text, a braced name, or nothing."""
+    if m["dq"] is not None:
+        return _QUOTED_NAME.sub(r"${\1}", _QUOTED_ESCAPE.sub(r"\1", m["dq"]))
+    if m["name"] is not None:
+        return "${" + m["name"] + "}"
+    return m["esc"] or m["sq"] or ""
 
 
 def _unquoted(line: str) -> str:
@@ -419,6 +421,8 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #:   -x``)
 #: - a command as an expansion's ``-`` default: ``${X:-set -x}`` (no rule starts a word after a
 #:   ``-``, as in ``x-set``)
+#: - a command, shell or option word built by brace expansion or command substitution (#3583):
+#:   ``{set,} -x``, ``bash -{x,} ci.sh``, ``set -o xt{race,}``, ``$(echo bash) -x ci.sh``
 #: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does
 #:   not follow (#3525): ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
@@ -428,8 +432,12 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: - a shell path with a ``:`` in a segment (``_PIECE``): ``/opt/a:b/bin/bash -x``
 #: - a quoted word three quote levels deep (the scan takes two levels off):
 #:   ``bash -c "bash -c 'set \"-x\"'"``
-#: - a command going on to the next line: ``bash \`` then ``-x ci.sh``, or ``set -e`` then ``-x``
-#:   in a folded ``run: >`` block (each line is read alone)
+#: - a command going on to the next line (#3583): ``bash \`` then ``-x ci.sh``, or ``set -e`` then
+#:   ``-x`` in a folded ``run: >`` block or a plain multi-line scalar (each line is read alone)
+#: - a ``#`` inside a string opened on an earlier line (#3583), read as a comment, its line skipped:
+#:   ``X='`` then ``#'; set -x``
+#: - an escape in an inline double-quoted ``run:`` value, which YAML decodes before the shell runs
+#:   it (#3583): ``run: "set \x2dx"``
 #: - an ``ERR``, ``EXIT`` or ``RETURN`` trap: it runs once, on its event, not before each command
 #:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
 #: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh

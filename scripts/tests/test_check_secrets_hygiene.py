@@ -545,8 +545,9 @@ TRACED = [
     "tr''ap 'echo T' DEBUG",
     # #3400: a name before a quote, a $ and a quote, or an escape, braced as the quotes come off: a
     # command, a shell or option letters after an expansion that may be empty, not another name
-    # (main read the '', "" and \ forms as a word after a quote; bash 5.3 traced each, X unset).
+    # (main read the '', "" and \ forms as a word after a quote; bash 5.3 traced each, names unset).
     "$X''set -x",
+    "$XY''set -x",
     '$X""set -x',
     "$X\\set -x",
     "$X'set' -x",
@@ -554,6 +555,7 @@ TRACED = [
     "$X$'set' -x",
     "$X''bash -x ci.sh",
     "$X\\bash -x ci.sh",
+    "$PRE\\bash -x ci.sh",
     '$X"bash" -x ci.sh',
     '$X$""bash -x ci.sh',
     "$BASH'' -x ci.sh",
@@ -699,6 +701,10 @@ NOT_TRACED = [
     "bash --verb${X}ose ci.sh",
     "$'\\x73et' -x",
     "set ''>log -x",
+    # #3400: listed beside _SET_X as not reported (#3583), though they trace (bash 5.3): a command
+    # word built by brace expansion or command substitution.
+    "{set,} -x",
+    "$(echo set) -x",
 ]
 #: #3400: listed beside _SET_X as reported though not tracing (the scan's safe side; bash 5.3 traced
 #: none of those it ran: tmux and gh were not run), pinned so that the list stays true.
@@ -708,6 +714,7 @@ REPORTED_NOT_TRACING = [
     'echo "use bash" -x',
     "a+bash -x ci.sh",
     "x=bash -x ci.sh",
+    "a@bash -x ci.sh",
     "bash --rcfile --xtrace ci.sh",
     '[ -n "$SHELL" -a -x "$SHELL" ]',
 ]
@@ -751,12 +758,25 @@ def test_listed_over_report_is_flagged(tmp_path: Path, line: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "run", ["|\n          bash \\\n            -x ci.sh", ">\n          set -e\n          -x"]
+    "run",
+    [
+        "|\n          bash \\\n            -x ci.sh",
+        ">\n          set -e\n          -x",
+        "bash\n          -x ci.sh",
+    ],
 )
 def test_command_going_on_to_the_next_line_is_not_read_whole(tmp_path: Path, run: str) -> None:
-    # #3400: listed beside _SET_X as not reported, though bash 5.3 traced both (the folded block
-    # runs `set -e -x`): each line is read alone. Pinned until the scan joins such lines first.
+    # #3400: listed beside _SET_X as not reported, though each traces (bash 5.3; YAML folds the
+    # last two into `set -e -x` and `bash -x ci.sh`): each line is read alone. Pinned until the
+    # scan joins them first (#3583).
     _write(tmp_path, WF, _runs(run))
+    assert h.check_workflows(tmp_path) == []
+
+
+def test_hash_in_a_string_from_the_line_before_is_read_as_a_comment(tmp_path: Path) -> None:
+    # #3400: listed beside _SET_X as not reported, though bash 5.3 traced it: the `#` is inside
+    # the string `X='` opened, not a comment. Pinned until the scan tracks such quotes (#3583).
+    _write(tmp_path, WF, _runs("|\n          X='\n          #'; set -x"))
     assert h.check_workflows(tmp_path) == []
 
 
