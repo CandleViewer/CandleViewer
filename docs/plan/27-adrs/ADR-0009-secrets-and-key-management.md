@@ -214,3 +214,15 @@ caller passes (SR-E27-09). The pair is stored `pending` only after the check pas
 error or the bound stores nothing (decision 7, in place of SR-E27-01's `pending` row destroyed on
 refusal, whose ciphertext 0024 would keep). Both paths share one MAC wrapper and one record close. A
 stored key's borrow also re-checks C-2.8 on its row before its audit and any decrypt (SR-E27-14).
+
+## Amendment 7 (2026-10-18, #3009; ADR-0037 decision 6, accepted on an interim basis on #3009)
+
+Adds one application secret to the key inventory (Design §8; Amendment 4, "Unchanged").
+
+- **The audit lane key** MACs the frames, marker and release note of the journal-first audit lane
+  (ADR-0037): 32 bytes, one per environment (C-2.11), an application secret like
+  `CV_AUTH_CSRF_KEY_HEX` and not under the KEK. It lives in the file that `CV_AUDIT_LANE_KEY_FILE`
+  names, by default `/run/secrets/cv_audit_lane_key` (a compose secret); during a rotation the
+  previous key, which only verifies, is in `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`. The composition root
+  reads both once at boot and hands the bytes to `audit` (C-3.2); logs carry only each key's `kid`.
+  The file rules and the boot refusals: `24-internal-schemas.md` §15.6 and ADR-0037 decision 6.
