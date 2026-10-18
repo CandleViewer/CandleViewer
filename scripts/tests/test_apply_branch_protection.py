@@ -13,26 +13,13 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import apply_branch_protection as abp
 
+ROOT = SCRIPTS_DIR.parent
+
 
 def _valid_desired_state() -> dict:
-    return {
-        "branch": "main",
-        "required_pull_request_reviews": {
-            "required_approving_review_count": 2,
-            "require_code_owner_reviews": True,
-            "dismiss_stale_reviews": True,
-            "require_last_push_approval": True,
-        },
-        "required_conversation_resolution": True,
-        "required_linear_history": True,
-        "allow_force_pushes": False,
-        "allow_deletions": False,
-        "enforce_admins": True,
-        "required_status_checks": {"strict": True, "contexts": ["governance"]},
-        "x-pending-contexts": ["lint"],
-        "merge_queue": {"merge_method": "SQUASH"},
-        "$comment": "ignored",
-    }
+    """The committed file, plus a merge queue for the ruleset tests (the file declares none)."""
+    data = json.loads((ROOT / ".github/branch-protection.json").read_text(encoding="utf-8"))
+    return {**data, "merge_queue": {"merge_method": "SQUASH"}}
 
 
 def test_load_desired_state_valid_file_round_trips(tmp_path: Path) -> None:
@@ -57,33 +44,45 @@ def test_load_desired_state_invalid_json_raises(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "mutation,message_fragment",
     [
-        (lambda d: d["required_pull_request_reviews"].update(required_approving_review_count=1), "review_count"),
-        (lambda d: d["required_pull_request_reviews"].update(require_code_owner_reviews=False), "code_owner"),
+        (lambda d: d.update(allow_deletions=True), "allow_deletions"),
+        (lambda d: d.update(lock_branch=True), "lock_branch"),
         (lambda d: d.update(enforce_admins=False), "enforce_admins"),
         (lambda d: d.update(allow_force_pushes=True), "force_pushes"),
         (lambda d: d.update(required_linear_history=False), "linear_history"),
     ],
 )
-# Regression: encodes E01-Q01 cases 1.1-1.5 (originating case id) -- desired-state
-# mutations that must be rejected (review count, code-owner reviews, enforce_admins,
-# force pushes, linear history).
+# Regression: encodes E01-Q01 cases 1.3-1.5 (originating case id) -- desired-state
+# mutations that must be rejected (enforce_admins, force pushes, linear history). Cases
+# 1.1-1.2 (review count, code-owner reviews) are weaker-than-live refusals now (#3103).
 def test_validate_desired_state_rejects_weakened_settings(mutation, message_fragment) -> None:
     data = _valid_desired_state()
     mutation(data)
-    with pytest.raises(abp.DesiredStateError):
+    with pytest.raises(abp.DesiredStateError, match=message_fragment):
         abp.validate_desired_state(data)
 
 
-def test_validate_desired_state_requires_contexts_list() -> None:
+@pytest.mark.parametrize(
+    "mutation,message_fragment",
+    [
+        (lambda d: d.update({"x-pending-contexts": ["lint"]}), "unknown key x-pending-contexts"),
+        (lambda d: d["required_status_checks"].update(contexts=["lint"]), "unknown key required_"),
+        (lambda d: d["required_status_checks"].update(checks="not-a-list"), "must be list"),
+        (lambda d: d["required_status_checks"].update(checks=[{"context": "lint"}]), "pairs"),
+        (lambda d: d.pop("lock_branch"), "missing lock_branch"),
+    ],
+)
+def test_validate_desired_state_refuses_unknown_missing_and_mistyped_keys(
+    mutation, message_fragment
+) -> None:
     data = _valid_desired_state()
-    data["required_status_checks"]["contexts"] = "not-a-list"
-    with pytest.raises(abp.DesiredStateError):
+    mutation(data)
+    with pytest.raises(abp.DesiredStateError, match=message_fragment):
         abp.validate_desired_state(data)
 
 
 def test_to_api_payload_strips_internal_keys() -> None:
     payload = abp.to_api_payload(_valid_desired_state())
-    for key in abp.NON_API_KEYS:
+    for key in [*abp.META_KEYS, *abp.CHECK_ONLY_KEYS, "$comment", "$deviations"]:
         assert key not in payload
     assert "required_pull_request_reviews" in payload
 
@@ -123,25 +122,25 @@ def test_diff_state_detects_added_removed_and_changed() -> None:
 
 # --- Live-state normalisation (finding: diff_state never went empty) -----
 
+
 def _recorded_get_protection_response() -> dict:
-    """Shape modelled on GitHub's documented GET
-    .../branches/{branch}/protection response: booleans wrapped as
-    `{"enabled": ...}` and nested objects carrying read-only `url` fields."""
+    """The live GET .../branches/main/protection response (read 2026-10-18, #3103): booleans
+    wrapped as `{"enabled": ...}`, read-only `url` fields, no `restrictions` key when unset."""
     return {
         "url": "https://api.github.com/repos/o/r/branches/main/protection",
         "required_status_checks": {
             "url": "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks",
-            "strict": True,
-            "contexts": ["governance"],
+            "strict": False,
+            "contexts": ["ci-required"],
             "contexts_url": "https://api.github.com/repos/o/r/branches/main/protection/required_status_checks/contexts",
-            "checks": [{"context": "governance", "app_id": -1}],
+            "checks": [{"context": "ci-required", "app_id": 15368}],
         },
         "required_pull_request_reviews": {
             "url": "https://api.github.com/repos/o/r/branches/main/protection/required_pull_request_reviews",
-            "required_approving_review_count": 2,
-            "require_code_owner_reviews": True,
-            "dismiss_stale_reviews": True,
-            "require_last_push_approval": True,
+            "required_approving_review_count": 0,
+            "require_code_owner_reviews": False,
+            "dismiss_stale_reviews": False,
+            "require_last_push_approval": False,
         },
         "enforce_admins": {
             "url": "https://api.github.com/repos/o/r/branches/main/protection/enforce_admins",
@@ -150,8 +149,11 @@ def _recorded_get_protection_response() -> dict:
         "required_linear_history": {"enabled": True},
         "allow_force_pushes": {"enabled": False},
         "allow_deletions": {"enabled": False},
-        "required_conversation_resolution": {"enabled": True},
-        "restrictions": None,
+        "required_conversation_resolution": {"enabled": False},
+        "block_creations": {"enabled": False},
+        "lock_branch": {"enabled": False},
+        "allow_fork_syncing": {"enabled": False},
+        "required_signatures": {"url": "https://api.github.com/x", "enabled": False},
     }
 
 
@@ -160,23 +162,26 @@ def test_normalise_live_state_unwraps_bool_enabled_shape() -> None:
     assert normalised["enforce_admins"] is True
     assert normalised["allow_force_pushes"] is False
     assert normalised["required_linear_history"] is True
-    assert normalised["required_conversation_resolution"] is True
+    assert normalised["required_signatures"] is False
+    assert normalised["restrictions"] is None
 
 
 def test_normalise_live_state_strips_nested_readonly_fields() -> None:
     normalised = abp._normalise_live_state(_recorded_get_protection_response())
     assert "url" not in normalised["required_status_checks"]
     assert "contexts_url" not in normalised["required_status_checks"]
-    assert "checks" not in normalised["required_status_checks"]
-    assert normalised["required_status_checks"]["contexts"] == ["governance"]
+    assert "contexts" not in normalised["required_status_checks"]
+    assert normalised["required_status_checks"]["checks"] == [
+        {"context": "ci-required", "app_id": 15368}
+    ]
     assert "url" not in normalised["required_pull_request_reviews"]
 
 
 def test_normalise_then_diff_against_matching_desired_is_a_no_op() -> None:
-    """AC4: re-applying identical settings must be a genuine no-op, not just
-    a no-op between two hand-built flat fixtures."""
+    """AC4 and #3103: the committed file describes the live protection exactly, so re-applying
+    it is a genuine no-op, not just a no-op between two hand-built flat fixtures."""
     desired = _valid_desired_state()
-    payload = abp.to_api_payload(desired)
+    payload = abp.compare_view(desired)
     live = abp._normalise_live_state(_recorded_get_protection_response())
     diff = abp.diff_state(live, payload)
     assert diff.is_empty(), diff.render()
@@ -184,16 +189,17 @@ def test_normalise_then_diff_against_matching_desired_is_a_no_op() -> None:
 
 def test_normalise_then_diff_detects_real_drift() -> None:
     desired = _valid_desired_state()
-    payload = abp.to_api_payload(desired)
+    payload = abp.compare_view(desired)
     raw_live = _recorded_get_protection_response()
-    raw_live["required_pull_request_reviews"]["require_code_owner_reviews"] = False
+    raw_live["required_pull_request_reviews"]["require_code_owner_reviews"] = True
     live = abp._normalise_live_state(raw_live)
     diff = abp.diff_state(live, payload)
     assert not diff.is_empty()
-    assert diff.changed["required_pull_request_reviews"][0]["require_code_owner_reviews"] is False
+    assert diff.changed["required_pull_request_reviews"][0]["require_code_owner_reviews"] is True
 
 
 # --- Merge queue (finding: merge_queue never applied or drift-checked) ----
+
 
 def test_merge_queue_rule_params_shapes_ruleset_body() -> None:
     desired = _valid_desired_state()

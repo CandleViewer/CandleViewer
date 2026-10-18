@@ -100,9 +100,8 @@ def _read_text(path: Path) -> str:
 def _import_check_reconciliation() -> Any:
     """Import scripts/check_required_check_reconciliation.py (GOV-005) as a
     module. It already implements assertion 1's exact logic (every §9 gate
-    name present in `.github/branch-protection.json` `contexts` or
-    `x-pending-contexts`, with a job in `.github/workflows/*.yml` once
-    required); this pack reuses it rather than re-implementing a second
+    enforced through `.github/branch-protection.json` or listed in its
+    `pending_checks`); this pack reuses it rather than re-implementing a second
     parser of the same source-of-truth table (C-16.5 duplication ban)."""
     import importlib.util
 
@@ -120,16 +119,15 @@ def _import_check_reconciliation() -> Any:
 def check_gate_registration(repo_root: Path = REPO_ROOT) -> list[Violation]:
     """Assertion 1 (ticket Scope item 1): every gate name in CONSTITUTION.md
     §9's table is either implemented locally (a job exists) or explicitly
-    registered as CI-only via `x-pending-contexts`, with an owning epic
-    documented in that file's `$note_pending` -- no gate silently missing."""
+    registered as CI-only via `pending_checks`, with the reason and the item
+    that closes it -- no gate silently missing."""
     recon = _import_check_reconciliation()
     try:
-        desired_state = recon.load_json(str(repo_root / ".github" / "branch-protection.json"))
-        constitution_names = recon.load_constitution_check_names(str(repo_root / "CONSTITUTION.md"))
-        workflow_job_names = recon.load_workflow_job_names(
-            str(repo_root / ".github" / "workflows" / "*.yml")
+        errors, _pending = recon.reconcile_repo(
+            str(repo_root / ".github" / "branch-protection.json"),
+            str(repo_root / "CONSTITUTION.md"),
+            str(repo_root / ".github" / "workflows" / "*.yml"),
         )
-        errors = recon.reconcile(desired_state, constitution_names, workflow_job_names)
     except recon.ReconciliationError as exc:
         return [Violation("C-9.1", f"gate registration check could not run: {exc}")]
     return [Violation("C-9.1", e) for e in errors]

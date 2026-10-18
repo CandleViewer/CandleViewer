@@ -364,8 +364,8 @@ def test_release_checklist_needs_a_green_e2e_nightly_on_the_tip_it_cuts() -> Non
 def test_e2e_nightly_adds_no_check_a_required_context_names() -> None:
     # C-9.1 is unchanged: the nightly's check runs carry names no branch-protection context uses.
     protection = json.loads((ROOT / ".github/branch-protection.json").read_text(encoding="utf-8"))
-    required = set(protection["required_status_checks"]["contexts"])
-    required |= set(protection["x-pending-contexts"])
+    required = {check["context"] for check in protection["required_status_checks"]["checks"]}
+    required |= set(protection["pending_checks"])
     jobs = _load(NIGHTLY)["jobs"]
     lane = _load(LANE_FILE)["jobs"]
     checks = {f"{jobs['e2e']['name']} / {job.get('name', name)}" for name, job in lane.items()}

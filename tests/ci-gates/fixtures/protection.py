@@ -32,8 +32,8 @@ _CONSTITUTION_NAMES = [
 
 def _desired_state(contexts: list[str]) -> dict[str, object]:
     return {
-        "required_status_checks": {"contexts": contexts},
-        "x-pending-contexts": [n for n in _CONSTITUTION_NAMES if n not in contexts],
+        "required_status_checks": {"checks": [{"context": c, "app_id": 15368} for c in contexts]},
+        "pending_checks": {n: "fixture" for n in _CONSTITUTION_NAMES if n not in contexts},
     }
 
 
