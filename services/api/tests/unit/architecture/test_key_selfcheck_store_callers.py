@@ -3,7 +3,10 @@
 `KeySelfCheckStore` can set `trading_enabled` false on any account of the environment and rewrite
 the verification columns of any key, with no principal. `accounts.selfcheck` is its one caller,
 the M10 port its one definition, the Postgres adapter its one implementation and the composition
-root's `key_selfcheck_wiring` the one place that builds it for the job. A reference anywhere else in
+root's `key_selfcheck_wiring` the one place that builds it for the job. Key import (#836 slice
+2b4) also writes the verified columns, of the one key its own request stored under the id M2
+minted, after the route's RBAC (`keys:manage`): `accounts.key_import` calls `record_pass` only.
+A reference anywhere else in
 `candleviewer` (an `api/` router, a WS topic, the `AccountsRepository` facade) fails here and must
 be reviewed as an RBAC bypass first (C-12.4, SR-051), as for the row counts in
 `test_accounts_row_counts_callers.py`.
@@ -50,6 +53,7 @@ ALLOWED = frozenset(
         "storage/repositories/key_selfcheck_sqlalchemy.py",
         "key_selfcheck_wiring.py",
         "account_health_wiring.py",
+        "accounts/key_import.py",
     }
 )
 
@@ -121,3 +125,7 @@ def test_the_wiring_check_sees_every_way_to_reach_a_write_and_lets_the_read_thro
     source: str, reached: set[str]
 ) -> None:
     assert _reaches_a_write(source) == reached
+
+
+def test_key_import_writes_only_the_verified_columns() -> None:
+    assert _users()["accounts/key_import.py"] == {"record_pass"}

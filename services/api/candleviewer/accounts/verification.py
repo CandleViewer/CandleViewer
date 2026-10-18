@@ -109,7 +109,12 @@ class KeyRefused(AccountsError):
 
 class VerificationInconclusive(AccountsError):
     """No verdict: refused signature, clock drift, rate limit, outage, a slow or unreadable reply.
-    Import answers 502 and stores nothing; a self-check keeps no fresh result (SR-E27-18)."""
+    Import answers 502 (503 with no answer) and stores nothing; a self-check keeps no fresh result
+    (SR-E27-18). `ret_code` is the venue's return code when it sent one, never its text."""
+
+    def __init__(self, code: str, ret_code: int | None = None) -> None:
+        super().__init__(code)
+        self.ret_code = ret_code
 
 
 class KeyFacts(Protocol):

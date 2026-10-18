@@ -10,8 +10,9 @@ first checks the live owner role, so a non-owner holding one gets
 narrows silently in SQL. Not-found, not-yours, soft-deleted and path-mismatched all return
 `None`, so there is no existence oracle. No method names or returns an envelope column
 (C-3.2): key writes (insert, revoke, touch) belong to M2's credential store. Two surfaces take no
-scope, and no route reaches either: `AccountsRowCounts`, aggregate counts for the M13 gauges, never
-a row (#2314), and `KeySelfCheckStore`, the stored-key self-check's system port (E27-T03, #836).
+scope: `AccountsRowCounts`, aggregate counts for the M13 gauges, never a row and reached by no route
+(#2314), and `KeySelfCheckStore`, the stored-key self-check's system port (E27-T03, #836), which
+key import reaches only to write the verified columns of the key its own request stored.
 """
 
 from __future__ import annotations
@@ -296,7 +297,8 @@ class KeySelfCheckStore(Protocol):
 
     The job has no principal, so it takes no scope: `accounts.selfcheck` is its one caller, and
     the composition root's `account_health_wiring` a second, reviewed reader of `targets()` alone
-    (E27-T04), both pinned by `tests/unit/architecture/test_key_selfcheck_store_callers.py`
+    (E27-T04); key import also writes the verified columns of the key its own request stored
+    (`record_pass`). All are pinned by `tests/unit/architecture/test_key_selfcheck_store_callers.py`
     (C-12.4). It writes the verification columns of `api_keys` and, of `exchange_accounts`,
     `trading_enabled` with the policy-disarm columns, never a ciphertext, identity or status
     column. Each write returns whether it changed a row."""

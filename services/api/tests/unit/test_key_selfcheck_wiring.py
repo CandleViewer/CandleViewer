@@ -153,6 +153,7 @@ async def test_any_other_error_is_inconclusive_with_a_probe_error_name_only(
     inconclusive = await judge(error, bound_s=0.0)  # the adapter's bound cuts the hang at once
     assert isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == code
     assert inconclusive.__cause__ is None and inconclusive.__suppress_context__
+    assert inconclusive.ret_code == (error and error.exchange_ret_code)  # the code alone (#836)
 
 
 @pytest.mark.parametrize(
