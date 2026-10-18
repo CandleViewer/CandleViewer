@@ -3,14 +3,16 @@
 `testApiKey`'s WebSocket half (`KeyTestResult.websocket`, served by slice 2b6): dial the private
 stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11), send one `auth`
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
-close. It never subscribes (#2877 and #848 own the streaming socket). One 5 s bound covers the
-dial, the signature and the reply; the socket is closed on every path under its own short bound,
-and a cancellation propagates. Diagnostic only: it enforces nothing (ruling 11 on #836).
+close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
+falls back to another host. One 5 s bound covers the dial, the signature and the reply; the
+socket is closed on every path under its own short bound, and a cancellation propagates.
+Diagnostic only: it enforces nothing (ruling 11 on #836).
 SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per `KeyWsProbe`, then
 `rate_limited` at once with nothing signed or dialled (slice 2b5b's adapter holds the
 deployment's one probe). Results are `KeyProbeError` names (SR-E27-08), never
 exchange text: a refused `auth` is `auth_error`, no answer `timeout`, a failed or dropped
-connection or a frame that is not JSON `transport_error`, any other reply `exchange_unknown`.
+connection or a frame that does not decode as JSON `transport_error`, any other reply
+`exchange_unknown`.
 """
 
 from __future__ import annotations
@@ -149,7 +151,7 @@ def _reply_error(frame: str) -> WsProbeError | None:
     """None when the stream granted `auth`. Its `ret_msg`, exchange text, is never read."""
     try:
         reply = json.loads(frame)
-    except ValueError:
+    except (ValueError, RecursionError):  # nested past the decoder's recursion limit
         return "transport_error"
     if not isinstance(reply, dict) or reply.get("op") != "auth":
         return "exchange_unknown"

@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import get_args
 from uuid import UUID
@@ -187,34 +188,41 @@ async def test_a_granted_auth_passes_with_its_latency_after_one_frame_then_close
     [
         (DENIED, "auth_error"),
         ("not json", "transport_error"),
+        ("[" * 100_000 + "]" * 100_000, "transport_error"),
         ("[]", "exchange_unknown"),
         ('{"op": "pong", "success": true}', "exchange_unknown"),
         ('{"op": "auth", "success": "true"}', "exchange_unknown"),
     ],
-    ids=["denied", "not-json", "not-an-object", "other-op", "success-not-bool"],
+    ids=["denied", "not-json", "too-deep", "not-an-object", "other-op", "success-not-bool"],
 )
 async def test_each_reply_is_its_key_probe_error_and_the_socket_is_closed(
     reply: str, error: WsProbeError
 ) -> None:
+    """`too-deep` nests past the C decoder's recursion limit, a `RecursionError` and not a
+    `ValueError`. How deep that is depends on the interpreter: 3.14 decodes 10,001 levels."""
     stream = Stream(reply)
     assert await run(stream) == WsProbeResult(ok=False, error=error, latency_ms=0)
-    assert stream.closes == 1 and set(get_args(WsProbeError)) <= PROBE_ERRORS  # the contract's
+    assert stream.closes == 1
+
+
+def test_the_probe_names_only_key_probe_errors_of_the_contract() -> None:
+    assert set(get_args(WsProbeError)) <= PROBE_ERRORS
 
 
 @pytest.mark.parametrize(
-    "stream",
+    "make",
     [
-        Stream(dial=ConnectionRefusedError("demo stream down")),
-        Stream(dial=InvalidHandshake("upgrade refused")),
-        Stream(ConnectionResetError("reset")),
-        Stream(ConnectionClosedError(None, None)),
+        pytest.param(lambda: Stream(dial=ConnectionRefusedError("down")), id="unreachable"),
+        pytest.param(lambda: Stream(dial=InvalidHandshake("upgrade refused")), id="handshake"),
+        pytest.param(lambda: Stream(ConnectionResetError("reset")), id="reset"),
+        pytest.param(lambda: Stream(ConnectionClosedError(None, None)), id="closed"),
     ],
-    ids=["unreachable", "handshake", "reset", "closed"],
 )
 async def test_an_unreachable_or_dropped_stream_fails_on_its_own_host_with_no_fallback(
-    stream: Stream,
+    make: Callable[[], Stream],
 ) -> None:
     """AC "No silent fallback": `transport_error`, one dial of the demo host, no retry."""
+    stream = make()
     assert await run(stream) == WsProbeResult(ok=False, error="transport_error", latency_ms=None)
     assert stream.dialled == [URLS["demo"]]
     assert stream.closes == (0 if stream.dial else 1)  # a socket that opened is closed
@@ -274,6 +282,32 @@ async def test_the_open_budget_is_10_per_5_minutes_then_refused_at_once_then_ope
     assert (len(stream.dialled), len(calls)) == (10, 10)
     clock.now += 1  # 300 s after the first open
     assert (await once(11)).ok and len(stream.dialled) == 11
+
+
+async def test_the_window_slides_so_no_300_s_ever_holds_more_than_10_opens() -> None:
+    """SR-E27-05 against a fixed or tumbling window: one open at 0 s and nine at 299 s. At 300 s
+    only the first has left the window, so one more opens and the next is refused, and the
+    window stays full until 599 s, when the nine leave it."""
+    clock, stream = Clock(), Stream()
+    probe = probe_for(stream, clock)
+
+    async def at(second: float) -> WsProbeError | None:
+        clock.now = 1000.0 + second
+        return (await probe.probe(fake_capability(), "demo", CREDENTIAL_ID)).error
+
+    assert [await at(0)] + [await at(299) for _ in range(9)] == [None] * 10
+    later = [await at(second) for second in (300, 300, 301, 598, 599)]
+    assert later == [None, "rate_limited", "rate_limited", "rate_limited", None]
+
+
+async def test_a_refused_unknown_environment_takes_no_open_from_the_budget() -> None:
+    stream = Stream()
+    probe = probe_for(stream)
+    for _ in range(10):
+        with pytest.raises(ValueError, match="unknown environment"):
+            await probe.probe(fake_capability(), "mainnet", CREDENTIAL_ID)
+    results = [await probe.probe(fake_capability(), "demo", CREDENTIAL_ID) for _ in range(10)]
+    assert ([r.ok for r in results], len(stream.dialled)) == ([True] * 10, 10)
 
 
 async def test_no_key_id_signature_or_exchange_text_reaches_a_log_repr_or_metric(

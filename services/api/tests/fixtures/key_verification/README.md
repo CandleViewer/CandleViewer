@@ -12,9 +12,13 @@ demo (host `api-demo.bybit.com`) and no symbol. Redaction: no key id, secret, si
 identifier. The UID is the synthetic `1000001` of `packages/fixtures/accounts/accounts.json`,
 `apiKey` is `***`, and the whitelist uses the documentation address 203.0.113.7 (RFC 5737).
 
-The two `ws_auth_*` files are the private stream's `auth` reply (`success`, `ret_msg`, `op`,
-`conn_id`, the fields of the v5 "Connect" page; not re-read from this network) on host
-`stream-demo.bybit.com`, with fabricated connection ids and no `time`.
+The two `ws_auth_*` files are the private stream's `auth` reply on host `stream-demo.bybit.com`,
+with fabricated connection ids and no `time`. Their fields (`success`, `ret_msg`, `op`, `conn_id`)
+are the ack that `docs/research/11-backend-tech.md` §2.2 (line 43) gives for the v5 "Connect"
+page, not re-read from this network. But `docs/research/06-bybit-api.md` §11 and §12 (lines 353
+and 376) give the order-entry stream's `auth` reply as `retCode` and `connId`, and say the same
+scheme applies to `/v5/private`. Before these files are replaced, #2240's capture must show which
+shape `/v5/private` returns: in the `retCode` shape every reply would read as `exchange_unknown`.
 
 | File                  | Call                             | Notable                                                              |
 | --------------------- | -------------------------------- | -------------------------------------------------------------------- |
