@@ -1,4 +1,4 @@
-"""E27-T04 (#837) W4b: the `wallet` topic (`accounts/wallet_topic.py`) on the real gateway parts:
+"""E27-T04 (#837): the `wallet` topic (`accounts/wallet_topic.py`) on the real gateway parts:
 what a snapshot holds for the caller's scope (C-12.4), the health-only delta of a transition, the
 balance delta of a refresh and of a turn to stale, and a delta that fails. Fake clock; every frame a
 subscriber gets is validated against 23-ws-protocol.md §15.4."""

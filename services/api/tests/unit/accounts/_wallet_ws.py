@@ -1,4 +1,4 @@
-"""E27-T04 (#837) W4b helpers: a `wallet` subscriber on the real gateway parts (`ConnectionAuthz`,
+"""E27-T04 (#837) test helpers: a `wallet` subscriber on the real gateway parts (`ConnectionAuthz`,
 `TopicEmitter`, `SequencingHub`), each frame it gets validated against 23-ws-protocol.md §13-§15;
 the principals of the scope tests; and the two monitored accounts with the topic on a hub."""
 

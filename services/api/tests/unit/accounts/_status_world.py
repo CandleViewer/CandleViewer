@@ -1,4 +1,4 @@
-"""E27-T04 (#837) W4: two monitored accounts on a fake clock, read through the `ExchangeAccount`
+"""E27-T04 (#837): two monitored accounts on a fake clock, read through the `ExchangeAccount`
 read model (`accounts/status.py`); the `wallet` topic tests extend it with a hub (`_wallet_ws.py`).
 """
 

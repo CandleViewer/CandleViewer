@@ -1,4 +1,4 @@
-"""Contract (E27-T04 W4a, #837): the `ExchangeAccount` read model as its provider (C-6.2). In each
+"""Contract (E27-T04, #837): the `ExchangeAccount` read model as its provider (C-6.2). In each
 state it serves, its JSON form merged into an account row validates against 22-api-openapi.yaml's
 `ExchangeAccount` and the generated model, with exactly the five fields it owns, each declared
 there, and nothing in `balance` or `health` that `WalletBalance` or `AccountHealth` does not

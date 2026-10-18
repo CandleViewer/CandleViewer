@@ -1,4 +1,4 @@
-"""E27-T04 (#837) W4a: the `ExchangeAccount` read model (`accounts/status.py`). AC1, AC2 and AC5 as
+"""E27-T04 (#837): the `ExchangeAccount` read model (`accounts/status.py`). AC1, AC2 and AC5 as
 the account routes will serve them, the `connection_state` order, an account that is not monitored,
 and Decimal amounts that leave as plain digit strings. Fake clock, no I/O."""
 
