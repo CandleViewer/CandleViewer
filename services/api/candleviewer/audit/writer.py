@@ -224,7 +224,8 @@ class AuditWriter:
 
     @property
     def buffer_depth(self) -> int:
-        """Records accepted into the WAL by this process, not yet in Postgres."""
+        """Records accepted into the WAL by this process whose batch is not yet committed, so
+        a frame leaves the count with its bytes; an earlier run's backlog is not in it."""
         return self._pending
 
     @property
@@ -266,6 +267,8 @@ class AuditWriter:
         if self._task is not None and not self._task.done():
             return
         self._failure = None
+        # A flusher that stopped mid-batch confirmed records it never committed: count again.
+        self._pending = len(self._uncommitted)
         self._running = True
         # An op abandoned by a previous stop() may have read a batch with no commit
         # to clear this; a stale flag would refuse the emergency compaction (#2250).
@@ -564,6 +567,7 @@ class AuditWriter:
                 batch = await self._shielded("audit-wal-read", self._read_batch)
                 if not batch:
                     break
+                before = self._committed_through  # only this process's records have tokens
                 for end_offset, record in batch:
                     # A frame appended before records were normalised is made storable here.
                     await self._write_with_retry(storable(record))
@@ -571,7 +575,8 @@ class AuditWriter:
                     self._confirm(end_offset)
                 # One cursor fsync per batch: a crash mid-batch re-inserts the
                 # already-written prefix, which ON CONFLICT (record_id) ignores.
-                await self._shielded("audit-wal-commit", self._commit, batch[-1][0], len(batch))
+                mine = self._committed_through - before  # what `_pending` counted of the batch
+                await self._shielded("audit-wal-commit", self._commit, batch[-1][0], mine)
 
     def _confirm(self, end_offset: int) -> None:
         """The record whose frame ends at `end_offset` is in Postgres, and so is every frame

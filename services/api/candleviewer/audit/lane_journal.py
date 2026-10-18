@@ -584,6 +584,7 @@ LANE_MAX_BYTES, SHARED_MAX_BYTES = 32 << 20, 16 << 20  # S1c: the byte quotas
 _BOOT_ROWS = ("audit.lane_started", "audit.lane_resumed")  # Limits: no cap refuses them
 LANE_WAITERS: Mapping[LaneClass, int] = MappingProxyType({"reserved": 192, "shared": 64})
 DRAIN_BATCH, CONFIRM_POLL_S, RETRY_S = 200, 0.05, (0.5, 30.0)  # S2a2: the drain's (`audit/lane.py`)
+DRAIN_PAUSE_DEPTH = 256  # S2a2c: no hand-over while the writer holds this many (Limits)
 
 
 class LaneNotAdmitted(LaneError):

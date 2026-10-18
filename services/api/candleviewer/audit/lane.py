@@ -43,10 +43,13 @@ class AuditLane:
         retry_s: tuple[float, float] = lj.RETRY_S,
         poll_s: float = lj.CONFIRM_POLL_S,
         batch: int = lj.DRAIN_BATCH,
+        pause_depth: int = lj.DRAIN_PAUSE_DEPTH,
         new_lane: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
         self.journal, self._writer, self._new_lane = journal, writer, new_lane
         self._retry, self._poll, self._batch = retry_s, poll_s, batch
+        self._pause_depth, self._paused = pause_depth, False  # Limits: the drain's pacing
+        self.paused_batches = 0  # each pause at `pause_depth` (S4a's metric)
         self.confirmed: lj.Pos | None = None
         self._lane: uuid.UUID | None = None  # the scan's; None while no frame or marker set one
         self._origin = lj.LaneMarker(uuid.UUID(int=0), (1, 0), 1, lj.ZERO_MAC, True)  # next scan's
@@ -79,10 +82,11 @@ class AuditLane:
         return result
 
     async def _boot_row(self, record: AuditEmission) -> None:
-        """A boot row refused all the same stops the lane, so a failed `start()` refuses appends."""
+        """A boot row refused all the same, or cancelled, stops the lane: a failed `start()`
+        refuses appends."""
         try:
             await self.append(record)
-        except lj.LaneError as exc:
+        except BaseException as exc:
             if self.journal.refusal is None:
                 self.journal.stop(exc)
             raise
@@ -151,13 +155,19 @@ class AuditLane:
                 delay = min(2 * delay, self._retry[1])
                 continue
             delay = self._retry[0]
-            if not (self._units or self._dirty):
-                await self._pause(self._poll if self._pending else None)
+            if self._paused or not (self._units or self._dirty):
+                await self._pause(self._poll if self._pending or self._paused else None)
 
     async def _hand_over_batch(self) -> bool:
-        """Up to `batch` units in order; True when a transient refusal ended it (Ingest step 2)."""
+        """Up to `batch` units in order, none while the writer holds `pause_depth` records not
+        yet in Postgres (Limits); True when a transient refusal ended it (Ingest step 2)."""
         for _ in range(min(self._batch, len(self._units))):
-            unit = self._units[0]
+            if self._writer.buffer_depth >= self._pause_depth:  # Limits: live `emit()` keeps it
+                if not self._paused:  # a pause counts once, however often the drain looks
+                    self.paused_batches += 1
+                self._paused = True
+                return False
+            self._paused, unit = False, self._units[0]
             try:
                 token = await self._hand_over(unit)
             except (aw.AuditUnavailable, aw.AuditWriterStopped):
