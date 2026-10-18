@@ -7,6 +7,7 @@ sleeps: every wait is on a frame or an event, bounded by `asyncio.timeout`.
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections.abc import Iterable, Mapping
 from typing import Any
 from unittest.mock import Mock
@@ -49,21 +50,27 @@ def _counts(since: list[float] | None = None) -> list[float]:
 
 
 def _attached(
-    levels: int = 2, max_frame_bytes: int | None = None, **config: Any
+    levels: int = 2, max_frame_bytes: int | None = None, now: float = 0.0, **config: Any
 ) -> tuple[ConnectionPipeline, list[str], Conn]:
     """A pipeline attached to a `Conn` (a book of `levels` bids) whose emitter pushes into it,
-    with a close that takes the terminal slot as `_Connection.close_with` does."""
+    with a close that takes the terminal slot as `_Connection.close_with` does, and a `notify`
+    that queues a `connection_quality` notice on `system` as `_Connection.push_system` does for a
+    principal with a role (§8.3). It attaches at `now` on the conn's clock."""
     source = Source()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         source.books[symbol] = Book(symbol)
         source.books[symbol].apply([[str(100 + i), "1"] for i in range(levels)], [])
     conn = Conn(source, ACC_A, max_frame_bytes=max_frame_bytes)
     asked: list[str] = []
+    system = itertools.count(1)
 
     def close(reason: str, *, bye: dict[str, Any] | None = None) -> None:
         asked.append(reason)
         frame = bye or bye_frame(reason, now_ms=BASE_MS)
         pipe.close(frame, int(frame["p"]["code"]), flush=reason != "slow_consumer")
+
+    def notify(body: dict[str, Any]) -> None:
+        pipe.push({"t": "d", "ch": "system", "s": next(system), "ts": BASE_MS, "e": "j", "p": body})
 
     pipe = ConnectionPipeline(
         encoding="cv.v1.json",
@@ -72,7 +79,8 @@ def _attached(
         wall_ms=lambda: BASE_MS,
         connection_id="ws_test",
     )
-    pipe.attach(conn.authz, conn.emitter)
+    conn.clock.now = now
+    pipe.attach(conn.authz, conn.emitter, notify)
     conn.emitter.push = pipe.push
     return pipe, asked, conn
 
@@ -366,7 +374,11 @@ async def test_the_timer_retries_one_parked_snapshot_per_tick_and_logs_once_per_
         assert attempts[5:] == [_TRADES, _BOOK, "book.ETHUSDT.50"]
         pipe.ladder.pacer.drop(subs[0])
         pipe.service(3.0)  # marked again, the book is tried at once: it was retried, not parked
-    assert [f["ch"] for f in _queued(pipe)] == [_TRADES, _BOOK, _BOOK]
+    # The priority lane holds, ahead, the RTT probe of the 1.0 classification (§9.1), unanswered,
+    # and the 2.0 one's `saturated` notice (§8.3); the 3.0 one changes nothing and sends no probe.
+    frames = _queued(pipe)
+    assert [(f["t"], f.get("ch")) for f in frames[:2]] == [("ping", None), ("d", "system")]
+    assert [f["ch"] for f in frames[2:]] == [_TRADES, _BOOK, _BOOK]
     failed = [(e["family"], e["suppressed"]) for e in logs if e["event"] == _SNAPSHOT_FAILED]
     assert failed == [("book", 0), ("trades", 0), ("book", 1), ("book", 0), ("book", 0)]
     assert _MARK not in repr(logs)

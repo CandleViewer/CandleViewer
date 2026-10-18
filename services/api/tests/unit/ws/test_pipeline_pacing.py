@@ -260,18 +260,18 @@ async def test_window_closes_at_next_due_on_the_injected_clock() -> None:
         await _turn(sock)
         rig.clock.now = 0.05
         [window] = await sock.next()
-        assert pipe.wait_s(0.05, 1.0) == 1.0  # no window left open
+        assert pipe.wait_s(0.05, 1.0) == pytest.approx(0.95)  # no window: the classification
     assert (window["s"], window["p"]["bids"]) == (first["s"] + 1, [["102", "1"]])
 
 
 async def test_a_window_opened_while_the_writer_idles_closes_on_time() -> None:
-    """§8.1: a window opened after the writer went idle (its wait read none, so 30 s) wakes it,
-    so it closes at its due time with no other frame to wake the writer."""
-    rig, sock = _Rig(BackpressureConfig(), tick_s=30.0), _Wire()
+    """§8.1: a window opened after the writer went idle (its wait read the 10 s classification)
+    wakes it, so it closes at its due time with no other frame to wake the writer."""
+    rig, sock = _Rig(BackpressureConfig(classify_interval_ms=10_000), tick_s=30.0), _Wire()
     async with _connected(rig, sock):
         await rig.sub(sock)
         rig.sequencing.publish(_BOOK, _bid("101"))
-        [first] = await sock.next()  # it left at once; then the writer waits its 30 s
+        [first] = await sock.next()  # it left at once; then the writer waits its 10 s
         rig.clock.now = 0.01
         rig.sequencing.publish(_BOOK, _bid("102"))  # opens the window, closing at 0.05
         rig.clock.now = 0.05

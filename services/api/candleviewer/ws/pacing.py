@@ -19,9 +19,12 @@ check, `tick` and `next_due` are O(1) until one is due (C-2.18). A window whose 
 its topic and tells `on_error` (the pipeline's containment, §10.1).
 
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
-`CLASSIFY_INTERVAL_S`: a class worsens at once and improves only after two consecutive better
-samples. `Pacer.apply` enforces it: `lagging` doubles throttles and forces coalescing; `saturated`
-and `overflowing` quadruple them and hold `heatmap` and `profile` to at most one frame a second.
+classification interval (`CV_WS_CLASSIFY_INTERVAL_MS`, `CLASSIFY_INTERVAL_S` by default): a class
+worsens at once and improves only after two consecutive better samples. `Pacer.apply` enforces it:
+`lagging` doubles throttles and forces coalescing; `saturated` and `overflowing` quadruple them and
+hold `heatmap` and `profile` to at most one frame a second. A queue depth that is not finite reads
+as a full queue, never as a healthy one (#2552). With the flag on the pipeline's writer turn runs
+the classification and sends the probe (`ws/pipeline.py`, #412).
 
 Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's monotonic
 `TopicEmitter.clock`: `offer` reads it; `tick`, `classify` and `apply` default `now` to it.
@@ -57,8 +60,14 @@ IMPROVE_AFTER: Final = 2
 DEGRADED_FAMILIES: Final = frozenset({"heatmap", "profile"})
 DEGRADED_THROTTLE_MS: Final = 1000
 RTT_PROBE_PREFIX: Final = "s-rtt-"
+#: Bytes from a CSPRNG in each probe id (§9.1): a fresh 48-bit token per probe.
+PROBE_TOKEN_BYTES: Final = 6
 #: §9.1: a server `ping` is answered within 10 s; a probe left unanswered that long is retired.
 PONG_TIMEOUT_S: Final = 10.0
+#: A probe is due once this share of its interval has passed since the last one: a classification
+#: tick that runs early against the last probe (that tick ran late) still sends one, and a caller
+#: that ticks faster sends at most two per interval.
+PROBE_DUE_SHARE: Final = 0.5
 
 
 class ConnectionClass(StrEnum):
@@ -119,17 +128,27 @@ class Classifier:
         return True
 
 
-class RttProbe:
-    """§9.1 RTT sampling: one server `ping` outstanding at a time, at most one per `interval_s`.
-    While a probe is unanswered its age counts as the RTT, so a socket that stopped draining reads
-    as slow at once rather than when (if ever) the `pong` arrives. After `PONG_TIMEOUT_S` the
-    probe is retired: its age becomes one sample and a fresh probe follows, so one lost `pong`
-    cannot hold the connection `saturated`."""
+def _probe_token() -> str:
+    return secrets.token_hex(PROBE_TOKEN_BYTES)
 
-    def __init__(self, interval_s: float = CLASSIFY_INTERVAL_S, nonce: str | None = None) -> None:
+
+class RttProbe:
+    """§9.1 RTT sampling: one server `ping` outstanding at a time, one per classification tick
+    (`interval_s` apart; a tick that runs early against the last probe still sends one,
+    `PROBE_DUE_SHARE`). Each id ends in a fresh random token, so no id follows from an earlier
+    one: only the one outstanding id, which a client learns from its `ping`, is a sample, and a
+    `pong` for any other id stores nothing. While a probe is unanswered its age counts as the RTT,
+    so a socket that stopped draining reads as slow at once rather than when (if ever) the `pong`
+    arrives. After `PONG_TIMEOUT_S` the probe is retired: its age becomes one sample and a fresh
+    probe follows, so one lost `pong` cannot hold the connection `saturated`. A sample is never
+    negative (§15.9 `rtt_ms`), whatever clock stamps the `pong`."""
+
+    def __init__(
+        self, interval_s: float = CLASSIFY_INTERVAL_S, *, token: Callable[[], str] = _probe_token
+    ) -> None:
         self.interval_s = interval_s
-        #: Unpredictable per connection, so a client cannot answer a probe before it is sent.
-        self.prefix = f"{RTT_PROBE_PREFIX}{secrets.token_hex(4) if nonce is None else nonce}-"
+        #: Each probe id's token: a CSPRNG's (`secrets`) by default; tests inject a fixed source.
+        self._token = token
         self.sample_ms: float | None = None
         self._sent = 0
         self._outstanding: tuple[str, float] | None = None
@@ -138,10 +157,11 @@ class RttProbe:
     def ping_id(self, now: float) -> str | None:
         """The id of the probe to send now, or None when one is outstanding or not yet due."""
         self._retire(now)
-        if self._outstanding is not None or now - self._last_sent < self.interval_s:
+        due = self._last_sent + self.interval_s * PROBE_DUE_SHARE
+        if self._outstanding is not None or now < due:
             return None
         self._sent += 1
-        probe = f"{self.prefix}{self._sent}"
+        probe = f"{RTT_PROBE_PREFIX}{self._sent}-{self._token()}"
         self._outstanding, self._last_sent = (probe, now), now
         return probe
 
@@ -151,7 +171,7 @@ class RttProbe:
         self._retire(now)
         if self._outstanding is None or self._outstanding[0] != probe:
             return False
-        self.sample_ms = (now - self._outstanding[1]) * 1000
+        self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
         self._outstanding = None
         return True
 
@@ -159,12 +179,12 @@ class RttProbe:
         self._retire(now)
         if self._outstanding is None:
             return self.sample_ms
-        age = (now - self._outstanding[1]) * 1000
+        age = max(0.0, (now - self._outstanding[1]) * 1000)
         return age if self.sample_ms is None else max(self.sample_ms, age)
 
     def _retire(self, now: float) -> None:
         if self._outstanding is not None and now - self._outstanding[1] >= PONG_TIMEOUT_S:
-            self.sample_ms = (now - self._outstanding[1]) * 1000
+            self.sample_ms = max(0.0, (now - self._outstanding[1]) * 1000)
             self._outstanding = None
 
 
@@ -200,7 +220,7 @@ class _Lane:
 class Pacer:
     """Throttling and coalescing of one connection's subscriptions (§8.1, §8.3)."""
 
-    def __init__(self, emitter: TopicEmitter) -> None:
+    def __init__(self, emitter: TopicEmitter, interval_s: float = CLASSIFY_INTERVAL_S) -> None:
         self.emitter = emitter
         #: Told of a window whose emit raised, after its topic is dropped; without it the error
         #: propagates out of `offer` / `tick`.
@@ -209,7 +229,9 @@ class Pacer:
         #: closes before the writer's wait ends (§8.1).
         self.on_arm: Callable[[float], None] | None = None
         self.classifier = Classifier()
-        self.probe = RttProbe()
+        #: Probed once per classification tick: `interval_s` is the connection's classification
+        #: interval (`BackpressureConfig.classify_interval_ms`).
+        self.probe = RttProbe(interval_s)
         self.lanes: dict[str, _Lane] = {}
         #: §8.4 step 1: dropped topics awaiting their `backpressure` snapshot, by `sub_id`; the
         #: outbound ladder (`Backpressure.drain`) sends them and removes them.
@@ -413,8 +435,11 @@ class Pacer:
     ) -> dict[str, Any] | None:
         """One §8.3 sample: on a class change, enforce it and return the `connection_quality`
         notice to send on `system`; None otherwise. `subs` is the connection's full subscription
-        set, from which the notice's `degraded_topics` are named."""
+        set, from which the notice's `degraded_topics` are named. A `queue_pct` that is not finite
+        reads as a full queue (100 %): never as healthy, and never a NaN for the notice (#2552)."""
         now = self.emitter.clock() if now is None else now
+        if not math.isfinite(queue_pct):
+            queue_pct = 100.0
         rtt = self.probe.rtt_ms(now)
         if not self.classifier.observe(classify(queue_pct, rtt)):
             return None

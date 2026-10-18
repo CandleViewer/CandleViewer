@@ -103,7 +103,7 @@ def test_rtt_probe_one_outstanding_and_its_age_counts() -> None:
     assert probe.pong(first, 10.04)
     assert not probe.pong(first, 10.05)  # answered already: ignored, nothing kept for it
     assert probe.rtt_ms(11.0) == pytest.approx(40)
-    assert probe.ping_id(11.0) is None  # not due before the interval
+    assert probe.ping_id(10.9) is None  # not due before half the interval (PROBE_DUE_SHARE)
     second = probe.ping_id(12.0)
     assert second is not None
     assert probe.rtt_ms(12.01) == pytest.approx(40)  # the last sample until the age exceeds it
@@ -392,9 +392,31 @@ def test_pacer_failing_emit_never_leaves_the_window_due() -> None:
     assert pacer.resnapshot_required == {sub.sub_id: sub}  # the lost window recovers by `snap`
 
 
-def test_rtt_probe_ids_carry_a_per_connection_nonce() -> None:
-    assert RttProbe(nonce="abc").ping_id(0.0) == "s-rtt-abc-1"
-    assert RttProbe().prefix != RttProbe().prefix
+def test_each_rtt_probe_id_carries_a_fresh_random_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """§9.1: a counter and a token drawn per probe (`secrets` unless a source is injected), so no
+    id follows from an earlier one."""
+    tokens = iter(["aa", "bb"])
+    probe = RttProbe(token=lambda: next(tokens))
+    first = probe.ping_id(0.0)
+    assert first == "s-rtt-1-aa" and probe.pong(first, 0.0) and probe.ping_id(1.0) == "s-rtt-2-bb"
+    drawn, ids = RttProbe(), list[str]()
+    for t in (0.0, 1.0, 2.0):
+        ids.append(str(drawn.ping_id(t)))
+        assert drawn.pong(ids[-1], t)
+    heads, drawn_tokens = zip(*(i.rsplit("-", 1) for i in ids), strict=True)
+    assert heads == ("s-rtt-1", "s-rtt-2", "s-rtt-3") and len(set(drawn_tokens)) == 3
+    assert {len(t) for t in drawn_tokens} == {12}  # 48 bits, as hex
+    monkeypatch.setattr("candleviewer.ws.pacing.secrets.token_hex", lambda n: "ab" * n)
+    assert RttProbe().ping_id(0.0) == "s-rtt-1-" + "ab" * 6  # the default draws from `secrets`
+
+
+def test_an_rtt_sample_is_never_negative() -> None:
+    """§15.9 `rtt_ms` minimum 0: a `pong` stamped earlier than its probe's mark (a clock behind
+    the probe's) reads 0, and so does an outstanding probe's age."""
+    probe = RttProbe()
+    first = probe.ping_id(10.0)
+    assert first is not None and probe.rtt_ms(9.0) == 0.0
+    assert probe.pong(first, 9.5) and probe.sample_ms == 0.0 and probe.rtt_ms(9.6) == 0.0
 
 
 def test_the_probe_and_the_pacer_default_to_the_classify_interval() -> None:
@@ -525,7 +547,7 @@ def test_pacer_one_missed_pong_does_not_pin_the_connection_saturated() -> None:
 
 def test_rtt_probe_ignores_a_pong_that_comes_after_the_pong_window() -> None:
     """§9.1: even when nothing retired the probe first, its late `pong` is not a sample."""
-    probe = RttProbe(nonce="n")
+    probe = RttProbe()
     late = probe.ping_id(100.0)
     assert late is not None and not probe.pong(late, 100.0 + PONG_TIMEOUT_S + 0.5)
     assert probe.rtt_ms(111.0) == pytest.approx((PONG_TIMEOUT_S + 0.5) * 1000)

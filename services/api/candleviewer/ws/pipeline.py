@@ -26,6 +26,19 @@ after every routed update too (O(1)). An update, a window or a flushed snapshot'
 raises is contained to its subscription (D9, §10.1). A paced frame's fan-out span runs from its
 release to the send (D7); a producer's own `coalesced_count` is not carried through a window.
 
+From `attach` the writer's `service` also classifies the connection (§8.3, #412) once per
+`classify_interval_ms`, on a drift-free schedule (a late turn takes one classification, not the
+ones it missed), before it closes the due windows: a class change re-times them (`Pacer.apply`), so
+the windows that change made due leave in the same turn and the writer's wait is read after it
+(#2552). The depth is the queue's share of the budget, pending state included, and a class change,
+in either direction, is announced through `_Connection.push_system` (§15.9's view of it) on the
+priority lane, after a budget check, since `apply` may fold a window. Right after it the RTT probe
+(§9.1) queues a `ping` on the priority lane when none is outstanding; its `pong` comes back
+through `pong`, where any other id costs one comparison and keeps nothing (an unanswered probe is
+retired after 10 s). The gateway's idle heartbeat `ping` is unchanged, but the probe keeps the
+outbound traffic from idling for its 20 s, so it does not fire while the probe runs; a socket with
+no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1).
+
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
@@ -229,9 +242,14 @@ class ConnectionPipeline:
         self._timeout: asyncio.Timeout | None = None
         #: From `attach`: the connection's subscriptions by id (the ladder's `subs` and `live`).
         self._live: Mapping[str, Subscription] = {}
-        #: The coarse retry of parked snapshots, on the gateway's clock (`service`).
-        self._retry_s = config.classify_interval_ms / 1000
+        #: `classify_interval_ms` in seconds, on the gateway's clock (`service`): the classification
+        #: tick (§8.3), the coarse retry of parked snapshots and the log window (`_quiet`).
+        self._interval_s = config.classify_interval_ms / 1000
         self._retry_at: float | None = None
+        #: §8.3: when the next classification is due, from `attach` on (none before it).
+        self._classify_at = math.inf
+        #: From `attach`: `_Connection.push_system`, for the `connection_quality` notice.
+        self._notify: Callable[[dict[str, Any]], None] | None = None
         #: Per log line and family: when it may log again, and the lines held back (`_quiet`).
         self._now, self._held = 0.0, dict[tuple[str, str], tuple[float, int]]()
         #: From `attach`: the authorisation (its `on_drop` is `_invalidate`) and the pacer.
@@ -247,15 +265,22 @@ class ConnectionPipeline:
         """The close's flush deadline on the loop's clock, from the first close; None before."""
         return self._deadline
 
-    def attach(self, authz: ConnectionAuthz, emitter: TopicEmitter) -> None:
+    def attach(
+        self,
+        authz: ConnectionAuthz,
+        emitter: TopicEmitter,
+        notify: Callable[[dict[str, Any]], None],
+    ) -> None:
         """The first `auth_ok`: the ladder over this queue, and the `Pacer` that the hub's deltas
-        go through from now on (this pipeline is the connection's sink, module docstring)."""
-        self._live, pacer = authz.by_id, Pacer(emitter)
+        go through from now on (this pipeline is the connection's sink, module docstring). The
+        first classification is one interval on; `notify` queues its notices on `system`."""
+        self._live, pacer = authz.by_id, Pacer(emitter, self._interval_s)
         pacer.on_error = partial(self._failed, "update", pacer)
         pacer.on_arm = self._wake_for
         self.ladder = Backpressure(self.queue, pacer, partial(self._snapshot, emitter))
         emitter.on_rebuild = self._rebuilt
         authz.on_drop, self._attached = partial(self._invalidate, pacer), (authz, pacer)
+        self._notify, self._classify_at = notify, emitter.clock() + self._interval_s
 
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01). A frame the hub
@@ -292,23 +317,57 @@ class ConnectionPipeline:
             self._step3("budget", ())
 
     def service(self, now: float) -> None:
-        """The writer's turn before each pop (after every send and wake): the throttle windows
-        closed by `now` go out (`Pacer.tick`, O(1) while none is), then `drain` while a topic
-        awaits its snapshot, opening the ladder's `retry` pass over the parked ones once per
-        `classify_interval_ms` (the coarse timer)."""
-        ladder = self.ladder
+        """The writer's turn before each pop (after every send and wake): the classification when
+        one is due (`_classify`), then the throttle windows closed by `now` (`Pacer.tick`, O(1)
+        while none is), then `drain` while a topic awaits its snapshot, opening the ladder's
+        `retry` pass over the parked ones once per `classify_interval_ms` (the coarse timer)."""
+        ladder, notify = self.ladder, self._notify
         self._now = now  # `_quiet`'s clock, as of the writer's last turn
-        if ladder is not None and self.terminal is None:
-            ladder.pacer.tick(now)
+        if ladder is not None and notify is not None and self.terminal is None:
+            if now >= self._classify_at:
+                self._classify(ladder, notify, now)
+            if self.terminal is None:  # its budget check may have closed: nothing after it
+                ladder.pacer.tick(now)
         if ladder is None or self.terminal is not None or not ladder.pacer.resnapshot_required:
             self._retry_at = None
             return
         if self._retry_at is None:
-            self._retry_at = now + self._retry_s
+            self._retry_at = now + self._interval_s
         elif now >= self._retry_at:
-            self._retry_at = now + self._retry_s
+            self._retry_at = now + self._interval_s
             ladder.retry()
         self._apply(ladder.drain(self._live))
+
+    def _classify(
+        self, ladder: Backpressure, notify: Callable[[dict[str, Any]], None], now: float
+    ) -> None:
+        """One §8.3 sample (module docstring): the depth with the pending state, the class, and
+        on a change the budget check and the notice; then the probe's `ping`, if one is due and
+        neither closed the connection. The next classification is the schedule's first tick after
+        `now`."""
+        step = self._interval_s
+        self._classify_at += step * (1 + (now - self._classify_at) // step)
+        if self._classify_at <= now:  # the float sum rounded onto `now`: one sample per tick
+            self._classify_at += step
+        pacer = ladder.pacer
+        notice = pacer.classify(self.queue.pct(pacer.pending_bytes), self._live.values(), now)
+        if notice is not None:
+            self._apply(ladder.check(self._live.values()))  # `apply` may have folded a window
+            notify(notice)  # never dropped: over the budget, it closes (§8.4 step 3)
+        if self.terminal is not None:
+            return  # nothing after the close
+        probe = pacer.probe.ping_id(now)
+        if probe is not None:
+            wall = self._wall_ms()
+            self.push({"t": "ping", "id": probe, "ts": wall, "p": {"server_ms": wall}})
+
+    def pong(self, probe: str, now: float) -> None:
+        """A client `pong` (`dispatch`, §9.1) received at `now`: the outstanding probe's answer,
+        an RTT sample. Any other id (a heartbeat's, an answered or retired probe's, one the
+        client made up) is ignored at the cost of one comparison and keeps nothing: a client
+        answers at will, and its `pong`s are exempt from the inbound rate limit (§8.5)."""
+        if self.ladder is not None:
+            self.ladder.pacer.probe.pong(probe, now)
 
     def _recovers(self, frame: Mapping[str, Any], exc: Exception) -> bool:
         """§10.1 (module docstring): True when `frame`, refused by its encoder, is a `d` or `snap`
@@ -336,7 +395,9 @@ class ConnectionPipeline:
         """None holds a log line back: one per `key` (event, family) per `classify_interval_ms`, on
         `service`'s clock. Else how many it held back since the last line (`suppressed`)."""
         until, held = self._held.get(key, (-math.inf, 0))
-        self._held[key] = (until, held + 1) if self._now < until else (self._now + self._retry_s, 0)
+        self._held[key] = (
+            (until, held + 1) if self._now < until else (self._now + self._interval_s, 0)
+        )
         return None if self._now < until else held
 
     def _skipped(self, frame: Mapping[str, Any]) -> bool:
@@ -404,10 +465,13 @@ class ConnectionPipeline:
         return sent
 
     def wait_s(self, now: float, tick_s: float) -> float:
-        """The idle writer's wait: `tick_s`, or less when a window closes sooner (§8.1). A
-        window armed during it to close before it ends wakes the writer (`_wake_for`)."""
+        """The idle writer's wait: `tick_s`, or less when a window closes or the classification
+        is due sooner (§8.1, §8.3). Read after `service`, so after a classification re-timed the
+        windows (#2552). A window armed during it to close before it ends wakes the writer
+        (`_wake_for`)."""
         due = None if self.ladder is None else self.ladder.pacer.next_due()
-        wait = tick_s if due is None else min(tick_s, max(0.0, due - now))
+        wake = self._classify_at if due is None else min(due, self._classify_at)
+        wait = min(tick_s, max(0.0, wake - now))
         self._wake_by = now + wait
         return wait
 
