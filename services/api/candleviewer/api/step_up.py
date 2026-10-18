@@ -37,13 +37,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
-from candleviewer.admin.flags.store import FlagWrite
+from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
 from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
 )
 from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
@@ -367,17 +368,26 @@ async def require_elevation_for(
 
 
 async def require_session_elevation(
-    auth: _AuthLike, session_id: object | None, action_class: str, text: ChallengeText | None = None
+    auth: _AuthLike,
+    session_id: object | None,
+    action_class: str,
+    text: ChallengeText | None = None,
+    *,
+    fingerprint: str | None = None,
+    emitter: _Emitter | None = None,
 ) -> JSONResponse | None:
     """`require_elevation_for` for a handler that resolved its caller itself (#2304): with no
     session there is nothing to elevate and no challenge to issue (401), and sessions wired
     without step-up are a wiring fault (503, as on the path-gated routes), never a refusal no
-    client could answer. A challenge restates `text`, as there."""
+    client could answer. A challenge restates `text`, and a no-grace class needs the
+    `fingerprint` of the request, as there."""
     if session_id is None:
         return _unauthenticated()
     if not auth.step_up_is_active:
         return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
-    return await require_elevation_for(auth, str(session_id), action_class, text=text)
+    return await require_elevation_for(
+        auth, str(session_id), action_class, text=text, fingerprint=fingerprint, emitter=emitter
+    )
 
 
 class StepUpRefused(Exception):
@@ -387,15 +397,26 @@ class StepUpRefused(Exception):
 
 
 def step_up_port(
-    auth: _AuthLike, restate: Callable[[FlagWrite], ChallengeText]
-) -> Callable[[AuditPrincipal, str, FlagWrite], Awaitable[None]]:
+    auth: _AuthLike, restate: Callable[[FlagWrite], ChallengeText], emitter: _Emitter | None
+) -> Callable[[AuditPrincipal, str, FlagWrite, str | None], Awaitable[None]]:
     """`require_session_elevation` raising `StepUpRefused`, for a writer that picks the action
     class itself under its lock (the feature-flag writer); a challenge restates the validated
-    change the writer gives, by the route's template `restate` (#2304)."""
+    change the writer gives, by the route's template `restate` (#2304). A no-grace class
+    passes only with the grant bound to `fingerprint`, which the route computed from the
+    request it validated; `emitter` writes the `auth.step_up_mismatch` of another request's."""
 
-    async def demand(who: AuditPrincipal, action_class: str, change: FlagWrite) -> None:
+    async def demand(
+        who: AuditPrincipal, action_class: str, change: FlagWrite, fingerprint: str | None
+    ) -> None:
         text = restate(change)
-        refused = await require_session_elevation(auth, who.session_id, action_class, text)
+        try:
+            refused = await require_session_elevation(
+                auth, who.session_id, action_class, text, fingerprint=fingerprint, emitter=emitter
+            )
+        except Exception as exc:  # an outage is the writer's: counted, logged and recorded
+            if not is_storage_outage(exc):
+                raise
+            raise StoreUnavailableError(type(exc).__name__) from None
         if refused is not None:
             raise StepUpRefused(refused)
 

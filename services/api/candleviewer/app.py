@@ -1375,7 +1375,7 @@ def create_app(
     feature_flags = build_feature_flags(
         resolved,
         audit=_LazyAuditEmitter(ctx.audit),
-        step_up=step_up_port(ctx.auth, restate_flag_write),
+        step_up=step_up_port(ctx.auth, restate_flag_write, _LazyAuditEmitter(ctx.audit)),
         hub=ws_hub,
         users=user_role_store,
     )

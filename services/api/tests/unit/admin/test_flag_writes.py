@@ -48,6 +48,7 @@ _B = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
 _C = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0003")  # names no user
 _SESSION = UUID("5e000000-0000-4000-8000-000000000001")
 _REQUEST = UUID("7e000000-0000-4000-8000-000000000001")
+_FP = "f" * 64  # a request fingerprint
 _K = "rules.graph_editor"
 
 
@@ -126,7 +127,7 @@ def _changes(key: str, result: str) -> float:
 async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() -> None:
     writer, store, audit = await _writer(_Hook(), step_up=(step_up := FakeStepUp()))
     ok = _changes("rules.form_editor", "ok")
-    await _set(writer, "rules.form_editor", False, user_overrides={_B: True})
+    await _set(writer, "rules.form_editor", False, user_overrides={_B: True}, fingerprint=_FP)
     (a1, intent), (a2, outcome) = audit.records
     assert (a1, a2) == ("flags.change", "flags.change")
     asked = {
@@ -145,6 +146,7 @@ async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() 
     assert (outcome["outcome"], outcome["reason"]) == (AuditOutcome.SUCCESS, "ok")
     assert [w.user_overrides for w in store.writes] == [{_B: True}]
     assert step_up.changes == store.writes  # restated with its overrides
+    assert step_up.fingerprints == [_FP]  # and bound to the route's request
     assert _changes("rules.form_editor", "ok") == ok + 1
 
 
