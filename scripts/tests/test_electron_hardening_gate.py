@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -673,6 +674,7 @@ def test_autoupdate_enabled_in_main_fails_sr115(tree: Tree) -> None:
 
 
 MAP_FILTER = "    filter:\n      - '!**/*.map'\n"
+SRC_PATTERNS = "  - src/**\n  - '!**/*.map'\n"
 GOOD_PACKAGING = GOOD_BUILDER + GOOD_WEB_RESOURCES
 
 
@@ -705,6 +707,13 @@ def test_web_dist_entry_that_could_package_maps_fails_sr116(
     tree.files["electron-builder.yml"] = GOOD_BUILDER + WEB_ENTRY + web_filter
     vs = tree.violations()
     assert srs(vs) == {"SR-116"} and "extraResources entry from 'web'" in vs[0].message
+
+
+@pytest.mark.parametrize("pattern", ["!x/../**/*.map", "!x\\..\\**\\*.map"])
+def test_dot_dot_after_the_exclusion_fails_sr116(tree: Tree, pattern: str) -> None:
+    tree.files["electron-builder.yml"] = GOOD_PACKAGING + f"      - '{pattern}'\n"
+    vs = tree.violations()
+    assert srs(vs) == {"SR-116"} and "could package source maps" in vs[0].message
 
 
 @pytest.mark.parametrize(
@@ -751,28 +760,59 @@ def test_web_dist_missing_from_the_asset_root_fails_sr174(
 
 
 @pytest.mark.parametrize(
-    ("extra", "reason"),
+    ("key", "to"),
     [
-        ("  - from: docs\n    to: docs\n", "extraResources entry from 'docs'"),
-        ('  - "notes/**"\n', "extraResources patterns"),
-        ("extraFiles:\n  - from: docs\n", "extraFiles entry from 'docs'"),
-        ("files:\n  - '**/*'\n", "cannot read files: declared twice"),
-        ("linux:\n  extraResources:\n    - x\n", "['extraResources'] outside the top"),
-        ("  - from: [web]\n", "unreadable from value '[web]'"),
-        ("  - from: web\n    mode: x\n", "unexpected field 'mode'"),
-        ("  - &web x\n", "unreadable item '&web x'"),
-        ("  - from: x\n    filter:\n      - *w\n", "unreadable filter pattern '*w'"),
-        ("  - to: null\n", "unreadable to value 'null'"),
-        ("  -\n", "unreadable line '-'"),
-        ("extraFiles: x\n  - y\n", "cannot read extraFiles: a value and a block"),
-        ("extraFiles: [{from: docs}]\n", "cannot read extraFiles: unreadable value"),
-        ("!!str extraFiles:\n  - from: docs\n", "cannot read line '!!str extraFiles:'"),
-        ('"extra\\x46iles":\n  - from: docs\n', "cannot read line '\"extra"),
-        ("? extraFiles\n: [docs]\n", "cannot read line '? extraFiles'"),
-        ("extraFiles :\n  - from: docs\n", "cannot read line 'extraFiles :'"),
-        ("linux:\n  !!str files: [x]\n", "cannot read line '!!str files: [x]'"),
-        ("extends: base.yml\n", "does not follow 'extends'"),
+        ("extraResources", "../resources/web/dist/src"),
+        ("extraResources", "Web/Dist/src"),
+        ("extraResources", "web\\dist"),
+        ("extraResources", "${env.X}"),
+        ("extraResources", "/opt/src"),
+        ("extraResources", "c:/src"),
+        ("extraResources", None),
+        ("extraFiles", "resources/web/dist/src"),
+        ("files", "../web/dist/src"),
     ],
+)
+def test_another_writer_into_the_asset_root_fails_sr174(
+    tree: Tree, key: str, to: str | None
+) -> None:
+    # None: patterns, which copy to their list's own root.
+    item = SRC_PATTERNS if to is None else f"  - from: src\n    to: {to}\n" + MAP_FILTER
+    tree.files["electron-builder.yml"] = {
+        "files": GOOD_WEB_RESOURCES + GOOD_BUILDER,
+        "extraResources": GOOD_PACKAGING,
+        "extraFiles": GOOD_PACKAGING + "extraFiles:\n",
+    }[key] + item
+    vs = tree.violations()
+    assert srs(vs) == {"SR-174"} and "'web/dist'" in vs[0].message
+
+
+OTHER_PACKAGING = [
+    ("  - from: docs\n    to: docs\n", "extraResources entry from 'docs'"),
+    ("extraFiles:\n  - from: docs\n    to: docs\n", "extraFiles entry from 'docs'"),
+    ("files:\n  - '**/*'\n", "cannot read files: declared twice"),
+    ("linux:\n  extraResources:\n    - x\n", "['extraResources'] outside the top"),
+    ("  - from: [web]\n", "unreadable from value '[web]'"),
+    ("  - from: web\n    mode: x\n", "unexpected field 'mode'"),
+    ("  - &web x\n", "unreadable item '&web x'"),
+    ("  - from: x\n    filter:\n      - *w\n", "unreadable filter pattern '*w'"),
+    ("  - to: null\n", "unreadable to value 'null'"),
+    ("  -\n", "unreadable line '-'"),
+    ("extraFiles: x\n  - y\n", "cannot read extraFiles: a value and a block"),
+    ("extraFiles: [{from: docs}]\n", "cannot read extraFiles: unreadable value"),
+    ("!!str extraFiles:\n  - from: docs\n", "cannot read line '!!str extraFiles:'"),
+    ('"extra\\x46iles":\n  - from: docs\n', "cannot read line '\"extra"),
+    ("? extraFiles\n: [docs]\n", "cannot read line '? extraFiles'"),
+    ("extraFiles :\n  - from: docs\n", "cannot read line 'extraFiles :': use a"),
+    ("linux:\n  !!str files: [x]\n", "cannot read line '!!str files: [x]'"),
+    ("extends: base.yml\n", "does not follow 'extends'"),
+]
+
+
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    OTHER_PACKAGING,
+    ids=[re.sub(r"\W+", "-", reason).strip("-") for _, reason in OTHER_PACKAGING],
 )
 def test_other_packaging_that_could_ship_maps_fails_sr116(
     tree: Tree, extra: str, reason: str
