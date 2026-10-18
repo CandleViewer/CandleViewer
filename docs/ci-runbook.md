@@ -135,15 +135,19 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   writes the reproduce steps to the job summary; its step log holds the CI-GEN code and diff.
 - `secret-scan` is the first `gates` step and runs on every PR, a docs-only one too (#3385).
   gitleaks and trufflehog read the PR's commits (`base.sha..head.sha`, the range commitlint reads)
-  offline from digest-pinned images; then the step runs `check_secrets_hygiene.py all` and the
-  SR-146 scan of everything the scanners printed. `CI-SEC-001` is a finding: gitleaks names the
-  rule, file and line (redacted), trufflehog annotates the file and line, and neither prints the
-  value.
-  `CI-SEC-005` means a scan did not run: a missing commit range, a failed image pull, the image's
-  git unable to read the range, or a scanner exit code other than clean or findings. Unverified
-  trufflehog findings fail too (C-9.1); a deliberate test vector it flags, such as a placeholder
-  DSN or URL with credentials in a redaction test, gets a path entry with its reason in
-  `.trufflehog-exclude` (one path per entry, as the E43-T06 triage below).
+  offline from digest-pinned images; gitleaks also diffs each merge commit against its first
+  parent, so a line added while resolving a merge is scanned (trufflehog's git mode prints no
+  merge patches). Then the step runs `check_secrets_hygiene.py all` and the SR-146 scan of
+  everything the scanners printed. `CI-SEC-001` is a finding: gitleaks names the rule, file and
+  line (redacted), trufflehog annotates the file and line, and neither prints the value.
+  `CI-SEC-005` means a scan did not run: a missing commit range, a failed image pull or PyYAML
+  install, the image's git unable to read the range, or a scanner exit code other than clean or
+  findings. A `FAIL` line with no code is the hygiene gate (see the E43-T06 section below).
+  Unverified trufflehog findings fail too (C-9.1). For a deliberate test vector it flags, drop
+  the password part where the test does not need one (`postgresql://user@host/db` is not
+  flagged; a `DUMMYKEY_` or `REDACTED` password still is). A redaction test that needs a
+  credentialed DSN or URL gets a path entry with its reason in `.trufflehog-exclude` (one path
+  per entry, as the E43-T06 triage below).
 - `security` is one lane over every job in `_job-security.yml`. In the folded jobs
   (`security / read-only-scans`, `security / semgrep-bandit`) each scan is a step that starts with
   the scan's name; the job summary's verdict table gives each scan's outcome, and the red scan's
@@ -317,7 +321,7 @@ removing nothing.
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
   step, §3). Fix the finding.
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
-  comment) — rotate the secret per `SECURITY.md` / IR-02 (§6 below) instead.
+  comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
   `tools/ci/licenses-allowlist.json`. Either drop the dependency, find an
   allowlisted alternative, or add the licence to the allowlist in its own

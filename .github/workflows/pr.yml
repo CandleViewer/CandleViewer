@@ -255,10 +255,11 @@ jobs:
       # #3385: every PR gets the secret scans, whatever paths it touches (SR-142, SR-146; C-9.1
       # secrets-scan: trufflehog on the diff, any finding fails). First gate: no PR script has
       # touched the checkout or its history yet. gitleaks and trufflehog read the PR's commits
-      # (commitlint's range) offline, from images pinned by digest; then the credential-hygiene
-      # gate and the SR-146 scan of what the scanners printed. The `security` lane's gitleaks job
-      # still scans the whole tree and history on code PRs. Cost: no new job; two image pulls
-      # (about 73 MB compressed) and seconds of scanning in this one.
+      # (commitlint's range; gitleaks also diffs each merge commit) offline, from images pinned
+      # by digest; then the credential-hygiene gate and the SR-146 scan of what the scanners
+      # printed. The `security` lane's gitleaks job still scans the whole tree (about 31 s) and
+      # history on code PRs. Cost: no new job; two image pulls (about 73 MB compressed) and
+      # seconds of scanning in this one.
       - name: secret-scan (#3385; gitleaks + trufflehog over the PR's commits, credential hygiene)
         id: secret-scan
         if: ${{ !cancelled() }}
@@ -279,10 +280,14 @@ jobs:
           # security_gate.py's PyYAML, in its own venv as `gen` keeps its own.
           { python -m venv "$RUNNER_TEMP/secret-scan-venv" && export PATH="$RUNNER_TEMP/secret-scan-venv/bin:$PATH" &&
             python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML; } || fail "PyYAML install"
-          # Both scanners report a range git cannot read as clean, so the gitleaks image's own git
-          # must count the PR's commits through the same read-only mount first.
+          # `git log -p` prints no patch for a merge commit, so gitleaks diffs each one against its
+          # first parent: a line added only while resolving a merge is scanned too.
+          merges=--diff-merges=first-parent
+          # Both scanners report a range (or a log option) git cannot read as clean, so the
+          # gitleaks image's own git must count the PR's commits, with that option, through the
+          # same read-only mount first.
           run=(docker run --rm --network none -v "$PWD:/repo:ro")
-          seen=$("${run[@]}" --entrypoint git "$GITLEAKS_IMAGE" -C /repo rev-list --count "$range") || seen=
+          seen=$("${run[@]}" --entrypoint git "$GITLEAKS_IMAGE" -C /repo rev-list --count "$merges" "$range") || seen=
           [ "$seen" = "$count" ] || fail "the gitleaks image reads '$seen' of the PR's $count commit(s)"
           echo "Scanning the PR's $count commit(s): $range"
           out="$RUNNER_TEMP/secret-scan"
@@ -290,7 +295,7 @@ jobs:
           status=0 found=0
           # gitleaks: 0 clean, 3 findings (security_gate.py names each below, redacted), else failed.
           code=0
-          "${run[@]}" -v "$out:/out" "$GITLEAKS_IMAGE" git /repo --log-opts="$range" \
+          "${run[@]}" -v "$out:/out" "$GITLEAKS_IMAGE" git /repo --log-opts="$merges $range" \
             --config=/repo/.gitleaks.toml --redact --no-banner --no-color --exit-code=3 \
             --report-format=json --report-path=/out/gitleaks.json 2>&1 | tee "$out/gitleaks.log" || code=$?
           case "$code" in
