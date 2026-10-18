@@ -1,0 +1,60 @@
+name: e2e-nightly
+
+# #3383 (C-9.2, the nightly full Playwright matrix): calls the PR lane's own _job-e2e.yml on `main`,
+# so the four e2e-web shards, e2e-staging and a11y-axe run every night, including after changes
+# that pr.yml's `e2e` filter leaves out on purpose, such as the root dependency manifests
+# (docs/ci-runbook.md section 2). Not a required check (C-9.1 unchanged), but a red nightly blocks
+# the next release (C-9.2), so a red scheduled run opens an issue, as the bar-determinism, perf and
+# fixture-drift nightlies do. Only the `report` job can write; it runs no checkout and no action.
+# e2e-electron stays off on the schedule until it is green (#3366): a manual run with `electron`
+# ticked proves it on `main`, then the flip sets `electron: true` below (runbook section 2).
+# Cost: six jobs of about 1 to 1.5 minutes each (pr.yml medians), capped by CV_CI_TIMEOUT_MINUTES.
+
+on:
+  schedule:
+    - cron: "53 2 * * *"
+  workflow_dispatch:
+    inputs:
+      electron:
+        description: "Also run e2e-electron (the schedule leaves it off until it is green, #3366)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: e2e-nightly
+    uses: ./.github/workflows/_job-e2e.yml
+    with:
+      # `== true`: a scheduled run has no inputs, and the callee's input must get a boolean.
+      electron: ${{ inputs.electron == true }}
+
+  report:
+    name: e2e-nightly-report
+    needs: e2e
+    # always(), not !cancelled(): a job that hits its timeout ends `cancelled` and must still be
+    # reported (as in xstate-nightly.yml). A manual run is watched by whoever started it.
+    if: ${{ always() && github.event_name == 'schedule' && needs.e2e.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue for the red nightly (C-9.2)
+        # Only the runner's preinstalled gh CLI runs beside the write token; values reach the
+        # script through env.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh issue create --title "e2e: nightly Playwright matrix failed ($(date -u +%F))" \
+            --label qa --label area/frontend-platform --label priority/p1 \
+            --body "e2e-nightly (_job-e2e.yml) ended $RESULT on main at $GITHUB_SHA, and a red nightly blocks the next release (C-9.2). Run: $run_url. Triage: docs/ci-runbook.md section 4, CI-E2E-* and CI-A11Y-*."
