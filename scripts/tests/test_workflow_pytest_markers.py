@@ -8,14 +8,16 @@ unless the call names it outside a `not` (its own lane: `-m harness`, `-m "perf 
 or `ON_PURPOSE` lists it. Not modelled: a heavy test that also carries a marker the call selects
 (an integration+perf test under `-m integration`).
 #3091 (C-9.3): QUARANTINE is stricter, as a quarantined test keeps its lane markers: no mix of the
-markers a call names may select it, and naming it is not a lane (ON_PURPOSE can exempt). addopts
-deselects it too, so a call without its own -m, and a local run, keep it out as well.
+markers a call names may select it, naming it is not a lane, and no ON_PURPOSE entry may exempt it.
+The addopts -m keeps it out under every mix of markers too, so a call without its own -m, and a
+local run, keep it out as well.
 The scan reads each step's `run:` as bash does (a comment starts only at a word that begins with
 `#`), the command lines quoted in it (`bash -c "..."`) and the SCRIPTS a step runs. It fails
 loudly on the other ways to set or replace addopts' -m: a pytest command word in a string other
 than a `run:`, `name:` or `id:` (an env, matrix or action input), a `$` in a pytest call that
-`EXPANSIONS` does not list, PYTEST_ADDOPTS, UV_ENV_FILE, `--env-file`, `pytest.main`, a `-qm`
-cluster, `-c`/`--config-file`, an `addopts` override and `@file`.
+`EXPANSIONS` does not list, PYTEST_ADDOPTS or UV_ENV_FILE anywhere in a workflow or a SCRIPTS
+file, `--env-file`, `pytest.main`, a `-qm` cluster, `-c`/`--config-file`, an `addopts` override
+and `@file`.
 Not read: pytest that any other script runs."""
 
 from __future__ import annotations
@@ -196,6 +198,13 @@ def _marker_expressions(run: str, expansions: frozenset[str] = frozenset()) -> I
             command = []
 
 
+def _refuse_carriers(text: str) -> None:
+    """Raise when a text names a variable that can replace addopts' -m (CARRIERS)."""
+    carrier = next((name for name in CARRIERS if name in text), None)
+    if carrier is not None:
+        raise ValueError(f"cannot read {carrier}: it can replace addopts' -m")
+
+
 def _strings(node: object, key: str = "") -> Iterator[tuple[str, str]]:
     """(key, value) for every string in a YAML tree; a list item keeps its list's key."""
     if isinstance(node, str):
@@ -211,9 +220,10 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     calls: list[tuple[str, str, str]] = []
     for path in sorted(folder.glob("*.y*ml")):
         text = path.read_text(encoding="utf-8")
-        carrier = next((name for name in CARRIERS if name in text), None)
-        if carrier is not None:
-            raise ValueError(f"{path.name}: cannot read {carrier}: it can replace addopts' -m")
+        try:
+            _refuse_carriers(text)
+        except ValueError as err:
+            raise ValueError(f"{path.name}: {err}") from err
         doc = yaml.safe_load(text) or {}
         for job, spec in (doc.get("jobs") or {}).items():
             expansions = EXPANSIONS.get((path.name, job), frozenset())
@@ -233,12 +243,19 @@ def _script_calls(root: Path = ROOT) -> list[tuple[str, str, str]]:
     """(script, "script", `-m` expression) for every pytest call in SCRIPTS that sets its own."""
     calls: list[tuple[str, str, str]] = []
     for script in SCRIPTS:
-        try:
-            found = list(_marker_expressions((root / script).read_text(encoding="utf-8")))
+        text = (root / script).read_text(encoding="utf-8")
+        try:  # an export or a $GITHUB_ENV line in the script reaches its pytest and later steps
+            _refuse_carriers(text)
+            found = list(_marker_expressions(text))
         except ValueError as err:
             raise ValueError(f"{script}: {err}") from err
         calls += [(script, "script", expr) for expr in found]
     return calls
+
+
+def _keeps_quarantine_out(addopts: str) -> bool:
+    """Whether the addopts -m deselects a quarantined test whatever else it carries (#3091)."""
+    return not _lets_through(_marker_expression(shlex.split(addopts)) or "", {QUARANTINE})
 
 
 PYPROJECT = tomllib.loads((ROOT / "services/api/pyproject.toml").read_text(encoding="utf-8"))
@@ -267,6 +284,24 @@ def test_addopts_deselects_the_markers_the_pin_reads() -> None:
 def test_addopts_keeps_quarantined_tests_out() -> None:
     """#3091 (C-9.3): a call without its own -m (pr.yml's golden-upcaster run) inherits it."""
     assert QUARANTINE in DESELECTED, f"add `and not {QUARANTINE}` to the addopts -m"
+    assert _keeps_quarantine_out(ADDOPTS), "a mix of markers lets a quarantined test through"
+
+
+@pytest.mark.parametrize(
+    ("addopts", "out"),
+    [
+        ('-m "not fuzz and not flaky" -q', True),
+        ('-m "not fuzz and (not flaky or integration)" -q', False),  # a flaky integration test
+        ('-m "not fuzz" -q', False),
+    ],
+)
+def test_addopts_rule_tries_every_mix_of_markers(addopts: str, out: bool) -> None:
+    assert _keeps_quarantine_out(addopts) is out
+
+
+def test_on_purpose_never_exempts_a_quarantined_test() -> None:
+    """C-9.3 keeps a quarantined test out of every blocking lane, with no exemption."""
+    assert all(QUARANTINE not in markers for markers in ON_PURPOSE.values())
 
 
 def test_scan_reads_every_workflow() -> None:
@@ -388,10 +423,18 @@ def test_rule_keeps_a_quarantined_test_out_whatever_else_it_carries(
     assert _lets_through(expr, {QUARANTINE}) == through
 
 
-def test_script_error_names_the_script(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("uv run pytest -mx\n", "cannot read '-mx'"),
+        *[(f"export {c}=-q\nuv run pytest tests\n", f"cannot read {c}") for c in CARRIERS],
+        ('echo "PYTEST_ADDOPTS=-q" >> "$GITHUB_ENV"\n', "cannot read PYTEST_ADDOPTS"),
+    ],
+)
+def test_script_error_names_the_script(tmp_path: Path, text: str, error: str) -> None:
     (tmp_path / SCRIPTS[0]).parent.mkdir(parents=True)
-    (tmp_path / SCRIPTS[0]).write_text("uv run pytest -mx\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=re.escape(f"{SCRIPTS[0]}: cannot read '-mx'")):
+    (tmp_path / SCRIPTS[0]).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(f"{SCRIPTS[0]}: {error}")):
         _script_calls(tmp_path)
 
 
