@@ -144,7 +144,7 @@ def make_funding_router(
             return _problem(401, "unauthenticated", "Unauthorized", "no verified session")
         if not principal.has(_REQUIRED_PERMISSION):
             return _problem(403, "forbidden", "Forbidden", f"requires {_REQUIRED_PERMISSION}")
-        if not _SYMBOL_RE.match(symbol):
+        if not _SYMBOL_RE.fullmatch(symbol):
             deriv_range_rejected_total.labels(endpoint="funding").inc()
             return _problem(400, "validation_failed", "Bad request", "invalid symbol")
         reader = reader_provider()

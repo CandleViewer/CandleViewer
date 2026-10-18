@@ -147,7 +147,9 @@ def test_unauthenticated_and_no_resolver_fail_closed() -> None:
     assert not reader.calls
 
 
-@pytest.mark.parametrize("symbol", ["eth", "ETH/USDT", "A", "X" * 30, "ETH;DROP"])
+@pytest.mark.parametrize(
+    "symbol", ["eth", "ETH/USDT", "A", "X" * 30, "ETH;DROP", "ETHUSDT\n", "ETHUSDT\r\n"]
+)
 def test_invalid_symbol_is_rejected_before_reader(symbol: str) -> None:
     reader = _Reader(_series())
     r = _client(reader, _OK).get("/market/funding", params={"symbol": symbol})

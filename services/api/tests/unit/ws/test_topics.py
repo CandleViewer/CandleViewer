@@ -18,7 +18,9 @@ from candleviewer.ws.topics import (
     MACHINE_KINDS,
     MIN_THROTTLE_MS,
     TOPIC_REGISTRY,
+    Segment,
     TopicError,
+    _segment,
     effective_options,
     parse_topic,
     validate_options,
@@ -113,6 +115,44 @@ def test_parse_topic_unknown_instrument_is_unsupported_symbol() -> None:
     )
 
 
+#: #3539: Python's `$` also matches before a final newline, so `match` took each of these.
+_TAILS = pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+
+
+@_TAILS
+@pytest.mark.parametrize(
+    "template",
+    [
+        pytest.param("ticker.BTCUSDT{}", id="symbol-last"),
+        pytest.param("book.BTCUSDT{}.50", id="symbol-middle"),
+        pytest.param("bars.BTCUSDT.time.5{}", id="param"),
+    ],
+)
+def test_parse_topic_a_segment_ending_in_a_newline_is_invalid_topic_format(
+    template: str, tail: str
+) -> None:
+    legal = template.format("")
+    assert parse_topic(legal).ch == legal
+    assert _code(parse_topic, template.format(tail)) == "invalid_topic_format"
+
+
+@_TAILS
+@pytest.mark.parametrize(
+    ("kind", "legal", "code"),
+    [
+        pytest.param("symbol", "BTCUSDT", "unsupported_symbol", id="symbol"),
+        pytest.param("param", "atr:14", "invalid_topic_format", id="param"),
+    ],
+)
+def test_segment_a_value_ending_in_a_newline_fails_the_pattern_of_its_kind(
+    kind: Segment, legal: str, code: str, tail: str
+) -> None:
+    """`parse_topic` refuses such a segment at its grammar check first; `_segment` repeats the
+    pattern of its kind, so it is read on its own."""
+    assert _segment(kind, legal, None) == legal
+    assert _code(_segment, kind, legal + tail, None) == code
+
+
 @pytest.mark.parametrize(
     ("family", "opt"),
     [pytest.param(f.family, o, id=f"{f.family}.{o}") for f in FAMILIES.values() for o in f.options],
@@ -160,6 +200,33 @@ def test_validate_options_boundaries(family: str, opts: dict[str, Any], ok: bool
         assert validate_options(FAMILIES[family], opts) == opts
     else:
         assert _code(validate_options, FAMILIES[family], opts) == "invalid_options"
+
+
+#: A legal value of each option kind that `_CHECKS` reads with a pattern (#3539).
+_PATTERN_VALUES: dict[str, Any] = {"decimal": "0.5", "symbols": ["BTCUSDT"], "str": "atr:14"}
+
+
+@_TAILS
+@pytest.mark.parametrize(
+    ("family", "option"),
+    [
+        pytest.param(f.family, name, id=f"{f.family}.{name}")
+        for f in FAMILIES.values()
+        for name, opt in f.options.items()
+        if opt.kind in _PATTERN_VALUES
+    ],
+)
+def test_validate_options_a_value_ending_in_a_newline_is_out_of_range(
+    family: str, option: str, tail: str
+) -> None:
+    """Every `decimal`, `symbols` and `str` option: `invalid_options` naming it (§10.2)."""
+    fam = FAMILIES[family]
+    legal = _PATTERN_VALUES[fam.options[option].kind]
+    assert validate_options(fam, {option: legal}) == {option: legal}
+    bad = [s + tail for s in legal] if isinstance(legal, list) else legal + tail
+    with pytest.raises(TopicError) as exc:
+        validate_options(fam, {option: bad})
+    assert (exc.value.code, exc.value.field) == ("invalid_options", option)
 
 
 @pytest.mark.parametrize(
