@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { THEME_STORAGE_KEY, resetSharedThemeStores } from "@candleviewer/ui";
 import {
   BOOTSTRAP_TIMEOUT_MS,
   SLOW_BOOT_THRESHOLD_MS,
@@ -119,5 +120,102 @@ describe("runBootstrap", () => {
 
   it("exposes the bootstrap timeout constant used for each call", () => {
     expect(BOOTSTRAP_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+});
+
+describe("runBootstrap: theme runtime (#3139)", () => {
+  const root = document.documentElement;
+  const PREPAINT = {
+    "data-theme": "light",
+    "data-density": "comfortable",
+    "data-motion": "reduce",
+    "data-text-scale": "125",
+  };
+  const attributes = (): Record<string, string | null> =>
+    Object.fromEntries(Object.keys(PREPAINT).map((name) => [name, root.getAttribute(name)]));
+
+  /** What the pre-paint snippet leaves on the root for a persisted local override. */
+  function persistLocalOverride(): void {
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({
+        baseTheme: "light",
+        matchSystem: false,
+        highContrast: false,
+        density: "comfortable",
+        motionOverride: "on",
+        textScale: 125,
+      }),
+    );
+    for (const [name, value] of Object.entries(PREPAINT)) root.setAttribute(name, value);
+  }
+
+  function respondWith(preferences: Promise<Response>): typeof fetch {
+    return vi.fn().mockImplementation((path: string) => {
+      if (path === "/api/v1/me") return Promise.resolve(jsonResponse(ME_BODY));
+      if (path === "/api/v1/me/preferences") return preferences;
+      return Promise.resolve(jsonResponse({ bindings: [] }));
+    }) as unknown as typeof fetch;
+  }
+
+  beforeEach(() => {
+    resetShellState();
+    resetMeClaims();
+    resetSharedThemeStores(); // a store made by an earlier test has not read this test's storage
+  });
+
+  afterEach(() => {
+    resetSharedThemeStores();
+    localStorage.clear();
+    for (const name of Object.keys(PREPAINT)) root.removeAttribute(name);
+  });
+
+  it("One writer: system theme, spacious density and high contrast reach the root through the runtime", async () => {
+    const fetchImpl = respondWith(
+      Promise.resolve(
+        jsonResponse({
+          appearance: { theme: "system", density: "spacious", high_contrast: true },
+        }),
+      ),
+    );
+    await runBootstrap({ fetchImpl });
+    expect(root.getAttribute("data-theme")).toBe("high-contrast");
+    expect(root.getAttribute("data-density")).toBe("comfortable");
+  });
+
+  it("No clobber: the persisted values stay on the root until the server values arrive", async () => {
+    persistLocalOverride();
+    let answer!: (response: Response) => void;
+    const slow = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    const done = runBootstrap({ fetchImpl: respondWith(slow) });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attributes()).toStrictEqual(PREPAINT);
+
+    answer(jsonResponse({ appearance: { theme: "dark", font_scale: 1.5 } }));
+    await done;
+    expect(attributes()).toStrictEqual({
+      "data-theme": "dark",
+      "data-density": "comfortable", // the server sent no density: the persisted one stays
+      "data-motion": "reduce",
+      "data-text-scale": "150",
+    });
+  });
+
+  it("keeps the persisted values when preferences fail to load", async () => {
+    persistLocalOverride();
+    await runBootstrap({ fetchImpl: respondWith(Promise.resolve(jsonResponse({}, 500))) });
+    expect(getShellState().preferencesWarning).toBeTruthy();
+    expect(attributes()).toStrictEqual(PREPAINT);
+  });
+
+  it("does not persist what the server sent", async () => {
+    const before = localStorage.getItem(THEME_STORAGE_KEY);
+    await runBootstrap({
+      fetchImpl: respondWith(Promise.resolve(jsonResponse({ appearance: { theme: "light" } }))),
+    });
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(before);
   });
 });

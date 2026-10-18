@@ -88,13 +88,13 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
   });
 
   if (preferencesResult.status === "fulfilled") {
-    applyAppearance(preferencesResult.value.appearance);
+    applyAppearance(preferencesResult.value);
     setShellState({ preferences: preferencesResult.value, preferencesWarning: null });
   } else {
+    // Nothing to apply: the runtime keeps the persisted choice or its own defaults (no clobber).
     setShellState({
       preferencesWarning: "Preferences failed to load; using defaults.",
     });
-    applyAppearance(undefined);
   }
   applyChartColorMode(readStoredChartColorMode());
 
