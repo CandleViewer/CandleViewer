@@ -1666,7 +1666,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "System WS frames not queued for a socket: a kind outside 23 section 15.9, a kill switch "
         "without its state, no principal or no role (SR-188, #3125). A deny-all socket counts "
-        "every other frame as no_role.",
+        "every other frame as no_role. A Manager's or Viewer's feature_flags frame left with no "
+        "key it may learn is the contract and is not counted.",
         "unknown_kind or invalid_body > 0 (ticket: producer bug)",
         _L,
         "E17",

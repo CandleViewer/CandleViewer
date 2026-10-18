@@ -3941,11 +3941,13 @@ left out takes no `s` (S3). The Owner receives every frame whole. A Manager or V
 left out. So `message` must be role-neutral in every kind, as the notices above require. A frame
 of any other `kind` is sent to nobody, and so is every frame to a connection whose principal
 holds no role (the deny-all principal of a failed load, and every socket on the fake backend).
+Such a frame, and a `kill_switch` frame with no `kill_switch` object (left out of every connection
+but the Owner's), are counted by `cv_ws_system_frames_withheld_total` (20 §12.1).
 
 | `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` and `feature_flags` (each as below) |
-| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`)                                                                                          |
+| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`); a frame with no `kill_switch` object goes to the Owner only, counted as `invalid_body`  |
 | `feature_flags`      | `feature_flags` with only the keys whose registry `visibility` admits the role, never one that no flag definition names; left out when none remains, and then a frame of this kind is not sent                                       |
 | `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                                            |
 | `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                                            |
