@@ -4,3 +4,4 @@
   - link "Return to the terminal":
     - /url: /terminal
 - status
+- status

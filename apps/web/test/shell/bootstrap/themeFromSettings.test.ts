@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  accessibilityThemeSettings,
+  increasedContrastThemeSettings,
+  reducedMotionThemeSettings,
   themeFromSettings,
   type ThemeSettings,
 } from "../../../src/shell/bootstrap/themeFromSettings.js";
@@ -178,44 +179,73 @@ describe("themeFromSettings: whole payloads", () => {
   });
 });
 
-describe("accessibilityThemeSettings: what a change of the accessibility preferences may touch", () => {
-  const accessibility = { reduced_motion: "off", increased_contrast: "on" } as const;
+describe("one accessibility preference at a time: what feeding it may touch", () => {
+  // What the bootstrap loaded: every appearance value, so a helper that sent too much would show.
+  const bootstrapped = {
+    theme: "light",
+    density: "compact",
+    font_scale: 1.25,
+    high_contrast: true,
+    reduce_motion: true,
+  } as const;
 
-  it("carries the two accessibility inputs and the appearance twins they combine with, nothing else", () => {
-    const settings = accessibilityThemeSettings(accessibility, {
-      theme: "dark",
-      density: "spacious",
-      font_scale: 1.5,
-      high_contrast: true,
-      reduce_motion: true,
-    });
-    expect(settings).toStrictEqual({
-      appearance: { high_contrast: true, reduce_motion: true },
-      accessibility: { reduced_motion: "off", increased_contrast: "on" },
+  it("reduced motion carries its tri-state and its own twin, nothing else", () => {
+    expect(reducedMotionThemeSettings("off", bootstrapped)).toStrictEqual({
+      appearance: { reduce_motion: true },
+      accessibility: { reduced_motion: "off" },
     });
   });
 
-  it("never yields theme, density or text scale, so a change cannot undo what the user did in this session", () => {
-    const patch = themeFromSettings(
-      accessibilityThemeSettings(accessibility, {
-        theme: "light",
-        density: "compact",
-        font_scale: 1.25,
-      }),
-    );
-    expect(Object.keys(patch).sort()).toStrictEqual(["highContrast", "motionOverride"]);
+  it("increased contrast carries its tri-state and its own twin, nothing else", () => {
+    expect(increasedContrastThemeSettings("on", bootstrapped)).toStrictEqual({
+      appearance: { high_contrast: true },
+      accessibility: { increased_contrast: "on" },
+    });
   });
 
-  it("leaves out the twins the bootstrap did not load", () => {
-    expect(accessibilityThemeSettings(accessibility, undefined)).toStrictEqual({
+  it("each yields its own runtime field only, so one cannot undo the other's override of the session", () => {
+    const motion = themeFromSettings(reducedMotionThemeSettings("system", bootstrapped));
+    const contrast = themeFromSettings(increasedContrastThemeSettings("system", bootstrapped));
+    expect(Object.keys(motion)).toStrictEqual(["motionOverride"]);
+    expect(Object.keys(contrast)).toStrictEqual(["highContrast"]);
+  });
+
+  it.each([
+    ["system", { reduce_motion: true }, "on"],
+    ["system", { reduce_motion: false }, "system"],
+    ["system", undefined, "system"],
+    ["on", { reduce_motion: false }, "on"],
+    ["off", { reduce_motion: true }, "off"],
+  ] as const)("reduced motion %s with the twin %j gives %s", (tri, twin, expected) => {
+    expect(themeFromSettings(reducedMotionThemeSettings(tri, twin))).toStrictEqual({
+      motionOverride: expected,
+    });
+  });
+
+  it.each([
+    ["system", { high_contrast: true }, true],
+    ["system", { high_contrast: false }, false],
+    ["system", undefined, false],
+    ["on", { high_contrast: false }, true],
+    ["off", { high_contrast: true }, true],
+    ["off", undefined, false],
+  ] as const)("increased contrast %s with the twin %j gives %s", (tri, twin, expected) => {
+    expect(themeFromSettings(increasedContrastThemeSettings(tri, twin))).toStrictEqual({
+      highContrast: expected,
+    });
+  });
+
+  it("leaves out a twin the bootstrap did not load, and the twin of the other preference", () => {
+    expect(reducedMotionThemeSettings("on", undefined)).toStrictEqual({
       appearance: {},
-      accessibility: { reduced_motion: "off", increased_contrast: "on" },
+      accessibility: { reduced_motion: "on" },
+    });
+    expect(reducedMotionThemeSettings("on", { theme: "dark", high_contrast: true })).toStrictEqual({
+      appearance: {},
+      accessibility: { reduced_motion: "on" },
     });
     expect(
-      accessibilityThemeSettings(accessibility, { theme: "dark", reduce_motion: false }),
-    ).toStrictEqual({
-      appearance: { reduce_motion: false },
-      accessibility: { reduced_motion: "off", increased_contrast: "on" },
-    });
+      increasedContrastThemeSettings("on", { theme: "dark", reduce_motion: false }),
+    ).toStrictEqual({ appearance: {}, accessibility: { increased_contrast: "on" } });
   });
 });

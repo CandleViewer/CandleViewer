@@ -8,3 +8,4 @@
   - button "Show password"
   - button "Sign in"
 - status
+- status

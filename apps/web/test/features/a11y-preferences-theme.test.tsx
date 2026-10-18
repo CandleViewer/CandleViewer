@@ -54,19 +54,20 @@ function mount(): void {
 }
 
 /** What the pre-paint snippet leaves behind for a persisted local override. */
-function persistLocalOverride(): void {
+function persistLocalOverride({ highContrast = false } = {}): void {
   localStorage.setItem(
     THEME_STORAGE_KEY,
     JSON.stringify({
       baseTheme: "light",
       matchSystem: false,
-      highContrast: false,
+      highContrast,
       density: "comfortable",
       motionOverride: "on",
       textScale: 125,
     }),
   );
   for (const [name, value] of Object.entries(PREPAINT)) root.setAttribute(name, value);
+  if (highContrast) root.setAttribute("data-theme", "high-contrast");
 }
 
 beforeEach(() => {
@@ -99,6 +100,21 @@ describe("PreferencesProvider feeds the theme runtime", () => {
     await waitFor(() => expect(root.getAttribute("data-motion")).toBe("safe"));
     expect(root.getAttribute("data-theme")).toBe("high-contrast");
     expect(root.getAttribute("data-density")).toBe("comfortable"); // not a server value: untouched
+  });
+
+  it("No clobber: a persisted high contrast stays until /settings answers, then the server decides", async () => {
+    stubMedia(false);
+    persistLocalOverride({ highContrast: true });
+    const settings = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(settings.promise));
+    mount();
+    await act(async () => {});
+    expect(root.getAttribute("data-theme")).toBe("high-contrast");
+
+    await act(async () => {
+      settings.resolve(reply(200, { accessibility: { increased_contrast: "off" } }));
+    });
+    await waitFor(() => expect(root.getAttribute("data-theme")).toBe("light")); // the persisted base theme
   });
 
   it("keeps the persisted values when /settings fails", async () => {
@@ -150,6 +166,68 @@ describe("PreferencesProvider feeds the theme runtime", () => {
     fireEvent.click(screen.getByLabelText("On", { selector: "[name=reduced-motion]" }));
     await waitFor(() => expect(root.getAttribute("data-motion")).toBe("reduce"));
     expect(root.getAttribute("data-theme")).toBe("light"); // the bootstrap's dark is not re-applied
+  });
+
+  // The two preferences are fed one at a time: each is a session override once the hotkeys of
+  // 05-accessibility-standard.md §3.2 are registered (#305), so changing one must not revert the other.
+  it("keeps a high contrast toggled in this session when the reduced-motion preference changes", async () => {
+    stubMedia(false);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(reply(200, {}))
+      .mockResolvedValueOnce(reply(200, { accessibility: { reduced_motion: "on" } }));
+    vi.stubGlobal("fetch", f);
+    mount();
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
+    await act(async () => {}); // the load settled and was applied
+    appThemeStore().toggleHighContrast(); // the user's override (Ctrl+Shift+H once registered)
+    expect(root.getAttribute("data-theme")).toBe("high-contrast");
+
+    fireEvent.click(screen.getByLabelText("On", { selector: "[name=reduced-motion]" }));
+    await waitFor(() => expect(root.getAttribute("data-motion")).toBe("reduce"));
+    expect(root.getAttribute("data-theme")).toBe("high-contrast");
+    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+      highContrast: true,
+    });
+  });
+
+  it("keeps a reduced-motion override set in this session when the contrast preference changes", async () => {
+    stubMedia(false);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(reply(200, {}))
+      .mockResolvedValueOnce(reply(200, { accessibility: { increased_contrast: "on" } }));
+    vi.stubGlobal("fetch", f);
+    mount();
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
+    await act(async () => {}); // the load settled and was applied
+    appThemeStore().setMotionOverride("on"); // the user's override (Ctrl+Shift+M once registered)
+    expect(root.getAttribute("data-motion")).toBe("reduce");
+
+    fireEvent.click(screen.getByLabelText("On", { selector: "[name=contrast]" }));
+    await waitFor(() => expect(root.getAttribute("data-theme")).toBe("high-contrast"));
+    expect(root.getAttribute("data-motion")).toBe("reduce");
+    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+      motionOverride: "on",
+    });
+  });
+
+  it("feeds the runtime after a save when the load had failed, and not before it answers", async () => {
+    stubMedia(false);
+    const save = deferred<Response>();
+    const f = vi.fn().mockResolvedValueOnce(reply(500, {})).mockReturnValueOnce(save.promise);
+    vi.stubGlobal("fetch", f);
+    mount();
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    fireEvent.click(screen.getByLabelText("On", { selector: "[name=reduced-motion]" }));
+    await act(async () => {});
+    expect(root.getAttribute("data-motion")).toBe("safe"); // the prefs do not mirror the server yet
+
+    await act(async () => {
+      save.resolve(reply(200, { accessibility: { reduced_motion: "on" } }));
+    });
+    await waitFor(() => expect(root.getAttribute("data-motion")).toBe("reduce"));
   });
 
   it("applies a change at once and reverts the runtime when the save fails", async () => {

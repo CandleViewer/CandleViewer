@@ -125,28 +125,34 @@ export function themeFromSettings(settings: ThemeSettings | undefined): ThemePat
 }
 
 /**
- * `ThemeSettings` for a change of the two accessibility preferences that feed the runtime (reduced
- * motion and increased contrast): those two plus their appearance twins (`reduce_motion` and
- * `high_contrast`), which they are combined with. Nothing else is sent, so a change of one of them
- * (or of any other accessibility preference) never re-applies the theme, density or text scale the
- * bootstrap loaded, which would undo what the user changed in this session.
+ * `ThemeSettings` for the reduced-motion preference on its own: its tri-state plus its appearance
+ * twin (`reduce_motion`), which it is combined with. It yields `motionOverride` and nothing else, so
+ * feeding it never touches the contrast overlay, the theme, the density or the text scale, any of which
+ * the user may have set since the bootstrap (the session overrides of 05-accessibility-standard.md
+ * §3.2 are exactly that).
  */
-export function accessibilityThemeSettings(
-  accessibility: Required<Pick<Accessibility, "reduced_motion" | "increased_contrast">>,
+export function reducedMotionThemeSettings(
+  reducedMotion: NonNullable<Accessibility["reduced_motion"]>,
   appearance: Settings["appearance"],
 ): ThemeSettings {
   return {
-    appearance: {
-      ...(appearance?.high_contrast === undefined
-        ? {}
-        : { high_contrast: appearance.high_contrast }),
-      ...(appearance?.reduce_motion === undefined
-        ? {}
-        : { reduce_motion: appearance.reduce_motion }),
-    },
-    accessibility: {
-      reduced_motion: accessibility.reduced_motion,
-      increased_contrast: accessibility.increased_contrast,
-    },
+    appearance:
+      appearance?.reduce_motion === undefined ? {} : { reduce_motion: appearance.reduce_motion },
+    accessibility: { reduced_motion: reducedMotion },
+  };
+}
+
+/**
+ * The same for increased contrast: its tri-state plus its appearance twin (`high_contrast`), yielding
+ * `highContrast` and nothing else, so it never reverts a reduced-motion override of the session.
+ */
+export function increasedContrastThemeSettings(
+  increasedContrast: NonNullable<Accessibility["increased_contrast"]>,
+  appearance: Settings["appearance"],
+): ThemeSettings {
+  return {
+    appearance:
+      appearance?.high_contrast === undefined ? {} : { high_contrast: appearance.high_contrast },
+    accessibility: { increased_contrast: increasedContrast },
   };
 }

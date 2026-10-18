@@ -10,7 +10,10 @@ import {
 import type { ReactNode } from "react";
 import { applyAppearance } from "../../shell/bootstrap/preferencesApply";
 import { getShellState } from "../../shell/bootstrap/store";
-import { accessibilityThemeSettings } from "../../shell/bootstrap/themeFromSettings";
+import {
+  increasedContrastThemeSettings,
+  reducedMotionThemeSettings,
+} from "../../shell/bootstrap/themeFromSettings";
 import {
   DEFAULT_PREFERENCES,
   resolveFlags,
@@ -95,19 +98,23 @@ export function PreferencesProvider(props: PreferencesProviderProps): JSX.Elemen
   }, [flags, onEngineFlags]);
 
   // Reduced motion and increased contrast belong to the theme runtime, which owns the root attributes.
-  // Each has a twin in the appearance the bootstrap loaded, so the runtime is fed both together. Only
-  // these two preferences are sent (and only when they change), so no other change re-applies a theme.
+  // Each has a twin in the appearance the bootstrap loaded, so each is fed together with its twin, and
+  // one at a time: a change of one must not re-send the other, which the user may have overridden in
+  // this session (05-accessibility-standard.md §3.2), nor anything else (the theme, say).
   const motionPref = prefs.reduced_motion;
   const contrastPref = prefs.increased_contrast;
   useEffect(() => {
     if (!settled) return;
     applyAppearance(
-      accessibilityThemeSettings(
-        { reduced_motion: motionPref, increased_contrast: contrastPref },
-        getShellState().preferences?.appearance,
-      ),
+      reducedMotionThemeSettings(motionPref, getShellState().preferences?.appearance),
     );
-  }, [settled, motionPref, contrastPref]);
+  }, [settled, motionPref]);
+  useEffect(() => {
+    if (!settled) return;
+    applyAppearance(
+      increasedContrastThemeSettings(contrastPref, getShellState().preferences?.appearance),
+    );
+  }, [settled, contrastPref]);
 
   useEffect(() => {
     const r = document.documentElement;
