@@ -816,7 +816,10 @@ class Supervisor:
 
     async def stop_all(self, grace_s: float = TEARDOWN_BUDGET_S) -> None:
         """Stop every module in reverse start order. The default grace is the teardown term of
-        the container stop budget (`Settings.api_stop_budget_s`, #2565)."""
+        the container stop budget (`Settings.api_stop_budget_s`, #2565). An outer
+        `asyncio.timeout` or `wait_for` around it no longer cuts the teardown short (#3361): the
+        cancellation it causes is re-raised only after the remaining stops, each within its own
+        bound."""
         await self._stop_each(reversed(_SUPERVISOR_ORDER), grace_s)
 
     async def _stop_each(self, names: Iterable[str], grace_s: float) -> None:
