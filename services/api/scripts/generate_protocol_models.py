@@ -13,7 +13,7 @@ It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the p
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
 `render_contract_subset` in `candleviewer/api/contract_conformance.py` defines its content. The
 artifact records no digest of the YAML (#2743), so two PRs that change different parts of the
-contract do not conflict on it: `--check` here and the always-on `gen-freshness` CI gate
+contract do not conflict on it: `--check` here and the always-on `gen` CI gate
 (`tools/ci/check_gen_freshness.py`) render it again and compare, which catches a YAML edit that
 skipped regeneration and a hand edit of the artifact alike.
 

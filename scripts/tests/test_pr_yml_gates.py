@@ -128,9 +128,18 @@ def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
     order += ['export PATH="$RUNNER_TEMP/gen-venv/bin:$PATH"']
     order += ["python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"]
     # E03-T05's acceptance criterion: the failure summary names the command `make gen`.
-    order += ["python tools/ci/check_gen_freshness.py || {", 'echo "make gen"']
+    # #3299: and `make gen-check`, the only command that reproduces CI-GEN-005.
+    gen_check = (
+        'echo "Reproduce the whole gate locally with \\`make gen-check\\`. '
+        'To regenerate and review:"'
+    )
+    order += ["python tools/ci/check_gen_freshness.py || {", gen_check, 'echo "make gen"']
     order += ['} >> "$GITHUB_STEP_SUMMARY"', "exit 1"]
     assert [line for line in lines if line in order] == order
+    # #3299: the step name lists every code the gate reports.
+    gate = (ROOT / "tools" / "ci" / "check_gen_freshness.py").read_text(encoding="utf-8")
+    last = max(re.findall(r"CI-GEN-(\d{3})", gate))
+    assert steps[-2]["name"].endswith(f", CI-GEN-001..{last})")
     (python,) = [s for s in steps if "actions/setup-python@" in s.get("uses", "")]
     assert python["with"] == {"python-version": "3.13"}  # the old job's; no step activates a venv
     assert not [s for s in steps if "activate-environment" in (s.get("with") or {})]

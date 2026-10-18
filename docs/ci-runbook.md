@@ -24,7 +24,7 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
 │  ├─ always:       spike-containment (CI-SPIKE-001/002), changelog-fragment (CI-REL-001),
 │  │                licence-header, docs-link-check (GOV-002); last, as their installs run PR
-│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..004)
+│  │                scripts: commitlint, then gen (generated-code freshness, CI-GEN-001..005)
 │  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
@@ -147,6 +147,12 @@ here, or the check fails the `governance` lane.
 ### CI-GEN-* — generated-code freshness (`packages/protocol`)
 
 The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` runs it locally.
+It first removes the tracked files under the outputs `pnpm generate` writes in full
+(`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
+tree, never the index, then generates. It restores nothing. A CI-GEN-005 report prints one
+`git rm -- <paths>` command for the files it names; any other failed run, a traceback or Ctrl-C
+included, lists the tracked files it leaves missing and prints one `git restore -- <paths>`
+command that brings them all back.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit
@@ -160,7 +166,14 @@ diff` cannot see because they were never tracked. `git add` them in the
   against the generator, do not silence the check.
 - **CI-GEN-004** (generator toolchain failure): the generator itself crashed
   (missing dependency, schema syntax error). Fix the schema or toolchain;
-  the gate cannot pass on a generator that did not run.
+  the gate cannot pass on a generator that did not run. The same code reports a gate that
+  cannot run a check: git failed, a tracked output could not be removed, a tracked name is
+  not UTF-8, or git tracks nothing under the outputs (run it from the repository root).
+- **CI-GEN-005** (committed file no generator writes): the named tracked files
+  did not come back when the gate removed them and regenerated. A GENERATED
+  header does not make a hand-written file generated (C-4.16). Delete them with the one
+  `git rm -- <paths>` command the report prints, or add the generator that writes each one
+  to the `generate` script in `packages/protocol/package.json`.
 
 ### CI-CON-* — contract conformance
 

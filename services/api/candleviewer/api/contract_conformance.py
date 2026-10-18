@@ -20,7 +20,7 @@ at import. The runtime reads `load_contract_subset()`: a pruned copy of the YAML
 package-relative, so `create_app()` needs no `docs/plan`.
 
 Only the stdlib is imported at module level, so the boot path, the generator and the
-`gen-freshness` CI gate (both load this file by path) need nothing else. The dev-only functions
+`gen` CI gate (both load this file by path) need nothing else. The dev-only functions
 import PyYAML and openapi-spec-validator when called (#2616). No network.
 """
 
@@ -251,9 +251,9 @@ def render_contract_subset(source: bytes) -> str:
     and a trailing newline; CRLF in `source` is folded to LF. The header names the source but
     records no digest of it (#2743): a digest of the whole YAML changes with every contract edit,
     so any two contract PRs would conflict on it. Freshness is checked by rendering again and
-    comparing instead (`--check` of the generator, and the `gen-freshness` CI gate).
+    comparing instead (`--check` of the generator, and the `gen` CI gate).
     """
-    import yaml  # dev-only: only the generator, the gen-freshness gate and the tests render
+    import yaml  # dev-only: only the generator, the `gen` CI gate and the tests render
 
     normalised = source.replace(b"\r\n", b"\n")
     header = {

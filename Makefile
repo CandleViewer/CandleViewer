@@ -38,7 +38,8 @@ contracts:
 	uv run --project services/api python tools/contracts/check_error_registry.py
 
 # E03-T05: generated-code freshness gate (ADR-0013 binding rule 3). Runs
-# `make gen` twice to assert determinism (CI-GEN-003), then fails on any
+# `make gen` twice to assert determinism (CI-GEN-003), then fails on a
+# committed generated file no generator writes (CI-GEN-005), and on any
 # diff/untracked output under packages/protocol (CI-GEN-001/002). Same
 # script the `gen` step of `.github/workflows/pr.yml` runs in CI.
 gen-check:

@@ -134,6 +134,11 @@ add` and commit it.
 4. **`CI-GEN-004` (generator toolchain failure)** — the generator command itself errored (missing
    dependency, syntax error in the schema, pinned tool version mismatch); the job summary and step log
    carry the underlying stdout/stderr.
+5. **`CI-GEN-005` (committed file no generator writes)** — a tracked file under
+   `packages/protocol/src/generated` (or the Python twin of the CVWB layout) did not come back when
+   the gate removed it from the working tree and regenerated. A GENERATED header does not make a
+   hand-written file generated: delete it (`git rm`), or add the generator that writes it. The gate
+   leaves it removed; `git restore -- <path>` brings it back.
 
 Run the same check locally before pushing: `make gen-check` (wraps
 `tools/ci/check_gen_freshness.py`).

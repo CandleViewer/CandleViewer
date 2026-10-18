@@ -6,8 +6,8 @@
 // edit that is neither fails here and points the author at `pnpm generate`. The record does not
 // move with git, so content git wrote since the last generate (pull, rebase, checkout, merge) is
 // accepted when it is exactly HEAD's blob. Without a recorded manifest (a fresh clone, CI) only
-// the headers are checked, and the output says so. A committed hand edit is what CI's
-// gen-freshness check catches: it regenerates and diffs (tools/ci/check_gen_freshness.py).
+// the headers are checked, and the output says so. A committed hand edit is what CI's `gen`
+// gate catches: it regenerates and diffs (tools/ci/check_gen_freshness.py, `make gen-check`).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
