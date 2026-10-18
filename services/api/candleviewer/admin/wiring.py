@@ -118,7 +118,8 @@ def secrets_audit_row(
 ) -> Callable[[str, dict[str, str]], dict[str, Any]]:
     """M2 `(action, fields)` -> one `audit_log` record in the WAL's format, which the M10
     credential store inserts in the transaction of the change it records (#2266: a re-wrap's
-    `security.credential_rewrapped`). The columns `secrets_audit_sink` writes, and what
+    `security.credential_rewrapped`, an enrolment's `security.kek_enrolled`). The columns
+    `secrets_audit_sink` writes, and what
     `AuditWriter.emit` does to a record: the action validated, the state redacted, a fresh
     `record_id` and the clock's `event_ts`; plus the process environment `env`. M2 passes only
     `(action, fields)`: neither M2 nor M10 imports `audit` (CONSTITUTION §3)."""

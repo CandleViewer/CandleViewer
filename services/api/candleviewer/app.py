@@ -680,7 +680,7 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
         return build_secrets_service(audit=audit)
     store = SqlAlchemyCredentialStore(
         SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets"),
-        audit_row=secrets_audit_row(settings.environment.value),  # #2266: a re-wrap's records
+        audit_row=secrets_audit_row(settings.environment.value),  # #2266: re-wrap/enrolment records
     )
     return build_secrets_service(store, store, audit)
 
