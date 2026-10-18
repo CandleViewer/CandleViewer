@@ -206,6 +206,12 @@ DUPLICATE_JS_LANE = " js: {applicable: false, result: process.env.RESULT_JS},"
 SPREAD = '              ...{ js: { applicable: false, result: "success" } },\n'
 FILTER_JS = "FILTER_JS: ${{ needs.changed-paths.outputs.js }}"
 COMMITLINT = '!== "false", result: process.env.RESULT_COMMITLINT'
+ARCH_IF = "    if: ${{ always() && needs.changed-paths.outputs.py == 'true' }}\n"
+JOB_COE = "$&    continue-on-error: true\n"
+COE = "        continue-on-error: true\n"
+VERDICT = "      - name: Verdict (every gate succeeded or was skipped)\n"
+RESOLVE = "      - name: Resolve ci"
+PIN_CHECK = "isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK"
 
 
 @pytest.mark.parametrize(
@@ -257,6 +263,23 @@ COMMITLINT = '!== "false", result: process.env.RESULT_COMMITLINT'
         ("pr.yml", FILTER_JS, FILTER_JS.replace(".js", ".py"), "lane 'js' reads ['FILTER_JS']"),
         ("pr.yml", COMMITLINT, COMMITLINT.replace("false", "true"), "more than lanes"),
         ("_job-security.yml", "name: trivy\n", "$&    continue-on-error: true\n", "trivy"),
+        # Review round 3 of #3103: every job `ci-required` needs fails when its work fails ...
+        ("pr.yml", "    name: architecture\n", JOB_COE, "job 'architecture' must fail"),
+        ("pr.yml", ARCH_IF, "    if: false\n", "job 'architecture' must fail"),
+        ("pr.yml", "the architecture contract)\n", "$&" + COE, "job 'architecture' must fail"),
+        ("pr.yml", "    name: changed-paths\n", JOB_COE, "job 'changed-paths' must fail"),
+        ("pr.yml", "        id: filter\n", "$&" + COE, "job 'changed-paths' must fail"),
+        ("pr.yml", VERDICT, "$&" + COE, "job 'gates' must fail"),
+        # (a `gates` step may continue on error only while its outcome is a judged lane)
+        ("pr.yml", PIN_CHECK, "false, result: process.env.RESULT_PIN_CHECK", "job 'gates' must"),
+        # ... and its step is the resolver call alone, whatever shell a default or alias sets.
+        ("pr.yml", "          ')\"\n", "$&          true\n", "whose exit is the resolver's"),
+        ("pr.yml", "          ')\"\n", "$&\n          true\n", "whose exit is the resolver's"),
+        ("pr.yml", "\nconcurrency:\n", "\ndefaults:\n  run:\n    shell: bash {0}$&", "or shell:"),
+        ("pr.yml", "    name: ci-required\n", "$&    defaults: {run: {shell: sh}}\n", "or shell:"),
+        ("pr.yml", RESOLVE, "      - shell: sh\n        name: Resolve ci", "or shell:"),
+        ("pr.yml", RESOLVE, "      - *step\n$&", "YAML anchor"),
+        ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: *off", "YAML anchor"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(

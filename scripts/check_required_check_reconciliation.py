@@ -59,10 +59,13 @@ LANE_RE = re.compile(
     rf'\s*"?([a-z0-9-]+)"?:\s*\{{\s*applicable:\s*(true|false|{_FILTER}(?:\s*\|\|\s*{_FILTER})*),'
     r"\s*result:\s*process\.env\.(RESULT_[A-Z0-9_]+),?\s*\},?"
 )
-# The step that decides `ci-required`: a `run:` block that starts with the resolver call and
-# ends its argument (the lane table) with nothing after it that could override its exit.
+# The step that decides `ci-required`: a `run:` block that is the resolver call and its argument
+# (the lane table), with nothing after it in the block, so its exit is the resolver's whatever the
+# shell (`( +)` is the block's indentation: a later line as indented would still be in it).
 RESOLVER_RUN_RE = re.compile(
-    rf"^\s+run: \|\n\s+node {re.escape(RESOLVER)} \"\$\(node -e '$(.*?)^\s+'\)\"$", re.M | re.S
+    rf"^\s+run: \|\n( +)node {re.escape(RESOLVER)} \"\$\(node -e '$(.*?)^\s+'\)\""
+    r"(?=(?:\n[ \t]*)*(?:\n(?!\1) *\S|\Z))",
+    re.M | re.S,
 )
 # That argument's program: this prelude, the lane table, this epilogue, and nothing else.
 PROGRAM_RE = re.compile(
@@ -82,6 +85,10 @@ USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
 NEVER_RE = re.compile(
     r"^    (if:\s*(\$\{\{\s*)?false\s*(\}\})?|continue-on-error:(?!\s*false\s*$).*)\s*$", re.M
 )
+# The same for a step (`- ` opens one; its keys sit at 8 spaces).
+STEP_NEVER_RE = re.compile(NEVER_RE.pattern.replace("^    ", "^      (?:- |  )", 1), re.M)
+# A YAML anchor, alias or merge key: it hides a node's content from this text-based proof.
+ANCHOR_RE = re.compile(r"^\s*(?:- )?(?:[\w\"'-]+\s*:\s+)?[&*]\w|^\s*(?:- )?<<\s*:", re.M)
 PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
 # GitHub's default pull_request activity types: a `types` filter that drops one stops a check
 # arriving on every pull request.
@@ -192,14 +199,20 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
     of the reusable workflow it calls that can fail it (not NEVER_RE). `ci-required` must run
-    `if: always()`, with no continue-on-error or shell:, its steps checkout, setup-node and one
-    `run:` step, with no `if:`, that runs the resolver (RESOLVER_RUN_RE) on PROGRAM_RE's program. A
-    lane counts when its applicability is not the literal `false` and reads only FILTER_<NAME>
-    set from the `changed-paths` output <name>, and the table, with no key twice and nothing but
-    lanes, takes its result from the needed job of the lane's own name, or from the `gates`
-    output of that name, which the step of that id backs. Returns (lanes, errors)."""
+    `if: always()`, with no continue-on-error, defaults or shell: (pr.yml's own defaults too), its
+    steps checkout, setup-node and one `run:` step, with no `if:`, that is the resolver call alone
+    (RESOLVER_RUN_RE) on PROGRAM_RE's program. A lane counts when its applicability is not the
+    literal `false` and reads only FILTER_<NAME> set from the `changed-paths` output <name>, and
+    the table, with no key twice and nothing but lanes, takes its result from the needed job of
+    the lane's own name, or from the `gates` output of that name, which the step of that id backs.
+    Every job `ci-required` needs must fail when its work fails: no NEVER_RE, on the job or on a
+    step, but continue-on-error on a `gates` step whose outcome is a lane. These files may hold no
+    YAML anchor, alias or merge key (ANCHOR_RE). Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
-    jobs = _job_blocks(_read(path))
+    text = _read(path)
+    if ANCHOR_RE.search(text):
+        return set(), [f"{path}: a YAML anchor, alias or merge key hides content from this proof"]
+    jobs = _job_blocks(text)
     body = "\n".join(jobs.get(AGGREGATE_CONTEXT, []))
     run = RESOLVER_RUN_RE.search(body)
     steps = re.split(r"^      - ", body.split("\n    steps:\n", 1)[-1], flags=re.M)[1:]
@@ -207,7 +220,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     actions = re.findall(r"^\s+(?:- )?uses:\s*(\S+)", body, re.M)
     if (
         not re.search(r"^    if:\s*(\$\{\{\s*)?always\(\)\s*(\}\})?\s*$", body, re.M)
-        or re.search(r"^\s+(continue-on-error|shell):", body, re.M)
+        or re.search(r"^\s+(?:- )?(continue-on-error|defaults|shell)\s*:", body, re.M)
+        or re.search(r"^[\"']?defaults[\"']?\s*:", text, re.M)
         or not run
         or len(re.findall(r"^\s+(?:- )?run:", body, re.M)) != 1
         or len(decider) != 1
@@ -215,11 +229,11 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
         or not all(map(STEP_ACTION_RE.fullmatch, actions))
     ):
         return set(), [
-            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error or "
-            "shell:, with steps checkout, setup-node and one `run:` step, with no `if:`, that "
-            f"starts with {RESOLVER} and whose exit is the resolver's"
+            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error, "
+            "defaults (pr.yml's own too) or shell:, with steps checkout, setup-node and one `run:` "
+            f"step, with no `if:`, that is the {RESOLVER} call alone, whose exit is the resolver's"
         ]
-    program = PROGRAM_RE.fullmatch(run.group(1))
+    program = PROGRAM_RE.fullmatch(run.group(2))
     if not program:
         return set(), [
             f"{path}: the `{AGGREGATE_CONTEXT}` program must be the isTrue line, the lane table "
@@ -241,6 +255,7 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     errors = [f"{path}: lane '{k}' repeats" for k in sorted(set(keys)) if keys.count(k) > 1]
     errors += [f"{path}: the lane table holds more than lanes: {rest[:80]!r}"] if rest else []
     lanes: set[str] = set()
+    outcomes: set[str] = set()  # lanes judged by a `gates` step's outcome
     for lane, applicable, var in found:
         source = env.get(var, "")
         unset = sorted(set(re.findall(r"FILTER_\w+", applicable)) - filters)
@@ -252,11 +267,31 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             lanes.add(lane)
             uses = USES_RE.search("\n".join(jobs[lane]))
             if uses:
-                called = _job_blocks(_read(os.path.join(workflows_dir, uses.group(1))))
+                called_path = os.path.join(workflows_dir, uses.group(1))
+                called_text = _read(called_path)
+                if ANCHOR_RE.search(called_text):
+                    errors.append(f"{called_path}: a YAML anchor, alias or merge key hides content")
+                called = _job_blocks(called_text)
                 skip = {job for job, block in called.items() if NEVER_RE.search("\n".join(block))}
                 lanes.update(f"{lane}/{job}" for job in set(called) - skip)
         elif source == f"needs.gates.outputs.{lane}" and "gates" in needs and lane in exported:
             lanes.add(lane)
+            outcomes.add(lane)
+    for job in sorted(needs):
+        block = "\n" + "\n".join(jobs.get(job, []))
+        sets = [f"sets {m.group(1)!r}" for m in NEVER_RE.finditer(block)]
+        for step in re.split(r"(?=^      - )", block.partition("\n    steps:\n")[2], flags=re.M):
+            step_id = re.search(r"^      (?:- |  )id:\s*([\w-]+)\s*$", step, re.M)
+            judged = job == "gates" and step_id is not None and step_id.group(1) in outcomes
+            sets += [
+                f"a step sets {m.group(1)!r}"
+                for m in STEP_NEVER_RE.finditer(step)
+                if not (judged and m.group(1).startswith("continue-on-error"))
+            ]
+        errors += [
+            f"{path}: job '{job}' must fail `{AGGREGATE_CONTEXT}` when its work fails, but {s}"
+            for s in sets
+        ]
     return lanes, errors + ([] if lanes else [f"{path}: no lane table in `{AGGREGATE_CONTEXT}`"])
 
 
