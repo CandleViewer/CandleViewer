@@ -1,8 +1,16 @@
-import { app, BrowserWindow, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARDENED_WEB_PREFERENCES } from "./shellPort.js";
 import { buildCsp } from "./csp.js";
+import {
+  APP_ENTRY_URL,
+  APP_SCHEME,
+  APP_SCHEME_PRIVILEGES,
+  createDistReader,
+  isAppUrl,
+  resolveAppRequest,
+} from "./appProtocol.js";
 import { logStartup, logAuditEvent } from "./logger.js";
 import { applyGpuFlags, probeGpu } from "./gpu.js";
 import { getKekHandle } from "./keychain.js";
@@ -31,38 +39,40 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// Packaged-build navigation is confined to the app's own dist directory; in
-// dev it is confined to the Vite dev server's origin. Neither is a bare
-// scheme/prefix string match (see isNavigationAllowed) so a lookalike host
-// (e.g. "http://localhost:5173.evil.test") or an arbitrary local file cannot
-// pass the check.
+// The built web app (apps/web/dist), the only directory the app:// handler
+// serves from (SR-174). Resolved once, relative to dist/main. In a packaged
+// build this is <resources>/web/dist, which the installer does not ship yet
+// (see README "Load path").
 const APP_ROOT_DIR = path.resolve(__dirname, "../../../web/dist");
+
+// Electron requires custom schemes to be registered before the app is ready,
+// and only once. The privileges are the closed set in appProtocol.ts.
+protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);
 
 /**
  * Returns the origin of `url` for audit logging, or "invalid-url" if it does
  * not parse. Never returns the full URL: query strings can carry tokens
- * (C-12.6) so only the origin is safe to persist.
+ * (C-12.6) so only the origin is safe to persist. Node's URL reports origin
+ * "null" for non-special schemes (app:, file:), so those log scheme and host,
+ * still without the path or query.
  */
 export function safeOriginOf(url: string): string {
   try {
-    return new URL(url).origin;
+    const parsed = new URL(url);
+    return parsed.origin === "null" ? `${parsed.protocol}//${parsed.host}` : parsed.origin;
   } catch {
     return "invalid-url";
   }
 }
 
 /**
- * Returns true only if `url` targets the packaged app's own dist directory
- * (file: scheme, path confined to APP_ROOT_DIR) or, in dev, exactly the dev
- * server's origin. Compares parsed URL fields, never a string prefix, so
- * "file://" cannot match arbitrary local files and a dev origin cannot match
- * a lookalike host that merely starts with the same string.
+ * Returns true only if `url` is on the app origin: without a dev server, the
+ * `app:` scheme with its one fixed host (served by the app:// handler); in
+ * dev, exactly the dev server's origin. Compares parsed URL fields, never a
+ * string prefix, so a lookalike host (e.g. "http://localhost:5173.evil.test")
+ * cannot pass, and no `file:` URL is ever allowed.
  */
-export function isNavigationAllowed(
-  url: string,
-  devServerUrl: string | undefined,
-  appRootDir: string = APP_ROOT_DIR,
-): boolean {
+export function isNavigationAllowed(url: string, devServerUrl: string | undefined): boolean {
   let target: URL;
   try {
     target = new URL(url);
@@ -80,17 +90,7 @@ export function isNavigationAllowed(
     return target.origin === dev.origin;
   }
 
-  if (target.protocol !== "file:") {
-    return false;
-  }
-  let targetPath: string;
-  try {
-    targetPath = path.resolve(fileURLToPath(target));
-  } catch {
-    return false;
-  }
-  const relative = path.relative(appRootDir, targetPath);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return isAppUrl(url);
 }
 
 /**
@@ -179,21 +179,39 @@ export function createMainWindow(): BrowserWindow {
   if (devServerUrl) {
     void win.loadURL(devServerUrl);
   } else {
-    void win.loadFile(path.join(__dirname, "../../../web/dist/index.html"));
+    void win.loadURL(APP_ENTRY_URL);
   }
 
   return win;
 }
 
-function installCspHeader(): void {
-  const csp = buildCsp();
+function installCspHeader(csp: string): void {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // app:// responses already carry this same header from the app protocol
+    // handler; leave them unchanged so a page never gets the header twice.
+    if (isAppUrl(details.url)) {
+      callback({});
+      return;
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [csp],
       },
     });
+  });
+}
+
+/**
+ * Serves the built web app over app:// (SR-174): a read-only static-file
+ * handler confined to APP_ROOT_DIR that attaches the shell's CSP header
+ * (SR-112) to every response it returns.
+ */
+function installAppProtocol(csp: string): void {
+  const read = createDistReader(APP_ROOT_DIR);
+  protocol.handle(APP_SCHEME, async (request) => {
+    const response = await resolveAppRequest(request.url, APP_ROOT_DIR, read, csp);
+    return new Response(response.body, { status: response.status, headers: response.headers });
   });
 }
 
@@ -229,7 +247,11 @@ app.on("window-all-closed", () => {
 applyGpuFlags();
 
 void app.whenReady().then(() => {
-  installCspHeader();
+  // One CSP value for both delivery points: the dev-server response hook and
+  // the app:// handler.
+  const csp = buildCsp();
+  installCspHeader(csp);
+  installAppProtocol(csp);
   installPermissionHandler();
   installIpcHandlers();
   logStartup();

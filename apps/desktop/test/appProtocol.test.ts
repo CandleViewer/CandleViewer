@@ -1,0 +1,256 @@
+import { afterAll, beforeAll, describe, expect, it, vi, type Mock } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  APP_ENTRY_URL,
+  APP_SCHEME_PRIVILEGES,
+  contentTypeFor,
+  createDistReader,
+  isAppUrl,
+  resolveAppRequest,
+  resolveDistPath,
+  type DistReader,
+} from "../src/main/appProtocol";
+
+// #3410 / SR-174: the app:// handler is a read-only static-file server confined to the web
+// app's dist root. These tests drive its pure parts with an in-memory reader; the last block
+// runs the real file reader against a temporary directory.
+const ROOT = path.resolve(process.platform === "win32" ? "C:\\app\\web\\dist" : "/app/web/dist");
+const CSP = "default-src 'self'";
+
+function memoryReader(files: Record<string, string>): Mock<DistReader> {
+  const table = new Map(
+    Object.entries(files).map(([rel, text]) => [
+      path.join(ROOT, rel),
+      new TextEncoder().encode(text),
+    ]),
+  );
+  return vi.fn<DistReader>((absolutePath) => Promise.resolve(table.get(absolutePath) ?? null));
+}
+
+const DIST = {
+  "index.html": "<!doctype html><div id=root></div>",
+  "assets/index-abc.js": "export {};",
+  "assets/index-abc.css": "body{}",
+};
+
+describe("APP_SCHEME_PRIVILEGES", () => {
+  it("is exactly standard + secure (never a CSP bypass, fetch, CORS or service workers)", () => {
+    expect(APP_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true });
+  });
+
+  it("the entry URL is the root of the one fixed app origin", () => {
+    expect(APP_ENTRY_URL).toBe("app://candleviewer/");
+  });
+});
+
+describe("isAppUrl", () => {
+  it("accepts the app scheme with its fixed host", () => {
+    expect(isAppUrl("app://candleviewer/")).toBe(true);
+    expect(isAppUrl("app://candleviewer/assets/x.js?v=1#h")).toBe(true);
+  });
+
+  it("rejects another scheme, host, port, credentials or an unparseable URL", () => {
+    for (const url of [
+      "https://candleviewer/",
+      "file:///app/web/dist/index.html",
+      "app://candleviewer.evil.test/",
+      "app://evil.test/",
+      "app://candleviewer:8080/",
+      "app://user:pass@candleviewer/",
+      "not a url",
+    ]) {
+      expect(isAppUrl(url), url).toBe(false);
+    }
+  });
+});
+
+describe("resolveDistPath (path mapping)", () => {
+  it("maps the origin root to index.html and asset paths into the dist root", () => {
+    expect(resolveDistPath("app://candleviewer/", ROOT)).toBe(path.join(ROOT, "index.html"));
+    expect(resolveDistPath("app://candleviewer", ROOT)).toBe(path.join(ROOT, "index.html"));
+    expect(resolveDistPath("app://candleviewer/assets/index-abc.js?v=2", ROOT)).toBe(
+      path.join(ROOT, "assets", "index-abc.js"),
+    );
+  });
+
+  it("refuses a URL on another host or scheme", () => {
+    expect(resolveDistPath("app://evil.test/index.html", ROOT)).toBeNull();
+    expect(resolveDistPath("https://candleviewer/index.html", ROOT)).toBeNull();
+  });
+
+  it("refuses encoded traversal that would leave the root", () => {
+    for (const url of [
+      "app://candleviewer/..%2f..%2fetc%2fpasswd",
+      "app://candleviewer/assets/..%2F..%2F..%2Fsecret.txt",
+      "app://candleviewer/%2e%2e%2f%2e%2e%2fsecret.txt",
+    ]) {
+      expect(resolveDistPath(url, ROOT), url).toBeNull();
+    }
+  });
+
+  it("keeps dot segments inside the root (the URL parser resolves them first)", () => {
+    expect(resolveDistPath("app://candleviewer/../../etc/passwd", ROOT)).toBe(
+      path.join(ROOT, "etc", "passwd"),
+    );
+    expect(resolveDistPath("app://candleviewer/%2e%2e/%2e%2e/etc/passwd", ROOT)).toBe(
+      path.join(ROOT, "etc", "passwd"),
+    );
+  });
+
+  it("refuses backslashes, raw or encoded, on every platform", () => {
+    expect(resolveDistPath("app://candleviewer/..\\..\\secret.txt", ROOT)).toBeNull();
+    expect(resolveDistPath("app://candleviewer/..%5c..%5csecret.txt", ROOT)).toBeNull();
+  });
+
+  it("refuses an encoded NUL and malformed percent-encoding", () => {
+    expect(resolveDistPath("app://candleviewer/index.html%00.png", ROOT)).toBeNull();
+    expect(resolveDistPath("app://candleviewer/%E0%A4%A", ROOT)).toBeNull();
+  });
+
+  it("decodes once: a double-encoded traversal stays a literal name inside the root", () => {
+    expect(resolveDistPath("app://candleviewer/%252e%252e%252fsecret", ROOT)).toBe(
+      path.join(ROOT, "%2e%2e%2fsecret"),
+    );
+  });
+});
+
+describe("resolveAppRequest", () => {
+  it("serves a dist file with its content type, the CSP header and nosniff", async () => {
+    const res = await resolveAppRequest(
+      "app://candleviewer/assets/index-abc.js",
+      ROOT,
+      memoryReader(DIST),
+      CSP,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers).toEqual({
+      "content-security-policy": CSP,
+      "x-content-type-options": "nosniff",
+      "content-type": "text/javascript; charset=utf-8",
+    });
+    expect(new TextDecoder().decode(res.body as Uint8Array)).toBe("export {};");
+  });
+
+  it("serves index.html for the origin root", async () => {
+    const res = await resolveAppRequest(APP_ENTRY_URL, ROOT, memoryReader(DIST), CSP);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
+  });
+
+  it("falls back to index.html for a client route (no extension), as the browser router needs", async () => {
+    const read = memoryReader(DIST);
+    const res = await resolveAppRequest("app://candleviewer/terminal/last", ROOT, read, CSP);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(new TextDecoder().decode(res.body as Uint8Array)).toContain("id=root");
+    expect(read).toHaveBeenLastCalledWith(path.join(ROOT, "index.html"));
+  });
+
+  it("answers 404 for a missing asset (with an extension), with the CSP and no echoed path", async () => {
+    const res = await resolveAppRequest(
+      "app://candleviewer/assets/missing-secret-name.js",
+      ROOT,
+      memoryReader(DIST),
+      CSP,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers["content-security-policy"]).toBe(CSP);
+    expect(res.body).toBe("Not found");
+  });
+
+  it("answers 404 for a client route when index.html itself is missing", async () => {
+    const res = await resolveAppRequest("app://candleviewer/login", ROOT, memoryReader({}), CSP);
+    expect(res.status).toBe(404);
+  });
+
+  it("answers 404 for another host and never reads a file for it", async () => {
+    const read = memoryReader(DIST);
+    const res = await resolveAppRequest("app://evil.test/index.html", ROOT, read, CSP);
+    expect(res.status).toBe(404);
+    expect(res.headers["content-security-policy"]).toBe(CSP);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for a traversal attempt and never reads outside the root", async () => {
+    const read = memoryReader(DIST);
+    const res = await resolveAppRequest(
+      "app://candleviewer/..%2f..%2fetc%2fpasswd",
+      ROOT,
+      read,
+      CSP,
+    );
+    expect(res.status).toBe(404);
+    expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("contentTypeFor (MIME map)", () => {
+  it.each([
+    ["index.html", "text/html; charset=utf-8"],
+    ["a.js", "text/javascript; charset=utf-8"],
+    ["a.mjs", "text/javascript; charset=utf-8"],
+    ["a.css", "text/css; charset=utf-8"],
+    ["a.json", "application/json"],
+    ["a.js.map", "application/json"],
+    ["a.svg", "image/svg+xml"],
+    ["a.png", "image/png"],
+    ["favicon.ico", "image/x-icon"],
+    ["a.woff", "font/woff"],
+    ["a.woff2", "font/woff2"],
+    ["a.wasm", "application/wasm"],
+    ["robots.txt", "text/plain; charset=utf-8"],
+    ["A.JS", "text/javascript; charset=utf-8"],
+  ])("%s -> %s", (file, type) => {
+    expect(contentTypeFor(file)).toBe(type);
+  });
+
+  it("serves an unknown extension as opaque bytes", () => {
+    expect(contentTypeFor("a.exe")).toBe("application/octet-stream");
+    expect(contentTypeFor("LICENSE")).toBe("application/octet-stream");
+  });
+});
+
+describe("createDistReader (real filesystem)", () => {
+  let tmp: string;
+  let root: string;
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cv-app-protocol-"));
+    root = path.join(tmp, "dist");
+    fs.mkdirSync(path.join(root, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(root, "index.html"), "<!doctype html>");
+    fs.writeFileSync(path.join(tmp, "outside.txt"), "outside the root");
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("reads a regular file inside the root", async () => {
+    const bytes = await createDistReader(root)(path.join(root, "index.html"));
+    expect(new TextDecoder().decode(bytes ?? new Uint8Array())).toBe("<!doctype html>");
+  });
+
+  it("reads a directory or a missing file as missing (nothing is listed)", async () => {
+    const read = createDistReader(root);
+    expect(await read(path.join(root, "assets"))).toBeNull();
+    expect(await read(path.join(root, "missing.js"))).toBeNull();
+  });
+
+  it("refuses a path outside the root", async () => {
+    expect(await createDistReader(root)(path.join(tmp, "outside.txt"))).toBeNull();
+  });
+
+  it("refuses a symlink inside the root that points outside it", async () => {
+    const link = path.join(root, "assets", "escape.js");
+    fs.symlinkSync(path.join(tmp, "outside.txt"), link);
+    expect(await createDistReader(root)(link)).toBeNull();
+  });
+
+  it("reads everything as missing when the root does not exist", async () => {
+    const read = createDistReader(path.join(tmp, "no-such-dist"));
+    expect(await read(path.join(tmp, "no-such-dist", "index.html"))).toBeNull();
+  });
+});
