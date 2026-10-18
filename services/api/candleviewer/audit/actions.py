@@ -228,6 +228,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # #2893 S8 (FX-R01): the dev-only account fixture transport is on and its boot guard
         # passed (system actor `system:account-fixture`, `candleviewer/account_fixture_wiring.py`).
         "system.config.account_fixture_enabled",
+        # #3009 (ADR-0037): the journal-first audit lane's own records (actor `system:audit-lane`,
+        # `audit/lane.py`): its frame 1, one per boot, and one per anomaly run the drain hands over.
+        "audit.lane_started",
+        "audit.lane_resumed",
+        "audit.lane_anomaly",
     }
 )
 
@@ -240,7 +245,7 @@ _ANY = frozenset(AuditOutcome)
 
 #: The journal-first audit lane's closed registry (ADR-0037 decision 3; the single source, C-16.5):
 #: each admitted action, its class and the outcomes it may carry. The class follows the action,
-#: never the caller. The two `audit.lane_*` rows join AUDIT_ACTIONS in S2a2, which first emits them.
+#: never the caller. `audit.lane_anomaly` is no frame: the drain builds it (`audit/writer.py`).
 LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
     {
         "auth.logout": ("reserved", _ANY),

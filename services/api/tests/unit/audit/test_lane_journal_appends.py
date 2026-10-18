@@ -147,18 +147,18 @@ def fds() -> int:
 
 
 def test_lane_actions_hold_the_adr_rows() -> None:
-    """Decision 3. S2a2 registers the two `audit.lane_*` rows in `AUDIT_ACTIONS`."""
+    """Decision 3. S2a2 registers the three `audit.lane_*` actions in `AUDIT_ACTIONS`; the anomaly
+    row is no frame."""
     every, success = frozenset({"success", "failure", "denied"}), frozenset({"success"})
     reserved = ("logout", "session_revoked", "refresh_reuse_detected")
     rows = {f"auth.{name}": ("shared", every) for name in LOGINS.split()}
     rows |= {f"auth.{name}": ("reserved", every) for name in reserved}
     rows |= {"auth.session_refreshed": ("shared", frozenset({"denied"}))}
     rows |= dict.fromkeys(("audit.lane_started", "audit.lane_resumed"), ("reserved", success))
-    ex08 = "auth.disabled_user_session_revoked"  # #3120; holds before and after #3355 registers it
-    rows |= {ex08: ("reserved", success)}
+    rows |= {"auth.disabled_user_session_revoked": ("reserved", success)}  # #3120 (EX-08)
 
-    assert dict(LANE_ACTIONS) == rows
-    assert {*LANE_ACTIONS} - AUDIT_ACTIONS - {ex08} == {"audit.lane_started", "audit.lane_resumed"}
+    assert dict(LANE_ACTIONS) == rows and {*LANE_ACTIONS} <= AUDIT_ACTIONS
+    assert {f"audit.lane_{name}" for name in ("started", "resumed", "anomaly")} <= AUDIT_ACTIONS
 
 
 @pytest.mark.parametrize(

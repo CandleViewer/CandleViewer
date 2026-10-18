@@ -447,7 +447,7 @@ class _Scan:
             self.cache[i] = self.read(self.names[i])
         return self.cache[i]
 
-    def begin(self, marker: bytes | None) -> Pos | None:
+    def begin(self, marker: bytes | None, trusted: bool) -> Pos | None:
         """Rows 1 to 6: the state, and the segment index and offset to scan from."""
         found = None if marker is None else decode_marker(self.keys, marker)
         if isinstance(found, str):
@@ -463,7 +463,7 @@ class _Scan:
         first, offset = found.pos
         if first in self.firsts:
             i = self.firsts.index(first)
-            if offset <= len(self.data(i)) and _at_boundary(self.data(i), offset):
+            if offset <= len(self.data(i)) and (trusted or _at_boundary(self.data(i), offset)):
                 return i, offset
         elif not self.firsts and found.pos == (1, 0):
             return None  # row 6: a new lane before its frame 1
@@ -561,11 +561,13 @@ def scan(
     names: Iterable[str],
     read: Callable[[str], bytes],
     note: bytes | None = None,
+    trusted: bool = False,
 ) -> LaneScan:
     """The §15.6 scan from `marker` (`confirmed`, None when absent) over the segments among
-    `names`, each read once through `read`, with the `released` note if one exists."""
+    `names`, each read once through `read`, with the `released` note if one exists. `trusted`
+    marks the drain's own position, a frame boundary it scanned: nothing before it is parsed."""
     run = _Scan(keys, names, read)
-    start = run.begin(marker)
+    start = run.begin(marker, trusted)
     if start is not None:
         run.walk(*start, note)
     units = tuple(run.units)
@@ -580,6 +582,7 @@ _READ_MAX = SEGMENT_MAX_BYTES + MAX_FRAME_BYTES  # longer than any file the lane
 _STRAY = re.compile(r"confirmed\.tmp|seg-[0-9]{20}\.lane\.new")
 LANE_MAX_BYTES, SHARED_MAX_BYTES = 32 << 20, 16 << 20  # S1c: the byte quotas
 LANE_WAITERS: Mapping[LaneClass, int] = MappingProxyType({"reserved": 192, "shared": 64})
+DRAIN_BATCH, CONFIRM_POLL_S, RETRY_S = 200, 0.05, (0.5, 30.0)  # S2a2: the drain's (`audit/lane.py`)
 
 
 class LaneNotAdmitted(LaneError):
@@ -803,6 +806,11 @@ def _boot(files: LaneFiles, keys: LaneKeys) -> tuple[list[str], object, LaneScan
     return names, found, scan(keys, marker=marker, names=names, read=files.read, note=note)
 
 
+def _running_scan(files: LaneFiles, keys: LaneKeys, origin: bytes) -> LaneScan:
+    names = os.listdir(files.dir)
+    return scan(keys, marker=origin, names=names, read=files.read, trusted=True)
+
+
 def _admit(rec: dict[str, object], *, first: bool) -> LaneClass:
     """Decision 3: the class follows the action; frame 1 is `audit.lane_started`."""
     action = str(rec.get("action"))
@@ -842,6 +850,7 @@ class LaneJournal:
         self.lane, self._next_seq, self._prev = uuid.UUID(int=0), 1, ZERO_MAC
         self.refusal: LaneReason | None = "stopped"  # until `open()`
         self._pos: Pos | None = None  # the verified marker's; a new lane writes its own first
+        self.boot_marker: LaneMarker | None = None  # the verifiable marker the boot found
         self._fd, self._active, self._size = -1, 0, 0  # the segment the appends go to
         self._lock = _LaneLock(waiters)
         self._ops: set[asyncio.Task[Any]] = set()
@@ -860,6 +869,7 @@ class LaneJournal:
             self.lane = new_lane() if result.lane is None else result.lane
             self._next_seq = 1 if state.next_seq is None else state.next_seq
             self._prev, self._pos = state.prev, found.pos if isinstance(found, LaneMarker) else None
+            self.boot_marker = found if isinstance(found, LaneMarker) else None
             if any(isinstance(unit, Run) and unit.marker_ahead for unit in result.units):
                 self._pos = None  # row 2: no compaction until the first `confirm()` (Fable L4)
             held = result.held or (result.lane is None and bool(segments))
@@ -875,6 +885,20 @@ class LaneJournal:
     def fresh(self) -> bool:
         """Frame 1, `audit.lane_started`, is due."""
         return self._next_seq == 1
+
+    @property
+    def head(self) -> tuple[int, str]:
+        """The newest authentic frame's `seq` and `mac`: 0 and 64 zeros before frame 1."""
+        return self._next_seq - 1, self._prev
+
+    @property
+    def end(self) -> Pos:
+        """The furthest unit end counted: the boot's units and every append since."""
+        return self._end
+
+    def run_id(self, lane: uuid.UUID | None, run: Run) -> uuid.UUID:
+        """The `record_id` of `run`'s anomaly row, keyed under the current key (Ingest step 1)."""
+        return anomaly_id(self._keys, lane, run)
 
     async def append(self, rec: dict[str, object]) -> int:
         """Append one record (an `AuditEmission` as JSON); its `seq` once the frame is durable.
@@ -949,6 +973,13 @@ class LaneJournal:
         self._drain()
         if (name := run.quarantined) is not None:
             await self._run(lambda op: self._io(op, self._files.quarantine, name, run.data))
+
+    async def rescan(self, origin: LaneMarker) -> LaneScan:
+        """The drain's running scan (§15.6 Scan) from `origin`, the end of the last unit it took:
+        a frame boundary it scanned, so nothing before it is parsed again."""
+        self._drain()
+        body, files, keys = encode_marker(self._keys, origin), self._files, self._keys
+        return await self._run(lambda op: self._io(op, _running_scan, files, keys, body))
 
     async def close(self) -> None:
         """Refuse every later append (`stopped`) and drain operation (`LaneError`), wait for the

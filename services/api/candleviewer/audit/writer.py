@@ -644,6 +644,36 @@ class AuditUnavailable(AuditError):
     or unwritable). The audited action must be refused (C-2.9 fail-closed)."""
 
 
+#: The actor of the audit lane's own records (§15.6 Ingest step 1).
+LANE_ACTOR = "system:audit-lane"
+
+
+def _lane_anomaly(
+    writer: AuditWriter,
+    record_id: uuid.UUID,
+    *,
+    reason: str,
+    severity: Severity,
+    lane: uuid.UUID | None,
+    after_state: dict[str, Any],
+) -> AuditEmission:
+    """The lane drain's `audit.lane_anomaly` row (ADR-0037 decision 8; §15.6 Ingest step 1).
+    Package-private: the drain in `audit/lane.py` is its only caller. It is `build()`, so the
+    action check, the redaction and the model are the same, with the run's keyed `record_id`
+    in place of a new one, which the public `build()` never takes."""
+    row = writer.build(
+        "audit.lane_anomaly",
+        actor_label=LANE_ACTOR,
+        object_kind="audit_lane",
+        object_id=None if lane is None else str(lane),
+        outcome=AuditOutcome.FAILURE,
+        severity=severity,
+        reason=reason,
+        after_state=after_state,
+    )
+    return row.model_copy(update={"record_id": record_id})
+
+
 @dataclass(slots=True)
 class _WalOp:
     """One `_wal_lock` critical section (see `AuditWriter._shielded`)."""
