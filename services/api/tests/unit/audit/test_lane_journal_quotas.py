@@ -94,7 +94,7 @@ async def test_lane_quota_counts_every_byte_after_the_marker(tmp_path: Path) -> 
 
 
 async def test_lane_boot_counts_the_shared_frames_after_the_marker(tmp_path: Path) -> None:
-    """Reading 2 and U39 (M2): a restart does not reset the `shared` share."""
+    """Reading 2 and U39: a restart does not reset the `shared` share."""
     lane, _ = await boot(tmp_path)
     for record in (STARTED, LOGIN):
         await lane.append(record)
@@ -107,7 +107,7 @@ async def test_lane_boot_counts_the_shared_frames_after_the_marker(tmp_path: Pat
 
 
 async def test_lane_confirmation_frees_only_the_shared_bytes_it_passes(tmp_path: Path) -> None:
-    """Reading 2 and U39 (M2): confirming a `reserved` frame leaves the `shared` count alone."""
+    """Reading 2 and U39: confirming a `reserved` frame leaves the `shared` count alone."""
     lane, _ = await boot(tmp_path)
     for record in (STARTED, LOGIN, rec(2)):
         await lane.append(record)
@@ -123,10 +123,29 @@ async def test_lane_confirmation_frees_only_the_shared_bytes_it_passes(tmp_path:
     assert full.value.reason == "full"
 
 
+async def test_lane_boot_rows_go_past_both_caps_once_per_boot_and_are_counted(
+    tmp_path: Path,
+) -> None:
+    """Limits: frame 1's `audit.lane_started` and a boot's first `audit.lane_resumed` go past both
+    caps, counted in `boot_overshoot_frames`; any other append, a second `audit.lane_resumed`
+    among them, is refused `full`."""
+    resumed, refused = rec(0, "audit.lane_resumed"), list[str]()
+    lane, _ = await boot(tmp_path, lane_max_bytes=1, max_segments=1, segment_max_bytes=1)
+    seqs = [await lane.append(record) for record in (STARTED, resumed)]
+    for record in (resumed, rec(3)):
+        with pytest.raises(lj.LaneRefused) as full:
+            await lane.append(record)
+        refused.append(full.value.reason)
+    count = lane.boot_overshoot_frames
+    await lane.close()
+
+    assert (seqs, refused, count) == ([1, 2], ["full", "full"], 2)
+
+
 async def test_lane_over_quota_append_is_refused_at_once_while_the_lock_is_held(
     tmp_path: Path,
 ) -> None:
-    """Decision 4 (m1): past a bound an append is refused at once, never after the lane lock."""
+    """Decision 4: past a bound an append is refused at once, never after the lane lock."""
     disk, start = Parked(tmp_path), lj.LaneMarker(LANE, (1, 0), 1, lj.ZERO_MAC, True)
     lane, _ = await boot(tmp_path, disk, lane_max_bytes=F1 + 10)
     await lane.append(STARTED)

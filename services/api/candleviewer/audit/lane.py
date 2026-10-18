@@ -5,6 +5,7 @@ confirmation (C-16.5); this module runs them and restates none. A boot creates a
 `audit.lane_started` and appends `audit.lane_resumed`. One drain task then hands each unit of the
 boot's scan, and of the running scans after it, to `AuditWriter.ingest()` in order, and moves the
 marker past a unit once the writer reports its token committed. No log line carries a record (U41).
+A held boot writes neither row; otherwise no cap refuses them (§15.6 Limits).
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ Unit = lj.Handover | lj.Run
 
 class AuditLane:
     """The lane's journal, boot and one drain task; `confirmed` is the last marker's position. A
-    failed `start()` leaves the journal unusable (a retry builds a new one); until S2a2b a boot
-    that holds raises from it. The deques hold units after the marker, which the journal bounds."""
+    failed `start()` leaves the journal unusable (a retry builds a new one). The deques hold units
+    after the marker, which the journal bounds (C-2.18)."""
 
     def __init__(
         self,
@@ -52,31 +53,64 @@ class AuditLane:
         self._units: deque[Unit] = deque()  # scanned, not yet handed over
         self._pending: deque[tuple[lj.LaneMarker | None, int]] = deque()  # handed over, by token
         self._dirty, self._wake = False, asyncio.Event()  # an append since the last scan
+        self._moved = asyncio.Event()  # the marker moved
         self._task: asyncio.Task[None] | None = None
+        self._copied: str | None = None  # the last run copied to `quarantine/`
 
     async def start(self) -> lj.LaneScan:
-        """Boot: the scan, `audit.lane_started` when frame 1 is due, `audit.lane_resumed` with the
-        head its frame follows, then the drain, which hands the scan's units over first."""
+        """Boot: the scan; unless it holds, `audit.lane_started` when frame 1 is due and
+        `audit.lane_resumed` with the head its frame follows, past any cap; then the drain."""
         result = await self.journal.open(self._new_lane)
         journal, self._lane = self.journal, result.lane
         self._units.extend(result.units)
         new = lj.LaneMarker(journal.lane, (1, 0), 1, lj.ZERO_MAC, True)
         self._origin = journal.boot_marker or new
-        if journal.fresh:
-            await self.append(self._own("audit.lane_started", Severity.WARNING))
+        held = journal.refusal == "held"  # Hold: no lane creation, no resumed row, no appends
+        if journal.fresh and not held:
+            await self._boot_row(self._own("audit.lane_started", Severity.WARNING))
         (seq, mac), anchored = journal.head, result.state.anchored or result.lane is None
         head = {"head_seq": seq, "head_mac": mac, "anchored": anchored}  # a new lane is anchored
-        await self.append(self._own("audit.lane_resumed", Severity.INFO, head))
+        if held:
+            _log().critical("audit lane held at boot", hold=result.hold)
+        else:
+            await self._boot_row(self._own("audit.lane_resumed", Severity.INFO, head))
         self._task = spawn(self._drain(), name="audit-lane-drain")
-        self._task.add_done_callback(_log_death)
+        self._task.add_done_callback(self._died)
         return result
 
+    async def _boot_row(self, record: AuditEmission) -> None:
+        """A boot row refused all the same stops the lane, so a failed `start()` refuses appends."""
+        try:
+            await self.append(record)
+        except lj.LaneError as exc:
+            if self.journal.refusal is None:
+                self.journal.stop(exc)
+            raise
+
     async def append(self, record: AuditEmission) -> int:
-        """Journal a record that `build()` made; its `seq` once durable. Refusals propagate."""
-        seq = await self.journal.append(json.loads(record.model_dump_json()))
+        """Journal a record that `build()` made; its `seq` once durable. A refusal wakes nothing;
+        a cancelled caller's frame can still land (#2250), so it wakes the drain too (one still
+        queued for the lock lands nothing, which costs one scan)."""
+        try:
+            seq = await self.journal.append(json.loads(record.model_dump_json()))
+        except asyncio.CancelledError:
+            self._landed()
+            raise
+        self._landed()
+        return seq
+
+    def _landed(self) -> None:
         self._dirty = True
         self._wake.set()
-        return seq
+
+    async def flush(self, timeout_s: float) -> None:
+        """Return once every frame appended before the call is confirmed (§15.6 Ingest step 3),
+        or raise `TimeoutError`; a held or stopped lane never confirms them."""
+        target = self.journal.end
+        async with asyncio.timeout(timeout_s):
+            while self.confirmed is None or self.confirmed < target:
+                self._moved.clear()
+                await self._moved.wait()
 
     async def close(self) -> None:
         """Stop the drain, then close the journal; what is not confirmed drains at the next boot."""
@@ -99,9 +133,15 @@ class AuditLane:
         units run out and an append came; backoff after a refusal, which an append cuts short."""
         delay = self._retry[0]
         while True:
+            self._wake.clear()  # here, not in `_pause()`: an append during this iteration wakes it
+            if self._writer.failure is not None:  # Ingest step 2: no retry until a restart
+                await self._pause(self._retry[1])
+                continue
             if not self._units and self._dirty:
                 self._dirty = False
                 result = await self.journal.rescan(self._origin)
+                if result.held:
+                    self.journal.hold()
                 self._lane = result.lane
                 self._units.extend(result.units)
             refused = await self._hand_over_batch()
@@ -136,7 +176,9 @@ class AuditLane:
                 return await self._writer.ingest(unit.frame.rec)
             except (UnknownAuditAction, ValidationError):
                 unit = lj.record_invalid(unit)
-        await self.journal.quarantine(unit)
+        if unit.quarantined != self._copied:  # a retry after a refusal copies nothing again
+            await self.journal.quarantine(unit)
+            self._copied = unit.quarantined
         token = await self._writer.ingest(self._row(unit))
         _log().warning("audit.lane.anomaly", reason=unit.reason, seqs=(unit.from_seq, unit.to_seq))
         return token
@@ -171,21 +213,23 @@ class AuditLane:
         if marker is not None:
             await self.journal.confirm(marker)
             self.confirmed = marker.pos
+            self._moved.set()
             await self.journal.compact()
 
     async def _pause(self, delay: float | None) -> None:
         """Wait `delay` seconds, or with None for an append; an append ends it early."""
-        self._wake.clear()
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(delay):
                 await self._wake.wait()
 
-
-def _log_death(task: asyncio.Task[None]) -> None:
-    """The drain's done-callback: an unexpected end is logged by its error class only."""
-    error = None if task.cancelled() else task.exception()
-    if error is not None:
-        _log().critical("audit lane drain died", error=type(error).__name__)
+    def _died(self, task: asyncio.Task[None]) -> None:
+        """Failures while running: a drain that ends with an error stops the lane (`stopped`, a
+        hold stays a hold), so the façade falls back. The log names the error class only."""
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            _log().critical("audit lane drain died", error=type(error).__name__)
+            if self.journal.refusal is None:  # `_io()` has stopped it already: one log line
+                self.journal.stop(error)
 
 
 def _log() -> Any:
