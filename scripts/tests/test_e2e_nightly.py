@@ -68,9 +68,11 @@ with open(os.environ["PY_LOG"], "w", encoding="utf-8") as log:
 FAKE_GIT = "import sys\nsys.exit(97)\n"
 A11Y_LANE = "_job-a11y.yml"
 #: A command that reaches the repository's remote, or GitHub, from a lane's step. git's global
-#: options (`-C dir`, `-c key=value`, `--no-pager`) may come before the subcommand.
+#: options (`-C dir`, `-c key=value`, `--no-pager`) may come before the subcommand. `-c` and `-C`
+#: take the next word, as git reads them, and no other option word can be read as either: each
+#: word has one parse, so a match cannot backtrack exponentially (CodeQL py/redos).
 REMOTE = re.compile(
-    r"\bgit(?:\s+(?:-[cC]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+"
+    r"\bgit(?:\s+(?:-[cC](?:\s+|=)\S+|-(?:[^\WcC]|-|[cC][\w-])[\w-]*(?:=\S+)?))*\s+"
     r"(?:fetch|pull|push|clone|ls-remote|submodule)\b|\bgh\s"
 )
 #: The a11y step that compares the PR's baseline file with its base's copy.
@@ -283,6 +285,28 @@ def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
     # No later step needs a credential: none fetches, pushes or calls GitHub, so neither a token
     # nor the repository's visibility matters to them.
     assert remote == []
+
+
+@pytest.mark.parametrize(
+    ("run", "remote"),
+    [
+        ("git fetch origin main", True),
+        ('git -C . fetch --no-tags origin "$BASE_SHA" || true', True),
+        ("git --no-pager -c core.quotepath=off pull", True),
+        ("base=$(git --git-dir=.git ls-remote origin HEAD)", True),
+        ("git -C -- -C -- submodule update", True),
+        ("gh api repos/owner/repo", True),
+        ("git -C fetch", False),
+        ("git -C . diff --exit-code", False),
+        ("echo ${{ github.sha }} > git-fetch.txt", False),
+    ],
+)
+def test_remote_finds_a_remote_git_subcommand_after_global_options_or_gh(
+    run: str, remote: bool
+) -> None:
+    # #3449: what REMOTE finds, now that each word has one parse. `-c` and `-C` take the next
+    # word, as git reads them, so in `git -C fetch` the word fetch is a directory, not a command.
+    assert bool(REMOTE.search(run)) is remote
 
 
 def test_a11y_lane_checks_out_the_pr_base_baseline_and_keeps_no_credential() -> None:
