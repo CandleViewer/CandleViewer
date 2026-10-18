@@ -4,7 +4,8 @@ name: e2e-nightly
 # so the four e2e-web shards, e2e-staging, a11y-axe and e2e-electron run every night, including
 # after changes that pr.yml's `e2e` filter leaves out on purpose, such as the root dependency
 # manifests (docs/ci-runbook.md section 2). pr.yml runs e2e-electron on release/* heads only; the
-# nightly asks for it through the lane's `electron` input (green since #3393, run 39105058132).
+# nightly asks for it through the lane's `electron` input. It is green since #3393: job 117609983250
+# (e2e / e2e-electron) passed in run 39105058132, a proof run whose other jobs were cancelled.
 # Not a required check (C-9.1 unchanged), but a red nightly blocks the next release (C-9.2): the
 # release checklist needs a green run on the tip it cuts (docs/plan/07-release-and-prr.md §4.1),
 # and a red scheduled run opens an issue, as the bar-determinism, perf and fixture-drift nightlies
@@ -50,6 +51,11 @@ jobs:
           RESULT: ${{ needs.e2e.result }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="e2e-nightly (_job-e2e.yml) ended $RESULT on main at $GITHUB_SHA, and a red nightly"
+          body+=" blocks the next release (C-9.2). Run: $run_url."
+          body+=" Triage: docs/ci-runbook.md section 4 (CI-E2E-*, CI-A11Y-*, CI-BUILD-*)."
+          body+=" If an Electron hardening check failed, follow SECURITY.md and keep the analysis"
+          body+=" out of this public issue (C-12.13)."
           gh issue create --title "e2e: nightly Playwright matrix failed ($(date -u +%F))" \
             --label qa --label area/frontend-platform --label priority/p1 \
-            --body "e2e-nightly (_job-e2e.yml) ended $RESULT on main at $GITHUB_SHA, and a red nightly blocks the next release (C-9.2). Run: $run_url. Triage: docs/ci-runbook.md section 4, CI-E2E-* and CI-A11Y-*."
+            --body "$body"
