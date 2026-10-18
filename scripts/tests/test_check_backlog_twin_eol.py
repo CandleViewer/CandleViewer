@@ -8,6 +8,7 @@ and `git update-index`, the way that commit stores it."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -129,6 +130,19 @@ def test_a_resaved_twin_restages_as_lf(
     assert _run(repo, capsys)[0] == 0
 
 
+def test_a_resaved_empty_twin_stays_none_and_the_hint_says_what_fixes_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    with (repo / TWIN).open("w", encoding="utf-8", newline="\n") as fh:  # AGENTS.md section 3a
+        json.dump([], fh, ensure_ascii=False, indent=2)
+    _git(repo, "add", TWIN)
+    code, out = _run(repo, capsys)
+    assert code == 1
+    assert out.startswith(f"TWIN-EOL {TWIN}: the committed blob is i/none, not i/lf\n")
+    assert "an empty twin (`[]`) stays i/none however it is saved: add its kind=Epic row" in out
+
+
 def test_no_twin_fails_as_a_gate_that_checks_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -148,6 +162,18 @@ def test_git_failing_or_a_missing_root_is_an_internal_error(
     assert codes == [2, 2]
     assert lines[0].startswith("TWIN-EOL internal error: git ls-files failed: fatal: not a git")
     assert lines[1].startswith("TWIN-EOL internal error: ")
+
+
+def test_a_twin_path_that_is_not_utf8_is_an_internal_error_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    sha = _git(repo, "hash-object", "-w", "--stdin", stdin=LF).strip()
+    name = os.fsdecode(b"E\xff.json")  # git keeps a path's raw bytes; the index needs no file
+    _git(repo, "update-index", "--add", "--cacheinfo", f"100644,{sha},{BACKLOG}/{name}")
+    assert mod.main(["--repo-root", str(repo)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("TWIN-EOL internal error: git ls-files lists a path that is not UTF-8: ")
 
 
 def test_this_checkout_s_twin_blobs_are_lf_and_the_only_ones_checked(

@@ -10,7 +10,8 @@ fails: `crlf` and `mixed` hold CRLF, `-text` a lone CR or a NUL byte, `none` no 
 all. Every twin validate.py writes is `lf` once it holds a ticket; an empty E<nn>.json (`[]`) is
 `none` and fails here too (validate.py rejects one for a roadmap epic: MISSING-EPIC-FILE).
 
-Exit codes: 0 clean, 1 violation(s), 2 internal error. Stdlib only.
+Exit codes: 0 clean, 1 violation(s), 2 internal error (git fails, or lists a path that is not
+UTF-8). Stdlib only.
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PATHSPEC = ":(glob)docs/plan/backlog/*.json"
 FIX = (
     "re-save the twin as AGENTS.md section 3a says and commit it with the git CLI; for CRLF or "
-    "mixed line endings, `git add --renormalize docs/plan/backlog` restages it as LF (#3495)"
+    "mixed line endings, `git add --renormalize docs/plan/backlog` restages it as LF; an empty "
+    "twin (`[]`) stays i/none however it is saved: add its kind=Epic row or delete it (#3495)"
 )
 
 
@@ -69,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except OSError as exc:
         print(f"TWIN-EOL internal error: {exc}", file=sys.stderr)
+        return 2
+    except UnicodeDecodeError as exc:
+        print(
+            f"TWIN-EOL internal error: git ls-files lists a path that is not UTF-8: {exc}",
+            file=sys.stderr,
+        )
         return 2
     problems = violations(eols)
     for line in problems:
