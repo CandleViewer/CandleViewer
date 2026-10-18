@@ -1,10 +1,15 @@
 import { resolve } from "node:path";
+import process from "node:process";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { vitestPreset } from "@candleviewer/config/vitest";
 
 export default defineConfig({
   plugins: [react()],
+  // The WS fault-injection flag (E17-T04 S5e): off unless CV_ALLOW_FAULT_INJECTION=1, as in vite.config.ts.
+  define: {
+    __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(process.env.CV_ALLOW_FAULT_INJECTION === "1"),
+  },
   resolve: {
     alias: [
       // Exact match for the entry only: `@candleviewer/ui/theme.css` and the token CSS must resolve through
