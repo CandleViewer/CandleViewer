@@ -184,7 +184,9 @@ class PrincipalResolver(Protocol):
 _MAX_ERRORS = 10
 #: Contract parameter names where they differ from the `AuditQueryRequest` field names.
 _PARAM_NAMES = {"actions": "action", "from_ts": "from", "to_ts": "to"}
-#: Contract (`queryAuditLog`): a `200` page is never cached; it carries IPs and payloads.
+#: Contract (`queryAuditLog`): a `200` page is never cached; it carries IPs and payloads. The
+#: verify and export routes answer the same way, as their answers name a range, a chain state
+#: or who was refused. `_no_store` is the one place the header is set.
 _NO_STORE: Final = {"Cache-Control": "no-store"}
 
 
@@ -287,14 +289,14 @@ def _verify_unavailable(exc: Exception) -> JSONResponse:
 def _no_store[**P](
     handler: Callable[P, Awaitable[JSONResponse]],
 ) -> Callable[P, Awaitable[JSONResponse]]:
-    """Every response the handler returns carries `Cache-Control: no-store` (contract
-    `queryAuditLog`), so no browser or proxy cache keeps an audit page. FastAPI reads the
-    handler's own signature through `functools.wraps`."""
+    """Every response the handler returns carries `_NO_STORE`, a refusal included, so no
+    browser or proxy cache keeps an audit page, a verify result or a refusal. FastAPI reads
+    the handler's own signature through `functools.wraps`."""
 
     @functools.wraps(handler)
     async def no_store(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
         response = await handler(*args, **kwargs)
-        response.headers["Cache-Control"] = "no-store"
+        response.headers.update(_NO_STORE)
         return response
 
     return no_store
@@ -614,9 +616,10 @@ def make_audit_router(
             except BudgetWriteFailed:
                 return _unavailable()
         plan.commit()
-        return JSONResponse(status_code=200, content=_jsonable(page), headers=_NO_STORE)
+        return JSONResponse(status_code=200, content=_jsonable(page))
 
     @router.post("/verify")
+    @_no_store
     async def verify_audit_chain(request: Request) -> JSONResponse:
         try:
             service, principal, _ = await _authorize_or_raise(request, "verify")
@@ -733,6 +736,7 @@ def make_audit_router(
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
+    @_no_store
     async def export_audit_log(request: Request) -> JSONResponse:
         """Deliberate stub until owner decision D1 (export signing-key custody,
         E42-T02 design §6.3, #889). Authorisation runs first (401/403), then
