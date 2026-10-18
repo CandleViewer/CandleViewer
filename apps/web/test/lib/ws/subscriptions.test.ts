@@ -1,4 +1,4 @@
-// E17-T04 S2 (C2, C3, C10, C11): what the registry delivers and asks for, driven by real decoded frames.
+// E17-T04 S2 (C2-C5, C10, C11): what the registry delivers and asks for, driven by real decoded frames.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeBars } from "@candleviewer/protocol";
 import type { ConsumerSpec, TopicFrame } from "../../../src/lib/ws/api";
@@ -7,13 +7,19 @@ import {
   createSubscriptionRegistry,
   type RegistryOptions,
 } from "../../../src/lib/ws/core/subscriptions";
-import { decodeFrame, type DataFrame } from "../../../src/lib/ws/protocol/codec";
+import {
+  decodeFrame,
+  type ControlOf,
+  type ControlType,
+  type DataFrame,
+} from "../../../src/lib/ws/protocol/codec";
 import { b64, bars, bookDelta, bookSnapshot, FLAG_PARTIAL, FLAG_REPLAY } from "./support/cvwb";
 
 const BOOK = "book.BTCUSDT.50";
 const BARS = "bars.BTCUSDT.time.1";
 const RS = "bb000000-0000-4000-8000-000000000001";
 const SP = "0123456789abcdef";
+const LIVE = { rs: undefined }; // the scope of a request for the live stream
 const wire = (frame: object): string => JSON.stringify(frame);
 
 function data(frame: object): DataFrame {
@@ -24,6 +30,21 @@ function data(frame: object): DataFrame {
 const snap = (s: number | null, over: object = {}) => data({ t: "snap", ch: BOOK, s, ...over });
 const delta = (s: number, over: object = {}) => data({ t: "d", ch: BOOK, s, ...over });
 const binary = (bytes: Uint8Array) => ({ e: "b64", p: b64(bytes) });
+
+function control<T extends ControlType>(t: T, p: object, over: object = {}): ControlOf<T> {
+  const decoded = decodeFrame(wire({ t, ...over, p }));
+  if (decoded.t !== t) throw new Error(`${t} did not decode: ${wire(decoded)}`);
+  return decoded as ControlOf<T>;
+}
+const subOk = (effective: unknown = {}, ch = BOOK, extra: object = {}) =>
+  control("sub_ok", { results: [{ ch, ok: true, sub_id: "s_01", effective, ...extra }] });
+const refused = (code = "replay_session_not_found") =>
+  control("sub_ok", { results: [{ ch: BOOK, ok: false, error: { code, message: "m" } }] });
+const ctlOk = (effective: object, resnapshot = false) =>
+  control("ctl_ok", { effective, ...(resnapshot && { resnapshot }) }, { ch: BOOK });
+const unsubOk = (ok = true) => control("unsub_ok", { results: [{ ch: BOOK, ok }] });
+const revoked = (reason: string, extra: object = {}, ch = BOOK) =>
+  control("revoked", { reason, message: "m", ...extra }, { ch });
 
 const spec = (over: Partial<ConsumerSpec> = {}): ConsumerSpec => ({
   ch: BOOK,
@@ -63,7 +84,8 @@ const resynced = (
   last_seq: number | null,
   reason: string,
   rs?: string,
-) => expect(host.resync).toHaveBeenCalledWith(BOOK, rs, { last_seq, reason });
+  subId?: string,
+) => expect(host.resync).toHaveBeenCalledWith(BOOK, rs, { last_seq, reason }, subId);
 
 describe("streams", () => {
   it("takes server-chosen topic names as plain stream keys", () => {
@@ -315,6 +337,306 @@ describe("malformed data (C10)", () => {
   });
 });
 
+describe("options (C4) and server strings", () => {
+  it("requested 5 reads back as effective 50; ctl_ok retunes without losing the rest", () => {
+    const { registry, host, got } = setup();
+    const handle = registry.consume(spec({ opts: { throttle_ms: 5 } }));
+    expect(host.subscribe).toHaveBeenCalledWith(spec({ opts: { throttle_ms: 5 } }), undefined);
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "s".repeat(65) }), LIVE); // neither is used
+    expect([handle.effective, handle.subId]).toEqual([{}, undefined]);
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "" }), LIVE); // 1 to 64 characters: no id either
+    expect(handle.subId).toBeUndefined();
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "s" }), LIVE); // the shortest one is kept
+    expect(handle.subId).toBe("s");
+    registry.onSubOk(subOk({}, BOOK, { sub_id: "s".repeat(64) }), LIVE); // the longest one kept
+    expect(handle.subId).toBe("s".repeat(64));
+    registry.onSubOk(subOk({ throttle_ms: 50, encoding: "binary" }), LIVE);
+    expect(handle.effective).toEqual({ throttle_ms: 50, encoding: "binary" });
+    expect(handle.subId).toBe("s_01");
+    registry.onSubOk(subOk("not an object", BOOK, { sub_id: "" }), LIVE); // nor does it replace the one kept
+    expect(handle.subId).toBe("s_01");
+    registry.onCtlOk(control("ctl_ok", { effective: { throttle_ms: 1 } }), LIVE); // names no topic: ignored
+    registry.onCtlOk(ctlOk({ throttle_ms: 200 }), LIVE);
+    registry.onCtlOk(control("ctl_ok", { effective: {}, resnapshot: false }, { ch: BOOK }), LIVE);
+    expect(handle.effective).toEqual({ throttle_ms: 200, encoding: "binary" });
+    expect(got()).toEqual([]); // no `resnapshot`: the stream's state is left alone
+  });
+
+  it("keeps __proto__ and constructor keys of the options as plain data", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    const hostile = '{"__proto__":{"polluted":true},"constructor":{"x":1},"throttle_ms":50}';
+    const one = `{"ch":"${BOOK}","ok":true,"effective":${hostile}}`;
+    const sub = decodeFrame(`{"t":"sub_ok","p":{"results":[${one}]}}`);
+    const ctl = decodeFrame(`{"t":"ctl_ok","ch":"${BOOK}","p":{"effective":${hostile}}}`);
+    registry.onSubOk(sub as ControlOf<"sub_ok">, LIVE);
+    registry.onCtlOk(ctl as ControlOf<"ctl_ok">, LIVE);
+    expect(Object.getPrototypeOf(handle.effective)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(Object.hasOwn(handle.effective, "constructor")).toBe(true);
+  });
+
+  it("ends a stream the server refused, and counts a forced snapshot", () => {
+    const { registry, got } = setup();
+    const ended = registry.consume(spec());
+    registry.onSubOk(refused("forbidden"), LIVE);
+    expect([ended.status, got()]).toEqual(["revoked", ["reset:revoked"]]);
+    registry.consume(spec({ ch: BARS }));
+    registry.onSubOk(subOk({}, BARS, { snapshot_forced: false }), LIVE);
+    expect(registry.counters.forcedSnapshots).toBe(0);
+    registry.onSubOk(subOk({}, BARS, { snapshot_forced: true }), LIVE);
+    expect(registry.counters.forcedSnapshots).toBe(1);
+  });
+
+  it("shares an effective that is a read-only copy all the way down", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    expect(Object.isFrozen(handle.effective)).toBe(true);
+    const frame = subOk({ throttle_ms: 50, metrics: ["cvd"] });
+    registry.onSubOk(frame, LIVE);
+    expect([handle.effective, handle.effective["metrics"]].map((v) => Object.isFrozen(v))).toEqual([
+      true,
+      true,
+    ]);
+    registry.onCtlOk(ctlOk({ depth: { max: 200 } }), LIVE);
+    const shared = [handle.effective, handle.effective["metrics"], handle.effective["depth"]];
+    expect(shared.map((v) => Object.isFrozen(v))).toEqual([true, true, true]);
+    expect(handle.effective["metrics"]).toEqual(["cvd"]); // an array stays an array
+    expect(Object.isFrozen(frame.p.results[0]?.effective)).toBe(false); // the frame is left as it came
+  });
+});
+
+describe("options too deep or too big", () => {
+  // JSON.parse accepts a million levels and a 4 MiB frame holds a million elements: `effective` can arrive so.
+  const deep = (n: number) => '{"a":'.repeat(n) + "1" + "}".repeat(n);
+  const subWith = (options: string) =>
+    decodeFrame(
+      `{"t":"sub_ok","p":{"results":[{"ch":"${BOOK}","ok":true,"effective":${options}}]}}`,
+    ) as ControlOf<"sub_ok">;
+  const ctlWith = (options: string, extra = "") =>
+    decodeFrame(
+      `{"t":"ctl_ok","ch":"${BOOK}","p":{"effective":${options}${extra}}}`,
+    ) as ControlOf<"ctl_ok">;
+
+  it("keeps eight levels and ignores nine, and a hundred thousand throw nothing", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onSubOk(subOk({ throttle_ms: 50 }), LIVE);
+    registry.onSubOk(subWith(deep(100_000)), LIVE);
+    registry.onCtlOk(ctlWith(deep(100_000)), LIVE);
+    expect(handle.effective).toEqual({ throttle_ms: 50 }); // what it had stays
+    registry.onSubOk(subWith(deep(9)), LIVE);
+    expect(handle.effective).toEqual({ throttle_ms: 50 });
+    registry.onSubOk(subWith(deep(8)), LIVE);
+    expect(Object.keys(handle.effective)).toEqual(["a"]);
+    registry.onCtlOk(ctlWith(deep(9)), LIVE);
+    expect(Object.keys(handle.effective)).toEqual(["a"]); // a retune too deep changed nothing
+    registry.onCtlOk(ctlWith('{"b":1}'), LIVE);
+    expect(Object.keys(handle.effective)).toEqual(["a", "b"]);
+  });
+
+  it("an effective of 100 000 keys or a 1 M-element list is ignored like one too deep", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onSubOk(subOk({ throttle_ms: 50 }), LIVE);
+    const keys = `{${Array.from({ length: 100_000 }, (_, i) => `"k${i}":1`).join(",")}}`;
+    const empties = `{"v":[${new Array<string>(1_000_000).fill("[]").join(",")}]}`;
+    for (const options of [keys, empties]) {
+      registry.onSubOk(subWith(options), LIVE);
+      registry.onCtlOk(ctlWith(options), LIVE);
+    }
+    expect(handle.effective).toEqual({ throttle_ms: 50 }); // nothing thrown or copied, what it had stays
+  }, 30_000); // four parses of a million values: slow on a busy machine, not a performance budget
+
+  it("keeps 1 024 values and ignores 1 025", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    const list = (n: number) => `{"v":[${new Array<string>(n).fill("1").join(",")}]}`;
+    const length = () => {
+      const items = handle.effective["v"];
+      return Array.isArray(items) ? items.length : -1;
+    };
+    registry.onSubOk(subWith(list(1022)), LIVE); // the root, the list and 1 022 elements
+    expect(length()).toBe(1022);
+    registry.onSubOk(subWith(list(1023)), LIVE);
+    registry.onCtlOk(ctlWith(list(1023)), LIVE);
+    expect(length()).toBe(1022);
+  });
+
+  const fresh = (prefix: string, n: number) =>
+    `{${Array.from({ length: n }, (_, i) => `"${prefix}${i}":1`).join(",")}}`;
+  const keyCount = (options: object) => Object.keys(options).length;
+
+  it("two retunes of 600 fresh keys each: the second is ignored and effective keeps the first 600", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onCtlOk(ctlWith(fresh("a", 600)), LIVE);
+    registry.onCtlOk(ctlWith(fresh("b", 600)), LIVE); // 1 200 values between them: no longer options
+    expect(Object.keys(handle.effective)).toEqual(Array.from({ length: 600 }, (_, i) => `a${i}`));
+  });
+
+  it("effective never passes 1 024 values across retunes: 300 retunes of 1 000 fresh keys keep the first", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    for (let i = 0; i < 300; i += 1) {
+      registry.onCtlOk(ctlWith(fresh(`r${i}k`, 1000)), LIVE);
+      expect(keyCount(handle.effective)).toBeLessThanOrEqual(1024);
+    }
+    expect(keyCount(handle.effective)).toBe(1000);
+  });
+
+  it("retunes add up to the limit and stop there: 10 fresh keys at a time end at 1 020", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    for (let i = 0; i < 110; i += 1) registry.onCtlOk(ctlWith(fresh(`r${i}k`, 10)), LIVE);
+    expect(keyCount(handle.effective)).toBe(1020); // the root and 1 023 values would fit; the 103rd retune would make 1 030
+  });
+
+  it("counts the size of a list from its length alone: nothing of it is enumerated or read", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    const touched: (string | symbol)[] = [];
+    const list = new Proxy(new Array<number>(5000).fill(1), {
+      get: (target, key, receiver) => {
+        touched.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+      ownKeys: (target) => {
+        touched.push("ownKeys");
+        return Reflect.ownKeys(target);
+      },
+    });
+    const frame = ctlOk({});
+    Object.assign(frame.p, { effective: { v: list } });
+    registry.onCtlOk(frame, LIVE);
+    expect(handle.effective).toEqual({}); // 5 000 elements: ignored
+    expect(touched).toEqual(["length"]);
+  });
+
+  it("still voids the stream when the resnapshot comes with options too deep to keep", () => {
+    const { registry, handle, got } = live();
+    registry.onCtlOk(ctlWith(deep(50), ',"resnapshot":true'), LIVE);
+    expect([handle.effective, handle.status, got()]).toEqual([
+      {},
+      "resyncing",
+      ["reset:resnapshot"],
+    ]);
+  });
+});
+
+describe("resnapshot, narrowing and unsubscribe (C5)", () => {
+  it("ctl_ok with resnapshot voids the state and asks for nothing: the snap follows by itself", () => {
+    const { registry, host, handle, got } = live();
+    registry.onData(delta(101), 1);
+    registry.onCtlOk(ctlOk({ depth: 200 }, true), LIVE);
+    expect([handle.status, handle.effective["depth"]]).toEqual(["resyncing", 200]);
+    registry.onData(snap(103, { meta: { reason: "reconfigure", previous_seq: 101 } }), 1);
+    expect(got()).toEqual(["d:101", "reset:resnapshot", "snap:103"]);
+    expect(host.resync).not.toHaveBeenCalled();
+  });
+
+  it("a delta on a stream that resnapshot voided says the server went on without the snap: one resync", () => {
+    const { registry, host, handle, got } = live();
+    registry.onCtlOk(ctlOk({}, true), LIVE);
+    expect(host.resync).not.toHaveBeenCalled(); // the snap follows by itself
+    for (let s = 101; s <= 120; s += 1) registry.onData(delta(s), 1);
+    resynced(host, 100, "state_corrupt");
+    expect([host.resync.mock.calls.length, handle.status, got()]).toEqual([
+      1,
+      "resyncing",
+      ["reset:resnapshot"],
+    ]);
+    registry.onData(snap(200), 1);
+    registry.onData(delta(201), 1);
+    expect(got()).toEqual(["snap:200", "d:201"]);
+  });
+
+  it("a resnapshot the snap answers asks for nothing, and a later gap is an ordinary one", () => {
+    const { registry, host } = live();
+    registry.onCtlOk(ctlOk({}, true), LIVE);
+    registry.onData(snap(200), 1);
+    registry.onData(delta(202), 1); // a gap after the snap
+    expect(host.resync).toHaveBeenCalledTimes(1);
+    resynced(host, 200, "sequence_gap");
+    registry.onData(delta(203), 1); // dropped: it is not a second ask
+    expect(host.resync).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["resnapshot", () => ctlOk({}, true), 0],
+    [
+      "a narrowing revoked",
+      () => revoked("account_scope_changed", { resubscribe_allowed: true }),
+      1,
+    ],
+  ])(
+    "after %s the rest of the held set is refused: its tail is never a baseline",
+    (_what, frame, asks) => {
+      const { registry, host, handle } = live();
+      registry.onData(snap(null, { id: "set-1", p: { n: 1 } }), 1);
+      const f = frame();
+      if (f.t === "ctl_ok") registry.onCtlOk(f, LIVE);
+      else registry.onRevoked(f);
+      registry.onData(snap(null, { id: "set-1", p: { n: 2 } }), 1);
+      registry.onData(snap(300, { id: "set-1", p: { n: 3 } }), 1);
+      expect([handle.status, host.resync.mock.calls.length]).toEqual(["resyncing", asks]);
+    },
+  );
+
+  it("an unsub_ok concerns only a stream with no baseline yet: what it holds is the old subscription's", () => {
+    const { registry, handle, got } = live();
+    registry.onUnsubOk(unsubOk(), LIVE); // a stream with a baseline is not the one unsubscribed
+    registry.onData(delta(101), 1);
+    expect([handle.status, got()]).toEqual(["live", ["d:101"]]);
+    registry.onData(delta(103), 1); // a gap: resyncing, and still not the one unsubscribed
+    registry.onUnsubOk(unsubOk(), LIVE);
+    expect([handle.status, got()]).toEqual(["resyncing", ["reset:gap"]]);
+    const t = setup(); // re-subscribed after an unsub: a chunk of the old subscription may be held
+    const again = t.registry.consume(spec());
+    t.registry.onData(snap(null, { id: "old", p: { n: 1 } }), 1);
+    t.registry.onUnsubOk(unsubOk(false), LIVE); // refused: nothing happens
+    expect([t.registry.heldBytes > 0, t.got()]).toEqual([true, []]);
+    t.registry.onUnsubOk(unsubOk(), LIVE);
+    expect([t.registry.heldBytes, t.got(), again.status]).toEqual([
+      0,
+      ["reset:unsubscribed"],
+      "pending",
+    ]);
+    t.registry.onData(snap(500), 1);
+    expect(again.status).toBe("live");
+  });
+
+  it("an unsub_ok with a scope reaches the stream of its request only", () => {
+    const { registry, got } = setup();
+    registry.consume(spec());
+    registry.consume(spec(), RS);
+    registry.onData(snap(null, { id: "a", p: { n: 1 } }), 1); // the live stream holds a chunk
+    registry.onData(snap(null, { id: "b", rs: RS, p: { n: 1 } }), 1); // and so does the replay one
+    registry.onUnsubOk(unsubOk(), { rs: RS });
+    expect([got(), got(BOOK, RS), registry.heldBytes > 0]).toEqual([
+      [],
+      ["reset:unsubscribed"],
+      true,
+    ]);
+    registry.onUnsubOk(unsubOk(), LIVE); // the live stream's turn
+    expect([got(), got(BOOK, RS), registry.heldBytes]).toEqual([["reset:unsubscribed"], [], 0]);
+  });
+
+  it.each([
+    ["an ending revoked", () => revoked("session_revoked")],
+    ["a narrowing revoked", () => revoked("account_scope_changed", { resubscribe_allowed: true })],
+    ["ctl_ok with resnapshot", () => ctlOk({}, true)],
+  ])("%s discards the set held for the topic", (_what, frame) => {
+    const { registry } = live();
+    registry.onData(snap(null, { id: "set-1", p: { n: 1 } }), 1);
+    expect(registry.heldBytes).toBeGreaterThan(0);
+    const f = frame();
+    if (f.t === "ctl_ok") registry.onCtlOk(f, LIVE);
+    else registry.onRevoked(f);
+    expect(registry.heldBytes).toBe(0);
+  });
+});
+
 describe("bars (C3)", () => {
   it("delivers an unconfirmed bar untouched, never as closed, with the delta's meta", () => {
     const { registry, take } = setup();
@@ -331,6 +653,141 @@ describe("bars (C3)", () => {
     expect(second.body).toBe(update.body); // the very body that arrived: nothing read or rewritten
     expect(decodeBars(new Uint8Array(second.body.bytes)).bars[0]?.confirmed).toBe(false);
     expect(decodeBars(bars(true)).bars[0]?.confirmed).toBe(true); // the builder sets the bit it claims
+  });
+});
+
+describe("revocation (9.5)", () => {
+  it.each(["session_revoked", "topic_removed"])("%s ends it", (reason) => {
+    const { registry, host, handle, got } = live();
+    registry.onRevoked(revoked(reason));
+    expect(handle.status).toBe("revoked");
+    expect(got()).toEqual(["reset:revoked"]);
+    registry.onData(snap(200), 1); // nothing more is delivered to an ended stream, not even a snapshot
+    registry.onData(delta(201), 1);
+    expect(got()).toEqual([]);
+    const again = registry.consume(spec()); // a new consumer starts a fresh subscription
+    expect([host.subscribe.mock.calls.length, again.status]).toEqual([2, "pending"]);
+    handle.release(); // the dead stream's last handle: nothing to unsubscribe, the new stream untouched
+    expect(host.unsubscribe).not.toHaveBeenCalled();
+    expect(again.status).toBe("pending");
+  });
+
+  it("an account_scope_changed that keeps accounts continues, with the old rows voided", () => {
+    const { registry, host, handle, got } = live();
+    registry.onRevoked(revoked("account_scope_changed", { resubscribe_allowed: true }));
+    expect(handle.status).toBe("resyncing"); // not revoked
+    expect(got()).toEqual(["reset:narrowed"]);
+    resynced(host, 100, "state_corrupt");
+    registry.onData(snap(101, { meta: { reason: "reconfigure" } }), 1);
+    expect(handle.status).toBe("live");
+    handle.release();
+    expect(host.unsubscribe).toHaveBeenCalledWith(BOOK, undefined);
+  });
+
+  it.each([
+    ["account_scope_changed", false],
+    ["session_revoked", true],
+  ])("a %s revoked with resubscribe_allowed %s ends the subscription", (reason, resubscribe) => {
+    const { registry, host, handle } = live();
+    registry.onRevoked(control("revoked", { reason: "session_revoked", message: "m" })); // no topic
+    registry.onRevoked(revoked("session_revoked", {}, "orders")); // a topic nobody consumes
+    expect(handle.status).toBe("live");
+    registry.onRevoked(revoked(reason, { resubscribe_allowed: resubscribe }));
+    expect(handle.status).toBe("revoked");
+    handle.release();
+    expect(host.unsubscribe).not.toHaveBeenCalled(); // the server already ended it
+  });
+
+  it("an ended stream gets no control frame: a second revoked, a refusal or a narrowing does nothing", () => {
+    const { registry, host, handle, got } = live();
+    registry.onRevoked(revoked("session_revoked"));
+    expect(got()).toEqual(["reset:revoked"]);
+    registry.onRevoked(revoked("session_revoked"));
+    registry.onRevoked(revoked("account_scope_changed", { resubscribe_allowed: true }));
+    registry.onSubOk(refused(), LIVE);
+    registry.onCtlOk(ctlOk({ depth: 200 }, true), LIVE);
+    expect([handle.status, got(), host.resync.mock.calls.length]).toEqual(["revoked", [], 0]);
+    expect(handle.effective).toEqual({}); // and its options are not retuned
+  });
+});
+
+describe("a resync names the subscription, once sub_ok has given its id (#572)", () => {
+  it("carries sub_id beside the replay session", () => {
+    const { registry, host } = live();
+    registry.onData(delta(102), 1); // a gap before any sub_ok: no id to name yet
+    resynced(host, 100, "sequence_gap");
+    registry.onSubOk(subOk({}), LIVE);
+    registry.onData(snap(110), 1);
+    registry.onData(delta(112), 1);
+    resynced(host, 110, "sequence_gap", undefined, "s_01");
+    const replay = registry.consume(spec(), RS);
+    registry.onSubOk(subOk({}, BOOK, { sub_id: "s_02" }), { rs: RS });
+    registry.onData(snap(5, { rs: RS }), 1);
+    registry.onData(delta(7, { rs: RS }), 1);
+    resynced(host, 5, "sequence_gap", RS, "s_02");
+    expect(replay.subId).toBe("s_02");
+  });
+});
+
+describe("a control reply names a ch, not a stream (23 11, #572)", () => {
+  /** A live and a replay stream of one ch, each with a baseline: no reply says which of them it is for. */
+  function pair() {
+    const t = setup();
+    const liveHandle = t.registry.consume(spec());
+    const replayHandle = t.registry.consume(spec(), RS);
+    t.registry.onData(snap(100), 1);
+    t.registry.onData(snap(5, { rs: RS, meta: { source: "replay" } }), 1);
+    t.take();
+    t.take(BOOK, RS);
+    return { ...t, liveHandle, replayHandle, forReplay: { rs: RS } };
+  }
+
+  it("a sub_ok that refuses the replay ends the replay stream, and its options land on it alone", () => {
+    const { registry, liveHandle, replayHandle, forReplay, got } = pair();
+    registry.onSubOk(subOk({ throttle_ms: 50 }), forReplay);
+    expect([replayHandle.subId, replayHandle.effective]).toEqual(["s_01", { throttle_ms: 50 }]);
+    expect([liveHandle.subId, liveHandle.effective]).toEqual([undefined, {}]);
+    registry.onSubOk(refused(), forReplay);
+    expect([replayHandle.status, liveHandle.status]).toEqual(["revoked", "live"]);
+    expect([got(), got(BOOK, RS)]).toEqual([[], ["reset:revoked"]]);
+  });
+
+  it("ctl_ok voids the stream it was for, and the unsub_ok of a released replay leaves live alone", () => {
+    const { registry, host, liveHandle, replayHandle, forReplay, got } = pair();
+    registry.onCtlOk(ctlOk({ depth: 200 }, true), forReplay);
+    expect([replayHandle.status, liveHandle.status]).toEqual(["resyncing", "live"]);
+    expect([replayHandle.effective, liveHandle.effective]).toEqual([{ depth: 200 }, {}]);
+    expect([got(), got(BOOK, RS)]).toEqual([[], ["reset:resnapshot"]]);
+    replayHandle.release();
+    expect(host.unsubscribe).toHaveBeenCalledWith(BOOK, RS);
+    registry.onUnsubOk(unsubOk(), forReplay);
+    registry.onData(delta(101), 1);
+    expect([liveHandle.status, got()]).toEqual(["live", ["d:101"]]);
+  });
+
+  it("a reply for a stream that is gone applies to nothing, however many streams of the ch remain", () => {
+    const { registry, host, liveHandle, replayHandle, forReplay, got } = pair();
+    replayHandle.release();
+    registry.onCtlOk(ctlOk({ depth: 200 }, true), forReplay); // the released replay stream's resnapshot
+    registry.onSubOk(refused(), forReplay);
+    registry.onSubOk(subOk({ throttle_ms: 50 }), forReplay);
+    for (let s = 101; s <= 120; s += 1) registry.onData(delta(s), 1);
+    expect([liveHandle.status, liveHandle.effective, liveHandle.subId]).toEqual([
+      "live",
+      {},
+      undefined,
+    ]);
+    expect([got().length, host.resync.mock.calls.length]).toEqual([20, 0]); // 20 deltas, no reset
+  });
+
+  it("replay_session_ended ends the replay streams only; any other reason ends both", () => {
+    const { registry, liveHandle, replayHandle, got } = pair();
+    registry.onRevoked(revoked("replay_session_ended"));
+    expect([replayHandle.status, liveHandle.status]).toEqual(["revoked", "live"]);
+    expect([got(), got(BOOK, RS)]).toEqual([[], ["reset:revoked"]]);
+    const both = pair();
+    both.registry.onRevoked(revoked("session_revoked"));
+    expect([both.liveHandle.status, both.replayHandle.status]).toEqual(["revoked", "revoked"]);
   });
 });
 
@@ -410,6 +867,25 @@ describe("resync budget (7.5)", () => {
     expect(host.resync).toHaveBeenCalledTimes(6);
     resynced(host, base, "sequence_gap");
     expect(registry.counters.resyncsSent).toBe(6);
+  });
+
+  it("drops the deferred resync when the server ends the stream, and its window with it", () => {
+    const { registry, host } = live();
+    const base = gaps(registry, 5);
+    registry.onData(delta(base + 2), 1);
+    registry.onRevoked(revoked("session_revoked"));
+    vi.advanceTimersByTime(120_000);
+    expect(host.resync).toHaveBeenCalledTimes(5);
+  });
+
+  it("an ended stream takes the gateway's resync window with it: the next subscription has a new one", () => {
+    const { registry, host } = live();
+    gaps(registry, 5);
+    registry.onRevoked(revoked("session_revoked"));
+    registry.consume(spec()); // a fresh subscription of the same ch, inside the minute
+    registry.onData(snap(1), 1);
+    registry.onData(delta(3), 1);
+    expect(host.resync).toHaveBeenCalledTimes(6);
   });
 
   it("drops the deferred resync when a snap repairs the stream first", () => {

@@ -256,14 +256,17 @@ describe("snapshot assembler: structured sets at the sizes the gateway sends (3.
     expect(asm.heldBytes).toBe(0);
   });
 
-  it("holds four chunks of the frame limit, 16 MiB of text, and drops the set at a fifth", () => {
+  it("holds four chunks of up to 4 MiB less 64 characters, and drops the set at a fifth", () => {
     const asm = createSnapshotAssembler();
-    const full = (s: number | null = null) => sized(4 * MiB - 1024, s);
+    const full = (s: number | null = null) => sized(4 * MiB - 64, s); // 4 x (4x + 256) is 64 MiB
     for (let i = 0; i < 3; i += 1) expect(asm.push(KEY, full())).toEqual({ kind: "pending" });
     expect(asm.push(KEY, full(9))).toMatchObject({ kind: "complete", seq: 9 });
     for (let i = 0; i < 4; i += 1) asm.push(KEY, full());
     expect(asm.push(KEY, full(10))).toEqual({ kind: "overflow" });
     expect(asm.push(KEY, full(11))).toEqual({ kind: "ignored" });
+    const near = createSnapshotAssembler(); // a character nearer the limit and the fourth no longer fits
+    for (let i = 0; i < 3; i += 1) near.push(KEY, sized(4 * MiB - 63));
+    expect(near.push(KEY, sized(4 * MiB - 63, 12))).toEqual({ kind: "overflow" });
   });
 
   it("pins the defaults to the byte: 64 MiB a set, 128 MiB across streams, a factor of 4 and 256 a chunk", () => {
