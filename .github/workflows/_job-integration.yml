@@ -60,7 +60,7 @@ jobs:
 
       - name: Fixture-driven pipeline suite (network denied except loopback)
         working-directory: services/api
-        run: uv run pytest tests/integration/pipeline -m "not integration" --no-cov
+        run: uv run pytest tests/integration/pipeline -m "not integration and not fuzz and not perf and not harness" --no-cov
 
       - name: Postgres/QuestDB-backed integration suite (testcontainers, needs Docker)
         working-directory: services/api

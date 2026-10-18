@@ -25,7 +25,8 @@ jobs:
         working-directory: services/api
         # Stricter than _job-py.yml on purpose: cold runs have no docker services,
         # so all integration tests are excluded, not only chaos+integration.
-        run: uv run --no-cache pytest -p no:cacheprovider -m "not exchange_smoke and not integration and not chaos and not roundtrip" --no-cov
+        # Both py jobs repeat addopts' fuzz/perf/harness exclusions: a later -m replaces addopts' -m.
+        run: uv run --no-cache pytest -p no:cacheprovider -m "not exchange_smoke and not integration and not chaos and not roundtrip and not fuzz and not perf and not harness" --no-cov
   explore-py:
     # Non-blocking nightly: random (non-derandomised) Hypothesis exploration; the ci profile never finds new examples.
     runs-on: ubuntu-latest
@@ -41,7 +42,7 @@ jobs:
         working-directory: services/api
       - name: pytest (hypothesis dev profile, random exploration)
         working-directory: services/api
-        run: uv run --no-cache pytest -p no:cacheprovider -m "not exchange_smoke and not integration and not chaos and not roundtrip" --no-cov
+        run: uv run --no-cache pytest -p no:cacheprovider -m "not exchange_smoke and not integration and not chaos and not roundtrip and not fuzz and not perf and not harness" --no-cov
   cold-web:
     runs-on: ubuntu-latest
     timeout-minutes: 30
