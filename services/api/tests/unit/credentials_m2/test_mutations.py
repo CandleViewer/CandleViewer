@@ -104,7 +104,8 @@ async def test_mutant_no_prev_kek_fallback_killed(monkeypatch: pytest.MonkeyPatc
 async def test_mutant_tofu_kcv_killed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def tofu(self: RotatingBroker, k: Any, kcvs: Any, *, must_exist: bool) -> bool:
         if await kcvs.kcv_for(self._env, k.version) is None:
-            await kcvs.record_kcv(self._env, k.version, k.kcv())
+            enrolment: tuple[str, dict[str, str]] = ("security.kek_enrolled", {})
+            await kcvs.record_kcv(self._env, k.version, k.kcv(), audit=enrolment)
         return False
 
     monkeypatch.setattr(RotatingBroker, "verify_kcv", tofu)

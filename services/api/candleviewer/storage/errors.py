@@ -252,6 +252,13 @@ class BackupCheckViolation(StorageError):
         self.constraint = constraint
 
 
+class KcvEnrolmentNotAudited(StorageError):
+    """A KCV enrolment's `security.kek_enrolled` cannot commit with its `kek_versions` row (no
+    audit row builder is wired, or the record's `record_id` is stored), so nothing does (#2266)."""
+
+    code = "STORAGE_KCV_ENROLMENT_NOT_AUDITED"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -280,4 +287,5 @@ ERROR_CODES: dict[type[StorageError], str] = {
     RewrapAuditNotWritten: RewrapAuditNotWritten.code,
     BackupWriteOnceViolation: BackupWriteOnceViolation.code,
     BackupCheckViolation: BackupCheckViolation.code,
+    KcvEnrolmentNotAudited: KcvEnrolmentNotAudited.code,
 }

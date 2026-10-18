@@ -125,10 +125,9 @@ async def test_empty_database_each_environment_starts_its_own_lineage(
         audit = AuditLog()
         svc, _ = await _start(store, env_name, _Src(raw, 1), audit=audit)
         assert svc.health().status is HealthStatus.OK
-        assert [(a, f["env"]) for a, f in audit.records] == [
-            ("security.kek_enrolled", env_name),
-            ("security.kek_loaded", env_name),
-        ]
+        assert [(a, f["env"]) for a, f in audit.records] == [("security.kek_loaded", env_name)]
+        action, fields = store.kcv_audit[-1]  # committed with its row (#2266)
+        assert (action, fields["env"]) == ("security.kek_enrolled", env_name)
     assert await _lineages(store) == sorted([("live", 1), (other, 1)])
 
 
@@ -164,17 +163,19 @@ class _EnrolRace(InMemoryCredentialStore):
         self.refused: list[str] = []
         self._loser_read, self._winner_done = asyncio.Event(), asyncio.Event()
 
-    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+    async def record_kcv(
+        self, env: str, version: int, kcv: bytes, *, audit: tuple[str, dict[str, str]]
+    ) -> tuple[bytes, bool]:
         if env == self.winner:
             await self._loser_read.wait()
             try:
-                return await super().record_kcv(env, version, kcv)
+                return await super().record_kcv(env, version, kcv, audit=audit)
             finally:
                 self._winner_done.set()
         self._loser_read.set()
         await self._winner_done.wait()
         try:
-            return await super().record_kcv(env, version, kcv)
+            return await super().record_kcv(env, version, kcv, audit=audit)
         except ValueError as exc:
             self.refused.append(str(exc))
             raise

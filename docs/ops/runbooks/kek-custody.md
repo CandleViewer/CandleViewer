@@ -74,6 +74,16 @@ credential operation raises `kek_unavailable`. The log line contains this remedi
 | `kcv_store_unavailable` | `kek_versions` unreadable (Postgres down, schema older than `0026_kek_versions_env`) — not a custody problem; or two environments raced to enrol one KEK (`kv_kcv_unique`) — a custody problem, see `kek_reused` |
 | `audit_unavailable` | the audit writer refused `security.kek_loaded`; the KEK was zeroed — fix the audit WAL/DB first |
 | `no_credential_store` | (`live`) started without the Postgres credential store |
+| `kek_rows_stranded` | the KEK loaded, but unrevoked API key rows of this environment are wrapped under a version this process did not load: typically a restart without `CV_KEK_PREV_HANDLE` before a re-wrap finished. Unlike the reasons above, cv-api keeps the broker: those keys fail closed, every other key still signs (cancels and SL amendments included), and new orders stay latched with `secrets.kek_rows_stranded`. Its log line and `security.kek_rows_stranded` give the count. Recover as below |
+
+**Recovering from `kek_rows_stranded`** (either way ends with a restart that finds no stranded row):
+
+1. The previous KEK is in custody: restart via the launcher with `CV_KEK_PREV_HANDLE` = that KEK
+   beside the current one, so the stranded keys sign again, and run the re-wrap again; it resumes
+   where it stopped. Then restart without the previous handle.
+2. The previous KEK is lost: those keys can never be opened again. Revoke each at Bybit, then revoke
+   it in CandleViewer through the audited key-management flow (#898), which works under this
+   degrade because revocation needs no KEK. Restart, then provision new keys.
 
 Enrolment: the first boot at a new version with no rows records its KCV and writes
 `security.kek_enrolled` (with the KCV). A wrongly enrolled KCV can be re-enrolled **only while

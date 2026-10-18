@@ -3,7 +3,7 @@
 Lives in M10 so M2 never imports a driver; structurally satisfies
 `secrets.store.CredentialStore` / `secrets.store.KcvStore` without importing M2 (C-3.2).
 Moves only ciphertext, nonces and wrapped-DEK refs; never logs a row. Static SQL only.
-A re-wrap's audit record is built by a function the composition root injects
+A re-wrap's or KCV enrolment's audit record is built by a function the composition root injects
 (`admin.wiring.secrets_audit_row`): M10 depends on M1 only, so it never imports `audit` (§3).
 """
 
@@ -16,7 +16,11 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from candleviewer.storage.errors import RewrapAuditNotWired, RewrapAuditNotWritten
+from candleviewer.storage.errors import (
+    KcvEnrolmentNotAudited,
+    RewrapAuditNotWired,
+    RewrapAuditNotWritten,
+)
 from candleviewer.storage.repositories.audit_sqlalchemy import insert_audit_row_locked
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -46,8 +50,8 @@ _REVOKE = sa.text(
     "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()), status = 'revoked', "
     "updated_at = now() WHERE id = :id"
 )
-#: `_IDS` and `_COUNT` leave out a row either revocation signal fences, as `_REWRAP` does, so a
-#: KEK rotation never lists a row it may not move and can still complete (#2266).
+#: `_IDS`, `_COUNT` and `_STRANDED` leave out a row either revocation signal fences, as `_REWRAP`
+#: does, so a KEK rotation never lists a row it may not move and can still complete (#2266).
 _IDS = sa.text(
     "SELECT k.id FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
     "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND k.status <> 'revoked' "
@@ -58,6 +62,11 @@ _COUNT = sa.text(
     "SELECT count(*) FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
     "WHERE k.kek_version = :v AND k.revoked_at IS NULL AND k.status <> 'revoked' "
     "AND ea.env::text = :env"
+)
+_STRANDED = sa.text(
+    "SELECT count(*) FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "WHERE k.kek_version <> ALL(CAST(:loaded AS integer[])) AND k.revoked_at IS NULL "
+    "AND k.status <> 'revoked' AND ea.env::text = :env"
 )
 #: Rows at `:v` created before `(env, :v)` was enrolled, revoked or not: an earlier run's moves.
 _REWRAPPED = sa.text(
@@ -107,7 +116,8 @@ class SqlAlchemyCredentialStore:
         audit_row: AuditRowBuilder | None = None,
     ) -> None:
         self._rel = relational
-        #: Builds the record `rewrap` writes with its compare-and-set; without one it refuses.
+        #: Builds the record `rewrap` or `record_kcv` writes with its change; without one, both
+        #: refuse.
         self._audit_row = audit_row
 
     async def _exec(self, stmt: sa.TextClause, params: dict[str, Any]) -> Any:
@@ -148,6 +158,10 @@ class SqlAlchemyCredentialStore:
 
     async def count_rewrapped_since_enrolment(self, version: int, env: str) -> int:
         return int((await self._exec(_REWRAPPED, {"v": version, "env": env}))[0]["count"])
+
+    async def count_stranded(self, env: str, *loaded_versions: int) -> int:
+        params = {"env": env, "loaded": sorted(loaded_versions)}
+        return int((await self._exec(_STRANDED, params))[0]["count"])
 
     async def rewrap(
         self,
@@ -190,11 +204,22 @@ class SqlAlchemyCredentialStore:
             (str(r["env"]), int(r["version"]), bytes(r["kcv"]), bool(r["retired"])) for r in rows
         ]
 
-    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
-        """Insert-if-absent, then re-read: concurrent boots converge on one stored KCV. One KCV
-        under two environments violates `kv_kcv_unique` and propagates (the boot degrades)."""
-        await self._exec(_KCV_PUT, {"env": env, "v": version, "kcv": kcv})
+    async def record_kcv(
+        self, env: str, version: int, kcv: bytes, *, audit: tuple[str, dict[str, str]]
+    ) -> tuple[bytes, bool]:
+        """Insert-if-absent, then re-read: concurrent boots converge on one stored KCV. Only an
+        insert that wrote the row takes the chain lock and inserts the `audit` record, before
+        COMMIT: one transaction, so an error rolls back both (C-2.9, #2266). One KCV under two
+        environments violates `kv_kcv_unique` and propagates (the boot degrades)."""
+        if self._audit_row is None:
+            raise KcvEnrolmentNotAudited("KCV enrolment refused: no audit row builder is wired")
+        async with self._rel.unit_of_work() as uow:
+            put: Any = await uow.session.execute(_KCV_PUT, {"env": env, "v": version, "kcv": kcv})
+            enrolled = int(put.rowcount) == 1
+            if enrolled and not await insert_audit_row_locked(uow.session, self._audit_row(*audit)):
+                raise KcvEnrolmentNotAudited("KCV enrolment record not written")
+            await uow.commit()
         stored = await self.kcv_for(env, version)
         if stored is None:  # pragma: no cover - row was just inserted or already present
             raise RuntimeError("kek_versions row missing after insert")
-        return stored
+        return stored, enrolled

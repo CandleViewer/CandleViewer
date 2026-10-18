@@ -58,6 +58,11 @@ class CredentialStore(Protocol):
         a failure of either rolls back both."""
         ...
 
+    async def count_stranded(self, env: str, *loaded_versions: int) -> int:
+        """Rows of `env` that neither revocation signal fences (as `ids_at_kek_version`) at a KEK
+        version not in `loaded_versions`: keys a process with only those KEKs cannot open."""
+        ...
+
     async def touch_last_used(self, key_id: UUID) -> None: ...
 
 
@@ -79,9 +84,12 @@ class KcvStore(Protocol):
         """All `(env, version, kcv, retired)` rows, every environment (KCVs are not secret)."""
         ...
 
-    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+    async def record_kcv(
+        self, env: str, version: int, kcv: bytes, *, audit: tuple[str, dict[str, str]]
+    ) -> tuple[bytes, bool]:
         """Insert-if-absent; return the KCV now stored for `(env, version)` (re-read after
-        conflict). A KCV already stored under another key raises (`kv_kcv_unique`)."""
+        conflict) and whether this call inserted it, the `audit` record `(action, fields)` then
+        committed with it (C-2.9, #2266). A KCV under another key raises (`kv_kcv_unique`)."""
         ...
 
 
@@ -94,6 +102,8 @@ class InMemoryCredentialStore:
         self.retired: set[tuple[str, int]] = set()
         #: `(action, fields)` of each record `rewrap` committed with a moved row.
         self.rewrap_audit: list[tuple[str, dict[str, str]]] = []
+        #: `(action, fields)` of each record `record_kcv` committed with an enrolment.
+        self.kcv_audit: list[tuple[str, dict[str, str]]] = []
         #: When each row was inserted and each KCV enrolled, as `created_at` orders them.
         self.created: dict[UUID, int] = {}
         self.enrolled: dict[tuple[str, int], int] = {}
@@ -155,6 +165,13 @@ class InMemoryCredentialStore:
         self.rewrap_audit.append((audit[0], dict(audit[1])))
         return True
 
+    async def count_stranded(self, env: str, *loaded_versions: int) -> int:
+        return sum(
+            r["env"] == env and r["kek_version"] not in loaded_versions
+            for r in self.rows.values()
+            if not r["revoked"] and r.get("status") != "revoked"
+        )
+
     async def touch_last_used(self, key_id: UUID) -> None:
         return None
 
@@ -164,12 +181,16 @@ class InMemoryCredentialStore:
     async def kcv_versions(self) -> list[tuple[str, int, bytes, bool]]:
         return [(e, v, k, (e, v) in self.retired) for (e, v), k in sorted(self.kcvs.items())]
 
-    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
-        if (env, version) not in self.kcvs:
-            if kcv in self.kcvs.values():
-                raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
-            self.enrolled[(env, version)] = next(self._clock)
-        return self.kcvs.setdefault((env, version), kcv)
+    async def record_kcv(
+        self, env: str, version: int, kcv: bytes, *, audit: tuple[str, dict[str, str]]
+    ) -> tuple[bytes, bool]:
+        if (env, version) in self.kcvs:
+            return self.kcvs[(env, version)], False
+        if kcv in self.kcvs.values():
+            raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
+        self.kcvs[(env, version)], self.enrolled[(env, version)] = kcv, next(self._clock)
+        self.kcv_audit.append((audit[0], dict(audit[1])))
+        return kcv, True
 
 
 class InMemoryAuthKeyStore:

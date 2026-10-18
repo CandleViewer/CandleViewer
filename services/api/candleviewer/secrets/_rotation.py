@@ -25,6 +25,7 @@ class RotatingBroker(CredentialBroker):
 
         An unknown KCV is recorded only if no live row exists at that version, or after a
         trial unwrap of one such row succeeds; `must_exist` (previous KEK) refuses unknown.
+        An enrolment commits its `security.kek_enrolled` record with the row (#2266).
         """
         expected = await self._io(kcvs.kcv_for(self._env, kek.version), "kcv_store_unavailable")
         enrolled = False
@@ -40,9 +41,14 @@ class RotatingBroker(CredentialBroker):
                     env.zero(kek.unwrap_dek(row.dek_ref, credential_id=row.id))
                 except (InvalidTag, ValueError):
                     raise KekLoadError("kek_mismatch") from None
-            stored = kcvs.record_kcv(self._env, kek.version, kek.kcv())
-            expected = await self._io(stored, "kcv_store_unavailable")
-            enrolled = True
+            kind, role, _ = _SYSTEM
+            fields = {"actor_kind": kind, "actor_role": role, "env": self._env}
+            fields |= {"kek_version": str(kek.version), "kcv": kek.kcv().hex()}
+            put = kcvs.record_kcv(
+                self._env, kek.version, kek.kcv(), audit=("security.kek_enrolled", fields)
+            )
+            stored, enrolled = await self._io(put, "kcv_store_unavailable")
+            expected = stored
         if not kcv_matches(kek, expected):
             raise KekLoadError("kek_mismatch")
         return enrolled
