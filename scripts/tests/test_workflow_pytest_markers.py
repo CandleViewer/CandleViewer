@@ -7,10 +7,13 @@ Rule, per marker the addopts `-m` deselects: a test carrying only that marker st
 unless the call names it outside a `not` (its own lane: `-m harness`, `-m "perf and not flaky"`)
 or `ON_PURPOSE` lists it. Not modelled: a heavy test that also carries a marker the call selects
 (an integration+perf test under `-m integration`).
-The scan reads each step's `run:` text and fails loudly on the other ways to replace addopts' -m:
-PYTEST_ADDOPTS, a `-qm` cluster, `-c`/`--config-file`, an `addopts` override and `@file` arguments.
-Not read: a shell expansion among the arguments (`"${lane_paths[@]}"`) and a pytest call inside a
-script that a step runs (tools/statechart/run_xstate_contract.sh)."""
+The scan reads each step's `run:` as bash does (a comment starts only at a word that begins with
+`#`), and the command lines quoted in it (`bash -c "..."`). It fails loudly on the other ways to
+set or replace addopts' -m: a pytest command word in a string other than a `run:`, `name:` or
+`id:` (an env, matrix or action input), a `$` in a pytest call that `EXPANSIONS` does not list,
+PYTEST_ADDOPTS, UV_ENV_FILE, `--env-file`, `pytest.main`, a `-qm` cluster, `-c`/`--config-file`,
+an `addopts` override and `@file`.
+Not read: pytest run by a script that a step runs (tools/statechart/run_xstate_contract.sh)."""
 
 from __future__ import annotations
 
@@ -30,10 +33,18 @@ OPERATOR = re.compile(r"[();<>|&]+")  # a run of shell punctuation that shlex sp
 SEPARATOR = re.compile(r"[();|&]+")  # ends a simple command: `a && b`, `a || s=$?`, `a | tee`
 REDIRECT = {"<", ">", ">>", ">&", "<&", "&>", "&>>", ">|", "<>", "<<", "<<<"}  # takes one word
 ENV = re.compile(r"[A-Za-z_]\w*=.*")
+WORD = re.compile(r"[^\s'\"();|&<>]+")  # a shell word with its quotes and operators cut off
+# A line and its comment, which starts at a `#` that begins a word outside quotes. shlex would also
+# start one inside a word (`$#`, `${#x}`) and drop the rest of the line, so it gets no commenters.
+COMMENT = re.compile(
+    r"""^((?:[^'"\\#]|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|(?<=[^\s;&|()<>])#)*)(?<![^\s;&|()<>])#.*"""
+)
 # What may stand before `pytest`: `uv run [--flags]`, then `python -m`; anything else fails loudly.
 LAUNCHER = re.compile(r"(?:uv run(?: -\S+)* )?(?:(?:\S*/)?python[\d.]* -m )?")
 # Arguments that swap or drop addopts' -m: `-c FILE`, `--config-file`, `-o addopts=`, `@argsfile`.
 SWAPS_ADDOPTS = re.compile(r"-[A-Za-z]*c|--config-file|@|.*addopts")
+CARRIERS = ("PYTEST_ADDOPTS", "UV_ENV_FILE")  # in an env map, a prefix, export or $GITHUB_ENV
+UNSEEN = ("--env-file", "pytest.main")  # on a pytest line: an env file, arguments built in Python
 EXPRESSION = (ast.Name, ast.Load, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not)
 # Markers a job runs on purpose without naming them in its `-m`: (workflow, job) -> markers.
 ON_PURPOSE = {
@@ -41,13 +52,20 @@ ON_PURPOSE = {
     # ws/test_ws_s2_s9.py (its note says so) and the parse budget in bybit/test_contract_leakage.py.
     ("_job-contract.yml", "contract"): {"perf"},
 }
+# `$` words a job's pytest call may carry, and why none can hold a -m: (workflow, job) -> words.
+EXPANSIONS = {
+    # tools/ci/py_test_lanes.py pytest-args prints paths and --ignore= only: its collects() raises
+    # on any other option, and test_py_test_lanes runs it on every lane.
+    ("_job-py.yml", "py-tests"): frozenset({"${lane_paths[@]}"}),
+}
 
 
 def _parse(expr: str) -> ast.expr:
-    """A `-m` expression of marker names, `not`, `and`, `or` and parentheses; else ValueError."""
+    """A `-m` expression of marker names, `not`, `and`, `or` and parentheses; else ValueError.
+    ASCII only: Python folds fullwidth letters into marker names (NFKC), pytest does not."""
     tree: ast.expr | None
     try:
-        tree = ast.parse(expr.strip(), mode="eval").body
+        tree = ast.parse(expr.strip(), mode="eval").body if expr.isascii() else None
     except SyntaxError:
         tree = None
     if tree is None or not all(isinstance(node, EXPRESSION) for node in ast.walk(tree)):
@@ -108,14 +126,47 @@ def _deselected_by(addopts: str) -> set[str]:
     return {name for name in names if not _selects(tree, {name})}
 
 
-def _marker_expressions(run: str) -> Iterator[str]:
+def _runs_pytest(text: str) -> bool:
+    """Whether a text holds a pytest command word (`pytest-report.xml`, `.pytest_cache` do not)."""
+    return any(Path(word).name in PYTEST for word in WORD.findall(text))
+
+
+def _nested(word: str) -> bool:
+    """A word that holds a command line running pytest, as in `bash -c "uv run pytest -m x"`."""
+    return len(word.split()) > 1 and _runs_pytest(word)
+
+
+def _call(command: list[str], expansions: frozenset[str]) -> Iterator[str]:
+    """The `-m` of a simple command that runs pytest, and of the command lines quoted in it."""
+    for word in filter(_nested, command):
+        yield from _marker_expressions(word, expansions)
+    at = next((i for i, w in enumerate(command) if Path(w).name in PYTEST and not _nested(w)), None)
+    if at is None:
+        return
+    prefix = [w for w in command[:at] if not ENV.fullmatch(w)]
+    for word in [*prefix, *command[at:]]:
+        if "$" in word and word not in expansions:
+            raise ValueError(f"cannot read the expansion {word!r}: it can carry a -m (EXPANSIONS)")
+    expr = _marker_expression(command[at + 1 :])
+    if expr is not None:
+        if not LAUNCHER.fullmatch("".join(f"{w} " for w in prefix)):
+            raise ValueError(f"cannot read the pytest launcher {prefix!r}")
+        yield expr
+
+
+def _marker_expressions(run: str, expansions: frozenset[str] = frozenset()) -> Iterator[str]:
     """The `-m` of every pytest call in a step's `run:` that sets one."""
     # YAML has already folded `>` blocks; join the backslash continuations of `|` blocks.
     for line in run.replace("\\\n", " ").splitlines():
-        if not any(name in line for name in PYTEST):
+        code = COMMENT.sub(r"\1", line)  # unchanged when there is no comment or a quote is open
+        if not any(name in code for name in PYTEST):
             continue
-        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        unseen = next((word for word in UNSEEN if word in code), None)
+        if unseen is not None:
+            raise ValueError(f"cannot read {unseen}: it hides pytest's arguments")
+        lexer = shlex.shlex(code, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
+        lexer.commenters = ""  # COMMENT has cut the comment where bash starts one
         command: list[str] = []
         words = iter([*lexer, ";"])  # shlex raises ValueError on unbalanced quotes
         for word in words:
@@ -126,14 +177,18 @@ def _marker_expressions(run: str) -> Iterator[str]:
                 continue
             if not SEPARATOR.fullmatch(word):  # `>(`, or a redirection without a target
                 raise ValueError(f"cannot read the shell operator {word!r}")
-            at = next((i for i, w in enumerate(command) if Path(w).name in PYTEST), None)
-            expr = None if at is None else _marker_expression(command[at + 1 :])
-            if at is not None and expr is not None:
-                prefix = [w for w in command[:at] if not ENV.fullmatch(w)]
-                if not LAUNCHER.fullmatch("".join(f"{w} " for w in prefix)):
-                    raise ValueError(f"cannot read the pytest launcher {prefix!r}")
-                yield expr
+            yield from _call(command, expansions)
             command = []
+
+
+def _strings(node: object, key: str = "") -> Iterator[tuple[str, str]]:
+    """(key, value) for every string in a YAML tree; a list item keeps its list's key."""
+    if isinstance(node, str):
+        yield key, node
+    for name, value in node.items() if isinstance(node, dict) else []:
+        yield from _strings(value, str(name))
+    for value in node if isinstance(node, list) else []:
+        yield from _strings(value, key)
 
 
 def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[str, str, str]]:
@@ -141,23 +196,31 @@ def _marker_calls(folder: Path = ROOT / ".github" / "workflows") -> list[tuple[s
     calls: list[tuple[str, str, str]] = []
     for path in sorted(folder.glob("*.y*ml")):
         text = path.read_text(encoding="utf-8")
-        if "PYTEST_ADDOPTS" in text:  # an env map, a prefix, export or $GITHUB_ENV: it can carry -m
-            raise ValueError(f"{path.name}: cannot read PYTEST_ADDOPTS: it can replace addopts' -m")
+        carrier = next((name for name in CARRIERS if name in text), None)
+        if carrier is not None:
+            raise ValueError(f"{path.name}: cannot read {carrier}: it can replace addopts' -m")
         doc = yaml.safe_load(text) or {}
         for job, spec in (doc.get("jobs") or {}).items():
+            expansions = EXPANSIONS.get((path.name, job), frozenset())
             for step in spec.get("steps") or []:
-                try:
-                    found = list(_marker_expressions(str(step.get("run", ""))))
+                try:  # pop: a run read here is not a string that names pytest out of sight below
+                    found = list(_marker_expressions(str(step.pop("run", "")), expansions))
                 except ValueError as err:
                     raise ValueError(f"{path.name} job {job}: {err}") from err
                 calls += [(path.name, job, expr) for expr in found]
+        for key, value in _strings(doc):
+            if key not in ("name", "id") and _runs_pytest(value):
+                raise ValueError(f"{path.name}: cannot read pytest in {key}: {value!r}; use run:")
     return calls
 
 
 PYPROJECT = tomllib.loads((ROOT / "services/api/pyproject.toml").read_text(encoding="utf-8"))
 ADDOPTS: str = PYPROJECT["tool"]["pytest"]["ini_options"]["addopts"]
 DESELECTED = _deselected_by(ADDOPTS)
-CALLS = _marker_calls()
+try:
+    CALLS, SCAN_ERROR = _marker_calls(), ""
+except ValueError as err:  # an unreadable call fails a test below, not the lane's collection
+    CALLS, SCAN_ERROR = [], str(err)
 # An empty scan proves nothing: these jobs set their own -m today.
 KNOWN = {
     ("cold-cache.yml", "cold-py"),
@@ -171,6 +234,10 @@ KNOWN = {
 
 def test_addopts_deselects_the_markers_the_pin_reads() -> None:
     assert DESELECTED and all(f"not {marker}" in ADDOPTS for marker in DESELECTED)
+
+
+def test_scan_reads_every_workflow() -> None:
+    assert not SCAN_ERROR, SCAN_ERROR
 
 
 def test_scan_finds_the_known_calls() -> None:
@@ -203,13 +270,17 @@ def test_on_purpose_entry_is_still_needed(workflow: str, job: str) -> None:
         ('uv run pytest tests \\\n  -m "c and i" \\\n  -k s2', ["c and i"]),
         ('s=0\nuv run pytest -m x "${p[@]}" || s=$?\nexit "$s"', ["x"]),
         (".venv/bin/pytest -m a -m b", ["b"]),
-        ("pytest tests -q  # -m x", []),
+        ("pytest tests -q  # don't read -m x", []),
+        ('[ $# -eq 0 ] && uv run pytest -m "not a"', ["not a"]),  # `#` inside a word: no comment
+        ('n=${#L}; pytest -k "t#1" -m "not a" || true', ["not a"]),
+        ("timeout 900 bash -c \"uv run pytest -m 'not a'\"", ["not a"]),
+        ('echo "::error::pytest failed"', []),
         ("pip install pytest && python -m pytest scripts/tests -q", []),
         ('lane=$(python t.py pytest-args "$L")', []),
     ],
 )
 def test_reader_extracts_the_marker_expression(run: str, expected: list[str]) -> None:
-    assert list(_marker_expressions(run)) == expected
+    assert list(_marker_expressions(run, frozenset({"${p[@]}"}))) == expected
 
 
 @pytest.mark.parametrize(
@@ -219,12 +290,16 @@ def test_reader_extracts_the_marker_expression(run: str, expected: list[str]) ->
         ("uv run pytest -mperf", "write -m EXPR"),
         ("timeout 600 uv run pytest -m perf", "launcher"),
         ('uv run pytest -m "it', "No closing quotation"),
-        ('pytest -m "$MARKERS"', "cannot read the -m expression"),
-        ('pytest -m "${{ inputs.markers }}"', "cannot read the -m expression"),
+        ('pytest -m "$MARKERS"', "cannot read the expansion '$MARKERS'"),
+        ('pytest -m "${{ inputs.markers }}"', "cannot read the expansion"),
+        ("uv run pytest $ARGS", "cannot read the expansion '$ARGS'"),
+        ('uv run pytest tests "${extra[@]}"', "cannot read the expansion '${extra[@]}'"),
+        ("uv run pytest ${{ matrix.args }}", "cannot read the expansion '${{'"),
         ('pytest -m ""', "cannot read the -m expression"),
         ("pytest -m a-b", "cannot read the -m expression"),
         ("pytest -m None", "cannot read the -m expression"),
         ('pytest -m "f(x=1)"', "cannot read the -m expression"),
+        ('pytest -m "not \uff50\uff45\uff52\uff46"', "cannot read the -m expression"),
         ("uv run pytest -qm perf", "write -m EXPR"),
         ("pytest -vxm 'not a'", "write -m EXPR"),
         ("uv run pytest -o addopts= tests", "replace addopts"),
@@ -234,6 +309,8 @@ def test_reader_extracts_the_marker_expression(run: str, expected: list[str]) ->
         ("pytest @args.txt", "replace addopts"),
         ("pytest tests >(tee log) -m a", "shell operator '>('"),
         ("pytest tests -m a >", "shell operator '>'"),
+        ("uv run --env-file=ci.env pytest tests", "cannot read --env-file"),
+        ("python -c \"import pytest; pytest.main(['-m', 'a'])\"", "cannot read pytest.main"),
     ],
 )
 def test_reader_and_rule_fail_loudly_on_what_they_cannot_read(run: str, error: str) -> None:
@@ -259,22 +336,47 @@ def test_rule_flags_what_a_call_lets_through(expr: str, through: set[str]) -> No
     assert _lets_through(expr, {"a", "b"}) == through
 
 
-def test_scan_reads_folded_and_literal_blocks_and_names_the_failing_job(tmp_path: Path) -> None:
+def test_scan_reads_folded_and_literal_blocks(tmp_path: Path) -> None:
     folded = "  f:\n    steps:\n      - run: >\n          uv run pytest\n          -m 'not x'\n"
     literal = '  l:\n    steps:\n      - run: |\n          pytest \\\n            -m "y"\n'
     (tmp_path / "a.yml").write_text(f"jobs:\n{folded}{literal}", encoding="utf-8")
     (tmp_path / "b.yaml").write_text("on: push\n", encoding="utf-8")
     assert _marker_calls(tmp_path) == [("a.yml", "f", "not x"), ("a.yml", "l", "y")]
+
+
+def test_scan_error_names_the_workflow_and_job(tmp_path: Path) -> None:
     bad = "jobs:\n  c:\n    steps:\n      - run: pytest -mx\n"
     (tmp_path / "c.yml").write_text(bad, encoding="utf-8")
     with pytest.raises(ValueError, match=re.escape("c.yml job c: cannot read '-mx'")):
         _marker_calls(tmp_path)
 
 
-def test_scan_fails_loudly_on_pytest_addopts(tmp_path: Path) -> None:
-    (tmp_path / "e.yml").write_text("env:\n  PYTEST_ADDOPTS: -m 'not x'\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=re.escape("e.yml: cannot read PYTEST_ADDOPTS")):
+@pytest.mark.parametrize("carrier", CARRIERS)
+def test_scan_fails_loudly_on_an_addopts_carrier(tmp_path: Path, carrier: str) -> None:
+    (tmp_path / "e.yml").write_text(f"env:\n  {carrier}: x\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(f"e.yml: cannot read {carrier}")):
         _marker_calls(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("job", "key"),
+    [
+        ("steps:\n      - uses: x/y@v1\n        with:\n          command: pytest -m x", "command"),
+        ("env:\n      CMD: uv run pytest -m x\n    steps:\n      - run: $CMD", "CMD"),
+        ("strategy:\n      matrix:\n        cmd: [pytest -m x]\n    steps:\n      - run: x", "cmd"),
+    ],
+)
+def test_scan_fails_loudly_on_pytest_outside_run(tmp_path: Path, job: str, key: str) -> None:
+    (tmp_path / "o.yml").write_text(f"jobs:\n  j:\n    {job}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(f"o.yml: cannot read pytest in {key}:")):
+        _marker_calls(tmp_path)
+
+
+def test_scan_reads_no_call_in_a_name_an_id_or_a_path(tmp_path: Path) -> None:
+    step = "      - id: pytest\n        name: pytest\n        uses: x/y@v1\n"
+    with_path = "        with:\n          path: .pytest_cache\n"
+    (tmp_path / "p.yml").write_text(f"jobs:\n  j:\n    steps:\n{step}{with_path}", encoding="utf-8")
+    assert _marker_calls(tmp_path) == []
 
 
 def test_addopts_reader_returns_the_markers_its_expression_deselects() -> None:
