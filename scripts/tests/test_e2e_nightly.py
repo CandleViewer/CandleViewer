@@ -9,16 +9,30 @@ sets `_job-e2e.yml`'s `electron` input, as the nightly does (the suite is green 
 a `release/*` head: `pr.yml` keeps the default. A red scheduled run opens an issue from a job that
 holds `issues: write` and nothing else, and runs no checkout and no action. A red nightly blocks the
 next release (C-9.2) through the release checklist: 07 section 4.1 and the issue form `release.yml`
-opens for each cut both ask for a green run on the `main` tip being cut."""
+opens for each cut both ask for a green run on the `main` tip being cut.
+
+#3449, from the #3383 reviews: the nightly has no concurrency group, as most nightlies do, so no
+run waits in a pending slot that a later one can take (two manual runs used to drop the
+scheduled run and that night's report). A red night comments on the one tracker issue that the
+repository variable `CV_E2E_NIGHTLY_TRACKER_ISSUE` names, as `xstate-nightly.yml` does, and opens a
+P1 while it is unset; a value that is not an issue number files nothing and fails the job. The e2e
+and a11y lanes' checkouts keep no git credential (ADR-0013 rule 6) while `pnpm install` runs
+dependency lifecycle scripts."""
 
 from __future__ import annotations
 
 import functools
 import json
+import os
+import re
+import shutil
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +49,18 @@ EVERY_CALL = {"e2e-web", "e2e-staging", "a11y-axe"}
 PR_ONLY = ("github.head_ref", "github.base_ref", "github.event.pull_request", "github.event.number")
 ELECTRON_IF = "${{ inputs.electron || startsWith(github.head_ref, 'release/') }}"
 REPORT_IF = "${{ always() && github.event_name == 'schedule' && needs.e2e.result != 'success' }}"
+#: #3449: the repository variable that names the one issue a red night comments on.
+TRACKER_VAR = "CV_E2E_NIGHTLY_TRACKER_ISSUE"
+#: A stand-in `gh` that logs its arguments, one JSON list per call.
+FAKE_GH = """import json, os, sys
+with open(os.environ["GH_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+"""
+A11Y_LANE = "_job-a11y.yml"
+#: A command that reaches the repository's remote, or GitHub, from a lane's step.
+REMOTE = re.compile(r"\bgit\s+(?:fetch|pull|push|clone|ls-remote|submodule)\b|\bgh\s")
+#: The one such step in the e2e and a11y lanes: it fetches the PR's base commit, anonymously.
+BASE_FETCH = "Baseline changes must cite finding id in PR description"
 
 
 @functools.cache
@@ -67,7 +93,16 @@ def test_e2e_nightly_runs_on_its_schedule_and_on_demand_only() -> None:
     assert on["schedule"] == [{"cron": CRON}]
     # A manual run is the scheduled run on demand: no inputs, so none can trim the matrix.
     assert on["workflow_dispatch"] == {}
-    assert _load(NIGHTLY)["concurrency"] == {"group": "e2e-nightly", "cancel-in-progress": False}
+
+
+def test_no_concurrency_group_can_drop_a_scheduled_run() -> None:
+    # #3449: `group: e2e-nightly` was shared with manual runs on any ref, and a newer pending run
+    # replaces an older one, so two dispatches near 02:53 UTC could drop the scheduled run and
+    # that night's report. As in most nightlies, neither the nightly nor its lane has a group.
+    for name in (NIGHTLY, LANE_FILE):
+        doc = _load(name)
+        assert "concurrency" not in doc
+        assert [job for job, body in doc["jobs"].items() if "concurrency" in body] == []
 
 
 def test_e2e_nightly_runs_the_whole_e2e_lane_every_night() -> None:
@@ -112,7 +147,7 @@ def test_e2e_nightly_reads_contents_only_and_one_job_can_open_issues() -> None:
     assert held == {"e2e": None, "report": {"issues": "write"}}
 
 
-def test_e2e_nightly_report_opens_an_issue_for_a_red_scheduled_run() -> None:
+def test_e2e_nightly_report_runs_only_the_gh_cli_for_a_red_scheduled_run() -> None:
     report = _load(NIGHTLY)["jobs"]["report"]
     assert (report["needs"], report["if"]) == ("e2e", REPORT_IF)
     (step,) = report["steps"]
@@ -122,10 +157,94 @@ def test_e2e_nightly_report_opens_an_issue_for_a_red_scheduled_run() -> None:
         "GH_TOKEN": "${{ github.token }}",
         "GH_REPO": "${{ github.repository }}",
         "RESULT": "${{ needs.e2e.result }}",
+        # #3449: named, never searched for; no default, so an unset variable keeps the P1.
+        "TRACKER_ISSUE": "${{ vars.CV_E2E_NIGHTLY_TRACKER_ISSUE }}",
     }
     # Values reach the script through env, never as expressions expanded into it.
     assert "${{" not in step["run"]
     assert "gh issue create" in step["run"] and "/actions/runs/$GITHUB_RUN_ID" in step["run"]
+    assert 'gh issue comment "$TRACKER_ISSUE"' in step["run"]
+
+
+def _report(tmp_path: Path, tracker: str) -> tuple[int, str, list[list[str]]]:
+    """Run the report step's script as the runner does, with the variable's value in TRACKER_ISSUE
+    (empty when it is unset) and a fake `gh` first on PATH: the exit code, output and gh calls."""
+    if not shutil.which("bash"):  # CI must run these fail-closed proofs
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
+    bin_dir, log = tmp_path / "bin", tmp_path / "gh.log"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(f"#!{sys.executable}\n{FAKE_GH}", encoding="utf-8")
+    (bin_dir / "gh").chmod(0o755)
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path)}
+    env |= {"GH_LOG": str(log), "TRACKER_ISSUE": tracker, "RESULT": "failure"}
+    env |= {"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "owner/repo"}
+    env |= {"GITHUB_RUN_ID": "7", "GITHUB_SHA": "0" * 40}
+    (step,) = _load(NIGHTLY)["jobs"]["report"]["steps"]
+    proc = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return proc.returncode, proc.stdout + proc.stderr, [json.loads(line) for line in lines]
+
+
+def test_e2e_nightly_report_opens_a_p1_while_no_tracker_issue_is_named(tmp_path: Path) -> None:
+    # An unset repository variable reaches the step as an empty string: the #3383 behaviour.
+    rc, out, calls = _report(tmp_path, "")
+    assert rc == 0, out
+    (call,) = calls
+    assert call[:3] == ["issue", "create", "--title"]
+    assert re.fullmatch(r"e2e: nightly Playwright matrix failed \(\d{4}-\d{2}-\d{2}\)", call[3])
+    labels = ["--label", "qa", "--label", "area/frontend-platform", "--label", "priority/p1"]
+    assert call[4:-2] == labels
+    assert call[-2] == "--body" and "/owner/repo/actions/runs/7" in call[-1]
+
+
+def test_e2e_nightly_report_comments_on_the_named_tracker_issue(tmp_path: Path) -> None:
+    # #3449: one tracker issue instead of a new P1 every red night, as xstate-nightly.yml does.
+    rc, out, calls = _report(tmp_path, "3449")
+    assert rc == 0, out
+    (call,) = calls
+    assert call[:4] == ["issue", "comment", "3449", "--body"] and len(call) == 5
+    assert "/owner/repo/actions/runs/7" in call[4] and "(C-9.2)" in call[4]
+
+
+@pytest.mark.parametrize(
+    "value", ["0", "012", "-3", "12a", "#12", " 12", "12 ", "1.5", "owner/repo#12"]
+)
+def test_e2e_nightly_report_fails_closed_when_the_tracker_is_not_an_issue_number(
+    tmp_path: Path, value: str
+) -> None:
+    # A set value that is not a positive integer is a misconfiguration: nothing is filed (no P1,
+    # no comment, nowhere outside this repository) and the job turns red, naming the variable.
+    rc, out, calls = _report(tmp_path, value)
+    assert (rc, calls) == (1, [])
+    assert f"::error title=e2e-nightly-report::{TRACKER_VAR} " in out
+
+
+def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
+    # #3449 (ADR-0013 rule 6): `pnpm install` runs dependency lifecycle scripts, so no checkout in
+    # these lanes leaves its token in the git config, as in pr.yml and xstate-nightly.yml.
+    checkouts: list[tuple[str, str, Any]] = []
+    remote: list[str] = []
+    for name in (LANE_FILE, A11Y_LANE):
+        for job_name, job in _load(name)["jobs"].items():
+            for step in job["steps"]:
+                if str(step.get("uses", "")).startswith("actions/checkout@"):
+                    checkouts.append((name, job_name, step.get("with")))
+                if REMOTE.search(step.get("run", "")):
+                    remote.append(step["name"])
+    lanes = {(LANE_FILE, job) for job in EVERY_CALL | {"e2e-electron"}} | {(A11Y_LANE, "a11y")}
+    assert sorted((name, job) for name, job, _ in checkouts) == sorted(lanes)
+    assert [c for c in checkouts if c[2] != {"persist-credentials": False}] == []
+    # No later step needs a credential: the one that reaches the remote fetches the PR's base
+    # commit, which an anonymous fetch reads on this public repository; nothing pushes.
+    assert remote == [BASE_FETCH]
 
 
 def test_release_checklist_needs_a_green_e2e_nightly_on_the_tip_it_cuts() -> None:
