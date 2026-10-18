@@ -16,7 +16,11 @@ the contract's `x-error-codes`. `account_access=None` fails closed with 501.
 then the step-up, `acknowledge_unknown_positions` (`true` or `false`, once, as the DELETE reads
 it), the closed body (at most 64 KiB and 256 grants, SR-040) and `AccountAccessService.replace`,
 whose store refusals map to the design's codes. It answers with the set the store read under its
-locks; unwired, 501.
+locks; unwired, 501 (sessions wired without a step-up service, 503). A caller RBAC refuses is
+refused, not challenged, inside the handler only: in the deployed app the path-gated
+`DANGEROUS_ROUTES` guard (`make_read_only_guard`) challenges every un-elevated session first, a
+forbidden Manager or Viewer included and with no `rbac.denied`, so this order is the second line:
+it alone decides an elevated caller.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
@@ -86,6 +90,9 @@ _Input = tuple[api.AccountAccessGrantInput, ...]
 _MAX_BODY_BYTES: Final = 64 * 1024
 _MAX_GRANTS: Final = 256
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
+#: The tail of every `positions_unknown` detail, the PUT's (`_REFUSED`) and the DELETE's
+#: (`_lifecycle_problem`): how a client acknowledges that the open-position state is unknown.
+_RESEND_ACKNOWLEDGED: Final = "resend with acknowledge_unknown_positions=true"
 #: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
 _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
@@ -96,7 +103,7 @@ _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessPositionsUnknownError: (
         ErrorCode.POSITIONS_UNKNOWN,
         409,
-        "open-position state is unavailable; resend with acknowledge_unknown_positions=true",
+        f"open-position state is unavailable; {_RESEND_ACKNOWLEDGED}",
     ),
     aa.AccessAuditUnavailableError: (ErrorCode.AUDIT_UNAVAILABLE, 503, "change not audited"),
 }
@@ -243,8 +250,7 @@ def _lifecycle_problem(exc: UserLifecycleError) -> JSONResponse:
         return _registered(ErrorCode.CONFLICT, 409, "the last active owner cannot be disabled")
     if isinstance(exc, PositionsUnknownError):
         unknown = f"open-position state is unavailable (source: {exc.source})"
-        resend = "resend with acknowledge_unknown_positions=true"
-        return _registered(ErrorCode.POSITIONS_UNKNOWN, 409, f"{unknown}; {resend}")
+        return _registered(ErrorCode.POSITIONS_UNKNOWN, 409, f"{unknown}; {_RESEND_ACKNOWLEDGED}")
     if isinstance(exc, LifecycleAuditUnavailableError):
         detail = "the audit record could not be written; nothing changed"
         return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
