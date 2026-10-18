@@ -8,8 +8,11 @@ import { _electron as electron, test, expect } from "@playwright/test";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = path.join(__dirname, "../dist/main/index.js");
 const CSP_MODULE = path.join(__dirname, "../dist/main/csp.js");
+// A loopback backend origin other than the default, so the shell's CSP header differs from the
+// <meta> fallback in apps/web/index.html and a violation shows which policy reported it.
+const BACKEND_ORIGIN = "http://127.0.0.1:8123";
 
-/** The test runner's environment minus CV_DEV_SERVER_URL: the default (non-dev) load path. */
+/** The runner's environment minus CV_DEV_SERVER_URL (the default load path), plus the backend. */
 function defaultLoadEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -17,7 +20,7 @@ function defaultLoadEnv(): Record<string, string> {
       env[key] = value;
     }
   }
-  return env;
+  return { ...env, CV_BACKEND_ORIGIN: BACKEND_ORIGIN };
 }
 
 interface Violation {
@@ -52,42 +55,40 @@ test.describe("Default load path (#3410)", () => {
       // app:// (the scheme is not granted the Fetch API), so read the same response through
       // the window's session.
       const { buildCsp } = (await import(pathToFileURL(CSP_MODULE).href)) as {
-        buildCsp: () => string;
+        buildCsp: (backendOrigin: string) => string;
       };
+      const header = buildCsp(BACKEND_ORIGIN);
       const served = await app.evaluate(async ({ session }, url) => {
         const response = await session.defaultSession.fetch(url);
         return { status: response.status, csp: response.headers.get("content-security-policy") };
       }, win.url());
-      expect(served).toEqual({ status: 200, csp: buildCsp() });
+      expect(served).toEqual({ status: 200, csp: header });
 
-      // The page enforces it: an injected inline script is blocked by script-src 'self'.
-      const inline = await win.evaluate(async () => {
-        const doc = (globalThis as unknown as { document: PageDocument }).document;
-        const reported = new Promise<Violation>((resolve) => {
-          doc.addEventListener("securitypolicyviolation", (event) => {
-            if (event.blockedURI === "inline") {
-              resolve({
-                blockedURI: event.blockedURI,
-                effectiveDirective: event.effectiveDirective,
-                originalPolicy: event.originalPolicy,
-                disposition: event.disposition,
-              });
-            }
-          });
+      // The page enforces that header, not only index.html's <meta> fallback: the two policies
+      // differ in connect-src, and each enforced policy reports its own violation when it blocks
+      // an injected inline script (script-src 'self').
+      const ran = await win.evaluate(() => {
+        const page = globalThis as unknown as { document: PageDocument; cvViolations: Violation[] };
+        const doc = page.document;
+        page.cvViolations = [];
+        doc.addEventListener("securitypolicyviolation", (event) => {
+          const { blockedURI, effectiveDirective, originalPolicy, disposition } = event;
+          page.cvViolations.push({ blockedURI, effectiveDirective, originalPolicy, disposition });
         });
         const script = doc.createElement("script");
         script.textContent = "document.documentElement.dataset.cvInline = 'ran';";
         doc.head.append(script);
-        if (doc.documentElement.dataset["cvInline"] === "ran") {
-          return { ran: true, violation: null };
-        }
-        return { ran: false, violation: await reported };
+        return doc.documentElement.dataset["cvInline"] === "ran";
       });
-      expect(inline.ran).toBe(false);
-      expect(inline.violation?.disposition).toBe("enforce");
-      expect(inline.violation?.effectiveDirective).toMatch(/^script-src/);
-      expect(inline.violation?.originalPolicy).toContain("script-src 'self'");
-      expect(inline.violation?.originalPolicy).not.toContain("unsafe-eval");
+      expect(ran).toBe(false);
+      const reported = (): Promise<Violation[]> =>
+        win.evaluate(() => (globalThis as unknown as { cvViolations: Violation[] }).cvViolations);
+      await expect.poll(reported).toContainEqual({
+        blockedURI: "inline",
+        effectiveDirective: "script-src-elem",
+        originalPolicy: header,
+        disposition: "enforce",
+      });
     } finally {
       await app.close();
     }
