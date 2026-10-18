@@ -73,7 +73,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ env.CV_CODEQL_LANGUAGES }}
           config-file: ./.github/codeql/codeql-config.yml
@@ -82,7 +82,7 @@ jobs:
       # empty and no commit can reach, so only SARIF from this run counts. Its own outcome does
       # not gate: the gate step below fails CI-SEC-005 for each configured language without a
       # SARIF (a crash after the first language's file never passes) and judges every one.
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         continue-on-error: true
         with:
           output: ${{ runner.temp }}/codeql-results
@@ -144,7 +144,7 @@ jobs:
           files=("$RUNNER_TEMP/codeql-results/"**/*.sarif)
           if [ "${#files[@]}" -gt 0 ]; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
 
-      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # Gate decided above. The upload feeds GitHub's informational "CodeQL"
         # check run (github-advanced-security app; PR-scoped alerts, not a
         # C-9.1 required check) — it must agree with the gate, never replace
@@ -212,7 +212,7 @@ jobs:
           fi
           python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif
 
-      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # Upload only when the scanner wrote a report; the semgrep step (not this upload)
         # decides pass/fail. Code scanning is on: run 39041114804 posted the Semgrep OSS and
         # Bandit check runs. continue-on-error and no `id` keep an upload outage out of the verdict.
@@ -239,7 +239,7 @@ jobs:
           bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
           python tools/ci/security_gate.py --tool bandit --report bandit.sarif
 
-      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # As the semgrep upload above: the bandit step decides, the upload never gates.
         if: ${{ !cancelled() && hashFiles('bandit.sarif') != '' }}
         continue-on-error: true
@@ -577,7 +577,7 @@ jobs:
       - name: Evaluate Trivy findings (security_gate.py, CI-SEC-001/004)
         run: python tools/ci/security_gate.py --tool trivy --report trivy.sarif
 
-      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # Upload only when the scanner wrote a report; the gate step above (not
         # this upload) decides pass/fail. Code scanning is on: run 39045664778 posted
         # the Trivy check run. continue-on-error: an upload outage must never mask the gate.
