@@ -55,6 +55,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
+      # and this job runs pnpm directly, so turbo's `^build` does not build them first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
       - name: Build web app (Playwright's webServer runs the built `dist/` via vite preview)
         working-directory: apps/web
         run: pnpm run build
@@ -91,6 +99,14 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
+      # and this job runs pnpm directly, so turbo's `^build` does not build them first (#3272).
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
 
       - name: Build web app (Playwright's webServer runs the built `dist/` via vite preview)
         working-directory: apps/web
