@@ -157,7 +157,7 @@ class Conn:
         services = SubscriptionServices(upstream=UpstreamRefs(), snapshots=source)
         if cache is not None:
             services.snapshot_cache = cache
-        self.authz = ConnectionAuthz(principal(*accounts or (ACC_A,)), services)
+        self.authz = ConnectionAuthz(principal(*accounts or (ACC_A,)), services, clock=self.clock)
         kw: dict[str, Any] = {}
         if max_frame_bytes is not None:
             kw["max_frame_bytes"] = max_frame_bytes

@@ -1636,6 +1636,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_rebuild_refused_total",
+        "counter",
+        "requests",
+        ("kind", "cause"),
+        "Client WS requests the rebuild budget refused (SR-193), by kind and refusing limit.",
+        "sustained: a client in a rebuild loop",
+        _L,
+        "E17",
+        max_series=6,
+        exported=True,
+    ),
+    _s(
         "cv_ws_snapshot_bytes",
         "histogram",
         "bytes",

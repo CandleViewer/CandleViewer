@@ -945,7 +945,7 @@ existing numbering after SR-182; no existing SR is renumbered. Each names its ow
 | SR-190 | Shared upstream references and encode-once fan-out buffers MUST be used only for public topic families; account-scoped frames are filtered and encoded per subscription (E17-S02, E17-T03).                   | unit, integration   |
 | SR-191 | The ASGI server's WebSocket limits — maximum message size, inbound compression, per-connection queue, handshake/keep-alive timeouts — MUST be set explicitly and consistently with the protocol caps (#2176). | integration         |
 | SR-192 | A single WS `sub` frame MUST NOT cause work, reply size or audit writes proportional to its entry count beyond a fixed cap; denial audit records MUST be aggregated per frame (E17-S02, #2292).               | unit, load          |
-| SR-193 | Every snapshot-rebuild path (client `resync`, `ctl`-forced resnapshot, unsub/sub churn) MUST draw on one per-connection rebuild budget (E17-S02/S03, #2293).                                                  | unit, load          |
+| SR-193 | Every snapshot-rebuild path (client `resync`, `ctl`-forced resnapshot, unsub/sub churn) MUST draw on one per-connection rebuild budget (E17-S02/S03, #2293; load via E17-Q03).                                | unit, contract      |
 
 ---
 

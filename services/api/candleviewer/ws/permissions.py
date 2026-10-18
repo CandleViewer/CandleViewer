@@ -41,6 +41,7 @@ from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
@@ -55,6 +56,8 @@ from candleviewer.ws.limits import (
     MAX_TOPICS_PER_SUB,
 )
 from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
+from candleviewer.ws.rebuild_budget import RebuildBudget, topic_key
+from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -63,7 +66,6 @@ from candleviewer.ws.revocation import (
     ws_revoked_total,
 )
 from candleviewer.ws.sequencing import (
-    RESYNC_MAX_PER_WINDOW,
     SequencingHub,
     SnapReason,
     SnapshotCache,
@@ -256,10 +258,6 @@ class Subscription:
     announced: bool = True
     #: E17-T03: set when it ends (`_drop`), after which `TopicEmitter` sends nothing of it.
     ended: bool = False
-    #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
-    resyncs: collections.deque[float] = field(
-        default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)
-    )
 
     @property
     def ch(self) -> str:
@@ -295,7 +293,8 @@ _REFUSED: Final = {
 
 
 def _fail(ch: Any, code: str, message: str, fld: str | None = None) -> dict[str, Any]:
-    err: dict[str, Any] = {"code": code, "message": message}
+    retryable = ERROR_META[ErrorCode(code)].retryable  # §10.2, as an `err` frame says it
+    err: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
     if fld is not None:
         err["field"] = fld
     return {"ch": ch if isinstance(ch, str) else str(ch)[:120], "ok": False, "error": err}
@@ -336,6 +335,7 @@ class ConnectionAuthz:
         *,
         connection_id: str | None = None,
         version: int = 0,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.principal = principal
         self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
@@ -344,6 +344,8 @@ class ConnectionAuthz:
         self.by_id: dict[str, Subscription] = {}
         self._by_topic: dict[str, set[str]] = {}
         self._ids = itertools.count(1)
+        #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it).
+        self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock)
         #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
@@ -362,6 +364,8 @@ class ConnectionAuthz:
             maxlen=DENIAL_AUDITS_PER_WINDOW
         )
         self._denial_skip_logged: float | None = None
+        #: SR-193: the limit that refused the last `admit` for the rebuild budget (its log line).
+        self.refusal_scope: BudgetScope | None = None
 
     # -- views ------------------------------------------------------------------------------
 
@@ -433,7 +437,7 @@ class ConnectionAuthz:
         bookkeeping: upstream refs and bar leases are taken by `subscribe_upstream`. A refused
         `machines` entity leaves its internal §6.4 reason in `refusal_reason`."""
         ch = entry.get("ch") if isinstance(entry, dict) else entry
-        self.refusal_reason = None
+        self.refusal_reason = self.refusal_scope = None
         try:
             return self._admit(entry, ch, snapshot, replay_session_id)
         except TopicError as exc:
@@ -486,6 +490,10 @@ class ConnectionAuthz:
             held |= s.symbols
         if len(held | sub.symbols) > MAX_SYMBOLS_PER_CONNECTION:
             raise TopicError("subscription_limit", "40 symbols per connection reached.")
+        if (scope := self.rebuilds.refusal(topic_key(topic, rs), "sub")) is not None:
+            self.refusal_scope = scope  # SR-193: after every refusal decided from the entry (§5.2)
+            spent = self.rebuilds.count_refusal("sub", scope)
+            raise TopicError("resync_rate_limited", f"{spent}; not subscribed.")
         self._record(sub)
         result = {
             "ch": topic.ch,
@@ -666,6 +674,8 @@ class ConnectionAuthz:
         if sub.bar_lease is not None and self.services.bars is not None:
             self.services.bars.release(sub.bar_lease[0], sub.bar_lease[1], consumer)
         sub.upstream, sub.bar_lease = (), None
+        if sub.announced:  # SR-193: a `sub` of its topic within the window counts toward it
+            self.rebuilds.released(topic_key(sub.topic, sub.replay_session_id))
 
     def release_all(self) -> None:
         """Connection closed: release every upstream ref, bar lease and series hold, as in `_drop`.
@@ -688,7 +698,8 @@ class ConnectionAuthz:
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
         `TopicError` (`not_subscribed`, `invalid_options`; a non-null `ch` that is no topic name
-        is the latter, #2572)."""
+        is the latter, #2572), or `resync_rate_limited` for a re-snapshot past the rebuild
+        budget, which changes nothing (SR-193)."""
         if ch is not None and not is_topic_name(ch):
             raise TopicError("invalid_options", "ch must be a topic name.", "ch")
         ids = self._by_topic.get(ch) if isinstance(ch, str) else None
@@ -719,6 +730,12 @@ class ConnectionAuthz:
         resnapshot = (was_paused and not paused) or any(
             k in IDENTITY_OPTIONS and sub.effective.get(k) != effective.get(k) for k in changes
         )
+        if resnapshot:  # SR-193: drawn before any change, so a refused `ctl` changes nothing
+            key = topic_key(sub.topic, sub.replay_session_id)
+            if (scope := self.rebuilds.take(key, "ctl")) is not None:
+                self.rebuilds.log("ctl", scope, self.connection_id, sub.ch)
+                spent = self.rebuilds.count_refusal("ctl", scope)
+                raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if paused or "paused" in changes:
             effective["paused"] = paused
         if sub.accounts:
@@ -1192,6 +1209,7 @@ async def handle_sub(
     results: list[dict[str, Any]] = []
     admitted: list[Subscription] = []
     denials: list[tuple[str, str, str]] = []  # (object_id, code, reason) of each kept refusal
+    spent: list[tuple[str, BudgetScope]] = []  # SR-193: each budget refusal's `ch` and limit
     snapshot = body.get("snapshot", True)
     replay = body.get("replay_session_id")
     try:
@@ -1199,10 +1217,13 @@ async def handle_sub(
             ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by shape
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
             why = authz.refusal_reason  # a refused entity's internal reason; read before any await
+            if authz.refusal_scope is not None:
+                spent.append((ch, authz.refusal_scope))
             if sub is not None:
                 result = await authz.subscribe_upstream(sub) or result
                 if result["ok"]:
                     admitted.append(sub)
+                    authz.rebuilds.draw(topic_key(sub.topic, sub.replay_session_id), "sub")
             results.append(result)
             _observe(ch, result)
             if not result["ok"]:
@@ -1211,6 +1232,8 @@ async def handle_sub(
                     denials.append(_denial(ch, code, why))
     finally:  # a raise or a cancellation mid-loop still records the refusals before it (C-2.9)
         await _audit_denials(authz, denials)
+    if spent:  # SR-193: one line for the frame, naming its first budget refusal (§7.7)
+        authz.rebuilds.log("sub", spent[0][1], authz.connection_id, spent[0][0], count=len(spent))
     cv_ws_client_topics_depth.observe(len(authz.by_id))
     out: dict[str, Any] = {"t": "sub_ok", "p": {"results": results}}
     if fid is not None:

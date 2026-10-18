@@ -379,6 +379,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_permission_snapshots_refused_total",
         "cv_ws_upstream_consumers_in_use",
         "cv_ws_resync_total",
+        "cv_ws_rebuild_refused_total",
         "cv_ws_snapshot_bytes",
         "cv_ws_snapshot_build_seconds",
         "cv_ws_sequence_gaps_detected_total",
@@ -451,6 +452,7 @@ def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportColle
     from candleviewer.ws import (  # noqa: F401
         machines,
         permissions,
+        rebuild_budget,
         revocation,
         sequencing,
         upstream,

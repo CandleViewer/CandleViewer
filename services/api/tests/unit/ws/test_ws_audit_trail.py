@@ -28,11 +28,11 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws import permissions
 from candleviewer.ws.lifecycle import OriginRefusal
+from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC
 from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS, count_audit_failure
 from candleviewer.ws.metrics import cv_ws_audit_failures_total as failures_total
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices, handle_sub
-from candleviewer.ws.sequencing import RESYNC_MAX_PER_WINDOW
 from tests.unit.ws.test_gateway_teardown import _UVICORN_CANCEL, _cancel, _Rig, _Socket
 from tests.unit.ws.test_origin_refusal_audit import SLOW_S, _FailingAudit, _StalledAudit
 
@@ -241,7 +241,7 @@ def test_a_resync_rate_limited_revocation_writes_its_revoked_row(world: ls._Worl
         ls._auth(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch]}})
         assert ls._recv_type(ws, "sub_ok")["p"]["results"][0]["ok"] is True
-        for i in range(RESYNC_MAX_PER_WINDOW + 1):  # every one at the fake clock's t=0
+        for i in range(REBUILD_MAX_PER_TOPIC + 1):  # every one at the fake clock's t=0
             ws.send_json({"t": "resync", "id": f"r{i}", "ch": ch, "p": {"reason": "manual"}})
         assert ls._recv_type(ws, "err")["p"]["code"] == "resync_rate_limited"
         assert ls._recv(ws)["p"]["reason"] == "resync_rate_limited"

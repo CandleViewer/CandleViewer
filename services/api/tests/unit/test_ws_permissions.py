@@ -139,6 +139,7 @@ def test_handle_sub_rejects_malformed_and_partial_account_lists() -> None:
         "code": "invalid_options",
         "message": "Option 'exchange_account_ids' is out of range.",
         "field": "exchange_account_ids",
+        "retryable": False,
     }
     assert _run_sub(conn, {"ch": "orders", "opts": {"exchange_account_ids": []}})["ok"] is False
     assert (

@@ -29,6 +29,7 @@ from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
     DENIAL_AUDITS_PER_WINDOW,
     MAX_TOPICS_PER_SUB,
+    REBUILD_MAX_PER_TOPIC,
 )
 from candleviewer.ws.metrics import (
     CV_WS_NAMES,
@@ -49,7 +50,9 @@ VIEWER = uuid.UUID(int=0x3185)
 KEPT, KEPT_TOO = "orders", "wallet"
 #: Public and refused `unknown_topic`: a refusal the audit does not keep.
 NOT_KEPT = "nope.BTCUSDT"
-PUBLIC = "ticker.BTCUSDT"
+#: Public streams the churn test cycles through: each restarts within its topic's share of the
+#: rebuild budget (SR-193, 23 §7.5), so only the denial budget is under test.
+CHURN = tuple(f"ticker.{base}USDT" for base in ("BTC", "ETH", "SOL", "XRP"))
 _PROTOCOL = Path(__file__).resolve().parents[5] / "docs" / "plan" / "23-ws-protocol.md"
 
 
@@ -232,14 +235,17 @@ async def test_a_record_handed_to_the_writer_spends_its_place_whether_or_not_it_
 
 async def test_the_budget_is_the_connections_and_survives_unsub_and_sub_churn() -> None:
     """Per connection, not per subscription: subscribing and dropping a topic between the denied
-    frames leaves the budget as it is; another connection of the same user has its own."""
+    frames leaves the budget as it is; another connection of the same user has its own. The
+    churn goes round `CHURN`, so no topic restarts more than its rebuild share allows."""
+    assert len(CHURN) * REBUILD_MAX_PER_TOPIC >= N
     sink = _Sink()
     conn = _conn(sink)
-    unsub = {"t": "unsub", "id": "u", "p": {"topics": [PUBLIC]}}
-    for _ in range(N):
+    for i in range(N):
+        public = CHURN[i % len(CHURN)]
         await _sub(conn, KEPT)
-        assert (await _sub(conn, PUBLIC))["p"]["results"][0]["ok"] is True
-        assert handle_unsub(conn, unsub, 1)["p"]["results"] == [{"ch": PUBLIC, "ok": True}]
+        assert (await _sub(conn, public))["p"]["results"][0]["ok"] is True
+        unsub = {"t": "unsub", "id": "u", "p": {"topics": [public]}}
+        assert handle_unsub(conn, unsub, 1)["p"]["results"] == [{"ch": public, "ok": True}]
     await _sub(conn, KEPT)
     assert len(sink.records) == N
     await _sub(_conn(sink), KEPT)

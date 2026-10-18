@@ -1066,6 +1066,7 @@ def make_ws_router(
                     registry.services,
                     connection_id=conn.connection_id,
                     version=snap.version,
+                    clock=conn.clock,  # SR-193: the rebuild budget's window
                 )
                 registry.register(conn.authz, conn.send, conn.evict, conn.closer)
                 async with _auth_call("recheck", auth_call_timeout_s):

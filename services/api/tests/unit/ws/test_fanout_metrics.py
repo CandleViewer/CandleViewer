@@ -210,14 +210,14 @@ def test_the_hub_stamps_every_sampled_frame_of_a_subscription_and_reads_no_other
     conn = _book_conn(clock, Source())
     stamps = _stamped(conn)
     _, sub = conn.sub(ENTRY)  # the snapshot is `s` 1
-    assert stamps == {} and clock.reads == 0  # not sampled: no stamp, no clock read
+    assert stamps == {} and clock.reads == 1  # not sampled; one read: the budget's `sub` check
     conn.take()
     for i in range(3 * N):  # `s` 2 to 3N + 1: three sampled frames
         clock.now = 100.0 + i
         assert conn.emitter.delta(sub, _bid(str(100 + i)))
     assert [f["s"] for f in conn.take()] == list(range(2, 3 * N + 2))  # every frame left
     assert stamps == {(CH, s): 100.0 + s - 2 for s in (N, 2 * N, 3 * N)}
-    assert clock.reads == 3  # one read for each stamp, none for the other frames
+    assert clock.reads == 1 + 3  # and one read for each stamp, none for the other frames
 
 
 def test_each_subscription_counts_its_own_frames() -> None:
@@ -247,7 +247,7 @@ def test_a_snapshot_is_stamped_before_it_is_built() -> None:
     sub.announced = True  # the gateway's `sub_ok` is queued (#2831)
     sub.seq = N - 1  # the snapshot is the subscription's `N`th frame: sampled
     conn.emitter.flush_pending([sub])
-    assert stamps == {(CH, N): 100.0} and clock.now == pytest.approx(100.3) and clock.reads == 1
+    assert stamps == {(CH, N): 100.0} and clock.now == pytest.approx(100.3) and clock.reads == 2
 
 
 def test_a_sampled_chunked_snapshot_is_stamped_on_the_chunk_that_carries_s_only() -> None:
