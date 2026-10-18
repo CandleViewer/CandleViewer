@@ -59,12 +59,15 @@ merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/work
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
-scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml)
+scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml,
+           e2e-nightly.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
 ├─ coverage-ratchet       → baseline-raise PR from merged coverage runs
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
-└─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
+├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
+└─ e2e-nightly            → _job-e2e.yml on main (e2e-electron once green), non-required; a red
+                            run opens an issue (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
@@ -74,14 +77,31 @@ release tag (.github/workflows/release.yml)
 or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
 and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the `e2e` filter on
 purpose: they would put seven more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`)
-on every bump. The accepted control is the nightly `a11y-nightly.yml` sweep on `main`, a named
-artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1). The Playwright suite
-has no scheduled run yet (#3383: C-9.2 asks for a nightly full matrix), so a bump that breaks it
-shows on the next PR the `e2e` filter starts. The decision covers those three files only. A backend
-manifest (`services/api/uv.lock`, `pyproject.toml`) skips `migrations`, `contract` and
-`rule-roundtrip`. The nightly `cold-cache.yml` runs the `services/api` pytest, `tests/contract`
-included (the contract job's pytest step), but no nightly runs `make contracts`, the `migrations`
-job or `rule-roundtrip`: an open gap with no decision recorded yet (#3384), not an accepted control.
+on every bump. The accepted controls are two nightlies on `main`: the `a11y-nightly.yml` sweep, a
+named artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1), and
+`e2e-nightly.yml`, which runs the `e2e` lane's own jobs (next paragraph). So a bump that breaks the
+Playwright suite turns a nightly red within a day, and that run opens an issue. The decision covers
+those three files only. A backend manifest (`services/api/uv.lock`, `pyproject.toml`) skips
+`migrations`, `contract` and `rule-roundtrip`. The nightly `cold-cache.yml` runs the `services/api`
+pytest, `tests/contract` included (the contract job's pytest step), but no nightly runs
+`make contracts`, the `migrations` job or `rule-roundtrip`: an open gap with no decision recorded
+yet (#3384), not an accepted control.
+
+**Nightly e2e matrix (#3383).** `e2e-nightly.yml` calls `_job-e2e.yml` on `main` daily at 02:53 UTC
+and on demand, for C-9.2's full Playwright matrix: the four `e2e-web` shards, `e2e-staging`,
+`a11y-axe` and, once it is green, `e2e-electron`. It is not a required check (C-9.1 is unchanged),
+but a red nightly blocks the next release (C-9.2). A red scheduled run opens a `qa`, `priority/p1`
+issue that links the run; its `e2e-nightly-report` job is the only one that can write
+(`issues: write`, no checkout). Triage the red job by its error code, as in §4's Playwright and
+accessibility recipes. `e2e-electron` stays off on the schedule until it is green (#3366: #3393 and
+its follow-ups): a scheduled run passes the `electron` input of `_job-e2e.yml` as `false`, and a
+manual run on `main` can set it with `gh workflow run e2e-nightly.yml -f electron=true`. To flip,
+once such a run is green, set the nightly's `electron` to `true`, drop its manual input, and update
+this paragraph and `scripts/tests/test_e2e_nightly.py`. Cost: six jobs, about 6.5 runner-minutes a
+night (each job's median over 11 green `pr.yml` runs on 2026-10-17 and 18, 0.9 to 1.5 minutes), at
+most 120 if every job reaches its 20-minute cap (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners
+are free on this public repository, so the cost is six runner slots for about two minutes; the flip
+adds one job.
 
 ## 3. Reading the `ci-required` resolver summary
 
