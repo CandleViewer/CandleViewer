@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID
 
 from candleviewer.accounts.health import HealthTransition
 from candleviewer.accounts.order_gate import KeyStanding
+from candleviewer.domain.primitives import Exchange
 from candleviewer.observability.context import get_context
+from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -34,6 +36,38 @@ class FakeClock:
 
 ACC = UUID("a1000000-0000-4000-8000-000000000001")
 ACC_B = UUID("a1000000-0000-4000-8000-000000000002")
+
+
+def key_of(account: UUID) -> UUID:
+    """`key_row`'s default key id for an account."""
+    return UUID(int=account.int + 100)
+
+
+def key_row(
+    account: UUID,
+    *,
+    key: UUID | None = None,
+    verified_at: datetime = T0,
+    error: str | None = None,
+    armed: bool = True,
+    enabled: bool = True,
+    env: str = "testnet",
+) -> SelfCheckTargetRow:
+    """One usable stored key as the usable-key read returns it: its stored last pass
+    (`verified_at`), last error code, and its account, enabled and armed for trading by default."""
+    # A dict literal, not keywords: ruff S106 reads `colour_token=` as a password. The venue is the
+    # domain's one `Exchange`, so this helper names no venue (C-2.2).
+    fields: dict[str, Any] = {
+        "id": account, "exchange": get_args(Exchange)[0], "env": env, "kind": "main",
+        "exchange_uid": "1000001", "parent_account_id": None, "label": "fx",
+        "colour_token": "accent.neutral", "is_enabled": enabled, "trading_enabled": armed,
+        "position_mode": "one_way",
+        "margin_mode": "cross", "account_type": "UNIFIED", "quote_ccy": "USDT",
+        "equity_cached_usd": None, "equity_cached_at": None, "max_sub_accounts_hint": 5,
+        "last_reconciled_at": None, "created_at": T0, "updated_at": T0, "deleted_at": None,
+    }  # fmt: skip
+    row = ExchangeAccountRow(**fields)
+    return SelfCheckTargetRow(key or key_of(account), False, verified_at, row, error)
 
 
 class Dms:
