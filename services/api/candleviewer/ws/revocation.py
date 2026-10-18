@@ -5,7 +5,13 @@ keyed by session id; the session router's `publish_revocation` calls
 `RevocationHub.revoke`, which sends the `bye` frame and closes with 4401. The
 reason `user_disabled` (the SR-029 disable cascade) gets the §9.5 `bye` and
 4403 instead, so the client returns to login and does not reconnect (#2493).
-Latency is observed on `auth_revocation_latency_seconds` (alert > 5 s).
+Each revocation that attempts a close is one observation of `auth_revocation_latency_seconds`
+(`auth/metrics.py`, scraped; `AuthRevocationLatencyHigh` tickets a p99 above 5 s, SR-029), on the
+hub's monotonic clock (#3415): from the revoke to the last of its closes initiated or failed. A
+disable's per-user close, `ConnectionRegistry.user_disabled` (`ws/permissions.py`), which also ends
+the sockets on sessions that no revoke names (#3440), is one more, on the registry's clock. The
+gateway's closer queues the `bye` and seals the connection without suspending, so no data frame
+is sent after it; its writer closes the socket later, and that is not measured.
 
 The hub also remembers each revoked session id, with its reason, for one access-token
 lifetime (#2739), so an `auth` that was already in flight when the revocation was published
@@ -34,7 +40,8 @@ from typing import Any, Final, Literal
 
 import structlog
 
-from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.auth.metrics import auth_revocation_latency_seconds
+from candleviewer.observability.metrics import Counter
 from candleviewer.ws.limits import FANOUT_SEND_TIMEOUT_S
 
 
@@ -44,12 +51,6 @@ def _log() -> Any:
 
 
 CLOSE_TOKEN_EXPIRED = 4401
-
-auth_revocation_latency_seconds = Histogram(
-    "ws_session_revocation_close_seconds",
-    "Seconds from session revocation to its WebSocket being closed.",
-    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
-)
 
 ws_revocation_close_failures_total = Counter(
     "ws_session_revocation_close_failures_total",
@@ -187,6 +188,7 @@ class RevocationHub:
         self._max_remembered = max_remembered
         self._close_timeout_s = close_timeout_s
         self._max_close_tasks = max_close_tasks
+        #: The memory's expiry and the close latency read it; injectable for a fake clock.
         self._monotonic = monotonic
         #: In-flight close tasks, referenced until done so none is collected mid-loop (C-2.18).
         self._closing: set[asyncio.Task[None]] = set()
@@ -290,7 +292,15 @@ class RevocationHub:
         return len(closers)
 
     async def _close_all(self, session_id: str, reason: str, closers: list[Closer]) -> None:
-        started = time.monotonic()
+        """One latency observation per batch, in a `finally`: a batch cut off by its cancelled
+        caller (inline, past the task cap) is observed too, up to the cut-off (#3415)."""
+        started = self._monotonic()
+        try:
+            await self._close_each(session_id, reason, closers)
+        finally:
+            auth_revocation_latency_seconds.observe(self._monotonic() - started)
+
+    async def _close_each(self, session_id: str, reason: str, closers: list[Closer]) -> None:
         for closer in closers:
             try:
                 frame, code = self.close_for(reason)
@@ -306,7 +316,6 @@ class RevocationHub:
                         session_id=session_id,
                         exc_info=True,
                     )
-        auth_revocation_latency_seconds.observe(time.monotonic() - started)
 
     def _close_task_done(self, task: asyncio.Task[None]) -> None:
         self._closing.discard(task)

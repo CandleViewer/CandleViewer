@@ -11,7 +11,8 @@ and a socket that never re-authed is still on its predecessor; a refresh of a th
 with a socket, has claimed it and waits to mint (#2911). So two of M's four sockets are on a session
 no id list names (S7). The Owner disables M, once. Postgres: `test_user_disable_route_pg.py`.
 A second world holds a new socket's `auth` of M across the disable (#2739), and a third holds one
-across the disable and a refresh (#3413).
+across the disable and a refresh (#3413). A fourth has one socket of M, on a session a completed
+refresh rotated, which only the per-user close ends (#3415).
 """
 
 from __future__ import annotations
@@ -204,6 +205,15 @@ async def _armed_rule(manager: Any, m: str) -> str:
     return rid
 
 
+_UNSERVED = "auth_revocation_latency_seconds_count is not on the scraped registry"
+
+
+def _latency_count(ctx: appmod.AppContext) -> float | None:
+    """#3415: `auth_revocation_latency_seconds_count` on the registry Prometheus scrapes."""
+    env = {"env": ctx.settings.environment.value}
+    return ctx.metrics.get_sample_value("auth_revocation_latency_seconds_count", env)
+
+
 def _ended(ws: Any) -> tuple[dict[str, Any], int]:
     """The socket's last frame, which must be its `bye`, and its close code. A first frame that is
     not the `bye` fails here, named, before any wait for the close: a socket left open (an
@@ -258,7 +268,9 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
             w.unacked = client.delete(f"/users/{m}", headers=headers)
             w.action_at = w.clock.now
             path = f"/users/{m}?acknowledge_unknown_positions=true"
+            w.latency_counts = [_latency_count(ctx)]
             w.disabled = client.delete(path, headers=headers)
+            w.latency_counts.append(_latency_count(ctx))
             w.ended = [_ended(ws) for ws in (ws_a, ws_b, ws_c, ws_p)]
         finally:
             run(park.set)  # the claimed refresh mints its successor after the disable
@@ -371,6 +383,47 @@ def test_rest_401_ws_4403_within_5s(disabled: SimpleNamespace) -> None:
     session left live, and the instant on the rows is the call site's `clock`."""
     sessions_ended(disabled)
     assert disabled.published == []
+
+
+def test_the_disable_is_one_scraped_latency_observation_per_session_with_a_socket_and_one_per_user(
+    disabled: SimpleNamespace,
+) -> None:
+    """#3415 (SR-029, E09-S03), the issue's AC end to end: the cascade revokes M's two live
+    sessions, each with a socket, through the deployed hub and the gateway's closer, then closes
+    every socket of M through the WS registry (`WsEvents.user_disabled`, #3440), the two on
+    rotated sessions among them. The histogram on the registry Prometheus scrapes gains one
+    observation for each of the two sessions and one for the per-user close before the DELETE
+    returns: three, not one for each of the four sockets."""
+    before, after = disabled.latency_counts
+    assert before is not None, _UNSERVED
+    assert after == before + 2 + 1, f"the count went {before} -> {after}, not +2 sessions +1 user"
+
+
+def test_a_socket_ended_by_the_per_user_close_alone_is_one_scraped_latency_observation() -> None:
+    """#3415 (SR-029), #965 slice 7: M's one socket stays on a session that a completed refresh
+    rotated, and the session that refresh minted has no socket. The cascade's publish for it
+    closes nothing and observes nothing; the per-user close (`WsEvents.user_disabled`, #3440)
+    ends the socket, and the histogram on the registry Prometheus scrapes gains that close's one
+    observation before the DELETE returns."""
+    with _world() as (w, app, client):
+        portal = client.portal
+        assert portal is not None  # inside the client's `with`
+        run, ctx = portal.call, app.state.app_context
+        headers = _owner_headers(app, run, w, str(_OWNER))
+        rotated = run(ctx.auth.sessions.mint, str(_M))
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            assert _auth_ws(ws, rotated.access_token)["t"] == "auth_ok"
+            run(ctx.auth.sessions.refresh, rotated.refresh_token)  # completes: `ws` stays on it
+            before = _latency_count(ctx)
+            path = f"/users/{_M}?acknowledge_unknown_positions=true"
+            status = client.delete(path, headers=headers).status_code
+            after = _latency_count(ctx)
+            bye, code = _ended(ws)
+    assert status == 204
+    p = bye["p"]
+    assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
+    assert before is not None, _UNSERVED
+    assert after == before + 1, f"the count went {before} -> {after}, not +1 for the per-user close"
 
 
 def test_rule_disarmed_audited(disabled: SimpleNamespace) -> None:

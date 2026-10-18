@@ -103,6 +103,25 @@ groups:
         annotations:
           summary: "A session outlived its user's disable and was revoked on use"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authdisabledusersessionrevoked"
+      - alert: AuthRevocationLatencyHigh
+        # #3415 (SR-029, E09-S03): the p99 revoke-to-close latency over 15 minutes is above 5 s,
+        # a bucket edge, so the line is decided exactly. One observation per revocation that
+        # attempted a close (ws/revocation.py) and one per disable's per-user close
+        # (ws/permissions.py), each up to its last close initiated (sealed) or failed; the
+        # socket's own close is not measured. Under 100 in the window, one slow one fires it.
+        # No revocation in the window: every bucket's rate is 0 and the quantile is NaN, which
+        # never fires. A ticket: the sockets are sealed (or the failure logged) by then, and REST
+        # refuses the session already.
+        # Held 9 h 30 m past its window as AuthDisabledUserSessionRevoked is (quiet hours).
+        expr: histogram_quantile(0.99, sum by (env, le) (rate(auth_revocation_latency_seconds_bucket[15m]))) > 5
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "A session revocation took more than 5 s to seal its sockets (SR-029)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh"
       - alert: AuthzDeniedSpike
         expr: sum(increase(authz_denied_total[10m])) > 20
         for: 0m

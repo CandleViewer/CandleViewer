@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from prometheus_client import REGISTRY, generate_latest
+from prometheus_client import REGISTRY, CollectorRegistry, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
 from candleviewer.app import create_app
@@ -190,3 +190,46 @@ def test_login_failures_catalogue_text_names_exactly_the_audit_rows_it_counts() 
     text = _SPECS["auth_login_failures_total"].help
     assert {t for t in re.findall(r"[a-z_]+\.[a-z_]+", text) if t in AUDIT_ACTIONS} == _COUNTED_ROWS
     assert "cv_ws_auth_failures_total" in text and "cv_ws_auth_failures_total" in _SPECS
+
+
+#: #3415 (SR-029, E09-S03): the one revoke-to-close latency series.
+_LATENCY = "auth_revocation_latency_seconds"
+
+
+def test_create_app_serves_the_revocation_latency_with_no_identifier_label() -> None:
+    app = create_app(Settings(environment=Environment.DEMO))
+    text = generate_latest(app.state.app_context.metrics).decode()
+    family = {f.name: f for f in text_string_to_metric_families(text)}[_LATENCY]
+    assert family.type == "histogram" and family.samples
+    assert {label for sample in family.samples for label in sample.labels} == {"env", "le"}
+
+
+async def test_a_disabled_users_socket_closed_by_the_deployed_hub_is_one_scraped_sample() -> None:
+    """The deployed app's hub, with a stand-in closer: a `user_disabled` revoke is one sample on
+    the scraped registry. The AC end to end, through the disable cascade and the gateway's own
+    sockets, is in `tests/security/auth/test_disable_user_e2e.py`."""
+    app = create_app(Settings(environment=Environment.DEMO))
+    scraped: CollectorRegistry = app.state.app_context.metrics
+    closes: list[int] = []
+
+    async def socket(frame: dict[str, object], code: int) -> None:
+        closes.append(code)
+
+    def observed() -> float | None:
+        return scraped.get_sample_value(f"{_LATENCY}_count", {"env": "demo"})
+
+    app.state.revocation_hub.register("s1", socket)
+    before = observed()
+    assert before is not None, f"{_LATENCY}_count is not on the scraped registry"
+    await app.state.revocation_hub.revoke("s1", "user_disabled")
+    assert closes == [4403]
+    assert observed() == before + 1
+
+
+def test_the_revoke_to_close_latency_has_one_name_catalogued_and_exported() -> None:
+    # `create_app`'s module has imported the hub (`ws/revocation.py`), the series' one writer.
+    assert "ws_session_revocation_close_seconds" not in {f.name for f in REGISTRY.collect()}
+    spec = _SPECS[_LATENCY]
+    assert (spec.kind, spec.labels, spec.status, spec.exported) == ("histogram", (), "live", True)
+    assert _LATENCY in AUTH_EXPORTED_NAMES
+    assert spec.buckets is not None and 5.0 in spec.buckets  # SR-029's line is a bucket edge

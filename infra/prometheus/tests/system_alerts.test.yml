@@ -916,3 +916,122 @@ tests:
   - eval_time: 6m
     alertname: UserGrantsPushFailed
     exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 1+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: auth
+        env: live
+      exp_annotations:
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 1+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: auth
+        env: live
+      exp_annotations:
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 1+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 1+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 1+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 149+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 149+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 150+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 150+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 178+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 178+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 180+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 180+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: auth
+        env: live
+      exp_annotations:
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
+- interval: 1m
+  input_series:
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="2.5"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="5.0"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="10.0"}
+    values: 0+0x5 0+0x700
+  - series: auth_revocation_latency_seconds_bucket{env="live",le="+Inf"}
+    values: 0+0x5 0+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuthRevocationLatencyHigh
+    exp_alerts: []
