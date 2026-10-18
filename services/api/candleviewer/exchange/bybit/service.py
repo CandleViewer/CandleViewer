@@ -48,7 +48,7 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
-    from candleviewer.secrets import CredentialBorrower
+    from candleviewer.secrets import CredentialBorrower, SigningCapability
 
 
 class _NonClosingTransport(httpx.AsyncBaseTransport):
@@ -177,8 +177,23 @@ class ExchangeBybitService:
         through the adapter's account REST transport (#2893 S4)."""
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
+        return self._signed_calls(
+            self._credentials, env, credential_id, uid, recv_window_ms, clock_offset_ms
+        )
+
+    def _signed_calls(
+        self,
+        signer: SigningCapability,
+        env: str,
+        key_id: UUID,
+        uid: str,
+        recv_window_ms: int,
+        clock_offset_ms: Callable[[], int] | None,
+    ) -> KeyVerificationCalls:
+        """The one body of every key's verification calls: the verification budget and the
+        account REST transport (#2893 S4) are chosen here only, whatever M2 signer signs."""
         return key_verification_calls(
-            self._credentials, env, credential_id, uid=uid, recv_window_ms=recv_window_ms,
+            signer, env, key_id, uid=uid, recv_window_ms=recv_window_ms,
             governor=self._verify_governor, clock_offset_ms=clock_offset_ms,
             transport=self._rest_transport,
         )  # fmt: skip

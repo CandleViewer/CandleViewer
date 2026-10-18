@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 import types
 from typing import Any
 from uuid import UUID, uuid4
@@ -38,6 +39,8 @@ from tests.unit.credentials_m2._vectors import (
 
 #: The name the broker gives its `last_used_at` write tasks (#2776).
 _TOUCH_TASK = "secrets-credential-touch"
+#: A low-entropy key-id marker for the frame-locals check (never a real credential).
+_MARK_ID = "storefail" + "0" * 9 + "WXYZ"
 
 
 def _touch_tasks() -> list[asyncio.Task[Any]]:
@@ -348,6 +351,22 @@ async def test_store_insert_failure_audited_and_typed(store: Any) -> None:
         await _store(b)
     assert str(ei.value) == "store_unavailable"
     assert audit.actions() == ["security.credential_stored", "security.credential_store_failed"]
+
+
+async def test_a_failed_store_leaves_no_key_id_in_its_frame_locals(store: Any) -> None:
+    """C-12.6: a failing insert's traceback, rendered with frame locals, shows no pasted key id:
+    `store()` binds no local to it, as for the API secret."""
+
+    async def refuse(record: Any) -> None:
+        raise ValueError("db down")
+
+    store.insert = refuse
+    b = CredentialBroker(store, AuditLog(), kek())
+    with pytest.raises(CredentialUnavailable) as ei:
+        await b.store("demo", ACCOUNT, "l", Secret(_MARK_ID), Secret(API_SECRET), SNAPSHOT)
+    shown = traceback.TracebackException.from_exception(ei.value, capture_locals=True)
+    rendered = "".join(shown.format())
+    assert ", in store\n" in rendered and _MARK_ID not in rendered
 
 
 async def test_store_refuses_other_environment(store: Any) -> None:

@@ -57,6 +57,11 @@ class CredentialRow:
     enc_alg: str = "AES-256-GCM"
     status: str = "pending"
     revoked: bool = False
+    #: Read back for the borrow's C-2.8 re-check (SR-E27-14); `insert` never writes them, so the
+    #: database default (false, pinned by `ak_no_withdraw` and `ak_no_transfer`) applies. A read
+    #: that does not return one leaves it `None`, which the re-check refuses (`broker._load`).
+    can_withdraw: bool | None = False
+    can_transfer: bool | None = False
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)

@@ -117,3 +117,19 @@ def mac_hex(key_id: Secret[str], secret: Secret[str], message: SigningMessage) -
         if not isinstance(exc, Exception):
             raise
     raise CredentialUnavailable("signing_failed")
+
+
+def request_signature(
+    key_id: Secret[str], secret: Secret[str], message: SigningMessage
+) -> RequestSignature:
+    """The key id and the MAC for `message`: M2's one signing wrapper, for every signing path.
+    It holds only the wrappers, so a kept traceback shows no plaintext. Any failure leaves as a
+    typed `signing_failed` with nothing chained, after the frames below it are cleared (C-12.6);
+    a `BaseException` that is not an `Exception` is not the MAC's doing and propagates."""
+    try:
+        return RequestSignature(Secret(key_id.reveal()), mac_hex(key_id, secret, message))
+    except BaseException as exc:
+        scrub_frames(exc)
+        if not isinstance(exc, Exception):
+            raise
+    raise CredentialUnavailable("signing_failed")

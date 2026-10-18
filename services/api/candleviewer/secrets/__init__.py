@@ -29,6 +29,7 @@ from candleviewer.secrets.service import (
     SecretsMetadata,
     SecretsMetadataFacade,
     SecretsService,
+    SigningCapability,
     mint_borrower,
     prove_kek_possession,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "SecretsMetadata",
     "SecretsMetadataFacade",
     "SecretsService",
+    "SigningCapability",
     "StoredCredential",
     "WithdrawPermissionRejected",
     "export_secrets_metrics",

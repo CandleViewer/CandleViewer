@@ -24,7 +24,6 @@ import pytest
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.redact import redact
 from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable
-from candleviewer.secrets import broker as broker_mod
 from candleviewer.secrets import signing as signing_mod
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.signing import message_sha256, scrub_frames
@@ -50,8 +49,8 @@ def _fail_in_hmac(mp: pytest.MonkeyPatch, fault: BaseException) -> None:
 
 
 def _fail_below_mac(mp: pytest.MonkeyPatch, fault: BaseException) -> None:
-    """Any failure below `mac`, not only in the HMAC: a frame holding the revealed secret."""
-    mp.setattr(broker_mod, "mac_hex", lambda k, s, m: _throw(fault, s.reveal()))
+    """Any failure below `request_signature`, not only in the HMAC: a frame holding the secret."""
+    mp.setattr(signing_mod, "mac_hex", lambda k, s, m: _throw(fault, s.reveal()))
 
 
 def _assert_no_plaintext(exc: BaseException) -> None:
@@ -108,8 +107,8 @@ async def test_failed_mac_leaves_no_plaintext_and_closes_the_write_ahead_record(
 async def test_a_hook_kept_mac_failure_shows_no_plaintext(
     broker: CredentialBroker, monkeypatch: pytest.MonkeyPatch, kept: list[Any], inject: Inject
 ) -> None:
-    """Never chained, yet a hook still holds the original failure: `mac_hex` and `mac` each
-    clear the frames below them."""
+    """Never chained, yet a hook still holds the original failure: `mac_hex` and
+    `request_signature` each clear the frames below them."""
     meta = await _store(broker)
     fault = RuntimeError("boom")
     inject(monkeypatch, fault)
@@ -198,7 +197,7 @@ async def test_outcome_audit_failure_keeps_the_original_error(
         audit.fail = True  # the sink refuses the outcome record that follows
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(broker_mod, "mac_hex", fail)
+    monkeypatch.setattr(signing_mod, "mac_hex", fail)
     with pytest.raises(CredentialUnavailable, match=r"^signing_failed$"):
         await _h(broker).sign(meta.key_id, MSG, purpose="sign_rest")
     assert audit.actions()[-1] == _BORROWED

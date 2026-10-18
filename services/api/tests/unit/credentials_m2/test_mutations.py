@@ -62,9 +62,9 @@ async def test_mutant_aad_uses_row_env_not_process_env_killed(
     own (relabelled) env reaches the AAD — the oracle must still refuse."""
     real_check = CredentialBroker._check_row
 
-    def lax(self: CredentialBroker, row: Any, key_id: Any, purpose: str) -> Any:
+    def lax(self: CredentialBroker, row: Any, key_id: Any, purpose: str, **kw: Any) -> Any:
         self._env = row.env if row is not None else self._env
-        return real_check(self, row, key_id, purpose)
+        return real_check(self, row, key_id, purpose, **kw)
 
     async def any_env(self: InMemoryCredentialStore, key_id: Any, env_: str) -> Any:
         row = self.rows.get(key_id)
@@ -159,9 +159,9 @@ async def test_mutant_fence_recheck_dropped_killed(monkeypatch: pytest.MonkeyPat
     real = CredentialBroker._check_row
     calls = {"n": 0}
 
-    def once(self: CredentialBroker, row: Any, key_id: Any, purpose: str) -> Any:
+    def once(self: CredentialBroker, row: Any, key_id: Any, purpose: str, **kw: Any) -> Any:
         calls["n"] += 1
-        return row if calls["n"] % 2 == 0 else real(self, row, key_id, purpose)
+        return row if calls["n"] % 2 == 0 else real(self, row, key_id, purpose, **kw)
 
     monkeypatch.setattr(CredentialBroker, "_check_row", once)
     with pytest.raises(_KILLED):

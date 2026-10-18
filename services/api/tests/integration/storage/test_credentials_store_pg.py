@@ -213,6 +213,9 @@ async def test_status_env_and_flags_from_real_rows(pg_dsn: str) -> None:
         (key_id,) = await _seed(store, acct, 1)
         rec = await store.get(key_id, "demo")
         assert rec is not None and rec["env"] == "demo" and rec["status"] == "active"
+        # SR-E27-14: the borrow's C-2.8 re-check reads real bools and a decoded jsonb dict
+        assert rec["can_withdraw"] is False and rec["can_transfer"] is False
+        assert isinstance(rec["permission_snapshot"], dict)
         _activate(pg_dsn, [key_id], "invalid")
         with pytest.raises(CredentialUnavailable):
             await _borrow(CredentialBroker(store, _audit, _kek(0, 1)), key_id)
