@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -1117,6 +1117,56 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
   value at 0 from process start, so the first failure after a restart is an increase the tickets
   see. `ExpectedMetricMissingCvUserLifecycleStepsTotal` fires if they are not scraped (one export).
 
+## 12. Release a held audit lane (`audit lane held at boot`; ADR-0037, #3009)
+
+**Partly blocked.** cv-api runs the journal-first audit lane (since #3009's S2b-2a) only with a real
+audit backend and a lane key file; compose provisions the key (S2b-2b2, #3737) but runs the fake
+backend, which has no lane, and the `AuditLaneDrainHeld` page comes with S4a.
+
+**When.** cv-api logs `audit lane held at boot` (critical) with `hold` as `[segment, offset]`: the
+lane met a frame under a key id or format version that no configured key knows (§15.6 Hold of
+`docs/plan/24-internal-schemas.md`). Every append is then refused (`held`) and each record falls
+back to the audit sink, so a sink outage fails closed again.
+
+1. **Prefer the key.** If the hold followed a key rotation, set `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`
+   to the old key and restart: the frames drain and nothing is lost. Release only frames no key
+   you hold verifies (a planted or foreign frame, a lost key), with the Security engineer's
+   agreement: they never reach `audit_log`; their bytes are kept in `lane/quarantine/`. A hold
+   logged as `hold=None` (the marker) is not released: §15.6 Hold names its remedies.
+2. **Stop cv-api** until step 4; the command takes `lane.lock` exclusively and refuses (exit 5)
+   while cv-api holds it: `docker compose -f infra/compose/docker-compose.yml --profile core stop api`.
+3. **Run the command** as a one-off container of the `api` service, as for break-glass (§3: the
+   service's volume, key file, `CV_AUDIT_WAL_PATH` and user; no `-v`, no `--user`), with the
+   logged hold and your own words. It reads the key only from `CV_AUDIT_LANE_KEY_FILE`:
+
+   ```bash
+   docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint python api -m candleviewer.admin.lane_release --hold <segment>:<offset> --operator <you> --ticket <incident> --operator-reason "<why>"
+   ```
+
+   The words must be printable and within §15.6 Release's caps. They are stored verbatim in the
+   `released` row, shown to every Owner who reads the audit log, and sit on the command line:
+   never put a key, token, password or code in them (the break-glass label rule). Keep the output
+   with the ticket; the log line goes with the `--rm` container. Exit 0: the held bytes (from the
+   hold to the next frame the key verifies, or to the end) are in
+   `lane/quarantine/seg-<segment, 20 digits>.lane.<offset>` and the MAC'd note `lane/released`
+   is written. Else 2 (an argument refused), 4 (no lane: no real backend, a key file refused, an
+   unanchored or unusable lane; after a failed write a note may exist, so run again once the
+   volume is sound), 5 (cv-api runs), 6 (no hold at a frame) or 7 (it holds elsewhere, at the
+   position the line names; see step 5).
+
+4. **Start cv-api** (`... --profile core start api`). Its boot applies the note.
+5. **Read the `released` row** with an Owner token:
+   `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=audit.lane_anomaly"`: one
+   entry with `reason` `released` (critical), `detail.after` holding your `operator`, `ticket`
+   and `operator_reason`, `bytes`, `digest` (the SHA-256 of the quarantined copy) and
+   `quarantined`; a `seq_gap` entry follows for the held `seq` values when authentic frames, or
+   the boot's own frame (a whole held segment at the end), came after them. `lane/released` goes
+   once the drain has passed it: wait for that before stopping cv-api for a second hold, since
+   until then the command finds the first (exit 7). If the boot logs `audit lane held at boot`
+   again with `note_ignored=True`, the note did not apply there (another key, the lane changed, a
+   note an earlier release left), or it applied and a second hold follows: repeat from step 2 with
+   the logged position; the new note replaces the old. The `released` row is the release's record.
+
 ## Known gaps referenced above
 
 | Gap                                                                       | Reference      |
@@ -1138,6 +1188,7 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 | A refused refresh of a disabled user neither revokes nor counts           | #3331          |
 | A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332          |
 | No counter or alert for a write-ahead audit refusal (the `503`)           | #3009, #2267   |
+| Compose runs the fake backend (no lane); no `AuditLaneDrainHeld` page     | #3009 (S4a)    |
 
 ## Execution record
 

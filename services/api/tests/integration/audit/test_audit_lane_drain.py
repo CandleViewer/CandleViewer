@@ -1,6 +1,7 @@
 """Integration, ADR-0037 S2a2 (#3009): records the audit lane journaled while the sink refused reach
 `audit_log` after a restart once and in order, the chain verifies, and the segments the marker
-passed are gone. Real Postgres 16 via testcontainers (needs Docker); the key is a test vector."""
+passed are gone. S2c: a held segment released by the offline command leaves one `released` row.
+Real Postgres 16 via testcontainers (needs Docker); the key is a test vector."""
 
 from __future__ import annotations
 
@@ -15,17 +16,21 @@ import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.admin.lane_release import main as release
+from candleviewer.audit import lane_journal as lj
 from candleviewer.audit.lane import AuditLane
 from candleviewer.audit.lane_journal import LaneFiles, LaneJournal, LaneKeys, segment_name
 from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.writer import AuditWriter
+from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
 pytestmark = pytest.mark.integration
-_KEYS = LaneKeys(bytes(range(32)))
+_KEY = bytes(range(32))
+_KEYS, _OTHER = LaneKeys(_KEY), LaneKeys(bytes(range(32, 64)))
 
 
 @pytest.fixture(scope="module")
@@ -96,3 +101,56 @@ def test_lane_records_reach_audit_log_once_across_a_refusing_sink_and_a_restart(
     assert [a for a, _ in rows] == [*lane, *["auth.logout"] * 5, "audit.lane_resumed"]
     assert [r for a, r in rows if a == "auth.logout"] == ids
     assert sorted(os.listdir(tmp_path / "lane")) == ["confirmed", segment_name(8)]
+
+
+async def _release_scenario(dsn: str, tmp: Path, settings: Settings) -> tuple[bool, str | None]:
+    """A frame under an unknown key, all of the newest segment (one frame per segment here): the
+    boot that holds, the command, and the boot that applies the note and needs a free name."""
+    relational = SqlAlchemyRelationalRepository(dsn)
+    try:
+        repo = SqlAlchemyAuditRepository(relational)
+        writer = AuditWriter(repo, str(tmp / "audit.wal"))
+        await writer.start()
+        lane = await _boot(tmp, writer)
+        await _drained(lane)
+        await lane.close()
+        (seq, prev), lane_id = lane.journal.head, lane.journal.lane
+        held = lj.encode_frame(_OTHER, lane=lane_id, seq=seq + 1, prev=prev, cls="reserved", rec={})
+        (tmp / "lane" / segment_name(seq + 1)).write_bytes(held)
+        lane = await _boot(tmp, writer)
+        refusal = lane.journal.refusal
+        await lane.close()
+        words = ["--operator", "owner", "--ticket", "INC-7", "--operator-reason", "planted frame"]
+        assert release(["--hold", f"{seq + 1}:0", *words], settings=settings) == 0
+        lane = await _boot(tmp, writer)
+        await _drained(lane)
+        await lane.close()
+        await writer.flush(60)
+        await writer.stop(5)
+        return (await AuditQueryService(repo).verify()).verified, refusal
+    finally:
+        await relational.dispose()
+
+
+def test_lane_released_frame_leaves_one_released_row_and_the_chain_verifies(
+    pg_dsn: str, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    key = tmp_path_factory.mktemp("key").resolve() / "lane.key"
+    key.write_text(_KEY.hex())
+    key.chmod(0o400)
+    wal, path = str(tmp_path.resolve() / "audit.wal"), str(key)
+    settings = Settings(storage_backend="real", audit_wal_path=wal, CV_AUDIT_LANE_KEY_FILE=path)
+    verified, refusal = asyncio.run(_release_scenario(pg_dsn, tmp_path.resolve(), settings))
+    sql = "SELECT action, reason, after_state FROM audit_log ORDER BY id"
+    with psycopg.connect(pg_dsn.replace("postgresql+asyncpg", "postgresql")) as conn:
+        rows = conn.execute(sql).fetchall()
+    anomalies = [(r, s["from_seq"], s["to_seq"]) for a, r, s in rows if a == "audit.lane_anomaly"]
+    released = next(s for a, r, s in rows if r == "released")
+
+    assert verified and refusal == "held"
+    assert anomalies == [("released", 3, 2), ("seq_gap", 3, 3)]
+    assert [a for a, _, _ in rows][-1] == "audit.lane_resumed"
+    assert (released["operator"], released["ticket"], released["operator_reason"]) == (
+        "owner", "INC-7", "planted frame",
+    )  # fmt: skip
+    assert not (tmp_path / "lane" / "released").exists()

@@ -49,6 +49,7 @@ ANOMALY_REASONS = (*_SEVERITY, "record_invalid", "released")  # every anomaly ro
 _FRAME_KEYS = {"v", "lane", "seq", "prev", "kid", "cls", "rec"}
 _MARKER_KEYS = {"v", "lane", "pos", "next_seq", "prev", "anchored", "kid"}
 _NOTE_KEYS = {"v", "lane", "hold", "end", "from_seq", "operator", "ticket", "operator_reason"}
+NOTE_WORDS = ("operator", "ticket", "operator_reason")  # the note's words, in `Run.note` order
 
 Pos = tuple[int, int]  # a segment's `first_seq` and a byte offset, as in the marker's `pos`
 Framed = tuple[int, bytes, bytes, dict[str, Any]]  # parse steps (1)-(2): end, body, mac, object
@@ -310,6 +311,35 @@ def _at_boundary(data: bytes, offset: int) -> bool:
     return at == offset
 
 
+def encode_note(
+    keys: LaneKeys, *, lane: uuid.UUID, hold: Pos, end: Pos, from_seq: int, words: tuple[str, ...]
+) -> bytes:
+    """The `released` note (§15.6 Release): `words` are the operator, the ticket and the reason."""
+    ids = {"v": 1, "lane": str(lane), "hold": list(hold), "end": list(end), "from_seq": from_seq}
+    body = _canonical(ids | dict(zip(NOTE_WORDS, words, strict=True)))
+    return body + b"\n" + keys.sign(_RELEASED, body) + b"\n"
+
+
+def held_span(
+    keys: LaneKeys, lane: uuid.UUID, names: Iterable[str], read: Callable[[str], bytes], hold: Pos
+) -> tuple[Pos, bytes]:
+    """§15.6 Release: where the held bytes end, at the next frame authentic for `lane` after
+    `hold` or at the end of the data, and the bytes, joined across segments."""
+    firsts, chunks = _segments(names), list[bytes]()
+    i, off = firsts.index(hold[0]), hold[1]
+    while True:
+        data, at = read(segment_name(firsts[i])), off
+        while at < len(data):
+            _kind, end, framed = _item(data, at)
+            if framed is not None and isinstance(_classify(keys, framed, lane), LaneFrame):
+                return (firsts[i], at), b"".join(chunks) + data[off:at]
+            at = end
+        chunks.append(data[off:])
+        if i + 1 == len(firsts):
+            return (firsts[i], len(data)), b"".join(chunks)
+        i, off = i + 1, 0
+
+
 def _note(
     keys: LaneKeys, data: bytes, lane: uuid.UUID | None, hold: Pos
 ) -> tuple[Pos, tuple[str, str, str]] | None:
@@ -536,7 +566,8 @@ class _Scan:
 
     def release(self, i: int, off: int, note: bytes | None) -> Pos | None:
         """Rows 12 and 13: close the open run as at the end of the data, then resume after a
-        `released` note's bytes if it applies here, else hold."""
+        `released` note's bytes if it applies here (a `seq_gap` run follows bytes that end the data
+        in a segment named at or past `next_seq`), else hold."""
         hold = self.at
         if self.run is not None:
             self.units.append(self.run.close(None, hold, self.state, False))
@@ -553,6 +584,10 @@ class _Scan:
         to_seq = None if start is None else start - 1
         run = Run("released", start, to_seq, raw, hold, found[0], self.state, note=words)
         self.units.append(run)
+        newest, last = self.firsts[-1], len(self.firsts) - 1
+        if (j, stop) == (last, len(self.data(last))) and start is not None and start <= newest:
+            self.state = LaneState(newest + 1, self.state.prev, False)  # row 13: a free name
+            self.units.append(_OpenRun("seq_gap", start).close(newest, found[0], self.state, False))
         return j, stop
 
 
@@ -581,7 +616,7 @@ def scan(
 SEGMENT_MAX_BYTES = 1 << 20  # §15.6 Limits; the constructor overrides them in tests only
 LANE_MAX_SEGMENTS = 1024
 _READ_MAX = SEGMENT_MAX_BYTES + MAX_FRAME_BYTES  # longer than any file the lane writes
-_STRAY = re.compile(r"confirmed\.tmp|seg-[0-9]{20}\.lane\.new")
+_STRAY = re.compile(r"(?:confirmed|released)\.tmp|seg-[0-9]{20}\.lane\.new")
 LANE_MAX_BYTES, SHARED_MAX_BYTES = 32 << 20, 16 << 20  # S1c: the byte quotas
 _BOOT_ROWS = ("audit.lane_started", "audit.lane_resumed")  # Limits: no cap refuses them
 LANE_WAITERS: Mapping[LaneClass, int] = MappingProxyType({"reserved": 192, "shared": 64})
@@ -711,6 +746,17 @@ class LaneFiles:
         """fsync point 2: `confirmed.tmp`, renamed over `confirmed`."""
         self._put(self.dir / "confirmed.tmp", body)
         os.rename(self.dir / "confirmed.tmp", self.dir / "confirmed")
+        self.sync_dir()
+
+    def write_note(self, body: bytes) -> None:
+        """Release: the `released` note, written as the marker is (fsync point 2)."""
+        self._put(self.dir / "released.tmp", body)
+        os.rename(self.dir / "released.tmp", self.dir / "released")
+        self.sync_dir()
+
+    def drop_note(self) -> None:
+        """Release: the note goes once a marker at or past its `end` is durable."""
+        self.unlink(self.dir / "released")
         self.sync_dir()
 
     def compact(self, pos: Pos, active: int) -> list[int]:
@@ -880,6 +926,7 @@ class LaneJournal:
         self.refusal: LaneReason | None = "stopped"  # until `open()`
         self._pos: Pos | None = None  # the verified marker's; a new lane writes its own first
         self.boot_marker: LaneMarker | None = None  # the verifiable marker the boot found
+        self._note_end: Pos | None = None  # the `end` of a `released` note the boot applied
         self._fd, self._active, self._size = -1, 0, 0  # the segment the appends go to
         self._lock = _LaneLock(waiters)
         self.boot_overshoot_frames = 0  # Limits: boot rows past a cap (S4a's metric)
@@ -916,6 +963,8 @@ class LaneJournal:
                 self._count(
                     unit.end, len(unit.raw if isinstance(unit, Handover) else unit.data), shared
                 )
+            released = (unit.end for unit in result.units if isinstance(unit, Run) and unit.note)
+            self._note_end = next(released, None)
         return result
 
     @property
@@ -1021,19 +1070,27 @@ class LaneJournal:
     async def confirm(self, marker: LaneMarker) -> None:
         """fsync point 2: the drain moves the marker once a unit's records are committed. A marker
         of another lane, or anywhere but the current marker or a unit end the lane counted, is
-        refused, so the marker never moves back or into a unit."""
+        refused, so the marker never moves back or into a unit. The marker that reaches a
+        `released` note's `end` deletes the note in the same operation (§15.6 Release)."""
         self._require_open()
         ends = (end for end, _, _ in self._units)
         if marker.lane != self.lane or (marker.pos != self._pos and marker.pos not in ends):
             raise LaneError("the audit lane refused a marker of another lane or off its units")
         body = encode_marker(self._keys, marker)
-        await self._run(lambda op: self._io(op, self._files.mark, body))
-        self._pos = marker.pos
+        drop = self._note_end is not None and marker.pos >= self._note_end
+        mark = self._mark_dropping_note if drop else self._files.mark
+        await self._run(lambda op: self._io(op, mark, body))
+        self._pos, self._note_end = marker.pos, None if drop else self._note_end
         while self._units and self._units[0][0] <= marker.pos:
             _, size, shared = self._units.popleft()
             self._bytes -= size
             self._shared -= size if shared else 0
             self._since.popleft()
+
+    def _mark_dropping_note(self, body: bytes) -> None:
+        """Release: one locked operation, the marker reaching the note's `end`, then the note."""
+        self._files.mark(body)
+        self._files.drop_note()
 
     async def compact(self) -> int:
         """fsync point 3 (decision 7); how many segments it unlinked, none until a marker is
