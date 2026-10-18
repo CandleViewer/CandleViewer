@@ -56,6 +56,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/lib/http/csrfFetch.ts",  # CSRF double submit, the session cookie's re-issue
     "apps/web/src/lib/ws/core/connection.ts",  # the WS `auth` and re-`auth`, the token's lifetime
     "apps/web/src/lib/ws/policy/closePolicy.ts",  # 4401: drop the refused token, refresh first
+    "apps/web/src/lib/ws/port/messages.ts",  # the port's `token` message: the token into the worker
     "apps/web/src/lib/ws/protocol/frames.ts",  # the `auth` frame: the token's one way onto the wire
     "apps/web/src/routes/guards.ts",  # requireAuth -> requireRole -> requireStepUp
     "apps/web/src/routes/manifest.ts",  # each route's access: public, roles, step-up
