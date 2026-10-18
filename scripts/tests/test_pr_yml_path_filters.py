@@ -317,6 +317,15 @@ def test_pr_yml_py_filter_covers_every_statechart_tool_a_py_gate_runs() -> None:
         assert (ROOT / path).is_file() and any(fnmatch(path, rule) for rule in py), path
 
 
+def test_pr_yml_image_filter_covers_the_audit_lane_key_loader() -> None:
+    # #3009: the trivy job's image step loads a provisioned key through it, so a loader change
+    # must re-run that step.
+    loader = "services/api/candleviewer/audit_lane_wiring.py"
+    step = (ROOT / ".github" / "workflows" / "_job-security.yml").read_text(encoding="utf-8")
+    assert "from candleviewer.audit_lane_wiring import" in step and (ROOT / loader).is_file()
+    assert any(_matches(loader, rule) for rule in _filters()["image"]), loader
+
+
 def test_pr_yml_e2e_filter_covers_every_a11y_input() -> None:
     covered = set(_filters()["e2e"])
     assert set(A11Y_PATHS) <= covered, sorted(set(A11Y_PATHS) - covered)

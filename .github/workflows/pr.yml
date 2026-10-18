@@ -194,6 +194,8 @@ jobs:
               - 'services/api/candleviewer/settings.py'
               - 'services/api/candleviewer/app.py'
               - 'tools/ci/check_image_no_dev_modules.py'
+              # #3009: _job-security.yml's image step loads a provisioned audit lane key with it.
+              - 'services/api/candleviewer/audit_lane_wiring.py'
             docs:
               - 'docs/**'
               - '**/*.md'

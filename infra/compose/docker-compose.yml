@@ -19,6 +19,16 @@ secrets:
     environment: CV_ALERT_TICKET_WEBHOOK_URL
   alert_deadman_url:
     environment: CV_ALERT_DEADMAN_URL
+  # ADR-0037 decision 6 (#3009): the audit lane's key, which cv-api reads once at boot from
+  # /run/secrets/cv_audit_lane_key (the default CV_AUDIT_LANE_KEY_FILE); it has no environment form.
+  # Provision one per environment as a host file of 64 hex digits, mode 0400 and owned by uid 10001
+  # (`install -m 0400 -o 10001 -g 10001`), never on cv-audit-data, and name it in
+  # CV_AUDIT_LANE_MAC_SOURCE. Compose without Swarm bind-mounts the file as it is and ignores the
+  # api entry's `mode`, `uid` and `gid`, so the host file must carry them; cv-api refuses another
+  # mode, owner or content. Unset, the source is /dev/null: a fresh checkout's `up` still starts,
+  # the fake backend never reads it, and a real backend refuses it (not a regular file).
+  cv_audit_lane_key:
+    file: ${CV_AUDIT_LANE_MAC_SOURCE:-/dev/null}
 
 volumes:
   cv-postgres-data:
@@ -131,6 +141,13 @@ services:
       # uid 10001 (mode 0700); Docker copies that owner and mode into an empty volume on mount, so
       # the non-root `api` can write it under `read_only`.
       - cv-audit-data:/var/lib/candleviewer/audit
+    # ADR-0037 decision 6: the lane key (see the top-level `secrets:`); off the audit volume.
+    secrets:
+      - source: cv_audit_lane_key
+        target: cv_audit_lane_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
     # #2565: SIGTERM -> SIGKILL budget; equals CV_API_STOP_BUDGET_S in the environment above
     # (Docker's 10 s default cannot cover the planned shutdown).
     stop_grace_period: 30s
