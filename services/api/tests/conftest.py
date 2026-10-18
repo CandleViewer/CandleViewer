@@ -7,7 +7,7 @@ access outside `tmp_path` (Constitution C-13.5/C-13.7).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -80,6 +80,23 @@ def _reset_structlog_state() -> Iterator[None]:
 
     yield
     reset_logging()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    """C-13.7 (#3357, #2519): the reset above, after each collected node. Importing a module can
+    configure logging before any fixture runs (`candleviewer.main` calls `configure_logging()` at
+    import). Left in place, the first test would run under it, and pytest's `__test__` probe of
+    the next module collected would pin that module's module-level structlog loggers to the
+    cached chain for good."""
+    from candleviewer.observability.logging import reset_logging
+
+    try:
+        return (yield)
+    finally:
+        reset_logging()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
