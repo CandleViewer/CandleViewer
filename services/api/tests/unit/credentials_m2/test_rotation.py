@@ -110,7 +110,7 @@ async def test_rewrap_bad_rows_reported_and_audited() -> None:
     s, metas, _ = await _seed(3)
     s.rows[metas[1].key_id]["dek_ref"] = "v2:" + bytes(40).hex()
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, batch=1)
+    rep = await _rot(s, audit).rewrap_all(2, batch=1, auth_keys=InMemoryAuthKeyStore())
     assert rep.rewrapped == 2 and rep.failed == (metas[1].key_id,) and rep.remaining == 1
     assert audit.actions() == [
         "security.kek_rotation_started",
@@ -130,7 +130,8 @@ async def test_rewrap_terminates_when_cas_never_moves_row() -> None:
 
     s.rewrap = never  # type: ignore[method-assign]  # another worker / filter mismatch
     audit = AuditLog()
-    rep = await asyncio.wait_for(_rot(s, audit).rewrap_all(2, batch=2), timeout=5)
+    run = _rot(s, audit).rewrap_all(2, batch=2, auth_keys=InMemoryAuthKeyStore())
+    rep = await asyncio.wait_for(run, timeout=5)
     assert rep.rewrapped == 0 and rep.remaining == 3
     assert audit.actions()[-1] == "security.kek_rotation_incomplete"
 

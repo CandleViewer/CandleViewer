@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 from typing import Any, get_args
+from uuid import UUID
 
 import pytest
 
@@ -56,6 +57,31 @@ async def test_a_keyring_row_left_answers_incomplete_with_the_row_counted() -> N
     result = await admin.rewrap_kek("demo", 2, "owner-1")
     assert (result.rewrapped, result.remaining, result.complete) == (2, 1, False)
     assert "security.kek_rotated" not in audit.actions()
+
+
+async def test_a_row_that_cannot_be_rewrapped_is_counted_as_failed_with_no_key_id() -> None:
+    admin, store, _ = await _admin(InMemoryAuthKeyStore())
+    store.rows[min(store.rows)]["dek_ref"] = "v2:" + bytes(40).hex()  # v1 cannot open this wrap
+    result = await admin.rewrap_kek("demo", 2, "owner-1")
+    assert (result.rewrapped, result.remaining, result.failed, result.complete) == (1, 1, 1, False)
+    assert not [k for k in store.rows if str(k) in repr(result)]
+
+
+async def test_a_call_after_a_run_that_moved_a_row_and_aborted_answers_resumed() -> None:
+    admin, store, _ = await _admin(InMemoryAuthKeyStore())
+    cas = store.rewrap
+
+    async def down_after_one_row(key_id: UUID, **kw: Any) -> bool:
+        if store.rewrap_audit:
+            raise RuntimeError("store down")
+        return await cas(key_id, **kw)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(store, "rewrap", down_after_one_row)
+        with pytest.raises(KekRewrapError, match="store_unavailable"):
+            await admin.rewrap_kek("demo", 2, "owner-1")
+    result = await admin.rewrap_kek("demo", 2, "owner-1")
+    assert (result.resumed, result.rewrapped, result.remaining) == (True, 1, 0)
 
 
 class _Refusing:

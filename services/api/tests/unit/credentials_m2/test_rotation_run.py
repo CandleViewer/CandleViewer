@@ -171,7 +171,7 @@ async def test_every_record_of_a_run_carries_its_run_id() -> None:
     s, ids = await _seed(3)
     s.rows[ids[1]]["dek_ref"] = "v2:" + bytes(40).hex()  # this row's new wrap fails
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, batch=2)
+    rep = await _rot(s, audit).rewrap_all(2, batch=2, auth_keys=InMemoryAuthKeyStore())
     assert audit.actions() == [_STARTED, "security.kek_rotation_failed", _INCOMPLETE]
     records = audit.records + s.rewrap_audit
     assert len(records) == 5 and {f["run_id"] for _, f in records} == {str(rep.run_id)}

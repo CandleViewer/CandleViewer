@@ -102,6 +102,8 @@ for _r in REASONS:
 
 class LatchableGate(Protocol):
     def latch(self, *, reason_code: str, reason_text: str) -> None: ...
+    @property
+    def latched_reason_code(self) -> str | None: ...
 
 
 class SecretsMetadata(Protocol):
@@ -521,8 +523,12 @@ class SecretsService:
             raise KekRotationError("audit_unavailable") from None
 
     def _latch_rotation(self, gate: LatchableGate) -> None:
-        """#2266: order entry read-only for the rest of this process. Health reads DEGRADED
-        (`kek_rotation`, unless a boot latched first); no KEK page (`cv_kek_degraded_state`)."""
+        """#2266: order entry read-only for the rest of this process, latched once (a repeat call
+        notifies nobody) with the reason `rewrapKek` names, a stranded boot's replaced. Health
+        reads DEGRADED (`kek_rotation`, unless a boot latched first); no KEK page
+        (`cv_kek_degraded_state`)."""
+        if gate.latched_reason_code == ROTATION_GATE_REASON:
+            return
         gate.latch(reason_code=ROTATION_GATE_REASON, reason_text=ROTATION_REMEDIATION)
         self._reason, self._latched = self._reason or "kek_rotation", True
         _log().warning("secrets.kek_rotation_latched", remediation=ROTATION_REMEDIATION)
