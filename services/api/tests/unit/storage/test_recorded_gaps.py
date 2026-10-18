@@ -33,7 +33,7 @@ ROW = {
     "stream": "funding",  # the Postgres `stream_kind` spelling
     "gap_start": datetime(2026, 10, 1, 0, 0, 5, tzinfo=UTC),
     "gap_end": datetime(2026, 10, 1, 0, 0, 9, tzinfo=UTC),
-    "cause": "ws_disconnect",
+    "cause": "seq_jump",
 }
 
 
@@ -45,9 +45,7 @@ async def test_gap_rows_become_recorded_gaps_read_over_the_window_streams_and_li
 
     assert isinstance(repo, RecordingGapReader)
     assert got == [
-        RecordedGap(
-            "BTCUSDT", StreamKind.FUNDING_RATES, H0 + 5_000_000, H0 + 9_000_000, "ws_disconnect"
-        )
+        RecordedGap("BTCUSDT", StreamKind.FUNDING_RATES, H0 + 5_000_000, H0 + 9_000_000, "seq_jump")
     ]
     sql, params = rel.calls[-1]
     assert params == {

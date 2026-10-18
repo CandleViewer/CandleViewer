@@ -275,7 +275,10 @@ class RecordedStreamReader(Protocol):
         self, symbol: str, depth: int, at_us: int, *, not_before_us: int
     ) -> RecordedEvent | None:
         """Latest `orderbook_snapshot` of `(symbol, depth)` with
-        `not_before_us <= ts_us <= at_us` (the bounded seek-anchor lookup), else `None`."""
+        `not_before_us <= ts_us <= at_us` (the bounded seek-anchor lookup), else `None`.
+        Snapshots of one instant resolve by `order_key`, the copy written last among identical
+        keys, so both tiers return the same row; a tier whose bounded read cannot see every
+        snapshot of the latest instant refuses with its typed read error (24 Sec.13.7)."""
         ...
 
 

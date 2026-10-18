@@ -384,7 +384,7 @@ async def test_gap_reader_refuses_a_limit_below_one_before_touching_storage(limi
 
     with pytest.raises(RecordedQueryRejected):
         await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=limit)
-    assert reader.limits == []
+    assert reader.limits == [] and reader.windows == [] and reader.stream_sets == []
 
 
 @pytest.mark.parametrize(

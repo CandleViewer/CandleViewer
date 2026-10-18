@@ -425,6 +425,42 @@ async def test_coverage_spans_every_partition_of_the_window(tmp_path: Path) -> N
     assert await reader.archived(SYMBOL, StreamKind.ORDERBOOK_DELTA, both) == [both]
 
 
+async def test_a_window_that_only_touches_the_archive_is_not_covered(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+    after = TimeRange(start_us=H0 + HOUR, end_us=H0 + 2 * HOUR)  # starts where the export ends
+
+    assert await reader.archived(SYMBOL, StreamKind.TRADES, after) == []
+
+
+async def test_kline_coverage_is_read_from_the_month_trees_of_every_interval(
+    tmp_path: Path,
+) -> None:
+    """Klines keep one month tree per interval: coverage is every tree's manifests, merged."""
+    bar: dict[str, object] = {
+        "ts": H0,
+        "symbol": SYMBOL,
+        "interval": "1",
+        "open": 1.0,
+        "high": 2.0,
+        "low": 0.5,
+        "close": 1.5,
+        "volume": 3.0,
+        "turnover": 4.5,
+        "confirmed": True,
+    }
+    registry = DatasetRegistry(tmp_path / "cold")
+    registry.ensure_tree()
+    later = TimeRange(start_us=H0 + HOUR, end_us=H0 + 2 * HOUR)
+    for interval, rng in (("1", FIRST_HOUR), ("5", later)):
+        rows = [bar | {"ts": rng.start_us, "interval": interval}]
+        await ColdExporter(registry, MemHotSource({StreamKind.KLINES: rows})).export_partition(
+            SYMBOL, StreamKind.KLINES, rng, partition_extra={"interval": interval, "ym": "2026-10"}
+        )
+    both = TimeRange(start_us=H0, end_us=H0 + 2 * HOUR)
+
+    assert await ParquetRecordedReader(registry).archived(SYMBOL, StreamKind.KLINES, both) == [both]
+
+
 async def test_an_empty_coverage_window_names_nothing(tmp_path: Path) -> None:
     reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
     empty = TimeRange(start_us=H0 + 5, end_us=H0 + 5)
@@ -1106,6 +1142,19 @@ async def test_snapshots_alike_but_for_their_book_epoch_resolve_by_the_full_orde
     assert anchor is not None and anchor.tiebreak == (7, 200, 1)
 
 
+async def test_of_two_copies_of_the_anchor_in_one_part_the_later_row_is_returned(
+    tmp_path: Path,
+) -> None:
+    """The same key twice in one part: the copy written last wins, as across parts."""
+    at = H0 + MINUTE
+    rows = [_book(at, 0, 5), _book(at, 0, 5, bids='[["64999.0","3"]]')]
+    reader = ParquetRecordedReader(await _snapshots(tmp_path / "cold", rows))
+
+    anchor = await reader.snapshot_at(SYMBOL, 200, at, not_before_us=H0)
+
+    assert anchor == event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, rows[1])
+
+
 async def test_of_two_exported_copies_of_the_anchor_the_later_part_is_returned(
     tmp_path: Path,
 ) -> None:
@@ -1120,7 +1169,9 @@ async def test_of_two_exported_copies_of_the_anchor_the_later_part_is_returned(
         SYMBOL, snapshots, FIRST_HOUR
     )
     await ColdExporter(registry, MemHotSource({snapshots: [new]})).export_partition(
-        SYMBOL, snapshots, TimeRange(start_us=H0, end_us=H0 + 30 * MINUTE)  # a second part
+        SYMBOL,
+        snapshots,
+        TimeRange(start_us=H0, end_us=H0 + 30 * MINUTE),  # a second part
     )
 
     anchor = await ParquetRecordedReader(registry).snapshot_at(SYMBOL, 200, at, not_before_us=H0)
