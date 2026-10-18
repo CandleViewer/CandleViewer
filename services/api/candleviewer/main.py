@@ -152,13 +152,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if kline_refresh is not None:  # #2060: initial load, then periodic (rules are editable)
             await kline_refresh.load_now()
             kline_refresh.start()
-        for t in (
+        alert_candidates = (  # bound by name: E49-K01-F4's guard reads only assignments
             getattr(app.state, "alert_purge_task", None),
             getattr(app.state, "alert_gauge_task", None),
             getattr(app.state, "drawings_purge_task", None),
             getattr(app.state, "workspaces_purge_task", None),
             getattr(app.state, "incidents_purge_task", None),  # E42-T05
-        ):
+        )
+        for t in alert_candidates:
             if t is not None:
                 alert_tasks.append(t)
                 t.start()
