@@ -204,12 +204,15 @@ _WORD_START = r"(?<![\w./:-])"
 #: from the line before (``true'; set "-x"``). An escaped character gives itself; an empty ``''``,
 #: ``""``, ``$''`` or ``$""`` nothing before or after another character of its word (``-''x``,
 #: ``set'' -x``, ``bash$'' -x``), but itself as a whole word (``set "" -x`` sets ``$1``; ``''''``
-#: is one empty word). An escaped space stays: ``bash\ -x`` is one word. A quoted string's words
-#: read as words, so quoted prose counts as before. One pass, each quote read to its end once
-#: (only the last one of a kind can fail to close): the rules then read the line in linear time.
+#: is one empty word). An escaped space stays: ``bash\ -x`` is one word. A name before a quote, a
+#: ``$`` and a quote, or an escape is braced, as in a double-quoted string (``_QUOTED_NAME``):
+#: ``$X''set``, ``$X$'set'`` and ``$X\bash`` read as ``${X}set`` and ``${X}bash``, a command after
+#: an expansion that may be empty, not as another name. A quoted string's words read as words, so
+#: quoted prose counts as before. One pass, each quote read to its end once (only the last one of
+#: a kind can fail to close): the rules then read the line in linear time.
 _QUOTING = re.compile(
     r"\\(\S)|\$?'([^']+)'|\$?\"((?:[^\"\\]|\\.)+)\"|\$?(?:''|\"\")(?=[^\s;&|()<>`])"
-    r"|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")"
+    r"|(?<=[^\s;&|()<>`'\"$])\$?(?:''|\"\")|\$(\w+)(?=\$?['\"]|\\)"
 )
 
 
@@ -225,6 +228,8 @@ _QUOTED_NAME = re.compile(r"\$(\w+)")
 def _unquote(m: re.Match[str]) -> str:
     if m[3] is not None:
         return _QUOTED_NAME.sub(r"${\1}", _QUOTED_ESCAPE.sub(r"\1", m[3]))
+    if m[4] is not None:
+        return "${" + m[4] + "}"
     return m[1] or m[2] or ""
 
 
@@ -398,11 +403,12 @@ _TRAP_DEBUG = re.compile(
 _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: The rules reported as ``'set -x' tracing``: a match with an ``on`` group, in a line with its
 #: quotes off (``_unquoted``) and again with a second level off, the quotes of a string an inner
-#: shell runs (``bash -c 'set "-x"'``); or of ``_TRAP_DEBUG``, which reads the line with its
-#: quotes (a trap's quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
+#: shell runs (``bash -c 'set "-x"'``; that view finds nearly every hit of the first, which stays
+#: as the line bash itself reads); or of ``_TRAP_DEBUG``, which reads the line with its quotes (a
+#: trap's quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
-#:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``; or from an escape in ``$'...'``, whose quotes
-#:   the scan takes off but not its escapes: ``set $'\x2dx'``
+#:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``; or any word built from an escape in ``$'...'``,
+#:   whose quotes the scan takes off but not its escapes: ``set $'\x2dx'``, ``$'\x73et' -x``
 #: - an expansion whose value the scan cannot read, as a word before the tracing word or at its
 #:   start (it may hold ``--`` or a script's name, which end the options: ``set $X -x``, ``bash
 #:   ${X} -x ci.sh``, ``bash ${X}-x``), or in a command, option or signal word: ``s${X}et -x``,

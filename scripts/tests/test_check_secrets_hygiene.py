@@ -543,6 +543,25 @@ TRACED = [
     "set $''-x",
     "\"trap\" 'echo T' DEBUG",
     "tr''ap 'echo T' DEBUG",
+    # #3400: a name before a quote, a $ and a quote, or an escape, braced as the quotes come off: a
+    # command, a shell or option letters after an expansion that may be empty, not another name
+    # (main read the '', "" and \ forms as a word after a quote; bash 5.3 traced each, X unset).
+    "$X''set -x",
+    '$X""set -x',
+    "$X\\set -x",
+    "$X'set' -x",
+    '$X"set" -x',
+    "$X$'set' -x",
+    "$X''bash -x ci.sh",
+    "$X\\bash -x ci.sh",
+    '$X"bash" -x ci.sh',
+    '$X$""bash -x ci.sh',
+    "$BASH'' -x ci.sh",
+    "set -e$X''x",
+    "bash -c '$X\"set\" -x'",
+    # #3400: an empty quoted piece in a trap's action word (bash 5.3 ran each trap).
+    "trap 'echo T''' DEBUG",
+    "trap 'echo T'\"\" DEBUG",
 ]
 NOT_TRACED = [
     "set -e",
@@ -673,6 +692,24 @@ NOT_TRACED = [
     "set '''' -x",
     'set """" -x',
     "$trap 'echo T' DEBUG",
+    # #3400: listed beside _SET_X as not reported, though they trace (bash 5.3): an expansion at
+    # the tracing word's start or inside a long option, a command word from escapes in $'...'.
+    # An empty quoted word before a redirection is still a word (bash 5.3: no trace).
+    "bash ${X}-x ci.sh",
+    "bash --verb${X}ose ci.sh",
+    "$'\\x73et' -x",
+    "set ''>log -x",
+]
+#: #3400: listed beside _SET_X as reported though not tracing (the scan's safe side; bash 5.3 traced
+#: none of those it ran: tmux and gh were not run), pinned so that the list stays true.
+REPORTED_NOT_TRACING = [
+    "tmux new -s sh -x 80",
+    "gh secret set -v all X",
+    'echo "use bash" -x',
+    "a+bash -x ci.sh",
+    "x=bash -x ci.sh",
+    "bash --rcfile --xtrace ci.sh",
+    '[ -n "$SHELL" -a -x "$SHELL" ]',
 ]
 VIA = ["run", "script"]
 
@@ -706,6 +743,21 @@ def test_tracing_form_with_the_allow_marker_passes(tmp_path: Path, line: str, vi
 @pytest.mark.parametrize("line", NOT_TRACED)
 def test_not_tracing_is_not_flagged(tmp_path: Path, line: str, via: str) -> None:
     assert _sr146_in(tmp_path, line, via) == []
+
+
+@pytest.mark.parametrize("line", REPORTED_NOT_TRACING)
+def test_listed_over_report_is_flagged(tmp_path: Path, line: str) -> None:
+    assert _sr146_in(tmp_path, line, "run") == ["w.yml:5: 'set -x' tracing (SR-146)"]
+
+
+@pytest.mark.parametrize(
+    "run", ["|\n          bash \\\n            -x ci.sh", ">\n          set -e\n          -x"]
+)
+def test_command_going_on_to_the_next_line_is_not_read_whole(tmp_path: Path, run: str) -> None:
+    # #3400: listed beside _SET_X as not reported, though bash 5.3 traced both (the folded block
+    # runs `set -e -x`): each line is read alone. Pinned until the scan joins such lines first.
+    _write(tmp_path, WF, _runs(run))
+    assert h.check_workflows(tmp_path) == []
 
 
 @pytest.mark.parametrize(
@@ -793,6 +845,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
         # #3400: a signal word's quotes and escapes, read once before each letter of DEBUG.
         "trap x " + "\\'$\"" * 24000,
         "trap x " + "d'e'b'u' " * 10000,
+        # #3400: names braced before a quote, a $ and a quote, or an escape; a long name.
+        "$A$'" * 24000,
+        "$" + "A" * 96000,
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -805,7 +860,7 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
     + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
     + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes", "signal-quoting"]
-    + ["signal-letters"],
+    + ["signal-letters", "name-quotes", "long-name"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
