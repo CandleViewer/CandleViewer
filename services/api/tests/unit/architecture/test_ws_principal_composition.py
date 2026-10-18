@@ -105,6 +105,7 @@ def deployed() -> Iterator[SimpleNamespace]:
         ctx = app.state.app_context
         ctx.audit._writer = rbac._AuditSink()  # `ws.subscribe.denied` is audited
         ctx.auth._sessions, ctx.auth._step_up = rbac._Sessions(), rbac._StepUp()
+        ctx.auth._repository = rbac._Users()  # #2295: each session is classified against its user
         yield SimpleNamespace(app=app, grants=grants)
 
 
