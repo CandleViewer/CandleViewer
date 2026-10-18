@@ -48,4 +48,19 @@ export default tseslint.config(
       "no-unsanitized/property": "error",
     },
   },
+  // E17-T04 S5e-2 (ADR-0005; 50-security): the shared worker's code has no page, so it names none of a page's globals.
+  {
+    files: ["src/lib/ws/worker/**/*.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        ...["window", "document", "localStorage", "sessionStorage", "XMLHttpRequest"].map(
+          (name) => ({
+            name,
+            message: "The shared worker's code runs in a worker, which has no page (ADR-0005).",
+          }),
+        ),
+      ],
+    },
+  },
 );

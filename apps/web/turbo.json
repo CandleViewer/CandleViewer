@@ -3,9 +3,11 @@
   "extends": ["//"],
   "tasks": {
     "test": {
+      "env": ["CV_ALLOW_FAULT_INJECTION"],
       "inputs": [
         "$TURBO_EXTENDS$",
         "vitest.config.mjs",
+        "vite.config.ts",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
@@ -13,9 +15,11 @@
       ]
     },
     "test:cov": {
+      "env": ["CV_ALLOW_FAULT_INJECTION"],
       "inputs": [
         "$TURBO_EXTENDS$",
         "vitest.config.mjs",
+        "vite.config.ts",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",

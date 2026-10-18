@@ -11,6 +11,7 @@ import type { PaneVisibility, TokenResult, TokenSource, TopicFrame } from "../ap
 import { TOKEN_WAIT_MS, type SocketFactory } from "../core/connection";
 import { createWsEngine, type EngineSink, type WsEngine } from "../core/engine";
 import { RESYNC_WINDOW_MS } from "../core/resyncGuard";
+import type { PortLike } from "../port/endpoint";
 import { topicKey } from "../core/sequencer";
 import type { StreamHandle } from "../core/subscriptions";
 import { platformTimers, type Timers } from "../policy/timers";
@@ -34,12 +35,7 @@ import type { SystemUpdate } from "../protocol/frames";
 import { INITIAL_WS_STATE, reduce } from "../state/reducer";
 import type { TopicStatus, WsState } from "../state/types";
 
-/** What the host needs of a tab's end of the port (`MessagePort`, a dedicated worker's scope, a test's fake). */
-export interface PortLike {
-  postMessage(message: unknown, transfer: ArrayBuffer[]): void;
-  /** Starts delivery of the port's messages: `handler` gets each message's data. */
-  listen(handler: (data: unknown) => void): void;
-}
+export type { PortLike };
 
 export interface PortHostOptions {
   readonly createSocket: SocketFactory;
