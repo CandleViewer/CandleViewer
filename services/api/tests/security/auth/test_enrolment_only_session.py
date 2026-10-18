@@ -566,16 +566,25 @@ def test_refresh_of_a_deleted_or_disabled_users_session_writes_the_2911_denial(
     assert _refusals(stack, "http", "expired") == before
 
 
-def test_ws_auth_of_a_user_gone_since_its_lookup_fails_uncounted(stack: Stack) -> None:
+def test_ws_auth_of_a_user_gone_since_its_lookup_is_closed_as_disabled_uncounted(
+    stack: Stack,
+) -> None:
     """The socket's strict lookup refuses a disabled or deleted user's session first; a user gone
-    from the user store since then fails the `auth`, but no enrolment refusal is counted."""
+    from the user store since then is closed as a late registration is (#3413): `bye
+    user_disabled`, 4403, counted neither as a failed `auth` nor as an enrolment refusal."""
     minted, user = _full_session(stack)
     del stack.users.users[str(user.id)]  # the session row still reads it active: a race
     failures, expired = _failures(), _refusals(stack, "ws", "expired")
 
     with _socket(stack) as ws:
-        reply = _hello_auth(ws, minted.access_token)
+        bye = _hello_auth(ws, minted.access_token)
+        code = _closed(ws)
 
-    assert (reply["t"], reply["p"]["code"]) == ("err", "auth_failed")
-    assert (_failures(), _refusals(stack, "ws", "expired")) == (failures + 1, expired)
+    assert (bye["t"], bye["p"]["reason"], bye["p"]["reconnect"], code) == (
+        "bye",
+        "user_disabled",
+        False,
+        4403,
+    )
+    assert (_failures(), _refusals(stack, "ws", "expired")) == (failures, expired)
     assert stack.audit.of(REFUSAL_ACTION) == []
