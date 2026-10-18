@@ -7,9 +7,13 @@ name: e2e-nightly
 # nightly asks for it through the lane's `electron` input. It is green since #3393: job 117609983250
 # (e2e / e2e-electron) passed in run 39105058132, a proof run whose other jobs were cancelled.
 # Not a required check (C-9.1 unchanged), but a red nightly blocks the next release (C-9.2): the
-# release checklist needs a green run on the tip it cuts (docs/plan/07-release-and-prr.md §4.1),
-# and a red scheduled run opens an issue, as the bar-determinism, perf and fixture-drift nightlies
-# do. Only the `report` job can write; it runs no checkout and no action.
+# release checklist needs a green run on the tip it cuts (docs/plan/07-release-and-prr.md §4.1).
+# A red scheduled run comments on the one tracker issue that the repository variable
+# CV_E2E_NIGHTLY_TRACKER_ISSUE names (#3449; named, never searched for, as in xstate-nightly.yml),
+# or opens a P1 issue while the variable is unset, as the bar-determinism, perf and fixture-drift
+# nightlies do. Only the `report` job can write; it runs no checkout and no action.
+# No concurrency group (#3449), as in most nightlies: no run waits in a pending slot that a later
+# one can take. A group shared with manual runs let two dispatches drop the scheduled run.
 # Cost: seven jobs of about 1 to 1.5 minutes each (pr.yml medians), capped by CV_CI_TIMEOUT_MINUTES.
 
 on:
@@ -19,10 +23,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: e2e-nightly
-  cancel-in-progress: false
 
 jobs:
   e2e:
@@ -42,13 +42,15 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Open an issue for the red nightly (C-9.2)
+      - name: Report the red nightly on the tracker issue, or open one (C-9.2)
         # Only the runner's preinstalled gh CLI runs beside the write token; values reach the
-        # script through env.
+        # script through env. TRACKER_ISSUE has no default: unset, it opens a P1 as before. A set
+        # value must be an issue number of this repository, or the job fails and files nothing.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RESULT: ${{ needs.e2e.result }}
+          TRACKER_ISSUE: ${{ vars.CV_E2E_NIGHTLY_TRACKER_ISSUE }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           body="e2e-nightly (_job-e2e.yml) ended $RESULT on main at $GITHUB_SHA, and a red nightly"
@@ -56,6 +58,15 @@ jobs:
           body+=" Triage: docs/ci-runbook.md section 4 (CI-E2E-*, CI-A11Y-*, CI-BUILD-*)."
           body+=" If an Electron hardening check failed, follow SECURITY.md and keep the analysis"
           body+=" out of this public issue (C-12.13)."
-          gh issue create --title "e2e: nightly Playwright matrix failed ($(date -u +%F))" \
-            --label qa --label area/frontend-platform --label priority/p1 \
-            --body "$body"
+          if [ -z "$TRACKER_ISSUE" ]; then
+            gh issue create --title "e2e: nightly Playwright matrix failed ($(date -u +%F))" \
+              --label qa --label area/frontend-platform --label priority/p1 \
+              --body "$body"
+          elif [[ "$TRACKER_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+            gh issue comment "$TRACKER_ISSUE" --body "$body"
+          else
+            echo "::error title=e2e-nightly-report::CV_E2E_NIGHTLY_TRACKER_ISSUE is set but is" \
+              "not an issue number, so nothing was filed. Set it to a positive integer or delete" \
+              "it (docs/ci-runbook.md section 2)."
+            exit 1
+          fi

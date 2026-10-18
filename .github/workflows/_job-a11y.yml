@@ -25,6 +25,10 @@ jobs:
       CV_A11Y_INFRA_WAIVER_UNTIL: ${{ vars.CV_A11Y_INFRA_WAIVER_UNTIL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # #3449: `pnpm install` below runs dependency lifecycle scripts. Nothing pushes, and the
+          # baseline step's fetch of the PR's base commit needs no credential on a public repo.
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -40,6 +44,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Anonymous (#3449): a private repository would fail this step, never pass it.
           git fetch -q --depth=1 origin "$BASE_SHA"
           # First introduction: the baseline file does not exist on base yet -> empty base.
           git show "$BASE_SHA:tools/a11y/axe-baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null             || echo '{"entries": []}' > "$RUNNER_TEMP/base-baseline.json"
