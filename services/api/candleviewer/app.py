@@ -780,6 +780,21 @@ _SUPERVISOR_ORDER: tuple[str, ...] = (
     "ws",
 )
 
+#: What a module's stop may raise that `Supervisor._stop_each` never swallows (#3361): a
+#: cancellation of the task running it, and the two exceptions that end the process.
+_STOP_PROPAGATES: tuple[type[BaseException], ...] = (
+    asyncio.CancelledError,
+    KeyboardInterrupt,
+    SystemExit,
+)
+
+
+def _stop_propagates(exc: BaseException) -> bool:
+    """One of `_STOP_PROPAGATES`, alone or anywhere inside an exception group."""
+    if isinstance(exc, BaseExceptionGroup):
+        return exc.subgroup(_STOP_PROPAGATES) is not None
+    return isinstance(exc, _STOP_PROPAGATES)
+
 
 class Supervisor:
     """Starts modules in dependency order, stops them in reverse (Sec.6.2)."""
@@ -806,15 +821,30 @@ class Supervisor:
 
     async def _stop_each(self, names: Iterable[str], grace_s: float) -> None:
         """Stop every module, isolated and bounded: one raising or hanging `stop()` never
-        prevents a later one (e.g. `secrets.stop()` zeroing the KEK) from running."""
+        prevents a later one (e.g. `secrets.stop()` zeroing the KEK, C-2.7/C-12.2) from running.
+
+        #3361: that holds whatever a stop raises, so no exception type skips the KEK zeroing.
+        Each one is logged as the module's failed stop. A `BaseException` that is not an
+        `Exception` (a library's own subclass, `GeneratorExit`, a task group's
+        `BaseExceptionGroup`) goes no further, like an `Exception`. One of `_STOP_PROPAGATES`,
+        alone or in a group, is never swallowed: the first is re-raised, unchanged, once the last
+        stop has run. The later stops keep their own bounds, so a cancellation never makes the
+        teardown longer than it would have been, and never ends it before the KEK zeroing;
+        `start_all` and the lifespan likewise finish their stops before they re-raise. Each
+        bound is cooperative: see `Settings._refuse_unfittable_stop_budget`."""
+        propagate: BaseException | None = None
         for name in names:
             try:
                 async with asyncio.timeout(grace_s + STOP_SLACK_S):
                     await getattr(self._ctx, name).stop(grace_s)
-            except Exception:  # incl. TimeoutError; CancelledError still propagates
+            except BaseException as exc:  # incl. TimeoutError, the bound's cut
                 structlog.get_logger("candleviewer.app").exception(
                     "supervisor: module stop failed", module=name
                 )
+                if propagate is None and _stop_propagates(exc):
+                    propagate = exc
+        if propagate is not None:
+            raise propagate
 
 
 def _hub_publisher(hub: RevocationHub) -> Callable[[str, str], Awaitable[None]]:
