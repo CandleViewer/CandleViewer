@@ -1,7 +1,7 @@
 # src/lib/ws
 
 The web WebSocket client (E17-T04, #413; wire contract `docs/plan/23-ws-protocol.md`). It lands as
-twenty-nine stacked slices (S1, S1b, S2a to S2d, S3, S3b, S4a to S4h, S5a, S5a-2, S5b, S5b-2, S5c, S5d, S5d-2, S5e, S5e-2, S5f, S5f-2, S5f-3, S5g) and nothing here is
+thirty stacked slices (S1, S1b, S2a to S2d, S3, S3b, S4a to S4h, S5a, S5a-2, S5b, S5b-2, S5c, S5d, S5d-2, S5d-3, S5e, S5e-2, S5f, S5f-2, S5f-3, S5g) and nothing here is
 reachable from `main.tsx` until the last one wires it (C-4.13). State is a plain store read through
 `useSyncExternalStore`; RxJS, Zustand and Jotai are not dependencies. Layers depend downwards:
 `protocol` -> `state` -> `core` -> `policy` -> `client`/`port`/`worker`.

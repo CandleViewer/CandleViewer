@@ -321,15 +321,15 @@ describe("what every tab hears at once", () => {
     expect(t.tab().of("system")).toEqual([]);
   });
 
-  it("keeps the latest update of a few kinds, however many the server invents, and counts the kinds it kept no room for", async () => {
+  it("keeps the latest update of a few kinds, however many the server invents, and counts the updates it kept no room for", async () => {
     const t = hostHarness();
     t.tab();
     await t.advance(400);
     for (let i = 0; i < 40; i += 1) t.gateway.latest.delta("system", { kind: `invented_${i}` });
     expect(t.tab().of("system").length).toBeLessThanOrEqual(16);
-    expect(t.host.counters.droppedSystemKinds).toBe(25); // `health` and 15 of the 40 are kept
-    t.gateway.latest.delta("system", { kind: "invented_0" }); // one it holds: not a kind more
-    expect(t.host.counters.droppedSystemKinds).toBe(25);
+    expect(t.host.counters.droppedSystemUpdates).toBe(25); // `health` and 15 of the 40 are kept
+    t.gateway.latest.delta("system", { kind: "invented_39" }); // a kind it dropped, again: one more update with no room
+    expect(t.host.counters.droppedSystemUpdates).toBe(26);
   });
 });
 

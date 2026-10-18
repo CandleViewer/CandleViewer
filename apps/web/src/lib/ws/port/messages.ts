@@ -124,8 +124,8 @@ export interface HostCounters {
   readonly overflows: number;
   /** Messages from a tab the worker refused: malformed, or not served (a name taken or unknown, past a limit). */
   readonly rejectedMessages: number;
-  /** Kinds of `system` update past the few the host keeps for a tab that joins late (every tab still hears them). */
-  readonly droppedSystemKinds: number;
+  /** Updates of a `system` kind past the few the host keeps for a tab that joins late (every tab still hears them). */
+  readonly droppedSystemUpdates: number;
 }
 /** E04-S02's diagnostics: in memory, never exported (D8). */
 export interface WsDiagnostics {
