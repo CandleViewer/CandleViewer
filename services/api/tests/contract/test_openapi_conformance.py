@@ -170,10 +170,13 @@ def test_lifecycle_mutation_declares_csrf_step_up_and_audit_failure(
 def test_lifecycle_mutation_cites_only_registered_codes_with_their_status(
     spec: dict[str, Any], path: str, method: str
 ) -> None:
+    """`validation_failed` may also be the `422` of `UnprocessableEntity`, as the market contract
+    tests allow: `deleteUser` refuses an undeclared query key so (SR-026, E42-T04 S7)."""
     cited = _CITED_CODE.findall(spec["paths"][path][method]["description"])
     assert cited
     registered = _registered(spec)
-    assert all(registered.get(code) == int(status) for status, code in cited), cited
+    allowed = {(code, registered.get(code)) for _, code in cited} | {("validation_failed", 422)}
+    assert all((code, int(status)) in allowed for status, code in cited), cited
 
 
 @pytest.mark.parametrize(("path", "method"), _LIFECYCLE_MUTATIONS)
@@ -189,7 +192,7 @@ def test_lifecycle_mutation_declares_every_status_it_cites(
     ("path", "method", "statuses"),
     [
         ("/users/{userId}", "patch", {"200", "400", "401", "403", "404", "409", "412", "503"}),
-        ("/users/{userId}", "delete", {"204", "400", "401", "403", "404", "409", "503"}),
+        ("/users/{userId}", "delete", {"204", "400", "401", "403", "404", "409", "422", "503"}),
         ("/users/{userId}/roles", "put", {"200", "400", "401", "403", "404", "409", "503"}),
         (
             "/users/{userId}/account-access",

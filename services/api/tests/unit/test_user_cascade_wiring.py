@@ -26,6 +26,7 @@ from candleviewer.user_cascade_wiring import (
     RuleNotOwned,
     RulesNotRunning,
     ScopeRefreshAdapter,
+    _disarm_lock,
     disarm_key,
 )
 from tests.rules.test_rules_manager import _active_hash, _ir
@@ -33,6 +34,7 @@ from tests.rules.test_rules_manager import _active_hash, _ir
 _T0 = datetime(2026, 10, 17, 9, 0, tzinfo=UTC)
 _A, _B, _OWNER = uuid.UUID(int=0xA), uuid.UUID(int=0xB), uuid.UUID(int=0xC)
 _ACCOUNT = uuid.UUID(int=0x10)
+_RULE = str(uuid.UUID(int=0x11))  # rule ids are UUIDs
 
 
 def _actor(user: uuid.UUID) -> Actor:
@@ -147,7 +149,7 @@ async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_a
     e = _Engine()
     theirs = await e.rule(_B, "b-one")
     audited = list(e.audits)
-    rid = "no-such-rule" if missing else theirs
+    rid = str(uuid.UUID(int=0xDEAD)) if missing else theirs
     with capture_logs() as logs, pytest.raises(RuleNotOwned):
         await e.disarm(rid)
     (line,) = [entry for entry in logs if entry["event"] == "users.disable.rule_not_disarmed"]
@@ -159,6 +161,26 @@ async def test_disarm_of_a_rule_the_user_does_not_own_is_refused_and_leaves_it_a
     assert e.manager.lifecycle.leaf(theirs) == "armed"
     assert e.audits == audited
     assert not _DISARM_LOCKS  # a raise inside the lock frees it
+
+
+def test_the_disarm_lock_is_keyed_by_the_canonical_rule_uuid() -> None:
+    """S7 (the S5b security review's Low 2, CV-C06): one rule's disarms share one lock however its
+    id is spelled, so another spelling of the id cannot run a second disarm of the rule beside
+    the first (both would send DISARM, and the chart would park the second)."""
+    lock = _disarm_lock(_RULE)
+    for spelling in (_RULE.upper(), f"{{{_RULE}}}", f"urn:uuid:{_RULE}", _RULE.replace("-", "")):
+        assert _disarm_lock(spelling) is lock
+
+
+async def test_disarm_of_an_id_that_is_not_a_uuid_is_refused() -> None:
+    """Rule ids are UUIDs: any other id is refused before the store or the manager is asked, with
+    the one error line any refused disarm writes, and holds no lock."""
+    e = _Engine()
+    with capture_logs() as logs, pytest.raises(ValueError):
+        await e.disarm("not-a-rule-id")
+    (line,) = [entry for entry in logs if entry["event"] == "users.disable.rule_not_disarmed"]
+    assert (line["rule_id"], line["error"]) == ("not-a-rule-id", "ValueError")
+    assert not _DISARM_LOCKS
 
 
 def test_idempotency_key_deterministic() -> None:
@@ -265,10 +287,10 @@ async def test_rules_module_not_running_is_a_failed_disarm() -> None:
     and that is said, not skipped: the same one error line as any other failure names the rule."""
     adapter = RuleDisarmAdapter(InMemoryRuleStore(), lambda: None)
     with capture_logs() as logs, pytest.raises(RulesNotRunning):
-        await adapter.disarm("rule-1", user_id=_A, actor=_OWNER, disabled_at=_T0)
+        await adapter.disarm(_RULE, user_id=_A, actor=_OWNER, disabled_at=_T0)
     (line,) = [entry for entry in logs if entry["event"] == "users.disable.rule_not_disarmed"]
     assert (line["rule_id"], line["target_user_id"], line["error"], line["code"]) == (
-        *("rule-1", str(_A), "RulesNotRunning", None),
+        *(_RULE, str(_A), "RulesNotRunning", None),
     )
     assert line["log_level"] == "error"
 

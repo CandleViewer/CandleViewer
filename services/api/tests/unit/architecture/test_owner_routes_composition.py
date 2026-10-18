@@ -298,6 +298,34 @@ def test_deployed_app_demands_a_live_step_up_before_the_grant_change(deployed: A
     assert deployed.audit.records[audited:] == []  # no `rbac.denied`: the handler never ran
 
 
+@pytest.mark.parametrize(
+    ("actor", "target"),
+    [
+        *(("manager_with_grant", "viewer"), ("manager_without_grant", "viewer")),
+        *(("viewer", "manager_with_grant"), ("owner", "owner")),
+    ],
+    ids=["manager-with-grant", "manager-without-grant", "viewer", "owner-self-target"],
+)
+def test_deployed_app_challenges_an_unelevated_disable_before_the_handler(
+    deployed: SimpleNamespace, actor: str, target: str
+) -> None:
+    """#965 S7 (the S6 review's Low 4): without a live `users` elevation the path guard answers
+    `DELETE /users/{userId}` with the step-up challenge before the handler runs, for a Manager, a
+    Viewer and an Owner's self-target alike, so none of them meets the handler's audited 403 (the
+    elevated matrix cells above): no `rbac.denied` is written. The deployed B16 records the
+    challenge as `auth.step_up_required` without the target; the harness's step-up records none."""
+    step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/{}"
+    audited, step_up.elevated = len(deployed.audit.records), False
+    try:
+        headers = _headers(deployed.client, actor)
+        resp = deployed.client.delete(path.format(rbac.user_id_of(target)), headers=headers)
+    finally:
+        step_up.elevated = True
+    assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
+    assert resp.json()["action_class"] == "users"
+    assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
+
+
 def _states(resp: httpx.Response) -> dict[str, str]:
     assert resp.status_code == 200, resp.text
     return {item["key"]: item["state"] for item in resp.json()["items"]}

@@ -9,12 +9,15 @@ does, implements them over the rule engine's own interfaces.
   `DISARM` goes through `RuleLifecycle` and the statechart gateway to a chart only
   `statechart.factory` builds, and the manager writes `rules.disarm` ahead of the row (C-2.9). A
   rule the chart refuses is the manager's `RuleError`; the service goes on to the next rule. B9
-  handles `DISARM` only in armed, cooling_down and paused_degraded, so a rule that is evaluating,
-  acting, pending confirmation or spent stays armed behind O4 and O5 until a repeat, though
-  UL-AC02 of the STRIDE appendix says it "reaches disarmed" (#3226). A rule is disarmed by one
-  call at a time in the process, through whichever adapter (the manager has no per-rule lock; a
-  manual mode change is not covered, #3227), and only the user's own: the adapter acts as the
-  Owner, who sees every rule, so a rule that is not the user's is refused.
+  handles `DISARM` only in armed, cooling_down and paused_degraded, so a rule in another state
+  stays armed behind O4 and O5, though UL-AC02 of the STRIDE appendix says it "reaches disarmed"
+  (#3226). A repeat of the call disarms it only once it is back in one of those three: an
+  evaluating or acting rule moves on by itself, but one pending confirmation or spent waits for an
+  event no repeat sends (the confirmation's answer or timeout, `RESET_ONCE`). A rule is disarmed
+  by one call at a time in the process, through whichever adapter, keyed by its canonical UUID
+  (the manager has no per-rule lock; a manual mode change is not covered, #3227), and only the
+  user's own: the adapter acts as the Owner, who sees every rule, so a rule that is not the
+  user's is refused.
 - `ScopeRefreshAdapter` refreshes the user's entry in the rule engine's scope snapshot at once; a
   refresh that fails drops the entry (no grant, no live arming) and re-raises.
 - `build_user_disable_service` (S6) composes the service behind `DELETE /users/{userId}`.
@@ -106,10 +109,13 @@ def _disarm_lock(rule_id: str) -> asyncio.Lock:
     makes legal) both pass its `can()` pre-check while the chart is armed and both send DISARM:
     the second is parked by `onUnhandled: defer` (CV-C06) and `rule.disarmed` is written twice.
     Held, the second finds the rule disarmed and takes `set_mode`'s state-based no-op. Disarms of
-    different rules never wait for each other, so a slow one cannot eat another's step bound."""
-    lock = _DISARM_LOCKS.get(rule_id)
+    different rules never wait for each other, so a slow one cannot eat another's step bound.
+    Keyed by the canonical UUID, so two spellings of one id share it; an id that is not a UUID
+    raises `ValueError`, refused like any rule that cannot be disarmed."""
+    key = str(uuid.UUID(rule_id))
+    lock = _DISARM_LOCKS.get(key)
     if lock is None:
-        lock = _DISARM_LOCKS[rule_id] = asyncio.Lock()
+        lock = _DISARM_LOCKS[key] = asyncio.Lock()
     return lock
 
 

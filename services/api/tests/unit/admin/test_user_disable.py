@@ -179,7 +179,7 @@ async def test_step_order() -> None:
     assert w.log == [
         *("positions", "orders", "users.disable", "socket:user_disabled", "socket:user_disabled"),
         *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled"),
-        *("scope", "rules", "disarm:r1", "disarm:r2", "invite"),
+        *("scope", "rules", "disarm:r1", "disarm:r2", "rules", "invite"),
         "users.invite_revoked",
     ]
     (invite,) = w.of("users.invite_revoked")
@@ -453,6 +453,7 @@ async def test_already_disabled_is_a_noop_that_sweeps_and_disarms_again() -> Non
     assert await w.disable() == DisableResult(changed=False)
     assert w.calls == [] and w.log == [
         *("positions", "orders", "sweep:user_disabled!open", "scope!open", "rules!open"),
+        "rules!open",
     ]
 
 
@@ -464,6 +465,7 @@ async def test_repeat_disarms_a_rule_the_first_call_could_not() -> None:
     assert w.disarms == [("r1", _TARGET, _OWNER.user_id, _NOW)]
     assert w.post_commit() == [
         *("sweep:user_disabled!open", "scope!open", "rules!open", "disarm:r1!open"),
+        "rules!open",
     ]
 
 
@@ -479,7 +481,7 @@ async def test_retry_after_an_unknown_commit_outcome_does_not_settle_it() -> Non
     w.rel.rows[LOCK_USER] = [("disabled",)]  # the commit had gone through after all
     assert await w.disable() == DisableResult(changed=False)
     assert len(w.of("users.disable")) == 2 and w.post_commit() == [
-        *("sweep:user_disabled!open", "scope!open", "rules!open"),
+        *("sweep:user_disabled!open", "scope!open", "rules!open", "rules!open"),
     ]
 
 
@@ -498,7 +500,7 @@ async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
     gate.set()
     await w.svc.drain()
     assert w.post_commit() == [
-        *("sweep:user_disabled", "b16:user_disabled", "scope", "rules", "invite"),
+        *("sweep:user_disabled", "b16:user_disabled", "scope", "rules", "rules", "invite"),
     ]
 
 
@@ -639,15 +641,38 @@ async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple
 async def test_refused_rule_does_not_stop_loop() -> None:
     """R7, UL1-E3: a rule the chart refuses (B9 handles DISARM only in `armed`, `cooling_down`
     and `paused_degraded`) fails its own run: every other rule is still tried, in order, and the
-    step is counted failed (one run to list the rules, one per rule)."""
+    step is counted failed (two runs to list the rules, one per rule)."""
     refusal = RuleError(422, "illegal_transition", "A rule cannot change from armed to disabled.")
     w = _World(armed=("r1", "r2", "r3"), refuse={"r2": refusal})
     with capture_logs() as logs:
         assert await w.disable() == DisableResult(True, ("rule_disarm",))
     assert [rule for rule, *_ in w.disarms] == ["r1", "r2", "r3"]
     (line,) = [e for e in logs if e.get("step") == "rule_disarm"]
-    assert (line["attempted"], line["outcome"], line["error"]) == (4, "failed", "RuleError")
+    assert (line["attempted"], line["outcome"], line["error"]) == (5, "failed", "RuleError")
     assert line["log_level"] == "error" and line["target_user_id"] == str(_TARGET)
+
+
+async def test_a_rule_armed_after_the_first_listing_is_disarmed_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S7 (the S5b review's Low 3), SR-029: the user's rules are listed again once after the
+    disarms, so a rule whose arm landed after the first listing (its gate passed before the
+    commit) is disarmed too. A rule already tried, refused or not, is not tried again, and there
+    is no third listing."""
+    refusal = RuleError(422, "illegal_transition", "A rule cannot change from armed to disabled.")
+    w = _World(refuse={"r2": refusal})
+    listings = iter([("r1", "r2"), ("r2", "r3")])  # r1 disarmed, r2 refused and armed, r3 late
+
+    async def armed_rule_ids(user_id: uuid.UUID) -> tuple[str, ...]:
+        w.mark("rules")
+        return next(listings)
+
+    monkeypatch.setattr(w, "armed_rule_ids", armed_rule_ids)
+    assert await w.disable() == DisableResult(True, ("rule_disarm",))
+    assert [rule for rule, *_ in w.disarms] == ["r1", "r2", "r3"]
+    assert [e for e in w.post_commit() if e.startswith(("rules", "disarm"))] == [
+        *("rules", "disarm:r1", "disarm:r2", "rules", "disarm:r3"),
+    ]
 
 
 async def test_disable_disarms_the_users_armed_rules_through_b9_and_closes_their_scope(
