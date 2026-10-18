@@ -165,10 +165,13 @@ reads pnpm 12.5.1's report and fails closed on anything else (CI-SEC-005). On `m
 | tinypool 1.1.1 (2 Critical) | GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr                           | transitive, vitest 3.2.7                    | test-only       | **Fixed**: `overrides: tinypool >=2.1.2 <3` (2.2.0); every vitest suite passes on it. Remove with vitest 4 (#1819)                                                 |
 | source-map-js 1.2.1 (High)  | GHSA-68fv-2mgg-jv7q                                                | transitive, postcss and magicast            | build/test-time | **Fixed**: `overrides: source-map-js >=1.2.2 <2` (1.2.2); the ui and web builds pass                                                                               |
 | braces 3.0.3 (High)         | GHSA-vfj7-8cjw-p6xm                                                | transitive, lint-staged                     | dev-only        | Unchanged: EX-06 (`security/accepted-risks.yaml`), expires 2026-12-31                                                                                              |
-| 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | **Accepted** to 2026-11-26 (the R1 cut): one dated entry per advisory in `security/accepted-risks.yaml` (#3558), as R0's gate (`30-release-roadmap.md` §4.4) wants |
+| 6 Moderate, 1 Low           | uuid, react-router ×2, vitest, @vitest/mocker, sprintf-js; esbuild | transitive (react-router ships in apps/web) | mixed           | **Accepted** to 2026-11-20 (pre-R1 cut): one dated entry per advisory in `security/accepted-risks.yaml` (#3558), as R0's gate (`30-release-roadmap.md` §4.4) wants |
 
-#3558: none of the seven has a patched release in its installed major. react-router (which
-ships) and vitest need #1819's majors, uuid needs Storybook 9 or later, esbuild needs tsup 9,
-and sprintf-js has no fix. Dependabot also lists vitest on seven manifests, which the vitest
-entry's decision covers, and tauri 2.1.1 in the E06-T01 bench harness, accepted to the same date
-as `tool: dependabot`. Each is re-decided at the R1 cut.
+#3558: none of the seven pnpm advisories has a patched release in its installed major.
+react-router (which ships) and vitest need #1819's majors, uuid needs Storybook 9 or later,
+esbuild needs tsup 9, and sprintf-js has no fix. Dependabot also lists vitest on seven manifests,
+which the vitest entry's decision covers, and tauri 2.1.1 in the E06-T01 bench harness (patched
+in 2.11.1, a pin bump that needs cargo and a harness re-run), accepted to the same date as
+`tool: dependabot`. C-12.3 gives a Medium 30 days (vitest's alerts opened 2026-09-28): these
+entries run past that, as one release-cycle exception the owner ratifies on #2701. They expire
+when S09 starts, so the re-decision comes before the R1 cut and the cut-day PRs stay green.
