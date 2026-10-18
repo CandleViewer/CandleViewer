@@ -7,10 +7,12 @@ endpoints cannot be recorded without a real key, and agents never handle one (C-
 owns the recorded, redacted capture that replaces them.
 
 Shapes follow the exchange's v5 reference pages "Get API Key Information" and "Get Wallet
-Balance" and its error-code table. Every file has date 2026-10-15 (`time` 1792054800000), env
-demo (host `api-demo.bybit.com`) and no symbol. Redaction: no key id, secret, signature or real
-identifier. The UID is the synthetic `1000001` of `packages/fixtures/accounts/accounts.json`,
-`apiKey` is `***`, and the whitelist uses the documentation address 203.0.113.7 (RFC 5737).
+Balance" and its error-code table. Every file has date 2026-10-15, env demo and no symbol. The
+six REST files have `time` 1792054800000 and host `api-demo.bybit.com`; the two `ws_auth_*`
+files below have no `time`, and their host is `stream-demo.bybit.com`. Redaction: no key id,
+secret, signature or real identifier. The UID is the synthetic `1000001` of
+`packages/fixtures/accounts/accounts.json`, `apiKey` is `***`, and the whitelist uses the
+documentation address 203.0.113.7 (RFC 5737).
 
 The two `ws_auth_*` files are the private stream's `auth` reply on host `stream-demo.bybit.com`,
 with fabricated connection ids and no `time`. Their fields (`success`, `ret_msg`, `op`, `conn_id`)

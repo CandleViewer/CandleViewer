@@ -149,7 +149,7 @@ async def test_an_unknown_environment_is_refused_before_any_dial_or_signature() 
     assert (stream.dialled, calls) == ([], [])
 
 
-def test_the_hosts_are_the_architecture_tables_and_one_table_holds_them() -> None:
+def test_the_hosts_are_the_ws_private_row_of_the_architecture_environment_table() -> None:
     doc = (ROOT / "docs/plan/20-architecture.md").read_text(encoding="utf-8")
     row = next(line for line in doc.splitlines() if line.startswith("| WS private"))
     assert re.findall(r"`(wss://[^`]+)`", row) == [URLS["live"], URLS["demo"], URLS["testnet"]]
