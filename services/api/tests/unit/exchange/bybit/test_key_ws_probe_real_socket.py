@@ -29,17 +29,20 @@ FAILED = WsProbeResult(ok=False, error="transport_error", latency_ms=None)
 
 
 class Peer:
-    """A private stream on 127.0.0.1. It counts handshakes and keeps each frame; it answers a
-    handshake with a 302 to `redirect`, or else each frame with `reply`."""
+    """A private stream on 127.0.0.1. It counts handshakes and keeps each one's path and each
+    frame; it answers a handshake for `/v5/private` with a 302 to `redirect`, or else each frame
+    with `reply`."""
 
     def __init__(self, reply: str = OK, redirect: str | None = None) -> None:
         self.reply, self.redirect = reply, redirect
         self.handshakes = 0
+        self.paths: list[str] = []
         self.frames: list[str] = []
 
-    def process_request(self, conn: ServerConnection, _request: Request) -> Response | None:
+    def process_request(self, conn: ServerConnection, request: Request) -> Response | None:
         self.handshakes += 1
-        if self.redirect is None:
+        self.paths.append(request.path)
+        if self.redirect is None or request.path != "/v5/private":
             return None
         response = conn.respond(HTTPStatus.FOUND, "")
         response.headers["Location"] = self.redirect
@@ -108,6 +111,20 @@ async def test_a_redirect_the_library_follows_anyway_is_aborted_before_any_frame
         async with own.serving() as url:
             assert await probe(url) == FAILED
     assert (own.handshakes, other.handshakes, other.frames) == (1, 1, [])
+
+
+async def test_a_redirect_to_another_path_of_its_own_host_is_aborted_before_any_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The path half of the handshake check: a 3xx from `/v5/private` to `/v5/trade` on the same
+    host and port is a same-origin redirect, which the library follows whatever its cross-origin
+    rules; the socket on the other path is aborted with nothing sent on it."""
+    library = connect.process_redirect
+    monkeypatch.setattr(key_ws_probe._NoRedirectConnect, "process_redirect", library)
+    own = Peer(redirect="/v5/trade")
+    async with asyncio.timeout(_DEADLINE_S), own.serving() as url:
+        assert await probe(url) == FAILED
+    assert (own.paths, own.frames) == (["/v5/private", "/v5/trade"], [])
 
 
 async def test_a_reply_above_4096_bytes_is_refused_by_the_library_as_a_transport_error() -> None:

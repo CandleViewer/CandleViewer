@@ -195,6 +195,16 @@ def test_the_adapter_dials_with_productions_connector_or_behind_the_door_the_han
     assert fixture._ws_probe._connect is app.state.account_fixture.private_ws_connect
 
 
+@pytest.mark.parametrize("environment", [Environment.DEMO, Environment.TESTNET])
+def test_the_composition_root_gives_the_adapter_the_process_environment(
+    environment: Environment,
+) -> None:
+    """#836 slice 2b5: the adapter's private-WS probe dials only the stream of the process's own
+    environment, the one whose keys M2 signs (C-2.11)."""
+    context = app_module.build_app_context(Settings(environment=environment))
+    assert context.exchange_bybit._environment == environment.value
+
+
 def test_set_in_checkout_create_app_keeps_the_handle_for_later_slices(tmp_path: Path) -> None:
     app = app_module.create_app(_dev(tmp_path))
 

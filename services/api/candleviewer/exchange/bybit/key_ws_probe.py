@@ -135,8 +135,9 @@ async def connect_private_ws(url: str) -> PrivateSocket:
         ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG,
     )  # fmt: skip
     wanted, request = urlsplit(url), conn.request
+    resource = f"{wanted.path}?{wanted.query}" if wanted.query else wanted.path
     asked = None if request is None else (request.headers.get("Host"), request.path)
-    if asked != (wanted.netloc, wanted.path):
+    if asked != (wanted.netloc, resource):
         conn.transport.abort()
         raise ConnectionError("private ws handshake left the requested stream")
     return _Socket(conn)

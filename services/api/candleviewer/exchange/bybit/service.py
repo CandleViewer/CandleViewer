@@ -76,6 +76,7 @@ class ExchangeBybitService:
         *,
         rest_transport: httpx.AsyncBaseTransport | None = None,
         private_ws_connect: PrivateWsConnect | None = None,
+        environment: str | None = None,
     ) -> None:
         self._started = False
         #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
@@ -96,6 +97,9 @@ class ExchangeBybitService:
         self._ws_probe = (
             KeyWsProbe() if private_ws_connect is None else KeyWsProbe(private_ws_connect)
         )
+        #: The process's own environment (`Settings.environment`), the only one whose keys M2
+        #: signs: a stored key's probe dials no other stream (C-2.11). None refuses every probe.
+        self._environment = environment
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
@@ -176,9 +180,13 @@ class ExchangeBybitService:
         """E27-T03: one private-WS `auth` for a stored key, `testApiKey`'s WebSocket half (its
         caller is #836 slice 2b6; nothing calls it before that): on `env`'s own stream only
         (C-2.11), signed by M2 under `sign_ws_auth`, never a subscribe; diagnostic only. The
-        scheduled self-check never calls it (SR-E27-05)."""
+        scheduled self-check never calls it (SR-E27-05). M2 signs only the process environment's
+        keys, so any other `env` is refused before anything is signed or dialled, as a candidate
+        of another environment is (KV-T10)."""
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
+        if env != self._environment:
+            raise ValueError("not this process's environment")
         return await self._ws_probe.probe(
             self._credentials, env, credential_id, clock_offset_ms=clock_offset_ms
         )

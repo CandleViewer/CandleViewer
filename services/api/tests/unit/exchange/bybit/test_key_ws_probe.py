@@ -15,14 +15,15 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import pytest
 from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
+from websockets.client import ClientProtocol
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
 from websockets.protocol import State
+from websockets.uri import parse_uri
 
 from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
@@ -333,12 +334,12 @@ async def test_no_key_id_signature_or_exchange_text_reaches_a_log_repr_or_metric
 
 
 class Conn:
-    """A `websockets` client connection whose handshake asked for `url`. Its closing handshake
-    ends, or with `stall_close` never does; `aborts` counts transport aborts."""
+    """A `websockets` client connection whose handshake asked for `url`, in the request the
+    library itself builds. Its closing handshake ends, or with `stall_close` never does; `aborts`
+    counts transport aborts."""
 
     def __init__(self, url: str, *, stall_close: bool = False) -> None:
-        parts = urlsplit(url)
-        self.request = SimpleNamespace(headers={"Host": parts.netloc}, path=parts.path)
+        self.request = ClientProtocol(parse_uri(url)).connect()
         self.transport = SimpleNamespace(abort=self._abort)
         self.state, self.stall_close = State.OPEN, stall_close
         self.sent: list[str] = []
@@ -395,6 +396,23 @@ async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_f
     assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [*PRIVATE_WS_URLS.values(), f"{URLS['demo']}?max_active_time=60s"],
+    ids=[*PRIVATE_WS_URLS, "query"],
+)
+async def test_the_handshake_check_takes_the_request_websockets_builds_for_the_stream(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """The library's own request passes the check: a `Host` without the default port, and a path
+    that carries the query (research 06's `max_active_time`). A change in how the library renders
+    either fails here instead of failing every real probe closed."""
+    conn = Conn(url)
+    dial_into(monkeypatch, conn)
+    await key_ws_probe.connect_private_ws(url)
+    assert conn.aborts == 0
+
+
 async def test_a_close_the_peer_never_finishes_ends_in_an_abort(
     monkeypatch: pytest.MonkeyPatch, bounds: list[float | None]
 ) -> None:
@@ -410,21 +428,45 @@ async def test_a_close_the_peer_never_finishes_ends_in_an_abort(
 
 async def test_the_adapter_probes_through_its_injected_connector_signed_by_m2() -> None:
     stream, calls = Stream(), list[Call]()
-    svc = ExchangeBybitService(fake_capability(MARK, calls), private_ws_connect=stream.connect)
+    svc = ExchangeBybitService(
+        fake_capability(MARK, calls), private_ws_connect=stream.connect, environment="testnet"
+    )
     assert (await svc.key_ws_probe("testnet", CREDENTIAL_ID)).ok
     assert (stream.dialled, [c[2] for c in calls]) == ([URLS["testnet"]], ["sign_ws_auth"])
 
 
+@pytest.mark.parametrize(
+    ("process", "asked"),
+    [("demo", "live"), ("live", "demo"), (None, "demo")],
+    ids=["demo-process-live-stream", "live-process-demo-stream", "no-environment"],
+)
+async def test_the_adapter_refuses_another_environment_before_any_dial_or_signature(
+    process: str | None, asked: str
+) -> None:
+    """C-2.11 (KV-T10): M2 signs only the process environment's keys, so a demo key's signed
+    `auth` never reaches the live stream, nor a live key's the demo one; an adapter built without
+    an environment probes none. The candidate path refuses the same mismatch."""
+    stream, calls = Stream(), list[Call]()
+    svc = ExchangeBybitService(
+        fake_capability(MARK, calls), private_ws_connect=stream.connect, environment=process
+    )
+    with pytest.raises(ValueError, match="not this process's environment"):
+        await svc.key_ws_probe(asked, CREDENTIAL_ID)
+    assert (stream.dialled, calls) == ([], [])
+
+
 async def test_the_adapter_holds_one_budget_for_every_key() -> None:
     stream = Stream()
-    svc = ExchangeBybitService(credentials=fake_capability(), private_ws_connect=stream.connect)
+    svc = ExchangeBybitService(
+        credentials=fake_capability(), private_ws_connect=stream.connect, environment="demo"
+    )
     results = [await svc.key_ws_probe("demo", UUID(int=i)) for i in range(11)]
     assert [r.error for r in results] == [None] * 10 + ["rate_limited"]
 
 
 async def test_the_adapter_without_a_signer_dials_nothing() -> None:
     stream = Stream()
-    unsigned = ExchangeBybitService(private_ws_connect=stream.connect)
+    unsigned = ExchangeBybitService(private_ws_connect=stream.connect, environment="demo")
     with pytest.raises(RuntimeError, match="no signing capability"):
         await unsigned.key_ws_probe("demo", CREDENTIAL_ID)
     assert stream.dialled == []

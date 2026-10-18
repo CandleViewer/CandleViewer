@@ -724,6 +724,7 @@ def build_app_context(
             private_ws_connect=(
                 None if account_fixture is None else account_fixture.private_ws_connect
             ),
+            environment=resolved.environment.value,
         ),
         bus=bus_service,
         ingestion=IngestionService(),
