@@ -107,7 +107,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # one, would otherwise wait out its grace for a server that never served.
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
-    account_health = ws_runtime = None
+    account_health = ws_runtime = lost_jobs = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     try:
@@ -179,6 +179,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         account_health = getattr(app.state, "account_health", None)
         if account_health is not None:  # E27-T04 (#837): once `start_all` has brought modules up
             account_health.start()
+        lost_jobs = getattr(app.state, "admin_jobs_lost", None)
+        if lost_jobs is not None:  # E42-T05 (#966 Q10): the jobs the last clean stop left behind
+            await lost_jobs.load()
         if ctx.settings.metrics_enabled:
             # E04-T06: create_app() owns the single facade (telemetry series hang
             # off it); fall back for apps built without one.
@@ -242,6 +245,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             admin_jobs = getattr(app.state, "admin_jobs", None)
             if admin_jobs is not None:  # E16-T05: tracked compaction tasks never outlive the app
                 await teardown.run("admin_jobs", admin_jobs.stop)
+                if lost_jobs is not None:  # E42-T05: what the stopped store held, for next boot
+                    await teardown.run("admin_jobs_lost", lost_jobs.save)
             if bars_runtime is not None:  # set before writer; both before storage stops
                 await teardown.run("bars_runtime", bars_runtime.stop)
             await teardown.run("mesh_self_check", ctx.mesh_self_check.stop)

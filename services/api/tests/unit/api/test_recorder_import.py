@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from tests.unit.api._job_poll import mount_job_poll
 
 OWNER = {"recording:write", "admin:read"}
 BODY = {"symbol": "BTCUSDT", "from": "2026-06-01", "to": "2026-06-30"}
@@ -78,10 +79,9 @@ def _client(*, fail_audit: bool = False) -> tuple[httpx.AsyncClient, _Audit, _Ru
     audit, run, res = _Audit(fail=fail_audit), _Runner(), _Resolver()
     audit.runner = run
     res.as_(OWNER)
-    app = FastAPI()
-    app.include_router(
-        make_recorder_admin_router(AdminJobStore(), None, audit, res, import_runner=run)
-    )
+    app, store = FastAPI(), AdminJobStore()
+    app.include_router(make_recorder_admin_router(store, None, audit, res, import_runner=run))
+    mount_job_poll(app, store, res)
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     return c, audit, run, res
 
@@ -222,12 +222,10 @@ async def test_import_job_failure_reports_typed_reason_code() -> None:
     async def broken(*_a: object) -> dict[str, object]:
         raise LedgerCorrupt("import ledger is not valid")
 
-    app = FastAPI()
-    res = _Resolver()
+    app, store, res = FastAPI(), AdminJobStore(), _Resolver()
     res.as_(OWNER)
-    app.include_router(
-        make_recorder_admin_router(AdminJobStore(), None, audit, res, import_runner=broken)
-    )
+    app.include_router(make_recorder_admin_router(store, None, audit, res, import_runner=broken))
+    mount_job_poll(app, store, res)
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     job_id = (await c.post("/admin/recorder/import", json=BODY, headers=_hdr())).json()["job_id"]
     body = await _poll(c, job_id, "failed")
