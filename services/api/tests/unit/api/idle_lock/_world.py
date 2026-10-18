@@ -93,6 +93,19 @@ class _Audit:
         self.is_active = True
 
 
+class _FailingB16Sink(RecordingAuditSink):
+    """The B16 chart's sink, failing on the chosen actions (B16.7 regression tests)."""
+
+    def __init__(self, *fail_on: str) -> None:
+        super().__init__()
+        self.fail_on = set(fail_on)
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if action in self.fail_on:
+            raise AuditUnavailable("audit WAL unavailable: test")
+        await super().emit(action, **kwargs)
+
+
 class _Identity:
     async def user(self, user_id: str) -> dict[str, Any]:
         return {
@@ -114,7 +127,9 @@ class _Auth:
 
 
 class World:
-    def __init__(self, b16: RecordingAuditSink, *, throttle_max: int, authority: bool) -> None:
+    def __init__(
+        self, b16: RecordingAuditSink, *, throttle_max: int, authority: bool, identity: bool
+    ) -> None:
         self.b16 = b16
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
@@ -143,7 +158,7 @@ class World:
             make_session_router(
                 _Auth(self.sessions),
                 self.audit,
-                identity=_Identity(),
+                identity=_Identity() if identity else None,
                 allowed_origins=frozenset({_ORIGIN}),
                 csrf=_CODEC,
                 unlock_authority=(lambda: self.step_up) if authority else None,
@@ -210,9 +225,13 @@ async def _unlock(w: World, headers: dict[str, str], password: str = _PW) -> htt
 
 
 async def _open(
-    b16: RecordingAuditSink, *, throttle_max: int = 100, authority: bool = True
+    b16: RecordingAuditSink,
+    *,
+    throttle_max: int = 100,
+    authority: bool = True,
+    identity: bool = True,
 ) -> World:
-    return World(b16, throttle_max=throttle_max, authority=authority)
+    return World(b16, throttle_max=throttle_max, authority=authority, identity=identity)
 
 
 async def _session(w: World, headers: dict[str, str]) -> httpx.Response:

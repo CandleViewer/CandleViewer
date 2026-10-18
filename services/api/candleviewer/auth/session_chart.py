@@ -193,10 +193,16 @@ class SessionChart:
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
         """Session revoked by sync code: record `REVOKE`, then drop the chart."""
         await self.record(record, now, "REVOKE", reason=reason)
+        await self.forget(str(record.id))
+
+    async def forget(self, session_id: str) -> None:
+        """Drop the session's chart without recording anything; its next use rebuilds it
+        from the `sessions` row, as after an eviction. `POST /auth/unlock` (#2300) drops a
+        chart that failed to record an outcome the session service already committed."""
         self._bind_loop()
         async with self._lock:
-            interp = self._charts.pop(str(record.id), None)
-            self._gateway.unregister(str(record.id))
+            interp = self._charts.pop(session_id, None)
+            self._gateway.unregister(session_id)
         if interp is not None:
             await interp.stop()
 

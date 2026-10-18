@@ -186,8 +186,9 @@ def csrf_problem(reason: CsrfRefusal) -> JSONResponse:
 def verify_refresh_csrf(
     codec: CsrfCodec, header: str | None, cookie: str | None, session_id: str
 ) -> CsrfRefusal | None:
-    """SR-041 check for `POST /auth/refresh`, run by the route against the exact
-    session it is about to rotate. `None` means OK."""
+    """SR-041 check run by a route against the exact session it acts on: `POST /auth/refresh`
+    (the session it is about to rotate), and `POST /auth/unlock` and a cookie-identified
+    `POST /auth/logout` (the session they identify, #2300). `None` means OK."""
     if not header or not cookie:
         return CsrfRefusal.MISSING
     if not tokens_equal(header, cookie):

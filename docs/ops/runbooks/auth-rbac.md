@@ -24,15 +24,22 @@ Quick facts the procedures rely on:
 
 ## 1. Unlock a locked account (SR-016)
 
-**There is no unlock command, endpoint or CLI.** A lock is `users.locked_until`, set by the login
-service after the fifth failure. It clears in two ways, both in code:
+`POST /auth/unlock` is dark until #2300's last slice wires it (2f, held for #1640): it answers `503`
+and checks no password, so what this section says of it holds from then on.
+
+**There is no unlock command, endpoint or CLI for this lock.** `POST /auth/unlock` (#2300) lifts a
+session's idle lock, never an account lock. A lock is `users.locked_until`, set by the shared
+password check after the fifth failure: at login, at a step-up (§2), or at `POST /auth/unlock`,
+whose wrong password counts toward it through `StepUpService.verify_password`. It clears in two
+ways, both in code:
 
 - it expires 15 minutes after it was set; or
 - the next correct-password login after expiry resets the counter (`record_login_success` in
   `auth/repository.py`).
 
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
-account refuses even a correct password.
+account refuses even a correct password, at login, at a step-up and at the idle-lock unlock, where
+each refusal also counts toward the five failed unlocks that revoke the session.
 
 1. Confirm the lock. A login attempt returns `423` with a `Retry-After` header (seconds left):
 
@@ -49,7 +56,8 @@ account refuses even a correct password.
    ```
 
    Expected: `200` with one `auth.account_locked` entry (severity warning, identifier redacted such
-   as `abc***(len=9)`) per refused attempt.
+   as `abc***(len=9)`) per refused login attempt, and one with reason `unlock_failed` and the user
+   id as actor when a wrong `POST /auth/unlock` password applied the lock.
 
 2. Wait out `Retry-After`. Expected elapsed time: at most 15 minutes. Do not attempt a login
    meanwhile. **Warning:** `failed_login_count` is reset only by a _successful_ login, so a single wrong
@@ -62,13 +70,15 @@ account refuses even a correct password.
    `auth.login` entry for the user.
 
 Telemetry for a lock: counter `auth_lockouts_total` (no labels) rises by 1 when a failed password
-check applies the lock: the fifth failure, or the first failure after an expired lock (at login, or
-from a wrong step-up password, §2). The failure that trips the lock has no `auth.account_locked` row
-of its own: at login it is audited as `auth.login_failed`, in step-up as `auth.step_up_failed`. So
-this counter is the only record that the lock itself was applied. It does not name the user, it does
-not move for attempts refused while locked (at login, the `auth.account_locked` rows above) and it
-does not move on a successful login, so it confirms that a lock happened, not that it ended. Read it
-on the metrics listener (default `127.0.0.1:9108`, §6):
+check applies the lock: the fifth failure, or the first failure after an expired lock (at login,
+from a wrong step-up password, §2, or from a wrong `POST /auth/unlock` password). At login and in
+step-up the failure that trips the lock has no `auth.account_locked` row of its own (it is audited
+as `auth.login_failed` or `auth.step_up_failed`), so there this counter is the only record that the
+lock itself was applied. At `POST /auth/unlock` that failure's `auth.unlock_failed` row is followed
+by an `auth.account_locked` row (reason `unlock_failed`), both written before the answer. The
+counter does not name the user, it does not move for attempts refused while locked (at login, the
+`auth.account_locked` rows above) and it does not move on a successful login, so it confirms that a
+lock happened, not that it ended. Read it on the metrics listener (default `127.0.0.1:9108`, §6):
 
 ```bash
 curl -s http://127.0.0.1:9108/metrics | grep '^auth_lockouts_total'
@@ -84,9 +94,9 @@ Owner alert for a lock (SR-016, SR-126): the `AuthLockouts` alert is that rule. 
 from a secret file (`infra/alertmanager/alertmanager.yml`). The message holds the alert name,
 component, environment, severity, an occurrence count, the summary "Account lockout occurred" and
 the runbook link (`docs/plan/07-release-and-prr.md#alert-authlockouts`). **It does not name the
-account**: the audit rows in step 1 carry only a redacted identifier (first three characters and
-its length), and the lock itself is `users.locked_until`. Locks in one burst arrive as one message
-(grouped by alert, component and environment). Two limits:
+account**: the login rows in step 1 carry only a redacted identifier (first three characters and its
+length; an `unlock_failed` row has the user id), and the lock itself is `users.locked_until`. Locks
+in one burst arrive as one message (grouped by alert, component and environment). Two limits:
 
 - **Quiet hours.** A `ticket` notification inside quiet hours (22:00-07:00 UTC by default,
   `CV_ALERT_QUIET_HOURS`) is muted, not queued, and the alert stays active for only 10 minutes after
