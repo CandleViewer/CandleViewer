@@ -9,15 +9,17 @@ drives the auth stack. Each refusal must leave a trail: the audit record and the
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
-from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord
+from candleviewer.auth.models import MfaMethodKind, MintedSession, UserRecord, UserStatus
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import make_user
+from tests.unit.auth.session_fakes import FakeSessionRepository
 
 from ._stack import T0, Stack
 
@@ -63,6 +65,16 @@ def _lose_every_method(stack: Stack, user: UserRecord) -> None:
 def _refusals(stack: Stack, transport: str, reason: str) -> float:
     """`auth_enrolment_refused_total` as the scraped app registry serves it (SR-125)."""
     return stack.scraped("auth_enrolment_refused_total", transport=transport, reason=reason)
+
+
+def _refresh(stack: Stack, minted: MintedSession, *, csrf: bool = True) -> Any:
+    """`POST /auth/refresh` with the body token alone, as a client that lost its access handle
+    sends it; `csrf=False` leaves out the SR-041 header."""
+    stack.client.cookies.clear()
+    headers = csrf_headers(stack.state.csrf_codec, minted.session_id) if csrf else {}
+    return stack.client.post(
+        "/auth/refresh", headers=headers, json={"refresh_token": minted.refresh_token}
+    )
 
 
 # -- HTTP ------------------------------------------------------------------------------------
@@ -162,13 +174,8 @@ def test_refresh_ends_an_overlong_session_without_a_bearer(stack: Stack) -> None
     minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
     _lose_every_method(stack, _user(stack, "member"))
     before = _refusals(stack, "http", "expired")
-    stack.client.cookies.clear()
 
-    resp = stack.client.post(
-        "/auth/refresh",
-        headers=csrf_headers(stack.state.csrf_codec, minted.session_id),
-        json={"refresh_token": minted.refresh_token},
-    )
+    resp = _refresh(stack, minted)
 
     assert (resp.status_code, resp.json()["detail"]) == (401, "refresh_token_invalid")
     assert stack.audit.of("auth.session_refreshed") == []
@@ -187,13 +194,8 @@ def test_refresh_fails_closed_when_the_session_cannot_be_classified(
 
     monkeypatch.setattr(stack.users, "find_by_id", unreachable)
     before = _refusals(stack, "http", "unclassified")
-    stack.client.cookies.clear()
 
-    resp = stack.client.post(
-        "/auth/refresh",
-        headers=csrf_headers(stack.state.csrf_codec, minted.session_id),
-        json={"refresh_token": minted.refresh_token},
-    )
+    resp = _refresh(stack, minted)
 
     assert resp.status_code == 503 and "unreachable" not in resp.text
     assert (resp.json()["code"], resp.headers["Retry-After"]) == ("store_unavailable", "5")
@@ -203,16 +205,47 @@ def test_refresh_fails_closed_when_the_session_cannot_be_classified(
     assert _refusals(stack, "http", "unclassified") == before + 1
 
 
+def test_refresh_checks_csrf_before_it_classifies_the_session(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SR-041 comes first: a refresh without the token reads no user store and counts nothing."""
+    uid, _ = stack.add_user("member")
+    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
+    _lose_every_method(stack, _user(stack, "member"))  # overlong: classified, it counts `expired`
+    reads = AsyncMock(wraps=stack.users.find_by_id)
+    monkeypatch.setattr(stack.users, "find_by_id", reads)
+    before = _refusals(stack, "http", "expired")
+
+    resp = _refresh(stack, minted, csrf=False)
+
+    assert (resp.status_code, resp.json()["code"]) == (403, "csrf_token_invalid")
+    reads.assert_not_called()
+    assert _refusals(stack, "http", "expired") == before
+
+
+def test_refresh_leaves_a_disabled_users_session_to_the_audited_refusal(stack: Stack) -> None:
+    """A disabled user's session is #2911's to refuse: the denied `auth.session_refreshed` row is
+    written, and the refusal is not counted as an expired enrolment-only session."""
+    uid, _ = stack.add_user("member")
+    minted: MintedSession = stack.call(stack.auth.sessions.mint, str(uid))
+    stack.users.add(_user(stack, "member").model_copy(update={"status": UserStatus.DISABLED}))
+    repo = cast(FakeSessionRepository, stack.auth._session_repository)
+    repo.user_statuses[str(uid)] = UserStatus.DISABLED  # production reads one `users` row for both
+    before = _refusals(stack, "http", "expired")
+
+    resp = _refresh(stack, minted)
+
+    assert (resp.status_code, resp.json()["detail"]) == (401, "refresh_token_invalid")
+    denied = [r for r in stack.audit.of("auth.session_refreshed") if r["outcome"] == "denied"]
+    assert [r["reason"] for r in denied] == ["user_disabled"]
+    assert _refusals(stack, "http", "expired") == before
+
+
 def test_refresh_rotates_an_enrolment_only_session_inside_its_window(stack: Stack) -> None:
     minted, _ = _mint(stack, _enrolling(stack))
     stack.clock.now += timedelta(minutes=5)
-    stack.client.cookies.clear()
 
-    resp = stack.client.post(
-        "/auth/refresh",
-        headers=csrf_headers(stack.state.csrf_codec, minted.session_id),
-        json={"refresh_token": minted.refresh_token},
-    )
+    resp = _refresh(stack, minted)
 
     assert resp.status_code == 200
     successor = stack.call(stack.auth.sessions.peek_refresh, resp.json()["tokens"]["refresh_token"])
