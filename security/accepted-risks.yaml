@@ -72,13 +72,19 @@ entries:
     approver: "basiltt"
     expires: "2027-03-25"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1551"
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:59"
+  # #3540 (first accepted under #1978): re-keyed from line 59, stale since #2612 added an
+  # import above it. Pull request scans are diff-informed and never re-report an unchanged
+  # line, so only a full scan (the merge queue) showed it. Triaged a false positive by
+  # construction (orchestrator ruling); scripts/tests/test_security_gate.py now pins every
+  # line-keyed codeql entry to the code it accepts. Expires with its twin (mfa_service.py:68)
+  # at the GA cut, about five months after triage and the latest date the freeze test allows.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:60"
     tool: codeql
     severity: HIGH
-    reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"
-    approver: "basiltt"
+    reason: "False positive by construction: the SHA-256 digest is the lookup key for an opaque 256-bit random MFA challenge token (secrets.token_urlsafe(32)), not a password, so a slow KDF adds nothing. Re-check if the token source or the hashed value changes"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/3540"
   - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:68"
     tool: codeql
     severity: HIGH

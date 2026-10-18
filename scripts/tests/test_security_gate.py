@@ -7,6 +7,7 @@ outputs synthesised in-test (no network, no real scanner invocation).
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -1427,3 +1428,228 @@ def test_pnpm_audit_fixtures_keep_pnpms_own_formatting(name: str) -> None:
     # pnpm writes JSON.stringify(report, null, 2) and a newline; .prettierignore keeps it so.
     raw = (PNPM_FIXTURES / name).read_text(encoding="utf-8")
     assert raw == json.dumps(json.loads(raw), indent=2) + "\n"
+
+
+# --------------------------------------------------------------------------
+# #3540: a codeql entry keyed to a line must stay on the code it accepts. PR
+# scans are diff-informed and never re-report an unchanged line, so an edit
+# above an accepted line (login_service.py 59 -> 60, #2612) left its entry
+# stale until a full scan (the merge queue's) blocked on the result.
+# --------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parents[2]
+_TOKEN_HASH = 'return hashlib.sha256(token.encode("utf-8")).hexdigest()'
+# `rule:path` of every line-keyed codeql entry -> the code its line must still hold.
+_CODEQL_LINE_PINS = {
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py": _TOKEN_HASH,
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py": _TOKEN_HASH,
+    "py/clear-text-logging-sensitive-data:"
+    "services/api/candleviewer/migrations/versions/0002_rbac_seed.py": (
+        "print(message, file=sys.stdout)"
+    ),
+}
+_MFA_TOKEN_ENTRY = (
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:60"
+)
+_MFA_RULE, _MFA_PATH, _MFA_LINE = _MFA_TOKEN_ENTRY.rsplit(":", 2)
+_MFA_TOKEN_RESULT = (_MFA_RULE, _MFA_PATH, int(_MFA_LINE))
+
+
+def test_repo_register_codeql_line_entries_still_hold_the_code_they_accept() -> None:
+    stale: list[str] = []
+    keys: set[str] = set()
+    for risk in load_accepted_risks(REGISTER):
+        parts = risk.finding_id.rsplit(":", 2)
+        if risk.tool != "codeql" or len(parts) != 3 or not parts[2].isdigit():
+            continue
+        rule, path, line = parts
+        keys.add(f"{rule}:{path}")
+        want = _CODEQL_LINE_PINS.get(f"{rule}:{path}")
+        src = _ROOT / path
+        lines = src.read_text(encoding="utf-8").splitlines() if src.is_file() else []
+        n = int(line)
+        held = lines[n - 1].strip() if 0 < n <= len(lines) else "<no such line>"
+        if want is None:
+            stale.append(f"{risk.finding_id}: add the code it accepts to _CODEQL_LINE_PINS")
+        elif want not in held:
+            stale.append(f"{risk.finding_id}: line {n} holds {held!r}, not {want!r}")
+    hint = "re-key each entry to its code's line, and re-triage it if that code changed"
+    assert not stale, f"{hint}: {'; '.join(stale)}"
+    assert keys == set(_CODEQL_LINE_PINS)  # every pin names a live entry
+
+
+_PRODUCT = _ROOT / "services/api/candleviewer"
+_LOGIN_SERVICE = _PRODUCT / "auth/login_service.py"
+_MFA_SERVICE = _PRODUCT / "auth/mfa_service.py"
+# The hash helper on each weak-hashing entry's line -> the module that defines it.
+_TOKEN_HASHERS = {"_hash_mfa_token": _LOGIN_SERVICE, "_hash_token": _MFA_SERVICE}
+
+
+def _calls_of(tree: ast.Module, func: str) -> list[str]:
+    """Every call of the module-level function `func` in `tree`, unparsed."""
+    return [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == func
+    ]
+
+
+def _refs_of(tree: ast.Module, name: str) -> list[str]:
+    """Every reference to `name` in the code of `tree`, unparsed: a name, an attribute, an
+    import, or a string equal to it (as getattr takes). Prose that mentions it never counts."""
+    return [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.alias) and node.name == name)
+        or (isinstance(node, ast.Constant) and node.value == name)
+    ]
+
+
+def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:
+    """The weak-hashing entries (login_service.py:60, mfa_service.py:68) are false positives
+    only while the hashed value is the MFA challenge token and that token is 256 random bits.
+    A result is keyed to its hashing line, so a new hashed value or token source would stay
+    accepted there: pin both, so such a change fails here and the entries are re-triaged."""
+    login = ast.parse(_LOGIN_SERVICE.read_text(encoding="utf-8"))
+    factory = [
+        ast.unparse(default)
+        for node in ast.walk(login)
+        if isinstance(node, ast.FunctionDef)
+        for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+        if arg.arg == "mfa_token_factory" and default is not None
+    ]
+    assert factory == ["lambda: secrets.token_urlsafe(32)"]  # 32 bytes: 256 random bits
+    stores = [
+        node
+        for node in ast.walk(login)
+        if isinstance(node, ast.Name) and node.id == "mfa_token" and isinstance(node.ctx, ast.Store)
+    ]
+    minted = [
+        ast.unparse(node.value)
+        for node in ast.walk(login)
+        if isinstance(node, ast.Assign) and any(t in stores for t in node.targets)
+    ]
+    assert len(stores) == 1  # the token is bound once
+    assert minted == ["self._mfa_token_factory()"]
+    assert _calls_of(login, "_hash_mfa_token") == ["_hash_mfa_token(mfa_token)"]
+    assert _refs_of(login, "_hash_mfa_token") == ["_hash_mfa_token"]  # that call only
+    mfa = ast.parse(_MFA_SERVICE.read_text(encoding="utf-8"))
+    assert _calls_of(mfa, "_hash_token") == ["_hash_token(mfa_token)"]  # the presented token
+    assert _refs_of(mfa, "_hash_token") == ["_hash_token"]  # that call only
+
+
+def test_repo_register_mfa_token_hash_helpers_are_not_reached_from_other_modules() -> None:
+    """No other product module may override the token factory or reach a hash helper: one
+    that imports a helper could hash another value on the accepted line, and that result
+    would carry the accepted id. Tests are not product code and may import the helpers."""
+    found: list[str] = []
+    for path in sorted(_PRODUCT.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(_ROOT)
+        if path != _LOGIN_SERVICE and "mfa_token_factory" in text:
+            found.append(f"{rel}: mfa_token_factory")
+        named = [name for name, home in _TOKEN_HASHERS.items() if path != home and name in text]
+        if named:
+            tree = ast.parse(text)
+            found.extend(f"{rel}: {ref}" for name in named for ref in _refs_of(tree, name))
+    hint = "re-triage the weak-hashing entries (or give an unrelated helper another name)"
+    assert not found, f"{hint}: {found}"
+
+
+def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:
+    """A CodeQL SARIF of these results, each rule scored HIGH (7.5) on its descriptor."""
+    rules = [
+        {
+            "id": rule,
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"security-severity": "7.5"},
+        }
+        for rule in sorted({rule for rule, _, _ in results})
+    ]
+    found = [
+        {
+            "ruleId": rule,
+            "message": {"text": "synthetic result"},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": uri},
+                        "region": {"startLine": line},
+                    }
+                }
+            ],
+        }
+        for rule, uri, line in results
+    ]
+    run = {"tool": {"driver": {"name": "CodeQL", "rules": rules}}, "results": found}
+    return {"version": "2.1.0", "runs": [run]}
+
+
+def _real_codeql_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    register: Path,
+    results: list[tuple[str, str, int]],
+    run_date: str = "2026-10-18",  # fixed, and before the entry expires: deterministic
+) -> tuple[int, str]:
+    """Run the gate's CLI on a full-scan SARIF of `results`; return its exit code and output."""
+    report = _write_json(tmp_path, "python.sarif", _codeql_full_scan(results))
+    argv = ["--tool", "codeql", "--report", str(report), "--accepted-risks", str(register)]
+    rc = main([*argv, "--run-date", run_date])
+    out = capsys.readouterr()
+    return rc, out.out + out.err
+
+
+def test_real_codeql_gate_mfa_token_hash_without_its_entry_blocks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    doc = yaml.safe_load(REGISTER.read_text(encoding="utf-8"))
+    rest = [e for e in doc["entries"] if e["id"] != _MFA_TOKEN_ENTRY]
+    without = _write_yaml(tmp_path, {"entries": rest})
+    rc, out = _real_codeql_gate(tmp_path, capsys, without, [_MFA_TOKEN_RESULT])
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
+    assert f"{_MFA_TOKEN_ENTRY} (HIGH) has no accepted-risk entry" in out
+
+
+def test_real_codeql_gate_mfa_token_hash_with_its_entry_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT])
+    assert rc == 0, out
+    assert "security_gate[codeql]: OK" in out
+    assert f"accepted risk: codeql finding {_MFA_TOKEN_ENTRY} (HIGH)" in out
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param((_MFA_RULE, _MFA_PATH, int(_MFA_LINE) + 1), id="same-rule-next-line"),
+        pytest.param(
+            ("py/clear-text-logging-sensitive-data", _MFA_PATH, int(_MFA_LINE)),
+            id="other-high-same-line",
+        ),
+    ],
+)
+def test_real_codeql_gate_mfa_token_entry_other_result_still_blocks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], other: tuple[str, str, int]
+) -> None:
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT, other])
+    rule, path, line = other
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in out
+    assert f"{rule}:{path}:{line} (HIGH) has no accepted-risk entry" in out
+    assert f"{_MFA_TOKEN_ENTRY} (HIGH) has no accepted-risk entry" not in out  # entry is exact
+
+
+def test_real_codeql_gate_mfa_token_entry_on_its_expiry_blocks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    expires = {r.finding_id: r for r in load_accepted_risks(REGISTER)}[_MFA_TOKEN_ENTRY].expires
+    run_date = expires.isoformat()
+    rc, out = _real_codeql_gate(tmp_path, capsys, REGISTER, [_MFA_TOKEN_RESULT], run_date)
+    assert rc == 1, out
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-004)" in out
+    assert f"CI-SEC-004: accepted risk expired for {_MFA_TOKEN_ENTRY}" in out
