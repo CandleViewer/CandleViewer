@@ -367,8 +367,9 @@ async def test_a_locked_account_fails_like_a_wrong_password(w: World) -> None:
         update={"locked_until": w.clock.now + timedelta(hours=1)}
     )
     w.lock()
-    r = await _unlock(w, _bearer(minted))
-    assert (r.status_code, r.json()["code"]) == (401, "unlock_invalid")
+    codes = [(await _unlock(w, _bearer(minted))).json()["code"] for _ in range(5)]
+    assert codes == ["unlock_invalid"] * 4 + ["session_revoked"]
+    assert "auth.account_locked" not in w.audit.writer.actions()
 
 
 # -- write-ahead audit and the B16 record (C-2.9, B16.7) -------------------------------------
