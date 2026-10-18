@@ -346,8 +346,10 @@ def _locked_versions(name: str) -> set[tuple[int, ...]]:
 
 
 def test_tinypool_and_source_map_js_overrides_clear_their_advisories() -> None:
-    # #3494 (policy §8.4): tinypool <2.1.2 is Critical twice and source-map-js <1.2.2 is High;
-    # neither range has a fix inside the majors their parents ask for, so the overrides stay.
+    # #3494 (policy §8.4): tinypool <2.1.2 is Critical twice and source-map-js <1.2.2 is High.
+    # vitest 3.2.7 asks for tinypool ^1.1.1 and no 1.x is fixed, so only the override fixes it.
+    # postcss (^1.2.1) and magicast (^1.2.0) already accept source-map-js 1.2.2: that override
+    # is a floor, without which a lockfile that pins 1.2.1 keeps it.
     overrides = yaml.safe_load((ROOT / "pnpm-workspace.yaml").read_text(encoding="utf-8"))
     assert overrides["overrides"]["tinypool"] == ">=2.1.2 <3"
     assert overrides["overrides"]["source-map-js"] == ">=1.2.2 <2"
