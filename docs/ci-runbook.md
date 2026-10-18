@@ -208,6 +208,9 @@ diff` cannot see because they were never tracked. `git add` them in the
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).
+  For `codeql` it also fires per language: each one in the job's
+  `CV_CODEQL_LANGUAGES` needs a SARIF that this run's analyze wrote under the
+  runner's temp directory, and the message names the language without one.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

@@ -205,3 +205,133 @@ def test_verdict_fails_on_any_red_scan_and_ignores_a_failed_upload(
     for scan in scans:
         for outcome in ("failure", "cancelled"):
             assert _verdict(job, {scan: outcome}, summary) == (1, f"scans not successful: {scan}")
+
+
+# #3261: CV_CODEQL_LANGUAGES entry -> the SARIF analyze writes for it (the codeql job log of
+# run 39070557384 shows javascript.sarif and python.sarif for these two languages).
+WRITES = {"javascript-typescript": "javascript.sarif", "python": "python.sarif"}
+LANGUAGES = ",".join(WRITES)
+RESULTS = "${{ runner.temp }}/codeql-results"
+CLEAN = json.dumps({"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL"}}}]})
+# A CodeQL High: CodeQL scores the rule descriptor, not the result (#1715).
+HIGH = """{"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL",
+  "rules": [{"id": "x", "properties": {"security-severity": "7.5"}}]}},
+  "results": [{"ruleId": "x", "message": {"text": "x"}}]}]}"""
+NO_SARIF = re.compile(r"^CI-SEC-005: codeql produced no SARIF for (\S+) \(", re.MULTILINE)
+
+
+def _codeql(marker: str) -> dict[str, Any]:
+    """The one codeql step whose action or script contains `marker`."""
+    (step,) = [s for s in _steps("codeql") if marker in s.get("uses", "") + s.get("run", "")]
+    return step
+
+
+def _run(
+    marker: str,
+    tmp_path: Path,
+    temp: dict[str, str],
+    langs: str | None = LANGUAGES,
+    checkout: str = CLEAN,
+    **env: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a codeql step's script as the runner does (`bash -e`), with `temp` under $RUNNER_TEMP
+    and, in the checkout's own codeql-results/, a file per language whose body is `checkout`."""
+    ws, runner_temp, bin_dir = tmp_path / "ws", tmp_path / "runner-temp", tmp_path / "bin"
+    for d in (ws / "codeql-results", ws / "security", runner_temp / "codeql-results", bin_dir):
+        d.mkdir(parents=True)
+    (ws / "tools").symlink_to(ROOT / "tools")
+    (ws / "security" / "accepted-risks.yaml").write_text("entries: []\n", encoding="utf-8")
+    for d, files in ((ws, dict.fromkeys(WRITES.values(), checkout)), (runner_temp, temp)):
+        for name, body in files.items():
+            path = d / "codeql-results" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+    python = bin_dir / "python"  # this interpreter (with PyYAML); -B: no bytecode in the repo
+    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "$@"\n', encoding="utf-8")
+    python.chmod(0o755)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    env["RUNNER_TEMP"] = str(runner_temp)
+    if langs is not None:
+        env["CV_CODEQL_LANGUAGES"] = langs
+    run = ["bash", "-e", "-c", _codeql(marker)["run"]]
+    return subprocess.run(
+        run, cwd=ws, env=env, capture_output=True, encoding="utf-8", timeout=120, check=False
+    )
+
+
+def test_codeql_languages_have_one_source_that_init_and_the_gate_read() -> None:
+    assert JOBS["codeql"]["env"] == {"CV_CODEQL_LANGUAGES": LANGUAGES}
+    assert _codeql("/init@")["with"]["languages"] == "${{ env.CV_CODEQL_LANGUAGES }}"
+    assert '"${CV_CODEQL_LANGUAGES:-}"' in _codeql("security_gate.py")["run"]
+    assert LANGUAGES not in json.dumps(_steps("codeql"))  # no step restates the list
+
+
+def test_codeql_sarif_is_read_only_from_runner_temp() -> None:
+    # A file a PR commits under the checkout's codeql-results/ must never count; hashFiles() sees
+    # only the workspace, so it can no longer pick the upload either.
+    analyze, upload = _codeql("/analyze@"), _codeql("/upload-sarif@")
+    assert (analyze["with"]["output"], upload["with"]["sarif_file"]) == (RESULTS, RESULTS)
+    for marker in ("security_gate.py", "found="):
+        assert "$RUNNER_TEMP/codeql-results" in _codeql(marker)["run"]
+    text = json.dumps(JOBS["codeql"])
+    assert "hashFiles" not in text
+    assert not re.findall(r"(?<!runner\.temp }}/)(?<!\$RUNNER_TEMP/)codeql-results", text)
+
+
+def test_codeql_upload_keys_on_the_sarif_finder_and_never_gates() -> None:
+    finder, upload = _codeql("found="), _codeql("/upload-sarif@")
+    assert (finder["if"], finder["continue-on-error"]) == ("always()", True)
+    assert upload["if"] == f"always() && steps.{finder['id']}.outputs.found == 'true'"
+    assert "id" not in upload and upload["continue-on-error"] is True
+
+
+@pytest.mark.parametrize("present", [("javascript.sarif",), ("python.sarif",), ()])
+def test_codeql_gate_fails_naming_each_language_without_a_sarif_from_this_run(
+    tmp_path: Path, present: tuple[str, ...]
+) -> None:
+    # The checkout's codeql-results/ holds every file; only runner temp counts.
+    proc = _run("security_gate.py", tmp_path, dict.fromkeys(present, CLEAN))
+    missing = {lang for lang, name in WRITES.items() if name not in present}
+    assert (proc.returncode, set(NO_SARIF.findall(proc.stderr))) == (1, missing)
+
+
+def test_codeql_gate_passes_when_every_language_has_a_clean_sarif(tmp_path: Path) -> None:
+    # Invalid files in the checkout's codeql-results/ are never read either.
+    sarif = dict.fromkeys(WRITES.values(), CLEAN)
+    proc = _run("security_gate.py", tmp_path, sarif, checkout="{not sarif")
+    assert (proc.returncode, proc.stdout.count("security_gate[codeql]: OK")) == (0, len(WRITES))
+
+
+@pytest.mark.parametrize("high", [*WRITES.values(), ".extra/javascript.quality.sarif"])
+def test_codeql_gate_blocks_a_high_in_any_sarif_it_uploads(tmp_path: Path, high: str) -> None:
+    # Every language has a SARIF, so only security_gate.py can fail the step. The upload walks the
+    # whole tree, so a file of another analysis kind, even in a hidden directory, is judged too.
+    sarif = dict.fromkeys(WRITES.values(), CLEAN) | {high: HIGH}
+    proc = _run("security_gate.py", tmp_path, sarif)
+    assert (proc.returncode, proc.stdout.count("security_gate[codeql]: OK")) == (1, len(sarif) - 1)
+    assert "security_gate[codeql]: BLOCKED (CI-SEC-001)" in proc.stderr
+
+
+def test_codeql_gate_judges_each_language_so_a_bad_sarif_hides_no_missing_one(
+    tmp_path: Path,
+) -> None:
+    proc = _run("security_gate.py", tmp_path, {"javascript.sarif": "{not sarif"})
+    assert (proc.returncode, set(NO_SARIF.findall(proc.stderr))) == (1, {"python"})
+    assert "CI-SEC-005: codeql: unreadable/invalid SARIF" in proc.stderr
+
+
+@pytest.mark.parametrize("langs", ["", None, LANGUAGES.replace(",", ",,"), f"{LANGUAGES},"])
+def test_codeql_gate_refuses_a_bad_language_list(tmp_path: Path, langs: str | None) -> None:
+    proc = _run("security_gate.py", tmp_path, dict.fromkeys(WRITES.values(), CLEAN), langs)
+    message = f"CI-SEC-005: CV_CODEQL_LANGUAGES='{langs or ''}' is not a language list"
+    assert (proc.returncode, proc.stderr.strip()) == (1, message)
+
+
+# The upload walks the whole tree, so the finder looks there too, and only there.
+@pytest.mark.parametrize("present", [(), ("python.sarif",), (".extra/javascript.quality.sarif",)])
+def test_codeql_finder_ignores_the_workspace(tmp_path: Path, present: tuple[str, ...]) -> None:
+    out = tmp_path / "github-output"
+    proc = _run("found=", tmp_path, dict.fromkeys(present, CLEAN), GITHUB_OUTPUT=str(out))
+    assert proc.returncode == 0
+    found = out.read_text(encoding="utf-8") if out.exists() else ""
+    assert found == "found=true\n" * len(present)
