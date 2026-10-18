@@ -15,7 +15,8 @@ no threads, no sleeps. While the writer is parked only the timer reads the watch
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import contextlib
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -133,6 +134,20 @@ def _bye_fails(reason: str, error: BaseException, mp: pytest.MonkeyPatch) -> asy
 
     mp.setattr(gateway, "lifecycle_bye", bye)
     return raised
+
+
+@contextlib.contextmanager
+def _loop_escapes() -> Iterator[list[BaseException]]:
+    """What the loop's exception handler is given while the block runs: an exception that a
+    callback let go. The handler that was set before is restored on the way out."""
+    loop = asyncio.get_running_loop()
+    escaped: list[BaseException] = []
+    was = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, ctx: escaped.append(ctx["exception"]))
+    try:
+        yield escaped
+    finally:
+        loop.set_exception_handler(was)
 
 
 async def _quiet_then_closed(
@@ -357,8 +372,22 @@ async def test_a_check_that_raises_on_the_timer_fails_closed_and_never_spins(
 
 @pytest.mark.parametrize(
     ("flag_on", "site"),
-    [(False, "bye"), (True, "bye"), (True, "clear")],
-    ids=["flag_off-bye", "flag_on-bye", "flag_on-clear"],
+    [
+        (False, "bye"),
+        (True, "bye"),
+        (True, "clear"),
+        (False, "cancel"),
+        (True, "cancel"),
+        (True, "clear_cancel"),
+    ],
+    ids=[
+        "flag_off-bye",
+        "flag_on-bye",
+        "flag_on-clear",
+        "flag_off-cancel",
+        "flag_on-cancel",
+        "flag_on-clear_cancel",
+    ],
 )
 async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault(
     flag_on: bool, site: str, monkeypatch: pytest.MonkeyPatch
@@ -367,12 +396,33 @@ async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault
     building its `bye` (`bye`), or with the flag on clearing the lanes (`clear`, so no flush
     deadline starts). No close took, so the socket ends as on a writer fault: the writer is
     cancelled, the handler sends `bye internal_error` + `1011`, and the row reads
-    `internal_error`."""
-    before, error = _closes("internal_error"), OSError(site)
-    with capture_logs() as logs:
+    `internal_error`. A cancellation raised while building the `bye` (`cancel`) or clearing the
+    lanes (`clear_cancel`) ends it the same way, then is re-raised: it reaches the loop's handler
+    once. On this path the handler joins the writer before it sends its own `bye` (C-2.18, TG5),
+    so the writer is done when that `bye` goes out."""
+    before = _closes("internal_error")
+    cancel = "cancel" in site
+    error: BaseException = asyncio.CancelledError() if cancel else OSError(site)
+    order: list[tuple[str, bool]] = []  # each join, and each frame sent from here: writer done?
+    with _loop_escapes() as escaped, capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
             rig, sock, handler, conn = await _parked(flag_on, _FAR)
-            if site == "bye":
+            name = f"{conn.connection_id}-writer"
+            (writer,) = [t for t in asyncio.all_tasks() if t.get_name() == name]
+            join, send = gateway._join_writer, conn.send_frame
+
+            async def spy_join(task: asyncio.Task[None]) -> BaseException | None:
+                out = await join(task)
+                order.append(("join", writer.done()))
+                return out
+
+            async def spy_send(frame: dict[str, Any]) -> None:
+                order.append((frame["t"], writer.done()))
+                await send(frame)
+
+            monkeypatch.setattr(gateway, "_join_writer", spy_join)
+            monkeypatch.setattr(conn, "send_frame", spy_send)
+            if site in ("bye", "cancel"):
                 faulted = _bye_fails("heartbeat_timeout", error, monkeypatch)
             else:
                 assert conn.pipeline is not None
@@ -393,6 +443,12 @@ async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault
             await handler
     assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "internal_error", 1011)
     assert sock.sent.empty() and conn.timer_fault is error
+    assert escaped == ([error] if cancel else [])  # a cancellation: to the loop, once
+    # The writer is already done when the handler reaches its tail (its end cancels the blocked
+    # read through `_writer_done`; a read that returned first would be followed by the wait at
+    # `if conn.closing`), so the ("join", ...) entry and its place pin the order; ("bye", True)
+    # is an observation, not a pin.
+    assert order == [("join", True), ("bye", True)]
     assert _rows(rig) == [("ws.connection.closed", "internal_error", Severity.WARNING)]
     assert _closes("internal_error") == before + 1
     (fault,) = [e for e in logs if e["event"] == "ws connection fault"]
@@ -453,7 +509,10 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
 ) -> None:
     """`close_in` reads each deadline as `due` compares it: the token expiry on the monotonic and
     the wall clock, and the heartbeat deadline. The timer is armed at it, or at `recheck_s` if
-    that is sooner, and replaces the one before; its own re-arm is never sooner than a tick."""
+    that is sooner, and replaces the one before. After a check that found nothing due the rest is
+    waited to the millisecond (`CLOSE_REARM_MIN_S`, pinned by value). After one that raised it is
+    a tick, on the defensive path that no real flow reaches (the fail-closed close sets
+    `closing`); only a stubbed `close_with` does."""
     clock = _Clock()
     kw: dict[str, Any] = {"encoding": _JSON, "clock": clock, "wall_ms": clock.wall_ms}
     conn = _Conn(cast(Any, _Wire()), **kw, auth_timeout_s=10.0)
@@ -480,6 +539,9 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     monkeypatch.setattr(conn, "watch", lambda: False)  # a check that found nothing due
     clock.now, start = 50.0 - 0.0004, loop.time()
     conn._close_timer_fired()
+    # Pinned by value: uvloop rounds a delay to whole milliseconds, so a floor under 1 ms is a
+    # `call_soon` (a spin) and one over it lands the close late.
+    assert gateway.CLOSE_REARM_MIN_S == 0.001
     rest, ms = conn.close_timer, gateway.CLOSE_REARM_MIN_S
     assert isinstance(rest, asyncio.TimerHandle)
     assert start + ms <= rest.when() <= loop.time() + ms  # the rest, to the millisecond
@@ -487,7 +549,10 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     def raising() -> bool:
         raise KeyError("down")
 
-    rest.cancel()  # a check that raised, and a close that took nothing: a tick on, never more
+    # The defensive re-arm (defence in depth): after a check that raised, the fail-closed close
+    # sets `closing` first, so no real flow re-arms (the fail-closed tests above). A stubbed
+    # `close_with` that took nothing reaches it, and it waits a tick, never sooner.
+    rest.cancel()
     monkeypatch.setattr(conn, "watch", raising)
     monkeypatch.setattr(conn, "close_with", lambda *_a, **_k: None)
     with capture_logs():  # captured, not rendered: a rendered traceback would outlast a tick
