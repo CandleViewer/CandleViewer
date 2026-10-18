@@ -826,7 +826,16 @@ class Settings(BaseSettings):
         runtime's stop is bounded, at `STOP_TIMEOUT_S` (11 s) a step. A sum exactly at the
         budget passes and leaves the other modules' normal stop time nothing, so the largest
         grace is a limit, not a recommendation. Integer milliseconds, so a boundary is not a
-        float error."""
+        float error.
+
+        That cut is cooperative (#3361): `asyncio.timeout` cancels the stop once. A stop that
+        swallows that cancellation and keeps waiting, or that blocks the event loop, holds
+        `_stop_each`, and every stop after it, `secrets.stop()` zeroing the KEK included, until
+        the runtime's SIGKILL at the budget; no in-process bound can cut it. That is accepted,
+        not bounded: every module stop is our own code, which, with what it awaits, must honour
+        cancellation and never block the loop (`.claude/rules/20-python-backend.md`, AGENTS.md
+        §5.2), and an unzeroed KEK then lives no longer than the process, which the runtime
+        kills at the budget."""
         grace_ms = info.data.get("ws_shutdown_grace_ms")
         budget_s = info.data.get("api_stop_budget_s")
         if grace_ms is None or budget_s is None:
