@@ -71,8 +71,8 @@ export interface FakeConn {
   of(t: string): Json[];
   /** The subscriptions the server holds for this client, `system` included. */
   subs(): { ch: string; rs: string | undefined; id: string; seq: number; effective: Json }[];
-  /** One `d` with the next number of a subscription. */
-  delta(ch: string, p?: Json, rs?: string): void;
+  /** One `d` with the next number of a subscription; `extra` overrides envelope fields (`e: "b64"` for a binary body). */
+  delta(ch: string, p?: Json | string, rs?: string, extra?: Json): void;
   /** A number the client never sees: the next `d` shows a gap. */
   skip(ch: string, rs?: string): void;
   /** A `snap` the server sends unasked (7.4). */
@@ -499,10 +499,12 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           seq,
           effective,
         })),
-      delta(ch, p = {}, rs) {
+      delta(ch, p = {}, rs, extra = {}) {
         const sub = subs.get(keyOf(ch, rs));
-        if (sub !== undefined)
-          send({ t: "d", ch, s: (sub.seq += 1), e: "j", p, ...(rs !== undefined && { rs }) });
+        if (sub !== undefined) {
+          const rsField = rs === undefined ? {} : { rs };
+          send({ t: "d", ch, s: (sub.seq += 1), e: "j", p, ...rsField, ...extra });
+        }
       },
       skip(ch, rs) {
         const sub = subs.get(keyOf(ch, rs));

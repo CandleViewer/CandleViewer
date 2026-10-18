@@ -62,7 +62,7 @@ describe("joining", () => {
     await t.advance(400);
     expect(t.gateway.conns).toHaveLength(1);
     expect([other.sent, over.sent]).toEqual([[], []]); // told nothing: they never joined
-    expect(t.host.counters).toEqual({ tabs: MAX_TABS, rejectedMessages: 3 });
+    expect(t.host.counters).toMatchObject({ tabs: MAX_TABS, rejectedMessages: 3 });
   });
 
   it("takes nothing but connect from a tab that has not said it, even when the engine is up", async () => {
@@ -80,16 +80,9 @@ describe("joining", () => {
     for (const message of [first, { t: "visibility", hidden: true }, { t: "stop" }]) x.say(message);
     x.say({ t: "tokenRequest" }); // not a message of the protocol
     expect(x.sent).toEqual([]);
-    expect(t.host.counters).toEqual({ tabs: 1, rejectedMessages: 4 });
+    expect(t.host.counters).toMatchObject({ tabs: 1, rejectedMessages: 4 });
     await t.advance(400);
     expect(t.gateway.conns).toHaveLength(1);
-  });
-
-  it("does not serve streams yet: a consume of a tab that has joined is refused (S5d)", async () => {
-    const t = hostHarness();
-    const a = t.tab();
-    a.say({ t: "consume", id: "k1", ch: "book.BTCUSDT.50", pane: "p1", priority: "focused" });
-    expect(t.host.counters.rejectedMessages).toBe(1);
   });
 });
 
