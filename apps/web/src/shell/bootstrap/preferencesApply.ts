@@ -1,37 +1,24 @@
 /**
- * Applies `GET /me/preferences` appearance settings to the document root
- * (`data-theme`, `data-density`, reduced-motion, text scale) so the chrome
- * renders in the stored theme without a page reload (ticket AC "Preferences
- * apply without reload"). Consumes the E05 theme runtime's token contract —
- * this module only sets the root attributes/vars the tokens key off; it
- * does not own the token values themselves.
+ * Feeds the server's appearance and accessibility settings (`GET /me/preferences`, and the
+ * accessibility preferences once they load) to the theme runtime of `@candleviewer/ui` so the chrome
+ * renders in the stored theme without a page reload (ticket AC "Preferences apply without reload").
+ * The runtime owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root
+ * attributes (#3139): nothing in `apps/web` writes them, and this module owns no token values.
  */
-import type { generated } from "@candleviewer/protocol";
+import type { ThemeStore } from "@candleviewer/ui";
+import { themeFromSettings, type ThemeSettings } from "./themeFromSettings.js";
+import { HYDRATE, appThemeStore } from "./themeStore.js";
 
-export type Appearance = NonNullable<
-  generated.rest.components["schemas"]["Settings"]["appearance"]
->;
-
-const DEFAULT_APPEARANCE: Required<Appearance> = {
-  theme: "dark",
-  density: "comfortable",
-  font_scale: 1,
-  reduce_motion: false,
-  high_contrast: false,
-};
-
-/** Applies appearance settings to `root` (defaults to `document.documentElement`). */
+/**
+ * Applies `settings` to the app's theme store (or `store`) as one change. Only what the server sent
+ * is applied (see `themeFromSettings`), so missing or invalid values, and a failed load (`undefined`),
+ * leave a persisted local choice or the pre-paint value in place instead of resetting it to a default.
+ */
 export function applyAppearance(
-  appearance: Appearance | undefined,
-  root: HTMLElement = document.documentElement,
+  settings: ThemeSettings | undefined,
+  store: ThemeStore = appThemeStore(),
 ): void {
-  const effective = { ...DEFAULT_APPEARANCE, ...appearance };
-
-  root.setAttribute("data-theme", effective.theme);
-  root.setAttribute("data-density", effective.density);
-  root.setAttribute("data-reduced-motion", String(effective.reduce_motion));
-  root.setAttribute("data-high-contrast", String(effective.high_contrast));
-  root.style.setProperty("--cv-font-scale", String(effective.font_scale));
+  store.apply(themeFromSettings(settings), HYDRATE);
 }
 
 export type ChartPalette = "default" | "cvd-safe";
