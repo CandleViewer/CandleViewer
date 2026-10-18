@@ -369,11 +369,11 @@ function ipcListener(channel: string): IpcListener {
 type SenderFrame = "main" | "sub" | "nested-root" | "none";
 
 /**
- * An invoke event from `url` in the sending web contents' main frame, a sub-frame of it, the root
- * of a nested frame tree (no parent, yet not that main frame), or no frame.
+ * An invoke event from `url` in the main frame, or in a sub-frame, the root of a nested frame tree
+ * (no parent either) or no frame, while the web contents' main frame is on the shell page.
  */
 function invokeFrom(url: string, frame: SenderFrame): IpcMainInvokeEvent {
-  const mainFrame = { url, parent: null };
+  const mainFrame = { url: frame === "main" ? url : "app://candleviewer/", parent: null };
   const senderFrame = {
     main: mainFrame,
     sub: { url, parent: mainFrame },
@@ -390,9 +390,8 @@ function invokeDisposed(part: "senderFrame" | "url" | "mainFrame"): IpcMainInvok
   };
   const frame = { url: "app://candleviewer/", parent: null };
   const event = { senderFrame: frame, sender: { mainFrame: frame } };
-  Object.defineProperty({ senderFrame: event, url: frame, mainFrame: event.sender }[part], part, {
-    get: gone,
-  });
+  const owner = { senderFrame: event, url: frame, mainFrame: event.sender }[part];
+  Object.defineProperty(owner, part, { get: gone });
   return event as unknown as IpcMainInvokeEvent;
 }
 
@@ -428,6 +427,7 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
     ["file:///app/web/dist/index.html", "main", "not-shell-origin", "file:"],
     ["", "main", "not-shell-origin", "invalid-url"],
     ["app://candleviewer/", "sub", "not-main-frame", "app://candleviewer"],
+    ["https://evil.test/ad?token=secret", "sub", "not-main-frame", "https://evil.test"],
     ["app://candleviewer/", "nested-root", "not-main-frame", "app://candleviewer"],
     ["", "none", "frame-unavailable", "invalid-url"],
   ] as const)("refuses %j from a %s frame (%s), logged once", (url, frame, reason, origin) => {
