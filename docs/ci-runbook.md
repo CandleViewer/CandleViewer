@@ -131,7 +131,7 @@ The gate is the `gen` step of `pr.yml`'s `gates` job (§3); `make gen-check` run
 It first removes the tracked files under the outputs `pnpm generate` writes in full
 (`packages/protocol/src/generated` and the Python twin of the CVWB layout) from the working
 tree, never the index, then generates. It restores nothing: a failed run lists the tracked
-files it leaves missing, and `git restore -- <path>` brings one back.
+files it leaves missing and prints one `git restore -- <paths>` command that brings them all back.
 
 - **CI-GEN-001** (drift): the working tree does not match `make gen`'s
   output. Run codegen locally, commit the regenerated files — never hand-edit
@@ -145,7 +145,9 @@ diff` cannot see because they were never tracked. `git add` them in the
   against the generator, do not silence the check.
 - **CI-GEN-004** (generator toolchain failure): the generator itself crashed
   (missing dependency, schema syntax error). Fix the schema or toolchain;
-  the gate cannot pass on a generator that did not run.
+  the gate cannot pass on a generator that did not run. The same code reports a gate that
+  cannot run a check: git failed, a tracked output could not be removed, a tracked name is
+  not UTF-8, or git tracks nothing under the outputs (run it from the repository root).
 - **CI-GEN-005** (committed file no generator writes): the named tracked files
   did not come back when the gate removed them and regenerated. A GENERATED
   header does not make a hand-written file generated (C-4.16). Delete each one

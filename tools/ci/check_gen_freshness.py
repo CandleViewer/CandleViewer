@@ -26,8 +26,11 @@ This script is the single implementation invoked by the ``gen`` step of the
    GENERATED header it passed every other check: it is tracked, so it shows
    no diff and is not untracked, and the guard's local manifest records
    whatever the directory holds. The gate restores nothing: such a file stays
-   removed from the working tree (the index keeps it), and every failed run
-   lists the tracked files it leaves missing.
+   removed from the working tree (the index keeps it), and every other failed
+   run lists the tracked files it leaves missing, with one `git restore`
+   command that brings them all back. Step 1 fails closed (CI-GEN-004) when
+   git tracks nothing under the outputs, which would leave this step nothing
+   to check.
 4. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
    against a committed schema change). This is also the hand-edit guard for
    committed generated files: regenerating overwrites the edit, so it shows
@@ -41,8 +44,9 @@ This script is the single implementation invoked by the ``gen`` step of the
    edit of the artifact both fail. The artifact records no digest of the YAML
    (#2743), so two PRs that change different operations do not conflict on it.
 
-Exit codes: 0 clean, 1 a CI-GEN-* violation was found, 2 internal error
-(generator command failed to run at all).
+Exit codes: 0 clean; 1 on any failure (each check reports a CI-GEN-* code on
+stderr, CI-GEN-004 when the gate could not run a check: the generator, git or a
+working-tree step failed); 2 only for a command-line usage error (argparse).
 
 Stdlib only at import (subprocess/git/node are external processes, not
 imports). Step 6's renderer imports PyYAML when it runs; the ``gen`` step installs
@@ -57,6 +61,8 @@ import hashlib
 import importlib.util
 import itertools
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -80,8 +86,12 @@ EXTRA_GENERATED: tuple[Path, ...] = (
     Path("tests/fuzz/ws-frames"),
 )
 GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
-# #3299: the gated outputs `pnpm generate` writes in full (step 1, CI-GEN-005).
-# Not the CVWB vectors or the fuzz corpus: generate_cvwb_vectors.py writes those.
+# #3299: the gated outputs `pnpm generate` writes in full (step 1, CI-GEN-005). The
+# orphan check cannot judge outputs that run does not produce, so three gated paths
+# stay out: packages/protocol/generated/ (ws_constants.py, written only by `make gen`),
+# and packages/fixtures/golden/cvwb and tests/fuzz/ws-frames (written by
+# services/api/scripts/generate_cvwb_vectors.py). A committed file no generator writes
+# can still pass there; that gap is tracked by a follow-up.
 GENERATE_OUTPUTS: tuple[Path, ...] = (
     GENERATED_ROOT / "src" / "generated",
     CVWB_LAYOUT_TWIN,
@@ -115,6 +125,8 @@ GENERATE_CMD = [shutil.which("pnpm") or "pnpm", "generate"]
 # list every repo-level file the generators read. The overrides are merged last, so
 # an exported TURBO_FORCE=false cannot switch the bypass off.
 GENERATE_ENV_OVERRIDES: dict[str, str] = {"TURBO_FORCE": "true"}
+# What surrogateescape (see _run) makes of each byte of output that is not UTF-8.
+_NOT_UTF8 = re.compile("[\udc80-\udcff]")
 
 
 class GenGateError(Exception):
@@ -127,12 +139,15 @@ class GenGateError(Exception):
 def _run(
     cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    # surrogateescape: output that is not UTF-8 (a path name, a tool's message) decodes
+    # to U+DC80..U+DCFF instead of crashing the gate; _tracked_files rejects such names.
     return subprocess.run(
         cmd,
         cwd=cwd,
         env=env,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
         check=False,
     )
 
@@ -144,7 +159,21 @@ def _tracked_files(roots: tuple[Path, ...]) -> list[str]:
         raise GenGateError(
             "CI-GEN-004", f"git ls-files failed: {listed.stderr.strip()}"
         )
-    return [p for p in listed.stdout.split("\0") if p]
+    tracked = [p for p in listed.stdout.split("\0") if p]
+    not_utf8 = [p for p in tracked if _NOT_UTF8.search(p)]
+    if not_utf8:
+        shown = [
+            p.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+            for p in not_utf8
+        ]
+        raise GenGateError(
+            "CI-GEN-004",
+            "git tracks path(s) that are not valid UTF-8, so the gate cannot check "
+            "them, and no generator writes such a name:\n"
+            + _bullets(shown)
+            + "Delete or rename each one.",
+        )
+    return tracked
 
 
 def _missing(paths: list[str]) -> list[str]:
@@ -175,10 +204,19 @@ def _hash_generated_tree(roots: tuple[Path, ...]) -> str:
     return digest.hexdigest()
 
 
-def set_aside_outputs() -> list[str]:
+def set_aside_outputs(removed: list[str]) -> None:
     """Step 1: removes the tracked files under GENERATE_OUTPUTS from the working
-    tree, never the index, and returns their paths."""
+    tree, never the index, adding each to ``removed`` once it is gone, so a failure
+    partway still reports every file it removed."""
     tracked = _tracked_files(GENERATE_OUTPUTS)
+    if not tracked:
+        raise GenGateError(
+            "CI-GEN-004",
+            "git tracks no file under "
+            + ", ".join(map(str, GENERATE_OUTPUTS))
+            + ", so the orphan check (CI-GEN-005) would check nothing. Run the gate "
+            "from the repository root; if the outputs moved, update GENERATE_OUTPUTS.",
+        )
     for rel in tracked:
         try:
             Path(rel).unlink(missing_ok=True)
@@ -186,7 +224,7 @@ def set_aside_outputs() -> list[str]:
             raise GenGateError(
                 "CI-GEN-004", f"cannot remove {rel} before generating: {exc}"
             ) from exc
-    return tracked
+        removed.append(rel)
 
 
 def run_generator() -> None:
@@ -232,14 +270,16 @@ def check_orphans(removed: list[str]) -> None:
 
 
 def _note_missing(removed: list[str]) -> None:
-    """After a failure, the tracked outputs step 1 removed that nothing wrote back."""
+    """After a failure, the tracked outputs step 1 removed that nothing wrote back,
+    and one command that restores them all from the index."""
     missing = _missing(removed)
     if missing:
         print(
             f"note: {len(missing)} tracked generated file(s) missing from the working "
-            "tree: the gate removed them before generating and this run did not write "
-            "them back. The index keeps them (`git restore -- <path>` brings one "
-            "back).\n" + _bullets(missing),
+            "tree: the gate removed them and nothing wrote them back. The index keeps "
+            "them:\n"
+            + _bullets(missing)
+            + f"Restore them all with:\n  git restore -- {shlex.join(missing)}\n",
             file=sys.stderr,
             end="",
         )
@@ -342,13 +382,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
 
-    removed: list[str] = []
+    removed: list[str] = []  # step 1 adds each file as it removes it
     try:
         # Order matters (ticket "Technical notes"): determinism first, so a
         # flaky generator never presents as a random freshness failure. The
         # orphan check comes before `git diff`, which would report a removed
         # orphan as a deleted file (CI-GEN-001).
-        removed = set_aside_outputs()
+        set_aside_outputs(removed)
         check_determinism()
         check_orphans(removed)
         check_freshness()

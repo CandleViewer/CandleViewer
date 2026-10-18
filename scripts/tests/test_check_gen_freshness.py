@@ -15,6 +15,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -76,6 +77,29 @@ def contract_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
     return source, artifact
 
 
+@pytest.fixture(autouse=True)
+def scratch_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Step 1 removes tracked files from the cwd: never run the gate in the checkout."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+
+# #3299: the gate fails closed when git tracks nothing under the outputs, so the fakes
+# list one tracked output, in the scratch cwd, and their `pnpm generate` writes it back.
+_TRACKED = "packages/protocol/src/generated/index.ts"
+
+
+def _ls_files() -> SimpleNamespace:
+    return _proc(0, stdout=f"{_TRACKED}\0")
+
+
+def _generate() -> SimpleNamespace:
+    Path(_TRACKED).parent.mkdir(parents=True, exist_ok=True)
+    Path(_TRACKED).write_text("// GENERATED FILE\n", encoding="utf-8")
+    return _proc(0)
+
+
 def test_in_sync_tree_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Scenario: An in-sync tree passes."""
     calls: list[list[str]] = []
@@ -83,9 +107,9 @@ def test_in_sync_tree_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(cmd, cwd=None, env=None):
         calls.append(cmd)
         if cmd[:2] == ["pnpm", "generate"]:
-            return _proc(0)
+            return _generate()
         if cmd[:2] == ["git", "ls-files"]:
-            return _proc(0, stdout="")
+            return _ls_files()
         if cmd[:2] == ["git", "diff"]:
             return _proc(0)
         if cmd[:2] == ["git", "status"]:
@@ -103,9 +127,9 @@ def test_schema_edit_without_regeneration_fails_with_diff_and_command(
 
     def fake_run(cmd, cwd=None, env=None):
         if cmd[:2] == ["pnpm", "generate"]:
-            return _proc(0)
+            return _generate()
         if cmd[:2] == ["git", "ls-files"]:
-            return _proc(0, stdout="")
+            return _ls_files()
         if cmd[:2] == ["git", "diff"]:
             return _proc(
                 1, stdout="--- a/packages/protocol/src/generated/rest.ts\n+++ ..."
@@ -126,9 +150,9 @@ def test_untracked_generated_output_fails(
 
     def fake_run(cmd, cwd=None, env=None):
         if cmd[:2] == ["pnpm", "generate"]:
-            return _proc(0)
+            return _generate()
         if cmd[:2] == ["git", "ls-files"]:
-            return _proc(0, stdout="")
+            return _ls_files()
         if cmd[:2] == ["git", "diff"]:
             return _proc(0)
         if cmd[:2] == ["git", "status"]:
@@ -150,9 +174,9 @@ def test_nondeterministic_generation_fails_before_diff_check(
 
     def fake_run(cmd, cwd=None, env=None):
         if cmd[:2] == ["pnpm", "generate"]:
-            return _proc(0)
+            return _generate()
         if cmd[:2] == ["git", "ls-files"]:
-            return _proc(0, stdout="")
+            return _ls_files()
         if cmd[:2] == ["git", "diff"]:
             diff_called["value"] = True
             return _proc(0)
@@ -177,7 +201,7 @@ def test_generator_toolchain_failure_reports_ci_gen_004(
 ) -> None:
     def fake_run(cmd, cwd=None, env=None):
         if cmd[:2] == ["git", "ls-files"]:  # #3299: the outputs set aside first
-            return _proc(0, stdout="")
+            return _ls_files()
         if cmd[:2] == ["pnpm", "generate"]:
             return _proc(1, stderr="boom")
         raise AssertionError(f"unexpected command: {cmd}")
@@ -190,8 +214,10 @@ def test_generator_toolchain_failure_reports_ci_gen_004(
 
 def _clean_run(cmd, cwd=None, env=None):
     if cmd[:2] == ["pnpm", "generate"]:
-        return _proc(0)
-    if cmd[:2] in (["git", "ls-files"], ["git", "status"]):
+        return _generate()
+    if cmd[:2] == ["git", "ls-files"]:
+        return _ls_files()
+    if cmd[:2] == ["git", "status"]:
         return _proc(0, stdout="")
     if cmd[:2] == ["git", "diff"]:
         return _proc(0)
@@ -780,17 +806,103 @@ def test_generator_failure_after_the_removal_names_what_is_missing(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A generator that fails once the gate has removed its outputs leaves them missing;
-    the report lists them and how to get them back from the index."""
+    the report lists them and one command that gets them all back from the index."""
     failing = [sys.executable, "-c", "raise SystemExit(3)"]
     monkeypatch.setattr(gen_gate, "GENERATE_CMD", failing)
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
     assert err.startswith("CI-GEN-004: ")
     assert "2 tracked generated file(s) missing" in err
-    assert "`git restore -- <path>`" in err
     assert "".join(f"  - {rel}\n" for rel in sorted(_GENERATED)) in err
     removed = "".join(f" D {rel}\n" for rel in sorted(_GENERATED))
     assert _git(generated_repo, "status", "--porcelain") == removed
+    _paste_restore_command(generated_repo, err)
+    assert _git(generated_repo, "status", "--porcelain") == ""
+
+
+def _paste_restore_command(repo: Path, err: str) -> None:
+    """Runs the one restore command the report prints, as pasted into a shell."""
+    lines = err.splitlines()
+    (command,) = [line for line in lines if line.startswith("  git restore -- ")]
+    _git(repo, *shlex.split(command)[1:])
+
+
+def test_a_removal_that_fails_partway_names_every_file_it_removed(
+    generated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Step 1 stops at a file it cannot remove: CI-GEN-004 names that file, and the note
+    names each file already removed, with one restore command that quotes them."""
+    spaced = f"{_GENERATED_DIR}/rest/a b.ts"
+    (generated_repo / spaced).write_text(_HEADER, encoding="utf-8")
+    _git(generated_repo, "add", spaced)
+    _git(generated_repo, "commit", "-qm", "a name with a space")
+    *removed, stuck = sorted([spaced, *_GENERATED])
+    unlink = Path.unlink
+
+    def unlink_or_fail(path: Path, missing_ok: bool = False) -> None:
+        if path.as_posix() == stuck:
+            raise PermissionError(13, "Permission denied", str(path))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink_or_fail)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"CI-GEN-004: cannot remove {stuck} before generating: ")
+    assert "2 tracked generated file(s) missing" in err
+    assert "".join(f"  - {rel}\n" for rel in removed) in err
+    deleted = _git(generated_repo, "ls-files", "-z", "--deleted").split("\0")
+    assert [rel for rel in deleted if rel] == removed
+    _paste_restore_command(generated_repo, err)
+    assert _git(generated_repo, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize("where", ["outputs-moved", "subdirectory"])
+def test_nothing_tracked_under_the_outputs_fails_closed(
+    generated_repo: Path,
+    where: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With nothing to set aside the orphan check would check nothing: the gate stops
+    before generating, whether the outputs moved or it runs below the repo root."""
+    if where == "outputs-moved":
+        moved = (Path(f"{_GENERATED_DIR}-moved"),)
+        monkeypatch.setattr(gen_gate, "GENERATE_OUTPUTS", moved)
+    else:
+        monkeypatch.chdir(generated_repo / "packages")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-004: git tracks no file under ")
+    assert "note:" not in err
+    assert _git(generated_repo, "status", "--porcelain") == ""
+
+
+def test_a_tracked_name_that_is_not_utf8_fails_ci_gen_004(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No generator writes such a name. The gate reports it, coded, and removes nothing;
+    it does not crash decoding `git ls-files`."""
+    name = f"{_GENERATED_DIR}/rest/".encode() + b"\xff.ts"
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        input=b"x\n",
+        cwd=generated_repo,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "update-index", "--add", "--index-info"],
+        input=b"100644 " + blob + b"\t" + name + b"\n",
+        cwd=generated_repo,
+        check=True,
+    )
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("CI-GEN-004: ")
+    assert f"\n  - {_GENERATED_DIR}/rest/\\xff.ts\n" in err
+    assert all((generated_repo / rel).is_file() for rel in _GENERATED)
 
 
 def test_orphan_check_covers_the_gated_outputs_of_pnpm_generate() -> None:
