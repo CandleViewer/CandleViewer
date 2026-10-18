@@ -307,7 +307,7 @@ no grant and no permission to act on (O4, O5); a repeat disarms it once it is ba
 a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
 A new socket whose `auth` completes around the commit, on a session the user's own refresh rotated,
 can register after the socket step and stream until its access token expires, 12 minutes at most
-(UL1-E2's residual in `docs/security/threat-models/e42-user-lifecycle.md` §6).
+(UL1-E2's residual in `docs/security/threat-models/e42-user-lifecycle.md` §6; follow-up #3413).
 
 What the cascade builds on, and what to read afterwards:
 
@@ -787,6 +787,7 @@ sign-out in the alert runbook entry (row 7) is the check.
 | Disable-user drill on staging (SR-029)                                    | #2494, #300          |
 | Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
 | No B16 record of the sessions that a lost disable commit revoked          | #2710                |
+| A disabled user's new socket can register after the socket step (UL1-E2)  | #3413                |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |

@@ -33,8 +33,8 @@
   keeps an anchor-time state says so (`at b37d1c9d`); every other citation keeps its `b37d1c9d` reading, and the
   other E42 merges since the anchor are E42-X02's to re-read (#1220). No rating moves.
 - Updated 2026-10-18 by E42-T04 S7 (#965) for `deleteUser` (#3291) and `setUserAccountAccess` (#3267), served since
-  the anchor: §1.1, its user-management row, both §1.3 rows, AD-D01, L1, L4 and UL-F13, cited at the commit that
-  merges S7; §1.1 also states the route matrix at `c296b5c6`. No rating moves.
+  the anchor: §1.1, its user-management row, both §1.3 rows, AD-D01, L1, L2, L4 and UL-F13, cited at the commit that
+  merges S7; §1.1 also states the route matrix at `c296b5c6`, and §13.2 counts the two §6 rows S7 adds. No rating moves.
 - Path: `docs/security/threat-models/e42-admin.md`, the name the ticket gives. GOV-008
   (`scripts/check_threat_model_ticket_map.py:23-24`) matches it case-insensitively, so the level-2 or level-3
   heading that introduces the control map makes that section list all 35 non-retired E42 keys. The map is §12
@@ -808,7 +808,7 @@ four elements on this model's boundaries and records what has landed since the a
 | Element (annex §1) | Boundary: §2 elements | Annex rows | State at `b37d1c9d` | Owner |
 | --- | --- | --- | --- | --- |
 | L1 Disable | TB-4, SB: E1, P3, DS1; F12 (the cascade's socket close) | UL1-S1, UL1-T1, UL1-T2, UL1-R1, UL1-R2, UL1-I1, UL1-D1, UL1-E1 to UL1-E4 | Store, service and post-commit cascade merged (#3062, #3096, #3135; `admin/user_disable.py`); since then `DELETE /users/{userId}` is served (E42-T04 S6) and AC1 is proven end to end on the deployed app and on Postgres (S7, §1.3) | E42-T09 S11 for the `PATCH` |
-| L2 Account-access grants | TB-4, SB: P3, DS1; F12 (the `revoked` push) | UL2-S1, UL2-T1 to UL2-T3, UL2-R1, UL2-I1, UL2-D1, UL2-E1 | Store hardened (#3028) and `users.access_change` registered (`audit/actions.py:100`); the listing is served (#3161), the replacement is contract-only | E42-T08 (#2648) |
+| L2 Account-access grants | TB-4, SB: P3, DS1; F12 (the `revoked` push) | UL2-S1, UL2-T1 to UL2-T3, UL2-R1, UL2-I1, UL2-D1, UL2-E1 | Store hardened (#3028) and `users.access_change` registered (`audit/actions.py:100`); the listing is served (#3161); since then the replacement is served too, with the `revoked` push (E42-T08, #3267) | E42-T08 (#2648) |
 | L3 Roles and sessions | TB-4, EB, SB: P2, P3, DS1 | UL3-S1, UL3-S2, UL3-T1, UL3-T2, UL3-R1, UL3-I1, UL3-D1, UL3-E1 to UL3-E3 | The role change is served with the self-target refusal and the owner lock (#2508; `api/users.py:227`); user read, `PATCH` and the admin session routes are contract-only | E42-T09 (#2649) |
 | L4 Deferred purge | SB, TB-6: DS1, DS5 (pre-purge copies) | UL4-S1, UL4-T1, UL4-T2, UL4-R1, UL4-I1, UL4-I2, UL4-D1, UL4-E1 | Not built; `?purge=true` answers 400 until slice S14 (UL4-D1), since S6 mounted the delete | E42-T10 (#2650) |
 
@@ -1197,8 +1197,10 @@ sink-refusal residual, from #2914).
 | AD-I01 (AD-F19) | Refusals name the missing permission and the contract is public, so route existence is known (E09 U25) | Low | Security engineer | 2027-03-25 (GA cut) |
 | AD-D07 | A flag change can stop ingestion or recording, an operational choice shown on SCR-145 | Low | Owner/PO | 2027-03-25 (GA cut) |
 
-The annex's twelve §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
-(#2318; #2272, via #2690), so it is Low. AD-S05 stays Medium until D8 and #3085, and is not accepted. AD-R05,
+The annex's fourteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
+(#2318; #2272, via #2690), so it is Low, and #3413 tracks its race at registration. Twelve were read at the anchor; S7
+adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701. AD-S05 stays Medium until
+D8 and #3085, and is not accepted. AD-R05,
 AD-E07, AD-I05 and AD-E04 are High until #3084 and #3085 land, but no restore or view-as route can mount before then
 (D6, D7), so none is an open residual and none is accepted. No High residual remains once the tickets in §13.1 ship.
 The register entries are RSK-072 (AD-F02), RSK-073 (AD-F01, AD-F03, AD-F09), RSK-074 (AD-F06) and RSK-075 (AD-F08,

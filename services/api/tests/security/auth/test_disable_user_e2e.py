@@ -203,8 +203,11 @@ async def _armed_rule(manager: Any, m: str) -> str:
 
 
 def _ended(ws: Any) -> tuple[dict[str, Any], int]:
-    """The socket's last frame and its close code."""
+    """The socket's last frame, which must be its `bye`, and its close code. A first frame that is
+    not the `bye` fails here, named, before any wait for the close: a socket left open (an
+    `auth_ok`, say) would otherwise fail only at the close's deadline, without the frame it got."""
     bye = _recv(ws)
+    assert bye.get("t") == "bye", f"the first frame is {bye.get('t')!r}, not the bye: {bye}"
     with pytest.raises(WebSocketDisconnect) as close:
         _recv(ws)
     return bye, close.value.code

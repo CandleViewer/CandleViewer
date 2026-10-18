@@ -41,7 +41,7 @@ def _echoed(name: str) -> str:
 def undeclared_query_refusal(
     request: Request, declared: frozenset[str], *, self_service: bool = True
 ) -> JSONResponse | None:
-    """422 `validation_failed` when a self-service route gets an undeclared query key (SR-026).
+    """422 for an undeclared query key on a self-service route or `DELETE /users/{userId}` (SR-026).
 
     Decided on the parameter names alone, so the answer is identical for any value (no existence
     oracle). It echoes at most `_MAX_ECHOED_PARAMS` redacted, bounded names and never a value.
