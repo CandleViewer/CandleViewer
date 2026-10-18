@@ -16,7 +16,7 @@ from candleviewer.bars.reader import BarTail
 from candleviewer.bars.rows import BUILD_VERSIONS
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.ws.bars_source import BarsSnapshotSource, Seed
-from candleviewer.ws.binary import BARS, decode_b64
+from candleviewer.ws.binary import BARS, Frame, decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import SnapshotBody, TopicEmitter, cv_ws_stale_topics_in_use
@@ -185,11 +185,13 @@ async def test_each_build_seeds_the_publisher_with_the_generation_it_sent() -> N
     assert seeds == [(SYM, SPEC, GEN)]
 
 
+@pytest.mark.parametrize("encoding", ["structured", "binary"])
 async def test_a_quarantined_builder_makes_the_snapshot_stale_until_a_new_builder(
-    tmp_path: Path,
+    tmp_path: Path, encoding: str
 ) -> None:
     """#2195 through the emitter's cache: `stale` while the series' builder is quarantined, and
-    `cv_ws_stale_topics_in_use` with it; a new builder clears both."""
+    `cv_ws_stale_topics_in_use` with it; a new builder clears both. #3202: the `snap` frame says
+    so as `meta.stale: true`, whichever encoding it is in, and a `d` never does."""
     clock = SetClock(T0)
     bset = make_set(tmp_path, clock=clock)
     await bset.register(SPEC, SYM, "a")
@@ -198,22 +200,34 @@ async def test_a_quarantined_builder_makes_the_snapshot_stale_until_a_new_builde
     emitter = TopicEmitter(
         out.append, connection_id="c", wall_ms=lambda: 1, clock=lambda: 0.0, source=src
     )
-    sub = _sub(encoding="structured")
+    sub = _sub(encoding=encoding)
 
-    def stale() -> tuple[bool, float]:  # the body built, and the gauge the emitter's cache set
+    def stale() -> tuple[bool, object, float]:
+        """The body built, `meta.stale` of the frame the emitter sent (checked against the
+        schemas), and the gauge its cache set."""
         assert emitter.snapshot(sub, "initial")
-        return _build(src, sub).stale, cv_ws_stale_topics_in_use._value.get()
+        validate(out[-1])
+        return (
+            _build(src, sub).stale,
+            out[-1]["meta"].get("stale"),
+            cv_ws_stale_topics_in_use._value.get(),
+        )
 
     def defect(now: int) -> Any:
         raise ValueError("builder defect")
 
-    assert stale() == (False, 0)
+    assert stale() == (False, None, 0)  # sent only when true: no `"stale": false`
     bset._lanes[SYM].entries[0].builder.on_clock = defect  # type: ignore[method-assign,assignment]
     await bset.tick()  # the set quarantines the series
-    assert stale() == (True, 1)
+    assert stale() == (True, True, 1)
+    part = Frame(BARS, price_scale=1, qty_scale=3)  # an empty kind-4 delta
+    body = {"symbol": SYM, "bar_type": "time", "param": "5", "bars": []}
+    assert emitter.delta(sub, body, part=part, meta={"include_delta": False})
+    validate(out[-1])
+    assert out[-1]["t"] == "d" and "stale" not in out[-1]["meta"]
     bset.release(H, SYM, "a")
     clock.t += GRACE_US
     await bset.tick()
     await bset.register(SPEC, SYM, "b")  # a new builder
-    assert stale() == (False, 0)
+    assert stale() == (False, None, 0)
     await bset.stop()

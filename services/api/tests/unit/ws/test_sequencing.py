@@ -37,6 +37,7 @@ from candleviewer.ws.sequencing import (
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
     INCIDENT_REASONS,
     MAX_OUTBOUND_FRAME_BYTES,
+    OWNER_META_MAX_BYTES,
     SNAP_REASONS,
     SequencingHub,
     SnapReason,
@@ -50,11 +51,14 @@ from candleviewer.ws.sequencing import (
     cv_ws_resync_total,
     split_frame,
     split_structured,
+    structured_payload,
     window_delta,
 )
 from candleviewer.ws.upstream import UpstreamRefs
 from tests._corpus import frames as corpus_frames
 from tests.unit.ws._seq_support import _BUNDLE, ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
+from tests.unit.ws.test_span_id import _size as span_size
+from tests.unit.ws.test_span_id import _widest_snapshot
 
 RS = "bb000000-0000-4000-8000-000000000001"
 
@@ -741,6 +745,122 @@ def test_split_frame_rejects_unsplittable_units() -> None:
     with pytest.raises(FrameEncodeError):
         split_structured({"bars": [{"x": "y" * 100}]}, 50)
     assert b64_budget(100, 200) == 0
+
+
+# -- Scenario: `stale` is a `snapMeta` key, whole or chunked, either encoding (#3202, §7.2) -------
+
+
+def test_snapshot_body_sets_meta_stale_true_when_stale_and_leaves_the_key_out_otherwise() -> None:
+    owner = {"spec_hash": "ab" * 32, "include_delta": False}
+    assert SnapshotBody({}, stale=True).meta["stale"] is True
+    assert dict(SnapshotBody({}, stale=True, meta=owner).meta) == {**owner, "stale": True}
+    for body in (SnapshotBody({}, meta=owner), SnapshotBody({}, stale=False, meta=owner)):
+        assert dict(body.meta) == owner  # sent only when true: never `"stale": false`
+
+
+def test_a_books_payload_stale_and_its_meta_stale_agree() -> None:
+    """§7.2: where a family's payload also declares `stale` (`book`, §14.1), the two agree."""
+    for stale in (True, False):
+        body = SnapshotBody({}, stale=stale)
+        assert structured_payload("book", body)["stale"] is stale
+        assert body.meta.get("stale", False) is stale
+
+
+@pytest.mark.parametrize(
+    ("passed", "stale"),
+    [(True, False), (False, False), (False, True), ("yes", False), ("yes", True)],
+)
+def test_snapshot_body_field_overrides_a_stale_key_an_owner_passes(
+    passed: Any, stale: bool
+) -> None:
+    body = SnapshotBody({}, stale=stale, meta={"spec_hash": "ab" * 32, "stale": passed})
+    assert body.meta.get("stale") is (True if stale else None)
+    assert body.meta["spec_hash"] == "ab" * 32
+
+
+def test_replace_re_derives_meta_stale_from_the_flag_so_the_two_never_disagree() -> None:
+    """`replace` (the bars adapter marks a body stale with it, `cap_heatmap` rebuilds one) runs
+    `__post_init__` over the old body's frozen `meta`, so the key is dropped and set again."""
+    healthy = SnapshotBody({"x": 1}, meta={"spec_hash": "ab" * 32})
+    stale = replace(healthy, stale=True)
+    assert stale.meta["stale"] is True and "stale" not in healthy.meta
+    assert replace(stale, stale=False).meta == healthy.meta  # cleared again
+    for same in (replace(stale), replace(stale, structured={"x": 2})):
+        assert (same.stale, same.meta) == (True, stale.meta)
+    heat = SnapshotBody({"columns": [{}] * (HEATMAP_SNAPSHOT_MAX_COLUMNS + 1)}, stale=True)
+    assert cap_heatmap(heat).meta["stale"] is True
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_snapshot_body_bounds_the_owners_meta_alone_so_a_stale_body_has_the_same_bound(
+    stale: bool,
+) -> None:
+    """The 1 KiB bound counts the owner's keys, not the `stale` the flag adds (`render` sizes the
+    chunks with the real `meta`, so that key needs no room of its own in it): exactly the bound
+    builds, healthy or stale, and so does a healthy body at it that `replace` turns stale, as the
+    bars adapter does; one byte more raises either way."""
+    room = OWNER_META_MAX_BYTES - len('{"spec_hash":""}')
+    owner = {"spec_hash": "a" * room}
+    body = SnapshotBody({}, stale=stale, meta=owner)
+    assert (body.meta["spec_hash"], body.meta.get("stale")) == ("a" * room, True if stale else None)
+    assert replace(SnapshotBody({}, meta=owner), stale=stale).meta == body.meta
+    with pytest.raises(ValueError, match="snapshot meta is over 1024 bytes"):
+        SnapshotBody({}, stale=stale, meta={"spec_hash": "a" * (room + 1)})
+
+
+@pytest.mark.parametrize("encoding", ["binary", "structured"])
+def test_a_stale_snapshot_repeats_meta_stale_in_every_chunk_and_none_passes_the_cap(
+    encoding: str,
+) -> None:
+    """§3.6: the key is in the body's `meta`, so it is sized with the owner's keys, never left to
+    the envelope's room. The sweep is `test_span_id`'s (every limit from one record a chunk to the
+    whole snapshot, at the widest envelope, `sp` included): some chunk is packed as tight as it
+    goes."""
+    src = _book_source(levels=4)
+    src.stale = True
+    (whole,) = map(span_size, _widest_snapshot(src, encoding, MAX_OUTBOUND_FRAME_BYTES))
+    cuts: set[int] = set()
+    for limit in range(whole - 130, whole + 16):
+        out = _widest_snapshot(src, encoding, limit)
+        cuts.add(len(out))
+        assert all(f["meta"]["stale"] is True for f in out), limit
+        assert max(map(span_size, out), default=0) <= limit, (limit, whole)
+    assert max(cuts) >= 4 and 0 in cuts
+
+
+@pytest.mark.parametrize("encoding", ["structured", "binary"])
+@pytest.mark.parametrize("reason", SNAP_REASONS)
+def test_a_stale_snapshot_carries_meta_stale_whatever_its_reason(
+    reason: SnapReason, encoding: str
+) -> None:
+    """§7.2, §7.4: the key follows the flag, not the trigger. Each reason of the closed set goes
+    through the emitter as the server sends it (`backpressure` is the overflow ladder's: only
+    the hub's `resnapshot` refuses it), so a path that built its `meta` apart would lose it."""
+    src = _book_source(levels=2)
+    src.stale = True
+    conn = Conn(src)
+    _, sub = conn.sub({"ch": "book.BTCUSDT.50", "opts": {"encoding": encoding}})
+    conn.take()  # the `initial` one
+    assert conn.emitter.snapshot(sub, reason)
+    frames = conn.take()
+    assert frames and all(f["meta"]["stale"] is True for f in frames)
+    assert {f["meta"]["reason"] for f in frames} == {reason}
+
+
+def test_a_d_may_not_name_meta_stale_in_the_emitter_or_through_the_hub() -> None:
+    """§7.2: a `d` never carries `meta.stale`, so the guard that keeps the server's snapshot keys
+    off a `d` keeps this one off too: the emitter raises, and the hub's fan-out re-raises it as the
+    caller's own error instead of containing it as a failed delivery. No `s` is taken."""
+    hub, conn = SequencingHub(), Conn(_book_source(levels=2))
+    hub.register(conn.authz, conn.emitter)
+    _, sub = conn.sub("book.BTCUSDT.50")
+    conn.take()
+    seq, body = sub.seq, {"symbol": "BTCUSDT", "bids": [["100.0", "1.500"]], "asks": []}
+    with pytest.raises(ValueError, match="server-owned"):
+        conn.emitter.delta(sub, body, meta={"stale": True})
+    with pytest.raises(ValueError, match="server-owned"):
+        hub.publish("book.BTCUSDT.50", body, meta={"stale": True})
+    assert (conn.take(), sub.seq) == ([], seq)
 
 
 # -- Scenario: heatmap 2 000-column cap ---------------------------------------------------------

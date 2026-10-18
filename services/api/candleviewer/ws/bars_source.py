@@ -14,9 +14,10 @@ reads no storage itself.
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
 - **`stale`** (§7.2, #2195) while the series' builder is quarantined (`BarBuilderSet.quarantined`,
-  an O(1) bool), so `cv_ws_stale_topics_in_use` counts the topic; `generation` is negated
-  meanwhile, so the render cache refreshes on a quarantine. `BarsBatch` (§14.3) has no `stale`
-  field and kind 4 no flag, so it stays off the wire until the contract adds one.
+  an O(1) bool), so `cv_ws_stale_topics_in_use` counts the topic and the snapshot carries
+  `meta.stale: true` (#3202): `SnapshotBody` derives the key from the flag, so it is the same in
+  either encoding and in every chunk, where `BarsBatch` (§14.3) has no field and kind 4 no flag
+  for it. `generation` is negated meanwhile, so the render cache refreshes on a quarantine.
 - **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
   change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
   (`BarsPublisher.note_generation`): it seeds an unseen series, and a baseline or seed in another
