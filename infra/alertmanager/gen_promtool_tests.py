@@ -187,8 +187,8 @@ _LATENCY = 'auth_revocation_latency_seconds_bucket{{env="live",le="{}"}}'
 
 
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
-    """#3415: revocations at 6 min whose sockets closed in at most 2.5 s (`fast`), in 2.5 to 5 s
-    (`under_5`) and in 5 to 10 s (`slow`), as cumulative buckets; lower edges add nothing here."""
+    """#3415: revocations at 6 min whose closes were initiated in at most 2.5 s (`fast`), in 2.5 to
+    5 s (`under_5`) and in 5 to 10 s (`slow`), as cumulative buckets; lower edges add nothing."""
     counts = {"2.5": fast, "5.0": fast + under_5, "10.0": fast + under_5 + slow}
     counts["+Inf"] = counts["10.0"]
     return {_LATENCY.format(le): f"0+0x5 {n}+0x700" for le, n in counts.items()}

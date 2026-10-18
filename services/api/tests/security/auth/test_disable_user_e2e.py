@@ -204,6 +204,12 @@ async def _armed_rule(manager: Any, m: str) -> str:
     return rid
 
 
+def _latency_count(ctx: appmod.AppContext) -> float | None:
+    """#3415: `auth_revocation_latency_seconds_count` on the registry Prometheus scrapes."""
+    env = {"env": ctx.settings.environment.value}
+    return ctx.metrics.get_sample_value("auth_revocation_latency_seconds_count", env)
+
+
 def _ended(ws: Any) -> tuple[dict[str, Any], int]:
     """The socket's last frame, which must be its `bye`, and its close code. A first frame that is
     not the `bye` fails here, named, before any wait for the close: a socket left open (an
@@ -258,7 +264,9 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
             w.unacked = client.delete(f"/users/{m}", headers=headers)
             w.action_at = w.clock.now
             path = f"/users/{m}?acknowledge_unknown_positions=true"
+            w.latency_counts = [_latency_count(ctx)]
             w.disabled = client.delete(path, headers=headers)
+            w.latency_counts.append(_latency_count(ctx))
             w.ended = [_ended(ws) for ws in (ws_a, ws_b, ws_c, ws_p)]
         finally:
             run(park.set)  # the claimed refresh mints its successor after the disable
@@ -371,6 +379,18 @@ def test_rest_401_ws_4403_within_5s(disabled: SimpleNamespace) -> None:
     session left live, and the instant on the rows is the call site's `clock`."""
     sessions_ended(disabled)
     assert disabled.published == []
+
+
+def test_each_socket_session_the_disable_revokes_is_one_scraped_latency_observation(
+    disabled: SimpleNamespace,
+) -> None:
+    """#3415 (SR-029, E09-S03), the issue's AC end to end: the cascade revokes M's two live
+    sessions, each with a socket, through the deployed hub and the gateway's closer, and the
+    histogram on the registry Prometheus scrapes gains one observation for each before the DELETE
+    returns. The sockets on the two rotated sessions are ended by the per-user close alone
+    (`WsEvents.user_disabled`, #3440), which this series does not observe."""
+    before, after = disabled.latency_counts
+    assert before is not None and after == before + 2
 
 
 def test_rule_disarmed_audited(disabled: SimpleNamespace) -> None:

@@ -5,9 +5,11 @@ keyed by session id; the session router's `publish_revocation` calls
 `RevocationHub.revoke`, which sends the `bye` frame and closes with 4401. The
 reason `user_disabled` (the SR-029 disable cascade) gets the §9.5 `bye` and
 4403 instead, so the client returns to login and does not reconnect (#2493).
-Each revocation that closes sockets is one observation of `auth_revocation_latency_seconds`
-(`auth/metrics.py`, scraped; `AuthRevocationLatencyHigh` tickets a p99 above 5 s, SR-029): from
-the revoke to the last of its sockets closed or given up, on the hub's monotonic clock (#3415).
+Each revocation that attempts a close is one observation of `auth_revocation_latency_seconds`
+(`auth/metrics.py`, scraped; `AuthRevocationLatencyHigh` tickets a p99 above 5 s, SR-029), on the
+hub's monotonic clock (#3415): from the revoke to the last of its closes initiated or failed. The
+gateway's closer queues the `bye` and seals the connection without suspending, so no data frame
+is sent after it; its writer closes the socket later, and that is not measured.
 
 The hub also remembers each revoked session id, with its reason, for one access-token
 lifetime (#2739), so an `auth` that was already in flight when the revocation was published
@@ -288,7 +290,15 @@ class RevocationHub:
         return len(closers)
 
     async def _close_all(self, session_id: str, reason: str, closers: list[Closer]) -> None:
+        """One latency observation per batch, in a `finally`: a batch cut off by its cancelled
+        caller (inline, past the task cap) is observed too, up to the cut-off (#3415)."""
         started = self._monotonic()
+        try:
+            await self._close_each(session_id, reason, closers)
+        finally:
+            auth_revocation_latency_seconds.observe(self._monotonic() - started)
+
+    async def _close_each(self, session_id: str, reason: str, closers: list[Closer]) -> None:
         for closer in closers:
             try:
                 frame, code = self.close_for(reason)
@@ -304,7 +314,6 @@ class RevocationHub:
                         session_id=session_id,
                         exc_info=True,
                     )
-        auth_revocation_latency_seconds.observe(self._monotonic() - started)
 
     def _close_task_done(self, task: asyncio.Task[None]) -> None:
         self._closing.discard(task)

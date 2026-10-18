@@ -317,10 +317,15 @@ What the cascade builds on, and what to read afterwards:
 - `SessionService.revoke_all` (`auth/session_service.py`) and the socket hub
   (`ws/revocation.py`). Metric `auth_session_revocations_total{reason}` counts revocations (served on
   the metrics listener since #2319). `auth_revocation_latency_seconds` (served there since #3415, no
-  label) has one observation per revocation the hub closed sockets for, a disable's included: from
-  the revocation reaching the hub to the last of that session's sockets closed or given up.
+  label) has one observation per revocation the hub attempted a socket close for, a disable's
+  per-session closes included: from the revocation reaching the hub to the last of that session's
+  closes initiated (`bye` queued and the connection sealed, so no data frame is sent after it) or
+  failed. The socket's own close follows in the connection's writer and is not measured, and the
+  socket step's per-user close (the WS registry's `user_disabled`) is not observed at all.
   `AuthRevocationLatencyHigh` raises a ticket when its p99 over 15 minutes is above 5 s
-  (`docs/plan/07-release-and-prr.md`, section 9).
+  (`docs/plan/07-release-and-prr.md`, section 9). A failed hub close is the
+  `ws revocation close failed` log line; its counter `ws_session_revocation_close_failures_total`
+  is process-local and not served (#3497).
 - `users.status = disabled` makes login refuse with `403 Account disabled` after a correct password.
 
 What a `disabled` status does to sessions (#2911). It holds however the status was set, and it is

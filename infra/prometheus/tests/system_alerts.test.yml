@@ -935,7 +935,7 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: A session revocation took more than 5 s to close its sockets (SR-029)
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
         runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
 - interval: 1m
   input_series:
@@ -956,7 +956,7 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: A session revocation took more than 5 s to close its sockets (SR-029)
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
         runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
 - interval: 1m
   input_series:
@@ -1019,7 +1019,7 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: A session revocation took more than 5 s to close its sockets (SR-029)
+        summary: A session revocation took more than 5 s to seal its sockets (SR-029)
         runbook_url: docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh
 - interval: 1m
   input_series:

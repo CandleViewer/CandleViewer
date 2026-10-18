@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 import pytest
 from hypothesis import given, settings
@@ -15,6 +15,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
+from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
@@ -27,6 +28,7 @@ from candleviewer.ws.revocation import (
     user_disabled_bye,
     ws_revocation_close_failures_total,
 )
+from tests.unit.ws._auth_rig import BASE_MS, Sock
 
 _NOW_MS = 1_789_133_600_000
 #: Every §9.5 reason except a disabled user keeps the session-revocation close (4401).
@@ -500,3 +502,49 @@ async def test_a_revoke_that_closes_no_socket_observes_no_latency(scraped: Scrap
     before = scraped("count")
     assert await RevocationHub().revoke("s1", "user_disabled") == 0
     assert scraped("count") == before
+
+
+async def test_an_inline_batch_cut_off_by_its_cancelled_caller_is_still_one_observation(
+    scraped: Scraped,
+) -> None:
+    """Past the task cap a batch closes in its caller, which the cascade bounds (2 s a publish):
+    a cancel mid-batch still records the batch once, up to the cut-off (#3415)."""
+    clock, entered = _Clock(), asyncio.Event()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+        entered.set()
+        await asyncio.Event().wait()  # never set: only the cancel ends it
+
+    hub = RevocationHub(max_close_tasks=0, close_timeout_s=60.0, monotonic=clock)
+    hub.register("s1", stalled)
+    hub.register("s1", _Socket().close)
+    before = [scraped("count"), scraped("sum")]
+    caller = asyncio.create_task(hub.revoke("s1", "user_disabled"))
+    await entered.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert [scraped("count") - before[0], scraped("sum") - before[1]] == [1.0, 3.0]
+
+
+async def test_the_gateway_close_is_observed_once_sealed_before_its_socket_is_closed(
+    scraped: Scraped,
+) -> None:
+    """What the series measures (#3415): the closer the gateway registers queues the `bye` and
+    seals the connection without suspending, so the revoke is observed before the writer (not
+    running here) closes the socket. The transport close is not in the series."""
+    sock = Sock()
+    conn = _Connection(
+        cast(Any, sock),
+        encoding="cv.v1.json",
+        clock=lambda: 0.0,
+        wall_ms=lambda: BASE_MS,
+        auth_timeout_s=10.0,
+    )
+    hub = RevocationHub()
+    hub.register("s1", conn.closer)
+    before = scraped("count")
+    with pytest.raises(StopIteration):
+        hub.revoke("s1", "user_disabled").send(None)
+    assert (conn.sealed, sock.codes, scraped("count")) == (True, [], before + 1)

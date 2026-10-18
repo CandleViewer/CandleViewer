@@ -205,8 +205,9 @@ def test_create_app_serves_the_revocation_latency_with_no_identifier_label() -> 
 
 
 async def test_a_disabled_users_socket_closed_by_the_deployed_hub_is_one_scraped_sample() -> None:
-    """The AC: a user with an open socket is disabled, the deployed hub closes the socket, and
-    the histogram on the scraped registry gains one observation."""
+    """The deployed app's hub, with a stand-in closer: a `user_disabled` revoke is one sample on
+    the scraped registry. The AC end to end, through the disable cascade and the gateway's own
+    sockets, is in `tests/security/auth/test_disable_user_e2e.py`."""
     app = create_app(Settings(environment=Environment.DEMO))
     scraped: CollectorRegistry = app.state.app_context.metrics
     closes: list[int] = []

@@ -147,12 +147,15 @@ auth_session_revoke_denied_total = Counter(
     "(IDOR probe, or a stale row for the caller's own ended session).",
 )
 #: SR-029, E09-S03 (#3415): the one revoke-to-close latency, written by the WS `RevocationHub`
-#: (`ws` may import `auth`, never the reverse): one observation per revocation that closed a
-#: socket, from its `revoke` to the last of that session's sockets closed or given up, on the
-#: hub's clock. No label. Scraped: in `AUTH_EXPORTED_NAMES`; `AuthRevocationLatencyHigh` reads it.
+#: (`ws` may import `auth`, never the reverse): one observation per revocation that attempted a
+#: close, from its `revoke` to the last of that session's closes initiated (`bye` queued and the
+#: connection sealed: no data frame after it) or failed, on the hub's clock. The socket's own
+#: close, in the connection's writer, is not measured. No label. Scraped: in
+#: `AUTH_EXPORTED_NAMES`; `AuthRevocationLatencyHigh` reads it.
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
-    "Seconds from a session revocation reaching the WS hub to the last of its sockets closed.",
+    "Seconds from a session revocation reaching the WS hub to the last of its socket closes "
+    "initiated (bye queued, connection sealed); the transport close is not measured.",
     buckets=REVOCATION_CLOSE_BUCKETS,
 )
 # SR-022 (#2496): one per accepted recovery code, counted before its `auth.recovery_code_used`
