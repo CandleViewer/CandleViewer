@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.accounts import key_test as kt
 from candleviewer.accounts.errors import AccountNotFoundError
@@ -22,7 +23,7 @@ from candleviewer.accounts.key_import import Importer
 from candleviewer.accounts.key_test import KeyTest, KeyTested, KeyTestRefused, Probe, Throttle
 from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.repository import AccountsRepository
-from candleviewer.accounts.selfcheck import FAILED
+from candleviewer.accounts.selfcheck import FAILED, UNAVAILABLE
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationResult
 from candleviewer.exchange.bybit import key_info
 from candleviewer.storage.repositories.accounts import PolicyDisarm, SelfCheckTargetRow
@@ -150,6 +151,19 @@ async def test_a_test_with_no_verdict_changes_nothing_and_still_probes_the_socke
     assert (done.verdict, done.rest.error, done.rest.ret_code) == (None, "rate_limited", 10018)
     assert (w.kinds(), w.check.results, socket.calls) == ([], {}, [KEY])  # SR-E27-18
     assert not done.passed
+
+
+async def test_with_no_egress_ip_a_test_signs_and_judges_nothing_as_the_hourly_pass() -> None:
+    """Decision 11: a pass with no egress IP judges no key, so neither does a test; its unmet
+    whitelist rule is the deployment's, never the key's, so nothing is disarmed or recorded."""
+    w, socket = World(target(), egress=None), Socket()
+    flow = flow_of(w, socket=socket)
+    with capture_logs() as logs, pytest.raises(KeyTestRefused) as refused:
+        await run(flow)
+    assert (refused.value.code, w.built, socket.calls) == ("exchange_unavailable", [], [])
+    assert (w.kinds(), w.armed[ACCT], w.check.results) == ([("latch", UNAVAILABLE)], True, {})
+    unset = {"event": "key_selfcheck_no_egress_ip", "key_id": str(KEY), "log_level": "critical"}
+    assert unset in logs and flow.throttle.admit(KEY) is None  # nothing probed: its minute back
 
 
 async def test_a_failure_restored_after_a_restart_answers_a_test_until_a_pass_replaces_it() -> None:

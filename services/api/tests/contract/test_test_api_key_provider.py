@@ -18,7 +18,7 @@ from fastapi import FastAPI
 
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
-from candleviewer.accounts.selfcheck import FAILED, KeySelfCheck
+from candleviewer.accounts.selfcheck import FAILED, UNAVAILABLE, KeySelfCheck
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationPolicy
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.exchange_keys import make_exchange_keys_router
@@ -260,6 +260,18 @@ async def test_a_store_that_is_absent_or_down_is_a_503_with_retry_after(down: bo
     response = await Route(flow=flow).post()
     body = answer(response, 503, _EXCHANGE)
     assert (body["code"], response.headers["retry-after"]) == ("store_unavailable", "5")
+
+
+async def test_with_no_egress_ip_a_test_is_a_503_that_probed_signed_and_disarmed_nothing() -> None:
+    """As the hourly pass with no egress IP: the job latches `UNAVAILABLE` and judges no key."""
+    route = Route(World(target(), egress=None))
+    response = await route.post()
+    body = answer(response, 503, _EXCHANGE)
+    assert (body["code"], response.headers["retry-after"]) == ("exchange_unavailable", "5")
+    assert body["detail"] == "No egress IP is configured, so the key could not be tested."
+    assert (route.w.events, route.w.built, route.w.armed[ACCT]) == (
+        [("latch", UNAVAILABLE)], [], True,
+    )  # fmt: skip
 
 
 def test_without_a_self_check_or_an_import_no_test_is_wired() -> None:

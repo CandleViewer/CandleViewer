@@ -14,7 +14,8 @@ C-3.2, C-3.4); `key_test_wiring` binds its ports. For the acting Owner (`Importe
    and `account.tested` names the Owner. A check with no verdict changes nothing and shows no
    verification (SR-E27-18): its `KeyProbeError` name and the exchange's code when it sent one. M2
    refusing to sign answers `kek_unavailable` or `exchange_unavailable` and gives the key's minute
-   back, as nothing reached the exchange.
+   back, as nothing reached the exchange. So does a job with no egress IP configured, which signs
+   and judges nothing, as its pass does then (`exchange_unavailable`).
 4. With `include_ws`, the WebSocket half: the adapter's one-shot private `auth` (slice 2b5), only
    after a REST half that refused nothing, so a key a verdict refused is never signed with again
    (`verify()`'s order). It is diagnostic (ruling 11): it never enforces and never raises, and its
@@ -45,7 +46,7 @@ from candleviewer.accounts.errors import (
 from candleviewer.accounts.key_import import IO_TIMEOUT_S, Importer
 from candleviewer.accounts.models import ExchangeAccount, KeyStatus
 from candleviewer.accounts.repository import AccountsRepository
-from candleviewer.accounts.selfcheck import KEY_DEADLINE_S, Target
+from candleviewer.accounts.selfcheck import KEY_DEADLINE_S, NoEgressIp, Target
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationResult
 from candleviewer.storage.repositories.accounts import OwnerScope
 
@@ -54,11 +55,12 @@ WINDOW_S: Final = 60.0
 #: The keys the throttle holds at most (C-2.18): far above the signable keys of an environment.
 MAX_KEYS: Final = 256
 CONFLICT, THROTTLED, STORE = "conflict", "rate_limited", "store_unavailable"
+EXCHANGE: Final = "exchange_unavailable"
 _SIGNABLE: Final = frozenset({KeyStatus.ACTIVE, KeyStatus.ROTATING})
 #: M2's refusals to sign, by their class `code` (no M2 import, C-3.2), as the answer's codes.
 _UNSIGNED: Final = {
     "kek_unavailable": "kek_unavailable",
-    "credential_unavailable": "exchange_unavailable",
+    "credential_unavailable": EXCHANGE,
 }
 #: `KeyProbeError` (SR-E27-08), closed: a REST half without a verdict shows one of these.
 PROBE_ERRORS: Final = frozenset(
@@ -90,7 +92,8 @@ class PrivateAuth(Protocol):
 
 
 class SelfCheck(Protocol):
-    """The job's on-demand entry (`KeySelfCheck.test`): the verdict and its calls' seconds."""
+    """The job's on-demand entry (`KeySelfCheck.test`): the verdict and its calls' seconds, or
+    `NoEgressIp` when it can judge no key."""
 
     async def test(
         self, target: Target, account: ExchangeAccount, now: datetime, actor: Mapping[str, object]
@@ -211,7 +214,8 @@ class KeyTest:
         self, account_id: UUID, key_id: UUID, actor: Importer, *, include_ws: bool = True
     ) -> KeyTested:
         """The test's result, or its refusal with nothing probed (`KeyTestRefused`,
-        `AccountNotFoundError`, `AccountScopeDeniedError`)."""
+        `AccountNotFoundError`, `AccountScopeDeniedError`). A refusal after the throttle gives
+        the key's minute back."""
         scope = OwnerScope(actor.user_id)
         account = await self._read(self._accounts.get_account(scope, account_id))
         if account.env.value != self._env:  # never signed for on this environment's host
@@ -234,6 +238,10 @@ class KeyTest:
             rest = _answered(verdict, took)
         except (VerificationInconclusive, TimeoutError) as exc:  # no verdict: nothing changed
             rest = _unanswered(exc, self._monotonic() - started)
+        except NoEgressIp:  # the job judges no key without one, as its pass (decision 11)
+            self.throttle.release(key.id)
+            text = "No egress IP is configured, so the key could not be tested."
+            raise KeyTestRefused(EXCHANGE, text) from None
         except Exception as exc:  # M2 refusing to sign, by its class code; anything else goes on
             if (code := _UNSIGNED.get(str(getattr(type(exc), "code", "")))) is None:
                 raise
