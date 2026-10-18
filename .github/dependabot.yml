@@ -96,9 +96,10 @@ updates:
     commit-message:
       prefix: "chore(infra-devops)"
     ignore:
-      # The backend runtime is pinned to Python 3.12 (AGENTS.md §5.2, services/api/pyproject.toml,
-      # infra/images/PINS.md); #3314 (3.12 -> 3.14) was declined, #3430 added this entry. A runtime
-      # move needs its own ticket + ADR, which removes this entry; none is open yet. Patch and
-      # digest updates of the 3.12 line still flow.
+      # The backend targets Python 3.12: services/api/.python-version, the mypy/Ruff/Black
+      # targets in services/api/pyproject.toml and the python:3.12-slim pin in
+      # infra/images/PINS.md (AGENTS.md §5.2 sets 3.12 as the floor). #3314 (3.12 -> 3.14) was
+      # declined; #3430 added this entry. A runtime move needs its own ticket + ADR, which
+      # removes this entry; none is open yet. Patch and digest updates of the 3.12 line still flow.
       - dependency-name: "python"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]

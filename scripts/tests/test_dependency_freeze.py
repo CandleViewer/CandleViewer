@@ -234,9 +234,10 @@ def test_dependabot_ignores_majors_on_pinned_runtime_sensitive_packages() -> Non
 
 
 def test_dependabot_docker_ignores_python_base_image_minor_and_major_only() -> None:
-    # #3314 was declined: the backend runtime is pinned to Python 3.12 (AGENTS.md §5.2,
-    # infra/images/PINS.md), so the `python` base image must not offer 3.13+ every week,
-    # while patch and digest updates of the 3.12 line still arrive (#3430).
+    # #3314 was declined and #3430 added the rule: the backend targets Python 3.12
+    # (services/api/.python-version, the python:3.12-slim pin in infra/images/PINS.md), so
+    # the `python` base image must not offer 3.13+ every week, while patch and digest
+    # updates of the 3.12 line still arrive.
     (docker,) = [u for u in _dependabot_updates() if u["package-ecosystem"] == "docker"]
     assert docker["directory"] == "/infra/images"
     (python,) = [i for i in docker.get("ignore", []) if i["dependency-name"] == "python"]
