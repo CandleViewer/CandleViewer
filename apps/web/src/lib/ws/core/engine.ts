@@ -267,12 +267,15 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     const gens = target === undefined ? NO_GENS : gensOf([target]);
     submit(F.ctl(connection.nextId(), ch, payload), target?.rs, gens);
   }
-  const flow = createFlowControl({
-    consumers: allConsumers,
-    ctl: sendCtl,
-    changed: scheduleSync,
-    minThrottleMs: () => connection.minThrottleMs,
-  });
+  const flow = createFlowControl(
+    {
+      consumers: allConsumers,
+      ctl: sendCtl,
+      changed: scheduleSync,
+      minThrottleMs: () => connection.minThrottleMs,
+    },
+    timers,
+  );
 
   const host: RegistryHost = {
     subscribe(spec, rs) {
@@ -393,7 +396,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     s.consumers.size > 0 && s.handle?.status !== "revoked" && !flow.isReleased(s.ch);
 
   function topicEntry(s: Stream): F.SubPayload["topics"][number] {
-    const opts = s.spec.opts;
+    const opts = flow.optionsOf(s.spec);
     return opts === undefined ? { ch: s.ch } : { ch: s.ch, opts };
   }
 

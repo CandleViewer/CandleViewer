@@ -1217,6 +1217,261 @@ describe("panes and what they show (8.5, C8)", () => {
   });
 });
 
+describe("a heatmap's bucket follows its pane (6.1.1)", () => {
+  const HEATMAP = "heatmap.BTCUSDT";
+  const size = (cssWidth: number) =>
+    ({ visibility: "visible", tabHidden: false, size: { cssWidth, dpr: 1 } }) as const;
+  const topicsEntry = (frame: Json | undefined) => ((frame?.["p"] as Json)["topics"] as Json[])[0];
+  /** The buckets the client asked for with a `ctl` (a throttle ctl asks for none). */
+  const bucketCtls = (t: ReturnType<typeof engineHarness>) =>
+    t.gateway.latest
+      .of("ctl")
+      .map((f) => (f["p"] as Json)["time_bucket_ms"])
+      .filter((bucket) => bucket !== undefined);
+
+  it("is derived from the pane's size and sent on the sub, so nothing is retuned", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    expect(t.gateway.latest.of("sub")[0]).toMatchObject({
+      p: { topics: [{ ch: HEATMAP, opts: { time_bucket_ms: 1_000 } }] },
+    });
+    await t.advance(5_000);
+    expect(t.gateway.latest.of("ctl")).toEqual([]);
+  });
+
+  it("a bucket the user chose is sent as it is, and never retuned", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP, { opts: { time_bucket_ms: 250 } }));
+    await t.start();
+    t.engine.setPane("p1", size(300));
+    await t.advance(5_000);
+    expect(t.gateway.latest.of("sub")[0]).toMatchObject({
+      p: { topics: [{ ch: HEATMAP, opts: { time_bucket_ms: 250 } }] },
+    });
+    expect(t.gateway.latest.of("ctl")).toEqual([]);
+  });
+
+  it("Heatmap bucket is derived and debounced: a resize across a ladder boundary sends one ctl", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    const handle = t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.got(HEATMAP);
+    for (let i = 0; i < 20; i += 1) {
+      if (i > 0) await t.advance(10);
+      t.engine.setPane("p1", size(1190 - i * 31)); // down to 601 px
+    }
+    await t.advance(399);
+    expect(bucketCtls(t)).toEqual([]);
+    await t.advance(1);
+    expect(bucketCtls(t)).toEqual([5_000]);
+    await t.advance(10_000);
+    expect(t.gateway.latest.of("ctl")).toHaveLength(1); // not one per event, and no throttle ctl after it
+    expect(t.got(HEATMAP)).toEqual(["reset:resnapshot", "snap:2"]); // the server re-snapshots (6.1.1)
+    expect([handle.effective["time_bucket_ms"], handle.status]).toEqual([5_000, "live"]);
+    t.engine.setPane("p1", size(1190)); // back across the boundary: the server runs 5 000 ms now, so this is a change
+    await t.advance(400);
+    expect(bucketCtls(t)).toEqual([5_000, 1_000]);
+  });
+
+  it("is first derived when the pane is measured after the sub, and a pane without a size asks for nothing", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    expect(topicsEntry(t.gateway.latest.of("sub")[0])).toEqual({ ch: HEATMAP });
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: false,
+      size: { cssWidth: 0, dpr: 1 },
+    });
+    await t.advance(1_000);
+    expect(t.gateway.latest.of("ctl")).toEqual([]); // a hidden pane is 0 px wide: no bucket to derive
+    t.engine.setPane("p1", size(1190)); // the server runs 500 ms; 1 190 px derives 1 000 ms
+    await t.advance(400);
+    expect(bucketCtls(t)).toEqual([1_000]);
+  });
+
+  it("is one bucket per ch: with several panes the widest decides, and the narrow one's resize sends nothing", async () => {
+    const t = engineHarness();
+    t.engine.setPane("wide", size(1190));
+    t.engine.setPane("narrow", size(1190));
+    t.engine.consume(spec(HEATMAP, { paneId: "wide" }));
+    t.engine.consume(spec(HEATMAP, { paneId: "narrow" }));
+    await t.start();
+    t.engine.setPane("narrow", size(601));
+    await t.advance(5_000);
+    expect(t.gateway.latest.of("ctl")).toEqual([]);
+    t.engine.setPane("wide", size(601)); // now both are narrow
+    await t.advance(400);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("a collapsed pane's width does not count: the widest pane that is shown decides", async () => {
+    const t = engineHarness();
+    t.engine.setPane("wide", {
+      visibility: "collapsed",
+      tabHidden: false,
+      size: { cssWidth: 1190, dpr: 1 },
+    });
+    t.engine.setPane("narrow", size(601));
+    t.engine.consume(spec(HEATMAP, { paneId: "wide" }));
+    t.engine.consume(spec(HEATMAP, { paneId: "narrow" }));
+    await t.start();
+    expect(topicsEntry(t.gateway.latest.of("sub")[0])).toEqual({
+      ch: HEATMAP,
+      opts: { time_bucket_ms: 5_000 },
+    });
+  });
+
+  it("derives the bucket of the sub from the window the consumer asked for", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(5_400)); // 500 ms over the default 900 s; 250 ms over 300 s
+    t.engine.consume(spec(HEATMAP, { opts: { window_seconds: 300 } }));
+    await t.start();
+    expect(topicsEntry(t.gateway.latest.of("sub")[0])).toEqual({
+      ch: HEATMAP,
+      opts: { window_seconds: 300, time_bucket_ms: 250 },
+    });
+  });
+
+  it("re-derives the bucket from the window the server confirmed, not the one asked for", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(800));
+    t.engine.consume(spec(HEATMAP, { opts: { window_seconds: 900 } })); // the server keeps 300 s at most
+    await t.start();
+    expect(topicsEntry(t.gateway.latest.of("sub")[0])).toEqual({
+      ch: HEATMAP,
+      opts: { window_seconds: 900, time_bucket_ms: 5_000 },
+    });
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([1_000]); // 300 s over 800 px
+  });
+
+  it("a resize while the sub is still unanswered is derived as soon as the server answers", async () => {
+    const t = engineHarness({ hold: ["sub_ok"] });
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start(); // the sub carries 1 000 ms; its reply is in flight
+    t.engine.setPane("p1", size(601)); // nothing is confirmed to compare it with yet
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([]);
+    t.gateway.latest.releaseHeld();
+    await t.advance(500);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("derives a refused bucket ctl again", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.gateway.deny(1);
+    t.engine.setPane("p1", size(601));
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([5_000, 5_000]);
+    expect(t.gateway.latest.subs().at(-1)?.effective["time_bucket_ms"]).toBe(5_000);
+  });
+
+  it("a heatmap a remounting consumer takes over still follows its pane's size", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    const first = t.engine.consume(spec(HEATMAP));
+    await t.start();
+    first.release();
+    t.engine.consume(spec(HEATMAP)); // the same task: taken over, nothing is sent
+    t.engine.setPane("p1", size(601));
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("removing the widest pane of a heatmap derives the bucket from the panes that are left", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(601));
+    t.engine.setPane("p2", size(1190));
+    t.engine.consume(spec(HEATMAP, { paneId: "p1" }));
+    t.engine.consume(spec(HEATMAP, { paneId: "p2" }));
+    await t.start(); // the widest decides: 1 000 ms
+    t.engine.removePane("p2");
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("releasing the widest consumer of a heatmap derives the bucket from the panes that are left", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(601));
+    t.engine.setPane("p2", size(1190));
+    t.engine.consume(spec(HEATMAP, { paneId: "p1" }));
+    const wide = t.engine.consume(spec(HEATMAP, { paneId: "p2" }));
+    await t.start();
+    wide.release();
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("a heatmap with a throttle of its own is slowed from that throttle, not from its bucket, and comes back to it", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec(HEATMAP, { opts: { time_bucket_ms: 1_000, throttle_ms: 250 } }));
+    await t.start();
+    const throttles = () => t.gateway.latest.of("ctl").map((f) => (f["p"] as Json)["throttle_ms"]);
+    expect(throttles()).toEqual([]); // visible it runs at the 250 it asked for: nothing to retune
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300);
+    expect(throttles()).toEqual([1_000]); // it ran at 250: slowing it to its bucket's 1 000 is a change
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(300);
+    expect(throttles()).toEqual([1_000, 250]); // shown again, it goes back to its own pace and not its bucket's
+  });
+
+  it("a throttle retune that the server echoes without the bucket sends no bucket ctl", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(10_800)); // a bucket of 250 ms (the formula of 6.1.1 asks for a pane this wide)
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.engine.setPane("p1", { ...size(10_800), tabHidden: true });
+    await t.advance(1_000); // slowed to 1 000 ms: the ctl_ok names the throttle and no bucket
+    expect(bucketCtls(t)).toEqual([]);
+  });
+
+  it("a resize after a throttle retune is derived against the bucket the server runs", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(10_800)); // a bucket of 250 ms (the formula of 6.1.1 asks for a pane this wide)
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.engine.setPane("p1", { ...size(10_800), tabHidden: true });
+    await t.advance(1_000);
+    t.engine.setPane("p1", { ...size(5_400), tabHidden: true }); // 500 ms: not what the server runs
+    await t.advance(1_000);
+    expect(bucketCtls(t)).toEqual([500]);
+  });
+
+  it("a pass that changes nothing does not postpone a resize that is about to settle", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    t.engine.consume(spec(HEATMAP));
+    await t.start();
+    t.engine.setPane("p1", size(601)); // the 400 ms of the debounce start
+    await t.advance(300);
+    t.engine.setPane("p2", size(500)); // a pane no heatmap is on: nothing it says concerns the bucket
+    await t.advance(150);
+    expect(bucketCtls(t)).toEqual([5_000]);
+  });
+
+  it("a retune the server echoes in part leaves the bucket the stream runs at alone", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec(HEATMAP, { opts: { time_bucket_ms: 250 } }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+    await t.advance(300); // slowed to 1 000 ms: the ctl_ok names the throttle and nothing of the bucket
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(300);
+    const throttles = t.gateway.latest.of("ctl").map((f) => (f["p"] as Json)["throttle_ms"]);
+    expect(throttles).toEqual([1_000, 250]); // back at its bucket, not at the 500 ms of a heatmap that names none
+  });
+});
+
 describe("a snapshot that does not come (7.1, WS-E06)", () => {
   it("is asked for once more, then the stream reads stale until the snapshot arrives", async () => {
     const t = engineHarness();
@@ -1255,6 +1510,31 @@ describe("a snapshot that does not come (7.1, WS-E06)", () => {
     );
   });
 
+  it("a resnapshot that never comes is asked for once more, like any snapshot", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: false,
+      size: { cssWidth: 1190, dpr: 1 },
+    });
+    const handle = t.engine.consume(spec("heatmap.BTCUSDT"));
+    await t.start();
+    t.gateway.withholdSnaps(true); // from now on the server promises snapshots and sends none
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: false,
+      size: { cssWidth: 601, dpr: 1 },
+    });
+    await t.advance(500); // the ctl, and ctl_ok with resnapshot
+    expect(handle.status).toBe("resyncing");
+    const resyncs = () =>
+      t.gateway.latest.of("resync").filter((f) => f["ch"] === "heatmap.BTCUSDT");
+    await t.advance(BASELINE_DEADLINE_MS);
+    expect(resyncs()).toHaveLength(1);
+    await t.advance(BASELINE_DEADLINE_MS);
+    expect(handle.status).toBe("stale");
+  });
+
   it("costs nothing when the snapshot comes in time", async () => {
     const t = engineHarness();
     t.engine.consume(spec(BOOK));
@@ -1291,6 +1571,31 @@ describe("a snapshot that does not come (7.1, WS-E06)", () => {
     t.gateway.latest.snap("system", "client_resync"); // the snapshot arrives late: trusted again
     expect(state().orderEntry).toEqual({ enabled: true, reason: null });
     assertEngineOrder(t.events);
+  });
+});
+
+describe("stopping", () => {
+  it("closes the socket, forgets every stream and leaves no timer behind", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: false,
+      size: { cssWidth: 1190, dpr: 1 },
+    });
+    t.engine.consume(spec("heatmap.BTCUSDT"));
+    t.engine.consume(spec(BOOK, { paneId: "p2" }));
+    t.gateway.withholdSnaps(true); // a deadline is waiting
+    await t.start();
+    t.engine.setPane("p1", {
+      visibility: "visible",
+      tabHidden: false,
+      size: { cssWidth: 601, dpr: 1 },
+    });
+    t.engine.stop();
+    expect(t.gateway.latest.closedByClient).toEqual({ code: 1000, reason: "client_stop" });
+    expect(vi.getTimerCount()).toBe(0);
+    await t.advance(600_000);
+    expect(t.gateway.conns).toHaveLength(1);
   });
 });
 
