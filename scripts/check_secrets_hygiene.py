@@ -5,7 +5,8 @@ Subcommands (all offline, deterministic, exit 1 on violation):
 * ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
   and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
-* ``workflows`` - no ``set -x`` / environment dump in workflows (SR-146)
+* ``workflows`` - no ``set -x`` / environment dump in workflows or the repository shell scripts
+  their steps run, directly or through other scripts (``workflow_scripts``; SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
 
@@ -16,9 +17,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
-from pathlib import Path
+from collections.abc import Iterator
+from pathlib import Path, PurePosixPath
 
 #: Documented dummy prefix; the gitleaks allowlist and the fixture test both assert it.
 DUMMY_PREFIX = "DUMMYKEY_"
@@ -192,19 +196,173 @@ _ENV_DUMP = re.compile(
 )
 _SKIP_ALLOW = "# secrets-hygiene: allow"
 
+_RUN_KEY = re.compile(r"^(\s*(?:-\s+)?)run:(.*)$")
+_WORKDIR = re.compile(r"^\s*(?:-\s+)?working-directory:\s*[\"']?([\w./-]+)", re.MULTILINE)
+#: The repository root in CI, wherever a workflow or a script it runs names it.
+_WORKSPACE = re.compile(r"([\"']?)\$(?:\{?GITHUB_WORKSPACE\}?|\{\{ *github\.workspace *\}\})\1/")
+#: (interpreter, path) of a command in command position, past `VAR=x`, keywords, wrappers with
+#: their dash options and numeric arguments, and `bash|sh -c` (the string is a command line, a path
+#: in it counting only as a direct script); `workflow_scripts` says which.
+_OPTS = r"--\S*\s+|[-+][abd-zA-Z]*o\s+\w+\s+|[-+][abd-zA-Z]+\s+"
+_INVOKES = re.compile(
+    r"(?:^|[;&|(){`])\s*(?:(?:if|then|elif|else|do|while|until|!|exec|time|command"
+    r"|(?:/usr/bin/)?env|sudo|nohup|nice|stdbuf|timeout|xvfb-run|uv\s+run)(?:\s+(?:-\S+|\d\S*))*\s+"
+    r"|\w+=\S*\s+|(?:/(?:usr/)?bin/)?(?:ba)?sh\s+(?:" + _OPTS + r")*-[abd-zA-Z]*c[a-zA-Z]*\s+"
+    r"(?:--\s+)?[\"']?)*"
+    r"(?:(?:/(?:usr/)?bin/)?(bash|sh|source|\.)\s+(?:" + _OPTS + r")*)?[\"']?([\w.][\w./-]*)"
+)
+_SHEBANG = re.compile(r"#!.*\b(?:ba)?sh\b")
+#: A shebang whose options trace (``#!/bin/sh -ex``): line 1 of a scanned script.
+_SHEBANG_X = re.compile(r"#!.*\s-[a-zA-Z]*x[a-zA-Z]*(\s|$)")
+#: Suffixes never sourced as shell: ``source|.`` follows any other repository file.
+_NOT_SHELL = re.compile(
+    r"\.(?:md|markdown|txt|rst|py|json|ya?ml|toml|[cm]?js|tsx?|css|html|xml|csv|lock|cfg|ini|sql)"
+)
+
+
+def _sr146_hits(text: str) -> list[tuple[int, str]]:
+    """The SR-146 line rules: (line, finding) per hit; comment and allow-marked lines skip."""
+    hits: list[tuple[int, str]] = []
+    for n, ln in enumerate(text.splitlines(), 1):
+        if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
+            continue
+        body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
+        if _SET_X.search(body):
+            hits.append((n, "'set -x' tracing"))
+        if _ENV_DUMP.search(body):
+            hits.append((n, "environment dump"))
+    return hits
+
+
+def _code(line: str) -> str:
+    """``line`` up to its comment: a ``#`` that starts a word outside quotes."""
+    quote, escaped = "", False
+    for i, c in enumerate(line):
+        if escaped or (c == "\\" and quote != "'"):
+            escaped = not escaped
+        elif c == quote or (not quote and c in "\"'"):
+            quote = "" if quote else c
+        elif not quote and c == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
+def _run_lines(text: str) -> list[str]:
+    """The shell lines of every `run:` value in a workflow (inline or block), comments dropped."""
+    lines: list[str] = []
+    key_col = -1
+    for ln in text.splitlines():
+        if key_col >= 0 and (not ln.strip() or len(ln) - len(ln.lstrip()) > key_col):
+            lines.append(_code(ln.strip()))
+            continue
+        m = _RUN_KEY.match(ln)
+        key_col = len(m.group(1)) if m else -1
+        if m and not m.group(2).strip().startswith(("|", ">")):
+            value = _code(m.group(2)).strip()
+            lines.append(value[1:-1] if value[:1] in "\"'" and value[-1:] == value[:1] else value)
+    return lines
+
+
+def _read(path: Path, size: int = -1) -> str | None:
+    """``path``'s first ``size`` characters (all by default), or None if it cannot be read."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            return f.read(size)
+    except OSError:
+        return None
+
+
+def _repo_file(root: Path, rel: PurePosixPath) -> Path | None:
+    """``rel`` from ``root`` as a file resolving (symlinks, ``..``) inside ``root``, else None; one
+    that cannot be resolved (a symlink loop) is kept, so that reading it fails the scan. Not
+    ``Path.resolve``: it raises RuntimeError on a symlink loop up to Python 3.12."""
+    path = Path(os.path.realpath(root / rel))
+    try:
+        regular = stat.S_ISREG(path.stat().st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        regular = True
+    return path if path.is_relative_to(root) and regular else None
+
+
+def _is_shell(path: Path, interpreter: str) -> bool:
+    """Run by ``bash|sh``: any file; by ``source|.``: any without a ``_NOT_SHELL`` suffix; run
+    directly: a ``.sh``/``.bash`` file or one with a sh/bash shebang (an unreadable one counts)."""
+    if interpreter:
+        return interpreter in ("bash", "sh") or not _NOT_SHELL.fullmatch(path.suffix)
+    head = _read(path, 256)
+    return path.suffix in (".sh", ".bash") or head is None or bool(_SHEBANG.match(head))
+
+
+def _invoked(root: Path, bases: list[PurePosixPath], line: str) -> Iterator[str]:
+    """The root-relative repository shell scripts that ``line`` runs or sources."""
+    for interpreter, rel in _INVOKES.findall(line):
+        if not interpreter and "/" not in rel:
+            continue  # a bare command name is a PATH lookup, not a repository file
+        for base in bases:
+            script = _repo_file(root, base / rel)
+            if script and _is_shell(script, interpreter):
+                yield script.relative_to(root).as_posix()
+
+
+def workflow_scripts(root: Path) -> dict[str, set[str]]:
+    """Each repository shell script a workflow step runs, directly or through the scripts it runs
+    (root-relative) -> its runners: ``w.yml``, or ``w.yml via <the script that runs it>`` (#3274).
+
+    A command counts at a line start or after ``;``, ``&``, ``|``, ``(``, ``)``, ``{`` or a
+    backtick, past ``VAR=x``, ``!``, ``if then elif else do while until`` and the wrappers ``exec
+    time command env /usr/bin/env sudo nohup nice stdbuf timeout xvfb-run`` and ``uv run`` with
+    their dash options and numeric arguments: ``bash|sh [options] <path>`` (also from ``/bin/``
+    or ``/usr/bin/``) runs any file, ``source|. <path>`` any file without a ``_NOT_SHELL``
+    suffix, a direct ``<dir>/<file>`` only a shell script (``.sh``/``.bash`` or a sh/bash
+    shebang). Shell scripts only: SR-146's rules are shell rules, which would neither catch a
+    Python leak nor stay quiet on Python text quoting them. A ``#`` starting a word outside
+    quotes ends a line. Paths are tried from the root and each ``working-directory:`` of the
+    workflow, in nested scripts too (errs toward scanning), a ``$GITHUB_WORKSPACE/``,
+    ``${GITHUB_WORKSPACE}/``, ``"$GITHUB_WORKSPACE"/`` or ``${{ github.workspace }}/`` prefix
+    being the root, and a ``bash|sh -c`` string read as a command line; one resolving
+    outside the root (``..``, a symlink, absolute) is refused, a missing one skipped, one that
+    cannot be read (a loop) fails the scan. Not followed: ``make``/``pnpm`` targets, ``pnpm exec
+    bash``, ``npx bash``, ``eval``, paths built from any other ``$VAR`` or ``$(...)``, a
+    non-script command in a ``bash -c`` string (judged as a direct command), ``cd <dir> &&
+    ./x.sh`` (not tried from ``<dir>``), stdin and pipes (``cat x | bash``, ``bash < x``,
+    ``xargs bash x``), a wrapper option taking a word (``timeout -s KILL``), other interpreters.
+    """
+    root = root.resolve()
+    found: dict[str, set[str]] = {}
+    wf = root / ".github" / "workflows"
+    for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
+        text = _WORKSPACE.sub("", path.read_text(encoding="utf-8"))
+        bases = [PurePosixPath(), *map(PurePosixPath, _WORKDIR.findall(text))]
+        todo = [(path.name, line) for line in _run_lines(text)]
+        seen: set[str] = set()
+        while todo:
+            runner, line = todo.pop()
+            for key in _invoked(root, bases, line):
+                found.setdefault(key, set()).add(runner)
+                if key not in seen:
+                    seen.add(key)
+                    nested = _WORKSPACE.sub("", _read(root / key) or "").splitlines()
+                    todo += [(f"{path.name} via {key}", _code(ln)) for ln in nested]
+    return found
+
 
 def check_workflows(root: Path) -> list[str]:
     errors: list[str] = []
     wf = root / ".github" / "workflows"
     for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
-        for n, ln in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if _SKIP_ALLOW in ln or ln.lstrip().startswith("#"):
-                continue
-            body = ln.strip().removeprefix("- run:").removeprefix("run:").strip()
-            if _SET_X.search(body):
-                errors.append(f"{path.name}:{n}: 'set -x' tracing (SR-146)")
-            if _ENV_DUMP.search(body):
-                errors.append(f"{path.name}:{n}: environment dump (SR-146)")
+        for n, what in _sr146_hits(path.read_text(encoding="utf-8")):
+            errors.append(f"{path.name}:{n}: {what} (SR-146)")
+    for rel, runners in sorted(workflow_scripts(root).items()):
+        by = f"run by {', '.join(sorted(runners))}"
+        text = _read(root / rel)
+        if text is None:
+            errors.append(f"{rel}: unreadable script (SR-146 scan); {by}")
+        if _SHEBANG_X.match(text or ""):
+            errors.append(f"{rel}:1: 'set -x' tracing (SR-146); {by}")
+        for n, what in _sr146_hits(text or ""):
+            errors.append(f"{rel}:{n}: {what} (SR-146); {by}")
     return errors
 
 
